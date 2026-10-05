@@ -28,6 +28,7 @@ from ._registry import CapabilityProfile, SupportTuple
 _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
     ("phydrax.discretization.meshfree._profiles", "meshfree_candidate_profiles"),
+    ("phydrax.atomistic._mace_profiles", "mace_candidate_profiles"),
     ("phydrax.linalg._svd_qualification", "singular_subspace_candidate_profiles"),
     ("phydrax.acoustics._bubbly", "bubbly_medium_candidate_profiles"),
     ("phydrax.applications.foams._profiles", "foam_candidate_profiles"),

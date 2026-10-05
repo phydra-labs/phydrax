@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ..discretization import AbstractPreparedParticleNeighborhood
 from ._dynamics import (
     AtomisticDynamicsState,
     AtomisticEnergyLedgerState,
@@ -78,6 +79,11 @@ def apply_isotropic_monte_carlo_barostat(
     move_index: ArrayLike,
     /,
 ) -> AtomisticBarostatEvaluation:
+    """Propose and atomically accept or reject one addressed volume move.
+
+    Admission, RNG addressing, cache replacement, evidence, and rollback stay
+    in one transaction during cache migration to preserve rejection ordering.
+    """
     if not isinstance(dynamics, PreparedAtomisticDynamics):
         raise TypeError("dynamics must be PreparedAtomisticDynamics.")
     if not isinstance(state, AtomisticDynamicsState):
@@ -117,7 +123,10 @@ def apply_isotropic_monte_carlo_barostat(
         raise ValueError("Isotropic barostat requires a fully periodic cell.")
     if dynamics.potential.plan.requirements.directed_graph:
         raise ValueError("Dynamic-cell barostat does not support learned graph terms.")
-    if dynamics.neighborhood.backend != "dense_pairs":
+    if (
+        not isinstance(dynamics.neighborhood, AbstractPreparedParticleNeighborhood)
+        or dynamics.neighborhood.backend != "dense_pairs"
+    ):
         raise ValueError("Dynamic-cell barostat currently requires dense pair authority.")
     if dynamics.constraints is not None:
         indices = np.asarray(dynamics.system.topology.constraint_indices)
@@ -174,7 +183,7 @@ def apply_isotropic_monte_carlo_barostat(
         proposed_unwrapped, new_vectors
     )
     neighborhood, cache = dynamics._build_neighborhood(
-        proposed_positions, None, new_vectors
+        proposed_positions, None, new_vectors, proposed_images
     )
     evaluation = dynamics._evaluate_configuration(
         proposed_positions,
@@ -182,6 +191,7 @@ def apply_isotropic_monte_carlo_barostat(
         state.species,
         new_vectors,
         neighborhood,
+        cache,
         row.controls,
     )
     volume_before = _volume(old_vectors)

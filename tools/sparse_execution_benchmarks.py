@@ -265,6 +265,69 @@ def _relation_case() -> Any:
     }
 
 
+def _streamed_relation_case() -> Any:
+    """Shared bounded streamed runner against its materialized nonlinear reference."""
+    count = 4096
+    target_count = 512
+    rng = np.random.default_rng(7)
+    targets = np.sort(rng.integers(0, target_count, size=count)).astype(np.int32)
+    sources = rng.integers(0, target_count, size=count).astype(np.int32)
+    relation = phx.sparse.EdgeRelation(
+        sources, targets, source_size=target_count, target_size=target_count
+    )
+    positions = jnp.asarray(rng.normal(size=(target_count, 3)))
+    weights = jnp.asarray(rng.normal(size=(4, 8)))
+    payload = phx.sparse.StreamedPayloadSpec(
+        jax.ShapeDtypeStruct((8,), jnp.float64), jax.ShapeDtypeStruct((), jnp.float64)
+    )
+
+    def message(
+        w: jax.Array, source: jax.Array, receiver: jax.Array, edge: jax.Array | None
+    ) -> jax.Array:
+        displacement = receiver - source
+        distance = jnp.sqrt(jnp.sum(displacement**2) + 1.0)
+        return jnp.tanh(jnp.concatenate((displacement, distance[None])) @ w)
+
+    def readout(w: jax.Array, receiver: jax.Array, aggregate: jax.Array) -> jax.Array:
+        return jnp.sum(jnp.sin(aggregate)) + 0.1 * jnp.sum(receiver**2)
+
+    def reference(x: jax.Array) -> jax.Array:
+        messages = jax.vmap(lambda s, r: message(weights, s, r, None))(
+            x[sources], x[targets]
+        )
+        aggregate = jnp.zeros((target_count, 8)).at[targets].add(messages)
+        return jax.vmap(lambda r, a: readout(weights, r, a))(x, aggregate)
+
+    expected, reference_first, reference_steady = _time(reference, positions)
+    case: dict[str, Any] = {
+        "routes": count,
+        "targets": target_count,
+        "reference_compile_and_first_ms": reference_first,
+        "reference_steady_ms": reference_steady,
+    }
+    successful = True
+    for accumulation in ("fast", "deterministic", "compensated"):
+        prepared = phx.sparse.StreamedRelationPlan(
+            receiver_tile=32, edge_tile=256, channel_capacity=8, accumulation=accumulation
+        ).prepare(relation, owner_id="sparse-execution-benchmark")
+        result, first, steady = _time(
+            lambda x: prepared.evaluate(
+                payload, message, readout, weights, x, x, jnp.zeros((count,))
+            ),
+            positions,
+        )
+        successful = successful and bool(result.evidence.successful)
+        case[f"{accumulation}_compile_and_first_ms"] = first
+        case[f"{accumulation}_steady_ms"] = steady
+        case[f"{accumulation}_reference_defect"] = float(
+            jnp.max(jnp.abs(result.receiver_outputs - expected))
+        )
+        case["tile_count"] = prepared.schedule.tile_count
+        case["schedule_bytes"] = _array_bytes(prepared.schedule)
+    case["successful"] = successful
+    return case
+
+
 def _raster_case() -> Any:
     image = phx.imaging.ImagePlaneSupport((128, 128))
     row, column = jnp.meshgrid(
@@ -481,6 +544,7 @@ def run(output: Path, *, projector_only: bool = False) -> None:
         else {
             "key_groups": _group_case(),
             "relation_execution": _relation_case(),
+            "streamed_relation": _streamed_relation_case(),
             "gaussian_raster": _raster_case(),
             "sparse_lbm": _lbm_case(),
             "sparse_mpm": _mpm_case(),

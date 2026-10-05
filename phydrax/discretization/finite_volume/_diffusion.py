@@ -290,7 +290,13 @@ def _normalize_tensor_coefficient(
 
 
 class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
-    """Conservative cell-centered scalar/tensor diffusion preparation."""
+    """Conservative cell-centered scalar/tensor diffusion preparation.
+
+    `interpolation` averages the coefficient onto faces. Tangential cell
+    gradients of tensor cross terms are averaged arithmetically
+    (`gradient_average`), so the operator stays linear in the state for every
+    coefficient interpolation and its transpose is exact.
+    """
 
     grid: PreparedTensorGrid
     boundaries: tuple[
@@ -299,6 +305,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
     interpolation: FaceCoefficientPlan
     plan_id: str = eqx.field(static=True)
     precision: FiniteVolumePrecisionPolicy
+    gradient_average: FaceCoefficientPlan
 
     @checked
     def __init__(
@@ -328,6 +335,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         self.boundaries = boundaries_
         self.interpolation = face_plan
         self.precision = precision_
+        self.gradient_average = FaceCoefficientPlan(grid, kind="arithmetic")
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservative-diffusion-plan",
@@ -733,7 +741,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                 gradient = (
                     normal
                     if derivative_axis == normal_axis
-                    else self.plan.interpolation.interpolate(
+                    else self.plan.gradient_average.interpolate(
                         cell_gradients[derivative_axis],
                         axis_name,
                     )

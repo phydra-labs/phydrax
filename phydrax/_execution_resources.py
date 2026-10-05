@@ -9,10 +9,20 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
+from ._execution_sampling import DeviceMemorySample, HostMemorySample
 from ._fingerprint import canonical_fingerprint
 from ._validation import normalized_identifier
+from .typing import parse
+
+
+MemoryEnvelope: TypeAlias = Literal["declared", "certified"]
+"""`declared` checks ceilings against owner estimates; `certified` also requires
+measured available host memory and device allocator headroom for the placement."""
+
+ResourceMemoryBasis: TypeAlias = Literal["declared", "compiler_analysis", "sampled"]
+"""Provenance of candidate peak-byte estimates; a sampled peak is never a bound."""
 
 
 def _identifier(value: str, name: str) -> str:
@@ -100,8 +110,10 @@ class ResourceRequest:
     required_dtypes: tuple[str, ...] = ()
     required_backends: tuple[str, ...] = ()
     required_collectives: tuple[str, ...] = ()
+    memory_envelope: MemoryEnvelope = "declared"
 
     def __post_init__(self) -> None:
+        parse(self.memory_envelope, MemoryEnvelope, "memory_envelope")
         if self.cpu_cores <= 0:
             raise ValueError("cpu_cores must be positive")
         if self.memory_bytes <= 0:
@@ -191,6 +203,7 @@ class ResourceRequest:
             or self.required_dtypes
             or self.required_backends
             or self.required_collectives
+            or self.memory_envelope != "declared"
         ):
             payload.update(
                 {
@@ -209,6 +222,8 @@ class ResourceRequest:
                     "required_collectives": list(self.required_collectives),
                 }
             )
+            if self.memory_envelope != "declared":
+                payload["memory_envelope"] = self.memory_envelope
         return payload
 
     @classmethod
@@ -236,12 +251,20 @@ class ResourceRequest:
             required_dtypes=tuple(value.get("required_dtypes", ())),
             required_backends=tuple(value.get("required_backends", ())),
             required_collectives=tuple(value.get("required_collectives", ())),
+            memory_envelope=value.get("memory_envelope", "declared"),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutionResourceEvidence:
-    """Static candidate estimates and explicitly attested capabilities."""
+    """Candidate memory/storage estimates and explicitly attested capabilities.
+
+    ``memory_basis`` states where the per-device and per-host peak estimates come
+    from: owner-declared capacity bounds, XLA compiled-memory analysis, or a
+    sampled measurement. A sampled peak is evidence of what ran, never an upper
+    bound, so it cannot satisfy a certified memory envelope. Live measurements
+    (RSS, allocator counters) belong to `ResourceInventory`, not here.
+    """
 
     per_device_peak_bytes: int | None = None
     per_device_reserve_bytes: int | None = None
@@ -254,8 +277,10 @@ class ExecutionResourceEvidence:
     dtypes: tuple[str, ...] = ()
     backends: tuple[str, ...] = ()
     collectives: tuple[str, ...] = ()
+    memory_basis: ResourceMemoryBasis = "declared"
 
     def __post_init__(self) -> None:
+        parse(self.memory_basis, ResourceMemoryBasis, "memory_basis")
         for name in (
             "per_device_peak_bytes",
             "per_device_reserve_bytes",
@@ -296,6 +321,7 @@ class ExecutionResourceEvidence:
             "dtypes": list(self.dtypes),
             "backends": list(self.backends),
             "collectives": list(self.collectives),
+            "memory_basis": self.memory_basis,
         }
 
     @classmethod
@@ -316,6 +342,7 @@ class ExecutionResourceEvidence:
             dtypes=tuple(value.get("dtypes", ())),
             backends=tuple(value.get("backends", ())),
             collectives=tuple(value.get("collectives", ())),
+            memory_basis=value.get("memory_basis", "declared"),
         )
 
 
@@ -368,12 +395,19 @@ class DeviceResource:
 
 @dataclass(frozen=True, slots=True)
 class ResourceInventory:
-    """Observed resources in one initialized JAX runtime."""
+    """Observed resources in one initialized JAX runtime.
+
+    ``host_memory`` and ``device_memory`` are timestamped observations used by
+    certified memory admission. They are evidence, not identity, so they are
+    excluded from ``inventory_id`` and ``to_payload``.
+    """
 
     process_count: int
     process_index: int
     devices: tuple[DeviceResource, ...]
     process_host_ids: tuple[tuple[int, str], ...]
+    host_memory: tuple[HostMemorySample, ...]
+    device_memory: tuple[DeviceMemorySample, ...]
 
     def __init__(
         self,
@@ -382,9 +416,13 @@ class ResourceInventory:
         devices: Sequence[DeviceResource],
         *,
         process_host_ids: Mapping[int, str] | Sequence[tuple[int, str]] = (),
+        host_memory: Sequence[HostMemorySample] = (),
+        device_memory: Sequence[DeviceMemorySample] = (),
     ) -> None:
         devices_ = tuple(devices)
         hosts = _process_host_records(process_host_ids, "inventory")
+        host_samples = tuple(host_memory)
+        device_samples = tuple(device_memory)
         if process_count <= 0:
             raise ValueError("process_count must be positive")
         if not 0 <= process_index < process_count:
@@ -401,10 +439,33 @@ class ResourceInventory:
             raise ValueError(
                 "inventory process_host_ids must map every process exactly once"
             )
+        if any(not isinstance(sample, HostMemorySample) for sample in host_samples):
+            raise TypeError("host_memory must contain HostMemorySample values")
+        if len({sample.process_index for sample in host_samples}) != len(
+            host_samples
+        ) or any(sample.process_index >= process_count for sample in host_samples):
+            raise ValueError("host_memory processes must be unique inventory processes")
+        if any(not isinstance(sample, DeviceMemorySample) for sample in device_samples):
+            raise TypeError("device_memory must contain DeviceMemorySample values")
+        device_keys = {device.key for device in devices_}
+        if len({sample.key for sample in device_samples}) != len(device_samples) or any(
+            sample.key not in device_keys for sample in device_samples
+        ):
+            raise ValueError("device_memory keys must be unique inventory devices")
         object.__setattr__(self, "process_count", process_count)
         object.__setattr__(self, "process_index", process_index)
         object.__setattr__(self, "devices", devices_)
         object.__setattr__(self, "process_host_ids", hosts)
+        object.__setattr__(
+            self,
+            "host_memory",
+            tuple(sorted(host_samples, key=lambda sample: sample.process_index)),
+        )
+        object.__setattr__(
+            self,
+            "device_memory",
+            tuple(sorted(device_samples, key=lambda sample: sample.key)),
+        )
 
     @property
     def inventory_id(self) -> str:
@@ -613,7 +674,9 @@ __all__ = (
     "ExecutionGroupSpec",
     "ExecutionPolicy",
     "ExecutionResourceEvidence",
+    "MemoryEnvelope",
     "RecoveryPolicy",
     "ResourceInventory",
+    "ResourceMemoryBasis",
     "ResourceRequest",
 )

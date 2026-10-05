@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,6 +16,10 @@ import numpy as np
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from phydrax.domain import Domain, PeriodicIdentification
 
 
 _UINT64_MAX = np.iinfo(np.uint64).max
@@ -58,7 +63,21 @@ class MortonCellGeometry(NonTrainableState, StrictModule):
 
 
 class MortonAddressPlan(StrictModule):
-    """Canonical dyadic addressing over a finite Cartesian box."""
+    """Canonical dyadic addressing over a finite Cartesian box.
+
+    Periodic axes are addressed half-open, ``[lower, upper)``: encoding wraps a
+    coordinate into the cell, so a cloud on a periodic address carries one
+    representative per identified seam orbit and never the duplicate upper-face
+    node of the closed fundamental box. Minimum-image, wrapping, and chart
+    arithmetic consume only this numerical descriptor.
+
+    A raw address (``coordinates`` and ``identifications`` ``None``) is a
+    domain-less numerical box. A domain-bound address comes from
+    `from_periodic_identifications`, which records the canonical coordinate of
+    every point axis and, on periodic axes, the revision of its
+    `PeriodicIdentification`; both enter ``plan_id``, so equal numerical boxes
+    over different canonical seams are distinct addresses.
+    """
 
     lower: tuple[float, ...] = eqx.field(static=True)
     upper: tuple[float, ...] = eqx.field(static=True)
@@ -66,6 +85,8 @@ class MortonAddressPlan(StrictModule):
     dimension: int = eqx.field(static=True)
     maximum_depth: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    coordinates: tuple[tuple[str, int | None], ...] | None = eqx.field(static=True)
+    identifications: tuple[str | None, ...] | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -74,6 +95,8 @@ class MortonAddressPlan(StrictModule):
         maximum_depth: int,
         *,
         periodic_axes: Sequence[bool] | None = None,
+        coordinates: Sequence[tuple[str, int | None]] | None = None,
+        identifications: Sequence[str | None] | None = None,
     ) -> None:
         lower_tuple = tuple(float(value) for value in lower)
         upper_tuple = tuple(float(value) for value in upper)
@@ -100,23 +123,86 @@ class MortonAddressPlan(StrictModule):
             periodic_tuple = tuple(bool(value) for value in periodic_axes)
             if len(periodic_tuple) != dimension:
                 raise ValueError("periodic_axes must match the Morton dimension.")
-        object.__setattr__(self, "lower", lower_tuple)
-        object.__setattr__(self, "upper", upper_tuple)
-        object.__setattr__(self, "periodic_axes", periodic_tuple)
-        object.__setattr__(self, "dimension", dimension)
-        object.__setattr__(self, "maximum_depth", depth)
-        object.__setattr__(
-            self,
-            "plan_id",
-            canonical_fingerprint(
-                {
-                    "kind": "morton-address-plan",
-                    "lower": list(lower_tuple),
-                    "upper": list(upper_tuple),
-                    "periodic_axes": list(periodic_tuple),
-                    "maximum_depth": depth,
-                }
-            ),
+        binding = _address_binding(coordinates, identifications, periodic_tuple)
+        content: dict[str, object] = {
+            "kind": "morton-address-plan",
+            "lower": list(lower_tuple),
+            "upper": list(upper_tuple),
+            "periodic_axes": list(periodic_tuple),
+            "maximum_depth": depth,
+        }
+        if binding is not None:
+            content["coordinates"] = [list(coordinate) for coordinate in binding[0]]
+            content["identifications"] = list(binding[1])
+        self.lower = lower_tuple
+        self.upper = upper_tuple
+        self.periodic_axes = periodic_tuple
+        self.dimension = dimension
+        self.maximum_depth = depth
+        self.plan_id = canonical_fingerprint(content)
+        self.coordinates = None if binding is None else binding[0]
+        self.identifications = None if binding is None else binding[1]
+
+    @classmethod
+    def from_periodic_identifications(
+        cls,
+        identifications: Sequence[PeriodicIdentification],
+        /,
+        *,
+        maximum_depth: int,
+        coordinates: Sequence[tuple[str, int | None]] | None = None,
+    ) -> MortonAddressPlan:
+        """Derive the numerical address of a fundamental box and its seams.
+
+        Every identification must belong to one fundamental domain. Point axis
+        ``i`` carries the canonical coordinate ``coordinates[i]`` (a
+        ``(label, component)`` pair; ``component`` is ``None`` for a
+        `ScalarInterval` factor); a single-label domain binds its coordinate
+        components in order by default. Bounds come from the Cartesian factor
+        faces, and exactly the identified axes are periodic with period
+        ``identification.period``. A coordinate identified twice, an
+        identification whose coordinate is not a point axis, or a factor without
+        Cartesian faces is refused.
+        """
+        from phydrax.domain import PeriodicIdentification
+
+        seams = tuple(identifications)
+        if not seams:
+            raise ValueError(
+                "A derived address needs at least one PeriodicIdentification."
+            )
+        if any(not isinstance(seam, PeriodicIdentification) for seam in seams):
+            raise TypeError("identifications must be PeriodicIdentification values.")
+        domain = seams[0].domain
+        if any(not seam.domain.same_support(domain) for seam in seams[1:]):
+            raise ValueError(
+                "Periodic identifications must share one fundamental domain."
+            )
+        axes, lower, upper = _domain_point_coordinates(domain, coordinates)
+        revisions: list[str | None] = [None] * len(axes)
+        for seam in seams:
+            coordinate = (seam.label, seam.component)
+            if coordinate not in axes:
+                raise ValueError(
+                    f"Identified coordinate {coordinate!r} is not a point axis of {axes!r}."
+                )
+            axis = axes.index(coordinate)
+            if revisions[axis] is not None:
+                raise ValueError(
+                    f"Coordinate {coordinate!r} is identified more than once."
+                )
+            if (seam.lower, seam.upper) != (lower[axis], upper[axis]):
+                raise ValueError(
+                    f"Identification of {coordinate!r} disagrees with its factor bounds."
+                )
+            revisions[axis] = seam.revision
+        return cls(
+            lower,
+            upper,
+            maximum_depth,
+            periodic_axes=tuple(revision is not None for revision in revisions),
+            coordinates=axes,
+            identifications=tuple(revisions),
         )
 
     @property
@@ -378,6 +464,114 @@ def _canonical_morton_point_order(
         invalid_points=jnp.sum(active & ~encoding.in_domain, dtype=jnp.int32),
         stable_ids_unique=~jnp.any(duplicate_id),
     )
+
+
+def _address_binding(
+    coordinates: Sequence[tuple[str, int | None]] | None,
+    identifications: Sequence[str | None] | None,
+    periodic: tuple[bool, ...],
+    /,
+) -> tuple[tuple[tuple[str, int | None], ...], tuple[str | None, ...]] | None:
+    """Validate the canonical coordinate and seam revision of every address axis."""
+    if coordinates is None and identifications is None:
+        return None
+    if coordinates is None or identifications is None:
+        raise ValueError("Address coordinates and identifications are declared together.")
+    axes: list[tuple[str, int | None]] = []
+    for coordinate in coordinates:
+        if not isinstance(coordinate, tuple) or len(coordinate) != 2:
+            raise ValueError("Address coordinates must be (label, component) pairs.")
+        label, component = coordinate
+        if not isinstance(label, str) or not label:
+            raise ValueError("Address coordinate labels must be non-empty strings.")
+        if component is not None and (
+            isinstance(component, bool) or not isinstance(component, int) or component < 0
+        ):
+            raise ValueError("Address coordinate components must be nonnegative or None.")
+        axes.append((label, component))
+    revisions = tuple(identifications)
+    if len(axes) != len(periodic) or len(revisions) != len(periodic):
+        raise ValueError("Address coordinates must bind every Morton axis once.")
+    if len(set(axes)) != len(axes):
+        raise ValueError("Address coordinates must be distinct.")
+    for revision, periodic_axis in zip(revisions, periodic, strict=True):
+        if revision is not None and (not isinstance(revision, str) or not revision):
+            raise ValueError("Identification revisions must be non-empty strings.")
+        if (revision is not None) != periodic_axis:
+            raise ValueError(
+                "Exactly the periodic axes carry an identification revision."
+            )
+    return tuple(axes), revisions
+
+
+def _domain_point_coordinates(
+    domain: Domain, coordinates: Sequence[tuple[str, int | None]] | None, /
+) -> tuple[tuple[tuple[str, int | None], ...], tuple[float, ...], tuple[float, ...]]:
+    """Bind point-array axes to Cartesian coordinates of ``domain`` and their bounds.
+
+    ``None`` binds the components of a single-label domain in order. Geometry
+    coordinates canonicalize a one-dimensional component to ``0`` as
+    `PeriodicIdentification` does; factors without Cartesian faces are refused.
+    """
+    from phydrax.domain import AbstractGeometry, ScalarInterval
+
+    if coordinates is None:
+        if len(domain.labels) != 1:
+            raise ValueError(
+                f"Domain labels {domain.labels!r} need explicit point coordinates."
+            )
+        (label,) = domain.labels
+        factor = domain.factor(label)
+        requested: tuple[tuple[str, int | None], ...] = (
+            tuple((label, axis) for axis in range(factor.spatial_dim))
+            if isinstance(factor, AbstractGeometry)
+            else ((label, None),)
+        )
+    else:
+        requested = tuple(coordinates)
+    axes: list[tuple[str, int | None]] = []
+    lower: list[float] = []
+    upper: list[float] = []
+    for coordinate in requested:
+        if not isinstance(coordinate, tuple) or len(coordinate) != 2:
+            raise ValueError("Point coordinates must be (label, component) pairs.")
+        label, component = coordinate
+        if not isinstance(label, str) or label not in domain.labels:
+            raise ValueError(f"{label!r} is not a coordinate of {domain.labels!r}.")
+        factor = domain.factor(label)
+        if isinstance(factor, ScalarInterval):
+            if component is not None:
+                raise ValueError(f"Scalar coordinate {label!r} takes component None.")
+            bounds = (float(factor.fixed("start")), float(factor.fixed("end")))
+        elif isinstance(factor, AbstractGeometry):
+            dimension = factor.spatial_dim
+            if component is None and dimension == 1:
+                component = 0
+            if (
+                component is None
+                or isinstance(component, bool)
+                or not isinstance(component, int)
+                or not 0 <= component < dimension
+            ):
+                raise ValueError(
+                    f"Coordinate {label!r} needs a component in [0, {dimension})."
+                )
+            face_lower, face_upper = factor.coordinate_face_bounds()
+            bounds = (
+                float(np.asarray(face_lower)[component]),
+                float(np.asarray(face_upper)[component]),
+            )
+        else:
+            raise TypeError(
+                f"Point coordinate {label!r} names a {type(factor).__name__}, not a "
+                "ScalarInterval or Cartesian geometry factor."
+            )
+        axes.append((label, component))
+        lower.append(bounds[0])
+        upper.append(bounds[1])
+    if len(set(axes)) != len(axes):
+        raise ValueError("Point coordinates must be distinct.")
+    return tuple(axes), tuple(lower), tuple(upper)
 
 
 __all__ = [

@@ -14,7 +14,6 @@ import equinox as eqx
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from scipy.spatial import Delaunay, QhullError
 
 from ..._mass import Mass
 from ...measurement.lidar import LidarPointProduct
@@ -35,6 +34,7 @@ from .._contracts import (
     GeometrySource,
 )
 from .._cubature import CubatureAtlas, CubatureComponent
+from .._triangulation import DelaunayTriangulation
 from .._validity import GeometryValidityEvidence, representation_validity
 from ..design._schema import _ParameterCollector, DesignState
 from ..simplicial._io import (
@@ -267,19 +267,16 @@ def _planar_triangulation(
     vertices = points[retained]
     if vertices.shape[0] < 3:
         raise ValueError("Planar reconstruction retained fewer than three points.")
-    try:
-        faces = np.asarray(Delaunay(vertices).simplices, dtype=np.int32)
-    except QhullError as error:
-        raise ValueError("Planar Delaunay triangulation failed.") from error
+    # Canonical owner, Qhull provider: positively oriented, canonically ordered.
+    triangulation = DelaunayTriangulation(vertices, provider="qhull")
+    faces = np.array(triangulation.simplices, dtype=np.int32)
     triangles = vertices[faces]
-    doubled_area = (triangles[:, 1, 0] - triangles[:, 0, 0]) * (
-        triangles[:, 2, 1] - triangles[:, 0, 1]
-    ) - (triangles[:, 1, 1] - triangles[:, 0, 1]) * (
-        triangles[:, 2, 0] - triangles[:, 0, 0]
+    doubled_area = np.abs(
+        (triangles[:, 1, 0] - triangles[:, 0, 0])
+        * (triangles[:, 2, 1] - triangles[:, 0, 1])
+        - (triangles[:, 1, 1] - triangles[:, 0, 1])
+        * (triangles[:, 2, 0] - triangles[:, 0, 0])
     )
-    negative = doubled_area < 0.0
-    faces[negative] = faces[negative][:, [0, 2, 1]]
-    doubled_area = np.abs(doubled_area)
     if alpha > 0.0:
         first = np.linalg.norm(triangles[:, 1] - triangles[:, 0], axis=1)
         second = np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1)

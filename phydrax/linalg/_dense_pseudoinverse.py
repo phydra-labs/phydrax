@@ -76,22 +76,98 @@ def apply_pseudoinverse(
     vector_rhs = value.ndim == factors.left_vectors.ndim - 1
     if vector_rhs:
         value = value[..., None]
-    projected = jnp.matmul(
-        jnp.conj(jnp.swapaxes(factors.left_vectors, -1, -2)),
+    reciprocal = _reciprocal_singular_values(factors.singular_values, factors.retained)
+    result = _apply_factor_columns(
+        factors.left_vectors,
+        reciprocal,
+        factors.right_adjoint,
         value,
     )
-    safe = jnp.where(
-        factors.retained,
-        factors.singular_values,
-        jnp.ones_like(factors.singular_values),
-    )
-    reciprocal = jnp.where(factors.retained, 1.0 / safe, 0.0)
-    scaled = reciprocal[..., :, None] * projected
-    result = jnp.matmul(
-        jnp.conj(jnp.swapaxes(factors.right_adjoint, -1, -2)),
-        scaled,
-    )
     return result[..., 0] if vector_rhs else result
+
+
+def _reciprocal_singular_values(singular_values: Array, retained: Array, /) -> Array:
+    return jnp.where(retained, 1.0 / jnp.where(retained, singular_values, 1.0), 0.0)
+
+
+def _apply_factor_columns(
+    left: Array,
+    reciprocal: Array,
+    right_adjoint: Array,
+    rhs: Array,
+    /,
+) -> Array:
+    """Economy-factor action on coordinate columns, without a dense inverse."""
+    projected = _adjoint(left) @ rhs
+    return _adjoint(right_adjoint) @ (reciprocal[..., :, None] * projected)
+
+
+def fixed_rank_pseudoinverse_action(
+    matrix: Array,
+    left: Array,
+    singular_values: Array,
+    right_adjoint: Array,
+    retained: Array,
+    rhs: Array,
+    hermitian: bool,
+    /,
+) -> Array:
+    """Fixed-rank solution action and derivative using existing economy factors."""
+    if hermitian:
+        matrix = 0.5 * (matrix + _adjoint(matrix))
+    reciprocal = _reciprocal_singular_values(singular_values, retained)
+    return _fixed_rank_pseudoinverse_action(matrix, left, reciprocal, right_adjoint, rhs)
+
+
+@jax.custom_jvp
+def _fixed_rank_pseudoinverse_action(
+    matrix: Array,
+    left: Array,
+    reciprocal: Array,
+    right_adjoint: Array,
+    rhs: Array,
+    /,
+) -> Array:
+    del matrix
+    return _apply_factor_columns(left, reciprocal, right_adjoint, rhs)
+
+
+@_fixed_rank_pseudoinverse_action.defjvp
+def _fixed_rank_pseudoinverse_action_jvp(
+    primals: tuple[Array, Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array, Array],
+) -> tuple[Array, Array]:
+    matrix, left, reciprocal, right_adjoint, rhs = primals
+    matrix_tangent, _, _, _, rhs_tangent = tangents
+
+    def apply(columns: Array) -> Array:
+        return _fixed_rank_pseudoinverse_action(
+            matrix, left, reciprocal, right_adjoint, columns
+        )
+
+    def apply_adjoint(columns: Array) -> Array:
+        return _fixed_rank_pseudoinverse_action(
+            _adjoint(matrix),
+            _adjoint(right_adjoint),
+            reciprocal,
+            _adjoint(left),
+            columns,
+        )
+
+    value = apply(rhs)
+    residual = rhs - matrix @ value
+    tangent_adjoint = _adjoint(matrix_tangent)
+    null_direction = tangent_adjoint @ apply_adjoint(value)
+    # d(P b) = P(db - dA x) + P P* dA* r + (I - P A) dA* P* x.
+    # Apply the complements to columns: no source/target square buffer exists,
+    # even for a one-row design with a large source nullspace.
+    tangent = (
+        apply(rhs_tangent - matrix_tangent @ value)
+        + apply(apply_adjoint(tangent_adjoint @ residual))
+        + null_direction
+        - apply(matrix @ null_direction)
+    )
+    return value, tangent
 
 
 def materialize_pseudoinverse(
@@ -99,12 +175,7 @@ def materialize_pseudoinverse(
     /,
 ) -> Array:
     """Materialize A⁺ directly from economy factors with one matrix product."""
-    safe = jnp.where(
-        factors.retained,
-        factors.singular_values,
-        jnp.ones_like(factors.singular_values),
-    )
-    reciprocal = jnp.where(factors.retained, 1.0 / safe, 0.0)
+    reciprocal = _reciprocal_singular_values(factors.singular_values, factors.retained)
     scaled_right = (
         jnp.conj(jnp.swapaxes(factors.right_adjoint, -1, -2)) * reciprocal[..., None, :]
     )

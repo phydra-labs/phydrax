@@ -34,7 +34,11 @@ from .._differential_algebraic import (
     PreparedDAESolve,
     solve_dae,
 )
-from .._fixed_step import AbstractFixedStepMethod, FixedStepStatus
+from .._fixed_step import (
+    _zeros_from_structure,
+    AbstractFixedStepMethod,
+    FixedStepStatus,
+)
 from .._partitioned_coupling_types import (
     AbstractCouplingSubsystem,
     CouplingPort,
@@ -316,6 +320,26 @@ class _NativeStep(StrictModule):
     residual: Array
     iterations: Array
     work: Array
+    evidence: Any
+
+
+class FixedStepParticipantEvidence(StrictModule):
+    """Native owner evidence of one fixed-step participant window.
+
+    `executed[k]` marks the substeps that ran on a live state (no owner work is
+    performed after a refusal) and `successful[k]` those the owner accepted, so
+    the first executed unsuccessful substep is the refusal. `method` is the
+    owner's evidence over the window's static substep count as declared by
+    `AbstractFixedStepMethod.reduce_evidence`; an owner that declares no
+    reduction, and the conservative IMEX stage evidence, keep the bounded
+    per-substep stack. It is published for accepted and refused windows alike,
+    so a rolled-back candidate keeps its diagnostics while the checkpoint is
+    unchanged.
+    """
+
+    executed: Array
+    successful: Array
+    method: Any
 
 
 def _native_step(
@@ -337,6 +361,7 @@ def _native_step(
                 jnp.asarray(result.residual, dtype=time.dtype),
                 jnp.asarray(result.iterations, dtype=jnp.int32),
                 jnp.asarray(result.work, dtype=jnp.int32),
+                result.evidence,
             )
         case ConservationIMEXMethod():
             imex = method.step(time, state, step_size, method_args)
@@ -346,7 +371,29 @@ def _native_step(
                 jnp.asarray(imex.maximum_implicit_residual, dtype=time.dtype),
                 jnp.asarray(imex.implicit_iterations, dtype=jnp.int32),
                 jnp.asarray(method.tableau.stage_count, dtype=jnp.int32),
+                (
+                    imex.stage_successful,
+                    imex.stage_iterations,
+                    imex.stage_residual_norms,
+                    imex.stage_status,
+                    # Implicit stage solvers own their evidence; its static
+                    # metadata is not runtime evidence and cannot be scanned.
+                    eqx.filter(imex.stage_evidence, eqx.is_array),
+                ),
             )
+        case _:
+            raise TypeError("Unsupported native fixed-step owner.")
+
+
+def _reduced_evidence(
+    method: _Native, evidence: Any, executed: Array, successful: Array, /
+) -> Any:
+    """Window evidence reduced only by the owning method's declaration."""
+    match method:
+        case AbstractFixedStepMethod():
+            return method.reduce_evidence(evidence, executed, successful)
+        case ConservationIMEXMethod():
+            return evidence
         case _:
             raise TypeError("Unsupported native fixed-step owner.")
 
@@ -523,8 +570,36 @@ class FixedStepCouplingParticipant(AbstractMethodCouplingParticipant, NonTrainab
         window_key, next_key_data = _split_window_key(state, self.key_impl)
         dtype = window.start.dtype
 
-        def body(carry: _SubstepCarry, substep: Array) -> tuple[_SubstepCarry, Any]:
-            def execute(_: None) -> _SubstepCarry:
+        initial = _SubstepCarry(
+            state.native,
+            state.model_state,
+            jnp.asarray(True),
+            jnp.asarray(0.0, dtype=dtype),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+        # A skipped substep publishes zero evidence of the owner's exact structure,
+        # marked unexecuted; only the owner's declared reduction interprets it.
+        skipped_evidence = _zeros_from_structure(
+            eqx.filter_eval_shape(
+                lambda: (
+                    self._substep(
+                        window,
+                        inputs,
+                        window_key,
+                        args,
+                        initial,
+                        jnp.asarray(0, dtype=jnp.int32),
+                        state.native_steps,
+                    )[0].evidence
+                )
+            )
+        )
+
+        def body(
+            carry: _SubstepCarry, substep: Array
+        ) -> tuple[_SubstepCarry, tuple[tuple[Any, ...], Any, Array, Array]]:
+            def execute(_: None) -> tuple[_SubstepCarry, Any, Array]:
                 step, model_state = self._substep(
                     window,
                     inputs,
@@ -534,7 +609,7 @@ class FixedStepCouplingParticipant(AbstractMethodCouplingParticipant, NonTrainab
                     substep,
                     state.native_steps + substep,
                 )
-                return _SubstepCarry(
+                advanced = _SubstepCarry(
                     step.state,
                     model_state,
                     carry.successful & step.successful,
@@ -542,22 +617,24 @@ class FixedStepCouplingParticipant(AbstractMethodCouplingParticipant, NonTrainab
                     carry.iterations + step.iterations,
                     carry.work + step.work,
                 )
+                return advanced, step.evidence, step.successful
+
+            def skip(_: None) -> tuple[_SubstepCarry, Any, Array]:
+                return carry, skipped_evidence, jnp.asarray(False)
 
             # After a failed native step no further owner work is performed.
-            advanced = jax.lax.cond(
-                carry.successful, execute, lambda _: carry, operand=None
+            executed = carry.successful
+            advanced, evidence, accepted = jax.lax.cond(
+                executed, execute, skip, operand=None
             )
-            return advanced, tuple(self.observe(advanced.native, args))
+            return advanced, (
+                tuple(self.observe(advanced.native, args)),
+                evidence,
+                executed,
+                accepted,
+            )
 
-        initial = _SubstepCarry(
-            state.native,
-            state.model_state,
-            jnp.asarray(True),
-            jnp.asarray(0.0, dtype=dtype),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-        )
-        final, trajectory = jax.lax.scan(
+        final, (trajectory, substep_evidence, executed, accepted) = jax.lax.scan(
             body, initial, jnp.arange(self.substeps, dtype=jnp.int32)
         )
         outputs = self._outputs(state.native, final.native, trajectory, args)
@@ -586,6 +663,11 @@ class FixedStepCouplingParticipant(AbstractMethodCouplingParticipant, NonTrainab
             iterations=final.iterations,
             error_estimate=estimate,
             work=final.work,
+            evidence=FixedStepParticipantEvidence(
+                executed,
+                accepted,
+                _reduced_evidence(self.method, substep_evidence, executed, accepted),
+            ),
         )
 
     def _outputs(
@@ -1109,6 +1191,7 @@ __all__ = [
     "DAECouplingParticipant",
     "DAEParticipantNative",
     "FixedStepCouplingParticipant",
+    "FixedStepParticipantEvidence",
     "MethodParticipantRandomness",
     "MethodParticipantState",
     "MethodWindowBinding",

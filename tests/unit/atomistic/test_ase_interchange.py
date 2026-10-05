@@ -290,3 +290,146 @@ def test_optional_dependency_failure_and_public_exports(monkeypatch: Any) -> Non
         "require_ase",
         "to_ase_atoms",
     } <= set(phx.atomistic.interchange.__all__)
+
+
+_WATER = [[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]]
+_SKEW_CELL = [[4.2, 0.0, 0.0], [0.9, 4.0, 0.0], [0.5, -0.6, 4.4]]
+
+
+def _calculator(*, seed: int = 0) -> Any:
+    from tests._support.mace_deployment import calculator_plan, tiny_mace
+
+    return phx.atomistic.interchange.NativeASECalculator(
+        calculator_plan(tiny_mace(seed=seed))
+    )
+
+
+def _strained_energy(atoms: Any, strain: np.ndarray) -> float:
+    strained = atoms.copy()
+    strained.calc = atoms.calc
+    strained.set_cell(atoms.cell.array @ (np.eye(3) + strain).T, scale_atoms=True)
+    return float(strained.get_potential_energy())
+
+
+def test_native_calculator_stress_and_forces_match_independent_differences(
+    ase: Any,
+) -> None:
+    atoms = ase.Atoms("OHH", positions=_WATER, cell=_SKEW_CELL, pbc=True)
+    atoms.calc = _calculator()
+    energy = atoms.get_potential_energy()
+    forces = atoms.get_forces()
+    stress = atoms.get_stress(voigt=False)
+    assert atoms.get_potential_energy(force_consistent=True) == energy
+    np.testing.assert_allclose(np.sum(atoms.get_potential_energies()), energy, rtol=1e-10)
+
+    # Unit-direction strains S (symmetric off-diagonal halves) give
+    # dE(tS)/dt = V sigma_rc for the tensile ASE stress.
+    step = 1.0e-5
+    volume = atoms.get_volume()
+    for row, column in ((0, 0), (1, 1), (0, 1), (1, 2)):
+        strain = np.zeros((3, 3))
+        strain[row, column] = strain[column, row] = 0.5 * step
+        if row == column:
+            strain[row, column] = step
+        derivative = (
+            _strained_energy(atoms, strain) - _strained_energy(atoms, -strain)
+        ) / (2.0 * step)
+        np.testing.assert_allclose(
+            stress[row, column], derivative / volume, rtol=1e-4, atol=1e-7
+        )
+
+    displaced = atoms.copy()
+    displaced.calc = atoms.calc
+    shift = np.zeros_like(forces)
+    shift[1, 0] = step
+    displaced.positions = atoms.positions + shift
+    upper = displaced.get_potential_energy()
+    displaced.positions = atoms.positions - shift
+    lower = displaced.get_potential_energy()
+    np.testing.assert_allclose(
+        forces[1, 0], -(upper - lower) / (2.0 * step), rtol=1e-4, atol=1e-7
+    )
+
+
+def test_native_calculator_refuses_stress_for_finite_structures(ase: Any) -> None:
+    from ase.calculators.calculator import PropertyNotImplementedError
+
+    atoms = ase.Atoms("OHH", positions=_WATER)
+    atoms.calc = _calculator()
+    assert np.isfinite(atoms.get_potential_energy())
+    with pytest.raises(PropertyNotImplementedError, match="periodic"):
+        atoms.get_stress()
+
+
+def test_native_calculator_invalidates_caches_on_each_identity_change(ase: Any) -> None:
+    from tests._support.mace_deployment import calculator_plan, tiny_mace
+
+    atoms = ase.Atoms("OHH", positions=_WATER, cell=_SKEW_CELL, pbc=True)
+    calculator = _calculator()
+    atoms.calc = calculator
+    reference = atoms.get_potential_energy()
+    prepared = calculator.provenance["provider"]
+    assert calculator.preparation_count == 1
+
+    atoms.positions = atoms.positions + [[0.0, 0.0, 0.0], [0.02, 0.0, 0.0], [0.0] * 3]
+    moved = atoms.get_potential_energy()
+    assert moved != reference
+    assert calculator.preparation_count == 1
+    assert calculator.provenance["provider"] == prepared
+
+    atoms.set_cell(np.asarray(_SKEW_CELL) * 1.01, scale_atoms=True)
+    assert atoms.get_potential_energy() != moved
+    assert calculator.preparation_count == 1
+
+    atoms.numbers = [8, 1, 8]
+    swapped = atoms.get_potential_energy()
+    assert calculator.preparation_count == 2
+
+    atoms.pbc = False
+    finite = atoms.get_potential_energy()
+    assert calculator.preparation_count == 3
+    assert finite != swapped
+
+    revision = calculator.provenance["model_revision"]
+    calculator.update_plan(calculator_plan(tiny_mace(seed=1)))
+    retrained = atoms.get_potential_energy()
+    assert calculator.provenance["model_revision"] != revision
+    assert retrained != finite
+    assert calculator.preparation_count == 4
+
+
+def test_native_calculator_drives_ase_optimization(ase: Any) -> None:
+    from ase.optimize import BFGS
+
+    atoms = ase.Atoms("OHH", positions=_WATER)
+    atoms.calc = _calculator()
+    initial = atoms.get_potential_energy()
+    BFGS(atoms, logfile=None).run(fmax=1.0e-3, steps=25)
+    assert atoms.get_potential_energy() < initial
+
+
+def test_failed_periodic_calculator_preparation_cannot_reuse_finite_provider(
+    ase: Any,
+) -> None:
+    from tests._support.mace_deployment import electronvolt_units, tiny_mace
+
+    units = electronvolt_units()
+    plan = phx.atomistic.NativeAtomisticProviderPlan(
+        tiny_mace(),
+        phx.atomistic.AtomisticGraphExecutionPlan(8, backend="particle"),
+        finite_neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(64),
+        skin=0.4,
+    )
+    atoms = ase.Atoms("OHH", positions=_WATER)
+    atoms.calc = phx.atomistic.interchange.NativeASECalculator(
+        phx.atomistic.interchange.NativeASECalculatorPlan(plan, units)
+    )
+    finite = atoms.get_potential_energy()
+    atoms.set_cell(np.asarray(_SKEW_CELL, dtype=np.float64))
+    atoms.set_pbc(True)
+    with pytest.raises(ValueError):
+        atoms.get_potential_energy()
+    with pytest.raises(ValueError):
+        atoms.get_potential_energy()
+    atoms.set_pbc(False)
+    np.testing.assert_allclose(atoms.get_potential_energy(), finite, rtol=0.0, atol=0.0)

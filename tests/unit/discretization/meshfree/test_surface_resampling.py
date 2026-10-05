@@ -25,7 +25,10 @@ def test_deterministic_insertion_and_removal_project_without_fake_convergence() 
         lambda p: p[:, 1],
         _quality,
     )
-    assert result.converged and result.removed == 1 and result.inserted == 1
+    assert result.converged
+    assert result.removed_sources == (1,) and result.inserted_probes == (1,)
+    # Sample lineage: survivors name their input index, the probe is new.
+    np.testing.assert_array_equal(result.source_indices, [0, 2, -1])
     np.testing.assert_allclose(
         np.sort(np.asarray(result.points)[:, 0]), [0.0, 0.5, 1.0], atol=1e-12
     )
@@ -68,6 +71,27 @@ def test_coincident_point_removal_keeps_lower_index_without_admitting_bad_fit() 
         lambda p: p[:, 1],
         _quality,
     )
-    assert result.converged and result.removed == 1
+    assert result.converged and result.removed_sources == (1,)
     assert result.before.separation == 0
     np.testing.assert_allclose(result.points, [[0.0, 0.0], [1.0, 0.0]], atol=0)
+
+
+def test_repair_proposals_are_deterministic_and_identified() -> None:
+    points = jnp.array([[0.0, 0.0], [0.01, 0.0], [1.0, 0.0]])
+    probes = jnp.array([[0.0, 0.0], [0.5, 0.0], [1.0, 0.0]])
+    policy = SurfaceResamplingPolicy(maximum_fill=0.3, minimum_separation=0.1)
+
+    def repair() -> tuple[str, np.ndarray]:
+        result = policy.repair(
+            points,
+            probes,
+            MeshfreeCapacityPolicy((3, 4)),
+            lambda p: p.at[:, 1].set(0),
+            lambda p: p[:, 1],
+            _quality,
+        )
+        return result.proposal_id, np.asarray(result.points)
+
+    first, second = repair(), repair()
+    assert first[0] == second[0]
+    np.testing.assert_array_equal(first[1], second[1])

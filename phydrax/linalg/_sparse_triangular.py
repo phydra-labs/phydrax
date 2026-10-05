@@ -23,6 +23,18 @@ from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
 SparseTriangle: TypeAlias = Literal["lower", "upper"]
 
+# Wavefront blocking model, in units of one gathered CSR entry per right-hand
+# side. On CPU one sequential fori step (loop, slicing, and scatter) costs
+# about 1.4 us and one gathered entry about 5 ns, measured on 13-neighbor 2-D
+# clouds with n = 64k: a one-row step versus 86-row level blocks. Blocks trade
+# that overhead against padded rows. The working-set cap bounds one step's
+# gather to ``block_rows * row_width`` entries per right-hand side, and the
+# padding cap bounds resident schedule rows to twice the matrix size per
+# orientation.
+_LEVEL_STEP_OVERHEAD_ENTRIES = 256
+_MAX_LEVEL_STEP_ENTRIES = 1 << 16
+_MAX_LEVEL_PADDING = 2
+
 
 class SparseTriangularStatus(IntEnum):
     SUCCESS = 0
@@ -31,19 +43,26 @@ class SparseTriangularStatus(IntEnum):
 
 
 class SparseTriangularAnalysis(StrictModule):
-    """Host symbolic analysis and fixed-shape level schedules for one CSR pattern."""
+    """Host symbolic analysis and fixed-shape level schedules for one CSR pattern.
+
+    Each orientation's ``level_schedule`` lists its rows by dependency level,
+    then row index, packed into fixed-width blocks whose rows share one level;
+    padding slots hold ``shape[0]``. A solve runs one sequential step per block.
+    """
 
     indices: Array
     indptr: Array
     row_indices: Array
     diagonal_positions: Array
     row_levels: Array
+    level_schedule: Array
     transpose_indices: Array
     transpose_indptr: Array
     transpose_row_indices: Array
     transpose_value_positions: Array
     transpose_diagonal_positions: Array
     transpose_row_levels: Array
+    transpose_level_schedule: Array
     shape: tuple[int, int] = eqx.field(static=True)
     triangle: SparseTriangle = eqx.field(static=True)
     unit_diagonal: bool = eqx.field(static=True)
@@ -201,6 +220,55 @@ def _orientation_analysis(
     return diagonal, _levels(indices, indptr, triangle)
 
 
+def _analysis_storage_bytes(size: int, nnz: int, index_itemsize: int, /) -> int:
+    """Upper bound on one analysis' resident arrays for ``size`` rows, ``nnz`` entries.
+
+    Five index arrays per entry, then per orientation the row pointers,
+    diagonal positions, int32 levels, and at most ``_MAX_LEVEL_PADDING * size``
+    scheduled slots.
+    """
+    per_orientation = (size + 1) + size + _MAX_LEVEL_PADDING * size
+    return (
+        index_itemsize * (5 * nnz + 2 * per_orientation)
+        + 2 * size * np.dtype(np.int32).itemsize
+    )
+
+
+def _level_schedule(levels: np.ndarray, row_width: int, /) -> np.ndarray:
+    """Pack same-level rows into the cheapest admissible fixed block width.
+
+    Rows of one level are mutually independent, so a block substitutes them
+    together. Single-row blocks are always admissible and reproduce the
+    row-sequential step count when every level holds one row.
+    """
+    size = levels.size
+    if size == 0:
+        return np.zeros((0, 1), dtype=np.int64)
+    counts = np.bincount(levels)
+    largest = int(counts.max())
+    width = max(row_width, 1)
+    candidates = sorted({1 << power for power in range(largest.bit_length())} | {largest})
+    best_cost, block, steps = size * (_LEVEL_STEP_OVERHEAD_ENTRIES + width), 1, size
+    for candidate in candidates[1:]:
+        candidate_steps = int(np.sum(-(-counts // candidate)))
+        if (
+            candidate * width > _MAX_LEVEL_STEP_ENTRIES
+            or candidate_steps * candidate > _MAX_LEVEL_PADDING * size
+        ):
+            continue
+        cost = candidate_steps * (_LEVEL_STEP_OVERHEAD_ENTRIES + candidate * width)
+        if cost < best_cost:
+            best_cost, block, steps = cost, candidate, candidate_steps
+    order = np.argsort(levels, kind="stable")
+    ordered_levels = levels[order]
+    level_starts = np.concatenate(([0], np.cumsum(counts)))
+    block_starts = np.concatenate(([0], np.cumsum(-(-counts // block))))
+    rank = np.arange(size) - level_starts[ordered_levels]
+    schedule = np.full((steps, block), size, dtype=np.int64)
+    schedule[block_starts[ordered_levels] + rank // block, rank % block] = order
+    return schedule
+
+
 def analyze_sparse_triangular(
     operator_or_storage: AbstractSparseLinearOperator | SparseStorage,
     /,
@@ -230,6 +298,8 @@ def analyze_sparse_triangular(
         transpose_triangle,
         bool(unit_diagonal),
     )
+    row_width = int(np.max(np.diff(indptr), initial=0))
+    transpose_row_width = int(np.max(transpose_counts, initial=0))
     index_dtype = storage.indices.dtype
     pattern_bytes = b"|".join(
         (
@@ -246,6 +316,7 @@ def analyze_sparse_triangular(
         row_indices=jnp.asarray(rows, dtype=index_dtype),
         diagonal_positions=jnp.asarray(diagonal, dtype=index_dtype),
         row_levels=jnp.asarray(levels, dtype=jnp.int32),
+        level_schedule=jnp.asarray(_level_schedule(levels, row_width), dtype=index_dtype),
         transpose_indices=jnp.asarray(transpose_indices, dtype=index_dtype),
         transpose_indptr=jnp.asarray(transpose_indptr, dtype=index_dtype),
         transpose_row_indices=jnp.asarray(
@@ -255,13 +326,17 @@ def analyze_sparse_triangular(
         transpose_value_positions=jnp.asarray(transpose_positions, dtype=index_dtype),
         transpose_diagonal_positions=jnp.asarray(transpose_diagonal, dtype=index_dtype),
         transpose_row_levels=jnp.asarray(transpose_levels, dtype=jnp.int32),
+        transpose_level_schedule=jnp.asarray(
+            _level_schedule(transpose_levels, transpose_row_width),
+            dtype=index_dtype,
+        ),
         shape=storage.shape,
         triangle=triangle,
         unit_diagonal=bool(unit_diagonal),
         number_levels=int(levels.max(initial=-1)) + 1,
         transpose_number_levels=int(transpose_levels.max(initial=-1)) + 1,
-        row_width=int(np.max(np.diff(indptr), initial=0)),
-        transpose_row_width=int(np.max(transpose_counts, initial=0)),
+        row_width=row_width,
+        transpose_row_width=transpose_row_width,
         pattern_id=sha256(pattern_bytes).hexdigest(),
     )
 
@@ -276,7 +351,11 @@ def solve_sparse_triangular(
     transpose: bool = False,
     adjoint: bool = False,
 ) -> SparseTriangularSolveResult:
-    """Execute one fixed-capacity CSR row substitution per triangular row."""
+    """Substitute one level-scheduled block of independent rows per step.
+
+    Each row reduces its fixed-capacity CSR entries in stored column order, so
+    the block width chosen by the analysis never changes the arithmetic.
+    """
     if not isinstance(analysis, SparseTriangularAnalysis):
         raise TypeError("analysis must be SparseTriangularAnalysis.")
     tolerance = float(pivot_tolerance)
@@ -303,17 +382,17 @@ def solve_sparse_triangular(
         rows = analysis.transpose_row_indices
         values_ = values_[analysis.transpose_value_positions]
         diagonal_positions = analysis.transpose_diagonal_positions
+        schedule = analysis.transpose_level_schedule
         number_levels = analysis.transpose_number_levels
         row_width = analysis.transpose_row_width
-        lower = analysis.triangle == "upper"
     else:
         indices = analysis.indices
         indptr = analysis.indptr
         rows = analysis.row_indices
         diagonal_positions = analysis.diagonal_positions
+        schedule = analysis.level_schedule
         number_levels = analysis.number_levels
         row_width = analysis.row_width
-        lower = analysis.triangle == "lower"
     if adjoint:
         values_ = jnp.conj(values_)
     safe_diagonal_positions = jnp.maximum(diagonal_positions, 0)
@@ -331,21 +410,26 @@ def solve_sparse_triangular(
         else entry_positions != safe_diagonal_positions[rows]
     )
     off_values = jnp.where(off_diagonal, values_, jnp.zeros((), dtype=dtype))
-    initial = jnp.zeros_like(rhs)
-    offsets = jnp.arange(row_width, dtype=indptr.dtype)
+    # Padding slots address one extra row with an empty CSR span, zero
+    # right-hand side, and unit pivot; it absorbs their writes and is dropped.
+    padded_indptr = jnp.concatenate((indptr, indptr[-1:]))
+    padded_rhs = jnp.concatenate((rhs, jnp.zeros((1, rhs.shape[1]), dtype=dtype)))
+    padded_diagonal = jnp.concatenate((safe_diagonal, jnp.ones((1,), dtype=dtype)))
+    initial = jnp.zeros_like(padded_rhs)
+    offsets = jnp.arange(row_width, dtype=indptr.dtype)[:, None]
 
-    def solve_row(position: Array, solution: Array) -> Array:
-        row = jnp.where(lower, position, analysis.shape[0] - 1 - position)
-        entry_positions = indptr[row] + offsets
-        valid = entry_positions < indptr[row + 1]
+    def solve_block(step: Array, solution: Array) -> Array:
+        block = schedule[step]
+        entry_positions = padded_indptr[block][None, :] + offsets
+        valid = entry_positions < padded_indptr[block + 1][None, :]
         safe_positions = jnp.where(valid, entry_positions, 0)
         columns = indices[safe_positions]
-        products = off_values[safe_positions, None] * solution[columns]
-        row_sum = jnp.sum(jnp.where(valid[:, None], products, 0.0), axis=0)
-        candidate = (rhs[row] - row_sum) / safe_diagonal[row]
-        return solution.at[row].set(candidate)
+        products = off_values[safe_positions][..., None] * solution[columns]
+        row_sum = jnp.sum(jnp.where(valid[..., None], products, 0.0), axis=0)
+        candidate = (padded_rhs[block] - row_sum) / padded_diagonal[block][:, None]
+        return solution.at[block].set(candidate)
 
-    solution = jax.lax.fori_loop(0, analysis.shape[0], solve_row, initial)
+    solution = jax.lax.fori_loop(0, schedule.shape[0], solve_block, initial)[:-1]
     finite = (
         jnp.all(jnp.isfinite(solution))
         & jnp.all(jnp.isfinite(values_))

@@ -369,9 +369,9 @@ def prepare_convex_template(
 
         symbolic_state = prepare_mpax_policy(plan.policy)
     elif isinstance(plan.policy.method, NativeHomogeneousConic):
-        from ._barrier import cone_barrier_oracle
+        from ._native_conic import prepare_native_conic
 
-        symbolic_state = cone_barrier_oracle(_conic_program(program).cone)
+        symbolic_state = prepare_native_conic(_conic_program(program), plan.policy)
     elif isinstance(plan.policy.method, ClarabelInteriorPoint):
         from ._clarabel import prepare_clarabel_policy
 
@@ -600,7 +600,7 @@ def solve_prepared_convex_program(
         result = solve_native_conic_program(
             conic,
             policy,
-            barrier=prepared.template.symbolic_state,
+            prepared=prepared.template.symbolic_state,
             warm_start=lowered_warm,
         )
         if isinstance(program, (LinearProgram, QuadraticProgram)):

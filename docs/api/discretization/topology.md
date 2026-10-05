@@ -67,7 +67,10 @@ permutations. `DistributedLocalOperator` requires both the local forward and loc
 transpose actions and exposes serial references for qualification.
 
 `TopologyEpochTransition` accepts only a conservative `FieldTransfer` with separate
-dual pullback and Hilbert adjoint. Epoch selection itself remains nondifferentiable.
+dual pullback and Hilbert adjoint. Epoch selection itself remains nondifferentiable
+(`differentiation_available`), while values differentiate through the frozen
+transfer (`value_derivative_available`): `pullback` is the coordinate dual, the
+VJP of `apply`, and `adjoint` the Hilbert adjoint in the field-space pairings.
 
 ::: phydrax.discretization.DistributedHaloPlan
 

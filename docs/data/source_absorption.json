@@ -1,6 +1,6 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "3ba2807a679bcbdb2dbd653c37f2d45857869c50e6688fa444db13de0e313892",
+  "ledger_id": "0576a91cc97d0b77a579436bd297643224c9c348f95329a7894f6fb6507367fb",
   "sources": [
     {
       "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
@@ -125,6 +125,38 @@
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "87d99876abb362a6e07d555d10752ff2e20c2b7731d8928ebe5d9121fb019f84",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "real-o3-basis-gauge",
+        "tensor-product-source-normalization"
+      ],
+      "copying_permitted": true,
+      "data_rights": "Mathematical/interchange reference; no external checkpoint or dataset bundled.",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "MIT",
+      "license_digest": "2f875c146f567528415acaf19def2531b65e6dba7fb2485f25d86dd4b3912ad7",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE",
+        "e3nn-0.4.4.dist-info/METADATA"
+      ],
+      "relevant_paths": [
+        "e3nn/o3"
+      ],
+      "repository_url": "https://github.com/e3nn/e3nn",
+      "reuse_class": "permissive",
+      "review_status": "technically-reviewed",
+      "revision": "0.4.4",
+      "source_id": "e3nn-code",
+      "source_reference_id": "0ba110ddce4bbf5929074dd85ceb30e5f942c3112c95a5ecf2e7e4872be3da79",
+      "technical_reviewer": "phydrax-streamed-atomistic-source-review"
+    },
+    {
       "archive_digest": "git-tree-sha1:ce3ecdfa90ddd9283e4976b28f1e57515ee2670b",
       "behavior_inspected": false,
       "code_inspected": false,
@@ -213,6 +245,41 @@
       "source_id": "laserbeam-foam",
       "source_reference_id": "9e02e1214a020e34704999a0a7931626c93333d053f16138c7c49979bc3cea54",
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
+    },
+    {
+      "archive_digest": "b80407edf6b2a1ec8523668c2a36852d20927ce1c3c56b70983a9f2dc53233ad",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "original-w-fixed-u",
+        "standard-mace-architecture",
+        "trusted-checkpoint-interchange"
+      ],
+      "copying_permitted": true,
+      "data_rights": "Code MIT does not relicense weights; MP/MPA MIT, OMAT/MH/OFF ASL separately admitted.",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "MIT",
+      "license_digest": "42137790f854ae2b9d29a0a72a4da3f6fb9a21d820b3f276f23b0575af72e86e",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [],
+      "relevant_documents": [
+        "LICENSE.md",
+        "mace_torch-0.3.16.dist-info/METADATA"
+      ],
+      "relevant_paths": [
+        "mace/modules/blocks.py",
+        "mace/modules/models.py",
+        "mace/modules/symmetric_contraction.py"
+      ],
+      "repository_url": "https://github.com/ACEsuit/mace",
+      "reuse_class": "permissive",
+      "review_status": "technically-reviewed",
+      "revision": "0.3.16",
+      "source_id": "mace-code",
+      "source_reference_id": "8c3efe071859f591064b2ee9fc3e8f25bccd6530a99c1a24a1418e2c2f1ff0da",
+      "technical_reviewer": "phydrax-streamed-atomistic-source-review"
     },
     {
       "archive_digest": "sha256:a483e9f9b68588a82782a10ea0b20e73f0550a1c187f5115ec5880bd0bf154b9",
@@ -609,6 +676,45 @@
       "source_id": "simvascular",
       "source_reference_id": "77be425c8c5c7fa071ae51be5a34e02633c9e22f8d3f08d793309cf8be26a62e",
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
+    },
+    {
+      "archive_digest": "deb1a18a23c4e61767e73886a5b6469123114b591aaffe2a7418faa5cf02a78b",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "bounded-receiver-replay",
+        "radial-spline-projection",
+        "streamed-equivariant-edges"
+      ],
+      "copying_permitted": false,
+      "data_rights": "No weights or datasets bundled; GPLv2 pair_symmetrix integration excluded.",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "MIT",
+      "license_digest": "9fb567b39a0908352d37e6af711629f5f586c2d93a8d980fdce603597203c5a1",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [
+        {
+          "locator": "https://arxiv.org/abs/2610.01036",
+          "title": "Train for Accuracy, Execute at Scale: Architecture-Preserving Inference for Equivariant Atomistic Foundation Models"
+        }
+      ],
+      "relevant_documents": [
+        "LICENSE",
+        "docs/streamed_edge_execution.md"
+      ],
+      "relevant_paths": [
+        "libsymmetrix/source",
+        "symmetrix/source/symmetrix"
+      ],
+      "repository_url": "https://github.com/bonan-group/symmetrix-xl",
+      "reuse_class": "permissive",
+      "review_status": "technically-reviewed",
+      "revision": "da331142729978d27b2a52f6b34e1628593df3d0",
+      "source_id": "symmetrix-xl-engine",
+      "source_reference_id": "d2706683596401e901484e30afdbc51133a8dd839b894bc650fae15f3678cea8",
+      "technical_reviewer": "phydrax-streamed-atomistic-source-review"
     },
     {
       "archive_digest": "git-tree-sha1:4629ee658b664e0dcbd4b6ed8025dc72bd788e08",

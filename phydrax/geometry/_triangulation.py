@@ -24,9 +24,14 @@ centroids.
 from __future__ import annotations
 
 import math
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
+import scipy
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+from scipy.spatial import Delaunay, QhullError
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import orient2d, orient3d, PredicateMode
@@ -44,19 +49,34 @@ from .._meshcore import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 _DEGENERATE_ALL_PAIRS_LIMIT = 512
 _CLIP_PLANE_BUDGET = 1 << 18
 
 
+TriangulationProvider: TypeAlias = Literal["meshcore", "qhull"]
+
+# Qhull's documented Delaunay defaults for two and three dimensions, passed
+# explicitly so the construction is part of the recorded identity.
+_QHULL_OPTIONS = "Qbb Qc Qz Q12"
+
+
 class TriangulationEvidence(StrictModule, NonTrainableState):
-    """Route, native status, library identity, and counts of a triangulation."""
+    """Route, provider status and identity, and counts of a triangulation.
+
+    ``provider`` is ``"meshcore"`` (exact predicates, ``predicate_mode``
+    ``EXACT``) or ``"qhull"`` (SciPy's floating-point Qhull with recorded
+    options, ``predicate_mode`` ``FILTERED``: ties are resolved by Qhull, not
+    certified). ``provider_identity`` names the library build or options.
+    """
 
     route: str = eqx.field(static=True)
     status: str = eqx.field(static=True)
+    provider: TriangulationProvider = eqx.field(static=True)
     predicate_mode: PredicateMode = eqx.field(static=True)
-    meshcore_identity: str = eqx.field(static=True)
+    provider_identity: str = eqx.field(static=True)
     input_point_count: int = eqx.field(static=True)
     vertex_count: int = eqx.field(static=True)
     duplicate_count: int = eqx.field(static=True)
@@ -79,9 +99,11 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
         simplex_count: int,
         minimum_angle_degrees: float,
         content: dict,
+        provider: TriangulationProvider = "meshcore",
     ) -> None:
         if not isinstance(status, MeshcoreStatus):
             raise TypeError("status must be a MeshcoreStatus.")
+        provider_ = parse(provider, TriangulationProvider, "provider")
         counts = (
             input_point_count,
             vertex_count,
@@ -92,11 +114,20 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
         )
         if any(count < 0 for count in counts):
             raise ValueError("Triangulation counts must be nonnegative.")
-        identity = meshcore_identity()
+        match provider_:
+            case "meshcore":
+                identity = meshcore_identity()
+                mode = PredicateMode.EXACT
+            case "qhull":
+                identity = f"scipy-qhull {scipy.__version__} {_QHULL_OPTIONS}"
+                mode = PredicateMode.FILTERED
+            case unreachable:
+                assert_never(unreachable)
         self.route = route
         self.status = status.name.lower()
-        self.predicate_mode = PredicateMode.EXACT
-        self.meshcore_identity = identity
+        self.provider = provider_
+        self.predicate_mode = mode
+        self.provider_identity = identity
         self.input_point_count = input_point_count
         self.vertex_count = vertex_count
         self.duplicate_count = duplicate_count
@@ -109,7 +140,8 @@ class TriangulationEvidence(StrictModule, NonTrainableState):
                 "kind": "triangulation-evidence",
                 "route": route,
                 "status": self.status,
-                "meshcore": identity,
+                "provider": provider_,
+                "identity": identity,
                 "counts": list(counts),
                 "content": content,
             }
@@ -213,16 +245,60 @@ def _raise_for_items(status: np.ndarray, operation: str, /) -> None:
             )
 
 
+def _qhull_delaunay(
+    points: np.ndarray, max_simplices: int | None, /
+) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """SciPy Qhull Delaunay in the canonical simplex convention.
+
+    Rows are sorted, then the last two vertices swap where needed for positive
+    orientation, and rows are ordered lexicographically. Points Qhull leaves
+    out map to their nearest vertex (``Qc``); identical ones are duplicates.
+    """
+    count, dimension = points.shape
+    if count <= dimension:
+        raise ValueError("Delaunay triangulation needs more points than dimensions.")
+    try:
+        triangulation = Delaunay(points, qhull_options=_QHULL_OPTIONS)
+    except QhullError as error:
+        raise ValueError(f"Qhull Delaunay triangulation failed: {error}") from error
+    simplices = np.sort(np.asarray(triangulation.simplices, dtype=np.int32), axis=1)
+    vertices = points[simplices]
+    volumes = np.linalg.det(np.swapaxes(vertices[:, 1:] - vertices[:, :1], 1, 2))
+    simplices[volumes < 0] = simplices[volumes < 0][
+        :, [*range(dimension - 1), dimension, dimension - 1]
+    ]
+    simplices = simplices[np.lexsort(simplices.T[::-1])]
+    if max_simplices is not None and simplices.shape[0] > max_simplices:
+        raise MeshcoreError(
+            MeshcoreStatus.CAPACITY_EXCEEDED,
+            f"qhull delaunay: {simplices.shape[0]} simplices exceed max_simplices",
+        )
+    vertex_map = np.arange(count, dtype=np.int32)
+    duplicates = redundant = 0
+    for point, _, nearest in np.asarray(triangulation.coplanar, dtype=np.int64):
+        vertex_map[point] = nearest
+        if np.array_equal(points[point], points[nearest]):
+            duplicates += 1
+        else:
+            redundant += 1
+    return simplices, vertex_map, duplicates, redundant
+
+
 # ------------------------------------------------------------------ triangulations
 
 
 class DelaunayTriangulation(StrictModule, NonTrainableState):
-    """Exact Delaunay triangulation (2D) or tetrahedralization (3D).
+    """Delaunay triangulation (2D) or tetrahedralization (3D).
 
-    ``simplices`` are positively oriented and canonically ordered; cocircular
-    and cospherical ties are resolved by index-ordered symbolic perturbation.
-    ``vertex_map`` sends each input point to its triangulation vertex (the
-    smallest index of identical points).
+    ``simplices`` are positively oriented and canonically ordered. The
+    ``"meshcore"`` provider (default) is exact: cocircular and cospherical ties
+    are resolved by index-ordered symbolic perturbation. The ``"qhull"``
+    provider uses SciPy's Qhull (a core dependency) with the recorded options;
+    its floating-point ties are deterministic but not certified, so it suits
+    auxiliary constructions that need no exact predicates. ``vertex_map``
+    sends each input point to its triangulation vertex (the smallest index of
+    identical points; Qhull's nearest vertex for any other point it leaves out,
+    counted as ``redundant_count``).
     """
 
     points: np.ndarray
@@ -230,15 +306,36 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
     vertex_map: np.ndarray
     evidence: TriangulationEvidence
 
-    def __init__(self, points: object, /, *, max_simplices: int | None = None) -> None:
+    def __init__(
+        self,
+        points: object,
+        /,
+        *,
+        max_simplices: int | None = None,
+        provider: TriangulationProvider = "meshcore",
+    ) -> None:
         point_array = _point_array(points, "points", (2, 3))
+        provider_ = parse(provider, TriangulationProvider, "provider")
         dimension = point_array.shape[1]
-        if dimension == 2:
-            simplices, vertex_map = delaunay_2d(point_array, max_triangles=max_simplices)
-        else:
-            simplices, vertex_map = delaunay_3d(point_array, max_tetrahedra=max_simplices)
         count = point_array.shape[0]
-        duplicates = int(np.count_nonzero(vertex_map != np.arange(count)))
+        match provider_:
+            case "meshcore":
+                if dimension == 2:
+                    simplices, vertex_map = delaunay_2d(
+                        point_array, max_triangles=max_simplices
+                    )
+                else:
+                    simplices, vertex_map = delaunay_3d(
+                        point_array, max_tetrahedra=max_simplices
+                    )
+                duplicates = int(np.count_nonzero(vertex_map != np.arange(count)))
+                redundant = 0
+            case "qhull":
+                simplices, vertex_map, duplicates, redundant = _qhull_delaunay(
+                    point_array, max_simplices
+                )
+            case unreachable:
+                assert_never(unreachable)
         self.points = point_array
         self.simplices = _frozen(simplices)
         self.vertex_map = _frozen(vertex_map)
@@ -246,9 +343,9 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
             route=f"delaunay_{dimension}d",
             status=MeshcoreStatus.OK,
             input_point_count=count,
-            vertex_count=count - duplicates,
+            vertex_count=count - duplicates - redundant,
             duplicate_count=duplicates,
-            redundant_count=0,
+            redundant_count=redundant,
             steiner_count=0,
             simplex_count=simplices.shape[0],
             minimum_angle_degrees=(
@@ -260,6 +357,7 @@ class DelaunayTriangulation(StrictModule, NonTrainableState):
                 "points": array_tree_fingerprint(point_array),
                 "simplices": array_tree_fingerprint(simplices),
             },
+            provider=provider_,
         )
 
     @property
@@ -328,6 +426,197 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
                 "triangles": array_tree_fingerprint(triangles),
                 "segment_ids": array_tree_fingerprint(segment_ids),
             },
+        )
+
+
+# ------------------------------------------------------------------ quality
+
+
+# Normalized volume-length ratio at or below which a simplex has no usable
+# measure (floating-point flat simplices of cocircular/cospherical ties).
+_DEGENERATE_QUALITY = 1e-12
+
+
+def _simplex_quality(
+    points: np.ndarray, simplices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Measures and normalized volume-length ratios ``|T| / v_d(l_rms)``."""
+    dimension = points.shape[1]
+    corners = points[simplices]
+    measures = np.abs(
+        np.linalg.det(np.swapaxes(corners[:, 1:] - corners[:, :1], 1, 2))
+    ) / math.factorial(dimension)
+    first, second = np.triu_indices(dimension + 1, k=1)
+    squared = np.sum((corners[:, first] - corners[:, second]) ** 2, axis=-1)
+    # Measure of the regular d-simplex whose edge is the RMS edge length.
+    regular = (
+        np.mean(squared, axis=1) ** (dimension / 2)
+        / math.factorial(dimension)
+        * math.sqrt((dimension + 1) / 2**dimension)
+    )
+    quality = np.divide(
+        measures, regular, out=np.zeros_like(measures), where=regular > 0.0
+    )
+    return measures, quality
+
+
+def _facet_neighbors(simplices: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+    """Pairs of simplices that share a facet."""
+    count, width = simplices.shape
+    facets = np.sort(
+        np.concatenate([np.delete(simplices, k, axis=1) for k in range(width)]), axis=1
+    )
+    owners = np.tile(np.arange(count), width)
+    order = np.lexsort(facets.T[::-1])
+    ordered = facets[order]
+    shared = np.flatnonzero(np.all(ordered[1:] == ordered[:-1], axis=1))
+    return owners[order][shared], owners[order][shared + 1]
+
+
+def _facet_components(
+    count: int, first: np.ndarray, second: np.ndarray, members: np.ndarray, /
+) -> tuple[np.ndarray, int]:
+    """Facet-connected component labels and the component count of ``members``."""
+    inside = members[first] & members[second]
+    graph = coo_matrix(
+        (np.ones(np.count_nonzero(inside)), (first[inside], second[inside])),
+        shape=(count, count),
+    )
+    _, labels = connected_components(graph, directed=False)
+    return labels, np.unique(labels[members]).size
+
+
+def _restorations(
+    simplices: np.ndarray,
+    quality: np.ndarray,
+    retained: np.ndarray,
+    usable: np.ndarray,
+    neighbors: tuple[np.ndarray, np.ndarray],
+    components: int,
+    /,
+) -> np.ndarray:
+    """Excluded usable simplices to restore in one round (empty when complete).
+
+    Uncovered vertices first receive their best incident simplex; once every
+    vertex is covered, every component but the largest grows by its
+    facet-adjacent excluded simplices until the count matches the input.
+    """
+    covered = np.zeros(int(simplices.max()) + 1, dtype=np.bool_)
+    covered[simplices[retained]] = True
+    candidates = np.flatnonzero(usable & ~retained)
+    vertices = simplices[candidates].reshape(-1)
+    owners = np.repeat(candidates, simplices.shape[1])
+    open_ = ~covered[vertices]
+    restore = np.zeros(simplices.shape[0], dtype=np.bool_)
+    if np.any(open_):
+        vertices, owners = vertices[open_], owners[open_]
+        order = np.lexsort((-quality[owners], vertices))
+        first = np.unique(vertices[order], return_index=True)[1]
+        restore[owners[order][first]] = True
+        return restore
+    first, second = neighbors
+    labels, count = _facet_components(simplices.shape[0], first, second, retained)
+    if count <= components:
+        return restore
+    values, sizes = np.unique(labels[retained], return_counts=True)
+    largest = values[np.argmax(sizes)]
+    for inner, outer in ((first, second), (second, first)):
+        grow = (
+            retained[inner]
+            & (labels[inner] != largest)
+            & usable[outer]
+            & ~retained[outer]
+        )
+        restore[outer[grow]] = True
+    return restore
+
+
+class SimplexQualityEvidence(StrictModule, NonTrainableState):
+    """Threshold and counts of a quality-screened simplicial subcomplex."""
+
+    minimum_quality: float = eqx.field(static=True)
+    simplex_count: int = eqx.field(static=True)
+    degenerate_count: int = eqx.field(static=True)
+    excluded_count: int = eqx.field(static=True)
+    restored_count: int = eqx.field(static=True)
+    excluded_measure_fraction: float = eqx.field(static=True)
+    minimum_retained_quality: float = eqx.field(static=True)
+
+
+class SimplexQualitySubcomplex(StrictModule, NonTrainableState):
+    """Quality-screened subcomplex of a simplicial triangulation.
+
+    The quality of a simplex is its normalized volume-length ratio
+    ``|T| / v_d(l_rms)`` (1 for the regular simplex, 0 when flat), with
+    ``l_rms`` the root-mean-square edge length and ``v_d(l)`` the measure of
+    the regular d-simplex of edge ``l``. Simplices of quality at most 1e-12
+    carry no usable measure and are never retained (``degenerate_count``).
+    Simplices below ``minimum_quality`` (3-D slivers, caps and needles) are
+    excluded, except that excluded usable simplices are restored, best first,
+    while a vertex of a usable simplex would be left uncovered or the retained
+    simplices would split into more facet-connected components than the
+    usable ones form. The result therefore covers every such vertex and is
+    facet-connected exactly when the usable input is. ``retained`` marks the
+    retained input rows (``simplices`` lists them in input order); the
+    evidence's ``excluded_measure_fraction`` is the share of the usable
+    measure carried by the excluded simplices.
+    """
+
+    simplices: np.ndarray
+    quality: np.ndarray
+    retained: np.ndarray
+    evidence: SimplexQualityEvidence
+
+    def __init__(
+        self, points: object, simplices: object, /, *, minimum_quality: float
+    ) -> None:
+        point_array = _point_array(points, "points", (2, 3))
+        dimension = point_array.shape[1]
+        simplex_array = np.asarray(simplices)
+        if not np.issubdtype(simplex_array.dtype, np.integer):
+            raise TypeError("simplices must be an integer array.")
+        if (
+            simplex_array.ndim != 2
+            or simplex_array.shape[1] != dimension + 1
+            or simplex_array.shape[0] == 0
+        ):
+            raise ValueError("simplices must have shape (n, dimension + 1) with n >= 1.")
+        if np.any(simplex_array < 0) or np.any(simplex_array >= point_array.shape[0]):
+            raise ValueError("simplices must index the points.")
+        threshold = float(minimum_quality)
+        if not math.isfinite(threshold) or not 0.0 <= threshold < 1.0:
+            raise ValueError("minimum_quality must lie in [0, 1).")
+        simplex_array = simplex_array.astype(np.int64)
+        measures, quality = _simplex_quality(point_array, simplex_array)
+        usable = quality > _DEGENERATE_QUALITY
+        if not np.any(usable):
+            raise ValueError("No simplex carries a usable measure.")
+        retained = usable & (quality >= threshold)
+        neighbors = _facet_neighbors(simplex_array)
+        _, components = _facet_components(simplex_array.shape[0], *neighbors, usable)
+        excluded = np.count_nonzero(usable & ~retained)
+        # Each round restores at least one simplex or ends the loop.
+        while np.any(
+            restore := _restorations(
+                simplex_array, quality, retained, usable, neighbors, components
+            )
+        ):
+            retained = retained | restore
+        dropped = usable & ~retained
+        self.simplices = _frozen(simplex_array[retained].astype(np.int32))
+        self.quality = _frozen(quality)
+        self.retained = _frozen(retained)
+        self.evidence = SimplexQualityEvidence(
+            minimum_quality=threshold,
+            simplex_count=simplex_array.shape[0],
+            # NumPy count scalars are converted once into static metadata.
+            degenerate_count=int(np.count_nonzero(~usable)),
+            excluded_count=int(np.count_nonzero(dropped)),
+            restored_count=int(excluded - np.count_nonzero(dropped)),
+            excluded_measure_fraction=float(
+                np.sum(measures[dropped]) / np.sum(measures[usable])
+            ),
+            minimum_retained_quality=float(np.min(quality[retained])),
         )
 
 
@@ -860,6 +1149,8 @@ __all__ = [
     "DelaunayTriangulation",
     "DiagramCells",
     "PowerDiagram",
+    "SimplexQualityEvidence",
+    "SimplexQualitySubcomplex",
     "TriangulationEvidence",
     "VoronoiDiagram",
 ]

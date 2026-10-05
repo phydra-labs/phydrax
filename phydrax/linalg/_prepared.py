@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-import equinox as eqx
-import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
@@ -15,6 +13,7 @@ from ..typing import checked
 from ._binding import LinearSolveTemplate
 from ._preconditioning import PreparedPreconditioner
 from ._problems import AbstractLinearProblem
+from ._results import _numeric_versions
 
 
 if TYPE_CHECKING:
@@ -49,12 +48,10 @@ class PreparedLinearSolve(StrictModule):
             raise TypeError(
                 "preconditioning_state must be a PreparedPreconditioner or None."
             )
-        version = jnp.asarray(numeric_version, dtype=jnp.int32)
-        if version.ndim != 0:
-            raise ValueError("numeric_version must be scalar.")
-        version = eqx.error_if(
-            version,
-            version < 0,
+        (version,) = _numeric_versions(
+            (numeric_version,),
+            lambda value: value < 0,
+            "numeric_version must be scalar.",
             "numeric_version must be non-negative.",
         )
         self.problem = problem

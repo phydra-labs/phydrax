@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, Literal, NoReturn, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,7 +13,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked, parse
@@ -55,6 +55,7 @@ from ._properties import LinearCapabilityError
 from ._spaces import (
     _coordinate_dtype,
     _has_diagonal_pairing,
+    AbstractVectorSpace,
     ArraySpace,
     DiagonalPairing,
     EuclideanPairing,
@@ -135,6 +136,55 @@ def _materialization_matvec_count(
     return operator.source.size
 
 
+@final
+class _PlannedConstruction:
+    """Opaque builder-owned construction; compared and hashed by identity."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: object, /) -> None:
+        self.value = value
+
+
+@final
+class PlannedPreconditionerSetup(StrictModule):
+    """A builder's cost estimate and the construction that produced it.
+
+    ``plan_setup`` returns it and ``prepare_planned`` consumes it, so a solve
+    plan that costs a builder prepares from the same construction instead of
+    repeating it. ``content_id`` is the exact setup-operator identity the
+    construction is valid for; a builder that cannot match it prepares anew.
+    """
+
+    cost: PreconditionerCostEstimate
+    construction: _PlannedConstruction | None = eqx.field(static=True)
+    content_id: str | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        cost: PreconditionerCostEstimate,
+        /,
+        *,
+        construction: object | None = None,
+        content_id: str | None = None,
+    ) -> None:
+        if not isinstance(cost, PreconditionerCostEstimate):
+            raise TypeError("cost must be a PreconditionerCostEstimate.")
+        if (construction is None) != (content_id is None):
+            raise ValueError("A planned construction requires its content identity.")
+        self.cost = cost
+        self.construction = (
+            None if construction is None else _PlannedConstruction(construction)
+        )
+        self.content_id = content_id
+
+    def construction_for(self, content_id: str | None, /) -> object | None:
+        """The planned construction when ``content_id`` is the planned one."""
+        if self.construction is None or content_id is None:
+            return None
+        return self.construction.value if content_id == self.content_id else None
+
+
 class AbstractPreconditionerBuilder(StrictModule):
     """Symbolic recipe that prepares an approximate inverse from a setup operator."""
 
@@ -186,6 +236,91 @@ class AbstractPreconditionerBuilder(StrictModule):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         raise NotImplementedError
+
+    def plan_setup(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PlannedPreconditionerSetup:
+        """Cost this builder; builders with expensive setup also keep the construction."""
+        return PlannedPreconditionerSetup(
+            self.cost_for(setup_operator, materialization=materialization)
+        )
+
+    def prepare_planned(
+        self,
+        planned: PlannedPreconditionerSetup,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        """Prepare from ``plan_setup``'s construction when it matches the operator."""
+        del planned
+        return self.prepare(setup_operator, materialization=materialization)
+
+    def lowered_cost(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        """Cost of storing and applying this action in ``compute_dtype``.
+
+        Only actions that are one fixed diagonal, local-block, or triangular
+        solve admit lower precision: the outer solve owns every residual and
+        accumulation in coordinate precision and refines the lowered action.
+        Actions with inner residuals, polynomial recurrences, or nested
+        hierarchies have no such contract and refuse.
+        """
+        del setup_operator, compute_dtype, materialization
+        _refuse_lower_precision(self)
+
+    def prepare_lowered(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy,
+        previous: AbstractPreconditioner | None = None,
+    ) -> AbstractPreconditioner:
+        """Prepare the action stored and applied in ``compute_dtype`` coordinates."""
+        del setup_operator, compute_dtype, materialization, previous
+        _refuse_lower_precision(self)
+
+
+def _refuse_lower_precision(builder: AbstractPreconditionerBuilder, /) -> NoReturn:
+    raise LinearCapabilityError(
+        f"{type(builder).__name__} has no lower-precision accumulation/residual "
+        "contract; lower-precision preconditioning supports Jacobi, block "
+        "Jacobi, and single-direction Gauss-Seidel builders."
+    )
+
+
+def _lowered_space(space: AbstractVectorSpace, compute_dtype: str, /) -> ArraySpace:
+    """Coordinate-identical ArraySpace in a lower compute dtype."""
+    if not isinstance(space, ArraySpace):
+        raise LinearCapabilityError(
+            "Lower-precision preconditioning requires one ArraySpace coordinate layout."
+        )
+    dtype = jnp.dtype(compute_dtype)
+    pairing = space.pairing
+    if isinstance(pairing, DiagonalPairing):
+        low_pairing: DiagonalPairing | EuclideanPairing = DiagonalPairing(
+            pairing.weights.astype(dtype)
+        )
+    elif isinstance(pairing, EuclideanPairing):
+        low_pairing = EuclideanPairing()
+    else:
+        raise LinearCapabilityError(
+            "Lower-precision preconditioning requires Euclidean or diagonal pairing."
+        )
+    return ArraySpace(space.shape, dtype=dtype, pairing=low_pairing)
 
 
 class DenseInversePreconditionerBuilder(AbstractPreconditionerBuilder):
@@ -682,13 +817,67 @@ class JacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise TypeError("Jacobi refresh requires a DiagonalPreconditioner.")
         return self.prepare(setup_operator, materialization=materialization)
 
+    def lowered_cost(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        cost = self.cost_for(setup_operator, materialization=materialization)
+        low_itemsize = jnp.dtype(compute_dtype).itemsize
+        high_itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        dimension = setup_operator.source.size
+        return PreconditionerCostEstimate(
+            component=cost.component,
+            storage_bytes=dimension * low_itemsize,
+            preparation_workspace_bytes=(
+                cost.preparation_workspace_bytes + dimension * low_itemsize
+            ),
+            apply_workspace_bytes_per_rhs=dimension * (high_itemsize + 2 * low_itemsize),
+            setup_matvec_count=cost.setup_matvec_count,
+            accepted=cost.accepted,
+            reason=(
+                f"{cost.reason}; stored/applied in {compute_dtype} with explicit coordinate casts"
+            ),
+        )
+
+    def prepare_lowered(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy,
+        previous: AbstractPreconditioner | None = None,
+    ) -> AbstractPreconditioner:
+        del previous
+        space = _lowered_space(setup_operator.source, compute_dtype)
+        action = self.prepare(setup_operator, materialization=materialization)
+        if not isinstance(action, DiagonalPreconditioner):
+            raise RuntimeError("Jacobi preparation must return a diagonal action.")
+        return DiagonalPreconditioner(
+            jnp.reciprocal(action.inverse_diagonal).astype(space.dtype),
+            space=space,
+            positive_definite=action.properties.certifies("positive_definite"),
+        )
+
 
 class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
-    """Prepare fixed-size block Jacobi factors from exact canonical blocks."""
+    """Prepare fixed-size block Jacobi factors from exact canonical blocks.
+
+    ``padding`` declares structurally absent coordinates (for example the
+    padding that buckets variable-size local patches into one homogeneous
+    block shape). Their rows and columns must be exactly zero in the setup
+    operator, which is checked, and their diagonal entries are factored as
+    identity; every other block entry is the exact operator entry.
+    """
 
     block_size: int = eqx.field(static=True)
     relaxation: float = eqx.field(static=True)
     assembly: SparseAssemblyPolicy | None
+    padding: Array | None
     _builder_id: str = eqx.field(static=True)
 
     def __init__(
@@ -698,6 +887,7 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         relaxation: float = 1.0,
         assembly: SparseAssemblyPolicy | None = None,
+        padding: ArrayLike | None = None,
     ) -> None:
         size = int(block_size)
         if size < 1:
@@ -710,15 +900,24 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             SparseAssemblyPolicy,
         ):
             raise TypeError("assembly must be a SparseAssemblyPolicy or None.")
+        padding_ = None if padding is None else jnp.asarray(padding)
+        if padding_ is not None and (
+            padding_.ndim != 1 or padding_.dtype != jnp.bool_ or padding_.size % size
+        ):
+            raise ValueError(
+                "padding must be a Boolean coordinate mask divisible into whole blocks."
+            )
         self.block_size = size
         self.relaxation = relaxation_
         self.assembly = assembly
+        self.padding = padding_
         self._builder_id = canonical_fingerprint(
             {
                 "kind": "block-jacobi-preconditioner-builder",
                 "block_size": size,
                 "relaxation": relaxation_,
                 "assembly": _sparse_assembly_policy_payload(assembly),
+                "padding": None if padding_ is None else array_tree_fingerprint(padding_),
             }
         )
 
@@ -759,12 +958,15 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> PreconditionerCostEstimate:
         _validate_setup_operator(setup_operator)
         dimension = setup_operator.source.size
-        if dimension % self.block_size:
+        if dimension % self.block_size or (
+            self.padding is not None and self.padding.size != dimension
+        ):
             return PreconditionerCostEstimate(
                 component=self.builder_id,
                 accepted=False,
                 reason=(
-                    f"block size {self.block_size} does not divide operator dimension {dimension}"
+                    f"block size {self.block_size} does not divide operator dimension "
+                    f"{dimension}, or the padding mask does not cover it"
                 ),
             )
         itemsize = _coordinate_dtype(setup_operator.source).itemsize
@@ -836,6 +1038,19 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
             self.block_size,
             policy=self._resolved_assembly_policy(materialization),
         )
+        if self.padding is not None:
+            if self.padding.size != setup_operator.source.size:
+                raise ValueError("padding must have one entry per setup coordinate.")
+            pad = self.padding.reshape(blocks.shape[:2])
+            absent = pad[:, :, None] | pad[:, None, :]
+            blocks = eqx.error_if(
+                blocks,
+                jnp.any(absent & (blocks != 0)),
+                "Padded block-Jacobi coordinates must have structurally zero rows and columns.",
+            )
+            blocks = blocks + (
+                pad[:, :, None] & jnp.eye(self.block_size, dtype=jnp.bool_)
+            ).astype(blocks.dtype)
         properties = self.properties_for(setup_operator)
         return LocalBlockPreconditioner(
             blocks,
@@ -864,6 +1079,73 @@ class BlockJacobiPreconditionerBuilder(AbstractPreconditionerBuilder):
         return self.prepare(
             setup_operator,
             materialization=materialization,
+        )
+
+    def lowered_cost(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        cost = self.cost_for(setup_operator, materialization=materialization)
+        if not cost.accepted:
+            return cost
+        low = jnp.dtype(compute_dtype)
+        real_low = jnp.empty((), dtype=low).real.dtype.itemsize
+        high_itemsize = _coordinate_dtype(setup_operator.source).itemsize
+        dimension = setup_operator.source.size
+        block_bytes = dimension * self.block_size * low.itemsize
+        return PreconditionerCostEstimate(
+            component=cost.component,
+            storage_bytes=(
+                block_bytes
+                + dimension * jnp.dtype(jnp.int32).itemsize
+                + dimension * real_low
+                + (dimension // self.block_size) * jnp.dtype(jnp.bool_).itemsize
+            ),
+            preparation_workspace_bytes=cost.preparation_workspace_bytes + block_bytes,
+            apply_workspace_bytes_per_rhs=dimension * (high_itemsize + 3 * low.itemsize),
+            setup_matvec_count=cost.setup_matvec_count,
+            reason=(
+                f"{cost.reason}; blocks factored and applied in {compute_dtype} "
+                "with explicit coordinate casts"
+            ),
+        )
+
+    def prepare_lowered(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        compute_dtype: str,
+        materialization: MaterializationPolicy,
+        previous: AbstractPreconditioner | None = None,
+    ) -> AbstractPreconditioner:
+        del previous
+        space = _lowered_space(setup_operator.source, compute_dtype)
+        blocks = assemble_uniform_blocks(
+            setup_operator,
+            self.block_size,
+            policy=self._resolved_assembly_policy(materialization),
+        )
+        properties = self.properties_for(setup_operator)
+        # Exact high-precision blocks are rounded once, then factored in the
+        # compute dtype; singular rounded blocks are refused by the factor.
+        return LocalBlockPreconditioner(
+            blocks.astype(space.dtype),
+            space=space,
+            positive_definite=properties.certifies("positive_definite"),
+            relaxation=self.relaxation,
+            preconditioner_id=canonical_fingerprint(
+                {
+                    "kind": "prepared-block-jacobi",
+                    "builder": self.builder_id,
+                    "setup_operator": setup_operator.operator_id,
+                    "compute_dtype": space.dtype.name,
+                }
+            ),
         )
 
     def _resolved_assembly_policy(
@@ -1057,6 +1339,7 @@ class PreconditionerPlan(StrictModule):
     properties: PreconditionerProperties
     space_id: str = eqx.field(static=True)
     cost: PreconditionerCostEstimate
+    setup: PlannedPreconditionerSetup | None
     setup_operator_id: str | None = eqx.field(static=True)
     component_id: str = eqx.field(static=True)
     compute_dtype: str | None = eqx.field(static=True)
@@ -1092,32 +1375,30 @@ class PreconditionerPlan(StrictModule):
         )
         if source is None:
             raise RuntimeError("Invalid preconditioning policy state.")
-        cost = _source_cost(
-            source,
-            setup,
-            materialization=materialization_,
-        )
+        planned: PlannedPreconditionerSetup | None = None
+        if compute_dtype_ is None and isinstance(source, AbstractPreconditionerBuilder):
+            # The costed construction travels with the plan to preparation.
+            planned = source.plan_setup(setup, materialization=materialization_)
+            cost = planned.cost
+        elif compute_dtype_ is None:
+            cost = _source_cost(
+                source,
+                setup,
+                materialization=materialization_,
+            )
+        elif isinstance(source, AbstractPreconditionerBuilder):
+            cost = source.lowered_cost(
+                setup,
+                compute_dtype=compute_dtype_,
+                materialization=materialization_,
+            )
+        else:
+            raise LinearCapabilityError(
+                "Lower-precision preconditioning prepares its own action; supply a builder."
+            )
         if not cost.accepted:
             raise ValueError(
                 f"Preconditioner {cost.component} is infeasible: {cost.reason}."
-            )
-        if compute_dtype_ is not None:
-            low_itemsize = jnp.dtype(compute_dtype_).itemsize
-            high_itemsize = _coordinate_dtype(system_operator.source).itemsize
-            dimension = system_operator.source.size
-            cost = PreconditionerCostEstimate(
-                component=cost.component,
-                storage_bytes=dimension * low_itemsize,
-                preparation_workspace_bytes=(
-                    cost.preparation_workspace_bytes + dimension * low_itemsize
-                ),
-                apply_workspace_bytes_per_rhs=dimension
-                * (high_itemsize + 2 * low_itemsize),
-                setup_matvec_count=cost.setup_matvec_count,
-                accepted=cost.accepted,
-                reason=(
-                    f"{cost.reason}; stored/applied in {compute_dtype_} with explicit coordinate casts"
-                ),
             )
         if policy.preconditioner is not None:
             setup_operator_id = None
@@ -1151,6 +1432,7 @@ class PreconditionerPlan(StrictModule):
         self.side = side
         self.properties = properties
         self.cost = cost
+        self.setup = planned
         self.space_id = system_operator.source.space_id
         self.setup_operator_id = setup_operator_id
         self.component_id = component_id
@@ -1216,53 +1498,34 @@ class PreparedPreconditioner(StrictModule):
         self.refresh_kind = refresh_kind
 
 
-def _precision_cast_action(
-    action: AbstractPreconditioner,
+def _prepare_builder_action(
+    builder: AbstractPreconditionerBuilder,
+    setup: AbstractLinearOperator,
     plan: PreconditionerPlan,
     /,
+    *,
+    materialization: MaterializationPolicy,
+    previous: AbstractPreconditioner | None,
 ) -> AbstractPreconditioner:
     if plan.compute_dtype is None:
-        return action
-    if isinstance(action, PrecisionCastPreconditioner):
-        if action.compute_dtype != plan.compute_dtype:
-            raise LinearCapabilityError(
-                "Prepared preconditioner precision does not match its plan."
+        if previous is None and plan.setup is not None:
+            return builder.prepare_planned(
+                plan.setup, setup, materialization=materialization
             )
-        return action
-    if not isinstance(action, DiagonalPreconditioner):
+        if previous is None:
+            return builder.prepare(setup, materialization=materialization)
+        return builder.refresh(previous, setup, materialization=materialization)
+    if previous is not None and not isinstance(previous, PrecisionCastPreconditioner):
         raise LinearCapabilityError(
-            "Lower-precision preconditioning currently requires Jacobi diagonal state."
+            "Prepared preconditioner precision does not match its plan."
         )
-    if not isinstance(action.space, ArraySpace):
-        raise LinearCapabilityError(
-            "Lower-precision Jacobi requires one ArraySpace coordinate layout."
-        )
-    compute_dtype = jnp.dtype(plan.compute_dtype)
-    pairing = action.space.pairing
-    if isinstance(pairing, DiagonalPairing):
-        low_pairing = DiagonalPairing(pairing.weights.astype(compute_dtype))
-    elif isinstance(pairing, EuclideanPairing):
-        low_pairing = EuclideanPairing()
-    else:
-        raise LinearCapabilityError(
-            "Lower-precision Jacobi requires Euclidean or diagonal pairing."
-        )
-    low_space = ArraySpace(
-        action.space.shape,
-        dtype=compute_dtype,
-        pairing=low_pairing,
+    lowered = builder.prepare_lowered(
+        setup,
+        compute_dtype=plan.compute_dtype,
+        materialization=materialization,
+        previous=None if previous is None else previous.inner,
     )
-    diagonal = jnp.reciprocal(action.inverse_diagonal).astype(compute_dtype)
-    lowered = DiagonalPreconditioner(
-        diagonal,
-        space=low_space,
-        positive_definite=action.properties.certifies("positive_definite"),
-    )
-    return PrecisionCastPreconditioner(
-        lowered,
-        action.space,
-        compute_dtype,
-    )
+    return PrecisionCastPreconditioner(lowered, setup.source, plan.compute_dtype)
 
 
 def prepare_preconditioner(
@@ -1299,7 +1562,13 @@ def prepare_preconditioner(
             raise RuntimeError("Invalid preconditioning policy state.")
         setup = policy.resolve_setup_operator(system_operator)
         if previous is None:
-            action = policy.builder.prepare(setup, materialization=materialization)
+            action = _prepare_builder_action(
+                policy.builder,
+                setup,
+                plan,
+                materialization=materialization,
+                previous=None,
+            )
             built_version = numeric_version
             refresh_kind = "prepared"
         elif policy.refresh_policy == "frozen":
@@ -1307,23 +1576,25 @@ def prepare_preconditioner(
             built_version = previous.built_numeric_version
             refresh_kind = "reused"
         elif policy.refresh_policy == "numeric":
-            previous_action = (
-                previous.action.inner
-                if isinstance(previous.action, PrecisionCastPreconditioner)
-                else previous.action
-            )
-            action = policy.builder.refresh(
-                previous_action,
+            action = _prepare_builder_action(
+                policy.builder,
                 setup,
+                plan,
                 materialization=materialization,
+                previous=previous.action,
             )
             built_version = numeric_version
             refresh_kind = "refreshed"
         else:
-            action = policy.builder.prepare(setup, materialization=materialization)
+            action = _prepare_builder_action(
+                policy.builder,
+                setup,
+                plan,
+                materialization=materialization,
+                previous=None,
+            )
             built_version = numeric_version
             refresh_kind = "rebuilt"
-    action = _precision_cast_action(action, plan)
     return PreparedPreconditioner(
         action,
         setup,
@@ -1380,5 +1651,6 @@ __all__ = [
     "PreconditionerCostEstimate",
     "PreconditioningPolicy",
     "PreconditioningSide",
+    "PlannedPreconditionerSetup",
     "PreparedPreconditioner",
 ]

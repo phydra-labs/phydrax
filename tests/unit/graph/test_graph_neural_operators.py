@@ -44,7 +44,7 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
 
 def test_graph_neural_operators_scenario_1() -> None:
     kernel = phx.graph.GraphKernelIntegral(
-        lambda edges, sent, recv, globals_: edges[:, 0],
+        phx.graph.RouteLocal(lambda edge, sent, recv, globals_: edge[0]),
     )
     out = kernel(_line_graph())
 
@@ -99,7 +99,9 @@ def test_graph_kernel_integral_wraps_as_domain_graph_model() -> None:
     def u(node: Any) -> Any:
         return node[0]
 
-    model = phx.graph.GraphKernelIntegral(lambda edges, sent, recv, globals_: edges[:, 0])
+    model = phx.graph.GraphKernelIntegral(
+        phx.graph.RouteLocal(lambda edge, sent, recv, globals_: edge[0])
+    )
     integral = domain.GraphModel(model, input_fn=u)
 
     assert jnp.allclose(jnp.asarray(integral(batch).data), jnp.array([0.0, 0.0, 3.0]))

@@ -4,36 +4,76 @@
 
 """Fixed-capacity spatial decomposition and execution for atomistic programs.
 
-The local-reference runtime represents every logical shard with fixed-shape JAX
-arrays. It is both an executable single-device implementation and the
-scientific reference for collective implementations. Collective runtimes have
-no implicit communication fallback: callers must prepare them with explicit
-JAX exchange and reduction callables.
+Two execution families share this module.
+
+The slab family (`DistributedAtomisticPlan`) represents every logical shard
+with fixed-shape JAX arrays over the global particle capacity. Its
+`halo_short_range_evaluate` evaluates the global prepared program and then
+masks owner contributions: it is a global-evaluate-then-mask reference for
+classical programs, not owner-local execution. Collective runtimes have no
+implicit communication fallback: callers must prepare them with explicit JAX
+exchange and reduction callables.
+
+The owner-local family (`OwnerLocalAtomisticPlan`) executes layered learned
+potentials partition-locally. Atoms are owned through a fractional owner grid
+of the periodic cell and the canonical spatial point layout; every owner
+builds its own image-aware receiver graph from exchanged periodic image
+aliases, evaluates only its receivers with source features gathered through
+the canonical halo plan at every interaction, and returns reverse cotangents
+exactly once through the halo transpose. Shared cell (strain) cotangents and
+parameter cotangents are per-owner partials reduced in declared owner order.
+Lane-reference ownership runs the identical program as named vmap lanes on one
+device; it is the numerical oracle, not distributed hardware evidence.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from collections.abc import Callable, Mapping, Sequence
+from typing import final, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.sharding import PartitionSpec
+from jax.tree_util import PyTreeDef
 from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import combine_parameters, NonTrainableState, partition_parameters
 from ..discretization import (
     ParticleDomainDecompositionPlan,
     ParticleHaloState,
     ParticleNeighborhoodState,
 )
-from ..typing import parse
+from ..discretization._periodic_cell import (
+    _complete_image_shifts,
+    PeriodicCell,
+    PeriodicImageStencil,
+)
+from ..discretization.particle._distributed import FractionalOwnerPartition
+from ..discretization.spatial._distributed_relations import (
+    DistributedHaloPlan,
+    DistributedMigrationEvidence,
+    DistributedOwnershipPlan,
+    DistributedPointLayout,
+)
+from ..ein import contract
+from ..sparse import EdgeRelation
+from ..sparse._streamed import PreparedStreamedRelation, StreamedRelationPlan
+from ..typing import Bool, Dim, Float, Int32, parse, PRNGKey, Scalar
 from ._constraints import ConstraintProjection, PreparedDistanceConstraints
+from ._feature_execution import (
+    AtomisticLayeredModel,
+    owner_atom_energies,
+    owner_layer_gradients,
+    OwnerLayerTopology,
+)
+from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._potential_program import (
     AtomisticPotentialEvaluation,
     PreparedAtomisticPotentialProgram,
@@ -1876,7 +1916,13 @@ def halo_short_range_evaluate(
     neighborhood: ParticleNeighborhoodState,
     /,
 ) -> tuple[AtomisticPotentialEvaluation, Array]:
-    """Evaluate the established short-range API through canonical ownership."""
+    """Global-evaluate-then-mask reference of a short-range prepared program.
+
+    The complete program is evaluated on the global state and owner masks
+    attribute its outputs to slab partitions. This is the reference route for
+    classical programs, not owner-local execution; layered learned potentials
+    execute partition-locally through `evaluate_owner_local_atomistic`.
+    """
     if (
         state.plan_id != plan.plan_id
         or potential.system.prepared_id != plan.system.prepared_id
@@ -1906,15 +1952,18 @@ def halo_short_range_evaluate(
         evaluation.energy - _ordered_sum(partition_energy, plan.reduction)
     )
     distributed = AtomisticPotentialEvaluation(
-        evaluation.energy,
-        evaluation.term_energies,
-        evaluation.atom_energy,
-        reverse_force,
-        evaluation.virial,
-        evaluation.successful & state.successful,
-        evaluation.neighborhood_successful,
-        evaluation.graph_overflow,
-        evaluation.program_id,
+        energy=evaluation.energy,
+        term_energies=evaluation.term_energies,
+        atom_energy=evaluation.atom_energy,
+        forces=reverse_force,
+        virial=evaluation.virial,
+        successful=evaluation.successful & state.successful,
+        neighborhood_successful=evaluation.neighborhood_successful,
+        graph_overflow=evaluation.graph_overflow,
+        strain_derivative=evaluation.strain_derivative,
+        stress=evaluation.stress,
+        program_id=evaluation.program_id,
+        stress_convention=evaluation.stress_convention,
     )
     return distributed, partition_energy
 
@@ -2051,6 +2100,1645 @@ def restore_distributed_atomistic_checkpoint(
     return checkpoint.state
 
 
+class _OwnerRowDim(Dim, minimum=1):
+    """Owner-blocked atom rows: ``owner_count * local_capacity``."""
+
+
+class _OwnerEdgeDim(Dim, minimum=1):
+    """Owner-blocked edge routes: ``owner_count * edge_capacity``."""
+
+
+class _OwnerCountDim(Dim, minimum=1):
+    """Owners of one ownership plan."""
+
+
+class _LatticeRankDim(Dim, minimum=1):
+    """Lattice rank of the periodic cell."""
+
+
+_AMBIENT_DIMENSION = 3
+
+
+def _owner_stack(tree: PyTree[Array], /) -> PyTree[Array]:
+    """Give every owner-region output a leading owner axis of one."""
+    return jax.tree.map(lambda leaf: leaf[None], tree)
+
+
+def _owner_unstack(tree: PyTree[Array], /) -> PyTree[Array]:
+    return jax.tree.map(lambda leaf: leaf[0], tree)
+
+
+def _positive_capacity(name: str, value: int, /) -> int:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer.")
+    if value < 1:
+        raise ValueError(f"{name} must be positive.")
+    return int(value)
+
+
+def _finite_length(name: str, value: float, /, *, positive: bool) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        raise TypeError(f"{name} must be real.")
+    result = float(value)
+    if not np.isfinite(result) or result < 0.0 or (positive and result == 0.0):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"{name} must be finite and {qualifier}.")
+    return result
+
+
+def _require_complete_stencil(
+    cell: PeriodicCell, stencil: PeriodicImageStencil, radius: float, /
+) -> None:
+    """Refuse an image stencil that is not the complete translation box of ``cell``.
+
+    Its shifts must be the canonical lexicographic box of its extents, its
+    nonperiodic extents zero, and every periodic extent must reach the bound
+    ``floor(1 + radius * ||H^+[:, i]||)`` of wrapped endpoints in this cell.
+    """
+    extents = stencil.extents
+    if len(extents) != cell.rank or not np.array_equal(
+        np.asarray(stencil.shifts), _complete_image_shifts(extents)
+    ):
+        raise ValueError(
+            "The image stencil shifts are not the complete box of its extents."
+        )
+    if any(
+        extent != 0
+        for extent, periodic in zip(extents, cell.periodic_axes, strict=True)
+        if not periodic
+    ):
+        raise ValueError("The image stencil translates along a nonperiodic axis.")
+    try:
+        required = cell.image_stencil(
+            radius, maximum_image_count=stencil.image_count
+        ).extents
+    except ValueError as error:
+        raise ValueError(
+            "The image stencil does not cover cutoff + skin in its cell."
+        ) from error
+    if any(have < need for have, need in zip(extents, required, strict=True)):
+        raise ValueError("The image stencil does not cover cutoff + skin in its cell.")
+
+
+@final
+class OwnerLocalAtomisticPlan(StrictModule, NonTrainableState):
+    """Owner-local layered learned execution over a fractional owner grid.
+
+    Static contract of one fixed-cell owner-local execution: the canonical
+    point ownership (devices or reference lanes), the fractional owner
+    partition of the periodic cell, the complete integer image stencil for
+    ``cutoff + skin``, and every packet/message capacity. The ownership address
+    is the unit fractional box of the cell, so layout points are wrapped
+    fractional coordinates.
+
+    Capacities: ``alias_capacity`` image aliases per (sender, destination)
+    owner pair, ``edge_capacity`` receiver edges per owner,
+    ``halo_capacity`` deduplicated source columns per (requester, source)
+    owner pair, ``migration_capacity`` migrating atoms per owner pair, and
+    ``message_capacity_bytes`` bytes of one interaction's halo message per
+    owner. Exceeding any capacity is a refused topology or migration, never a
+    truncated relation. ``streaming`` tiles every owner's receiver relation; it
+    is prepared once per owner and topology epoch and reused by every layer.
+    """
+
+    ownership: DistributedOwnershipPlan
+    partition: FractionalOwnerPartition
+    stencil: PeriodicImageStencil
+    streaming: StreamedRelationPlan
+    reduction: DistributedReductionPolicy
+    cutoff: float = eqx.field(static=True)
+    skin: float = eqx.field(static=True)
+    alias_capacity: int = eqx.field(static=True)
+    edge_capacity: int = eqx.field(static=True)
+    halo_capacity: int = eqx.field(static=True)
+    migration_capacity: int = eqx.field(static=True)
+    message_capacity_bytes: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        ownership: DistributedOwnershipPlan,
+        partition: FractionalOwnerPartition,
+        stencil: PeriodicImageStencil,
+        /,
+        *,
+        streaming: StreamedRelationPlan,
+        cutoff: float,
+        skin: float,
+        alias_capacity: int,
+        edge_capacity: int,
+        halo_capacity: int,
+        migration_capacity: int,
+        message_capacity_bytes: int,
+        reduction: DistributedReductionPolicy | None = None,
+    ) -> None:
+        if not isinstance(ownership, DistributedOwnershipPlan):
+            raise TypeError("ownership must be a DistributedOwnershipPlan.")
+        if not isinstance(partition, FractionalOwnerPartition):
+            raise TypeError("partition must be a FractionalOwnerPartition.")
+        if not isinstance(stencil, PeriodicImageStencil):
+            raise TypeError("stencil must be a PeriodicImageStencil.")
+        if not isinstance(streaming, StreamedRelationPlan):
+            raise TypeError("streaming must be a StreamedRelationPlan.")
+        reduction_ = DistributedReductionPolicy() if reduction is None else reduction
+        if not isinstance(reduction_, DistributedReductionPolicy):
+            raise TypeError("reduction must be DistributedReductionPolicy or None.")
+        cell = partition.cell
+        if cell.ambient_dimension != _AMBIENT_DIMENSION:
+            raise ValueError("Owner-local atomistics requires a three-dimensional cell.")
+        if partition.owner_count != ownership.owner_count:
+            raise ValueError(
+                "The fractional partition must declare one region per owner."
+            )
+        address = ownership.address_plan
+        if (
+            address.dimension != cell.rank
+            or any(value != 0.0 for value in address.lower)
+            or any(value != 1.0 for value in address.upper)
+            or address.periodic_axes != cell.periodic_axes
+        ):
+            raise ValueError(
+                "Owner-local ownership must address the unit fractional box of the "
+                "cell with its periodic axes."
+            )
+        if stencil.cell_id != cell.cell_id:
+            raise ValueError("The image stencil belongs to another PeriodicCell.")
+        cutoff_ = _finite_length("cutoff", cutoff, positive=True)
+        skin_ = _finite_length("skin", skin, positive=False)
+        if stencil.radius < cutoff_ + skin_:
+            raise ValueError("The image stencil radius must cover cutoff + skin.")
+        if any(
+            excursion < 1.0
+            for excursion, periodic in zip(
+                stencil.fractional_excursion, cell.periodic_axes, strict=True
+            )
+            if periodic
+        ):
+            raise ValueError(
+                "The image stencil must admit wrapped endpoints (fractional_excursion >= 1)."
+            )
+        _require_complete_stencil(cell, stencil, cutoff_ + skin_)
+        self.ownership = ownership
+        self.partition = partition
+        self.stencil = stencil
+        self.streaming = streaming
+        self.reduction = reduction_
+        self.cutoff = cutoff_
+        self.skin = skin_
+        self.alias_capacity = _positive_capacity("alias_capacity", alias_capacity)
+        self.edge_capacity = _positive_capacity("edge_capacity", edge_capacity)
+        self.halo_capacity = _positive_capacity("halo_capacity", halo_capacity)
+        self.migration_capacity = _positive_capacity(
+            "migration_capacity", migration_capacity
+        )
+        self.message_capacity_bytes = _positive_capacity(
+            "message_capacity_bytes", message_capacity_bytes
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "owner-local-atomistic",
+                "ownership": ownership.plan_id,
+                "partition": partition.partition_id,
+                "stencil": stencil.stencil_id,
+                "streaming": streaming.plan_id,
+                "reduction": reduction_.policy_id,
+                "cutoff": cutoff_,
+                "skin": skin_,
+                "alias_capacity": self.alias_capacity,
+                "edge_capacity": self.edge_capacity,
+                "halo_capacity": self.halo_capacity,
+                "migration_capacity": self.migration_capacity,
+                "message_capacity_bytes": self.message_capacity_bytes,
+            }
+        )
+
+    @property
+    def search_radius(self) -> float:
+        return self.cutoff + self.skin
+
+    @property
+    def topology_owner_id(self) -> str:
+        return f"owner-local-atomistic:{self.plan_id}"
+
+
+class OwnerLocalTopologyEvidence(StrictModule):
+    """Completeness, capacity, and identity evidence of one topology epoch."""
+
+    __strict_contract__ = True
+
+    successful: Bool[Scalar]
+    owners_current: Bool[Scalar]
+    positions_finite: Bool[Scalar]
+    maximum_alias_load: Int32[Scalar]
+    alias_capacity: Int32[Scalar]
+    maximum_edge_count: Int32[Scalar]
+    edge_capacity: Int32[Scalar]
+    maximum_degree: Int32[Scalar]
+    halo_successful: Bool[Scalar]
+    refused_routes: Int32[Scalar]
+    maximum_halo_load: Int32[Scalar]
+    halo_capacity: Int32[Scalar]
+
+
+@final
+class OwnerLocalAtomisticTopology(StrictModule, NonTrainableState):
+    """One accepted owner-local image graph epoch.
+
+    Owner-blocked edge routes name their receiver row and the physical source
+    atom by ``(route_owners, route_slots)`` with integer image ``shifts``;
+    ``halo`` maps every route onto an owned or deduplicated halo column. The
+    prepared streamed relation of every owner is retained as owner-stacked
+    leaves of ``relation_tree`` and reused until the next epoch.
+    ``reference_positions`` are the stored coordinates the candidate edges
+    were certified for.
+    """
+
+    __strict_contract__ = True
+
+    route_owners: Int32[_OwnerEdgeDim]
+    route_slots: Int32[_OwnerEdgeDim]
+    receivers: Int32[_OwnerEdgeDim]
+    shifts: Int32[_OwnerEdgeDim, _LatticeRankDim]
+    valid: Bool[_OwnerEdgeDim]
+    halo: DistributedHaloPlan
+    relation_leaves: tuple[Array, ...]
+    reference_positions: Float[_OwnerRowDim, Literal[3]]
+    owner_epochs: Int32[_OwnerCountDim]
+    epoch: Int32[Scalar]
+    evidence: OwnerLocalTopologyEvidence
+    relation_tree: PyTreeDef = eqx.field(static=True)
+    streaming_plan_id: str = eqx.field(static=True)
+
+    @property
+    def columns(self) -> Array:
+        return self.halo.route_columns
+
+    @property
+    def edge_valid(self) -> Array:
+        return self.valid & self.halo.route_valid
+
+
+@final
+class OwnerLocalAtomisticState(StrictModule):
+    """Complete accepted owner-local continuation state.
+
+    Per-atom rows are owner-blocked in the layout order: stored Cartesian
+    positions (wrapped at the last accepted epoch), integer image counts that
+    recover unwrapped trajectories, velocities, masses, model species
+    indices, the force cache with the step it belongs to, and caller-declared
+    per-atom continuation payload (constraint membership, per-atom thermostat
+    or bias histories). Replicated state holds the typed RNG key, thermostat,
+    bias, and constraint state, and the step index. ``model_revision_id`` binds
+    the numeric model revision; ``topology`` binds the owner epoch.
+    """
+
+    __strict_contract__ = True
+
+    layout: DistributedPointLayout
+    positions: Float[_OwnerRowDim, Literal[3]]
+    velocities: Float[_OwnerRowDim, Literal[3]]
+    masses: Float[_OwnerRowDim]
+    species: Int32[_OwnerRowDim]
+    image_counts: Int32[_OwnerRowDim, _LatticeRankDim]
+    force_cache: Float[_OwnerRowDim, Literal[3]]
+    force_cache_step: Int32[Scalar]
+    atom_payload: Mapping[str, Array]
+    rng_key: PRNGKey
+    thermostat_state: Array
+    bias_state: Array
+    constraint_state: Array
+    step_index: Int32[Scalar]
+    topology: OwnerLocalAtomisticTopology
+    plan_id: str = eqx.field(static=True)
+    model_revision_id: str = eqx.field(static=True)
+    run_id: str = eqx.field(static=True)
+
+    @property
+    def force_cache_valid(self) -> Array:
+        return self.force_cache_step == self.step_index
+
+    def with_dynamics(
+        self,
+        positions: ArrayLike,
+        velocities: ArrayLike,
+        /,
+        *,
+        step_index: ArrayLike,
+        forces: ArrayLike | None = None,
+        rng_key: PRNGKey | None = None,
+        thermostat_state: ArrayLike | None = None,
+        bias_state: ArrayLike | None = None,
+        constraint_state: ArrayLike | None = None,
+        atom_payload: Mapping[str, ArrayLike] | None = None,
+    ) -> OwnerLocalAtomisticState:
+        """Advance dynamical state within the current owner and topology epoch.
+
+        ``forces`` (owner-blocked) become the force cache of ``step_index``.
+        Inactive padding rows are kept exactly zero, so values an integrator
+        computes there (for example from zero padding masses) never enter a
+        later owner exchange. Ownership, layout, and topology change only
+        through `rebuild_owner_local_atomistic`.
+        """
+        position = jnp.asarray(positions, dtype=self.positions.dtype)
+        velocity = jnp.asarray(velocities, dtype=self.velocities.dtype)
+        if (
+            position.shape != self.positions.shape
+            or velocity.shape != self.velocities.shape
+        ):
+            raise ValueError("Dynamics must preserve the owner-blocked row shape.")
+        step = jnp.asarray(step_index, dtype=jnp.int32)
+        if step.shape:
+            raise ValueError("step_index must be a scalar.")
+        cache = (
+            self.force_cache
+            if forces is None
+            else jnp.asarray(forces, dtype=self.force_cache.dtype)
+        )
+        if cache.shape != self.force_cache.shape:
+            raise ValueError("forces must match the owner-blocked row shape.")
+        payload = (
+            self.atom_payload
+            if atom_payload is None
+            else _validated_atom_payload(atom_payload, self.positions.shape[0])
+        )
+        if set(payload) != set(self.atom_payload):
+            raise ValueError("atom_payload must keep its declared entries.")
+        padding = ~self.layout.active[:, None]
+
+        def rows(value: Array) -> Array:
+            return self.layout.plan.place(jnp.where(padding, 0.0, value))
+
+        return OwnerLocalAtomisticState(
+            layout=self.layout,
+            positions=rows(position),
+            velocities=rows(velocity),
+            masses=self.masses,
+            species=self.species,
+            image_counts=self.image_counts,
+            force_cache=rows(cache),
+            force_cache_step=step if forces is not None else self.force_cache_step,
+            atom_payload=payload,
+            rng_key=self.rng_key if rng_key is None else _typed_key(rng_key),
+            thermostat_state=_same_shape(
+                "thermostat_state", thermostat_state, self.thermostat_state
+            ),
+            bias_state=_same_shape("bias_state", bias_state, self.bias_state),
+            constraint_state=_same_shape(
+                "constraint_state", constraint_state, self.constraint_state
+            ),
+            step_index=step,
+            topology=self.topology,
+            plan_id=self.plan_id,
+            model_revision_id=self.model_revision_id,
+            run_id=self.run_id,
+        )
+
+
+def _same_shape(name: str, value: ArrayLike | None, previous: Array, /) -> Array:
+    if value is None:
+        return previous
+    array = jnp.asarray(value, dtype=previous.dtype)
+    if array.shape != previous.shape:
+        raise ValueError(f"{name} must keep its declared shape.")
+    return array
+
+
+def _typed_key(value: PRNGKey, /) -> Array:
+    key = jnp.asarray(value)
+    if not jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key) or key.shape:
+        raise TypeError("rng_key must be one typed key from jax.random.key.")
+    return key
+
+
+def _validated_atom_payload(
+    payload: Mapping[str, ArrayLike], rows: int, /
+) -> dict[str, Array]:
+    result: dict[str, Array] = {}
+    for name in sorted(payload):
+        array = jnp.asarray(payload[name])
+        if not array.shape or array.shape[0] != rows:
+            raise ValueError(f"atom_payload[{name!r}] must lead with the atom rows.")
+        result[name] = array
+    return result
+
+
+class OwnerLocalExecutionStatus(StrictModule):
+    """Fail-closed topology, certificate, numerical, and identity status."""
+
+    __strict_contract__ = True
+
+    topology_successful: Bool[Scalar]
+    owners_current: Bool[Scalar]
+    displacement_certified: Bool[Scalar]
+    maximum_displacement: Float[Scalar]
+    relation_successful: Bool[Scalar]
+    finite: Bool[Scalar]
+    successful: Bool[Scalar]
+
+
+@final
+class OwnerLocalAtomisticEvaluation(StrictModule):
+    """Owner-local energy, forces, strain derivative, and stress.
+
+    ``atom_energies`` and ``forces`` are owner-blocked rows of the state
+    layout. ``owner_energies`` are the per-owner sums; ``energy`` is their sum
+    in owner order. ``strain_gradient`` is ``dE/d strain`` at fixed fractional
+    coordinates (row cell ``H' = H @ F.T``), the owner-ordered sum of every
+    owner's edge partial. ``stress = sym(strain_gradient) / volume`` exists
+    only for fully periodic three-dimensional cells. Failed execution poisons
+    every numerical output with NaN.
+    """
+
+    __strict_contract__ = True
+
+    energy: Float[Scalar]
+    owner_energies: Float[_OwnerCountDim]
+    atom_energies: Float[_OwnerRowDim]
+    forces: Float[_OwnerRowDim, Literal[3]]
+    strain_gradient: Float[Literal[3], Literal[3]]
+    stress: Float[Literal[3], Literal[3]]
+    stress_available: bool = eqx.field(static=True)
+    status: OwnerLocalExecutionStatus
+    successful: Bool[Scalar]
+
+
+@final
+class OwnerLocalTransition(StrictModule):
+    """Result of one migration plus topology epoch transaction."""
+
+    state: OwnerLocalAtomisticState
+    committed: Array
+    migration: DistributedMigrationEvidence
+    topology: OwnerLocalTopologyEvidence
+
+
+@final
+class OwnerLocalLossGradient(StrictModule):
+    """Energy/force/stress loss and its PARAMETER-lane gradient."""
+
+    loss: Array
+    parameter_gradient: PyTree[Array]
+    evaluation: OwnerLocalAtomisticEvaluation
+    successful: Array
+
+
+def _require_model(
+    plan: OwnerLocalAtomisticPlan, model: AtomisticLayeredModel, /
+) -> StreamedRelationPlan:
+    """Admit a layered potential and return the plan's owner relation tiling."""
+    if not isinstance(model, AbstractAtomisticPotential):
+        raise TypeError("Owner-local execution requires an AbstractAtomisticPotential.")
+    model_cutoff = model.requirements.cutoff
+    if model_cutoff is None or model_cutoff > plan.cutoff:
+        raise ValueError("The owner-local cutoff must cover the model cutoff.")
+    return plan.streaming
+
+
+def _model_revision(model: AtomisticLayeredModel, /) -> str:
+    """Numeric PARAMETER-lane revision of an admitted layered potential (host)."""
+    if not isinstance(model, AbstractAtomisticPotential):
+        raise TypeError("Owner-local execution requires an AbstractAtomisticPotential.")
+    return atomistic_potential_revision(model).revision_id
+
+
+@eqx.filter_jit
+def _owner_edges(
+    plan: OwnerLocalAtomisticPlan, positions: Array, active: Array
+) -> tuple[Array, ...]:
+    """Alias exchange plus owner-dense candidate filtering of every owner.
+
+    Candidate sources of one owner are its own rows (translation zero) and the
+    received image aliases. The filter is an owner-local dense bound of
+    ``local_capacity x (local_capacity + owner_count * alias_capacity)``
+    candidates, charged by the plan capacities; it never forms global pairs.
+    Edges are emitted receiver-major in candidate order.
+    """
+    ownership = plan.ownership
+    axis = ownership.axis_name
+    local = ownership.local_capacity
+    edges = plan.edge_capacity
+    radius = plan.search_radius
+    cell = plan.partition.cell
+
+    def body(
+        rows: Array, alive: Array, vectors: Array, inverse: Array, shifts: Array
+    ) -> tuple[Array, ...]:
+        me = jax.lax.axis_index(axis).astype(jnp.int32)
+        aliases = plan.partition.local_alias_exchange(
+            rows, alive, vectors, inverse, shifts, radius, axis, plan.alias_capacity
+        )
+        candidates = jnp.concatenate((rows, aliases.positions), axis=0)
+        candidate_valid = jnp.concatenate((alive, aliases.valid), axis=0)
+        count = candidates.shape[0]
+        separation = rows[:, None, :] - candidates[None, :, :]
+        squared = jnp.sum(separation * separation, axis=-1)
+        same_row = jnp.arange(local)[:, None] == jnp.arange(count)[None, :]
+        selected = (
+            alive[:, None]
+            & candidate_valid[None, :]
+            & ~same_row
+            & (squared <= radius * radius)
+        )
+        total = jnp.sum(selected, dtype=jnp.int32)
+        flat = jnp.nonzero(selected.reshape((-1,)), size=edges, fill_value=0)[0]
+        valid = jnp.arange(edges, dtype=jnp.int32) < total
+        receiver = (flat // count).astype(jnp.int32)
+        candidate = (flat % count).astype(jnp.int32)
+        owned = candidate < local
+        alias = jnp.clip(candidate - local, 0, aliases.slots.shape[0] - 1)
+        route_owner = jnp.where(owned, me, aliases.owners[alias])
+        route_slot = jnp.where(owned, candidate, aliases.slots[alias])
+        translation = jnp.where(owned[:, None], 0, aliases.translations[alias])
+        statistics = jnp.stack(
+            (
+                aliases.maximum_load,
+                total,
+                jnp.max(jnp.sum(selected, axis=1, dtype=jnp.int32)),
+            )
+        ).astype(jnp.int32)
+        return (
+            jnp.where(valid, receiver, 0),
+            jnp.where(valid, route_owner, 0),
+            jnp.where(valid, route_slot, 0),
+            jnp.where(valid[:, None], -translation, 0),
+            valid,
+            statistics[None],
+        )
+
+    owner = PartitionSpec(axis)
+    replicated = PartitionSpec()
+    return ownership.map(
+        body,
+        (owner, owner, replicated, replicated, replicated),
+        (owner, owner, owner, owner, owner, owner),
+    )(
+        positions,
+        active,
+        cell.vectors.astype(positions.dtype),
+        cell.inverse_vectors.astype(positions.dtype),
+        plan.stencil.shifts,
+    )
+
+
+def _relation_function(
+    plan: OwnerLocalAtomisticPlan, streaming: StreamedRelationPlan, column_count: int
+) -> Callable[[Array, Array, Array, Array, Array], PreparedStreamedRelation]:
+    local = plan.ownership.local_capacity
+    owner_id = plan.topology_owner_id
+
+    def prepare(
+        receivers: Array, columns: Array, valid: Array, alive: Array, epoch: Array
+    ) -> PreparedStreamedRelation:
+        relation = EdgeRelation(
+            columns,
+            receivers,
+            source_size=column_count,
+            target_size=local,
+            valid=valid,
+        )
+        return streaming.prepare(
+            relation, owner_id=owner_id, epoch=epoch, receiver_valid=alive
+        )
+
+    return prepare
+
+
+@eqx.filter_jit
+def _owner_relations(
+    plan: OwnerLocalAtomisticPlan,
+    streaming: StreamedRelationPlan,
+    column_count: int,
+    receivers: Array,
+    columns: Array,
+    valid: Array,
+    active: Array,
+    epoch: Array,
+) -> tuple[Array, ...]:
+    """Prepare every owner's streamed relation once for this topology epoch."""
+    prepare = _relation_function(plan, streaming, column_count)
+    axis = plan.ownership.axis_name
+
+    def body(
+        receiver: Array, column: Array, edge: Array, alive: Array, step: Array
+    ) -> tuple[Array, ...]:
+        return tuple(
+            _owner_stack(jax.tree.leaves(prepare(receiver, column, edge, alive, step)))
+        )
+
+    owner = PartitionSpec(axis)
+    leaves = jax.eval_shape(
+        lambda: jax.tree.leaves(
+            prepare(
+                receivers[: plan.edge_capacity],
+                columns[: plan.edge_capacity],
+                valid[: plan.edge_capacity],
+                active[: plan.ownership.local_capacity],
+                epoch,
+            )
+        )
+    )
+    return plan.ownership.map(
+        body,
+        (owner, owner, owner, owner, PartitionSpec()),
+        tuple(owner for _ in leaves),
+    )(receivers, columns, valid, active, epoch)
+
+
+def _relation_tree(
+    plan: OwnerLocalAtomisticPlan,
+    streaming: StreamedRelationPlan,
+    column_count: int,
+    dtype_epoch: Array,
+) -> PyTreeDef:
+    """Static structure of one owner's prepared relation (no execution)."""
+    edges = plan.edge_capacity
+    local = plan.ownership.local_capacity
+    prepare = _relation_function(plan, streaming, column_count)
+    shapes = jax.eval_shape(
+        prepare,
+        jax.ShapeDtypeStruct((edges,), jnp.int32),
+        jax.ShapeDtypeStruct((edges,), jnp.int32),
+        jax.ShapeDtypeStruct((edges,), jnp.bool_),
+        jax.ShapeDtypeStruct((local,), jnp.bool_),
+        jax.ShapeDtypeStruct((), dtype_epoch.dtype),
+    )
+    return jax.tree.structure(shapes)
+
+
+def _build_topology(
+    plan: OwnerLocalAtomisticPlan,
+    streaming: StreamedRelationPlan,
+    layout: DistributedPointLayout,
+    positions: Array,
+    epoch: Array,
+    /,
+) -> OwnerLocalAtomisticTopology:
+    """Discover, route, and prepare one owner-local topology epoch."""
+    receivers, route_owners, route_slots, shifts, valid, statistics = _owner_edges(
+        plan, positions, layout.active
+    )
+    halo = DistributedHaloPlan(
+        plan.ownership,
+        route_owners,
+        route_slots,
+        valid,
+        halo_capacity=plan.halo_capacity,
+    )
+    return _bind_topology(
+        plan,
+        streaming,
+        layout,
+        positions,
+        epoch,
+        layout.owner_epochs,
+        (receivers, route_owners, route_slots, shifts, valid),
+        halo,
+        statistics,
+    )
+
+
+def _bind_topology(
+    plan: OwnerLocalAtomisticPlan,
+    streaming: StreamedRelationPlan,
+    layout: DistributedPointLayout,
+    reference_positions: Array,
+    epoch: Array,
+    owner_epochs: Array,
+    routes: tuple[Array, Array, Array, Array, Array],
+    halo: DistributedHaloPlan,
+    statistics: Array,
+    /,
+) -> OwnerLocalAtomisticTopology:
+    receivers, route_owners, route_slots, shifts, valid = routes
+    epoch_ = jnp.asarray(epoch, dtype=jnp.int32)
+    edge_valid = valid & halo.route_valid
+    leaves = _owner_relations(
+        plan,
+        streaming,
+        halo.column_count,
+        receivers,
+        halo.route_columns,
+        edge_valid,
+        layout.active,
+        epoch_,
+    )
+    # ``owner_epochs`` is the layout epoch this topology was discovered for; a
+    # restore passes the recorded witness instead of re-reading the layout.
+    owner_epochs = jnp.asarray(owner_epochs).astype(jnp.int32)
+    owners_current = jnp.all(owner_epochs == owner_epochs[0]) & jnp.all(
+        owner_epochs == layout.owner_epochs.astype(jnp.int32)
+    )
+    finite = jnp.all(
+        jnp.where(layout.active[:, None], jnp.isfinite(reference_positions), True)
+    )
+    maximum_alias = jnp.max(statistics[:, 0])
+    maximum_edges = jnp.max(statistics[:, 1])
+    alias_capacity = jnp.asarray(plan.alias_capacity, dtype=jnp.int32)
+    edge_capacity = jnp.asarray(plan.edge_capacity, dtype=jnp.int32)
+    successful = (
+        owners_current
+        & finite
+        & (maximum_alias <= alias_capacity)
+        & (maximum_edges <= edge_capacity)
+        & halo.evidence.successful
+    )
+    evidence = OwnerLocalTopologyEvidence(
+        successful=successful,
+        owners_current=owners_current,
+        positions_finite=finite,
+        maximum_alias_load=maximum_alias,
+        alias_capacity=alias_capacity,
+        maximum_edge_count=maximum_edges,
+        edge_capacity=edge_capacity,
+        maximum_degree=jnp.max(statistics[:, 2]),
+        halo_successful=halo.evidence.successful,
+        refused_routes=halo.evidence.refused_routes,
+        maximum_halo_load=halo.evidence.maximum_halo_load,
+        halo_capacity=halo.evidence.halo_capacity,
+    )
+    return OwnerLocalAtomisticTopology(
+        route_owners=route_owners,
+        route_slots=route_slots,
+        receivers=receivers,
+        shifts=shifts,
+        valid=valid,
+        halo=halo,
+        relation_leaves=tuple(leaves),
+        reference_positions=reference_positions,
+        owner_epochs=owner_epochs,
+        epoch=epoch_,
+        evidence=evidence,
+        relation_tree=_relation_tree(plan, streaming, halo.column_count, epoch_),
+        streaming_plan_id=streaming.plan_id,
+    )
+
+
+def _wrapped_fractional(
+    plan: OwnerLocalAtomisticPlan, positions: Array, /
+) -> tuple[Array, Array]:
+    """Wrapped fractional coordinates and integer wraps of stored positions."""
+    cell = plan.partition.cell
+    fractional = cell.fractional(positions)
+    images = jnp.where(cell.periodic_mask, jnp.floor(fractional), 0.0)
+    return fractional - images, images.astype(jnp.int32)
+
+
+def prepare_owner_local_atomistic(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    positions: ArrayLike,
+    species: ArrayLike,
+    /,
+    *,
+    rng_key: PRNGKey,
+    velocities: ArrayLike | None = None,
+    masses: ArrayLike | None = None,
+    stable_ids: ArrayLike | None = None,
+    atom_payload: Mapping[str, ArrayLike] | None = None,
+    thermostat_state: ArrayLike | None = None,
+    bias_state: ArrayLike | None = None,
+    constraint_state: ArrayLike | None = None,
+    step_index: int = 0,
+    run_id: str | None = None,
+) -> OwnerLocalAtomisticState:
+    """Host ingress: wrap, own, distribute, and build the first topology.
+
+    ``species`` are the model's native species indices. Every per-atom input
+    is in logical atom order. Ingress refuses a failed first topology with
+    its evidence instead of returning an unusable state.
+    """
+    streaming = _require_model(plan, model)
+    coordinates = np.asarray(positions)
+    if coordinates.ndim != 2 or coordinates.shape[1] != _AMBIENT_DIMENSION:
+        raise ValueError("positions must have shape (atoms, 3).")
+    if not np.issubdtype(coordinates.dtype, np.floating):
+        raise TypeError("positions must have a floating dtype.")
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError("positions must be finite.")
+    count = coordinates.shape[0]
+    dtype = coordinates.dtype
+    species_ = np.asarray(species)
+    if species_.shape != (count,) or not np.issubdtype(species_.dtype, np.integer):
+        raise ValueError("species must hold one integer species index per atom.")
+    velocity = (
+        np.zeros_like(coordinates) if velocities is None else np.asarray(velocities)
+    )
+    mass = np.ones((count,), dtype=dtype) if masses is None else np.asarray(masses)
+    if velocity.shape != coordinates.shape or mass.shape != (count,):
+        raise ValueError("velocities and masses must match the atom rows.")
+    if not np.all(np.isfinite(mass)) or np.any(mass <= 0.0):
+        raise ValueError("masses must be finite and positive.")
+    wrapped, images = _wrapped_fractional(plan, jnp.asarray(coordinates))
+    cell = plan.partition.cell
+    stored = np.asarray(
+        jnp.asarray(coordinates)
+        - contract("na,ad->nd", images.astype(dtype), cell.vectors.astype(dtype))
+    )
+    owners = np.asarray(plan.partition.owners(wrapped))
+    layout = DistributedPointLayout.from_global(
+        plan.ownership, np.asarray(wrapped), owners, stable_ids=stable_ids, epoch=0
+    )
+    payload = _validated_atom_payload({} if atom_payload is None else atom_payload, count)
+    blocked_positions = layout.distribute(stored)
+    epoch = jnp.zeros((), dtype=jnp.int32)
+    topology = _build_topology(plan, streaming, layout, blocked_positions, epoch)
+    if not bool(topology.evidence.successful):
+        raise ValueError(
+            "The initial owner-local topology was refused: "
+            f"{jax.device_get(topology.evidence)}."
+        )
+    revision = _model_revision(model)
+    run = (
+        canonical_fingerprint(
+            {"kind": "owner-local-atomistic-run", "plan": plan.plan_id, "model": revision}
+        )
+        if run_id is None
+        else _nonempty_identity("run_id", run_id)
+    )
+    step = jnp.asarray(step_index, dtype=jnp.int32)
+    return OwnerLocalAtomisticState(
+        layout=layout,
+        positions=blocked_positions,
+        velocities=layout.distribute(velocity.astype(dtype)),
+        masses=layout.distribute(mass.astype(dtype)),
+        species=layout.distribute(species_.astype(np.int32)),
+        image_counts=layout.distribute(np.asarray(images)),
+        force_cache=layout.distribute(np.zeros_like(coordinates)),
+        force_cache_step=step - 1,
+        atom_payload={name: layout.distribute(value) for name, value in payload.items()},
+        rng_key=_typed_key(rng_key),
+        thermostat_state=jnp.zeros((0,), dtype)
+        if thermostat_state is None
+        else jnp.asarray(thermostat_state),
+        bias_state=jnp.zeros((0,), dtype)
+        if bias_state is None
+        else jnp.asarray(bias_state),
+        constraint_state=jnp.zeros((0,), dtype)
+        if constraint_state is None
+        else jnp.asarray(constraint_state),
+        step_index=step,
+        topology=topology,
+        plan_id=plan.plan_id,
+        model_revision_id=revision,
+        run_id=run,
+    )
+
+
+def _require_state(
+    plan: OwnerLocalAtomisticPlan,
+    streaming: StreamedRelationPlan,
+    state: OwnerLocalAtomisticState,
+    /,
+) -> None:
+    if not isinstance(state, OwnerLocalAtomisticState):
+        raise TypeError("state must be an OwnerLocalAtomisticState.")
+    if state.plan_id != plan.plan_id:
+        raise ValueError("The owner-local state belongs to another plan.")
+    if state.topology.streaming_plan_id != streaming.plan_id:
+        raise ValueError("The topology was prepared for another streamed relation plan.")
+
+
+def _select_tree[T](predicate: Array, candidate: T, previous: T, /) -> T:
+    """Leafwise transactional selection of two equally structured trees."""
+
+    def select(new: Array, old: Array) -> Array:
+        if jax.dtypes.issubdtype(old.dtype, jax.dtypes.prng_key):
+            return jax.random.wrap_key_data(
+                jnp.where(predicate, jax.random.key_data(new), jax.random.key_data(old)),
+                impl=jax.random.key_impl(old),
+            )
+        return jnp.where(predicate, new, old)
+
+    return jax.tree.map(select, candidate, previous)
+
+
+def rebuild_owner_local_atomistic(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    /,
+) -> OwnerLocalTransition:
+    """Wrap, migrate, and rebuild one owner epoch as a single transaction.
+
+    Every atom moves with its complete continuation payload to the owner of
+    its wrapped fractional coordinate; stored positions are wrapped by whole
+    lattice translations and the translations are added to the image counts.
+    The new topology is then discovered for the migrated layout. Migration
+    overflow, epoch inconsistency, alias/edge/halo overflow, or non-finite
+    positions on any owner return the accepted state unchanged together with
+    the failed attempt's evidence.
+    """
+    streaming = _require_model(plan, model)
+    _require_state(plan, streaming, state)
+    layout = state.layout
+    cell = plan.partition.cell
+    dtype = state.positions.dtype
+    wrapped, wraps = _wrapped_fractional(plan, state.positions)
+    destinations = jnp.where(layout.active, plan.partition.owners(wrapped), 0)
+    payload = {
+        "positions": state.positions,
+        "velocities": state.velocities,
+        "masses": state.masses,
+        "species": state.species,
+        "image_counts": state.image_counts,
+        "force_cache": state.force_cache,
+        "wraps": wraps,
+        "atom_payload": dict(state.atom_payload),
+    }
+    migrated = layout.migrate(
+        destinations,
+        packet_capacity=plan.migration_capacity,
+        points=wrapped.astype(layout.points.dtype),
+        payload=payload,
+    )
+    moved = migrated.payload
+    translation = contract(
+        "na,ad->nd", moved["wraps"].astype(dtype), cell.vectors.astype(dtype)
+    )
+    new_layout = migrated.layout
+    alive = new_layout.active[:, None]
+    positions = jnp.where(alive, moved["positions"] - translation, 0.0)
+    topology = _build_topology(
+        plan, streaming, new_layout, positions, state.topology.epoch + 1
+    )
+    committed = migrated.evidence.committed & topology.evidence.successful
+    candidate = OwnerLocalAtomisticState(
+        layout=new_layout,
+        positions=positions,
+        velocities=moved["velocities"],
+        masses=moved["masses"],
+        species=moved["species"],
+        image_counts=moved["image_counts"] + moved["wraps"],
+        force_cache=moved["force_cache"],
+        force_cache_step=state.force_cache_step,
+        atom_payload=moved["atom_payload"],
+        rng_key=state.rng_key,
+        thermostat_state=state.thermostat_state,
+        bias_state=state.bias_state,
+        constraint_state=state.constraint_state,
+        step_index=state.step_index,
+        topology=topology,
+        plan_id=state.plan_id,
+        model_revision_id=state.model_revision_id,
+        run_id=state.run_id,
+    )
+    return OwnerLocalTransition(
+        state=_select_tree(committed, candidate, state),
+        committed=committed,
+        migration=migrated.evidence,
+        topology=topology.evidence,
+    )
+
+
+class _OwnerInputs(NamedTuple):
+    """Owner-blocked operands of one owner-region evaluation."""
+
+    positions: Array
+    species: Array
+    active: Array
+    receivers: Array
+    columns: Array
+    shifts: Array
+    valid: Array
+    send_slots: Array
+    send_valid: Array
+    reference: Array
+    relation: tuple[Array, ...]
+
+
+def _owner_inputs(state: OwnerLocalAtomisticState, /) -> _OwnerInputs:
+    topology = state.topology
+    return _OwnerInputs(
+        positions=state.positions,
+        species=state.species,
+        active=state.layout.active,
+        receivers=topology.receivers,
+        columns=topology.columns,
+        shifts=topology.shifts,
+        valid=topology.edge_valid,
+        send_slots=topology.halo.send_slots,
+        send_valid=topology.halo.send_valid,
+        reference=topology.reference_positions,
+        relation=topology.relation_leaves,
+    )
+
+
+def _owner_view(
+    topology: OwnerLocalAtomisticTopology, inputs: _OwnerInputs, /
+) -> OwnerLayerTopology:
+    return OwnerLayerTopology(
+        relation=jax.tree.unflatten(
+            topology.relation_tree, _owner_unstack(inputs.relation)
+        ),
+        receivers=inputs.receivers,
+        columns=inputs.columns,
+        shifts=inputs.shifts,
+        valid=inputs.valid,
+        send_slots=inputs.send_slots,
+        send_valid=inputs.send_valid,
+    )
+
+
+def _owner_displacement(inputs: _OwnerInputs, /) -> Array:
+    moved = inputs.positions - inputs.reference
+    distance = jnp.sqrt(jnp.sum(moved * moved, axis=-1))
+    return jnp.max(jnp.where(inputs.active, distance, 0.0))
+
+
+@eqx.filter_jit
+def _evaluate_owner_regions(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    gradients: bool,
+) -> tuple[Array, ...]:
+    topology = state.topology
+    halo = topology.halo
+    axis = plan.ownership.axis_name
+    arrays, structure = eqx.partition(model, eqx.is_array)
+    dtype = state.positions.dtype
+    vectors = plan.partition.cell.vectors.astype(dtype)
+
+    def body(inputs: _OwnerInputs, parameters: PyTree[Array]) -> tuple[Array, ...]:
+        local_model = eqx.combine(parameters, structure)
+        view = _owner_view(topology, inputs)
+        if gradients:
+            result = owner_layer_gradients(
+                local_model,
+                halo,
+                view,
+                inputs.positions,
+                inputs.species,
+                inputs.active,
+                vectors,
+                plan.cutoff,
+                message_capacity_bytes=plan.message_capacity_bytes,
+                parameters=False,
+            )
+            atom_energy = result.atom_energies
+            gradient = result.gradient
+            strain = result.strain_gradient
+            relation_successful = result.relation_successful
+        else:
+            atom_energy, relation_successful = owner_atom_energies(
+                local_model,
+                halo,
+                view,
+                inputs.positions,
+                inputs.species,
+                inputs.active,
+                vectors,
+                plan.cutoff,
+                message_capacity_bytes=plan.message_capacity_bytes,
+            )
+            gradient = jnp.zeros_like(inputs.positions)
+            strain = jnp.zeros((3, 3), dtype=dtype)
+        atom_energy = jnp.where(inputs.active, atom_energy, 0.0)
+        owner_energy = _ordered_sum(atom_energy, plan.reduction)
+        finite = (
+            jnp.all(jnp.isfinite(atom_energy))
+            & jnp.all(jnp.isfinite(gradient))
+            & jnp.all(jnp.isfinite(strain))
+        )
+        return (
+            atom_energy,
+            gradient,
+            owner_energy[None],
+            strain[None],
+            _owner_displacement(inputs)[None],
+            finite[None],
+            relation_successful[None],
+        )
+
+    owner = PartitionSpec(axis)
+    return plan.ownership.map(
+        body,
+        (owner, PartitionSpec()),
+        (owner,) * 7,
+    )(_owner_inputs(state), arrays)
+
+
+def _execution_status(
+    plan: OwnerLocalAtomisticPlan,
+    state: OwnerLocalAtomisticState,
+    displacement: Array,
+    finite: Array,
+    relation: Array,
+    /,
+) -> OwnerLocalExecutionStatus:
+    topology = state.topology
+    owners_current = jnp.all(
+        topology.owner_epochs == state.layout.owner_epochs.astype(jnp.int32)
+    )
+    maximum = jnp.max(displacement)
+    certified = 2.0 * maximum <= plan.skin
+    finite_ = jnp.all(finite)
+    relation_ = jnp.all(relation)
+    successful = (
+        topology.evidence.successful & owners_current & certified & finite_ & relation_
+    )
+    return OwnerLocalExecutionStatus(
+        topology_successful=topology.evidence.successful,
+        owners_current=owners_current,
+        displacement_certified=certified,
+        maximum_displacement=maximum,
+        relation_successful=relation_,
+        finite=finite_,
+        successful=successful,
+    )
+
+
+def evaluate_owner_local_atomistic(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    /,
+    *,
+    forces: bool = True,
+) -> OwnerLocalAtomisticEvaluation:
+    """Partition-local energy, forces, and strain derivative of a layered model.
+
+    Every owner evaluates only its receivers. Before each interaction the
+    model's source payload of owned rows crosses the halo once; reverse
+    cotangents return through the halo transpose once per interaction in
+    reverse order. Owner energies, strain partials, and statuses reduce in
+    owner order. A stale owner epoch, an expired displacement certificate
+    (``2 max|x - x_ref| > skin``), a refused topology, or non-finite output
+    fails the evaluation and poisons every value. The model revision binding
+    is checked at ingress, restore, and `rebind_owner_local_model`, not by
+    hashing parameters on every call.
+    """
+    streaming = _require_model(plan, model)
+    _require_state(plan, streaming, state)
+    if not isinstance(forces, bool):
+        raise TypeError("forces must be a bool.")
+    atom_energy, gradient, owner_energy, strain, displacement, finite, relation = (
+        _evaluate_owner_regions(plan, model, state, forces)
+    )
+    status = _execution_status(plan, state, displacement, finite, relation)
+    energy = _ordered_sum(owner_energy, plan.reduction)
+    strain_gradient = _ordered_sum(strain, plan.reduction)
+    cell = plan.partition.cell
+    stress_available = forces and cell.fully_periodic and cell.rank == 3
+    stress = (
+        0.5 * (strain_gradient + strain_gradient.T) / cell.volume
+        if stress_available
+        else jnp.full((3, 3), jnp.nan, dtype=strain_gradient.dtype)
+    )
+    accepted = status.successful
+    nan = jnp.asarray(jnp.nan, dtype=energy.dtype)
+    force = jnp.where(state.layout.active[:, None], -gradient, 0.0)
+    return OwnerLocalAtomisticEvaluation(
+        energy=jnp.where(accepted, energy, nan),
+        owner_energies=jnp.where(accepted, owner_energy, nan),
+        atom_energies=jnp.where(accepted, atom_energy, nan),
+        forces=jnp.where(accepted & forces, force, nan),
+        strain_gradient=jnp.where(accepted & forces, strain_gradient, nan),
+        stress=jnp.where(accepted, stress, nan),
+        stress_available=stress_available,
+        status=status,
+        successful=accepted,
+    )
+
+
+@eqx.filter_jit
+def _owner_parameter_partials(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    force_reference: Array,
+    energy_factor: Array,
+    force_weight: Array,
+    stress_factor: Array,
+) -> PyTree[Array]:
+    """Per-owner PARAMETER-lane partials of the linearized global loss.
+
+    Each owner differentiates its local surrogate
+    ``energy_factor * E_owner + force_weight * sum |F - F_ref|^2 +
+    <stress_factor, strain_partial>`` through its own explicit reverse sweep,
+    including every halo gather and transpose; the sum over owners of these
+    partials is the gradient of the global loss.
+    """
+    topology = state.topology
+    halo = topology.halo
+    axis = plan.ownership.axis_name
+    arrays, structure = eqx.partition(model, eqx.is_array)
+    dtype = state.positions.dtype
+    vectors = plan.partition.cell.vectors.astype(dtype)
+
+    def body(
+        inputs: _OwnerInputs,
+        reference: Array,
+        parameters: PyTree[Array],
+        factors: tuple[Array, Array, Array],
+    ) -> PyTree[Array]:
+        energy_scale, weight, stress_scale = factors
+        lanes = partition_parameters(eqx.combine(parameters, structure))
+        view = _owner_view(topology, inputs)
+
+        def surrogate(lane: PyTree[Array]) -> Array:
+            local_model = combine_parameters(lane, lanes[1], lanes[2])
+            result = owner_layer_gradients(
+                local_model,
+                halo,
+                view,
+                inputs.positions,
+                inputs.species,
+                inputs.active,
+                vectors,
+                plan.cutoff,
+                message_capacity_bytes=plan.message_capacity_bytes,
+                parameters=False,
+            )
+            owned = jnp.where(inputs.active, result.atom_energies, 0.0)
+            residual = jnp.where(
+                inputs.active[:, None], -result.gradient - reference, 0.0
+            )
+            return (
+                energy_scale * _ordered_sum(owned, plan.reduction)
+                + weight * jnp.sum(residual * residual)
+                + jnp.sum(stress_scale * result.strain_gradient)
+            )
+
+        return _owner_stack(jax.grad(surrogate)(lanes[0]))
+
+    owner = PartitionSpec(axis)
+    replicated = PartitionSpec()
+    return plan.ownership.map(
+        body,
+        (owner, owner, replicated, replicated),
+        owner,
+    )(
+        _owner_inputs(state),
+        force_reference,
+        arrays,
+        (energy_factor, force_weight, stress_factor),
+    )
+
+
+def owner_local_loss_gradient(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    energy_reference: ArrayLike,
+    force_reference: ArrayLike,
+    /,
+    *,
+    energy_weight: float,
+    force_weight: float,
+    stress_reference: ArrayLike | None = None,
+    stress_weight: float = 0.0,
+) -> OwnerLocalLossGradient:
+    """Owner-local E/F/S loss and its exact PARAMETER-lane gradient.
+
+    ``loss = w_E (E - E_ref)^2 + w_F sum_atoms |F - F_ref|^2 +
+    w_S |stress - stress_ref|^2``; ``force_reference`` is in logical atom
+    order. The gradient differentiates the owner-local forces themselves
+    (mixed coordinate/parameter derivatives through every halo exchange) and
+    reduces the per-owner partials in owner order. A failed evaluation fails
+    the gradient and poisons it with NaN.
+    """
+    evaluation = evaluate_owner_local_atomistic(plan, model, state, forces=True)
+    dtype = state.positions.dtype
+    reference_energy = jnp.asarray(energy_reference, dtype=dtype)
+    if reference_energy.shape:
+        raise ValueError("energy_reference must be a scalar.")
+    references = jnp.asarray(force_reference, dtype=dtype)
+    if references.shape != (state.layout.logical_count, 3):
+        raise ValueError("force_reference must have shape (atoms, 3).")
+    blocked_reference = state.layout.distribute(references)
+    weights = tuple(
+        _finite_length(name, value, positive=False)
+        for name, value in (
+            ("energy_weight", energy_weight),
+            ("force_weight", force_weight),
+            ("stress_weight", stress_weight),
+        )
+    )
+    energy_residual = evaluation.energy - reference_energy
+    force_residual = jnp.where(
+        state.layout.active[:, None], evaluation.forces - blocked_reference, 0.0
+    )
+    loss = weights[0] * energy_residual**2 + weights[1] * jnp.sum(force_residual**2)
+    stress_factor = jnp.zeros((3, 3), dtype=dtype)
+    if stress_reference is not None or weights[2] != 0.0:
+        if not evaluation.stress_available or stress_reference is None:
+            raise ValueError(
+                "Stress supervision requires a stress reference and a fully "
+                "periodic three-dimensional cell."
+            )
+        stress_target = jnp.asarray(stress_reference, dtype=dtype)
+        if stress_target.shape != (3, 3):
+            raise ValueError("stress_reference must have shape (3, 3).")
+        stress_residual = evaluation.stress - stress_target
+        loss = loss + weights[2] * jnp.sum(stress_residual**2)
+        symmetric = 0.5 * (stress_residual + stress_residual.T)
+        stress_factor = 2.0 * weights[2] * symmetric / plan.partition.cell.volume
+    partials = _owner_parameter_partials(
+        plan,
+        model,
+        state,
+        blocked_reference,
+        2.0 * weights[0] * energy_residual,
+        jnp.asarray(weights[1], dtype=dtype),
+        stress_factor,
+    )
+    gradient = jax.tree.map(lambda value: _ordered_sum(value, plan.reduction), partials)
+    accepted = evaluation.successful
+    return OwnerLocalLossGradient(
+        loss=jnp.where(accepted, loss, jnp.nan),
+        parameter_gradient=jax.tree.map(
+            lambda value: jnp.where(accepted, value, jnp.nan), gradient
+        ),
+        evaluation=evaluation,
+        successful=accepted,
+    )
+
+
+def rebind_owner_local_model(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    state: OwnerLocalAtomisticState,
+    /,
+) -> OwnerLocalAtomisticState:
+    """Bind an updated model revision; the force cache becomes stale."""
+    streaming = _require_model(plan, model)
+    _require_state(plan, streaming, state)
+    revision = _model_revision(model)
+    if revision == state.model_revision_id:
+        return state
+    return OwnerLocalAtomisticState(
+        layout=state.layout,
+        positions=state.positions,
+        velocities=state.velocities,
+        masses=state.masses,
+        species=state.species,
+        image_counts=state.image_counts,
+        force_cache=state.force_cache,
+        force_cache_step=state.step_index - 1,
+        atom_payload=state.atom_payload,
+        rng_key=state.rng_key,
+        thermostat_state=state.thermostat_state,
+        bias_state=state.bias_state,
+        constraint_state=state.constraint_state,
+        step_index=state.step_index,
+        topology=state.topology,
+        plan_id=state.plan_id,
+        model_revision_id=revision,
+        run_id=state.run_id,
+    )
+
+
+@final
+class OwnerLocalAtomisticCheckpoint(StrictModule, NonTrainableState):
+    """Host continuation record of an owner-local state and its identity.
+
+    ``arrays`` holds every owner-blocked and replicated continuation array,
+    including the accepted topology routes and reference positions, so a
+    restored run continues bitwise like the uninterrupted one. Derived halo
+    columns and prepared relations are rebuilt through their constructors.
+    """
+
+    arrays: Mapping[str, np.ndarray]
+    key_implementation: str = eqx.field(static=True)
+    logical_count: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+    model_revision_id: str = eqx.field(static=True)
+    run_id: str = eqx.field(static=True)
+    checkpoint_id: str = eqx.field(static=True)
+
+
+def _checkpoint_arrays(state: OwnerLocalAtomisticState, /) -> dict[str, np.ndarray]:
+    layout = state.layout
+    topology = state.topology
+    records: dict[str, Array] = {
+        "layout/points": layout.points,
+        "layout/stable_ids": layout.stable_ids,
+        "layout/active": layout.active,
+        "layout/logical_indices": layout.logical_indices,
+        "layout/owner_epochs": layout.owner_epochs,
+        "layout/stable_ids_unique": layout.stable_ids_unique,
+        "atoms/positions": state.positions,
+        "atoms/velocities": state.velocities,
+        "atoms/masses": state.masses,
+        "atoms/species": state.species,
+        "atoms/image_counts": state.image_counts,
+        "atoms/force_cache": state.force_cache,
+        "state/force_cache_step": state.force_cache_step,
+        "state/rng_key": jax.random.key_data(state.rng_key),
+        "state/thermostat": state.thermostat_state,
+        "state/bias": state.bias_state,
+        "state/constraint": state.constraint_state,
+        "state/step_index": state.step_index,
+        "topology/route_owners": topology.route_owners,
+        "topology/route_slots": topology.route_slots,
+        "topology/receivers": topology.receivers,
+        "topology/shifts": topology.shifts,
+        "topology/valid": topology.valid,
+        "topology/reference_positions": topology.reference_positions,
+        "topology/epoch": topology.epoch,
+        "topology/owner_epochs": topology.owner_epochs,
+        "topology/maximum_alias_load": topology.evidence.maximum_alias_load,
+        "topology/maximum_edge_count": topology.evidence.maximum_edge_count,
+        "topology/maximum_degree": topology.evidence.maximum_degree,
+    }
+    for name, value in state.atom_payload.items():
+        records[f"payload/{name}"] = value
+    return {name: np.asarray(jax.device_get(value)) for name, value in records.items()}
+
+
+def _checkpoint_identity(
+    arrays: Mapping[str, np.ndarray],
+    key_implementation: str,
+    logical_count: int,
+    plan_id: str,
+    model_revision_id: str,
+    run_id: str,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "owner-local-atomistic-checkpoint",
+            "plan": plan_id,
+            "model_revision": model_revision_id,
+            "run": run_id,
+            "key_implementation": key_implementation,
+            "logical_count": logical_count,
+            "arrays": array_tree_fingerprint(dict(arrays)),
+        }
+    )
+
+
+def _require_coherent_epochs(
+    layout_epochs: np.ndarray, topology_epochs: np.ndarray, /
+) -> None:
+    """Refuse stale owners or a topology discovered for another layout epoch."""
+    layout_ = np.asarray(layout_epochs).astype(np.int64)
+    topology_ = np.asarray(topology_epochs).astype(np.int64)
+    if layout_.shape != topology_.shape or not np.all(layout_ == layout_[0]):
+        raise ValueError("The owner-local layout has stale owner epochs.")
+    if not np.array_equal(layout_, topology_):
+        raise ValueError(
+            "The owner-local topology was discovered for another layout epoch; "
+            "rebuild it with rebuild_owner_local_atomistic."
+        )
+
+
+def checkpoint_owner_local_atomistic(
+    plan: OwnerLocalAtomisticPlan, state: OwnerLocalAtomisticState, /
+) -> OwnerLocalAtomisticCheckpoint:
+    """Explicit host egress of the complete accepted continuation state.
+
+    Only a coherent accepted state is published: its topology must be the
+    successful epoch of this plan's streamed relation, discovered for the
+    layout's current (uniform) owner epoch. The topology's owner-epoch
+    witness is recorded, so restore never re-derives it from the layout.
+    """
+    if not isinstance(state, OwnerLocalAtomisticState):
+        raise TypeError("state must be an OwnerLocalAtomisticState.")
+    if state.plan_id != plan.plan_id:
+        raise ValueError("The owner-local state belongs to another plan.")
+    if state.topology.streaming_plan_id != plan.streaming.plan_id:
+        raise ValueError("The topology was prepared for another streamed relation plan.")
+    arrays = _checkpoint_arrays(state)
+    _require_coherent_epochs(
+        arrays["layout/owner_epochs"], arrays["topology/owner_epochs"]
+    )
+    if not bool(jax.device_get(state.topology.evidence.successful)):
+        raise ValueError("The owner-local topology is not an accepted epoch.")
+    implementation = str(jax.random.key_impl(state.rng_key))
+    logical = state.layout.logical_count
+    return OwnerLocalAtomisticCheckpoint(
+        arrays=arrays,
+        key_implementation=implementation,
+        logical_count=logical,
+        plan_id=state.plan_id,
+        model_revision_id=state.model_revision_id,
+        run_id=state.run_id,
+        checkpoint_id=_checkpoint_identity(
+            arrays,
+            implementation,
+            logical,
+            state.plan_id,
+            state.model_revision_id,
+            state.run_id,
+        ),
+    )
+
+
+def restore_owner_local_atomistic(
+    plan: OwnerLocalAtomisticPlan,
+    model: AtomisticLayeredModel,
+    checkpoint: OwnerLocalAtomisticCheckpoint,
+    /,
+) -> OwnerLocalAtomisticState:
+    """Reconstruct an accepted owner-local state for a matching plan and model.
+
+    The plan identity, the model numeric revision, and the content identity
+    must match. The layout, halo plan, and prepared relations are rebuilt
+    through their constructors from the recorded routes, so a restored run
+    reproduces the uninterrupted accepted evolution. The topology binds its
+    recorded owner-epoch witness, never the restored layout's epochs; a
+    record whose witness disagrees with the layout, or that lacks it, is
+    refused.
+    """
+    streaming = _require_model(plan, model)
+    if not isinstance(checkpoint, OwnerLocalAtomisticCheckpoint):
+        raise TypeError("checkpoint must be an OwnerLocalAtomisticCheckpoint.")
+    if checkpoint.plan_id != plan.plan_id:
+        raise ValueError("The checkpoint belongs to another owner-local plan.")
+    revision = _model_revision(model)
+    if checkpoint.model_revision_id != revision:
+        raise ValueError("The checkpoint belongs to another model revision.")
+    arrays = checkpoint.arrays
+    observed = _checkpoint_identity(
+        arrays,
+        checkpoint.key_implementation,
+        checkpoint.logical_count,
+        checkpoint.plan_id,
+        checkpoint.model_revision_id,
+        checkpoint.run_id,
+    )
+    if observed != checkpoint.checkpoint_id:
+        raise ValueError("The owner-local checkpoint content identity is corrupt.")
+    ownership = plan.ownership
+    layout = DistributedPointLayout(
+        ownership,
+        arrays["layout/points"],
+        arrays["layout/stable_ids"],
+        arrays["layout/active"],
+        arrays["layout/logical_indices"],
+        arrays["layout/owner_epochs"],
+        arrays["layout/stable_ids_unique"],
+        checkpoint.logical_count,
+    )
+    routes = tuple(
+        ownership.place(arrays[f"topology/{name}"])
+        for name in ("receivers", "route_owners", "route_slots", "shifts", "valid")
+    )
+    if "topology/owner_epochs" not in arrays:
+        raise ValueError("The checkpoint lacks the topology owner-epoch witness.")
+    _require_coherent_epochs(
+        arrays["layout/owner_epochs"], arrays["topology/owner_epochs"]
+    )
+    halo = DistributedHaloPlan(
+        ownership, routes[1], routes[2], routes[4], halo_capacity=plan.halo_capacity
+    )
+    owners = ownership.owner_count
+    statistics = jnp.broadcast_to(
+        jnp.stack(
+            tuple(
+                jnp.asarray(arrays[f"topology/{name}"], dtype=jnp.int32)
+                for name in ("maximum_alias_load", "maximum_edge_count", "maximum_degree")
+            )
+        ),
+        (owners, 3),
+    )
+    topology = _bind_topology(
+        plan,
+        streaming,
+        layout,
+        ownership.place(arrays["topology/reference_positions"]),
+        jnp.asarray(arrays["topology/epoch"]),
+        ownership.place(arrays["topology/owner_epochs"]),
+        (routes[0], routes[1], routes[2], routes[3], routes[4]),
+        halo,
+        statistics,
+    )
+    if not bool(topology.evidence.successful):
+        raise ValueError("The restored owner-local topology does not validate.")
+    payload = {
+        name.removeprefix("payload/"): ownership.place(value)
+        for name, value in arrays.items()
+        if name.startswith("payload/")
+    }
+    key = jax.random.wrap_key_data(
+        jnp.asarray(arrays["state/rng_key"]), impl=checkpoint.key_implementation
+    )
+    return OwnerLocalAtomisticState(
+        layout=layout,
+        positions=ownership.place(arrays["atoms/positions"]),
+        velocities=ownership.place(arrays["atoms/velocities"]),
+        masses=ownership.place(arrays["atoms/masses"]),
+        species=ownership.place(arrays["atoms/species"]),
+        image_counts=ownership.place(arrays["atoms/image_counts"]),
+        force_cache=ownership.place(arrays["atoms/force_cache"]),
+        force_cache_step=jnp.asarray(arrays["state/force_cache_step"]),
+        atom_payload=payload,
+        rng_key=key,
+        thermostat_state=jnp.asarray(arrays["state/thermostat"]),
+        bias_state=jnp.asarray(arrays["state/bias"]),
+        constraint_state=jnp.asarray(arrays["state/constraint"]),
+        step_index=jnp.asarray(arrays["state/step_index"]),
+        topology=topology,
+        plan_id=checkpoint.plan_id,
+        model_revision_id=checkpoint.model_revision_id,
+        run_id=checkpoint.run_id,
+    )
+
+
 __all__ = [
     "DistributedAtomisticCheckpoint",
     "DistributedAtomisticCheckpointIdentity",
@@ -2072,23 +3760,39 @@ __all__ = [
     "DistributedReductionMode",
     "DistributedReductionPolicy",
     "DistributedSpatialDecomposition",
+    "OwnerLocalAtomisticCheckpoint",
+    "OwnerLocalAtomisticEvaluation",
+    "OwnerLocalAtomisticPlan",
+    "OwnerLocalAtomisticState",
+    "OwnerLocalAtomisticTopology",
+    "OwnerLocalExecutionStatus",
+    "OwnerLocalLossGradient",
+    "OwnerLocalTopologyEvidence",
+    "OwnerLocalTransition",
     "PreparedDistributedAtomisticRuntime",
     "PreparedDistributedPME",
     "PreparedDistributedPolarization",
     "certify_distributed_polarization",
     "certify_distributed_reciprocal",
     "checkpoint_distributed_atomistic",
+    "checkpoint_owner_local_atomistic",
     "commit_distributed_migration",
     "distributed_constraint_projection",
     "distributed_domain_evidence",
     "distributed_particle_mesh_electrostatics",
     "distributed_thermodynamic_reduction",
     "evaluate_distributed_atomistic",
+    "evaluate_owner_local_atomistic",
     "exchange_distributed_halos",
     "halo_short_range_evaluate",
     "migrate_distributed_atomistic",
+    "owner_local_loss_gradient",
+    "prepare_owner_local_atomistic",
     "propose_distributed_migration",
+    "rebind_owner_local_model",
+    "rebuild_owner_local_atomistic",
     "restore_distributed_atomistic_checkpoint",
+    "restore_owner_local_atomistic",
     "reverse_distributed_halo_force_return",
     "reverse_halo_force_return",
 ]

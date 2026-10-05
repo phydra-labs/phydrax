@@ -13,6 +13,7 @@ import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -29,6 +30,7 @@ from .._array_archive import (
     unpack_array_tree,
 )
 from .._execution_resources import ResourceRequest
+from .._execution_sampling import PhaseMemoryEvidence, PhaseMemorySampler
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._host_io import descriptor_relative_path, open_directory_descriptor
 from .._iteration import (
@@ -44,6 +46,7 @@ from .._iteration import (
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from .._validation import canonical_identifier
 from ..lifecycle._archive import decode_logical_arrays, encode_logical_arrays
 from ..lifecycle._chunk_repository import (
     ArtifactManifest,
@@ -62,11 +65,14 @@ from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
     AbstractFixedStepMethod,
+    FixedStepEvidenceRetention,
+    inactive_fixed_step_retry,
     RetriedFixedStepResult,
     retry_fixed_step,
     RobustRetryPolicy,
 )
 from ._runtime_lifecycle import (
+    _unpack_state_tree,
     AcceptedStepTriggerGraph,
     AcceptedStepTriggerGraphState,
     ByteBoundedAsyncPublisher,
@@ -75,6 +81,8 @@ from ._runtime_lifecycle import (
     restore_runtime_checkpoint_arrays,
     RuntimeCheckpointEncodingPlan,
     RuntimeCheckpointEnvelope,
+    RuntimeIdentityInventory,
+    RuntimeMigrationReceipt,
     RuntimeRestartRelation,
     StreamingMomentPlan,
     StreamingMomentState,
@@ -246,6 +254,14 @@ def _validate_json_nesting(payload: str, maximum: int, /) -> None:
 
 
 class ProductionCaseManifest(StrictModule, NonTrainableState):
+    """Case identity every checkpoint of a production run binds.
+
+    With an ``inventory`` the method, precision, topology and geometry
+    identities are the inventory's own, and a restore whose inventory differs
+    in any role is refused with the stale roles before a value is used.
+    """
+
+    inventory: RuntimeIdentityInventory | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
@@ -255,6 +271,7 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
     dtype: str = eqx.field(static=True)
     manifest_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         /,
@@ -265,6 +282,7 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
         topology_id: str,
         geometry_layout_id: str,
         dtype: str,
+        inventory: RuntimeIdentityInventory | None = None,
     ) -> None:
         values = tuple(
             str(value)
@@ -279,6 +297,15 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
         )
         if any(not value for value in values):
             raise ValueError("Production case manifest identities are required.")
+        if inventory is not None and (
+            inventory.identity("method") != values[1]
+            or inventory.identity("precision") != values[2]
+            or inventory.topology_id != values[3]
+            or inventory.geometry_layout_id != values[4]
+        ):
+            raise ValueError(
+                "Production case identities do not match their identity inventory."
+            )
         backend = jax.default_backend()
         (
             self.problem_id,
@@ -288,18 +315,45 @@ class ProductionCaseManifest(StrictModule, NonTrainableState):
             self.geometry_layout_id,
             self.dtype,
         ) = values
+        self.inventory = inventory
         self.backend = backend
-        self.manifest_id = canonical_fingerprint(
-            {
-                "kind": "production-case-manifest",
-                "problem": self.problem_id,
-                "method": self.method_id,
-                "precision": self.precision_id,
-                "topology": self.topology_id,
-                "geometry_layout": self.geometry_layout_id,
-                "backend": backend,
-                "dtype": self.dtype,
-            }
+        identity = {
+            "kind": "production-case-manifest",
+            "problem": self.problem_id,
+            "method": self.method_id,
+            "precision": self.precision_id,
+            "topology": self.topology_id,
+            "geometry_layout": self.geometry_layout_id,
+            "backend": backend,
+            "dtype": self.dtype,
+        }
+        if inventory is not None:
+            identity["inventory"] = inventory.inventory_id
+        self.manifest_id = canonical_fingerprint(identity)
+
+    @classmethod
+    @checked
+    def from_inventory(
+        cls,
+        inventory: RuntimeIdentityInventory,
+        /,
+        *,
+        problem_id: str,
+        dtype: str,
+    ) -> ProductionCaseManifest:
+        """Case manifest whose compatibility identities are the inventory's."""
+        method = inventory.identity("method")
+        precision = inventory.identity("precision")
+        if method is None or precision is None:
+            raise ValueError("Runtime inventories always bind method and precision.")
+        return cls(
+            problem_id=problem_id,
+            method_id=method,
+            precision_id=precision,
+            topology_id=inventory.topology_id,
+            geometry_layout_id=inventory.geometry_layout_id,
+            dtype=dtype,
+            inventory=inventory,
         )
 
 
@@ -385,6 +439,101 @@ class CheckpointCommitReceipt:
         )
 
 
+_MIGRATION_RECORD_KEYS = frozenset(
+    {
+        "kind",
+        "source",
+        "target",
+        "transport_id",
+        "receipt_id",
+        "source_checkpoint_id",
+        "accepted_step",
+        "state",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointMigrationRecord:
+    """One committed migration in a repository checkpoint's restart lineage.
+
+    The record is written atomically with the ``restart-lineage`` snapshot of
+    the restore that crossed ``receipt`` and is carried by every later
+    snapshot of the artifact. ``source_checkpoint_id`` and ``accepted_step``
+    name the transported checkpoint; ``source_state(template)`` restores that
+    checkpoint's accepted state (for a support epoch, the held anchor the
+    successor was rebased at) into the source owners' exact template.
+    """
+
+    receipt: RuntimeMigrationReceipt
+    source_checkpoint_id: str
+    accepted_step: int
+    state_specification: Mapping[str, Any]
+    state_arrays: Mapping[str, np.ndarray]
+    encoding_plan: RuntimeCheckpointEncodingPlan
+
+    def source_state(self, template: Any, /) -> Any:
+        """The transported checkpoint's accepted state in ``template``'s layout."""
+        return _unpack_state_tree(
+            self.state_specification, self.state_arrays, template, self.encoding_plan
+        )
+
+    def to_record(self, /) -> dict[str, Any]:
+        receipt = self.receipt
+        return {
+            "kind": receipt.kind,
+            "source": receipt.source.record(),
+            "target": receipt.target.record(),
+            "transport_id": receipt.transport_id,
+            "receipt_id": receipt.receipt_id,
+            "source_checkpoint_id": self.source_checkpoint_id,
+            "accepted_step": self.accepted_step,
+            "state": dict(self.state_specification),
+        }
+
+    @classmethod
+    def from_record(
+        cls,
+        record: Any,
+        arrays: Mapping[str, np.ndarray],
+        encoding_plan: RuntimeCheckpointEncodingPlan,
+        /,
+    ) -> CheckpointMigrationRecord:
+        """Rebuild one archived lineage record, refusing an unbound receipt."""
+        if not isinstance(record, Mapping) or set(record) != _MIGRATION_RECORD_KEYS:
+            raise ValueError("Repository checkpoint migration record is invalid.")
+        specification = record["state"]
+        names = (
+            specification.get("arrays") if isinstance(specification, Mapping) else None
+        )
+        accepted_step = record["accepted_step"]
+        if (
+            not isinstance(names, list)
+            or any(not isinstance(name, str) or name not in arrays for name in names)
+            or type(accepted_step) is not int
+            or accepted_step < 0
+            or not isinstance(record["source_checkpoint_id"], str)
+            or not isinstance(record["transport_id"], str)
+        ):
+            raise ValueError("Repository checkpoint migration record is invalid.")
+        receipt = RuntimeMigrationReceipt(
+            record["kind"],
+            RuntimeIdentityInventory.from_record(record["source"]),
+            RuntimeIdentityInventory.from_record(record["target"]),
+            transport_id=record["transport_id"],
+        )
+        if receipt.receipt_id != record["receipt_id"]:
+            raise ValueError("Repository migration record does not bind its receipt.")
+        return cls(
+            receipt,
+            record["source_checkpoint_id"],
+            accepted_step,
+            dict(specification),
+            {name: arrays[name] for name in names},
+            encoding_plan,
+        )
+
+
 class DurableCheckpointStore:
     """Descriptor-confined, crash-consistent checkpoint generations."""
 
@@ -402,6 +551,7 @@ class DurableCheckpointStore:
             "archive_size_bytes",
             "archive_sha256",
             "commit_id",
+            "inventory",
         }
     )
 
@@ -509,6 +659,10 @@ class DurableCheckpointStore:
             > DEFAULT_ARRAY_ARCHIVE_LIMITS.max_container_bytes
         ):
             raise ValueError("Committed checkpoint archive size is corrupt.")
+        if payload["inventory"] is not None and not isinstance(
+            payload["inventory"], Mapping
+        ):
+            raise ValueError("Committed checkpoint inventory is corrupt.")
         commit_id = payload.pop("commit_id")
         expected_commit_id = canonical_fingerprint(
             {"kind": "durable-checkpoint-commit", **payload}
@@ -602,6 +756,12 @@ class DurableCheckpointStore:
             or envelope.precision_id != self.manifest.precision_id
             or envelope.topology_epoch_id != self.manifest.geometry_layout_id
             or envelope.encoding_plan.encoding_id != self.encoding_plan.encoding_id
+            or (None if envelope.inventory is None else envelope.inventory.inventory_id)
+            != (
+                None
+                if self.manifest.inventory is None
+                else self.manifest.inventory.inventory_id
+            )
         ):
             raise ValueError("Checkpoint envelope does not belong to this store.")
         if _entry_exists(self._root_descriptor, "committed.json"):
@@ -654,6 +814,9 @@ class DurableCheckpointStore:
             "store_id": self.store_id,
             "archive_size_bytes": archive_size,
             "archive_sha256": archive_sha256,
+            "inventory": None
+            if envelope.inventory is None
+            else envelope.inventory.record(),
         }
         pointer["commit_id"] = canonical_fingerprint(
             {"kind": "durable-checkpoint-commit", **pointer}
@@ -684,6 +847,14 @@ class DurableCheckpointStore:
         runtime_id: str | None = None,
     ) -> RuntimeCheckpointEnvelope:
         pointer = self._read_pointer()
+        # A stale or foreign inventory names its changed roles before anything
+        # else of the checkpoint is read or used.
+        RuntimeRestartRelation.identity(self.manifest.topology_id).admit_inventory(
+            None
+            if pointer["inventory"] is None
+            else RuntimeIdentityInventory.from_record(pointer["inventory"]),
+            self.manifest.inventory,
+        )
         if (
             pointer["store_id"] != self.store_id
             or pointer["manifest_id"] != self.manifest.manifest_id
@@ -705,6 +876,7 @@ class DurableCheckpointStore:
             rng_template=rng_template,
             runtime_id=pointer["runtime_id"],
             encoding_plan=self.encoding_plan,
+            inventory=self.manifest.inventory,
         )
         if (
             envelope.checkpoint_id != pointer["checkpoint_id"]
@@ -855,6 +1027,7 @@ class ArtifactCheckpointStore:
         self._last_receipt: CheckpointCommitReceipt | None = None
         self._terminal_payload: Mapping[str, Any] | None = None
         self.last_replay_classification: str | None = None
+        self._lineage: tuple[CheckpointMigrationRecord, ...] = ()
 
     def bind_runtime(
         self,
@@ -912,6 +1085,9 @@ class ArtifactCheckpointStore:
             "precision_id": envelope.precision_id,
             "topology_epoch_id": envelope.topology_epoch_id,
             "partition_id": envelope.partition_id,
+            "inventory": None
+            if envelope.inventory is None
+            else envelope.inventory.record(),
             **envelope.tree_specs_record(),
         }
 
@@ -987,11 +1163,20 @@ class ArtifactCheckpointStore:
             for event in self._events
             for leaf in jax.tree.leaves(event.state)
         )
+        lineage_arrays = {
+            name: value
+            for record in self._lineage
+            for name, value in record.state_arrays.items()
+        }
+        lineage_plaintext = sum(
+            value.size * np.dtype(value.dtype).itemsize
+            for value in lineage_arrays.values()
+        )
         if (
             state_plaintext > self.checkpoint_resources.maximum_total_plaintext_bytes
             or outbox_plaintext > self.checkpoint_resources.maximum_outbox_bytes
-            or state_plaintext
-            > self.checkpoint_resources.maximum_total_plaintext_bytes - outbox_plaintext
+            or state_plaintext + outbox_plaintext + lineage_plaintext
+            > self.checkpoint_resources.maximum_total_plaintext_bytes
         ):
             raise ValueError("Checkpoint array payloads exceed staging resources.")
         state_collection = encode_logical_arrays(
@@ -1025,6 +1210,14 @@ class ArtifactCheckpointStore:
             payloads["outbox-manifest"] = outbox_collection.manifest
             payloads.update(outbox_collection.payloads)
             outbox_collection_id = outbox_collection.collection_id
+        lineage_collection_id = None
+        if lineage_arrays:
+            lineage_collection = encode_logical_arrays(
+                lineage_arrays, logical_prefix="lineage"
+            )
+            payloads["lineage-manifest"] = lineage_collection.manifest
+            payloads.update(lineage_collection.payloads)
+            lineage_collection_id = lineage_collection.collection_id
         relation = self._restart_relation
         if self._runtime_id is None or relation is None:
             raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
@@ -1035,6 +1228,8 @@ class ArtifactCheckpointStore:
             "state_collection_id": state_collection.collection_id,
             "outbox_collection_id": outbox_collection_id,
             "outbox": outbox_records,
+            "lineage_collection_id": lineage_collection_id,
+            "lineage": [record.to_record() for record in self._lineage],
             "terminal": self._terminal_payload,
             "resolved_run_spec": self.resolved_run_spec.to_record(),
             "repository_support_tuple_id": self.repository_support_tuple_id,
@@ -1046,6 +1241,9 @@ class ArtifactCheckpointStore:
                 "tolerance": relation.tolerance,
                 "support_tuple_ids": list(relation.support_tuple_ids),
                 "relation_id": relation.relation_id,
+                "migrated_roles": []
+                if relation.migration is None
+                else list(relation.migration.migrated_roles),
             },
             "migration_report": None
             if self._migration_report is None
@@ -1323,6 +1521,12 @@ class ArtifactCheckpointStore:
             or envelope.topology_epoch_id != self.manifest.geometry_layout_id
             or envelope.encoding_plan.encoding_id != self.encoding_plan.encoding_id
             or envelope.runtime_id != self._runtime_id
+            or (None if envelope.inventory is None else envelope.inventory.inventory_id)
+            != (
+                None
+                if self.manifest.inventory is None
+                else self.manifest.inventory.inventory_id
+            )
         ):
             raise ValueError("Checkpoint envelope does not belong to this store.")
         if self._last_receipt is None:
@@ -1390,16 +1594,119 @@ class ArtifactCheckpointStore:
             _RepositoryOutboxEvent(identifier, cursor_, snapshot, False),
         )
 
+    @property
+    def outbox_cursor(self) -> int:
+        """Ordered output events staged in the bound checkpoint transaction.
+
+        The controller layout belongs to the runtime that wrote the checkpoint;
+        that runtime verifies its own output cursor against this count.
+        """
+        return len(self._events)
+
+    @property
+    def terminal_record(self) -> Mapping[str, Any] | None:
+        """Terminal record committed with the store's current checkpoint.
+
+        After ``latest`` this is the terminal the restored checkpoint was
+        committed with (``None`` while the run had not ended, and after a
+        restore through a non-identity relation, which starts a new lineage).
+        """
+        payload = self._terminal_payload
+        return None if payload is None else MappingProxyType(dict(payload))
+
+    def migration_lineage(self) -> tuple[CheckpointMigrationRecord, ...]:
+        """Committed migrations the artifact's latest checkpoint crossed, oldest first.
+
+        Read from the committed repository artifact without a runtime binding,
+        so a restarting process can re-derive its destination owners (for
+        example the current support epoch) before it prepares them. Each record
+        was committed atomically with the restore that crossed it.
+        """
+        manifest = self.repository.get_manifest(self.artifact_id)
+        self._receipt_from_manifest(manifest)
+        if dict(manifest.metadata).get("kind") != "production-checkpoint":
+            raise ValueError("Repository artifact is not a production checkpoint.")
+        payloads = self._read_payloads(manifest)
+        if "runtime" not in payloads:
+            raise ValueError("Repository checkpoint is missing required logical chunks.")
+        return self._decode_lineage(
+            self._json_object(payloads["runtime"], "runtime manifest"), payloads
+        )
+
+    def _decode_lineage(
+        self, runtime_record: Mapping[str, Any], payloads: Mapping[str, bytes], /
+    ) -> tuple[CheckpointMigrationRecord, ...]:
+        records = runtime_record.get("lineage")
+        if not isinstance(records, list):
+            raise ValueError("Repository checkpoint migration lineage is invalid.")
+        if not records:
+            if runtime_record.get("lineage_collection_id") is not None or any(
+                name.startswith("lineage-") for name in payloads
+            ):
+                raise ValueError("Empty migration lineage has unexpected logical chunks.")
+            return ()
+        if "lineage-manifest" not in payloads:
+            raise ValueError("Repository checkpoint lineage arrays are missing.")
+        arrays = decode_logical_arrays(
+            payloads["lineage-manifest"],
+            {
+                name: payload
+                for name, payload in payloads.items()
+                if name.startswith("lineage-") and name != "lineage-manifest"
+            },
+        )
+        collection = self._json_object(
+            payloads["lineage-manifest"], "lineage collection manifest"
+        )
+        if collection.get("collection_id") != runtime_record.get("lineage_collection_id"):
+            raise ValueError("Runtime manifest does not bind its lineage chunks.")
+        lineage = tuple(
+            CheckpointMigrationRecord.from_record(record, arrays, self.encoding_plan)
+            for record in records
+        )
+        names = [name for record in lineage for name in record.state_arrays]
+        if len(names) != len(set(names)) or set(names) != set(arrays):
+            raise ValueError("Migration lineage records do not bind their arrays.")
+        return lineage
+
+    def _lineage_record(
+        self,
+        receipt: RuntimeMigrationReceipt,
+        source_checkpoint_id: str,
+        accepted_step: int,
+        specification: Mapping[str, Any],
+        arrays: Mapping[str, np.ndarray],
+        /,
+    ) -> CheckpointMigrationRecord:
+        """The transported source state, renamed into the next lineage slot."""
+        names = {
+            name: f"lineage/{len(self._lineage):06d}/{name}"
+            for name in specification["arrays"]
+        }
+        return CheckpointMigrationRecord(
+            receipt,
+            source_checkpoint_id,
+            accepted_step,
+            {**specification, "arrays": list(names.values())},
+            {renamed: np.asarray(arrays[name]) for name, renamed in names.items()},
+            self.encoding_plan,
+        )
+
     def dispatch_outbox(
         self,
         publisher: ByteBoundedAsyncPublisher | None,
         /,
-    ) -> None:
-        """Deliver committed outbox entries in cursor order and durably acknowledge."""
+    ) -> CheckpointCommitReceipt | None:
+        """Deliver committed outbox entries in cursor order and durably acknowledge.
+
+        The acknowledgement recommits the last checkpoint with its delivered
+        outbox; its verified commit receipt is returned (``None`` when nothing
+        was pending and no commit was written).
+        """
 
         pending = tuple(event for event in self._events if not event.delivered)
         if not pending:
-            return
+            return None
         if publisher is None:
             raise ValueError("A publisher is required to dispatch repository outputs.")
         if self._last_envelope is None:
@@ -1417,7 +1724,46 @@ class ArtifactCheckpointStore:
             )
             for event in self._events
         )
-        self._write_snapshot(self._last_envelope, phase="outbox-ack")
+        committed = self._write_snapshot(self._last_envelope, phase="outbox-ack")
+        return self.verify_commit(self._receipt_from_manifest(committed))
+
+    def _restore_outbox_state(
+        self,
+        specification: Mapping[str, Any],
+        arrays: Mapping[str, Any],
+        template: Any,
+        /,
+    ) -> Any:
+        relation = self._restart_relation
+        if relation is None:
+            raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
+        migration = relation.migration
+        if migration is None or migration.kind != "ownership":
+            return unpack_array_tree(specification, arrays, template)
+        if not isinstance(specification, Mapping) or set(specification) != {
+            "paths",
+            "arrays",
+            "num_leaves",
+        }:
+            raise ValueError("Archived PyTree specification must be canonical.")
+        names = specification["arrays"]
+        if (
+            type(specification["num_leaves"]) is not int
+            or not isinstance(names, list)
+            or specification["num_leaves"] != len(names)
+            or any(not isinstance(name, str) or not name for name in names)
+            or len(set(names)) != len(names)
+        ):
+            raise ValueError("Archived PyTree does not match the runtime template.")
+        # Outbox arrays are plain, even when checkpoint state uses coordinates.
+        # The admitted relation restores source owners before transport and binds
+        # the transported values to the destination template.
+        return relation.restore_state(
+            arrays,
+            {**specification, "encodings": [None] * len(names)},
+            template,
+            RuntimeCheckpointEncodingPlan(),
+        )
 
     def latest(
         self,
@@ -1444,14 +1790,26 @@ class ArtifactCheckpointStore:
         unknown_payloads = {
             name
             for name in payloads
-            if name not in {"runtime", "state-manifest", "outbox-manifest"}
-            and not name.startswith(("state-", "outbox-"))
+            if name
+            not in {"runtime", "state-manifest", "outbox-manifest", "lineage-manifest"}
+            and not name.startswith(("state-", "outbox-", "lineage-"))
         }
         if unknown_payloads:
             raise ValueError("Repository checkpoint contains unknown logical chunks.")
         if "runtime" not in payloads or "state-manifest" not in payloads:
             raise ValueError("Repository checkpoint is missing required logical chunks.")
         runtime_record = self._json_object(payloads["runtime"], "runtime manifest")
+        if self._restart_relation is None:
+            raise RuntimeError("Artifact checkpoint store is not bound to a runtime.")
+        # A stale or foreign inventory names its changed roles before any
+        # archived configuration or array is decoded.
+        archived_inventory = runtime_record.get("inventory")
+        self._restart_relation.admit_inventory(
+            None
+            if archived_inventory is None
+            else RuntimeIdentityInventory.from_record(archived_inventory),
+            self.manifest.inventory,
+        )
         source_spec_record = runtime_record.get("resolved_run_spec")
         if not isinstance(source_spec_record, Mapping):
             raise ValueError("Repository checkpoint has no resolved run specification.")
@@ -1512,6 +1870,7 @@ class ArtifactCheckpointStore:
                 "precision_id",
                 "topology_epoch_id",
                 "partition_id",
+                "inventory",
                 "state",
                 "controller",
                 "rng",
@@ -1532,6 +1891,7 @@ class ArtifactCheckpointStore:
             target_runtime_id=self._runtime_id,
             restart_relation=self._restart_relation,
             encoding_plan=self.encoding_plan,
+            inventory=self.manifest.inventory,
         )
         if int(np.asarray(envelope.step_index)) != committed_receipt.accepted_step:
             raise ValueError(
@@ -1590,29 +1950,37 @@ class ArtifactCheckpointStore:
                 or type(delivered) is not bool
             ):
                 raise ValueError("Repository output cursor ordering is invalid.")
-            event_state = unpack_array_tree(
+            event_state = self._restore_outbox_state(
                 record["state"], outbox_arrays, state_template
             )
             events.append(
                 _RepositoryOutboxEvent(event_id, cursor, event_state, delivered)
             )
             seen_ids.add(event_id)
-        controller = envelope.controller_state
-        if (
-            not isinstance(controller, tuple)
-            or len(controller) != 4
-            or int(np.asarray(controller[2])) != len(events)
-        ):
-            raise ValueError("Checkpoint output cursor does not match its outbox.")
+        lineage = self._decode_lineage(runtime_record, payloads)
         self._events = tuple(events)
         self._last_envelope = envelope
         self._last_repository_manifest = repository_manifest
         self._last_generation = committed_receipt.generation
         self._last_receipt = committed_receipt
+        self._lineage = lineage
         terminal = runtime_record.get("terminal")
         self._terminal_payload = terminal if isinstance(terminal, Mapping) else None
         self.last_replay_classification = self._restart_relation.classification
         if envelope.checkpoint_id != source_checkpoint_id:
+            migration = self._restart_relation.migration
+            if migration is not None:
+                # The receipt and the source state it transported commit
+                # atomically with the first snapshot of the destination.
+                self._lineage = lineage + (
+                    self._lineage_record(
+                        migration,
+                        source_checkpoint_id,
+                        committed_receipt.accepted_step,
+                        checkpoint_manifest["state"],
+                        state_arrays,
+                    ),
+                )
             self._terminal_payload = None
             self._write_snapshot(envelope, phase="restart-lineage")
         return envelope
@@ -1879,6 +2247,96 @@ def _production_iteration_record(
     )
 
 
+class ProductionEvidenceState(StrictModule):
+    """Bounded accepted and refused native method evidence of a production run.
+
+    ``accepted`` is the method evidence of the last accepted step and
+    ``accepted_step`` its zero-based step index (-1 before any). ``refused`` is
+    the evidence of the most recent refused attempt, whether a retry refusal
+    inside a later accepted step or the refusal that stopped the run;
+    ``refused_step`` is the index of the step it attempted and
+    ``refused_attempt`` its retry ordinal (-1 before any). ``refused_attempts``
+    counts every refused attempt of the run. Accepted and refused evidence are
+    never merged, and storage is independent of the run length.
+    """
+
+    accepted: PyTree[Array]
+    accepted_step: Array
+    refused: PyTree[Array]
+    refused_step: Array
+    refused_attempt: Array
+    refused_attempts: Array
+
+
+def _record_production_evidence(
+    record: ProductionEvidenceState | None,
+    step_index: Array,
+    active: Array,
+    accepted: Array,
+    result: RetriedFixedStepResult,
+    /,
+) -> ProductionEvidenceState | None:
+    if record is None:
+        return None
+    ordinal = jnp.arange(result.attempt_successful.shape[0], dtype=jnp.int32)
+    # Attempts after the selected one ran but were not selected; they are
+    # neither refusals nor part of the accepted trajectory.
+    refused = (
+        active
+        & result.attempt_executed
+        & ~result.attempt_successful
+        & (ordinal <= result.retry_count)
+    )
+    any_refused = jnp.any(refused)
+    last = jnp.max(jnp.where(refused, ordinal, -1))
+    refused_evidence = jax.tree.map(
+        lambda leaf: leaf[jnp.maximum(last, 0)], result.attempt_evidence
+    )
+    index = step_index.astype(record.accepted_step.dtype)
+    return ProductionEvidenceState(
+        tree_where(accepted, result.evidence, record.accepted),
+        jnp.where(accepted, index, record.accepted_step),
+        tree_where(any_refused, refused_evidence, record.refused),
+        jnp.where(any_refused, index, record.refused_step),
+        jnp.where(any_refused, last, record.refused_attempt),
+        record.refused_attempts + jnp.sum(refused, dtype=record.refused_attempts.dtype),
+    )
+
+
+class ProductionArchivePolicy(StrictModule, NonTrainableState):
+    """Participant-owned rolling live history acknowledged at checkpoints.
+
+    The participant retains at most ``window`` accepted steps of live history
+    before it refuses a step (its declared history capacity).
+    ``acknowledge(state)`` is a pure array transform returning the accepted
+    state after the participant records that every lifetime through it is
+    archived. The runtime applies it to the accepted state of every scheduled
+    checkpoint step inside the compiled segment; that exact state is the one
+    the host commits after its outputs are durable, so restarts resume the same
+    archive cursor. Admission requires ``checkpoint_interval <= window``: the
+    declared capacity, not a sampled peak, is the hard ceiling.
+    """
+
+    acknowledge: Callable[[PyTree[Array]], PyTree[Array]] = eqx.field(static=True)
+    window: int = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        acknowledge: Callable[[PyTree[Array]], PyTree[Array]],
+        /,
+        *,
+        window: int,
+        policy_id: str,
+    ) -> None:
+        if isinstance(window, bool) or not isinstance(window, int) or window <= 0:
+            raise ValueError("Archive window must be a positive accepted-step count.")
+        self.acknowledge = acknowledge
+        self.window = window
+        self.policy_id = canonical_identifier(policy_id, "policy_id")
+
+
 class ProductionRunState(StrictModule):
     step_index: Array
     time: Array
@@ -1889,6 +2347,7 @@ class ProductionRunState(StrictModule):
     moment_states: tuple[StreamingMomentState, ...]
     trigger_states: tuple[AcceptedStepTriggerGraphState, ...]
     output_cursor: Array
+    evidence: ProductionEvidenceState | None
     status: RunStatus = eqx.field(static=True)
     last_checkpoint_id: str = eqx.field(static=True)
 
@@ -1910,6 +2369,7 @@ def _replace_run_metadata(
         state.moment_states,
         state.trigger_states,
         state.output_cursor,
+        state.evidence,
         state.status if status is None else status,
         state.last_checkpoint_id if last_checkpoint_id is None else last_checkpoint_id,
     )
@@ -1928,25 +2388,44 @@ def _replace_output_cursor(
         state.moment_states,
         state.trigger_states,
         jnp.asarray(cursor, dtype=state.output_cursor.dtype),
+        state.evidence,
         state.status,
         state.last_checkpoint_id,
     )
 
 
 class ProductionRunResult(StrictModule):
+    """Terminal production state with its failure and sampled resource evidence.
+
+    ``memory`` is the sampled phase memory of the run when sampling was
+    requested: a measurement, never a resource ceiling.
+    """
+
     state: ProductionRunState
     successful: Array
     failure: ProductionFailureRecord | None
     run_id: str = eqx.field(static=True)
     iteration_session_state: IterationSessionState | None = eqx.field(static=True)
+    memory: PhaseMemoryEvidence | None = eqx.field(static=True, default=None)
 
 
 class ProductionRunPlan(StrictModule):
+    """Bounded compiled production run of one fixed-step temporal participant.
+
+    ``evidence_retention`` bounds the native method evidence the run state
+    keeps: ``"terminal"`` keeps the last accepted and last refused attempt
+    with their cursors, ``"none"`` keeps nothing. An open-ended run never
+    stacks per-step evidence; per-step history belongs to published outputs.
+    ``archive`` binds a participant's rolling live history to scheduled
+    checkpoints.
+    """
+
     method: AbstractFixedStepMethod
     retry_policy: RobustRetryPolicy
     output_schedule: ExactTimeSchedule | None
     moments: tuple[StreamingMomentPlan, ...]
     trigger_bindings: tuple[ProductionTriggerBinding, ...]
+    archive: ProductionArchivePolicy | None
     validator: Callable = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     end_time: float = eqx.field(static=True)
@@ -1954,6 +2433,7 @@ class ProductionRunPlan(StrictModule):
     checkpoint_interval: int = eqx.field(static=True)
     segment_steps: int = eqx.field(static=True)
     device_resident: bool = eqx.field(static=True)
+    evidence_retention: FixedStepEvidenceRetention = eqx.field(static=True)
     validator_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -1974,6 +2454,8 @@ class ProductionRunPlan(StrictModule):
         validator: Callable | None = None,
         validator_id: str | None = None,
         device_resident: bool = False,
+        evidence_retention: FixedStepEvidenceRetention = "terminal",
+        archive: ProductionArchivePolicy | None = None,
     ) -> None:
         step = float(step_size)
         end = float(end_time)
@@ -2049,11 +2531,28 @@ class ProductionRunPlan(StrictModule):
             raise ValueError("Production step_size is incompatible with the method.")
         if retry_policy.maximum_retries and not method.allows_step_reduction:
             raise ValueError("Production retry policy requires forbidden step reduction.")
+        retention = parse(
+            evidence_retention, FixedStepEvidenceRetention, "evidence_retention"
+        )
+        if retention == "steps":
+            raise ValueError(
+                "Production runs are open-ended; retain terminal evidence and "
+                "publish per-step evidence as outputs."
+            )
+        if archive is not None:
+            if not isinstance(archive, ProductionArchivePolicy):
+                raise TypeError("archive must be a ProductionArchivePolicy or None.")
+            if interval > archive.window:
+                raise ValueError(
+                    "Checkpoint interval exceeds the participant's declared live-"
+                    "history window; acknowledged history would be refused."
+                )
         self.method = method
         self.retry_policy = retry_policy
         self.output_schedule = output_schedule
         self.moments = moments_
         self.trigger_bindings = bindings
+        self.archive = archive
         self.validator = validator_
         self.step_size = step
         self.end_time = end
@@ -2061,6 +2560,7 @@ class ProductionRunPlan(StrictModule):
         self.checkpoint_interval = interval
         self.segment_steps = segment
         self.device_resident = device_resident
+        self.evidence_retention = retention
         self.validator_id = validator_identifier
         identity = {
             "kind": "production-run-plan",
@@ -2077,6 +2577,8 @@ class ProductionRunPlan(StrictModule):
             "moments": tuple(value.plan_id for value in moments_),
             "trigger_bindings": tuple(value.binding_id for value in bindings),
             "validator": validator_identifier,
+            "evidence_retention": retention,
+            "archive": None if archive is None else [archive.policy_id, archive.window],
         }
         if device_resident:
             identity["device_resident"] = True
@@ -2091,6 +2593,7 @@ class _SegmentState(StrictModule):
     moment_states: tuple[StreamingMomentState, ...]
     trigger_states: tuple[AcceptedStepTriggerGraphState, ...]
     output_cursor: Array
+    evidence: ProductionEvidenceState | None
     running: Array
     stop_requested: Array
 
@@ -2137,6 +2640,13 @@ class PreparedProductionRun:
         if manifest.method_id != plan.method.method_id:
             raise ValueError(
                 "Production manifest method identity does not match the plan."
+            )
+        if (
+            manifest.inventory is not None
+            and manifest.inventory.identity("program") != plan.plan_id
+        ):
+            raise ValueError(
+                "Production manifest program identity does not match the plan."
             )
         if publisher is not None and not isinstance(publisher, ByteBoundedAsyncPublisher):
             raise TypeError("publisher must be ByteBoundedAsyncPublisher or None.")
@@ -2258,14 +2768,6 @@ class PreparedProductionRun:
     ) -> Callable[[_SegmentState], tuple[_SegmentState, _SegmentRecord]]:
         plan = self.plan
         args = self.args
-        retry_decision_id = canonical_fingerprint(
-            {
-                "kind": "retried-fixed-step-decision",
-                "method": plan.method.method_id,
-                "retry_policy": plan.retry_policy.policy_id,
-            }
-        )
-        attempt_count = plan.retry_policy.maximum_retries + 1
 
         def scan_step(
             carry: _SegmentState, unused: None
@@ -2301,14 +2803,14 @@ class PreparedProductionRun:
                 )
 
             def inactive(_: None) -> RetriedFixedStepResult:
-                return RetriedFixedStepResult(
+                return inactive_fixed_step_retry(
+                    plan.method,
+                    plan.retry_policy,
+                    carry.step_index,
+                    carry.time,
                     carry.accepted_state,
-                    carry.accepted_state,
-                    jnp.asarray(True),
-                    jnp.zeros((), dtype=carry.time.dtype),
-                    jnp.asarray(0, dtype=jnp.int32),
-                    jnp.zeros((attempt_count,), dtype=carry.time.dtype),
-                    retry_decision_id,
+                    proposed_step,
+                    args,
                 )
 
             result = jax.lax.cond(active, advance, inactive, operand=None)
@@ -2321,6 +2823,12 @@ class PreparedProductionRun:
             next_time = carry.time + jnp.where(accepted, result.accepted_step_size, 0.0)
             next_step = carry.step_index + accepted.astype(carry.step_index.dtype)
             next_state = tree_where(accepted, result.accepted_state, carry.accepted_state)
+            checkpoint_due = accepted & (next_step % plan.checkpoint_interval == 0)
+            if plan.archive is not None:
+                # The scheduled checkpoint commits exactly this acknowledged state.
+                next_state = tree_where(
+                    checkpoint_due, plan.archive.acknowledge(next_state), next_state
+                )
             proposed_moments = tuple(
                 moment.update(
                     next_time,
@@ -2395,10 +2903,12 @@ class PreparedProductionRun:
                 moment_states,
                 tuple(trigger_states),
                 carry.output_cursor + output_increment,
+                _record_production_evidence(
+                    carry.evidence, carry.step_index, active, accepted, result
+                ),
                 running,
                 carry.stop_requested | stop_fire,
             )
-            checkpoint_due = accepted & (next_step % plan.checkpoint_interval == 0)
             record = _SegmentRecord(
                 next_carry,
                 result,
@@ -2502,8 +3012,42 @@ class PreparedProductionRun:
                 for binding in self.plan.trigger_bindings
             ),
             jnp.asarray(0, dtype=jnp.int64),
+            self._initial_evidence(value, time_),
             "ready",
             "",
+        )
+
+    def _initial_evidence(
+        self, state: PyTree[Array], time: Array, /
+    ) -> ProductionEvidenceState | None:
+        """Empty bounded record shaped by the evidence the retried method publishes.
+
+        A method publishing no evidence still retains the accepted/refused
+        cursors; its evidence trees are then empty.
+        """
+        if self.plan.evidence_retention == "none":
+            return None
+        structure = eqx.filter_eval_shape(
+            retry_fixed_step,
+            self.plan.method,
+            self.plan.retry_policy,
+            jnp.asarray(0, dtype=jnp.int64),
+            time,
+            state,
+            jnp.asarray(self.plan.step_size, dtype=time.dtype),
+            self.args,
+        )
+        empty = jax.tree.map(
+            lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), structure.evidence
+        )
+        unset = jnp.asarray(-1, dtype=jnp.int64)
+        return ProductionEvidenceState(
+            empty,
+            unset,
+            empty,
+            unset,
+            jnp.asarray(-1, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int64),
         )
 
     def _iteration_session_checkpoint(self, /) -> tuple[()] | tuple[Array, Array]:
@@ -2530,11 +3074,13 @@ class PreparedProductionRun:
                 state.trigger_states,
                 state.output_cursor,
                 self._iteration_session_checkpoint(),
+                state.evidence,
             ),
             observer_states=state.moment_states,
             rng_state=state.rng_state,
             runtime_id=self.run_id,
             encoding_plan=self.checkpoint_store.encoding_plan,
+            inventory=self.manifest.inventory,
         )
 
     def commit_checkpoint(
@@ -2571,6 +3117,7 @@ class PreparedProductionRun:
                 template.trigger_states,
                 template.output_cursor,
                 self._iteration_session_checkpoint(),
+                template.evidence,
             ),
             observer_templates=template.moment_states,
             rng_template=template.rng_state,
@@ -2582,9 +3129,13 @@ class PreparedProductionRun:
             )
             self.checkpoint_store.dispatch_outbox(self.publisher)
         self._last_checkpoint_receipt = self.checkpoint_store.receipt_for(envelope)
-        controller, triggers, output_cursor, iteration_session_state = (
+        controller, triggers, output_cursor, iteration_session_state, evidence = (
             envelope.controller_state
         )
+        if isinstance(self.checkpoint_store, ArtifactCheckpointStore) and int(
+            np.asarray(output_cursor)
+        ) != (self.checkpoint_store.outbox_cursor):
+            raise ValueError("Checkpoint output cursor does not match its outbox.")
         if self.iteration_session is not None:
             cursor, stop_requested = iteration_session_state
             self.iteration_session.restore(
@@ -2612,12 +3163,17 @@ class PreparedProductionRun:
             envelope.observer_states,
             triggers,
             output_cursor,
+            evidence,
             "ready",
             envelope.checkpoint_id,
         )
 
     def _commit_terminal(
-        self, state: ProductionRunState, failure: ProductionFailureRecord | None, /
+        self,
+        state: ProductionRunState,
+        failure: ProductionFailureRecord | None,
+        memory: PhaseMemoryEvidence | None,
+        /,
     ) -> ProductionTerminalManifest:
         checkpoint_id = ""
         if state.last_checkpoint_id:
@@ -2639,7 +3195,11 @@ class PreparedProductionRun:
                 else self.iteration_session.snapshot()
             ),
         )
-        self.checkpoint_store.commit_terminal(terminal.payload())
+        payload = terminal.payload()
+        if memory is not None:
+            # Sampled measurements are evidence, never part of the terminal identity.
+            payload["resource_evidence"] = memory.to_payload()
+        self.checkpoint_store.commit_terminal(payload)
         return terminal
 
     def _index_tree(self, tree: Any, index: int, /) -> Any:
@@ -2678,6 +3238,7 @@ class PreparedProductionRun:
             state.moment_states,
             state.trigger_states,
             state.output_cursor,
+            state.evidence,
             state.status,
             state.last_checkpoint_id,
         )
@@ -2691,6 +3252,7 @@ class PreparedProductionRun:
             state.moment_states,
             state.trigger_states,
             state.output_cursor,
+            state.evidence,
             jnp.asarray(True),
             jnp.asarray(
                 False
@@ -2717,6 +3279,7 @@ class PreparedProductionRun:
             segment.moment_states,
             segment.trigger_states,
             segment.output_cursor,
+            segment.evidence,
             status,
             last_checkpoint_id,
         )
@@ -2751,7 +3314,10 @@ class PreparedProductionRun:
             return None
         try:
             if isinstance(self.checkpoint_store, ArtifactCheckpointStore):
-                self.checkpoint_store.dispatch_outbox(self.publisher)
+                acknowledged = self.checkpoint_store.dispatch_outbox(self.publisher)
+                # Terminal records bind the newest commit of the checkpoint.
+                if acknowledged is not None:
+                    self._last_checkpoint_receipt = acknowledged
             else:
                 self.publisher.drain()
         except Exception as error:
@@ -3054,11 +3620,56 @@ class PreparedProductionRun:
                 accepted_step_size=transition.accepted_step_size,
                 retry_count=transition.retry_count,
                 attempted_step_sizes=transition.attempted_step_sizes,
+                attempt_executed=transition.attempt_executed,
+                attempt_successful=transition.attempt_successful,
+                evidence=transition.evidence,
+                attempt_evidence=transition.attempt_evidence,
                 decision_id=transition.decision_id,
             )
         return current, transition
 
-    def run(self, state: ProductionRunState, /) -> ProductionRunResult:
+    def run(
+        self,
+        state: ProductionRunState,
+        /,
+        *,
+        memory_sampling_interval: float | None = None,
+    ) -> ProductionRunResult:
+        """Advance to a terminal status and commit its terminal manifest.
+
+        With ``memory_sampling_interval`` host and addressable-device memory are
+        sampled during the run; that phase evidence reaches the result and the
+        terminal record. It is a measurement, never a resource ceiling: hard
+        limits come from declared capacities admitted before execution.
+        """
+        if memory_sampling_interval is None:
+            current, failure = self._advance_to_terminal(state)
+            memory = None
+        else:
+            with PhaseMemorySampler(
+                "production-run",
+                interval_seconds=memory_sampling_interval,
+                devices=tuple(jax.local_devices()),
+            ) as sampler:
+                current, failure = self._advance_to_terminal(state)
+            memory = sampler.evidence
+        self._commit_terminal(current, failure, memory)
+        return ProductionRunResult(
+            current,
+            jnp.asarray(failure is None and current.status == "completed"),
+            failure,
+            self.run_id,
+            (
+                None
+                if self.iteration_session is None
+                else self.iteration_session.snapshot()
+            ),
+            memory,
+        )
+
+    def _advance_to_terminal(
+        self, state: ProductionRunState, /
+    ) -> tuple[ProductionRunState, ProductionFailureRecord | None]:
         initial_output_cursor = int(np.asarray(state.output_cursor))
         acknowledged_before = (
             0 if self.publisher is None else len(self.publisher.acknowledged_event_ids)
@@ -3117,25 +3728,17 @@ class PreparedProductionRun:
             self.checkpoint_store, ArtifactCheckpointStore
         ):
             current = self.checkpoint(current)
-        self._commit_terminal(current, failure)
-        return ProductionRunResult(
-            current,
-            jnp.asarray(failure is None and current.status == "completed"),
-            failure,
-            self.run_id,
-            (
-                None
-                if self.iteration_session is None
-                else self.iteration_session.snapshot()
-            ),
-        )
+        return current, failure
 
 
 __all__ = [
     "ArtifactCheckpointStore",
     "CheckpointCommitReceipt",
     "CheckpointGenerationPolicy",
+    "CheckpointMigrationRecord",
+    "ProductionArchivePolicy",
     "ProductionCaseManifest",
+    "ProductionEvidenceState",
     "ProductionFailureRecord",
     "ProductionRunPlan",
     "ProductionRunResult",

@@ -1,0 +1,6311 @@
+{
+  "fixtures": [
+    {
+      "configuration": {
+        "architecture_id": "cc90d3a9bdb1626ae468f85885e1df3627ffb4eec7d099e9703969c93fbabaf3",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              2
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              2
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              6,
+              16
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              24
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              192
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              64
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              64
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              9,
+              3
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              9,
+              9,
+              11
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              3,
+              8
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              1,
+              8
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              11,
+              8
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              6
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              8
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 4096,
+          "edge_tile": 2048,
+          "plan_id": "cf0e885ead71a4dd97c2fffe90f6df224da8f1baee3644cbc7d0c963519e8737",
+          "receiver_tile": 256
+        }
+      },
+      "fixture_sha256": "740786b278d4250eb43abaa00f9209dc79134b2f267144dd7d523cd471f7fae1",
+      "float64": {
+        "fixture-OH": {
+          "atoms": 4,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.1657341758564144e-15,
+          "forces_pass": true,
+          "provider_edges": 12
+        },
+        "fixture-OH-periodic": {
+          "atoms": 3,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 8.423817199343375e-15,
+          "forces_pass": true,
+          "provider_edges": 88,
+          "stress_max_abs_difference": 9.43689570931383e-16,
+          "stress_pass": true
+        }
+      },
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -7.631356834565294,
+            "energy_pass": true,
+            "energy_provider": -7.631356834565525,
+            "force_native": -1.937199143844394,
+            "force_pass": true,
+            "force_provider": -1.937199143844491
+          },
+          {
+            "energy_native": 1.619905677403,
+            "energy_pass": true,
+            "energy_provider": 1.6199056774028855,
+            "force_native": 1.8370432696143038,
+            "force_pass": true,
+            "force_provider": 1.8370432696143177
+          },
+          {
+            "energy_native": 2.7704188077837313,
+            "energy_pass": true,
+            "energy_provider": 2.7704188077837117,
+            "force_native": -0.9373084775099303,
+            "force_pass": true,
+            "force_provider": -0.9373084775099944
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.linear.weight",
+          "readouts.0.linear.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "2a1a2af89ee47a4630ed4bca69eb7a7adeb9377371dfeb1527b708cf62658546",
+        "declaration": {
+          "MLP_irreps": null,
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -13.6,
+            -2041.8
+          ],
+          "atomic_inter_scale": 1.3,
+          "atomic_inter_shift": 0.05,
+          "atomic_numbers": [
+            1,
+            8
+          ],
+          "avg_num_neighbors": 2.5,
+          "correlation": [
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": null,
+          "heads": [
+            "Default"
+          ],
+          "hidden_irreps": "8x0e",
+          "interaction_classes": [
+            "RealAgnosticResidualInteractionBlock"
+          ],
+          "max_ell": 2,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 6,
+          "num_interactions": 1,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 4.5,
+          "radial_MLP": [
+            16,
+            16
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "Default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [],
+          "dropped_inert_state": [],
+          "integral_buffers": [],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "e7a259106819b6d97db256387881a381444cb41f6335b33bde1ca24579478614",
+        "source_byte_size": 99338,
+        "source_dtype": "float64",
+        "source_kind": "torch-state-dict",
+        "source_license_id": "MIT",
+        "source_manifest_id": "853613af14d9ccb725fd7869b94a1398206afba22069abee1f16ee5cb3aa6960",
+        "source_sha256": "740786b278d4250eb43abaa00f9209dc79134b2f267144dd7d523cd471f7fae1",
+        "trusted_full_object": false
+      },
+      "release": "provider-fixture-one-interaction",
+      "seed": 20261003,
+      "status": "passed"
+    },
+    {
+      "configuration": {
+        "architecture_id": "ab27c7dc2427ca91d1a5c5bab504b72d00d14bc01d19d8c840d32db7100b2e4b",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              2
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              2
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              6,
+              16
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              24
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              192
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              64
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              64
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              9,
+              3
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              9,
+              9,
+              9,
+              5
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              3,
+              8
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              1,
+              8
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              2,
+              5,
+              8
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              6
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              8
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 4096,
+          "edge_tile": 2048,
+          "plan_id": "cf0e885ead71a4dd97c2fffe90f6df224da8f1baee3644cbc7d0c963519e8737",
+          "receiver_tile": 256
+        }
+      },
+      "fixture_sha256": "589f64f07bda250aba5edbdc8e86710ba1e3944c1d38864c15c3e64eb4021dd0",
+      "float64": {
+        "fixture-OH": {
+          "atoms": 4,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 7.216449660063518e-16,
+          "forces_pass": true,
+          "provider_edges": 12
+        },
+        "fixture-OH-periodic": {
+          "atoms": 3,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 5.218048215738236e-15,
+          "forces_pass": true,
+          "provider_edges": 88,
+          "stress_max_abs_difference": 1.7650811368064012e-16,
+          "stress_pass": true
+        }
+      },
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": 1.1839448621267383,
+            "energy_pass": true,
+            "energy_provider": 1.183944862126669,
+            "force_native": -3.6087064517575076,
+            "force_pass": true,
+            "force_provider": -3.6087064517575014
+          },
+          {
+            "energy_native": -6.069365495628547,
+            "energy_pass": true,
+            "energy_provider": -6.0693654956286425,
+            "force_native": -2.3342208868483088,
+            "force_pass": true,
+            "force_provider": -2.3342208868484136
+          },
+          {
+            "energy_native": -2.4234271453270053,
+            "energy_pass": true,
+            "energy_provider": -2.423427145327146,
+            "force_native": -3.4015562260731125,
+            "force_pass": true,
+            "force_provider": -3.401556226073251
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.linear.weight",
+          "readouts.0.linear.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "637cb75fe505c474ac31fcd35e15131cbd1906fab8f4db2fbf7021f026706ff7",
+        "declaration": {
+          "MLP_irreps": null,
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -13.6,
+            -2041.8
+          ],
+          "atomic_inter_scale": 1.3,
+          "atomic_inter_shift": 0.05,
+          "atomic_numbers": [
+            1,
+            8
+          ],
+          "avg_num_neighbors": 2.5,
+          "correlation": [
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": null,
+          "heads": [
+            "Default"
+          ],
+          "hidden_irreps": "8x0e",
+          "interaction_classes": [
+            "RealAgnosticResidualInteractionBlock"
+          ],
+          "max_ell": 2,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 6,
+          "num_interactions": 1,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 4.5,
+          "radial_MLP": [
+            16,
+            16
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": true
+        },
+        "head": "Default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [],
+          "dropped_inert_state": [],
+          "integral_buffers": [],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "6c01033a3add3201df954b06a2438c7173b58d625cc6fb230528ad1419a52279",
+        "source_byte_size": 63562,
+        "source_dtype": "float64",
+        "source_kind": "torch-state-dict",
+        "source_license_id": "MIT",
+        "source_manifest_id": "8e58b7282a1fff9e0e4095cc53c505157a5c7111164fce33294e2b889b62b673",
+        "source_sha256": "589f64f07bda250aba5edbdc8e86710ba1e3944c1d38864c15c3e64eb4021dd0",
+        "trusted_full_object": false
+      },
+      "release": "provider-fixture-one-interaction-reduced-cg",
+      "seed": 20261003,
+      "status": "passed"
+    }
+  ],
+  "gates": {
+    "float32": {
+      "energy_per_atom": [
+        1e-05,
+        1e-06
+      ],
+      "forces": [
+        0.0001,
+        1e-05
+      ],
+      "stress": [
+        1e-05,
+        1e-05
+      ]
+    },
+    "float64": {
+      "energy_per_atom": [
+        1e-09,
+        1e-12
+      ],
+      "forces": [
+        1e-08,
+        1e-10
+      ],
+      "parameter_direction": [
+        1e-10,
+        1e-07
+      ],
+      "stress": [
+        1e-09,
+        1e-10
+      ]
+    }
+  },
+  "provider": {
+    "distributions": {
+      "cuequivariance": "0.12.0",
+      "cuequivariance-torch": "0.12.0",
+      "e3nn": "0.4.4",
+      "mace-torch": "0.3.16",
+      "torch": "2.14.1"
+    },
+    "interpreter": "/Users/lgleyzer/.local/share/uv/python/cpython-3.12.8-macos-aarch64-none/bin/python3.12",
+    "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+    "interpreter_version": "3.12.8",
+    "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+  },
+  "rows": [
+    {
+      "head": null,
+      "release": "mace-omat-0-small",
+      "sha256": "0abfde07862cf1e93b8b4d03cb702f29ce9c344ff2fc4de2ec0d7166d6c113a5",
+      "source_url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_omat_0/mace-omat-0-small.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    },
+    {
+      "head": null,
+      "release": "mace-omat-0-medium",
+      "sha256": "d4b14be9afa294eebdbe31a0280b26a0fa29715771e978cbfd3ca24e0d90307a",
+      "source_url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_omat_0/mace-omat-0-medium.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    },
+    {
+      "configuration": {
+        "architecture_id": "71a5625cc930d698c30192caa5113728b669e29824327f4605fa5e7eadea21e3",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              1
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              1280
+            ]
+          },
+          "interactions.1.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              1
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              163840
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              6
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              16,
+              51
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              6,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              51,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              10
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 8192,
+          "edge_tile": 1024,
+          "plan_id": "fc0f79a85b1d54d86278dcb34b64caee60cb8c469bcd32367d2db46099867d82",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 3.814697265625e-06,
+          "forces_max_abs_difference": 2.193450927734375e-05,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 4.3213367462158203e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.52587890625e-06,
+          "forces_max_abs_difference": 1.233816146850586e-05,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 1.1893280316144228e-07,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 5.329070518200751e-15,
+          "forces_max_abs_difference": 5.573319583618286e-14,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 1.4502288259166107e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 2.842170943040401e-15,
+          "forces_max_abs_difference": 3.730349362740526e-14,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 3.7421237983337186e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -931.6101956881458,
+            "energy_pass": true,
+            "energy_provider": -931.6101956882179,
+            "force_native": 3.3056529742349756,
+            "force_pass": true,
+            "force_provider": 3.3056529742136513
+          },
+          {
+            "energy_native": 355.2335248292634,
+            "energy_pass": true,
+            "energy_provider": 355.2335248293138,
+            "force_native": -357.32906660666254,
+            "force_pass": true,
+            "force_provider": -357.32906660664986
+          },
+          {
+            "energy_native": -120.91135636898686,
+            "energy_pass": true,
+            "energy_provider": -120.9113563689301,
+            "force_native": -288.8115844376042,
+            "force_pass": true,
+            "force_provider": -288.81158443761365
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.0.density_fn.layer0.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "interactions.1.density_fn.layer0.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.symmetric_contractions.contractions.1.weights_max",
+          "products.0.symmetric_contractions.contractions.1.weights.0",
+          "products.0.symmetric_contractions.contractions.1.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "27f2eaadbc3297917d6d4bceb3853d3c04bb0bb4ed786f4e03925fbb7e6f8971",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 0.7735790334431056,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "default"
+          ],
+          "hidden_irreps": "128x0e+128x1o",
+          "interaction_classes": [
+            "RealAgnosticDensityInteractionBlock",
+            "RealAgnosticDensityResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 10,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 6.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "5e21e6d1bb2763aed4e0759e7cc0293c02eaf33697a748b8fa2635438506fab6",
+        "source_byte_size": 79462305,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "12149252bed919f07ac90321b12fe5cfe5dd376443611acbc4ef1a838e41173f",
+        "source_sha256": "75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638",
+        "trusted_full_object": true
+      },
+      "release": "mace-mpa-0-medium",
+      "sha256": "75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "5f45b0590cf329a0ccbb900047f7250bbee5975b6c760bdf89a6176305e79cab",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              10
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 4096,
+          "edge_tile": 2048,
+          "plan_id": "cf0e885ead71a4dd97c2fffe90f6df224da8f1baee3644cbc7d0c963519e8737",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.9073486328125e-06,
+          "forces_max_abs_difference": 1.6145408153533936e-05,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 6.044283509254456e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.3589859008789062e-05,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 1.043081283569336e-07,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 5.329070518200751e-15,
+          "forces_max_abs_difference": 4.39648317751562e-14,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 5.689893001203927e-16,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 4.263256414560601e-15,
+          "forces_max_abs_difference": 2.8949065367100957e-14,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 3.469446951953614e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": 146.0614607310375,
+            "energy_pass": true,
+            "energy_provider": 146.0614607310166,
+            "force_native": 11.652575245192846,
+            "force_pass": true,
+            "force_provider": 11.65257524520057
+          },
+          {
+            "energy_native": 949.9816871354965,
+            "energy_pass": true,
+            "energy_provider": 949.981687135486,
+            "force_native": 80.95876723704389,
+            "force_pass": true,
+            "force_provider": 80.95876723705338
+          },
+          {
+            "energy_native": -166.85316622052426,
+            "energy_pass": true,
+            "energy_provider": -166.85316622046474,
+            "force_native": 11.873730619958984,
+            "force_pass": true,
+            "force_provider": 11.873730619948166
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "0c38f9ba89bf29f797f72677365455fd5bb627affb6a66a887db4b0ceff14d0e",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 0.8041538754478097,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "Default"
+          ],
+          "hidden_irreps": "128x0e",
+          "interaction_classes": [
+            "RealAgnosticInteractionBlock",
+            "RealAgnosticResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 10,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 6.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "Default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": true,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "d02a43da316066fd8e6b7caec3a662462dc29e85e905ebc804f1a1b6f21a43f9",
+        "source_byte_size": 67603120,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "30a32d36191c6f2be8f9d9e0203e2d4c76a84ddc5774a63a9a304e996d7aef93",
+        "source_sha256": "7e3a0abcaf41e03a80e69f778e1b11b29de1cca704783dc25917a736392f8cf0",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b-small",
+      "sha256": "7e3a0abcaf41e03a80e69f778e1b11b29de1cca704783dc25917a736392f8cf0",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b/mace_agnesi_small.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "8ef221673b393920baef445d0bc824845e344e99af1acc4cae6064896bce93b3",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              1280
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              163840
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              6
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              16,
+              51
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              6,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              51,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              10
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 8192,
+          "edge_tile": 1024,
+          "plan_id": "fc0f79a85b1d54d86278dcb34b64caee60cb8c469bcd32367d2db46099867d82",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.4543533325195312e-05,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 3.1478703022003174e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.1593103408813477e-05,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 1.043081283569336e-07,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 5.329070518200751e-15,
+          "forces_max_abs_difference": 2.708944180085382e-14,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 1.394717674685353e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.4210854715202005e-15,
+          "forces_max_abs_difference": 1.6764367671839864e-14,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 4.163336342344337e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": 41.8981163682674,
+            "energy_pass": true,
+            "energy_provider": 41.89811636827959,
+            "force_native": 23.880194120494203,
+            "force_pass": true,
+            "force_provider": 23.8801941204975
+          },
+          {
+            "energy_native": -245.5044626871027,
+            "energy_pass": true,
+            "energy_provider": -245.50446268713796,
+            "force_native": 17.132760323048128,
+            "force_pass": true,
+            "force_provider": 17.132760323048235
+          },
+          {
+            "energy_native": 216.76327278399813,
+            "energy_pass": true,
+            "energy_provider": 216.76327278403238,
+            "force_native": -19.93006547820692,
+            "force_pass": true,
+            "force_provider": -19.930065478209663
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.symmetric_contractions.contractions.1.weights_max",
+          "products.0.symmetric_contractions.contractions.1.weights.0",
+          "products.0.symmetric_contractions.contractions.1.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "8f5412be9f9fa5769977a79adff65eb2acabdc1b578042945f2b27fae3409412",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 0.8041538754478097,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "Default"
+          ],
+          "hidden_irreps": "128x0e+128x1o",
+          "interaction_classes": [
+            "RealAgnosticInteractionBlock",
+            "RealAgnosticResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 10,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 6.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "Default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": true,
+          "precision_buffers": [
+            "radial_embedding.distance_transform.a",
+            "radial_embedding.distance_transform.covalent_radii",
+            "radial_embedding.distance_transform.p",
+            "radial_embedding.distance_transform.q"
+          ],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "979da9c8717e141ef6ef1245edbe434900967edea48e6e15b00f718210f08345",
+        "source_byte_size": 79447096,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "36d19257ca12b411ad408c093b89d658d0668174b8c51cd16e4741360a1a2fd5",
+        "source_sha256": "ab8baff639a8f295f3eccad3d3ccf574efb6fb63220bd52cd88664211569e521",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b-medium",
+      "sha256": "ab8baff639a8f295f3eccad3d3ccf574efb6fb63220bd52cd88664211569e521",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b/mace_agnesi_medium.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "ebd36e2c6e7fe211f46b43c6a73fd5640a17b5a5cb7c4420324942b9ca8aed6f",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.1.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              8
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 4096,
+          "edge_tile": 2048,
+          "plan_id": "cf0e885ead71a4dd97c2fffe90f6df224da8f1baee3644cbc7d0c963519e8737",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.9073486328125e-06,
+          "forces_max_abs_difference": 1.239776611328125e-05,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 2.7194619178771973e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 7.62939453125e-07,
+          "forces_max_abs_difference": 8.538365364074707e-06,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 1.2665987014770508e-07,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 3.552713678800501e-15,
+          "forces_max_abs_difference": 3.419486915845482e-14,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 3.733124920302089e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 4.263256414560601e-15,
+          "forces_max_abs_difference": 1.3100631690576847e-14,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 2.706168622523819e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -251.7920164197865,
+            "energy_pass": true,
+            "energy_provider": -251.79201641975726,
+            "force_native": -109.23926915638926,
+            "force_pass": true,
+            "force_provider": -109.23926915638026
+          },
+          {
+            "energy_native": -1011.7782522900328,
+            "energy_pass": true,
+            "energy_provider": -1011.7782522899976,
+            "force_native": -108.67829715066233,
+            "force_pass": true,
+            "force_provider": -108.67829715066124
+          },
+          {
+            "energy_native": 173.26343047612272,
+            "energy_pass": true,
+            "energy_provider": 173.26343047609637,
+            "force_native": 58.662726054302546,
+            "force_pass": true,
+            "force_provider": 58.662726054304116
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.0.density_fn.layer0.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "interactions.1.density_fn.layer0.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "177c56de3bd9851227f08a402f009ef38f82a106c52b43a815933448719dd1f4",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 1.7895356222853416,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "default"
+          ],
+          "hidden_irreps": "128x0e",
+          "interaction_classes": [
+            "RealAgnosticDensityInteractionBlock",
+            "RealAgnosticDensityResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 8,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 5.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "4c1beb3975b6d997e01d62f49b44e5f1e8e7fd8b61628de19bb76350bcb9360c",
+        "source_byte_size": 67622684,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "df2d9aef47c1fb0bc769e8933b3c42061dff51626529407c3362dca81bb24b6f",
+        "source_sha256": "d5773bf9440e96d6eb8c598f84bd0e6369fcfa432f626a87f890e07da3c651c9",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b2-small",
+      "sha256": "d5773bf9440e96d6eb8c598f84bd0e6369fcfa432f626a87f890e07da3c651c9",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-small-density-agnesi-stress.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "6e538c86f76d2dd9d6647dab9d1b03cd67450836c4fbf1b9f0f75f1ea5922ed7",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              1280
+            ]
+          },
+          "interactions.1.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              163840
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              6
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              16,
+              51
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              6,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              51,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              8
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 8192,
+          "edge_tile": 1024,
+          "plan_id": "fc0f79a85b1d54d86278dcb34b64caee60cb8c469bcd32367d2db46099867d82",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.1205673217773438e-05,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 4.731118679046631e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 1.0013580322265625e-05,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 8.940696716308594e-08,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.7763568394002505e-15,
+          "forces_max_abs_difference": 2.6201263381153694e-14,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 1.9810542095655137e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 4.263256414560601e-15,
+          "forces_max_abs_difference": 1.4210854715202004e-14,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 3.885780586188048e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -694.4089187214313,
+            "energy_pass": true,
+            "energy_provider": -694.40891872142,
+            "force_native": -85.23836488268995,
+            "force_pass": true,
+            "force_provider": -85.23836488268886
+          },
+          {
+            "energy_native": 740.8385201577345,
+            "energy_pass": true,
+            "energy_provider": 740.8385201577187,
+            "force_native": 19.138859158041445,
+            "force_pass": true,
+            "force_provider": 19.13885915804232
+          },
+          {
+            "energy_native": -265.74526703722853,
+            "energy_pass": true,
+            "energy_provider": -265.7452670372504,
+            "force_native": -63.570821440732196,
+            "force_pass": true,
+            "force_provider": -63.570821440737504
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.0.density_fn.layer0.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "interactions.1.density_fn.layer0.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.symmetric_contractions.contractions.1.weights_max",
+          "products.0.symmetric_contractions.contractions.1.weights.0",
+          "products.0.symmetric_contractions.contractions.1.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "c8cc73a5d57996f99f0acf6f5da8827154378cb6bad388a49797aba524e224f5",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 1.7895356222853416,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "default"
+          ],
+          "hidden_irreps": "128x0e+128x1o",
+          "interaction_classes": [
+            "RealAgnosticDensityInteractionBlock",
+            "RealAgnosticDensityResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 8,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 5.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "8c38d1f0744fd813e830f65ed0ec3b3b64f8964df80edf6b8066aa0cc90c14ce",
+        "source_byte_size": 79462798,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "9199e730b25cc6025cdfb459f237432348deb5f759f084661d02043faf497737",
+        "source_sha256": "a90be07c8aa6623c390fcc4653d3e319c4a356f8b4a53d323f96b2012d375caf",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b2-medium",
+      "sha256": "a90be07c8aa6623c390fcc4653d3e319c4a356f8b4a53d323f96b2012d375caf",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-medium-density-agnesi-stress.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "0aab364a37d692e0d48feadd771746b21bbdddfa43761965aa7b13ffb50d4045",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              2176
+            ]
+          },
+          "interactions.1.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              8,
+              1
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              278528
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              49152
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              49152
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              6
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              16,
+              51
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              6,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              51,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              5,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              5,
+              16,
+              16,
+              7
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              5,
+              16,
+              16,
+              16,
+              65
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              7,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.2.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              65,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              8
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 16384,
+          "edge_tile": 512,
+          "plan_id": "39b2c260eca6b24802b516d204b3ffe85fe4a3a0435c42ae82ad2c4c204ac9bf",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.9073486328125e-06,
+          "forces_max_abs_difference": 1.33514404296875e-05,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 3.4086406230926514e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 2.288818359375e-06,
+          "forces_max_abs_difference": 1.0013580322265625e-05,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 5.21540641784668e-08,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 3.552713678800501e-15,
+          "forces_max_abs_difference": 2.930988785010413e-14,
+          "forces_pass": true,
+          "provider_edges": 5608,
+          "stress_max_abs_difference": 2.2273849431542203e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 1.4210854715202005e-15,
+          "forces_max_abs_difference": 1.965094753586527e-14,
+          "forces_pass": true,
+          "provider_edges": 2000,
+          "stress_max_abs_difference": 2.5673907444456745e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -597.7530267946423,
+            "energy_pass": true,
+            "energy_provider": -597.7530267946246,
+            "force_native": -161.0238932368959,
+            "force_pass": true,
+            "force_provider": -161.02389323689428
+          },
+          {
+            "energy_native": -50.397189449772256,
+            "energy_pass": true,
+            "energy_provider": -50.3971894498015,
+            "force_native": -132.43731154038653,
+            "force_pass": true,
+            "force_provider": -132.43731154037974
+          },
+          {
+            "energy_native": 149.42710612868828,
+            "energy_pass": true,
+            "energy_provider": 149.4271061286794,
+            "force_native": -89.81017786746933,
+            "force_pass": true,
+            "force_provider": -89.81017786746732
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.0.density_fn.layer0.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "interactions.1.density_fn.layer0.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.symmetric_contractions.contractions.1.weights_max",
+          "products.0.symmetric_contractions.contractions.1.weights.0",
+          "products.0.symmetric_contractions.contractions.1.weights.1",
+          "products.0.symmetric_contractions.contractions.2.weights_max",
+          "products.0.symmetric_contractions.contractions.2.weights.0",
+          "products.0.symmetric_contractions.contractions.2.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "006eca59ae47b0bdc6ee03f818e727eeb7675dc057069ce578cf10e242a6b861",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 1.7895356222853416,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "default"
+          ],
+          "hidden_irreps": "128x0e+128x1o+128x2e",
+          "interaction_classes": [
+            "RealAgnosticDensityInteractionBlock",
+            "RealAgnosticDensityResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 8,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 5.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.2.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.2.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.2.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": [
+            "products.0.symmetric_contractions.contractions.1.U_matrix_3",
+            "products.0.symmetric_contractions.contractions.2.U_matrix_3"
+          ]
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "f5f16abeacf10c60c155dcf8fe4c5b33a3e10b254eb98299e4268167ae2802a4",
+        "source_byte_size": 98544548,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "2dd288720f4f99e46b93bf1cb6021b9fdf4950c878803280333e6c885f212923",
+        "source_sha256": "348390e758e1c90011c7675e864850f8e9c5b3e7c217f79a2b4bad1baaa657ad",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b2-large",
+      "sha256": "348390e758e1c90011c7675e864850f8e9c5b3e7c217f79a2b4bad1baaa657ad",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-large-density-agnesi-stress.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "configuration": {
+        "architecture_id": "b100451243b783acd71103babb10ce01cf7ecc083f428930175c703cf57c987c",
+        "source_parameters": {
+          "atomic_energies_fn.atomic_energies": {
+            "dtype": "float64",
+            "shape": [
+              89
+            ]
+          },
+          "atomic_numbers": {
+            "dtype": "int64",
+            "shape": [
+              89
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.0.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              512
+            ]
+          },
+          "interactions.0.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              1
+            ]
+          },
+          "interactions.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              65536
+            ]
+          },
+          "interactions.0.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "interactions.0.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              5832704
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer1.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer2.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              64
+            ]
+          },
+          "interactions.1.conv_tp_weights.layer3.weight": {
+            "dtype": "float64",
+            "shape": [
+              64,
+              1280
+            ]
+          },
+          "interactions.1.density_fn.layer0.weight": {
+            "dtype": "float64",
+            "shape": [
+              10,
+              1
+            ]
+          },
+          "interactions.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              163840
+            ]
+          },
+          "interactions.1.linear_up.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "interactions.1.skip_tp.weight": {
+            "dtype": "float64",
+            "shape": [
+              1458176
+            ]
+          },
+          "node_embedding.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              11392
+            ]
+          },
+          "pair_repulsion_fn.a_exp": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.a_prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "pair_repulsion_fn.c": {
+            "dtype": "float64",
+            "shape": [
+              4
+            ]
+          },
+          "pair_repulsion_fn.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "pair_repulsion_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "products.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              32768
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              1
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              6
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              3,
+              16,
+              16,
+              16,
+              51
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              6,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.0.symmetric_contractions.contractions.1.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              51,
+              128
+            ]
+          },
+          "products.1.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              16384
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_1": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              1
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_2": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              4
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.U_matrix_3": {
+            "dtype": "float64",
+            "shape": [
+              16,
+              16,
+              16,
+              23
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.0": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              4,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights.1": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              1,
+              128
+            ]
+          },
+          "products.1.symmetric_contractions.contractions.0.weights_max": {
+            "dtype": "float64",
+            "shape": [
+              89,
+              23,
+              128
+            ]
+          },
+          "r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.bessel_weights": {
+            "dtype": "float64",
+            "shape": [
+              10
+            ]
+          },
+          "radial_embedding.bessel_fn.prefactor": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.bessel_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.p": {
+            "dtype": "int32",
+            "shape": []
+          },
+          "radial_embedding.cutoff_fn.r_max": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.a": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.covalent_radii": {
+            "dtype": "float64",
+            "shape": [
+              119
+            ]
+          },
+          "radial_embedding.distance_transform.p": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "radial_embedding.distance_transform.q": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "readouts.0.linear.weight": {
+            "dtype": "float64",
+            "shape": [
+              128
+            ]
+          },
+          "readouts.1.linear_1.weight": {
+            "dtype": "float64",
+            "shape": [
+              2048
+            ]
+          },
+          "readouts.1.linear_2.weight": {
+            "dtype": "float64",
+            "shape": [
+              16
+            ]
+          },
+          "scale_shift.scale": {
+            "dtype": "float64",
+            "shape": []
+          },
+          "scale_shift.shift": {
+            "dtype": "float64",
+            "shape": []
+          }
+        },
+        "streaming": {
+          "accumulation": "fast",
+          "channel_capacity": 8192,
+          "edge_tile": 1024,
+          "plan_id": "fc0f79a85b1d54d86278dcb34b64caee60cb8c469bcd32367d2db46099867d82",
+          "receiver_tile": 256
+        }
+      },
+      "float32": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 9.5367431640625e-07,
+          "forces_max_abs_difference": 1.2859702110290527e-05,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 1.735752448439598e-07,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 0.0,
+          "forces_max_abs_difference": 7.927417755126953e-06,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 3.725290298461914e-08,
+          "stress_pass": true
+        }
+      },
+      "float64": {
+        "C64": {
+          "atoms": 64,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 7.105427357601002e-15,
+          "forces_max_abs_difference": 2.1760371282653068e-14,
+          "forces_pass": true,
+          "provider_edges": 10112,
+          "stress_max_abs_difference": 2.4494295480792516e-15,
+          "stress_pass": true
+        },
+        "STO40": {
+          "atoms": 40,
+          "energy_pass": true,
+          "energy_per_atom_abs_difference": 4.263256414560601e-15,
+          "forces_max_abs_difference": 1.3211653993039363e-14,
+          "forces_pass": true,
+          "provider_edges": 2960,
+          "stress_max_abs_difference": 1.6653345369377348e-16,
+          "stress_pass": true
+        }
+      },
+      "head": null,
+      "parameter_directions": {
+        "directions": [
+          {
+            "energy_native": -53.4116471194283,
+            "energy_pass": true,
+            "energy_provider": -53.411647119418376,
+            "force_native": 20.432913585809548,
+            "force_pass": true,
+            "force_provider": 20.432913585812653
+          },
+          {
+            "energy_native": 25.866994586296524,
+            "energy_pass": true,
+            "energy_provider": 25.866994586332275,
+            "force_native": -8.61885144581321,
+            "force_pass": true,
+            "force_provider": -8.618851445811343
+          },
+          {
+            "energy_native": -14.672503618261342,
+            "energy_pass": true,
+            "energy_provider": -14.672503618237654,
+            "force_native": -8.175584606977832,
+            "force_pass": true,
+            "force_provider": -8.175584606976807
+          }
+        ],
+        "parameters": [
+          "node_embedding.linear.weight",
+          "interactions.0.linear_up.weight",
+          "interactions.0.conv_tp_weights.layer0.weight",
+          "interactions.0.conv_tp_weights.layer1.weight",
+          "interactions.0.conv_tp_weights.layer2.weight",
+          "interactions.0.conv_tp_weights.layer3.weight",
+          "interactions.0.linear.weight",
+          "interactions.0.skip_tp.weight",
+          "interactions.0.density_fn.layer0.weight",
+          "interactions.1.linear_up.weight",
+          "interactions.1.conv_tp_weights.layer0.weight",
+          "interactions.1.conv_tp_weights.layer1.weight",
+          "interactions.1.conv_tp_weights.layer2.weight",
+          "interactions.1.conv_tp_weights.layer3.weight",
+          "interactions.1.linear.weight",
+          "interactions.1.skip_tp.weight",
+          "interactions.1.density_fn.layer0.weight",
+          "products.0.symmetric_contractions.contractions.0.weights_max",
+          "products.0.symmetric_contractions.contractions.0.weights.0",
+          "products.0.symmetric_contractions.contractions.0.weights.1",
+          "products.0.symmetric_contractions.contractions.1.weights_max",
+          "products.0.symmetric_contractions.contractions.1.weights.0",
+          "products.0.symmetric_contractions.contractions.1.weights.1",
+          "products.0.linear.weight",
+          "products.1.symmetric_contractions.contractions.0.weights_max",
+          "products.1.symmetric_contractions.contractions.0.weights.0",
+          "products.1.symmetric_contractions.contractions.0.weights.1",
+          "products.1.linear.weight",
+          "readouts.0.linear.weight",
+          "readouts.1.linear_1.weight",
+          "readouts.1.linear_2.weight"
+        ]
+      },
+      "provenance": {
+        "basis_residual": 2.886579864025407e-15,
+        "conversion_id": "7b9e23007bd67fc0335f098b49d8326b947ef19b4d5b402cdabea9f3068546ff",
+        "declaration": {
+          "MLP_irreps": "16x0e",
+          "apply_cutoff": true,
+          "atomic_energies": [
+            -1.11734008,
+            0.00096759,
+            -0.29754725,
+            -0.01781697,
+            -0.26885011,
+            -1.26173507,
+            -3.12438806,
+            -1.54838784,
+            -0.51882044,
+            -0.01241601,
+            -0.22883163,
+            -0.00951015,
+            -0.21630193,
+            -0.8263903,
+            -1.88816619,
+            -0.89160769,
+            -0.25828273,
+            -0.04925973,
+            -0.22697913,
+            -0.0927795,
+            -2.11396364,
+            -2.50054871,
+            -3.70477179,
+            -5.60261985,
+            -5.32541181,
+            -3.52004933,
+            -1.93555024,
+            -0.9351969,
+            -0.60025846,
+            -0.1651332,
+            -0.32990651,
+            -0.77971828,
+            -1.68367812,
+            -0.76941032,
+            -0.22213843,
+            -0.0335879,
+            -0.1881724,
+            -0.06826294,
+            -2.17084228,
+            -2.28579303,
+            -3.13429753,
+            -4.60211419,
+            -3.45201492,
+            -2.38073513,
+            -1.46855515,
+            -1.4773126,
+            -0.33954585,
+            -0.16843877,
+            -0.35470981,
+            -0.83642657,
+            -1.41101987,
+            -0.65740879,
+            -0.18964571,
+            -0.00857582,
+            -0.13771876,
+            -0.03457659,
+            -0.45580806,
+            -1.3309175,
+            -0.29671824,
+            -0.30391193,
+            -0.30898427,
+            -0.25470891,
+            -8.38001538,
+            -10.38896525,
+            -0.3059505,
+            -0.30676216,
+            -0.30874667,
+            -0.31610927,
+            -0.25190039,
+            -0.06431414,
+            -0.31997586,
+            -3.52770927,
+            -3.54492209,
+            -4.65658356,
+            -4.70108713,
+            -2.88257209,
+            -1.46779304,
+            -0.50269936,
+            -0.28801193,
+            -0.12454674,
+            -0.31737194,
+            -0.77644932,
+            -1.32627283,
+            -0.26827152,
+            -0.90817426,
+            -2.47653193,
+            -4.90438537,
+            -7.63378961,
+            -10.77237713
+          ],
+          "atomic_inter_scale": 0.8140724313304148,
+          "atomic_inter_shift": 0.0,
+          "atomic_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94
+          ],
+          "avg_num_neighbors": 61.964672446250916,
+          "correlation": [
+            3,
+            3
+          ],
+          "distance_transform": "Agnesi",
+          "gate": "silu",
+          "heads": [
+            "default"
+          ],
+          "hidden_irreps": "128x0e+128x1o",
+          "interaction_classes": [
+            "RealAgnosticDensityInteractionBlock",
+            "RealAgnosticDensityResidualInteractionBlock"
+          ],
+          "max_ell": 3,
+          "model_class": "ScaleShiftMACE",
+          "num_bessel": 10,
+          "num_interactions": 2,
+          "num_polynomial_cutoff": 5,
+          "pair_repulsion": true,
+          "r_max": 6.0,
+          "radial_MLP": [
+            64,
+            64,
+            64
+          ],
+          "radial_type": "bessel",
+          "use_agnostic_product": false,
+          "use_last_readout_only": false,
+          "use_reduced_cg": false
+        },
+        "head": "default",
+        "interpreter_sha256": "d6b64f766d3b08326aa10cdb37c9d922e3af38b57ec07caa28b894e5fccf6e69",
+        "interpreter_version": "3.12.8",
+        "layout_normalization": {
+          "derived_zero_flags": [
+            "products.0.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.0.weights_max_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_0_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_1_zeroed",
+            "products.0.symmetric_contractions.contractions.1.weights_max_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_0_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_1_zeroed",
+            "products.1.symmetric_contractions.contractions.0.weights_max_zeroed"
+          ],
+          "dropped_inert_state": [
+            "pair_repulsion_fn.cutoff.p",
+            "pair_repulsion_fn.cutoff.r_max",
+            "pair_repulsion_fn.r_max"
+          ],
+          "integral_buffers": [
+            "pair_repulsion_fn.p",
+            "radial_embedding.cutoff_fn.p"
+          ],
+          "legacy_head": false,
+          "precision_buffers": [],
+          "relabelled_reduced_cg": false,
+          "reparameterized_u_buffers": []
+        },
+        "provider": {
+          "distributions": {
+            "cuequivariance": {
+              "record_sha256": "85bb3c4fbeb19ef8991735eef16cbcf4bc5ad350794ad421ea17838a8637b5f3",
+              "verified_files": 58,
+              "version": "0.12.0"
+            },
+            "cuequivariance-torch": {
+              "record_sha256": "b7146ceb9b45c20d1bdd03c8a67a6ac973d0353f12a48d37bb2db89decc09a69",
+              "verified_files": 30,
+              "version": "0.12.0"
+            },
+            "e3nn": {
+              "record_sha256": "e8374e96767ec26eb2879bc2d06c18e1c706ba7101e99819d9ef8cab217668fa",
+              "verified_files": 69,
+              "version": "0.4.4"
+            },
+            "mace-torch": {
+              "record_sha256": "d43223c8a6bc9d3899e40a32492a02c0d15553e77a51dce0a6cbde8b602fb2f0",
+              "verified_files": 129,
+              "version": "0.3.16"
+            },
+            "torch": {
+              "record_sha256": "317cb856230cdacbdb509d9eed70e54c524e6b9a261e8a67b6b4ed316ab1af19",
+              "verified_files": 0,
+              "version": "2.14.1"
+            }
+          },
+          "python": "3.12.8",
+          "site_packages": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/streamed-atomistic-execution/.tmp/mace-provider/.venv/lib/python3.12/site-packages"
+        },
+        "source_admission_id": "7e68cd997cb53a5e8ac432c555125105c436638bd3830abc2485b741d9b23d03",
+        "source_byte_size": 79472952,
+        "source_dtype": "float64",
+        "source_kind": "torch-full-model",
+        "source_license_id": "MIT",
+        "source_manifest_id": "dd0b3d3e28dec08157d6cb7feef98c3267d888d79306b0f362900da58f925b37",
+        "source_sha256": "2f2be696351ac9e94fbe01cdfb6f017679acdbd2db7645209ef55fec9826b012",
+        "trusted_full_object": true
+      },
+      "release": "mace-mp-0b3-medium",
+      "sha256": "2f2be696351ac9e94fbe01cdfb6f017679acdbd2db7645209ef55fec9826b012",
+      "source_url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b3/mace-mp-0b3-medium.model",
+      "status": "passed",
+      "weight_license": "MIT"
+    },
+    {
+      "head": null,
+      "release": "mace-off23-small",
+      "sha256": "165cce4cfec5a34b9c64d4ebf95de15d71106bb584b7291c8470f0749977c46f",
+      "source_url": "https://github.com/ACEsuit/mace-off/raw/main/mace_off23/MACE-OFF23_small.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    },
+    {
+      "head": null,
+      "release": "mace-off23-medium",
+      "sha256": "4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7",
+      "source_url": "https://github.com/ACEsuit/mace-off/raw/main/mace_off23/MACE-OFF23_medium.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    },
+    {
+      "head": null,
+      "release": "mace-off23-large",
+      "sha256": "a29e397dbf3e7a24ac50a9b0dfc919bd5a62efa346f5895a6237b0950c1d76f4",
+      "source_url": "https://github.com/ACEsuit/mace-off/raw/main/mace_off23/MACE-OFF23_large.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    },
+    {
+      "head": "omat_pbe",
+      "release": "mace-mh-0",
+      "sha256": "d62ff8f293664e6556cfa49364b28ee72a70cf1e6150f3c111a578397fed609d",
+      "source_url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-mh-0.model",
+      "status": "blocked-rights",
+      "weight_license": "ASL"
+    }
+  ]
+}

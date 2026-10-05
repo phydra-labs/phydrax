@@ -29,8 +29,12 @@ from phydrax.qualification._evidence import SupportDependency
 from phydrax.solver._production_runtime import (
     ArtifactCheckpointStore,
     CheckpointCommitReceipt,
+    CheckpointMigrationRecord,
 )
 from phydrax.solver._runtime_lifecycle import (
+    RuntimeCheckpointEnvelope,
+    RuntimeIdentityInventory,
+    RuntimeMigrationReceipt,
     RuntimeRestartRelation,
     UnsupportedReplayError,
 )
@@ -493,6 +497,7 @@ def _artifact_bindings(
     repository_policy: Any = None,
     prepared_configuration_id: Any = "prepared-configuration",
     failure_injector: Any = None,
+    inventory: RuntimeIdentityInventory | None = None,
     maximum_output_backlog_bytes: Any = 8 * 1024 * 1024,
 ) -> Any:
     repository_policy = (
@@ -531,13 +536,21 @@ def _artifact_bindings(
         scheduler_id="scheduler",
         auth_policy_id="auth-policy",
     )
-    manifest = phx.solver.ProductionCaseManifest(
-        problem_id="repository-growth",
-        method_id=method.method_id,
-        precision_id="native-precision",
-        topology_id=topology_id,
-        geometry_layout_id=geometry_layout_id,
-        dtype=str(jnp.asarray(0.0).dtype),
+    manifest = (
+        phx.solver.ProductionCaseManifest(
+            problem_id="repository-growth",
+            method_id=method.method_id,
+            precision_id="native-precision",
+            topology_id=topology_id,
+            geometry_layout_id=geometry_layout_id,
+            dtype=str(jnp.asarray(0.0).dtype),
+        )
+        if inventory is None
+        else phx.solver.ProductionCaseManifest.from_inventory(
+            inventory,
+            problem_id="repository-growth",
+            dtype=str(jnp.asarray(0.0).dtype),
+        )
     )
     store = ArtifactCheckpointStore(
         repository,
@@ -640,6 +653,17 @@ def test_artifact_repository_checkpoint_outbox_resume_and_cache_rebuild(
     assert resumed_runtime.last_replay_classification == "bitwise"
     assert replayed == []
     assert reopened.get_manifest(resumed_store.artifact_id).complete
+    assert (
+        reopened.get_manifest(resumed_store.artifact_id).manifest_id
+        == committed.manifest_id
+    )
+    assert tuple(event.event_id for event in resumed_store._events) == tuple(
+        event_id for event_id, _ in published
+    )
+    assert tuple(event.cursor for event in resumed_store._events) == (0, 1)
+    assert all(event.delivered for event in resumed_store._events)
+    for event, (_, snapshot) in zip(resumed_store._events, published, strict=True):
+        np.testing.assert_array_equal(event.state, snapshot)
 
 
 @pytest.mark.parametrize(
@@ -930,6 +954,7 @@ def test_checkpoint_commit_receipt_defeats_forged_last_checkpoint_id(
         state.moment_states,
         state.trigger_states,
         state.output_cursor,
+        state.evidence,
         "canceled",
         envelope.checkpoint_id,
     )
@@ -1054,6 +1079,122 @@ def test_durable_checkpoint_generation_read_never_follows_symlink(tmp_path: Any)
 
     with pytest.raises(ArrayArchiveCorruptionError):
         prepared.resume(state)
+
+
+@pytest.mark.parametrize("limit_stage", ("arrays", "encoded"))
+def test_lineage_is_admitted_before_checkpoint_encoding(
+    tmp_path: Any, monkeypatch: Any, limit_stage: str
+) -> None:
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: jnp.ones_like(state)
+    )
+    plan = _repository_plan(method)
+    source_inventory = RuntimeIdentityInventory(
+        {
+            "source": "staging-admission",
+            "program": plan.plan_id,
+            "method": method.method_id,
+            "precision": "native-precision",
+            "capacity": "source-capacity-16",
+        }
+    )
+    target_inventory = RuntimeIdentityInventory(
+        {**source_inventory.record(), "capacity": "target-capacity-1"}
+    )
+    source = RuntimeCheckpointEnvelope(
+        jnp.zeros(16, dtype=jnp.float64),
+        time=0.0,
+        step_index=0,
+        schedule_cursor=0,
+        mesh_id=source_inventory.topology_id,
+        method_id=method.method_id,
+        precision_id="native-precision",
+        topology_epoch_id=source_inventory.geometry_layout_id,
+        inventory=source_inventory,
+    )
+    migration = RuntimeMigrationReceipt(
+        "epoch",
+        source_inventory,
+        target_inventory,
+        transport_id="bounded-epoch-repack",
+    )
+    repository, manifest, store, resolved, _, _ = _artifact_bindings(
+        tmp_path / "lineage-admission",
+        method,
+        inventory=target_inventory,
+    )
+    prepared = phx.solver.PreparedProductionRun(
+        manifest, plan, store, resolved_run_spec=resolved
+    )
+    state, receipt = prepared.commit_checkpoint(
+        prepared.initial_state(jnp.zeros(1, dtype=jnp.float64))
+    )
+    envelope = prepared._envelope(state)
+    store._lineage = (
+        store._lineage_record(
+            migration,
+            source.checkpoint_id,
+            0,
+            source.tree_specs_record()["state"],
+            source.archive_arrays,
+        ),
+    )
+    lineage_record = store._lineage[0]
+    restored_record = CheckpointMigrationRecord.from_record(
+        lineage_record.to_record(),
+        lineage_record.state_arrays,
+        store.encoding_plan,
+    )
+    assert restored_record.receipt.receipt_id == migration.receipt_id
+    np.testing.assert_array_equal(
+        restored_record.source_state(source.state), source.state
+    )
+    payloads, snapshot = store._snapshot_payloads(envelope, receipt.generation + 1)
+    assert snapshot["lineage"][0]["receipt_id"] == migration.receipt_id
+    assert snapshot["lineage_collection_id"] is not None
+    assert "lineage-manifest" in payloads
+    assert store.verify_commit(receipt) == receipt
+    state_bytes = sum(
+        value.size * np.dtype(value.dtype).itemsize
+        for value in envelope.archive_arrays.values()
+    )
+    lineage_bytes = sum(
+        value.size * np.dtype(value.dtype).itemsize
+        for value in lineage_record.state_arrays.values()
+    )
+    ceiling = (
+        state_bytes + lineage_bytes // 2
+        if limit_stage == "arrays"
+        else sum(len(payload) for payload in payloads.values()) - 1
+    )
+    store.checkpoint_resources = CheckpointResourcePolicy(
+        store.resource_request.resource_id,
+        maximum_manifest_bytes=store._maximum_manifest_bytes,
+        maximum_chunks=1024,
+        maximum_logical_payloads=1024,
+        maximum_logical_payload_bytes=ceiling,
+        maximum_total_plaintext_bytes=ceiling,
+        maximum_total_encoded_bytes=ceiling,
+        maximum_outbox_records=1,
+        maximum_outbox_bytes=64,
+    )
+
+    def refuse_encoding(arrays: Any, *, logical_prefix: str) -> Any:
+        pytest.fail(f"{logical_prefix} encoding occurred before staging admission")
+
+    if limit_stage == "arrays":
+        monkeypatch.setattr(
+            "phydrax.solver._production_runtime.encode_logical_arrays",
+            refuse_encoding,
+        )
+    refusal = (
+        "array payloads exceed staging resources"
+        if limit_stage == "arrays"
+        else "aggregate plaintext resource limit"
+    )
+    with pytest.raises(ValueError, match=refusal):
+        store._snapshot_payloads(envelope, receipt.generation + 1)
+    assert repository.get_manifest(store.artifact_id).manifest_id == receipt.commit_id
 
 
 def test_repository_aggregate_limits_precede_chunk_reads(

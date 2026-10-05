@@ -5,11 +5,13 @@
 """Self-adjoint, Schur, and general standard or generalized eigenproblems."""
 
 from ._general import (
+    ArnoldiRestart,
     CayleyTransform,
     DenseSchurQZ,
     general_eigensolve,
     GeneralEigenCapabilities,
     GeneralEigenCostEstimate,
+    GeneralEigenEnclosure,
     GeneralEigenMethod,
     GeneralEigenproblem,
     GeneralEigenproblemKind,
@@ -24,6 +26,7 @@ from ._general import (
     GeneralEigenSolveStatus,
     GeneralEigenTolerancePolicy,
     GeneralEigenTransform,
+    GeneralEigenVectors,
     plan_general_eigensolve,
     prepare_general_eigensolve,
     PreparedGeneralEigenSolve,
@@ -233,10 +236,12 @@ from ._tracking import (
 
 
 __all__ = [
+    "ArnoldiRestart",
     "CayleyTransform",
     "DenseSchurQZ",
     "GeneralEigenCapabilities",
     "GeneralEigenCostEstimate",
+    "GeneralEigenEnclosure",
     "GeneralEigenMethod",
     "GeneralEigenproblem",
     "GeneralEigenproblemKind",
@@ -251,6 +256,7 @@ __all__ = [
     "GeneralEigenSolveStatus",
     "GeneralEigenTolerancePolicy",
     "GeneralEigenTransform",
+    "GeneralEigenVectors",
     "GeneralEigenvalueDerivativeDiagnostics",
     "GeneralEigenvalueDerivativeProvenance",
     "GeneralEigenvalueDerivativeResult",

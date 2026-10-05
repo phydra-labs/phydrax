@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
+import jax.core as jax_core
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -19,7 +23,42 @@ from .._iteration import IterationEvidence
 from .._strict import StrictModule
 from ..typing import checked, parse
 from ._policies import DifferentiationMode, DifferentiationPolicy, MixedPrecisionPolicy
+from ._rectangular_rank import RectangularRankCertificate
 from ._recycling import RecyclingState
+
+
+def _numeric_versions(
+    values: tuple[Any, ...],
+    invalid: Callable[..., Any],
+    scalar_message: str,
+    invalid_message: str,
+    /,
+) -> tuple[Array, ...]:
+    """Canonical scalar int32 numeric versions behind one validity invariant.
+
+    Host metadata (Python, NumPy, or concrete JAX scalars) is validated before any
+    value is staged and stays a concrete array inside traces, so constant versions
+    embed without a runtime check here or in downstream provenance. Traced versions
+    keep the runtime refusal on every returned leaf.
+    """
+    if any(isinstance(value, jax_core.Tracer) for value in values):
+        versions = tuple(jnp.asarray(value, dtype=jnp.int32) for value in values)
+        if any(version.ndim != 0 for version in versions):
+            raise ValueError(scalar_message)
+        predicate = invalid(*versions)
+        return tuple(
+            eqx.error_if(version, predicate, invalid_message) for version in versions
+        )
+    host = tuple(np.asarray(value, dtype=np.int32) for value in values)
+    if any(version.ndim != 0 for version in host):
+        raise ValueError(scalar_message)
+    if bool(invalid(*host)):
+        raise ValueError(invalid_message)
+    with jax.ensure_compile_time_eval():
+        return tuple(
+            jnp.asarray(value if isinstance(value, Array) else version, dtype=jnp.int32)
+            for value, version in zip(values, host, strict=True)
+        )
 
 
 class LinearSolveStatus(IntEnum):
@@ -37,6 +76,8 @@ class LinearSolveStatus(IntEnum):
     ADJOINT_FAILED = 11
     CONDITION_LIMIT_REACHED = 12
     USER_STOPPED = 13
+    INCOMPATIBLE_RHS = 14
+    STATIONARITY_RESIDUAL_TOO_LARGE = 15
 
 
 _STATUS_MESSAGES = {
@@ -54,6 +95,13 @@ _STATUS_MESSAGES = {
     LinearSolveStatus.ADJOINT_FAILED: "adjoint solve failed",
     LinearSolveStatus.CONDITION_LIMIT_REACHED: "condition limit reached",
     LinearSolveStatus.USER_STOPPED: "stopped by the iteration control rule",
+    LinearSolveStatus.INCOMPATIBLE_RHS: (
+        "right-hand side is incompatible with the constraints; "
+        "a validated left-null witness separates it"
+    ),
+    LinearSolveStatus.STATIONARITY_RESIDUAL_TOO_LARGE: (
+        "minimum-norm stationarity witness exceeds the requested tolerance"
+    ),
 }
 
 
@@ -131,6 +179,86 @@ class LinearSolveDiagnostics(StrictModule):
         self.singular_values = (
             None if singular_values is None else jnp.asarray(singular_values)
         )
+
+
+class MinimumNormEvidence(StrictModule):
+    """Original-constraint and optimality evidence of one minimum-norm solve.
+
+    Arrays carry the operator batch and right-hand-side axes of the result. For the
+    solve ``minimize ||x||_M subject to A x = b``:
+
+    - ``constraint_residual`` is the true ``||b - A x||_N`` and ``normal_residual``
+      the true ``||A*(b - A x)||_M``.
+    - ``stationarity_residual`` is ``||x - A* y||_M`` for a computed multiplier
+      ``y``; it bounds the distance of ``x`` from ``range(A*)`` and therefore the
+      norm excess of a feasible ``x`` over the minimum-norm solution. It is NaN and
+      ``stationarity_verified`` is false when the route provides no witness.
+    - ``left_null_witness`` is ``z = r / ||r||_N`` for ``r = b - A x`` (zero when
+      ``r = 0``), ``left_null_residual = ||A* z||_M`` and
+      ``incompatibility_margin = |<z, b>|_N``. Every source vector ``x'`` satisfies
+      ``||b - A x'||_N >= margin - left_null_residual * ||x'||_M``;
+      ``incompatibility_radius`` is the source-norm radius within which no vector
+      meets the constraint tolerance. ``incompatible`` is set only when the
+      least-squares stationarity holds, the margin exceeds the tolerance, and the
+      radius exceeds the computed solution norm.
+    - ``rank_certificate`` is the rank evidence an operator derivative relies on;
+      the result's ``derivative_regular`` records whether it admits one.
+    """
+
+    constraint_residual: Array
+    normal_residual: Array
+    stationarity_residual: Array
+    stationarity_verified: Array
+    left_null_residual: Array
+    incompatibility_margin: Array
+    incompatibility_radius: Array
+    incompatible: Array
+    left_null_witness: PyTree[Array]
+    rank_certificate: RectangularRankCertificate | None
+
+    @checked
+    def __init__(
+        self,
+        *,
+        constraint_residual: ArrayLike,
+        normal_residual: ArrayLike,
+        stationarity_residual: ArrayLike,
+        stationarity_verified: ArrayLike,
+        left_null_residual: ArrayLike,
+        incompatibility_margin: ArrayLike,
+        incompatibility_radius: ArrayLike,
+        incompatible: ArrayLike,
+        left_null_witness: PyTree[Array],
+        rank_certificate: RectangularRankCertificate | None,
+    ) -> None:
+        values = tuple(
+            jnp.asarray(value)
+            for value in (
+                constraint_residual,
+                normal_residual,
+                stationarity_residual,
+                left_null_residual,
+                incompatibility_margin,
+                incompatibility_radius,
+            )
+        )
+        flags = tuple(
+            jnp.asarray(value, dtype=jnp.bool_)
+            for value in (stationarity_verified, incompatible)
+        )
+        if any(value.shape != values[0].shape for value in values + flags):
+            raise ValueError("Minimum-norm evidence must share one result shape.")
+        (
+            self.constraint_residual,
+            self.normal_residual,
+            self.stationarity_residual,
+            self.left_null_residual,
+            self.incompatibility_margin,
+            self.incompatibility_radius,
+        ) = values
+        self.stationarity_verified, self.incompatible = flags
+        self.left_null_witness = left_null_witness
+        self.rank_certificate = rank_certificate
 
 
 class LinearIterationMetrics(StrictModule):
@@ -374,30 +502,18 @@ class LinearSolveProvenance(StrictModule):
         self.preconditioner_refresh = (
             None if preconditioner_refresh is None else str(preconditioner_refresh)
         )
-        preconditioner_version = jnp.asarray(
-            preconditioner_numeric_version,
-            dtype=jnp.int32,
-        )
-        built_version = jnp.asarray(
-            preconditioner_built_numeric_version,
-            dtype=jnp.int32,
-        )
-        if preconditioner_version.ndim != 0 or built_version.ndim != 0:
-            raise ValueError("Preconditioner provenance versions must be scalar.")
-        invalid_versions = (
-            (preconditioner_version < -1)
-            | (built_version < -1)
-            | ((preconditioner_version == -1) != (built_version == -1))
-            | ((preconditioner_version >= 0) & (built_version > preconditioner_version))
-        )
-        self.preconditioner_numeric_version = eqx.error_if(
-            preconditioner_version,
-            invalid_versions,
-            "Preconditioner provenance versions are invalid.",
-        )
-        self.preconditioner_built_numeric_version = eqx.error_if(
-            built_version,
-            invalid_versions,
+        (
+            self.preconditioner_numeric_version,
+            self.preconditioner_built_numeric_version,
+        ) = _numeric_versions(
+            (preconditioner_numeric_version, preconditioner_built_numeric_version),
+            lambda version, built: (
+                (version < -1)
+                | (built < -1)
+                | ((version == -1) != (built == -1))
+                | ((version >= 0) & (built > version))
+            ),
+            "Preconditioner provenance versions must be scalar.",
             "Preconditioner provenance versions are invalid.",
         )
         preconditioner_costs = (
@@ -414,16 +530,14 @@ class LinearSolveProvenance(StrictModule):
             self.preconditioner_apply_workspace_bytes_per_rhs,
             self.preconditioner_setup_matvec_count,
         ) = preconditioner_costs
-        operator_version = jnp.asarray(operator_numeric_version, dtype=jnp.int32)
         recycling_costs = (
             int(recycling_capacity),
             int(recycling_state_bytes),
         )
-        if operator_version.ndim != 0:
-            raise ValueError("operator_numeric_version must be scalar.")
-        operator_version = eqx.error_if(
-            operator_version,
-            operator_version < 0,
+        (operator_version,) = _numeric_versions(
+            (operator_numeric_version,),
+            lambda version: version < 0,
+            "operator_numeric_version must be scalar.",
             "operator_numeric_version must be non-negative.",
         )
         if any(value < 0 for value in recycling_costs):
@@ -481,7 +595,11 @@ class LinearSolveResult(StrictModule):
     `"rhs-only"` is implicit in the right-hand side only, with the operator
     stopped; `"algorithmic"` unrolls the executed iteration; `"none"` is stopped.
     `derivative_valid` reports, per right-hand side, whether that contract holds
-    for this solve.
+    for this solve. `derivative_regular` is the per-right-hand-side regularity
+    evidence an implicit operator derivative additionally needs (fixed numerical
+    rank for pseudoinverse solutions); `None` means no such requirement.
+    `minimum_norm` carries constraint, stationarity, incompatibility, and rank
+    evidence of a `MinimumNormProblem` solve.
     """
 
     value: PyTree[Array]
@@ -491,6 +609,8 @@ class LinearSolveResult(StrictModule):
     iteration_evidence: IterationEvidence | None
     initial_guess: InitialGuessDiagnostics | None
     derivative_contract: DerivativeContract
+    minimum_norm: MinimumNormEvidence | None
+    derivative_regular: Array | None
 
     @checked
     def __init__(
@@ -504,6 +624,8 @@ class LinearSolveResult(StrictModule):
         differentiation: DifferentiationPolicy,
         iteration_evidence: IterationEvidence | None = None,
         initial_guess: InitialGuessDiagnostics | None = None,
+        minimum_norm: MinimumNormEvidence | None = None,
+        derivative_regular: ArrayLike | None = None,
     ) -> None:
         if iteration_evidence is not None and not isinstance(
             iteration_evidence, IterationEvidence
@@ -520,6 +642,12 @@ class LinearSolveResult(StrictModule):
         self.initial_guess = initial_guess
         self.iteration_evidence = iteration_evidence
         self.derivative_contract = _linear_solve_derivative_contract(differentiation.mode)
+        self.minimum_norm = minimum_norm
+        self.derivative_regular = (
+            None
+            if derivative_regular is None
+            else jnp.asarray(derivative_regular, dtype=jnp.bool_)
+        )
 
     @property
     def successful(self) -> Array:
@@ -530,13 +658,15 @@ class LinearSolveResult(StrictModule):
         """Whether `derivative_contract` holds for each right-hand side.
 
         Implicit derivatives require a converged solve, the same evidence that
-        guards the returned value's derivative; unrolled derivatives of the
-        executed iteration require finite arithmetic; a stopped contract claims
-        no derivative.
+        guards the returned value's derivative, and any `derivative_regular`
+        evidence; unrolled derivatives of the executed iteration require finite
+        arithmetic; a stopped contract claims no derivative.
         """
         match self.derivative_contract.route:
             case DerivativeRoute.IMPLICIT:
-                return self.diagnostics.converged
+                if self.derivative_regular is None:
+                    return self.diagnostics.converged
+                return self.diagnostics.converged & self.derivative_regular
             case DerivativeRoute.UNROLLED:
                 return self.diagnostics.finite
             case DerivativeRoute.STOPPED:
@@ -795,6 +925,7 @@ __all__ = [
     "LinearSolveStatus",
     "MatrixInversionKind",
     "MatrixInversionResult",
+    "MinimumNormEvidence",
     "RecycledLinearSolveResult",
     "linear_status_message",
 ]

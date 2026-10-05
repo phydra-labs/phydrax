@@ -1405,3 +1405,42 @@ def test_fv_triangle_limited_muscl_query_is_nonlinear_with_a_local_linearization
     ahead = reconstruction.prepare_query(inside + shift).apply(state)
     behind = reconstruction.prepare_query(inside - shift).apply(state)
     np.testing.assert_allclose(slope, (ahead - behind) / 2e-4, rtol=1e-8, atol=1e-8)
+
+
+def test_point_cloud_reconstruction_rebinds_to_refreshed_owner_coordinates() -> None:
+    points = _point_cloud_points()
+    count = points.shape[0]
+    discretization = phx.discretization.PointCloudPlan(
+        points,
+        np.full(count, 1.0 / count),
+        stencil=phx.discretization.LocalStencilPolicy(polynomial_degree=2),
+    ).prepare()
+    trust = float(jnp.min(discretization.trust_radius))
+    assert trust > 0
+    # A contraction toward the support center keeps every point in the square.
+    contraction = 0.5 * trust / 0.75
+    moved = 0.5 + (points - 0.5) * (1.0 - contraction)
+    refresh = discretization.refresh(moved)
+    assert bool(refresh.accepted)
+    support = phx.geometry.Rectangle((0.5, 0.5), (1.0, 1.0)).compile()
+    anchored = phx.discretization.prepare_point_cloud_field_reconstruction(
+        discretization, support_geometry=support, radius=_CLOUD_RADIUS, capacity=count
+    )
+    rebound = phx.discretization.prepare_point_cloud_field_reconstruction(
+        refresh.discretization,
+        support_geometry=support,
+        radius=_CLOUD_RADIUS,
+        capacity=count,
+    )
+    assert rebound.kernel.kernel_id != anchored.kernel.kernel_id
+    assert isinstance(
+        rebound.kernel, phx.discretization.PointCloudFieldReconstructionKernel
+    )
+    np.testing.assert_array_equal(rebound.kernel.points, moved)
+    field = _quadratic((0.3, -1.0, 2.0, 0.5, -0.7, 1.1))
+    query = rebound.prepare_query(_CLOUD_QUERIES[:2])
+    np.testing.assert_allclose(
+        query.apply(jnp.asarray(field(moved[:, 0], moved[:, 1]))),
+        field(_CLOUD_QUERIES[:2, 0], _CLOUD_QUERIES[:2, 1]),
+        atol=1e-10,
+    )

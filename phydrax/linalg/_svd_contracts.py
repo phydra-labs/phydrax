@@ -58,6 +58,10 @@ SVDDifferentiationMode: TypeAlias = Literal[
 SVDCertificateKind: TypeAlias = Literal[
     "exact-spectrum", "deterministic-frobenius", "independent-gaussian"
 ]
+# LAPACK-style dense SVD drivers. Divide and conquer (gesdd) is fastest but can
+# fail to converge on exactly clustered spectra; QR iteration (gesvd) is slower
+# and robust there. A non-converged driver reports NONFINITE_OUTPUT.
+DenseSVDAlgorithm: TypeAlias = Literal["divide-and-conquer", "qr"]
 
 
 @final
@@ -102,8 +106,10 @@ class SVDProblem(StrictModule):
 
 @final
 class DenseSVD(StrictModule):
-    def __init__(self) -> None:
-        pass
+    algorithm: DenseSVDAlgorithm = eqx.field(static=True)
+
+    def __init__(self, *, algorithm: DenseSVDAlgorithm = "divide-and-conquer") -> None:
+        self.algorithm = parse(algorithm, DenseSVDAlgorithm, "algorithm")
 
     @property
     def name(self) -> str:
@@ -331,6 +337,7 @@ class SVDSolvePlan(StrictModule):
             "source": problem.operator.source.space_id,
             "target": problem.operator.target.space_id,
             "method": method.name,
+            "dense_algorithm": method.algorithm if isinstance(method, DenseSVD) else None,
             "oversampling": method.oversampling
             if isinstance(method, RandomizedSVD)
             else 0,

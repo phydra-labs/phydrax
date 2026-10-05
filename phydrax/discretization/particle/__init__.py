@@ -243,8 +243,10 @@ from ._dfsph import (
 )
 from ._distributed import (
     certify_particle_precision,
+    FractionalOwnerPartition,
     halo_sum,
     halo_update,
+    ImageAliasPackets,
     migrate_particle_halos,
     MixedPrecisionCertification,
     particle_load_balance_report,
@@ -286,6 +288,24 @@ from ._hierarchical_cell_list import (
     PreparedHierarchicalRadiusParticleNeighborhood,
 )
 from ._iisph import IISPHMethodPlan, IISPHStateLayout, IISPHStepResult, PreparedIISPH
+from ._image_neighborhood import (
+    AbstractImageRouteSearch,
+    AbstractParticleImageNeighborhoodPlan,
+    AbstractPreparedParticleImageNeighborhood,
+    CellListImageRouteSearch,
+    CellListParticleImageNeighborhoodPlan,
+    DenseImageRouteSearch,
+    DenseParticleImageNeighborhoodPlan,
+    image_certificate,
+    ImageCertificate,
+    ImageRouteSearchResult,
+    ParticleImageCapacity,
+    ParticleImageCapacityLadder,
+    ParticleImageNeighborhoodState,
+    PreparedCellListParticleImageNeighborhood,
+    PreparedDenseParticleImageNeighborhood,
+)
+from ._image_relation import ParticleImageRelation, ParticleImageRelationEvidence
 from ._implicit_contact import (
     ImplicitContactResult,
     ImplicitRigidShapePlan,
@@ -696,6 +716,7 @@ from ._sph_density import (
     ContinuityDensityPlan,
     SummationDensityPlan,
 )
+from ._sph_operators import sph_continuity_density_rate, sph_summation_density
 from ._sph_source import (
     emit_sph_particles,
     SPHDensityInitialization,
@@ -788,7 +809,10 @@ from ._verification import (
     write_particle_replay,
 )
 from ._verlet import (
+    ImageVerletParticleNeighborhoodPlan,
+    ParticleImageVerletState,
     ParticleVerletState,
+    PreparedImageVerletParticleNeighborhood,
     PreparedVerletParticleNeighborhood,
     VerletParticleNeighborhoodPlan,
 )
@@ -842,6 +866,8 @@ __all__ = [
     "ParticleHaloState",
     "ParticleKernelRequestPlan",
     "ParticleLoadBalanceReport",
+    "FractionalOwnerPartition",
+    "ImageAliasPackets",
     "ParticleQualificationArtifact",
     "ParticleRefinementReport",
     "ParticleReplayPacket",
@@ -964,9 +990,11 @@ __all__ = [
     "multiphase_interface_interaction",
     "shepard_renormalized_density",
     "sph_artificial_viscosity_force",
+    "sph_continuity_density_rate",
     "sph_density_diffusion_rate",
     "sph_first_order_correction",
     "sph_kernel_normalization",
+    "sph_summation_density",
     "variable_h_density",
     "variable_h_pressure_gradient",
     "AbstractSPHDensityPlan",
@@ -1098,6 +1126,26 @@ __all__ = [
     "ParticleVerletState",
     "PreparedVerletParticleNeighborhood",
     "VerletParticleNeighborhoodPlan",
+    "AbstractImageRouteSearch",
+    "AbstractParticleImageNeighborhoodPlan",
+    "AbstractPreparedParticleImageNeighborhood",
+    "CellListImageRouteSearch",
+    "CellListParticleImageNeighborhoodPlan",
+    "DenseImageRouteSearch",
+    "DenseParticleImageNeighborhoodPlan",
+    "image_certificate",
+    "ImageCertificate",
+    "ImageRouteSearchResult",
+    "ImageVerletParticleNeighborhoodPlan",
+    "ParticleImageCapacity",
+    "ParticleImageCapacityLadder",
+    "ParticleImageNeighborhoodState",
+    "ParticleImageRelation",
+    "ParticleImageRelationEvidence",
+    "ParticleImageVerletState",
+    "PreparedCellListParticleImageNeighborhood",
+    "PreparedDenseParticleImageNeighborhood",
+    "PreparedImageVerletParticleNeighborhood",
     "DEMCheckpointPolicy",
     "DEMCheckpointVJPResult",
     "DEMLocalValidityCertificate",

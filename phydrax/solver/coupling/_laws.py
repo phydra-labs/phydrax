@@ -52,6 +52,7 @@ from ...geometry.surface import InterfaceSide
 from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
+    BlockSpace,
     DualSpace,
     FunctionLinearOperator,
 )
@@ -592,15 +593,8 @@ def _prepare_sides(
         _refuse_owner_facet_laws(component, trace, side.role)
         strong = component.strong_rows(side.field)
         free = np.setdiff1d(np.asarray(trace.support_rows), strong)
-        prepared.append(
-            _SideData(
-                side.component,
-                side.field,
-                trace,
-                component.prepare_conormal_flux(trace),
-                free,
-            )
-        )
+        flux = component.prepare_conormal_flux(trace)
+        prepared.append(_SideData(side.component, side.field, trace, flux, free))
     return prepared[0], prepared[1]
 
 
@@ -899,10 +893,12 @@ def _mortar_operators(
     multiplier_space: ArraySpace,
     law_id: str,
     /,
+    *,
+    names: tuple[str, str] = ("multiplier", "constraint"),
 ) -> tuple[Contribution, ...]:
     """Symmetric saddle blocks: rows ``R_m - B_m^T l``, ``R_p + B_p^T l``, ``-B_m u_m + B_p u_p``."""
-    multiplier = ContributionEndpoint(law_id, "multiplier", space="reduced")
-    constraint = ContributionEndpoint(law_id, "constraint", space="reduced")
+    multiplier = ContributionEndpoint(law_id, names[0], space="reduced")
+    constraint = ContributionEndpoint(law_id, names[1], space="reduced")
     row_space = DualSpace(multiplier_space)
     contributions: list[Contribution] = []
     for index, datum in enumerate(data):
@@ -957,7 +953,7 @@ def _l2_mismatch(
 
 
 def _free_reaction(
-    datum: _SideData, full: Array, args: Mapping[str, object], /
+    datum: _SideData, full: Array | tuple[Array, ...], args: Mapping[str, object], /
 ) -> tuple[Array, Array]:
     """Owner reaction flux on the interface support rows and their free mask."""
     reaction = datum.flux.evaluate(full, args[datum.component])
@@ -965,7 +961,9 @@ def _free_reaction(
     return reaction, free
 
 
-def _uncancelled_terms[T](action: Callable[..., T], *states: Array) -> T:
+def _uncancelled_terms[T](
+    action: Callable[..., T], *states: Array | tuple[Array, ...]
+) -> T:
     """Linearized ``action`` at ``states`` along their uncancelled direction.
 
     For a linear or affine action this is ``A (s * v)``, whose norm is the
@@ -981,7 +979,7 @@ def _uncancelled_terms[T](action: Callable[..., T], *states: Array) -> T:
 
 
 def _reaction_terms(
-    datum: _SideData, full: Array, args: Mapping[str, object], /
+    datum: _SideData, full: Array | tuple[Array, ...], args: Mapping[str, object], /
 ) -> Array:
     """Uncancelled terms of the owner reaction on the interface support rows."""
     return _uncancelled_terms(
@@ -989,9 +987,32 @@ def _reaction_terms(
     )
 
 
+def _reaction_state(
+    datum: _SideData, fields: FieldStates, /
+) -> Array | tuple[Array, ...]:
+    """The state the owner reaction reads: its own field, or every field of its block.
+
+    A reaction whose rows couple the field to further owner unknowns (block
+    components, boundary ghost values) is evaluated at the complete block, so
+    the certificate balances the rows exactly as the owner evaluates them.
+    """
+    space = datum.flux.evaluator.state_space
+    if (
+        eqx.tree_equal(space.structure(), datum.trace.coefficient_space.structure())
+        is True
+    ):
+        return fields[(datum.component, datum.field)]
+    if not isinstance(space, BlockSpace):
+        raise ValueError(
+            f"The conormal flux of field {datum.field!r} of {datum.component!r} reads "
+            "a state that is neither the field nor a named block of owner fields."
+        )
+    return tuple(fields[(datum.component, name)] for name in space.names)
+
+
 def _owner_row_law(
     data: tuple[_SideData, _SideData],
-    states: tuple[Array, Array],
+    states: tuple[Array | tuple[Array, ...], Array | tuple[Array, ...]],
     injected: tuple[Array, ...],
     injected_terms: tuple[Array, ...],
     args: Mapping[str, object],
@@ -999,12 +1020,13 @@ def _owner_row_law(
 ) -> tuple[Array, Array]:
     """Squared law residual of injected rows against the owner reactions, and its scale.
 
+    ``states`` are the reaction states of the two owners (``_reaction_state``).
     At a solution the owner reaction balances the law rows on free rows. The
     squared scale sums the reactions, the law rows, and the uncancelled terms of
     both, so a balance whose terms cancel is measured against those terms.
     """
-    law = jnp.zeros((), dtype=states[0].dtype)
-    scale = jnp.zeros((), dtype=states[0].dtype)
+    law = jnp.zeros((), dtype=injected[0].dtype)
+    scale = jnp.zeros((), dtype=injected[0].dtype)
     for datum, full, rows, row_terms in zip(
         data, states, injected, injected_terms, strict=True
     ):
@@ -1046,9 +1068,8 @@ class _MortarCertificate(AbstractLawCertificate):
         weak_scale = jnp.linalg.norm(left) + jnp.linalg.norm(right)
         balance = jnp.zeros((), dtype=first.dtype)
         balance_scale = jnp.zeros((), dtype=first.dtype)
-        for index, (datum, full) in enumerate(
-            zip(self.data, (first, second), strict=True)
-        ):
+        for index, datum in enumerate(self.data):
+            full = _reaction_state(datum, fields)
             reaction, free = _free_reaction(datum, full, args)
             terms = _reaction_terms(datum, full, args)
             sign = 1.0 if index == 0 else -1.0
@@ -1077,6 +1098,8 @@ def _lower_mortar(
     sides: tuple[TransmissionSide, TransmissionSide],
     data: tuple[_SideData, _SideData],
     /,
+    *,
+    names: tuple[str, str] = ("multiplier", "constraint"),
 ) -> tuple[
     tuple[LawBlock, ...],
     tuple[LawBlock, ...],
@@ -1153,11 +1176,11 @@ def _lower_mortar(
         )
     space = ArraySpace((basis.dimension,), dtype=data[0].trace.coefficient_space.dtype)
     actions = _MortarActions(quadrature, basis)
-    contributions = _mortar_operators(actions, data, space, law_id)
+    contributions = _mortar_operators(actions, data, space, law_id, names=names)
     certificate = _MortarCertificate(law_id, actions, data)
     return (
-        (LawBlock("multiplier", space),),
-        (LawBlock("constraint", DualSpace(space)),),
+        (LawBlock(names[0], space),),
+        (LawBlock(names[1], DualSpace(space)),),
         contributions,
         certificate,
         evidence,
@@ -1559,7 +1582,14 @@ class _NitscheCertificate(AbstractLawCertificate):
             second,
         )
         law, law_scale = _owner_row_law(
-            self.data, (first, second), injected, injected_terms, args
+            self.data,
+            (
+                _reaction_state(self.data[0], fields),
+                _reaction_state(self.data[1], fields),
+            ),
+            injected,
+            injected_terms,
+            args,
         )
         # Constants carry no flux and the partition of unity sums every row, so the
         # rows of the two owners cancel exactly: the numerical flux is conservative.
@@ -1857,6 +1887,325 @@ class ScalarTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
         )
 
 
+# --- Vector transmission -------------------------------------------------------------------
+
+
+@final
+class VectorTransmissionSide(StrictModule, NonTrainableState):
+    """One endpoint of a vector interface: Cartesian component fields of one owner.
+
+    ``fields[c]`` is the field holding Cartesian component ``c`` of the vector
+    (velocity or displacement); ``domain`` is the owner's exterior-facet domain
+    of the interface, shared by every component.
+    """
+
+    role: str = eqx.field(static=True)
+    component: str = eqx.field(static=True)
+    fields: tuple[str, ...] = eqx.field(static=True)
+    domain: IntegrationDomain
+
+    @checked
+    def __init__(
+        self,
+        role: str,
+        component: str,
+        fields: tuple[str, ...],
+        domain: IntegrationDomain,
+        /,
+    ) -> None:
+        if len(fields) < 2:
+            raise ValueError("fields must name at least two Cartesian component fields.")
+        names = tuple(canonical_identifier(field, "fields") for field in fields)
+        if len(set(names)) != len(names):
+            raise ValueError("Vector component fields must be distinct.")
+        self.role = canonical_identifier(role, "role")
+        self.component = canonical_identifier(component, "component")
+        self.fields = names
+        self.domain = TransmissionSide(role, component, names[0], domain).domain
+
+    def scalar(self, index: int, /) -> TransmissionSide:
+        """The scalar side of Cartesian component ``index``."""
+        return TransmissionSide(
+            self.role, self.component, self.fields[index], self.domain
+        )
+
+
+@final
+class VectorTransmissionEvidence(StrictModule, NonTrainableState):
+    """Per-component mortar evidence of one vector transmission law."""
+
+    fields: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    components: tuple[MortarEvidence, ...]
+
+
+@final
+class VectorInterfaceResultants(StrictModule):
+    """Integrated traction and interface power of one vector transmission solution.
+
+    ``force`` is ``int lambda ds``, the traction resultant the plus side exerts
+    on the minus side (the minus side's outward traction). ``minus_power`` is
+    the dual pairing ``<lambda, B_minus v_minus>`` of that traction covector
+    with the minus trace and ``plus_power`` the power ``-<lambda, B_plus
+    v_plus>`` received by the plus side; their sum is the power lost by the
+    interface, zero to the weak continuity of the traces.
+    """
+
+    force: Array
+    minus_power: Array
+    plus_power: Array
+
+
+@final
+class VectorTransmissionCertificate(AbstractLawCertificate):
+    """Weak continuity and traction balance of every component, and interface work.
+
+    Each owner reaction is evaluated at its complete coupled block, so traction
+    rows that depend on every displacement or velocity component are balanced
+    against the injected multiplier rows exactly as the owner evaluates them.
+    """
+
+    law_id: str = eqx.field(static=True)
+    sides: tuple[VectorTransmissionSide, VectorTransmissionSide]
+    actions: tuple[_MortarActions, ...]
+    data: tuple[tuple[_SideData, _SideData], ...]
+
+    def resultants(
+        self, fields: FieldStates, law_state: tuple[Array, ...], /
+    ) -> VectorInterfaceResultants:
+        force: list[Array] = []
+        minus = plus = jnp.zeros((), dtype=law_state[0].dtype)
+        for index, (actions, multiplier) in enumerate(
+            zip(self.actions, law_state, strict=True)
+        ):
+            quadrature = actions.quadrature
+            force.append(jnp.sum(quadrature.weights * actions.basis.values(multiplier)))
+            states = tuple(
+                fields[(side.component, side.fields[index])] for side in self.sides
+            )
+            minus = minus + jnp.vdot(multiplier, actions.constraint(0, states[0]))
+            plus = plus - jnp.vdot(multiplier, actions.constraint(1, states[1]))
+        return VectorInterfaceResultants(
+            force=jnp.stack(force), minus_power=minus, plus_power=plus
+        )
+
+    def defects(
+        self,
+        fields: FieldStates,
+        law_state: tuple[Array, ...],
+        args: Mapping[str, object],
+        /,
+    ) -> InterfaceDefectReport:
+        weak = weak_scale = jnp.zeros((), dtype=law_state[0].dtype)
+        balance = balance_scale = jnp.zeros((), dtype=law_state[0].dtype)
+        for index, (actions, pair, multiplier) in enumerate(
+            zip(self.actions, self.data, law_state, strict=True)
+        ):
+            values = tuple(
+                fields[(side.component, side.fields[index])] for side in self.sides
+            )
+            left = actions.constraint(0, values[0])
+            right = actions.constraint(1, values[1])
+            weak = weak + jnp.sum((left - right) ** 2)
+            weak_scale = weak_scale + jnp.sum(left**2) + jnp.sum(right**2)
+            for position, (datum, side) in enumerate(zip(pair, self.sides, strict=True)):
+                state = _reaction_state(datum, fields)
+                side_args = args[datum.component]
+                reaction = datum.flux.evaluate(state, side_args)
+                terms = _uncancelled_terms(
+                    lambda value, datum=datum, side_args=side_args: datum.flux.evaluate(
+                        value, side_args
+                    ),
+                    state,
+                )
+                free = jnp.isin(datum.support_rows, datum.free_rows)
+                sign = 1.0 if position == 0 else -1.0
+                load = datum.trace.flatten_rows(actions.load(position, multiplier))
+                injected = sign * load[datum.support_rows]
+                balance = balance + jnp.sum(
+                    jnp.where(free, reaction - injected, 0.0) ** 2
+                )
+                balance_scale = (
+                    balance_scale
+                    + jnp.sum(jnp.where(free, reaction, 0.0) ** 2)
+                    + jnp.sum(jnp.where(free, terms, 0.0) ** 2)
+                    + jnp.sum(jnp.where(free, injected, 0.0) ** 2)
+                )
+        result = self.resultants(fields, law_state)
+        work = jnp.abs(result.minus_power + result.plus_power)
+        work_scale = jnp.abs(result.minus_power) + jnp.abs(result.plus_power)
+        return InterfaceDefectReport(
+            self.law_id,
+            ("weak-continuity", "traction-balance", "interface-work"),
+            (True, True, True),
+            jnp.stack((jnp.sqrt(weak), jnp.sqrt(balance), work)),
+            jnp.stack((jnp.sqrt(weak_scale), jnp.sqrt(balance_scale), work_scale)),
+        )
+
+
+@final
+class VectorTransmissionLaw(AbstractCouplingLaw, NonTrainableState):
+    """Continuity of a vector field and balance of its traction across one interface.
+
+    For every Cartesian component ``c`` the minus and plus traces of the vector
+    (velocity or displacement) are continuous in the mortar sense and the
+    multiplier ``lambda_c`` is component ``c`` of the minus side's outward
+    traction; rows are ``R_minus - B^T lambda`` and ``R_plus + B^T lambda``. An
+    owner whose traction rows couple its components publishes a reaction of its
+    whole block, which the certificate balances at the complete block state.
+    The interface work is the dual pairing of the traction covector with each
+    side's trace (``VectorTransmissionCertificate.resultants``), not a sum of
+    vector coefficients. Each endpoint of ``binding`` binds every component
+    field of its side under the field's own name.
+    """
+
+    law_id: str = eqx.field(static=True)
+    binding: InterfaceBinding
+    sides: tuple[VectorTransmissionSide, VectorTransmissionSide]
+    imposition: MortarImposition
+
+    @checked
+    def __init__(
+        self,
+        law_id: str,
+        binding: InterfaceBinding,
+        sides: tuple[VectorTransmissionSide, VectorTransmissionSide],
+        imposition: MortarImposition,
+        /,
+    ) -> None:
+        if len(sides[0].fields) != len(sides[1].fields):
+            raise ValueError("Both sides must carry the same number of components.")
+        self.law_id = canonical_identifier(law_id, "law_id")
+        self.binding = binding
+        self.sides = sides
+        self.imposition = imposition
+
+    @property
+    def bindings(self) -> tuple[InterfaceBinding, ...]:
+        return (self.binding,)
+
+    def _require_binding(
+        self,
+        components: Mapping[str, AbstractSpatialComponent],
+        data: tuple[_SideData, _SideData],
+        interface_owners: tuple[InterfaceOwner, ...],
+        /,
+    ) -> None:
+        binding = self.binding
+        if binding.incidence != "two-sided":
+            raise ValueError("A transmission law needs a two-sided interface binding.")
+        expected = (
+            binding.side(InterfaceSide.MINUS).role,
+            binding.side(InterfaceSide.PLUS).role,
+        )
+        if (self.sides[0].role, self.sides[1].role) != expected:
+            raise ValueError(
+                f"Transmission sides must follow the binding's (minus, plus) roles "
+                f"{expected!r}."
+            )
+        for side, datum in zip(self.sides, data, strict=True):
+            endpoint = binding.endpoint(side.role)
+            declared = dict(endpoint.fields)
+            for field in side.fields:
+                identity = components[side.component].field_space_id(field)
+                if declared.get(field) != identity:
+                    raise ValueError(
+                        f"Endpoint {side.role!r} must bind component field {field!r} "
+                        f"to its field space {identity!r}."
+                    )
+            endpoint.require_side(
+                interface_owners,
+                datum.trace.sites,
+                datum.trace.normals,
+                facets=(
+                    datum.trace.descriptor.entity_set_id,
+                    datum.trace.descriptor.facets,
+                ),
+            )
+
+    def prepare(
+        self,
+        components: Mapping[str, AbstractSpatialComponent],
+        interface_owners: tuple[InterfaceOwner, ...],
+        /,
+    ) -> PreparedLaw:
+        count = len(self.sides[0].fields)
+        scalar = tuple(
+            (self.sides[0].scalar(index), self.sides[1].scalar(index))
+            for index in range(count)
+        )
+        data: list[tuple[_SideData, _SideData]] = []
+        for pair in scalar:
+            _require_components(pair, components)
+            prepared: list[_SideData] = []
+            for side in pair:
+                component = components[side.component]
+                if not isinstance(component, AbstractTraceComponent):
+                    raise TypeError(
+                        f"Component {side.component!r} publishes no side traces."
+                    )
+                trace = _prepare_trace(component, side)
+                _refuse_owner_facet_laws(component, trace, side.role)
+                free = np.setdiff1d(
+                    np.asarray(trace.support_rows), component.strong_rows(side.field)
+                )
+                prepared.append(
+                    _SideData(
+                        side.component,
+                        side.field,
+                        trace,
+                        component.prepare_conormal_flux(trace),
+                        free,
+                    )
+                )
+            data.append((prepared[0], prepared[1]))
+        dimension = np.asarray(data[0][0].trace.sites).shape[-1]
+        if count != dimension:
+            raise ValueError(
+                f"A traction has {dimension} Cartesian components; the sides carry {count}."
+            )
+        self._require_binding(components, data[0], interface_owners)
+        states: list[LawBlock] = []
+        rows: list[LawBlock] = []
+        contributions: list[Contribution] = []
+        actions: list[_MortarActions] = []
+        evidence: list[MortarEvidence] = []
+        for index, (pair, sides) in enumerate(zip(data, scalar, strict=True)):
+            lowered = _lower_mortar(
+                self.law_id,
+                self.imposition,
+                sides,
+                pair,
+                names=(f"multiplier-{index}", f"constraint-{index}"),
+            )
+            states.extend(lowered[0])
+            rows.extend(lowered[1])
+            contributions.extend(lowered[2])
+            actions.append(lowered[3].actions)
+            evidence.append(lowered[4])
+        impositions = tuple(
+            imposition
+            for index, (sides, pair) in enumerate(zip(scalar, data, strict=True))
+            for imposition in _impositions(
+                f"{self.law_id}:{index}", sides, pair, components
+            )
+        )
+        return PreparedLaw(
+            self.law_id,
+            binding_id=self.binding.binding_id,
+            state_blocks=tuple(states),
+            row_blocks=tuple(rows),
+            contributions=tuple(contributions),
+            impositions=impositions,
+            certificate=VectorTransmissionCertificate(
+                self.law_id, self.sides, tuple(actions), tuple(data)
+            ),
+            evidence=VectorTransmissionEvidence(
+                fields=tuple((minus.field, plus.field) for minus, plus in scalar),
+                components=tuple(evidence),
+            ),
+        )
+
+
 # --- Conservative numerical flux -------------------------------------------------------------
 
 
@@ -2137,7 +2486,14 @@ class _FluxCertificate(AbstractLawCertificate):
             second,
         )
         law, law_scale = _owner_row_law(
-            self.data, (first, second), injected, injected_terms, args
+            self.data,
+            (
+                _reaction_state(self.data[0], fields),
+                _reaction_state(self.data[1], fields),
+            ),
+            injected,
+            injected_terms,
+            args,
         )
         quadrature = self.residual.quadrature
         density = self.residual.density(first, second, args)
@@ -3726,4 +4082,9 @@ __all__ = [
     "ScalarTransmissionLaw",
     "TransmissionImposition",
     "TransmissionSide",
+    "VectorInterfaceResultants",
+    "VectorTransmissionCertificate",
+    "VectorTransmissionEvidence",
+    "VectorTransmissionLaw",
+    "VectorTransmissionSide",
 ]

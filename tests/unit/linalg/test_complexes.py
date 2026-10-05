@@ -568,3 +568,77 @@ def test_three_block_sparse_hodge_solve_satisfies_strong_and_gauge_equations() -
         np.asarray(harmonic.basis).T @ mass @ np.asarray(values), 0, atol=1e-9
     )
     assert bool(result.status == 0)
+
+
+def _weighted_ring(count: int) -> la.HilbertComplex:
+    """Cycle graph with irregular positive weights; its first cohomology is one-dimensional."""
+    rng = np.random.default_rng(7)
+    spaces = tuple(
+        la.ArraySpace(
+            (count,),
+            dtype=jnp.float64,
+            pairing=la.DiagonalPairing(jnp.asarray(rng.uniform(0.2, 5.0, count))),
+            space_id=f"ring:{count}:{k}",
+        )
+        for k in range(2)
+    )
+    edges = np.arange(count)
+    relation = EdgeRelation(
+        jnp.asarray(np.concatenate((edges, (edges + 1) % count)), dtype=jnp.int32),
+        jnp.asarray(np.concatenate((edges, edges)), dtype=jnp.int32),
+        source_size=count,
+        target_size=count,
+    )
+    differential = SparseCoordinateOperator(
+        relation,
+        jnp.concatenate((-jnp.ones(count), jnp.ones(count))),
+        source=spaces[0],
+        target=spaces[1],
+        operator_id=f"ring:{count}:d0",
+    )
+    return la.HilbertComplex(spaces, (differential,), complex_id=f"ring:{count}")
+
+
+def test_large_harmonic_kernel_converges_by_default_and_reports_unconverged_runs() -> (
+    None
+):
+    # 400 coordinates exceed dense_dimension=256, so the iterative route runs.
+    # Independent reference: a harmonic 1-form of the ring has M h constant
+    # along the cycle (co-closed), i.e. h ∝ 1 / w_e, normalized in the M-norm.
+    complex = _weighted_ring(400)
+    harmonic = la.harmonic_subspace(
+        complex,
+        1,
+        expected_dimension=1,
+        policy=la.HarmonicSubspacePolicy(tolerance=1e-10),
+    )
+    assert bool(harmonic.valid)
+    assert float(harmonic.residual_defect) <= 1e-10
+    space = complex.space(1)
+    assert isinstance(space, la.ArraySpace)
+    assert isinstance(space.pairing, la.DiagonalPairing)
+    weights = np.asarray(space.pairing.weights)
+    reference = 1.0 / weights
+    reference /= np.sqrt(reference @ (weights * reference))
+    basis = np.asarray(harmonic.basis)[:, 0]
+    np.testing.assert_allclose(np.abs(basis @ (weights * reference)), 1.0, atol=1e-9)
+    # A deliberately truncated unpreconditioned run must not claim the kernel.
+    truncated = la.harmonic_subspace(
+        complex,
+        1,
+        expected_dimension=1,
+        policy=la.HarmonicSubspacePolicy(
+            tolerance=1e-10,
+            eigen_policy=la.eigen.EigenSolvePolicy(
+                la.eigen.LOBPCG(block_dimension=3),
+                count=3,
+                max_steps=2,
+                key=jax.random.key(0),
+                tolerance=la.eigen.EigenTolerancePolicy(
+                    relative=1e-10, absolute=1e-10, orthogonality=1e-10
+                ),
+            ),
+        ),
+    )
+    assert not bool(truncated.valid)
+    assert float(truncated.residual_defect) > 1e-10

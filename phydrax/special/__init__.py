@@ -33,6 +33,12 @@ from ._normal import (
     normal_survival,
 )
 from ._polylog import polylog
+from ._real_harmonic import (
+    real_harmonic_basis,
+    RealCartesianHarmonics,
+    RealHarmonicArgument,
+    RealHarmonicNormalization,
+)
 from ._solid_harmonic import solid_harmonic_irregular, solid_harmonic_regular
 from ._spherical_harmonic import sph_harm_y, sph_harm_y_cart, sph_legendre_p
 from ._synchrotron import synchrotron_f, synchrotron_g, synchrotron_h
@@ -40,6 +46,9 @@ from ._zeta import hurwitz_zeta, zeta
 
 
 __all__ = [
+    "RealCartesianHarmonics",
+    "RealHarmonicArgument",
+    "RealHarmonicNormalization",
     "airy",
     "airye",
     "dawsn",
@@ -84,6 +93,7 @@ __all__ = [
     "polylog",
     "principal_log",
     "principal_sqrt",
+    "real_harmonic_basis",
     "solid_harmonic_irregular",
     "solid_harmonic_regular",
     "spence",

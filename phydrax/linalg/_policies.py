@@ -17,6 +17,7 @@ from .._dtype_names import precision_dtype_name
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..typing import parse
+from ._assembly import SparseAssemblyPolicy
 from ._certificates import StabilityLowerBound
 from ._materialization import MaterializationPolicy
 from ._preconditioning import PreconditioningPolicy
@@ -233,6 +234,34 @@ class PCG(AbstractLinearMethod):
     @property
     def name(self) -> str:
         return "pcg"
+
+
+class Craig(AbstractLinearMethod):
+    """Preconditioned normal-equation (Craig) solve of a minimum-norm problem.
+
+    Conjugate gradients on ``B B* y = b`` in the target pairing, returning
+    ``z = B* y``. Every such ``z`` lies in ``range(B*)``, so once the constraint
+    converges ``z`` is the exact minimum-norm solution for every symmetric
+    positive-definite preconditioner of ``B B*``; preconditioning changes only
+    the iteration count, never the objective.
+
+    Preconditioner builders act on ``RowGramLinearOperator(B)``. Builders that
+    need an explicit operator (smoothed aggregation, block Jacobi) receive the
+    exactly assembled sparse ``B B*`` only under the declared ``assembly``
+    policy; without it the setup operator stays matrix-free and exposes its
+    exact diagonal (row norms) to Jacobi.
+    """
+
+    assembly: SparseAssemblyPolicy | None
+
+    def __init__(self, *, assembly: SparseAssemblyPolicy | None = None) -> None:
+        if assembly is not None and not isinstance(assembly, SparseAssemblyPolicy):
+            raise TypeError("assembly must be a SparseAssemblyPolicy or None.")
+        self.assembly = assembly
+
+    @property
+    def name(self) -> str:
+        return "craig"
 
 
 class ProjectedPCG(AbstractLinearMethod):
@@ -666,7 +695,12 @@ class LinearDerivativeSolvePolicy(StrictModule):
     ``route`` selects how implicit tangent and cotangent linear solves execute:
 
     - ``"krylov"`` runs an independent restarted GMRES bounded by
-      ``maximum_steps`` and accepted by the declared tolerances.
+      ``maximum_steps`` and accepted by the declared tolerances on the true
+      residual. For a ``LinearSystem`` the prepared primal preconditioner is
+      reused as a flexible right preconditioner of both the tangent and the
+      cotangent solve (it never changes the accepted derivative, only its
+      cost). Minimum-norm problems instead apply the pseudoinverse through
+      zero-start LSMR, accepted by its true residual or normal residual.
     - ``"primal-factors"`` reuses the primal square direct factorization
       (``DenseLU`` or ``DenseCholesky``) and its algebraic transpose, then accepts
       each solve by its true residual against the declared tolerances. It is exact
@@ -844,6 +878,7 @@ __all__ = [
     "BlockCG",
     "BlockGMRES",
     "ConjugateGradient",
+    "Craig",
     "DenseCholesky",
     "DenseLU",
     "DenseQR",

@@ -8,7 +8,9 @@ from math import prod
 from typing import TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
@@ -16,17 +18,38 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
+# Concrete (host-prepared) topology is converted and validated with NumPy once
+# at construction and placed with ``device_put`` (a transfer, not a compiled
+# program); traced topology keeps device-side conversion and checks inside the
+# caller's compilation.
+
+
+def _traced(*values: object) -> bool:
+    return any(isinstance(value, jax_core.Tracer) for value in values)
+
+
 def _integer_indices(name: str, value: ArrayLike, /) -> Array:
-    indices = jnp.asarray(value)
-    if not jnp.issubdtype(indices.dtype, jnp.integer):
+    if isinstance(value, jax_core.Tracer):
+        if not jnp.issubdtype(value.dtype, jnp.integer):
+            raise TypeError(f"{name} must have an integer dtype.")
+        return value.astype(jnp.int32)
+    if isinstance(value, jax.Array) and value.dtype == jnp.int32:
+        return value
+    host = np.asarray(value)
+    if not np.issubdtype(host.dtype, np.integer):
         raise TypeError(f"{name} must have an integer dtype.")
-    return indices.astype(jnp.int32)
+    return jax.device_put(host.astype(np.int32))
 
 
 def _valid_mask(value: ArrayLike | None, shape: tuple[int, ...], /) -> Array:
     if value is None:
-        return jnp.ones(shape, dtype=jnp.bool_)
-    valid = jnp.asarray(value, dtype=jnp.bool_)
+        return jax.device_put(np.ones(shape, dtype=np.bool_))
+    if isinstance(value, jax_core.Tracer):
+        valid = value.astype(jnp.bool_)
+    elif isinstance(value, jax.Array) and value.dtype == jnp.bool_:
+        valid = value
+    else:
+        valid = jax.device_put(np.asarray(value, dtype=np.bool_))
     if valid.shape != shape:
         raise ValueError(f"valid must have shape {shape}; got {valid.shape}.")
     return valid
@@ -41,15 +64,28 @@ def _check_bounds(
 ) -> Array:
     if indices.size == 0:
         return indices
-    invalid = jnp.any(valid & ((indices < 0) | (indices >= size)))
     message = f"A valid {name} lies outside [0, {size})."
-    # Immutable symbolic admission is eager even under compile-time evaluation.
-    # Keep it out of a nested error callback; traced routes retain device checks.
-    if not isinstance(invalid, jax_core.Tracer):
-        if bool(invalid):
-            raise ValueError(message)
-        return indices
-    return eqx.error_if(indices, invalid, message)
+    if not _traced(indices):
+        # A frozen route with every endpoint in range is safe under any runtime
+        # validity mask. Masked out-of-range padding still needs its guard.
+        host_indices = np.asarray(jax.device_get(indices))
+        if np.all((host_indices >= 0) & (host_indices < size)):
+            return indices
+    if _traced(indices, valid):
+        invalid = jnp.any(valid & ((indices < 0) | (indices >= size)))
+        return eqx.error_if(indices, invalid, message)
+    # Immutable symbolic admission is a host decision at construction.
+    host_indices, host_valid = jax.device_get((indices, valid))
+    if np.any(host_valid & ((host_indices < 0) | (host_indices >= size))):
+        raise ValueError(message)
+    return indices
+
+
+def _and_valid(first: Array, second: Array, /) -> Array:
+    if _traced(first, second):
+        return first & second
+    host_first, host_second = jax.device_get((first, second))
+    return jax.device_put(np.logical_and(host_first, host_second))
 
 
 class EdgeRelation(StrictModule, NonTrainableState):
@@ -134,7 +170,7 @@ class EdgeRelation(StrictModule, NonTrainableState):
             self.target_indices,
             source_size=self.source_size,
             target_size=self.target_size,
-            valid=self.valid & extra,
+            valid=_and_valid(self.valid, extra),
         )
 
 
@@ -220,7 +256,7 @@ class RowRelation(StrictModule, NonTrainableState):
         return RowRelation(
             self.source_indices,
             source_size=self.source_size,
-            valid=self.valid & extra,
+            valid=_and_valid(self.valid, extra),
             case_shape=self.case_shape,
         )
 
@@ -229,15 +265,22 @@ class RowRelation(StrictModule, NonTrainableState):
         cases = self.num_cases
         targets = self.targets_per_case
         width = self.width
-        local_source = self.source_indices.reshape((cases, targets, width))
-        source_offsets = (jnp.arange(cases, dtype=jnp.int32) * self.source_size).reshape(
+        if _traced(self.source_indices, self.valid):
+            xp, indices, valid = jnp, self.source_indices, self.valid
+        else:
+            # Concrete topology is flattened on the host: no shape-specific
+            # device programs are compiled for a preparation-time view.
+            xp = np
+            indices, valid = jax.device_get((self.source_indices, self.valid))
+        local_source = indices.reshape((cases, targets, width))
+        source_offsets = (xp.arange(cases, dtype=xp.int32) * self.source_size).reshape(
             (cases, 1, 1)
         )
         source = local_source + source_offsets
-        target = jnp.broadcast_to(
+        target = xp.broadcast_to(
             (
-                jnp.arange(cases, dtype=jnp.int32)[:, None] * targets
-                + jnp.arange(targets, dtype=jnp.int32)[None, :]
+                xp.arange(cases, dtype=xp.int32)[:, None] * targets
+                + xp.arange(targets, dtype=xp.int32)[None, :]
             )[..., None],
             (cases, targets, width),
         )
@@ -246,11 +289,48 @@ class RowRelation(StrictModule, NonTrainableState):
             target.reshape((-1,)),
             source_size=cases * self.source_size,
             target_size=cases * targets,
-            valid=self.valid.reshape((-1,)),
+            valid=valid.reshape((-1,)),
         )
 
 
 SparseRelation: TypeAlias = EdgeRelation | RowRelation
+
+
+def _relation_traced(relation: SparseRelation, /) -> bool:
+    """Whether any topology array of ``relation`` is a tracer."""
+    if isinstance(relation, RowRelation):
+        return _traced(relation.source_indices, relation.valid)
+    return _traced(relation.source_indices, relation.target_indices, relation.valid)
+
+
+def _coalesced_route_count(relation: SparseRelation, /) -> int | None:
+    """Distinct valid (target, source) pairs of host topology; ``None`` when traced.
+
+    This is the canonical sparse storage entry count, read once from concrete
+    host topology so traced executions never need it from device data.
+    """
+    if _relation_traced(relation):
+        return None
+    if isinstance(relation, RowRelation):
+        indices, valid = jax.device_get((relation.source_indices, relation.valid))
+        # Each flattened (case, row) is one distinct target, so coalescing is
+        # per-row deduplication of valid sources; invalid slots sort first.
+        rows = np.sort(
+            np.where(valid, indices, -1).reshape((-1, relation.width)), axis=-1
+        )
+        return int(
+            np.count_nonzero(rows[:, 0] >= 0)
+            + np.count_nonzero((rows[:, 1:] != rows[:, :-1]) & (rows[:, 1:] >= 0))
+        )
+    source, target, valid = jax.device_get(
+        (relation.source_indices, relation.target_indices, relation.valid)
+    )
+    keys = target[valid].astype(np.int64) * relation.source_size + source[valid]
+    if keys.size == 0:
+        return 0
+    if np.any(keys[1:] < keys[:-1]):
+        keys = np.sort(keys)
+    return int(1 + np.count_nonzero(keys[1:] != keys[:-1]))
 
 
 __all__ = ["EdgeRelation", "RowRelation", "SparseRelation"]

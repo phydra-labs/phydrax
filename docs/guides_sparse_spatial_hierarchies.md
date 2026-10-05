@@ -41,10 +41,311 @@ route-support requirements; execution scratch halos are separate.
 by target. Fast, canonical deterministic, and compensated sums share one
 prepared execution order. Invalid routes are numerically inert, and compact
 target output is available without allocating the full logical target space.
+It reduces route values that already exist; `StreamedRelationPlan` (below)
+evaluates a nonlinear per-route callback and a receiver epilogue inside bounded
+tiles over the same relations and the same seeded reducers.
 
 These are execution substrates, not a new field language. Each domain retains
 its own inactive-state, boundary, conservation, and topology-transition
 semantics.
+
+## Streamed nonlinear relations
+
+`phydrax.sparse.StreamedRelationPlan` executes an additive nonlinear relation
+without materializing graph-wide per-route messages. For every admitted route it
+evaluates one pure edge callback on that route's source, receiver, and edge
+rows; it adds the returned message into its receiver's seeded accumulator; and
+after the receiver's final route it applies one complete receiver epilogue to
+the finished aggregate. Only receiver outputs and explicitly requested edge
+outputs leave a tile.
+
+### Prepared schedules
+
+`plan.prepare(relation, owner_id=..., epoch=..., stable_route_ids=...,
+receiver_valid=..., source_valid=...)` accepts an `EdgeRelation` or a
+`RowRelation` (lowered through `as_edge_relation()`) and returns a
+`PreparedStreamedRelation`. Its `StreamedSchedule` is receiver-major: events
+are ordered by receiver and then by stable route ID, with reversible permutation
+and row offsets. `transpose=True` additionally prepares an independent
+source-major schedule, and `prepared.transpose()` streams into relation sources
+over it. Swapping endpoints does not reuse or re-sort the target-major order.
+
+Tiles are filled greedily. A tile owns at most `receiver_tile` receivers and
+`edge_tile` route lanes. A receiver whose events exceed the remaining lanes is
+split into fragments across consecutive tiles. Its seeded high/correction
+accumulator (`KeyGroupAccumulation`) is carried from one fragment to the next.
+Its epilogue is committed once, after the final fragment, so a nonlinear epilogue
+always sees the complete sum. Chunk subtotals are never summed independently,
+which is why compensated accumulation keeps its correction across fragment
+boundaries. Rows are never truncated. On concrete host topology the exact tile
+sequence is prepared; on traced topology inside a compiled rebuild the static
+tile bound is `receivers // R + capacity // F + 1`, and an incomplete schedule
+is reported by evidence instead.
+
+Requested tiles are upper bounds. Each direction is prepared at effective widths
+`R = max(min(receiver_tile, receivers in that direction), 1)` and
+`F = max(min(edge_tile, route capacity), 1)`. These are recorded on the schedule
+and resolved once from static extents, never from route content, so small
+relations carry no padding and the plan identity is unchanged.
+`channel_capacity` caps the elements of one event's message plus edge output,
+and of one receiver output. A payload above it is refused before evaluation.
+
+Event semantics are explicit:
+
+- Duplicate routes with equal endpoints remain distinct events. Each one is
+  evaluated and accumulated separately. There is no CSR-style coalescing of
+  nonlinear routes.
+- Invalid routes, routes into or out of an endpoint masked by
+  `receiver_valid`/`source_valid`, and routes masked by the runtime
+  `edge_active` argument are absent. Padded and inactive lanes replay a usable
+  lane of the same fragment, so callbacks see only admitted, domain-safe
+  inputs, and are masked from accumulation. A fragment with no usable lane skips
+  its callbacks with `lax.cond`. Under `vmap` that skip becomes a select, so a
+  batched caller's slot-zero route data must itself be domain-safe.
+- An empty row, or a row whose routes are all inactive, still receives the
+  epilogue of a zero aggregate. A receiver masked by `receiver_valid` commits
+  zero.
+- Event order is deterministic: receiver-major and then by stable route ID, and
+  tiles follow that order. With `accumulation="deterministic"`, permuting route
+  storage under fixed `stable_route_ids` reproduces the result bit for bit.
+  `"compensated"` streams the same order with an error-free correction term.
+  `"fast"` uses the shared segment-sum reducer.
+
+### Callback contracts and payloads
+
+`StreamedPayloadSpec(message, output, edge_output=None)` declares one event's
+additive message, one receiver's output, and an optional per-event edge output.
+Each leaf is a `jax.ShapeDtypeStruct` with no leading axis. Callbacks are never
+probed: traced results must match the declared structure, shape, and dtype, or
+evaluation is refused. Messages accumulate in their declared dtype.
+
+- `StreamedEdgeFunction`: `(parameters, source, receiver, edge) -> message`,
+  or `(message, edge_output)` when edge outputs are declared. It sees exactly
+  one event and must not depend on other events.
+- `StreamedReceiverEpilogue`: `(parameters, receiver, aggregate) -> output`.
+  It runs once per receiver on the complete aggregate.
+- `StreamedFragmentAggregator`: `(parameters, sources, receivers, edges,
+  fragment, seed) -> accumulations` (or `(accumulations, edge_output)`). It
+  replaces the per-event callback when a consumer owns a specialized
+  whole-fragment accumulation. `prepared.evaluate_fragments(...)` calls it once
+  per fragment with a prepared `StreamedFragment`, which carries receiver-slot
+  lane ranges, fragment-local distinct sources, source-major lane lists, and
+  `lane_use`. The aggregator also receives the seeded accumulator of every
+  slot. `StreamedFragment.reduce` is the substrate's canonical seeded additive
+  reduction for per-lane values. The substrate still owns tiling, spill across
+  fragments, the single epilogue, replay, and output commits.
+  `prepared.fragments()` returns every fragment's routing, stacked by tile.
+
+Callables that carry arrays remain ordinary dynamic PyTree leaves of
+`parameters`. They are not hidden static captures.
+
+Requested edge outputs are explicit graph-wide outputs that lead with the route
+shape. They are zero on unused routes and charged in
+`StreamedRelationResources.output_bytes`. Their storage is
+O(routes × edge-output width) by construction, and returning them does not drop
+their cotangent.
+
+### Identity, evidence, and declared resources
+
+`StreamedTopologyBinding` separates topology identity from schedule identity.
+`owner_id` names the topology owner's schema, and `epoch` is its dynamic integer
+topology epoch, a device leaf. `content_id` fingerprints the concrete route
+indices, masks, and stable IDs. It is `None` for traced topology, whose identity
+is the owner and epoch. `binding_id` fingerprints `owner_id` and `content_id`.
+Equal shapes or capacities never imply the same topology.
+`PreparedStreamedRelation.execution_id` combines `plan.plan_id`, `binding_id`,
+the direction, the endpoint and route shapes, and the prepared tile counts.
+Owners that now embed a `StreamedRelationPlan` in their own fingerprint (for
+example `AtomisticGraphExecutionPlan.plan_id`) produce identities that differ
+from earlier source revisions. Rebuild dependent artifacts rather than comparing
+them with historical IDs.
+
+`StreamedRelationEvidence` reports `active_routes`, `evaluated_routes`,
+`committed_receivers`, `tiles_used`, `fragmented_receivers`,
+`maximum_receiver_degree`, `duplicate_stable_ids`, `schedule_complete`, and
+`finite`. `successful` requires a complete schedule without duplicate stable
+IDs, together with finite accumulations and committed outputs. Duplicate stable
+route IDs are refused during host preparation. A failed evaluation multiplies
+every inexact output by NaN and links that NaN to every differentiable input,
+including parameters and callback arrays the outputs do not read (for example a
+parameter used only by a failed message under a residual-only epilogue), so its
+values and derivatives of every order are invalid rather than silently zero.
+
+`StreamedRelationResources` (also available before evaluation through
+`prepared.resources(...)`) declares the logical bytes the substrate owns:
+
+- persistent schedules;
+- one edge fragment and one receiver tile of workspace;
+- the spill carry and retained replay boundaries;
+- admitted outputs and their staging;
+- one live cotangent accumulator for differentiable inputs: parameters, source,
+  receiver and edge rows, and the dynamic array leaves of array-bearing
+  callbacks (pass them as `callbacks=` to `prepared.resources(...)`).
+
+It excludes callback-internal intermediates and compiler temporaries. Under
+`replay="full"`, `replay_boundary_bytes` is `None` (undeclared). These declared
+bytes are not a compiled-memory bound. Certify a transformed executable
+(forward, reverse, force-loss, HVP) separately with
+`phx.execution.compiled_memory_estimate`; sampled peaks are observations.
+Streaming bounds the edge workspace by the tiles, not by the route count. Total
+memory is still not O(1): schedules, node states, requested edge outputs, and
+cotangent accumulators scale with the graph.
+
+### Differentiation
+
+The reference execution is ordinary JAX. Forward, JVP, VJP, reverse-over-reverse
+(force-loss parameter gradients), and forward-over-reverse (coordinate HVPs) are
+JAX's own derivatives of the tiled primal. Each tile body is rematerialized
+inside the shared checkpointed-scan replay boundary (`replay="step"`, `"block"`
+with `replay_block_size`, or `"full"`), with its own nested checkpoint, so a
+second reverse pass also replays tiles. Mixed coordinate/parameter derivatives
+need no custom first-order rule. Integer schedules, permutations, and epochs are
+discrete topology and are not differentiated.
+
+The shared seeded reducers keep the derivatives of valid zero-valued events.
+Primal zero events remain exact no-ops in the high/correction state. Their
+additive tangent, however, follows route validity rather than whether the
+numerical value is zero. For an active event `theta * x + x * x` at `x = 0`,
+the reduction therefore keeps coordinate derivative `theta` and mixed derivative
+one. Opposite events that cancel to a zero seeded subtotal keep their parameter
+tangent. Zero events also keep their curvature under forward-over-reverse and
+reverse-over-reverse transforms (HVPs and force-loss mixed gradients) in every
+accumulation mode. Structural padding stays inert through its mask. The same
+holds for `reduce_key_groups` in fast, deterministic, and compensated modes,
+seeded or unseeded.
+
+### Example
+
+```python
+import jax
+import jax.numpy as jnp
+import numpy as np
+import phydrax as phx
+
+# Five sources stream into three receivers. Receiver 1 has degree four, so an
+# edge tile of two splits it into fragments; receiver 0 receives a duplicate
+# route pair; receiver 2 has no routes.
+relation = phx.sparse.EdgeRelation(
+    np.asarray([0, 0, 1, 2, 3, 4], dtype=np.int32),
+    np.asarray([0, 0, 1, 1, 1, 1], dtype=np.int32),
+    source_size=5,
+    target_size=3,
+)
+plan = phx.sparse.StreamedRelationPlan(
+    receiver_tile=2,
+    edge_tile=2,
+    channel_capacity=16,
+    accumulation="compensated",
+)
+prepared = plan.prepare(relation, owner_id="docs-streamed-example")
+
+payload = phx.sparse.StreamedPayloadSpec(
+    message={"s": jax.ShapeDtypeStruct((2,), jnp.float64)},
+    output=jax.ShapeDtypeStruct((2,), jnp.float64),
+    edge_output=jax.ShapeDtypeStruct((), jnp.float64),
+)
+
+
+def edge_function(parameters, source, receiver, edge):
+    # One event, no leading edge axis: returns (message, requested edge output).
+    displacement = receiver["x"] - source["x"]
+    distance = jnp.sqrt(jnp.sum(displacement**2) + edge**2)
+    weight = jnp.exp(-parameters["decay"] * distance)
+    return {"s": weight * source["h"]}, weight
+
+
+def epilogue(parameters, receiver, aggregate):
+    # Runs once per receiver, after its final fragment, on the complete sum.
+    return jnp.tanh(aggregate["s"] @ parameters["mix"] + receiver["h"])
+
+
+key_x, key_h = jax.random.split(jax.random.key(0))
+parameters = {"decay": jnp.asarray(0.7), "mix": 0.5 * jnp.eye(2)}
+positions = jax.random.normal(key_x, (5, 3))
+source_features = jax.random.normal(key_h, (5, 2))
+receivers = {"x": positions[:3], "h": jnp.zeros((3, 2))}
+edges = jnp.full((6,), 0.1)
+
+result = prepared.evaluate(
+    payload,
+    edge_function,
+    epilogue,
+    parameters,
+    {"x": positions, "h": source_features},
+    receivers,
+    edges,
+)
+assert bool(result.evidence.successful)
+assert int(result.evidence.fragmented_receivers) == 1
+receiver_outputs = result.receiver_outputs  # (3, 2); row 2 is tanh(receivers["h"][2])
+edge_weights = result.edge_outputs  # (6,), one requested value per route
+
+
+def energy(parameters, positions):
+    streamed = prepared.evaluate(
+        payload,
+        edge_function,
+        epilogue,
+        parameters,
+        {"x": positions, "h": source_features},
+        receivers,
+        edges,
+    )
+    return jnp.sum(streamed.receiver_outputs**2) + jnp.sum(streamed.edge_outputs)
+
+
+@jax.jit
+def forces(parameters, positions):
+    return -jax.grad(energy, argnums=1)(parameters, positions)
+
+
+def force_loss(parameters):
+    return jnp.sum(forces(parameters, positions) ** 2)
+
+
+parameter_gradient = jax.jit(jax.grad(force_loss))(parameters)
+```
+
+The force-loss gradient differentiates through the source coordinate gradient
+of the streamed relation (reverse over reverse) with ordinary JAX. Checked
+against an independent dense per-route reference, the energy, forces, and
+force-loss parameter gradient match it to rounding.
+
+### Consumers on the shared route
+
+The following consumers run their per-route work through prepared streamed
+relations. Each exposes an `execution: StreamedRelationPlan | None` argument
+where it is public:
+
+- `phydrax.graph.EquivariantGraphConvolution`: one message per route. Each
+  receiver normalizes by its complete incoming weight only after its last route.
+- `phydrax.graph.GraphKernelIntegral` with `reduction="sum"` or `"mean"`.
+  Count and measure normalization happen in the receiver epilogue. `"max"` and
+  `"min"` remain `phydrax.sparse.route_reduce` reductions.
+- `phydrax.graph.MeshGraphNetBlock` and `MeshGraphNet`: all processor steps
+  share one schedule prepared from the input graph's relation. Updated edge
+  latents are a requested graph-wide edge output, so they are charged.
+  Only the MLP hidden activations are bounded by the edge tile.
+- Graph callbacks entering these operators (`radial_fn`, `kernel_fn`) must be
+  wrapped in `phydrax.graph.RouteLocal`. Graph-wide callbacks, such as a
+  normalization over all edges, are refused rather than reinterpreted per route.
+  `GraphAttentionOperator` and `GraphNeuralOperator` keep their explicit
+  route-reduction ownership.
+- Meshfree conservation solves
+  (`prepare_meshfree_conservation_solve` and
+  `prepare_meshfree_coupled_conservation_solve`, `execution=`): each edge
+  constitutive law is evaluated once per canonical edge. The streamed receiver
+  sum carries `+f` to the second endpoint, and the returned per-edge flux
+  carries `-f` to the first, so action and reaction never depend on law parity.
+- Atomistic PaiNN, NequIP, and native MACE message passing use the schedule
+  prepared once per atomistic graph topology epoch. MACE can also select an
+  accelerated whole-fragment aggregator. See [Atomistic learning](guides_atomistic.md)
+  and [Native MACE execution](guides_mace_execution.md).
+
+An observed before/after energy and force comparison covers the migrated PaiNN and NequIP
+consumers. This is regression evidence for those consumers, not a general
+performance or capacity claim for the streamed route.
+
 
 ## Morton addressing
 
@@ -184,12 +485,18 @@ invalidates every route; the exact required pair count is reported whenever no
 candidate buffer overflowed. The result also exposes the occupied coarse cells
 as logical cell slots, counts, and offsets into the Morton storage order.
 
-`DistributedMortonNeighborQueryPlan` shards sources, gathers target coordinates,
-computes each shard's exact local top-k set, and globally merges those sets by
-distance and stable ID. It returns globally indexed, target-sharded rows. This
-portable authority communicates all targets and `shard_count × target_count ×
-local_k` candidate summaries; it does not claim the communication complexity of
-a fully Morton-repartitioned multi-host tree.
+`DistributedNeighborQueryPlan` and `DistributedRadiusQueryPlan` run over a
+`DistributedPointLayout` with arbitrary uneven owners. Each target first
+queries its own owner, bounds its search radius by that local result and the
+published owner populations, and is sent only to owners whose (periodic)
+source boxes intersect the certified ball; answers merge by distance, stable
+ID, and owner. Targets are never replicated: communication is bounded by
+`maximum_remote_owners × halo_capacity` targets per owner pair, and overflow is
+a per-target refusal. `DistributedMortonNeighborQueryPlan` applies the same
+query to contiguous logical shards and returns globally indexed rows in
+logical target order. The owner-box shell needs one pass but its tightness
+depends on how compact the owner regions are; no locality-optimal
+repartitioning is implied.
 
 `ParticleOctreePlan3D` uses this substrate. Barnes--Hut uses a batched
 branchless walk over compact occupied nodes at moderate capacities and a
@@ -288,7 +595,11 @@ or long-range particles. Add primitive bounds for finite-support points such
 as surfels. Use a sparse voxel grid for sparse fixed-resolution samples. Use a
 sparse block topology for block-major fields on a virtual structured layout.
 Use a dyadic topology when physical cell resolution and conservative
-coarse/fine interfaces are part of the model.
+coarse/fine interfaces are part of the model. Use `RelationExecutionPlan` or
+`route_reduce` to reduce route values that already exist. Use
+`StreamedRelationPlan` when a nonlinear per-route function feeds an additive
+receiver update and the per-route messages should not be materialized
+graph-wide.
 
 ## Qualification tools
 
@@ -305,8 +616,16 @@ coarse/fine interfaces are part of the model.
 - `tools/surfel_voxel_benchmarks.py` records bounded overlap routes, local
   implicit reconstruction, and plane error.
 - `tools/sparse_execution_benchmarks.py` records active-key grouping,
-  prepared relation reduction, tile-major rasterization, and compact LBM,
+  prepared relation reduction, the streamed relation runner against its
+  materialized nonlinear reference, tile-major rasterization, and compact LBM,
   MPM, and FLIP execution.
+- `benchmarks/streamed_relation_scaling.py` separates schedule preparation,
+  lowering, compilation, first execution, and warm repeats. It covers forward,
+  reverse, force-loss parameter-gradient, and coordinate-HVP transforms while
+  varying edge count, degree skew, channel width, and tile capacities. It
+  records XLA compiler byte estimates, sampled peaks (observations, not bounds),
+  declared `StreamedRelationResources`, and capacity refusals. No result from it
+  is a published performance claim.
 
 Small systems should continue to use direct or dense authorities when the
 measured crossover favors them.

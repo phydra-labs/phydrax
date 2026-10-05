@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.metadata
 import math
@@ -451,8 +452,50 @@ def source_build_fingerprint(project_root: Path, /) -> str:
     )
 
 
+def _driver_source_paths(root: Path, initial: Iterable[Path], /) -> tuple[Path, ...]:
+    """Follow first-party scientific imports without executing their modules.
+
+    Local/lazy imports and example oracles are source dependencies too. Package
+    and native kernels remain owned by ``source_build_fingerprint``.
+    """
+    pending = list(initial)
+    visited: set[Path] = set()
+    while pending:
+        path = pending.pop().resolve()
+        if path in visited:
+            continue
+        visited.add(path)
+        package = path.relative_to(root).parent.parts
+        for depth in range(1, len(package) + 1):
+            initializer = root.joinpath(*package[:depth], "__init__.py")
+            if initializer.is_file():
+                pending.append(initializer)
+        for node in ast.walk(ast.parse(path.read_bytes(), filename=str(path))):
+            modules: tuple[str, ...]
+            if isinstance(node, ast.Import):
+                modules = tuple(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                prefix = (
+                    ".".join(package[: len(package) - node.level + 1])
+                    if node.level
+                    else ""
+                )
+                module = ".".join(part for part in (prefix, node.module) if part)
+                modules = (module, *(f"{module}.{alias.name}" for alias in node.names))
+            else:
+                continue
+            for module in modules:
+                parts = module.split(".")
+                if parts[0] not in ("benchmarks", "examples"):
+                    continue
+                module_path = root.joinpath(*parts)
+                candidates = (module_path.with_suffix(".py"), module_path / "__init__.py")
+                pending.extend(candidate for candidate in candidates if candidate.is_file())
+    return tuple(sorted(visited, key=lambda path: path.relative_to(root).as_posix()))
+
+
 def benchmark_driver_fingerprint(project_root: Path, driver_path: Path, /) -> str:
-    """Fingerprint a benchmark driver and its shared runtime harness."""
+    """Fingerprint a driver, runtime harness, and imported scientific/oracle sources."""
     root = _repository_root(project_root)
     driver = driver_path.resolve()
     try:
@@ -468,7 +511,7 @@ def benchmark_driver_fingerprint(project_root: Path, driver_path: Path, /) -> st
     return canonical_fingerprint(
         {
             "kind": "phydrax-benchmark-driver",
-            "files": _file_records(root, paths),
+            "files": _file_records(root, _driver_source_paths(root, paths)),
         }
     )
 

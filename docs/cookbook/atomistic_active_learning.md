@@ -16,7 +16,7 @@ plan = phx.atomistic.AtomisticLearningCampaignPlan(
     system,
     authoritative_provider,
     acquisition,
-    dense_training_graph,
+    training_graph,
     particle_runtime_graph,
     training_policy,
     committee_reduction,
@@ -40,3 +40,19 @@ state = result.state
 Provider failure never appends a label. Member or qualification failure advances the
 label revision but preserves the previously promoted committee. Persist the returned
 state and its label-set `RevisionLineage` at every accepted round boundary.
+
+`training_graph` is any `AtomisticGraphExecutionPlan`; `particle_runtime_graph` must
+use the particle backend. Stress returned by the authoritative provider is kept on each
+label and lowered into the retraining problem's stress targets, weighted by the
+training policy; labels without stress are masked out rather than given zero targets.
+To inspect the supervision a round trains on, lower the labels yourself with an
+explicit candidate cutoff:
+
+```text
+problem = result.state.labels.training_problem(
+    system, training_graph, cutoff=member_cutoff, skin=0.0
+)
+```
+
+Write promoted members with `phx.atomistic.write_atomistic_model_artifact` so a fresh
+process restores them without the original Python objects.

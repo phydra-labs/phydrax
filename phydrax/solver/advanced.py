@@ -29,6 +29,8 @@ from ._balance_law import (
     BalanceLawAcceptedStepCouplingAdvance,
 )
 from ._balance_law_composition import (
+    additive_imex_tableau,
+    AdditiveIMEXScheme,
     AdditiveIMEXTableau,
     BalanceLawCompositionPlan,
 )
@@ -112,7 +114,9 @@ from ._unstructured_mhd import (
 
 
 __all__ = [
+    "AdditiveIMEXScheme",
     "AdditiveIMEXTableau",
+    "additive_imex_tableau",
     "AnisotropicThermalTransportDiagnostics",
     "AnisotropicThermalTransportPlan",
     "DistributedGravitySolvePlan",

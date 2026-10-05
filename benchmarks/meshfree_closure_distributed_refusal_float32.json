@@ -1,0 +1,520 @@
+{
+  "config": {
+    "candidates": null,
+    "chunk_rows": 32,
+    "degree": 2,
+    "dimension": 2,
+    "max_points": 4096,
+    "neighbors": 24,
+    "precision": "float32",
+    "repeats": 3,
+    "resource_bytes": 1073741824,
+    "seeds": [
+      0
+    ],
+    "sizes": [
+      256
+    ],
+    "steps": 80,
+    "working_set_bytes": 268435456
+  },
+  "driver_dependencies": {
+    "benchmarks/meshfree_scaling.py": "4959c43f140760b6c00d20e1d9d808c84bfea3bac614d24fce9dc33fc82d6509"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "9d2fe420c8b89f9fb35756e446967a73cd39e58d69aa9d63f96c8255eccf3bfc",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": "cpu",
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "host_load": {
+    "load_average_1_5_15": [
+      57.9150390625,
+      54.56591796875,
+      56.25732421875
+    ],
+    "logical_cpus": 10,
+    "scope": "Shared host; wall time is reported beside process CPU time and compile counts"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "dd1a4532d849eaa1cea57b909d342646ca8a2a7b351a138eb11a36eec626c46e",
+    "evidence_schema": {
+      "fields": [
+        "config",
+        "driver_dependencies",
+        "environment",
+        "host_load",
+        "kind",
+        "precision",
+        "release_status",
+        "resource_measurement",
+        "rows"
+      ],
+      "signature": "634fd854366f41d77cb9ade296ecf25e061516da10b95de11092e56c29018afa"
+    },
+    "fingerprint": "d592d5c0b56ace7545d1c4014622bb64465283ef35c46c284af2043cc7400f2f",
+    "source_build_fingerprint": "fc2d4daac886489e0094a3caff57d16998257acb7888d718c707f1b33b955479"
+  },
+  "kind": "meshfree-phase-benchmark",
+  "precision": "float32",
+  "release_status": "candidate",
+  "resource_measurement": {
+    "compiler_scope": "official executable estimates, not process resident memory",
+    "retained_scope": "unique logical payload visible to runtime object walker",
+    "sampled_scope": "per-phase phydrax.execution.PhaseMemorySampler sampled resident peak above phase baseline; sampled, never an upper bound"
+  },
+  "rows": [
+    {
+      "capacity": 256,
+      "consumer": "phydrax.discretization.spatial.Distributed* and phydrax.discretization.meshfree.MeshfreePrecisionPolicy",
+      "devices": {
+        "device_count": 4,
+        "forced_host_devices": true,
+        "owner_processes": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "platforms": [
+          "cpu"
+        ],
+        "process_count": 1
+      },
+      "dimension": 2,
+      "local_capacity": 127,
+      "metrics": {
+        "certification_downcast_refused": true,
+        "certification_narrowing_refused": true,
+        "halo_overflow_refused": true,
+        "halo_overflow_refused_rows_invalid": true,
+        "halo_overflow_rows": 1,
+        "halo_overflow_surviving_mismatches": 0,
+        "halo_tight_successful": true,
+        "incomplete_halo_bind_refused": true,
+        "local_capacity_refused": true,
+        "local_capacity_tight_admitted": true,
+        "maximum_halo_load": 53,
+        "migration_packet_overflow_refused": true,
+        "migration_packet_overflow_rolled_back": true,
+        "migration_receive_overflow_refused": true,
+        "migration_receive_overflow_rolled_back": true,
+        "missing_owner_refused": true,
+        "owner_count": 4,
+        "owner_overflow_refused": true,
+        "owner_overflow_refused_rows_invalid": true,
+        "process_count": 1,
+        "row_overflow_refused": true,
+        "row_overflow_refused_rows_invalid": true,
+        "unsupported_bfloat16_refused": true,
+        "unsupported_float16_refused": true
+      },
+      "oracle_provenance": "documented DistributedRelationStatus codes, DistributedMigrationEvidence rollback, documented ValueError refusals; cKDTree survivors oracle; forced host CPU devices: functional distributed parity only, not GPU or multi-host performance evidence",
+      "owner_loads": [
+        17,
+        54,
+        84,
+        101
+      ],
+      "phases": {
+        "assembly": {
+          "reason": "The incomplete-halo binding is refused before assembly",
+          "status": "unavailable"
+        },
+        "communication-migration": {
+          "compile_count": 2,
+          "compile_seconds": 1.507166862487793,
+          "cpu_seconds": 1.8290409999999966,
+          "memory": {
+            "evidence": {
+              "baseline": {
+                "host_available": {
+                  "method": "mach_host_vm_statistics",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 37229264896
+                },
+                "host_total": {
+                  "method": "sysconf_physical_pages",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 68719476736
+                },
+                "process_index": 0,
+                "process_peak_resident": {
+                  "method": "getrusage_max_rss",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 1953267712
+                },
+                "process_resident": {
+                  "method": "mach_task_basic_info",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 1953267712
+                },
+                "provider": "darwin_mach",
+                "timestamp_ns": 1790929865602707000
+              },
+              "devices": [],
+              "duration_seconds": 0.9320776659296826,
+              "final": {
+                "host_available": {
+                  "method": "mach_host_vm_statistics",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 37208637440
+                },
+                "host_total": {
+                  "method": "sysconf_physical_pages",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 68719476736
+                },
+                "process_index": 0,
+                "process_peak_resident": {
+                  "method": "getrusage_max_rss",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 1965539328
+                },
+                "process_resident": {
+                  "method": "mach_task_basic_info",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 1965506560
+                },
+                "provider": "darwin_mach",
+                "timestamp_ns": 1790929866535323000
+              },
+              "interval_peak_resident": {
+                "method": "getrusage_max_rss",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1965539328
+              },
+              "interval_seconds": 0.05,
+              "maximum_sample_gap_seconds": 0.07879770803265274,
+              "phase": "communication-migration",
+              "sample_count": 18,
+              "sampled_peak_resident": {
+                "method": "interval_sampling",
+                "resolution_bytes": 16384,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1965539328
+              }
+            },
+            "sampled_peak_increase_bytes": 12271616
+          },
+          "occurrences": [
+            {
+              "compile_count": 1,
+              "compile_seconds": 0.7703280448913574,
+              "cpu_seconds": 0.993307999999999,
+              "sampled_peak_increase_bytes": 12271616,
+              "scope": "receive-overflow",
+              "wall_seconds": 0.93113825
+            },
+            {
+              "compile_count": 1,
+              "compile_seconds": 0.7368388175964355,
+              "cpu_seconds": 0.8357329999999976,
+              "sampled_peak_increase_bytes": 3358720,
+              "scope": "packet-overflow",
+              "wall_seconds": 0.941181667
+            }
+          ],
+          "status": "measured",
+          "wall_seconds": 1.872319917
+        },
+        "compilation": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        },
+        "conic": {
+          "reason": "No conic subproblem",
+          "status": "unavailable"
+        },
+        "end-to-end": {
+          "reason": "Phases are measured separately",
+          "status": "unavailable"
+        },
+        "epoch-commit": {
+          "reason": "The migration commit is atomic inside DistributedPointLayout.migrate (measured as communication-migration)",
+          "status": "unavailable"
+        },
+        "first": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        },
+        "geometry": {
+          "reason": "No geometry stage: unit-cube coordinates are the authority",
+          "status": "unavailable"
+        },
+        "hierarchy": {
+          "reason": "No multilevel hierarchy",
+          "status": "unavailable"
+        },
+        "jvp": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        },
+        "local-fit": {
+          "reason": "Refusal workload binds no local fit",
+          "status": "unavailable"
+        },
+        "lowering": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        },
+        "numeric-refresh": {
+          "reason": "Coefficients are rebound after migration (assembly phase)",
+          "status": "unavailable"
+        },
+        "ordering-fill": {
+          "reason": "No sparse factorization",
+          "status": "unavailable"
+        },
+        "output": {
+          "reason": "No output stage",
+          "status": "unavailable"
+        },
+        "rank-certificate": {
+          "reason": "Local fit rank evidence is fused into prepare_local_stencils",
+          "status": "unavailable"
+        },
+        "restart": {
+          "reason": "Restart under changed ownership is campaign Q17",
+          "status": "unavailable"
+        },
+        "search": {
+          "compile_count": 5,
+          "compile_seconds": 17.59802222251892,
+          "cpu_seconds": 22.026369000000003,
+          "memory": {
+            "evidence": {
+              "baseline": {
+                "host_available": {
+                  "method": "mach_host_vm_statistics",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 26771357696
+                },
+                "host_total": {
+                  "method": "sysconf_physical_pages",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 68719476736
+                },
+                "process_index": 0,
+                "process_peak_resident": {
+                  "method": "getrusage_max_rss",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 1288781824
+                },
+                "process_resident": {
+                  "method": "mach_task_basic_info",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 1288781824
+                },
+                "provider": "darwin_mach",
+                "timestamp_ns": 1790929836821293000
+              },
+              "devices": [],
+              "duration_seconds": 7.315591874998063,
+              "final": {
+                "host_available": {
+                  "method": "mach_host_vm_statistics",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 39711784960
+                },
+                "host_total": {
+                  "method": "sysconf_physical_pages",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 68719476736
+                },
+                "process_index": 0,
+                "process_peak_resident": {
+                  "method": "getrusage_max_rss",
+                  "resolution_bytes": 1,
+                  "scope": "peak",
+                  "unavailable_reason": null,
+                  "value_bytes": 1524334592
+                },
+                "process_resident": {
+                  "method": "mach_task_basic_info",
+                  "resolution_bytes": 16384,
+                  "scope": "baseline",
+                  "unavailable_reason": null,
+                  "value_bytes": 1524301824
+                },
+                "provider": "darwin_mach",
+                "timestamp_ns": 1790929844137468000
+              },
+              "interval_peak_resident": {
+                "method": "getrusage_max_rss",
+                "resolution_bytes": 1,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1524334592
+              },
+              "interval_seconds": 0.05,
+              "maximum_sample_gap_seconds": 1.652705957996659,
+              "phase": "search",
+              "sample_count": 95,
+              "sampled_peak_resident": {
+                "method": "interval_sampling",
+                "resolution_bytes": 16384,
+                "scope": "peak",
+                "unavailable_reason": null,
+                "value_bytes": 1524301824
+              }
+            },
+            "sampled_peak_increase_bytes": 235520000
+          },
+          "occurrences": [
+            {
+              "compile_count": 1,
+              "compile_seconds": 3.937990188598633,
+              "cpu_seconds": 5.078512,
+              "sampled_peak_increase_bytes": 235520000,
+              "scope": "complete-halo",
+              "wall_seconds": 7.304463959
+            },
+            {
+              "compile_count": 1,
+              "compile_seconds": 3.5536201000213623,
+              "cpu_seconds": 4.219418000000001,
+              "sampled_peak_increase_bytes": 125173760,
+              "scope": "tight-halo",
+              "wall_seconds": 4.754683208
+            },
+            {
+              "compile_count": 1,
+              "compile_seconds": 3.210378885269165,
+              "cpu_seconds": 4.408601000000004,
+              "sampled_peak_increase_bytes": 160088064,
+              "scope": "halo-overflow",
+              "wall_seconds": 4.692826125
+            },
+            {
+              "compile_count": 1,
+              "compile_seconds": 3.590114116668701,
+              "cpu_seconds": 4.302365999999999,
+              "sampled_peak_increase_bytes": 95010816,
+              "scope": "owner-overflow",
+              "wall_seconds": 4.266849584
+            },
+            {
+              "compile_count": 1,
+              "compile_seconds": 3.3059189319610596,
+              "cpu_seconds": 3.972393000000004,
+              "sampled_peak_increase_bytes": 46956544,
+              "scope": "row-overflow",
+              "wall_seconds": 4.704789334
+            },
+            {
+              "compile_count": 0,
+              "compile_seconds": 0.0,
+              "cpu_seconds": 0.045078999999994096,
+              "sampled_peak_increase_bytes": 49152,
+              "scope": "stale-owner-epoch",
+              "wall_seconds": 0.02152725
+            }
+          ],
+          "status": "measured",
+          "wall_seconds": 25.74513946
+        },
+        "solve": {
+          "reason": "Distributed actions only; no linear solve",
+          "status": "unavailable"
+        },
+        "transfer": {
+          "reason": "Migration carries fields exactly; no field transfer operator",
+          "status": "unavailable"
+        },
+        "vjp": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        },
+        "warm": {
+          "reason": "Not a separately executed phase of this workload",
+          "status": "unavailable"
+        }
+      },
+      "requested_capacity": 256,
+      "reserved_working_set_bytes": 5548512,
+      "retained_bytes": 319650,
+      "seed": 0,
+      "status": "measured",
+      "workload": "distributed-refusal"
+    }
+  ],
+  "workload_id": "f199065ac9d4bb6bc3a722129ad9c48c39e409566a7c8abaa6f09178171bb57f",
+  "workloads": [
+    "distributed-refusal"
+  ]
+}

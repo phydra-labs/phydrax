@@ -157,6 +157,16 @@ def _validate_transform_admissibility(value: Any, /) -> None:
         raise ValueError("Fixed-step transform admissibility must be scalar.")
 
 
+def _validate_evidence(value: Any, /) -> None:
+    if any(not eqx.is_array(leaf) for leaf in jax.tree.leaves(value)):
+        raise TypeError("Fixed-step method evidence must be an array PyTree or None.")
+
+
+def _zeros_from_structure(structure: Any, /) -> Any:
+    """Zero buffers with the exact structure of an abstractly evaluated PyTree."""
+    return jax.tree.map(lambda leaf: jnp.zeros(leaf.shape, leaf.dtype), structure)
+
+
 class AcceptedStepTransformResult(StrictModule):
     """Transformed fixed-step candidate and its evidence.
 
@@ -668,7 +678,10 @@ class FixedStepResult(StrictModule):
 
     `transform_admissibility` is the scalar native-check evidence of a learned
     proposal evaluated by the method's accepted-step transform (`None` when the
-    method evaluates none).
+    method evaluates none). `evidence` is the method's own array PyTree of native
+    evidence for this attempt, published whether the attempt was accepted or
+    refused; its structure must not depend on the outcome. Retry selection,
+    rollout, and coupling participants retain it under their declared bounds.
     """
 
     candidate_state: PyTree[Array]
@@ -712,12 +725,28 @@ class RobustRetryPolicy(StrictModule, NonTrainableState):
 
 
 class RetriedFixedStepResult(StrictModule):
+    """Selected retry attempt with bounded per-attempt method evidence.
+
+    The policy executes `maximum_retries + 1` attempts; attempt `k` uses
+    `attempted_step_sizes[k]`, `attempt_executed[k]` states whether it ran (false
+    only for a held transition from `inactive_fixed_step_retry`), and
+    `attempt_successful[k]` is the method's native acceptance. `attempt_evidence`
+    stacks the method evidence of every attempt along that static attempt axis.
+    `evidence` is the evidence of attempt `retry_count`: the accepted attempt when
+    `successful`, otherwise the last refused attempt. Attempts before
+    `retry_count` are refusals; attempts after it ran but were not selected.
+    """
+
     candidate_state: PyTree[Array]
     accepted_state: PyTree[Array]
     successful: Array
     accepted_step_size: Array
     retry_count: Array
     attempted_step_sizes: Array
+    attempt_executed: Array
+    attempt_successful: Array
+    evidence: PyTree[Array] | None
+    attempt_evidence: PyTree[Array] | None
     decision_id: str = eqx.field(static=True)
 
 
@@ -753,6 +782,24 @@ class AbstractFixedStepMethod(StrictModule):
         /,
     ) -> FixedStepResult:
         raise NotImplementedError
+
+    def reduce_evidence(
+        self,
+        evidence: PyTree[Array] | None,
+        executed: Array,
+        successful: Array,
+        /,
+    ) -> PyTree[Array] | None:
+        """Combine the evidence of consecutive steps into one record.
+
+        `evidence` stacks per-step evidence along a leading axis of static length;
+        `executed` marks the steps that ran on a live state and `successful` the
+        steps the method accepted. Only the owning method knows which evidence
+        fields are additive, extremal, or terminal, so the default retains the
+        bounded stack unchanged rather than inventing a generic reduction.
+        """
+        del executed, successful
+        return evidence
 
 
 class CallableFixedStepMethod(AbstractFixedStepMethod):
@@ -1080,6 +1127,8 @@ def retry_fixed_step(
     accepted_step = jnp.zeros_like(current_step)
     retry_count = jnp.asarray(policy.maximum_retries, dtype=jnp.int32)
     attempted = []
+    attempt_successful: list[Array] = []
+    attempt_evidence: list[PyTree[Array] | None] = []
     for attempt in range(policy.maximum_retries + 1):
         attempted.append(current_step)
         result = method.step(
@@ -1094,6 +1143,9 @@ def retry_fixed_step(
         _validate_result_state("candidate_state", result.candidate_state, initial)
         _validate_result_state("accepted_state", result.accepted_state, initial)
         _validate_scalar_result("successful", result.successful, boolean=True)
+        _validate_evidence(result.evidence)
+        attempt_successful.append(result.successful)
+        attempt_evidence.append(result.evidence)
         take = (~jax.lax.stop_gradient(successful)) & jax.lax.stop_gradient(
             result.successful
         )
@@ -1104,6 +1156,8 @@ def retry_fixed_step(
         successful = successful | result.successful
         if attempt < policy.maximum_retries:
             current_step = current_step * policy.reduction_factor
+    # Attempt count is the policy's static bound; every attempt shares one structure.
+    stacked_evidence = jax.tree.map(lambda *leaves: jnp.stack(leaves), *attempt_evidence)
     return RetriedFixedStepResult(
         selected_candidate,
         tree_where(successful, selected_state, initial),
@@ -1111,13 +1165,164 @@ def retry_fixed_step(
         accepted_step,
         retry_count,
         jnp.stack(tuple(attempted)),
-        canonical_fingerprint(
-            {
-                "kind": "retried-fixed-step-decision",
-                "method": method.method_id,
-                "retry_policy": policy.policy_id,
-            }
-        ),
+        jnp.ones((policy.maximum_retries + 1,), dtype=jnp.bool_),
+        jnp.stack(tuple(attempt_successful)),
+        jax.tree.map(lambda leaf: leaf[retry_count], stacked_evidence),
+        stacked_evidence,
+        _retry_decision_id(method, policy),
+    )
+
+
+def _retry_decision_id(
+    method: AbstractFixedStepMethod, policy: RobustRetryPolicy, /
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "retried-fixed-step-decision",
+            "method": method.method_id,
+            "retry_policy": policy.policy_id,
+        }
+    )
+
+
+def inactive_fixed_step_retry(
+    method: AbstractFixedStepMethod,
+    policy: RobustRetryPolicy,
+    step_index: Array,
+    time: Array,
+    state: PyTree[Array],
+    step_size: Array,
+    args: Any = None,
+    /,
+) -> RetriedFixedStepResult:
+    """Held transition that executes no attempt, shaped exactly like a retry.
+
+    Branches choosing between `retry_fixed_step` and a held state (an inactive
+    scan step, for example) need identical PyTrees. The state is returned as
+    candidate and accepted state with zero step size, no executed attempt, and
+    zero evidence buffers of the structure the actual retry publishes.
+    """
+    structure = eqx.filter_eval_shape(
+        retry_fixed_step, method, policy, step_index, time, state, step_size, args
+    )
+    held = _canonical_structured_state(state)
+    attempts = policy.maximum_retries + 1
+    step_dtype = structure.attempted_step_sizes.dtype
+    return RetriedFixedStepResult(
+        held,
+        held,
+        jnp.asarray(True),
+        jnp.zeros((), dtype=step_dtype),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.zeros((attempts,), dtype=step_dtype),
+        jnp.zeros((attempts,), dtype=jnp.bool_),
+        jnp.zeros((attempts,), dtype=jnp.bool_),
+        _zeros_from_structure(structure.evidence),
+        _zeros_from_structure(structure.attempt_evidence),
+        structure.decision_id,
+    )
+
+
+FixedStepEvidenceRetention: TypeAlias = Literal["none", "terminal", "steps"]
+
+
+class FixedStepEvidence(StrictModule):
+    """Native method evidence a fixed-step rollout retains under a declared bound.
+
+    `accepted` is the evidence of the last committed step and `accepted_step` its
+    zero-based index (-1 before any commit); `refused` is the evidence of the
+    attempt whose refusal stopped the rollout and `refused_step` its index (-1 when
+    no executed step was refused). Accepted-state and refused-attempt evidence are
+    never merged. `"terminal"` retention keeps only these two records, independent
+    of the step count; `"steps"` also stacks every step's evidence in `steps`
+    with `step_committed` marking the committed steps. Entry `refused_step` is
+    the refusal; other uncommitted entries re-evaluate the held state and are not
+    part of the accepted trajectory.
+    """
+
+    accepted: PyTree[Array]
+    accepted_step: Array
+    refused: PyTree[Array]
+    refused_step: Array
+    steps: PyTree[Array] | None
+    step_committed: Array | None
+    retention: FixedStepEvidenceRetention = eqx.field(static=True)
+
+
+def _initial_evidence(
+    problem: FixedStepProblem,
+    state_dtype: np.dtype,
+    retention: FixedStepEvidenceRetention,
+    /,
+) -> FixedStepEvidence | None:
+    """Empty retained-evidence record shaped by the method's actual evidence."""
+    if retention == "none":
+        return None
+    structure = eqx.filter_eval_shape(
+        problem.method.step,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(problem.t0, dtype=state_dtype),
+        problem.initial_state,
+        jnp.asarray(problem.step_size, dtype=state_dtype),
+        problem.args,
+    )
+    if not isinstance(structure, FixedStepResult):
+        raise TypeError("Fixed-step methods must return FixedStepResult.")
+    return _evidence_record(structure.evidence, retention)
+
+
+def _evidence_record(
+    structure: Any, retention: FixedStepEvidenceRetention, /
+) -> FixedStepEvidence | None:
+    """Empty record for evidence of an abstractly evaluated structure."""
+    if retention == "none" or not jax.tree.leaves(structure):
+        return None
+    template = _zeros_from_structure(structure)
+    unset = jnp.asarray(-1, dtype=jnp.int32)
+    return FixedStepEvidence(template, unset, template, unset, None, None, retention)
+
+
+def _record_evidence(
+    record: FixedStepEvidence | None,
+    active: Array,
+    successful: Array,
+    evidence: PyTree[Array] | None,
+    step_index: Array,
+    /,
+) -> FixedStepEvidence | None:
+    if record is None:
+        return None
+    committed = active & successful
+    refused = active & ~successful
+    index_ = jnp.asarray(step_index, dtype=jnp.int32)
+    return FixedStepEvidence(
+        tree_where(committed, evidence, record.accepted),
+        jnp.where(committed, index_, record.accepted_step),
+        tree_where(refused, evidence, record.refused),
+        jnp.where(refused, index_, record.refused_step),
+        None,
+        None,
+        record.retention,
+    )
+
+
+def _retained_evidence(
+    record: FixedStepEvidence | None,
+    steps: PyTree[Array] | None,
+    committed: Array,
+    /,
+) -> FixedStepEvidence | None:
+    """Attach the bounded per-step stack only under `"steps"` retention."""
+    if record is None or record.retention != "steps":
+        return record
+    return FixedStepEvidence(
+        record.accepted,
+        record.accepted_step,
+        record.refused,
+        record.refused_step,
+        steps,
+        committed,
+        record.retention,
     )
 
 
@@ -1126,7 +1331,9 @@ class FixedStepSolution(StrictModule, NonTrainableState):
 
     Per-step transform evidence has one entry per step; `transform_admissibility`
     stacks the steps' learned-proposal evidence (`None` when the method
-    evaluates no learned proposal).
+    evaluates no learned proposal). `evidence` is the method evidence retained
+    under the declared `FixedStepEvidenceRetention` (`None` when the method
+    publishes none or retention is `"none"`).
     """
 
     times: Array
@@ -1140,6 +1347,7 @@ class FixedStepSolution(StrictModule, NonTrainableState):
     transform_correction_norm: Array
     transform_admissibility: AdmissibilityHeader | None
     iteration_evidence: IterationEvidence | None
+    evidence: FixedStepEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
@@ -1225,9 +1433,17 @@ class FixedStepIterationMetrics(StrictModule):
         self.transform_correction_norm = jnp.asarray(transform_correction_norm)
 
 
-_NumericalCarry: TypeAlias = tuple[PyTree[Array], Array]
+# Accepted state, cumulative success, and the retained method-evidence record.
+_NumericalCarry: TypeAlias = tuple[PyTree[Array], Array, FixedStepEvidence | None]
 _StepPayload: TypeAlias = tuple[
-    Array, Array, Array, Array, Array, Array, AdmissibilityHeader | None
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    AdmissibilityHeader | None,
+    PyTree[Array] | None,
 ]
 _IterationCarry: TypeAlias = tuple[_NumericalCarry, IterationRuntimeState]
 _RolloutCarry: TypeAlias = _NumericalCarry | _IterationCarry
@@ -1241,7 +1457,7 @@ def _fixed_step_advance(
     step_index: Array,
     /,
 ) -> tuple[_NumericalCarry, _StepPayload]:
-    state, previous_success = carry
+    state, previous_success, evidence = carry
     step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
     time = jnp.asarray(problem.t0, dtype=state_dtype) + step_index * step_size
     result = problem.method.step(step_index, time, state, step_size, problem.args)
@@ -1256,8 +1472,12 @@ def _fixed_step_advance(
     _validate_scalar_result("transform_applied", result.transform_applied, boolean=True)
     _validate_scalar_result("transform_correction_norm", result.transform_correction_norm)
     _validate_transform_admissibility(result.transform_admissibility)
+    _validate_evidence(result.evidence)
     accepted = tree_where(previous_success, result.accepted_state, state)
     successful = previous_success & result.successful
+    retained = _record_evidence(
+        evidence, previous_success, result.successful, result.evidence, step_index
+    )
     payload = (
         successful,
         result.residual,
@@ -1266,8 +1486,11 @@ def _fixed_step_advance(
         result.transform_applied,
         result.transform_correction_norm,
         result.transform_admissibility,
+        result.evidence
+        if evidence is not None and evidence.retention == "steps"
+        else None,
     )
-    return (accepted, successful), payload
+    return (accepted, successful, retained), payload
 
 
 def _fixed_step_iteration_record(
@@ -1319,7 +1542,9 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
 
     Per-step transform evidence has one entry per step; `transform_admissibility`
     stacks the steps' learned-proposal evidence (`None` when the method
-    evaluates no learned proposal).
+    evaluates no learned proposal). `evidence` is the method evidence retained
+    under the plan's `evidence_retention` (`None` when the method publishes none
+    or retention is `"none"`).
     """
 
     final_state: PyTree[Array]
@@ -1334,6 +1559,7 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
     transform_correction_norm: Array
     transform_admissibility: AdmissibilityHeader | None
     iteration_evidence: IterationEvidence | None
+    evidence: FixedStepEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
@@ -1342,10 +1568,16 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
 
 
 class FixedStepRolloutPlan(StrictModule):
-    """Fixed-step retention, replay, and transform-safe iteration observation."""
+    """Fixed-step retention, replay, and transform-safe iteration observation.
+
+    `evidence_retention` bounds the native method evidence kept: `"none"`,
+    `"terminal"` (last committed and refusing step, independent of the step
+    count), or `"steps"` (one record per step of the static step count).
+    """
 
     retention: FixedStepRetentionPolicy = eqx.field(static=True)
     checkpoint_stride: int = eqx.field(static=True)
+    evidence_retention: FixedStepEvidenceRetention = eqx.field(static=True)
     replay: FixedStepReplayPolicy = fixed_field()
     iteration: IterationPlan | None = fixed_field()
     plan_id: str = eqx.field(static=True)
@@ -1358,8 +1590,12 @@ class FixedStepRolloutPlan(StrictModule):
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
         iteration: IterationPlan | None = None,
+        evidence_retention: FixedStepEvidenceRetention = "terminal",
     ) -> None:
         retention = parse(retention, FixedStepRetentionPolicy, "retention")
+        evidence_retention = parse(
+            evidence_retention, FixedStepEvidenceRetention, "evidence_retention"
+        )
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
@@ -1374,6 +1610,7 @@ class FixedStepRolloutPlan(StrictModule):
             raise TypeError("iteration must be IterationPlan or None.")
         self.retention = retention
         self.checkpoint_stride = stride
+        self.evidence_retention = evidence_retention
         self.replay = replay_
         self.iteration = iteration
         self.plan_id = canonical_fingerprint(
@@ -1381,6 +1618,7 @@ class FixedStepRolloutPlan(StrictModule):
                 "kind": "fixed-step-rollout-plan",
                 "retention": retention,
                 "checkpoint_stride": stride,
+                "evidence_retention": evidence_retention,
                 "replay": replay_.policy_id,
                 "iteration": None if iteration is None else iteration.plan_id,
             }
@@ -1395,7 +1633,11 @@ class FixedStepRolloutPlan(StrictModule):
             raise TypeError("problem must be a FixedStepProblem.")
         state_dtype = _state_dtype(problem.initial_state)
         step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
-        numerical_initial = (problem.initial_state, jnp.asarray(True))
+        numerical_initial = (
+            problem.initial_state,
+            jnp.asarray(True),
+            _initial_evidence(problem, state_dtype, self.evidence_retention),
+        )
         iteration_scope = None
         iteration_capabilities = None
 
@@ -1447,12 +1689,12 @@ class FixedStepRolloutPlan(StrictModule):
             ) -> tuple[_RolloutCarry, _StepPayload]:
                 # An iteration plan pairs the numerical carry with its runtime state.
                 numerical, iteration_state = cast(_IterationCarry, carry)
-                state, previous_success = numerical
+                state, previous_success, evidence = numerical
                 active = previous_success & ~iteration_state.stop_requested
                 next_numerical, built_in = _fixed_step_advance(
                     problem,
                     state_dtype,
-                    (state, active),
+                    (state, active, evidence),
                     step_index,
                 )
                 (
@@ -1462,6 +1704,7 @@ class FixedStepRolloutPlan(StrictModule):
                     work,
                     transformed,
                     correction,
+                    _,
                     _,
                 ) = built_in
                 endpoint = (
@@ -1521,10 +1764,11 @@ class FixedStepRolloutPlan(StrictModule):
                     Array,
                     Array,
                     AdmissibilityHeader | None,
+                    PyTree[Array] | None,
                 ],
             ]:
                 next_carry, payload = step(carry, step_index)
-                accepted, _ = numerical_carry(next_carry)
+                accepted, _, _ = numerical_carry(next_carry)
                 return next_carry, (accepted, *payload)
 
             result_carry, payload = checkpointed_scan(
@@ -1545,6 +1789,7 @@ class FixedStepRolloutPlan(StrictModule):
                 transformed,
                 correction,
                 admissibility,
+                step_evidence,
             ) = payload
             retained_states = _prepend_initial_state(problem.initial_state, states)
             retained_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
@@ -1569,8 +1814,9 @@ class FixedStepRolloutPlan(StrictModule):
                 transformed,
                 correction,
                 admissibility,
+                step_evidence,
             ) = payload
-            final_state, final_success = numerical_carry(result_carry)
+            final_state, final_success, _ = numerical_carry(result_carry)
             retained_states = jax.tree.map(lambda leaf: leaf[None, ...], final_state)
             retained_valid = final_success[None]
             retained_times = jnp.asarray([problem.t1], dtype=step_size.dtype)
@@ -1601,7 +1847,7 @@ class FixedStepRolloutPlan(StrictModule):
             ) -> tuple[_CheckpointCarry, _StepPayload]:
                 state_carry, saved, saved_valid, cursor = carry
                 next_carry, payload = step(state_carry, step_index)
-                accepted, successful = numerical_carry(next_carry)
+                accepted, successful, _ = numerical_carry(next_carry)
 
                 def store(
                     values: tuple[PyTree[Array], Array, Array],
@@ -1647,12 +1893,13 @@ class FixedStepRolloutPlan(StrictModule):
                 transformed,
                 correction,
                 admissibility,
+                step_evidence,
             ) = payload
             retained_times = jnp.asarray(
                 problem.t0, dtype=step_size.dtype
             ) + step_size * jnp.asarray(saved_indices, dtype=step_size.dtype)
 
-        final_state, final_success = numerical_carry(result_carry)
+        final_state, final_success, final_evidence = numerical_carry(result_carry)
         iteration_evidence = None
         result_success = final_success
         if self.iteration is not None:
@@ -1712,6 +1959,7 @@ class FixedStepRolloutPlan(StrictModule):
             correction,
             admissibility,
             iteration_evidence,
+            _retained_evidence(final_evidence, step_evidence, valid),
             problem.problem_id,
             problem.method.method_id,
             problem.state_geometry.geometry_id,
@@ -1727,6 +1975,7 @@ def solve_fixed_step(
     save_every: int = 1,
     replay: FixedStepReplayPolicy | None = None,
     iteration: IterationPlan | None = None,
+    evidence_retention: FixedStepEvidenceRetention = "terminal",
 ) -> FixedStepSolution:
     """Run one pure fixed-step scan with orthogonal saving and observation."""
 
@@ -1741,6 +1990,7 @@ def solve_fixed_step(
         checkpoint_stride=stride,
         replay=replay,
         iteration=iteration,
+        evidence_retention=evidence_retention,
     ).rollout(problem)
     return FixedStepSolution(
         rollout.times,
@@ -1754,6 +2004,7 @@ def solve_fixed_step(
         rollout.transform_correction_norm,
         rollout.transform_admissibility,
         rollout.iteration_evidence,
+        rollout.evidence,
         rollout.problem_id,
         rollout.method_id,
         rollout.state_geometry_id,
@@ -1770,6 +2021,8 @@ __all__ = [
     "AbstractFixedStepMethod",
     "AcceptedStepTransformResult",
     "CompositeAcceptedStepTransform",
+    "FixedStepEvidence",
+    "FixedStepEvidenceRetention",
     "FixedStepProblem",
     "FixedStepReplayMode",
     "FixedStepReplayPolicy",
@@ -1784,6 +2037,7 @@ __all__ = [
     "RetriedFixedStepResult",
     "RobustRetryPolicy",
     "retry_fixed_step",
+    "inactive_fixed_step_retry",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
     "IdentitySSPRKStageTransform",

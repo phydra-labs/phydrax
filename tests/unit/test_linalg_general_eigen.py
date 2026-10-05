@@ -8,7 +8,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+import scipy.sparse as sp
 
 import phydrax as phx
 from phydrax.linalg.eigen import (
@@ -579,4 +581,238 @@ def test_general_eigenvectors_preserve_complexified_pytree_space_structure() -> 
     assert result.left_eigenvectors["velocity"].shape == (1, 2)
     assert jnp.issubdtype(
         result.right_eigenvectors["position"].dtype, jnp.complexfloating
+    )
+
+
+def _sparse_map(
+    matrix: sp.sparray | sp.spmatrix, properties: la.OperatorProperties | None = None
+) -> phx.sparse.SparseLinearMap:
+    # SciPy's public constructor accepts both sparse bases and preserves their dtype;
+    # its overloads omit these base types (the runtime dispatch uses issparse).
+    coordinates = sp.coo_array(matrix)  # ty: ignore[no-matching-overload]
+    size = coordinates.shape[0]
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray(coordinates.col, dtype=jnp.int32),
+        jnp.asarray(coordinates.row, dtype=jnp.int32),
+        source_size=size,
+        target_size=size,
+    )
+    return phx.sparse.SparseLinearMap(
+        relation, jnp.asarray(coordinates.data), properties=properties
+    )
+
+
+def _convection_diffusion(size: int) -> sp.csr_matrix:
+    """Nonnormal 2-D upwinded convection-diffusion operator."""
+    one = sp.diags([-1.0, 2.0, -1.0], [-1, 0, 1], shape=(size, size))
+    advection = sp.diags([-1.0, 1.0], [-1, 0], shape=(size, size))
+    identity = sp.identity(size)
+    laplacian = sp.kron(one, identity) + sp.kron(identity, one)
+    rotation = sp.kron(advection, identity) - sp.kron(identity, advection.T)
+    return sp.csr_matrix((size + 1) ** 2 * laplacian + 6.0 * (size + 1) * rotation)
+
+
+def _factored_policy(count: int, shift: float, **kwargs: Any) -> GeneralEigenSolvePolicy:
+    return GeneralEigenSolvePolicy(
+        RestartedArnoldi(restart="krylov-schur"),
+        transform=ShiftInvertTransform(shift),
+        selection=GeneralEigenSelection.closest(shift, count),
+        transform_solve=la.SparseFactorizationPolicy(
+            "lu", ordering="approximate-minimum-degree"
+        ),
+        vectors="right",
+        failure=la.FailurePolicy("status"),
+        **kwargs,
+    )
+
+
+def _nearest(spectrum: np.ndarray, shift: float, count: int) -> np.ndarray:
+    return spectrum[np.argsort(np.abs(spectrum - shift))[:count]]
+
+
+@pytest.mark.parametrize("shift", [0.0, 150.0], ids=["zero-shift", "interior-shift"])
+def test_sparse_factor_krylov_schur_matches_the_dense_spectrum_nearest_the_shift(
+    shift: float,
+) -> None:
+    # Independent reference: numpy.linalg.eigvals of the materialized matrix.
+    matrix = _convection_diffusion(14)
+    dense = matrix.toarray()
+    expected = _nearest(np.linalg.eigvals(dense), shift, 8)
+    problem = GeneralEigenproblem(_sparse_map(matrix))
+    result = general_eigensolve(problem, policy=_factored_policy(8, shift))
+    assert bool(result.successful)
+    assert int(result.diagnostics.converged_count) == 8
+    assert result.diagnostics.enclosure == "estimate"
+    assert not result.provenance.capabilities.returns_left_eigenvectors
+    assert int(result.diagnostics.factorization_status) == 0
+    values = np.asarray(result.eigenvalues)
+    distances = np.min(np.abs(values[:, None] - expected[None, :]), axis=1)
+    assert np.max(distances) < 1e-6 * np.max(np.abs(expected))
+    vectors = np.asarray(result.right_eigenvector_coordinates)
+    backward = np.linalg.norm(dense @ vectors - vectors * values[None, :], axis=0) / (
+        np.linalg.norm(vectors, axis=0)
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.diagnostics.backward_errors), backward, atol=1e-9
+    )
+    norm = np.linalg.norm(dense, 2)
+    bound = float(result.diagnostics.norm_upper_bound)
+    exact_bound = np.sqrt(np.abs(dense).sum(0).max() * np.abs(dense).sum(1).max())
+    assert norm <= bound <= exact_bound * (1 + 1e-12)
+    assert np.all(np.isnan(np.asarray(result.diagnostics.left_residual_norms)))
+
+
+def test_sparse_factor_route_lifts_the_dense_dimension_cap() -> None:
+    matrix = _convection_diffusion(14)
+    capped = GeneralEigenResourcePolicy(max_dimension=16)
+    problem = GeneralEigenproblem(_sparse_map(matrix))
+    with pytest.raises(ValueError, match="exceeds limit 16"):
+        plan_general_eigensolve(
+            problem,
+            GeneralEigenSolvePolicy(
+                RestartedArnoldi(restart="krylov-schur"),
+                selection=GeneralEigenSelection("smallest-real", count=4),
+                vectors="right",
+                resources=capped,
+            ),
+        )
+    result = general_eigensolve(
+        problem, policy=_factored_policy(4, 0.0, resources=capped)
+    )
+    assert bool(result.successful)
+
+
+def test_certified_self_adjoint_backward_errors_are_bauer_fike_enclosures() -> None:
+    size = 200
+    matrix = (size + 1) ** 2 * sp.diags([-1.0, 2.0, -1.0], [-1, 0, 1], shape=(size, size))
+    certified = la.OperatorProperties(
+        self_adjoint=True, evidence={"self_adjoint": "construction"}
+    )
+    result = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(matrix, certified)),
+        policy=_factored_policy(5, 0.0),
+    )
+    assert result.diagnostics.enclosure == "bauer-fike"
+    exact = 4 * (size + 1) ** 2 * np.sin(np.arange(1, 6) * np.pi / (2 * (size + 1))) ** 2
+    values = np.asarray(result.eigenvalues)
+    radii = np.asarray(result.diagnostics.backward_errors)
+    # Each disk |λ - ρ| <= ‖A x - ρ x‖ / ‖x‖ contains an exact eigenvalue.
+    assert np.all(
+        np.min(np.abs(values[:, None] - exact[None, :]), axis=1) <= radii + 1e-9
+    )
+    unlabeled = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(matrix)), policy=_factored_policy(5, 0.0)
+    )
+    assert unlabeled.diagnostics.enclosure == "estimate"
+
+
+def test_preconditioned_iterative_shift_invert_matches_the_dense_spectrum() -> None:
+    # Real Krylov–Schur with GMRES+ILU inner solves; reference: numpy eigvals.
+    matrix = _convection_diffusion(14)
+    dense = matrix.toarray()
+    expected = _nearest(np.linalg.eigvals(dense), 0.0, 6)
+    transform_solve = la.LinearSolvePolicy(
+        la.GMRES(restart=40, stagnation_iterations=40),
+        tolerance=la.TolerancePolicy(relative=1e-11, absolute=0.0, max_steps=400),
+        # The shift is zero, so ILU of A itself preconditions A - 0 I.
+        preconditioning=la.PreconditioningPolicy(
+            la.ILUPreconditionerBuilder(), setup_operator=_sparse_map(matrix)
+        ),
+        differentiation=la.DifferentiationPolicy("none"),
+        failure=la.FailurePolicy("status"),
+        require_device_binding=True,
+    )
+    result = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(matrix)),
+        policy=GeneralEigenSolvePolicy(
+            RestartedArnoldi(restart="krylov-schur"),
+            transform=ShiftInvertTransform(0.0),
+            selection=GeneralEigenSelection.closest(0.0, 6),
+            transform_solve=transform_solve,
+            vectors="right",
+            failure=la.FailurePolicy("status"),
+        ),
+    )
+    assert bool(result.successful)
+    values = np.asarray(result.eigenvalues)
+    assert np.max(np.min(np.abs(values[:, None] - expected[None, :]), axis=1)) < 1e-6 * (
+        np.max(np.abs(expected))
+    )
+    vectors = np.asarray(result.right_eigenvector_coordinates)
+    backward = np.linalg.norm(dense @ vectors - vectors * values[None, :], axis=0) / (
+        np.linalg.norm(vectors, axis=0)
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.diagnostics.backward_errors), backward, atol=1e-9
+    )
+
+
+def test_krylov_schur_matrix_free_smallest_real_matches_the_dense_left_edge() -> None:
+    rng = np.random.default_rng(3)
+    size = 120
+    diagonal = np.concatenate(
+        (np.linspace(-3.0, -1.0, 4), np.linspace(5.0, 40.0, size - 4))
+    )
+    coupling = sp.random(size, size, density=0.03, random_state=rng) * 0.3
+    matrix = sp.diags(diagonal) + coupling - coupling.T
+    expected = np.sort(np.linalg.eigvals(matrix.toarray()).real)[:4]
+    result = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(matrix)),
+        policy=GeneralEigenSolvePolicy(
+            RestartedArnoldi(subspace_dimension=30, restart="krylov-schur"),
+            selection=GeneralEigenSelection("smallest-real", count=4),
+            max_steps=2000,
+            vectors="right",
+            failure=la.FailurePolicy("status"),
+        ),
+    )
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        np.sort(np.asarray(result.eigenvalues).real), expected, atol=1e-7
+    )
+
+
+def test_krylov_schur_work_limit_and_factorization_failure_are_explicit() -> None:
+    matrix = _convection_diffusion(14)
+    limited = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(matrix)),
+        policy=GeneralEigenSolvePolicy(
+            RestartedArnoldi(subspace_dimension=8, restart="krylov-schur"),
+            selection=GeneralEigenSelection("smallest-real", count=6),
+            max_steps=8,
+            vectors="right",
+            failure=la.FailurePolicy("status"),
+        ),
+    )
+    assert int(limited.status) == int(GeneralEigenSolveStatus.PARTIAL_CONVERGENCE)
+    assert int(limited.diagnostics.converged_count) < 6
+    assert int(limited.diagnostics.arnoldi_action_count) == 8
+    singular = sp.lil_matrix(matrix)
+    singular[5, :] = 0.0
+    failed = general_eigensolve(
+        GeneralEigenproblem(_sparse_map(singular.tocsr())),
+        policy=_factored_policy(6, 0.0),
+    )
+    assert int(failed.status) == int(GeneralEigenSolveStatus.NONFINITE_OUTPUT)
+    assert int(failed.diagnostics.factorization_status) != 0
+    assert int(failed.diagnostics.converged_count) == 0
+
+
+def test_sparse_factor_refresh_reuses_symbolic_factorization() -> None:
+    matrix = _convection_diffusion(10)
+    policy = _factored_policy(4, 50.0)
+    problem = GeneralEigenproblem(_sparse_map(matrix), problem_id="refresh-pencil")
+    prepared = prepare_general_eigensolve(problem, policy)
+    refreshed = refresh_general_eigensolve(
+        prepared,
+        GeneralEigenproblem(_sparse_map(2.0 * matrix), problem_id="refresh-pencil"),
+    )
+    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.plan.transform_factorization is prepared.plan.transform_factorization
+    result = general_eigensolve(refreshed)
+    expected = _nearest(np.linalg.eigvals(2.0 * matrix.toarray()), 50.0, 4)
+    values = np.asarray(result.eigenvalues)
+    assert bool(result.successful)
+    assert np.max(np.min(np.abs(values[:, None] - expected[None, :]), axis=1)) < 1e-6 * (
+        np.max(np.abs(expected))
     )

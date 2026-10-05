@@ -439,6 +439,7 @@ def test_implicit_unit_triangular_solve_retains_first_stored_offdiagonal() -> No
         assert result.status == int(la.SparseTriangularStatus.SUCCESS)
         assert jnp.allclose(result.value, expected)
 
+
 @pytest.mark.parametrize("triangle", ("lower", "upper"))
 def test_sparse_triangular_substitution_supports_multiple_complex_right_sides(
     triangle: Any,
@@ -453,9 +454,7 @@ def test_sparse_triangular_substitution_supports_multiple_complex_right_sides(
     matrix = lower if triangle == "lower" else lower.T
     storage = _sparse_map(matrix).sparse_storage()
     analysis = la.analyze_sparse_triangular(storage, triangle=triangle)
-    right_hand_side = jnp.asarray(
-        ((1.0 + 0.5j, 2.0), (-1.0j, 3.0 - 0.5j), (4.0, -2.0j))
-    )
+    right_hand_side = jnp.asarray(((1.0 + 0.5j, 2.0), (-1.0j, 3.0 - 0.5j), (4.0, -2.0j)))
 
     for options, operator in (
         ({}, matrix),
@@ -545,3 +544,114 @@ def test_exact_sparse_cholesky_tolerates_complex_hermitian_roundoff() -> None:
 
     assert action.factorization.status == int(la.SparseFactorizationStatus.SUCCESS)
     assert jnp.linalg.norm(matrix @ value - right_hand_side) < 1.0e-12
+
+
+def _convection_diffusion(size: int) -> Any:
+    # Nonsymmetric, strictly diagonally dominant, explicitly sparse.
+    return 4.0 * jnp.eye(size) - 1.3 * jnp.eye(size, k=-1) - 0.6 * jnp.eye(size, k=1)
+
+
+@pytest.mark.parametrize("direction", ["forward", "backward", "symmetric"])
+def test_ordered_gauss_seidel_sweeps_the_permuted_splitting(
+    direction: la.GaussSeidelDirection,
+) -> None:
+    matrix = _convection_diffusion(6) + 0.4 * jnp.eye(6, k=3)
+    permutation = jnp.asarray([3, 0, 5, 1, 4, 2])
+    action = la.GaussSeidelPreconditionerBuilder(
+        direction=direction, ordering=permutation
+    ).prepare(
+        _sparse_map(matrix),
+        materialization=la.MaterializationPolicy(max_entries=100, max_bytes=10_000),
+    )
+    residual = jnp.asarray([1.0, -2.0, 0.5, 0.25, 3.0, -1.5])
+    permuted = matrix[permutation][:, permutation]
+    inverse = jnp.argsort(permutation)
+
+    def sweep(triangle: Any, value: Any) -> Any:
+        return jnp.linalg.solve(triangle(permuted), value[permutation])[inverse]
+
+    if direction == "forward":
+        expected = sweep(jnp.tril, residual)
+    elif direction == "backward":
+        expected = sweep(jnp.triu, residual)
+    else:
+        first = sweep(jnp.tril, residual)
+        expected = first + sweep(jnp.triu, residual - matrix @ first)
+    natural = la.GaussSeidelPreconditionerBuilder(direction=direction).prepare(
+        _sparse_map(matrix),
+        materialization=la.MaterializationPolicy(max_entries=100, max_bytes=10_000),
+    )
+
+    assert jnp.allclose(
+        jax.jit(lambda value: action.apply(value))(residual), expected, atol=1e-12
+    )
+    assert not jnp.allclose(natural.apply(residual), expected, atol=1e-6)
+    with pytest.raises(ValueError, match="permutation"):
+        la.GaussSeidelPreconditionerBuilder(ordering=jnp.asarray([0, 0, 1]))
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        la.JacobiPreconditionerBuilder(),
+        la.BlockJacobiPreconditionerBuilder(2),
+        la.GaussSeidelPreconditionerBuilder(direction="forward"),
+        la.GaussSeidelPreconditionerBuilder(direction="backward"),
+    ],
+    ids=["jacobi", "block-jacobi", "forward-gauss-seidel", "backward-gauss-seidel"],
+)
+def test_lower_precision_single_solve_actions_keep_coordinate_residuals(
+    builder: Any,
+) -> None:
+    matrix = _convection_diffusion(8)
+    problem = la.LinearSystem(_sparse_map(matrix))
+    rhs = jnp.linspace(-1.0, 2.0, 8)
+
+    def policy(precision: Any) -> Any:
+        return la.LinearSolvePolicy(
+            la.GMRES(restart=8),
+            preconditioning=la.PreconditioningPolicy(builder),
+            precision=precision,
+            tolerance=la.TolerancePolicy(relative=1e-13, absolute=0.0, max_steps=64),
+            differentiation=la.DifferentiationPolicy("none"),
+        )
+
+    lowered = policy(la.MixedPrecisionPolicy(preconditioner_dtype=jnp.float32))
+    result = la.solve(problem, rhs, policy=lowered)
+    evidence = result.provenance.effective_precision
+
+    assert bool(result.successful)
+    assert result.value.dtype == jnp.float64
+    assert jnp.linalg.norm(matrix @ result.value - rhs) < 1e-11
+    # ty: ignore[unresolved-attribute]
+    assert evidence.preconditioner_dtype == "float32"
+    # ty: ignore[unresolved-attribute]
+    assert evidence.residual_dtype == "float64"
+    lowered_storage = la.plan(problem, lowered).candidates[-1]
+    full_storage = la.plan(problem, policy(None)).candidates[-1]
+    assert (
+        lowered_storage.preconditioner_storage_bytes
+        < full_storage.preconditioner_storage_bytes
+    )
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        la.GaussSeidelPreconditionerBuilder(direction="symmetric"),
+        la.ChebyshevPreconditionerBuilder(3, interval=(1.0, 6.0)),
+        la.ILUPreconditionerBuilder(),
+    ],
+    ids=["symmetric-gauss-seidel", "chebyshev", "ilu"],
+)
+def test_lower_precision_refuses_actions_without_accumulation_contract(
+    builder: Any,
+) -> None:
+    matrix = _convection_diffusion(8)
+    policy = la.LinearSolvePolicy(
+        la.GMRES(restart=8),
+        preconditioning=la.PreconditioningPolicy(builder),
+        precision=la.MixedPrecisionPolicy(preconditioner_dtype=jnp.float32),
+    )
+    with pytest.raises(la.LinearCapabilityError, match="lower-precision"):
+        la.solve(la.LinearSystem(_sparse_map(matrix)), jnp.ones(8), policy=policy)

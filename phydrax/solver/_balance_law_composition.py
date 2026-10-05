@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,6 +17,20 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
+
+
+AdditiveIMEXScheme: TypeAlias = Literal[
+    "forward-backward-euler", "ars-222", "ssp2-222", "ars-443"
+]
+"""Named additive IMEX Runge--Kutta schemes with published coefficients.
+
+``forward-backward-euler`` is first order. ``ars-222`` (Ascher, Ruuth and
+Spiteri, Appl. Numer. Math. 25, 1997, Sec. 2.6) and ``ssp2-222`` (Pareschi and
+Russo, J. Sci. Comput. 25, 2005) are second order; ``ars-443`` (ARS Sec. 2.8) is
+third order. Every ARS scheme and forward--backward Euler is stiffly accurate
+with an explicit-only first stage.
+"""
 
 
 ImplicitCallbacks: TypeAlias = Callable[..., Any] | tuple[Callable[..., Any], ...]
@@ -322,6 +336,71 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         )
 
 
+def additive_imex_tableau(scheme: AdditiveIMEXScheme, /) -> AdditiveIMEXTableau:
+    """Return the published tableau of one named additive IMEX scheme."""
+    selected = parse(scheme, AdditiveIMEXScheme, "scheme")
+    match selected:
+        case "forward-backward-euler":
+            return AdditiveIMEXTableau(
+                np.asarray(((0.0, 0.0), (1.0, 0.0))),
+                np.asarray(((0.0, 0.0), (0.0, 1.0))),
+                np.asarray((0.0, 1.0)),
+                np.asarray((0.0, 1.0)),
+                explicit_weights=np.asarray((1.0, 0.0)),
+                implicit_parts=(None, 0),
+            )
+        case "ars-222":
+            gamma = 1.0 - 1.0 / np.sqrt(2.0)
+            delta = 1.0 - 1.0 / (2.0 * gamma)
+            return AdditiveIMEXTableau(
+                np.asarray(
+                    ((0.0, 0.0, 0.0), (gamma, 0.0, 0.0), (delta, 1.0 - delta, 0.0))
+                ),
+                np.asarray(
+                    ((0.0, 0.0, 0.0), (0.0, gamma, 0.0), (0.0, 1.0 - gamma, gamma))
+                ),
+                np.asarray((0.0, 1.0 - gamma, gamma)),
+                np.asarray((0.0, gamma, 1.0)),
+                explicit_weights=np.asarray((delta, 1.0 - delta, 0.0)),
+                implicit_parts=(None, 0, 0),
+            )
+        case "ssp2-222":
+            gamma = 1.0 - 1.0 / np.sqrt(2.0)
+            return AdditiveIMEXTableau(
+                np.asarray(((0.0, 0.0), (1.0, 0.0))),
+                np.asarray(((gamma, 0.0), (1.0 - 2.0 * gamma, gamma))),
+                np.asarray((0.5, 0.5)),
+                np.asarray((gamma, 1.0)),
+            )
+        case "ars-443":
+            return AdditiveIMEXTableau(
+                np.asarray(
+                    (
+                        (0.0, 0.0, 0.0, 0.0, 0.0),
+                        (0.5, 0.0, 0.0, 0.0, 0.0),
+                        (11.0 / 18.0, 1.0 / 18.0, 0.0, 0.0, 0.0),
+                        (5.0 / 6.0, -5.0 / 6.0, 0.5, 0.0, 0.0),
+                        (0.25, 1.75, 0.75, -1.75, 0.0),
+                    )
+                ),
+                np.asarray(
+                    (
+                        (0.0, 0.0, 0.0, 0.0, 0.0),
+                        (0.0, 0.5, 0.0, 0.0, 0.0),
+                        (0.0, 1.0 / 6.0, 0.5, 0.0, 0.0),
+                        (0.0, -0.5, 0.5, 0.5, 0.0),
+                        (0.0, 1.5, -1.5, 0.5, 0.5),
+                    )
+                ),
+                np.asarray((0.0, 1.5, -1.5, 0.5, 0.5)),
+                np.asarray((0.0, 0.5, 2.0 / 3.0, 0.5, 1.0)),
+                explicit_weights=np.asarray((0.25, 1.75, 0.75, -1.75, 0.0)),
+                implicit_parts=(None, 0, 0, 0, 0),
+            )
+        case _:
+            assert_never(selected)
+
+
 class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
     """Symmetric process subcycles; each process owns its finite-update method."""
 
@@ -346,6 +425,8 @@ class BalanceLawCompositionPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AdditiveIMEXScheme",
     "AdditiveIMEXTableau",
     "BalanceLawCompositionPlan",
+    "additive_imex_tableau",
 ]

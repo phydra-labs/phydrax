@@ -31,11 +31,16 @@ from ._lattice_equivariant import (
 from ._o3 import (
     EquivariantIntegralLayer,
     o3_gated_activation,
+    O3IrrepLinear,
     O3PointwiseLinear,
     RadialBasis,
     RadialMap,
 )
-from ._o3_tensor_product import O3TensorProduct, O3TensorProductPlan
+from ._o3_tensor_product import (
+    O3TensorProduct,
+    O3TensorProductPath,
+    O3TensorProductPlan,
+)
 from ._regional_processor import RegionalGraphProcessor
 from ._spectral import BasisSpectralConvND, BasisTransformPlan, ModalTransformKind
 from ._transformer import OperatorTransformerProcessor
@@ -62,8 +67,10 @@ __all__ = [
     "SliceAttention",
     "ModalTransformKind",
     "GeometryMomentEmbedding",
+    "O3IrrepLinear",
     "O3PointwiseLinear",
     "O3TensorProduct",
+    "O3TensorProductPath",
     "O3TensorProductPlan",
     "o3_gated_activation",
     "RadialBasis",

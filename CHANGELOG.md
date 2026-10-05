@@ -2,7 +2,114 @@
 
 ## Unreleased
 
+### Fixed
+- Streamed deterministic and compensated reductions preserve reverse-mode
+  curvature at valid zero events, and failed evaluations invalidate derivatives
+  through message-only parameters and array-bearing callbacks. Callback leaves
+  are included in cotangent admission.
+- Graph message passing excludes masked padding receivers from numerical
+  admission and does not consume unused global payloads.
+- Runtime atomistic topology binds exact route and schedule content; image
+  geometry follows its discovery lattice and refuses uncertified cell changes.
+  Capacity retry preserves independent thermodynamic and other rejections.
+- Distributed ownership validates logical row addresses and global epochs,
+  honors replicated partition specifications, rejects incomplete stencils, and
+  refuses checkpoint publication that would launder stale topology ownership.
+- Source coupling imports refuse complex values before real conversion, and
+  SU(2)/native symmetric-basis construction checks legality and workspace
+  admission before allocating dense mathematical data.
+- Provider conversion bounds irreps expansion and edge/image topology before
+  construction or discovery. ASE commits cache identity only after successful
+  preparation. IREE validates reflected input/output ABI and HAL element types
+  before decoding buffers, including scalar inputs and frozen output contracts.
+- Energy/force/stress loss uses the declared reduction precision under strict
+  dtype promotion; force masks must explicitly match their Cartesian layout.
+- Sparse grouped sums retain coordinate, parameter, and mixed derivatives for
+  valid zero-valued events and cancelling seeded subtotals. Primal zero-event
+  no-ops and uncollapsed compensated correction state are preserved; structural
+  padding remains derivative-inert.
+- Atomistic derivative failure poisoning preserves each carrier's precision
+  under float64 energy accumulation and float32 coordinate differentiation.
+  Image cell-key reductions retain their declared int32 address space under
+  strict dtype promotion.
+- Tabulated radial evaluation preserves the admitted one-sided derivative at
+  the lower support bound instead of inheriting the half-slope of clipping.
+- Accelerated MACE coupling executes every nonzero entry of the executed
+  coefficient tables, including admitted imported residuals where the native
+  coupling is zero: `MACEEdgeCouplingSpec` now takes the `O3TensorProduct` and
+  lowers its `coefficient_support`, so kernel structure, coefficient counts,
+  declared resources and `spec_id` change with the support (native supports
+  keep their previous structure). Tables mutated outside their recorded
+  support are refused in-graph instead of truncated. Multi-slot tangents of the
+  receiver, source and coefficient kernels stream every slot's lane events
+  through one seeded accumulator, so compensated mixed derivatives keep
+  cancelling residuals instead of collapsing per-slot subtotals; seeded
+  tangent binds transpose and coefficient partials keep each program's
+  correction.
+- MACE validation, preparation publication, and radial table freshness rebuild
+  every executed fixed Bessel, cutoff, Agnesi, harmonic, ZBL, and coupling
+  field from the stored arrays instead of trusting recorded identities, so a
+  changed prefactor or ZBL exponent is refused. Float32 Bessel bases now
+  identify their realized prefactor, which changes float32 radial and MACE
+  architecture identities without an alias. Radial tables admit atom-type ID
+  `0` and refuse out-of-domain species indices instead of wrapping or clipping
+  them onto another species pair.
+- IREE host inference reads owned outputs through the public HAL buffer
+  protocol, avoiding the mapped-array reference leak in runtime 3.11.
+- Native i-PI boundaries now convert row-stored cells, Bohr/Hartree units, and
+  configurational virial explicitly; tensile stress is not a wire virial.
+  Required unavailable virial is refused rather than replaced with zero.
+- Atomistic training restarts publish the model and continuation as one atomic
+  bundle with a digest receipt. Failed publication preserves the prior bundle;
+  obsolete receipt-free directory layouts are refused.
+- `PreparedLinearSolve` and `LinearSolveProvenance` validate Python, NumPy, and
+  concrete JAX numeric versions on the host and keep them concrete inside
+  traces, so default and other constant version metadata stage no host
+  callbacks and prepared native solves export with `jax.export`. Invalid
+  constant versions now raise `ValueError` at construction, including inside a
+  trace; traced versions keep their runtime refusals with unchanged messages.
+- Image neighborhood searches refuse a singular or non-finite runtime cell even
+  when no particle is active, and charge `maximum_candidate_slots` (and
+  `PeriodicCell` its `maximum_image_count`) before enumerating a radius- or
+  condition-sized stencil. Wrap counts, route shifts, representation offsets
+  and image-Verlet counts outside the symmetric int32 range now set the new
+  scientific `ParticleImageRelationEvidence.representation_overflow` (or
+  refuse at relation construction) instead of saturating or wrapping into a
+  wrong translation. `ParticleImageNeighborhoodState` gains
+  `reference_positions`, re-expressed with its routes and wrap counts by
+  `with_representation_offsets`; array fingerprints of image neighborhood
+  states and evidence change accordingly, without a compatibility alias.
+
 ### Added
+- Prepared bounded streamed relation execution, seeded reductions, fragment
+  replay, receiver epilogues, resource admission, and failure evidence. PaiNN,
+  NequIP, selected graph operators, and meshfree constitutive/conservation
+  consumers use the same canonical owner.
+- Multi-image periodic atomistic routes, nonzero self images, triclinic and
+  partial periodicity, certified Verlet reuse under wrapping and cell
+  deformation, and transactional same-attempt capacity replacement.
+- General real O(3) representations and tensor-product paths, sparse symmetric
+  product graphs, exact Bessel/cutoff radial execution, and distinct qualified
+  tabulated radial preparation. Cartesian low-degree consumers retain their
+  declared semantics; new coupling/preparation identities are canonical.
+- Native standard MACE construction and training, invariant single-interaction
+  readouts, source-faithful residual/density/head/scale/ZBL handling, and one
+  fixed-topology energy/force/stress derivative boundary. Stress conventions
+  distinguish full periodic volume from partial-PBC embedding volume.
+- Trusted, bounded source conversion and pickle-free native model artifacts
+  with registered scientific reconstruction. Safe state-dict storage metadata
+  is checked before provider allocation; trusted full-object checkpoints
+  require explicit trust and are not memory or security sandboxes.
+- Owner-local multilayer MACE with intermediate feature halos and reverse
+  force/cell returns, migration/restart, architecture-specialized Pallas Mosaic
+  GPU coupling and admitted mixed derivatives, and explicit unsupported-target
+  refusal. CPU interpretation and forced-device proofs do not qualify GPU or
+  multi-host performance.
+- Native ASE calculation, periodic E/F/S dynamics, i-PI inference, and frozen
+  native-JAX IREE export with lifecycle certificate/status refusal. Double
+  precision host export admits an explicit system-library executable format.
+  Capability profiles remain unreleased candidates; checkpoint licenses and
+  independent release authorization remain separate prerequisites.
 - `phydrax.typing.checked` checks a function's annotated arguments against their
   input contracts: nominal runtime classes, callables, and Phydrax tensor and
   metadata forms, in declaration order and one dimension `Scope` per call, after
@@ -90,13 +197,100 @@
   extensive moving-surface IMEX execution, tangential shifting, deterministic
   resampling, measured conservative/positive epoch transfers, capacity maps,
   and native bulk–surface exchange publication.
+- Declared meshfree point transfers (`PointTransferPlan`, `PointTransferRequest`):
+  conservative-signed, conservative-positive, and joint
+  conservative/constant/moment routes (optionally nonnegative) solved as minimum
+  changes with native `MinimumNormProblem` or sparse conic programs, with host
+  audits, measure-obstruction witnesses, certified left-null/Farkas
+  infeasibility, and unresolved-provider status. Signed requests eliminate each
+  target's constant/moment rows exactly (native batched pseudoinverse) so the
+  Krylov solve carries only conservation rows; evidence reports the Lebesgue
+  constant, and `lebesgue_bound` refuses amplifying transfers
+  (`AMPLIFICATION_EXCEEDED`); `linear_policy`/`conic_policy` pass through
+  `from_stencils`. `SurfaceTransferPlan` now only prepares tangent-frame moments
+  and takes a `PointTransferRequest`; `SurfaceTransferMode`,
+  `SurfaceTransferEvidence`, and `PreparedSurfaceTransfer` are removed in favor
+  of `PreparedPointTransfer`.
+- Meshfree epoch transactions (`stage_meshfree_epoch`, `commit_meshfree_epoch`)
+  over `phx.lifecycle` compositions: every epoch-bound artifact is reprepared and
+  every live history remapped by its own route, or the source composition is
+  returned unchanged. `surface_event_epoch` consumes committed multiregion
+  split/merge/pinch lineage; `SurfaceResamplingResult` records sample lineage
+  (`source_indices`, `inserted_probes`, `removed_sources`) instead of counts.
+- Support-epoch restart from a fresh process: an `ArtifactCheckpointStore`
+  restore through a migration relation commits a `CheckpointMigrationRecord`
+  (receipt plus transported source state, i.e. the held epoch anchor) with its
+  `restart-lineage` snapshot and carries it in every later snapshot;
+  `migration_lineage()` reads it unbound and `terminal_record` exposes the
+  committed terminal. `resume_support_epochs` replays the lineage from epoch 0
+  (refusing a mismatched inventory with `StaleRuntimeCheckpointError`) and
+  returns the current `SupportEpochChain`. `examples/meshfree_production_epochs.py`
+  is a killable multi-epoch driver.
+- `TopologyEpochTransition.pullback` (coordinate dual) and `adjoint` (Hilbert)
+  replace `transpose`; results report `value_derivative_available` for values
+  through the frozen transfer.
+- Mixed-method meshfree coupling: `PointBoundaryCharts` (2-D chart boundary
+  authority with exact-transpose value traces), `MeshfreeTraceComponent` and
+  `MeshfreeBoundaryTrace` (chart-authorized coupling boundaries of point Poisson
+  and block-system owners, including traction-ghost owners with per-component
+  cloud and ghost blocks; measure-scaled residual-reaction conormal flux;
+  scalar/vector law certificates and flux observations evaluate reactions at
+  the complete owner state, retaining cross-component columns and adjoints),
+  block fields and nonlinear `MeshfreeReaction` on `MeshfreeComponent`,
+  `FiniteVolumeComponent`/`FiniteVolumeCapacity`, and `VectorTransmissionLaw`,
+  `VectorTransmissionSide`, `VectorTransmissionCertificate`,
+  `VectorTransmissionEvidence`, and `VectorInterfaceResultants` (per-component
+  mortar, traction balance, interface force and dual-pairing power).
+  `CoupledTransientSolution.derivative_valid` admits derivatives only at an
+  accepted solution. BREAKING: `SurfaceExchangeLaw(bulk, surface, query,
+  surface_component, normals, flux, *, deposition)` takes measures from the
+  surface component; `relocate_at_epoch`, `SurfaceDeposition`, and
+  `SurfaceEpochRelocation` are added.
 - Certified local constitutive edge laws, feature-coverage evidence, MODEL-bound
   implicit nonlinear solves/training, and phase-separated meshfree qualification
   drivers. Numerical implementation and scientific release remain distinct;
   meshfree profiles are unreleased candidates.
+- Separate fluid–structure energy qualification on the unchanged manufactured
+  problem at 578/968/1250/2178 total cloud points. The coarse-grid cancellation
+  and failed coarse campaign remain recorded; no order threshold or resource
+  limit is relaxed. The 3-D adaptive equal-work failure and unavailable hardware,
+  derivative-certificate resources, independent review, and release gates remain
+  explicit qualification boundaries.
+- Moving-surface examples retain cochain, measure, and reference-coordinate
+  arrays as dynamic callable leaves and use a stable compiled step with dynamic
+  numerical step sizes. Their callback PyTrees and operator/law/plan identities
+  intentionally change; old prepared plans/checkpoints are not compatibility
+  aliases. Benchmark derivatives reuse primal tracing, and per-method
+  concentration errors use the evolved measures with native success and
+  conservation evidence retained.
+- Audit fixes bind rectangular rank certificates to complete numeric operator
+  and pairing revisions, remove RHS-amplitude dependence from MINRES/Craig
+  stopping evidence, distinguish finite-ball exclusion from global range
+  incompatibility, and require resolved minimum-norm derivative actions.
+  Dense-SVD solution derivatives use economy-factor actions rather than square
+  complements or a materialized pseudoinverse merely for application.
+- Weak meshfree trace owners retain integrated natural rows and volume
+  capacity/reaction weights, publish verified two-sided floating modes, and keep
+  the pressure gauge when component-owned traction is only tangential.
+  Lagrangian projection binds current authoritative volumes; transactional
+  pressure policies must return failure status.
+- Motion and durable restart fixes reject unsupported normal-only authoritative
+  charts, bind level-set gradient floors and complete epoch anchors to identity,
+  retain the source runtime on refused remaps, admit lineage bytes before
+  encoding, and transport every retained ownership-migrated output without
+  changing event identity or delivery state. Array-bearing migration and
+  projector restorers now keep their bound numerical state as dynamic leaves;
+  relation/container PyTree fingerprints intentionally change.
+- Benchmark/qualification evidence binds effective sweeps, transitive helper
+  and oracle sources, and actual forced-child runtime identity. Partial
+  measurements, reservations, and complete failures survive failed repeats;
+  post-execution refusal stays distinct from pre-admission refusal. Adaptive
+  reference extensions obey the declared point ceiling. Historical records keep
+  their recorded source identities rather than being relabeled after this audit.
 - Native bounded sparse row-rank profiles and projected coarse pseudoinverse
-  preconditioning. Sparse homogeneous conic directions remain matrix-free and
-  terminate against original-coordinate KKT/complementarity evidence.
+  preconditioning. Sparse homogeneous conic directions use an explicitly selected
+  factorized or matrix-free Newton route and terminate against original-coordinate
+  KKT/complementarity and certificate evidence.
 - Clean meshfree API cutover: local stencil policies/functionals replace the old
   stencil wrapper, `PointDiffusionOperator` replaces dense dissipative matrices,
   and `PointCloudPoissonPlan` replaces the dense Poisson helper. Unused point
@@ -1875,6 +2069,122 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Point Poisson's dissipative example now explicitly binds native point-primary
+  tensor axes, `SBPDerivativePlan(interior_order=2)` and `SBPGridNorm`, rather
+  than using an unstable constrained degree-one GMLS derivative. The new
+  `prepare_tensor_point_sbp` bridge checks actual native grid/family ownership,
+  explicit cloud grid-row IDs, geometry, volume norm and signed face cubature.
+  Passing generic constrained SBP identities no longer authorizes global
+  continuum stability; algebraic values and native residual/status evidence
+  remain available. Q2 support now declares native tensor SBP method/geometry
+  identity. Historical unstable q1 artifacts remain failed; measured errors,
+  original-load diagnostics and source corrections are preserved.
+- Dissipative point Poisson uses actual weak natural-boundary equations:
+  Neumann/Robin nodes retain volume loads, boundary flux loads use declared
+  measures, and Robin coefficients contribute to the stiffness. Explicit
+  `sbp=PointSBPDerivatives` binds admitted full derivative/quadrature evidence
+  to `PointDiffusionOperator` and `PointCloudPoissonPlan`. The result's
+  `continuum_consistent` distinguishes an authorized stable native realization
+  from raw algebraic convergence, including generic constrained SBP. Prepared SBP values
+  now bind cloud/revision identity, so stale same-shaped clouds are refused.
+  Weak side/interface/periodic-seam row replacement is refused; the explicit
+  collocated interface and periodic realizations remain available. The SBP
+  fields and consistency evidence change prepared PyTree/fingerprint structure.
+- Complete the participant-evidence cutover in cardiovascular FSI consumers
+  and the square implicit-root call in GCRODR. Example reports now declare their
+  actual field types and validate retained evidence instead of hiding states
+  behind `dict[str, object]`.
+- `solve_sparse_triangular` executes the level schedule that
+  `analyze_sparse_triangular` computes. It runs one sequential step per block
+  of same-level rows instead of one per row. `SparseTriangularAnalysis` gains
+  `level_schedule` and `transpose_level_schedule`: rows ordered by level, then
+  index, and packed into fixed-width blocks. The analysis picks the block width
+  from a static cost model. One step's gather is capped at 65,536 entries per
+  right-hand side, and padded slots at twice the row count. Single-row blocks
+  always meet both caps, so the schedule never refuses. Each row still reduces
+  its CSR entries in column order. Single-right-hand-side solutions are
+  bitwise equal to the row-sequential route. With four right-hand sides at
+  n = 64k, the batched entry sum differs by at most 1.7e-16 relative.
+  Reverse-mode derivatives accumulate cotangents in a different but
+  deterministic order (4e-16). On a 13-neighbor 2-D cloud with about 500 levels
+  per 16k rows, one lower solve at n = 4k/16k/64k takes 0.49/2.5/6.1 ms instead
+  of 0.82/29/93 ms. Gauss-Seidel, ILU/IC, and sparse LU/Cholesky factor solves
+  inherit the speedup. Gauss-Seidel and sparse-factorization storage estimates
+  include the schedule arrays.
+- `SparseCoordinateOperator` built from host topology prepares a fixed-width,
+  output-major row-gather layout per apply direction: by target for `mv` and by
+  source for `transpose_mv` and `adjoint_mv`. Each output sums its routes
+  sequentially in route order with a loop-carried accumulation, which is
+  deterministic on every backend. On CPU the scalar results are bitwise equal
+  to the previous scatter. Complex and matrix-fiber applies differ at roundoff.
+  A direction whose widest row would pad past twice its routes plus outputs,
+  or a relation built from traced indices, keeps the route scatter. Resident
+  storage includes the layout. For a CSR-ordered operator with 1e5/1e6
+  entries, `mv` drops from 0.50/4.1 ms to 0.20/1.8 ms, and `transpose_mv`
+  stays at parity (0.25/1.6 ms). With fully shuffled route order, `mv` at 1e6
+  entries is about 1.2x slower (1.4 to 1.7 ms) because the coefficient gather
+  is random. The operator PyTree gains the two layout leaves; `operator_id` is
+  unchanged.
+- Eager `phydrax.linalg.solve` with a native Krylov or block-Krylov provider
+  runs everything after preparation, including the implicit-derivative rule,
+  through one stable module-level compiled entry with prepared arrays and
+  right-hand sides as dynamic arguments. Repeated solves, numeric refreshes with
+  unchanged structure, and repeated derivatives no longer re-trace and recompile
+  the Krylov loops: a warm 300×500 min-norm LSMR solve drops from 5 s to 0.02 s
+  and its right-hand-side gradient from 9 s to 0.04 s, with bitwise-identical
+  results.
+- `SparseLinearMap` and `SparseCoordinateOperator` count their coalesced
+  canonical entries from the host relation at construction and keep the count
+  as static structure. Planning and `estimate_operator_action_cost` no longer
+  rebuild canonical storage (unchanged byte counts) and work when a prepared
+  sparse operator is a `jax.jit` argument. Operator identity, cost estimation,
+  and canonical storage refuse traced relations with a `ValueError` naming the
+  missing host topology instead of a tracer conversion error.
+- Meshfree elasticity is solved by an auxiliary-space preconditioner by default.
+  `MeshfreeElasticityPlan(preconditioner=MeshfreeElasticityPreconditioner)`
+  defaults to `"auxiliary"` in 2-D and 3-D (`"multigrid"` in 1-D, `"ilu"`
+  selectable). `meshfree_auxiliary_stiffness` assembles the SPD linear-simplex
+  stiffness of the same coefficient on a qhull Delaunay triangulation of the
+  cloud, screened by the new `phydrax.geometry.SimplexQualitySubcomplex`
+  (`minimum_quality=0.1`; slivers below that normalized volume-length ratio are
+  excluded unless needed for point coverage or facet connectivity, reported as
+  `MeshfreeAuxiliaryStiffness.quality: SimplexQualityEvidence`).
+  `meshfree_auxiliary_builder` composes a damped-Jacobi (relaxation 0.45)
+  meshfree hierarchy on lumped-mass-scaled interior rows with an exact
+  elimination of the trace rows
+  (`PointBlockSystemPlan(auxiliary=MeshfreeNearNullspace(...))`). Default 3-D
+  traction elasticity needs 49/60 GMRES iterations at 1000/8000 points (166
+  unscreened at 8000); preparation at 3-D 8000 points fell from 14313 s to
+  857 s and the warm solve from 138 s to 8 s. Roller plates converge in 71, 85
+  and 124 GMRES iterations at 289, 1024 and 4096 points; collocated multigrid
+  and ILU are refused from 1024 points.
+- `MultiplicativeSubspaceCorrectionPreconditioner` skips the zero-correction
+  operator action of its first term, and subspace-correction builders no
+  longer assemble the local Galerkin block of a term whose local solver is
+  already prepared (its cost estimate no longer counts that unassembled block).
+  `collocation_stability_assessment(..., restart=)` sets the iterative
+  shift-invert GMRES restart; default block systems pass their own budgeted
+  restart `min(200, n)`.
+- Traction and Robin rows of `MeshfreeElasticityPlan` and
+  `MeshfreeHyperelasticPlan` use boundary ghosts by default
+  (`traction_route: MeshfreeTractionRoute = "ghost"`).
+  `PointBlockSystemPlan(ghosts=PreparedPointGhostLayer)` keeps the PDE at every
+  free point and places each component's condition, divided by the ghost offset,
+  in the row of a ghost unknown. At a corner between two traction faces the
+  shared ghost lies on the bisector of the components' declared normals
+  (`PointGhostLayerEvidence.direction`, `component_normals`), and cancelling
+  normals are refused. Results publish `ghost_values` /
+  `ghost_displacement` and `ghost_extension_defect`.
+  `PointBlockSystemPlan` now runs the square-collocation spectral assessment
+  (`stability`, default `"require-assessment"`). Square traction collocation
+  (`traction_route="square"`) is refused there: a jittered 9×9 patch has 4 of
+  its 16 nearest eigenvalues with `Re < 0`. The ghost route admits it.
+  `MeshfreeHyperelasticPlan.residual`/`linearize` take the `(unknown_count, d)`
+  equation unknowns, and `extend` fills ghosts from the extension law.
+- `DelaunayTriangulation(provider=TriangulationProvider)` adds `"qhull"` (scipy)
+  beside `"meshcore"`. `TriangulationEvidence.meshcore_identity` is renamed
+  `provider_identity`, and `provider` is recorded. Planar reconstruction uses the
+  canonical owner.
 - Periodic Cartesian covers attach a `PeriodicIdentification` to their wrap
   pairings and emit a one-patch self-seam for an undivided periodic axis.
   `PairedSupport` admits equal patch IDs only for an identified periodic seam,
@@ -2598,6 +2908,21 @@
   triangle-intersection implementations, and dense remesh transfer matrices.
 
 ### Fixed
+- `MeshfreeHyperelasticPlan` no longer refuses loads from a few hundred points:
+  its Newton–Krylov systems were right-preconditioned by a frozen ILU of the
+  reference tangent, whose GMRES stagnated (the first Newton step reduced the
+  residual by under 5 % at 289 points), so every increment ended in residual
+  stagnation. The plan now takes the `MeshfreeElasticityPlan` `preconditioner`
+  routes (default `"auxiliary"`) through the block owner's prepared
+  reference-tangent preconditioner, and solves each Newton system to a
+  constant `1e-6` forcing: two or three quadratically convergent Newton steps
+  per increment on 169 to 2401 points. The `restart` argument is removed; the
+  block owner's Krylov policy owns it.
+- Conservative cell-centered tensor diffusion averages the tangential cell
+  gradients of cross terms arithmetically. The previous use of the coefficient
+  interpolation (harmonic by default) made the operator nonlinear in the state
+  and its `jax.linear_transpose`-based transpose invalid; anisotropic-tensor
+  results change accordingly.
 - Periodic enforcement groups aliases of one coordinate into one constraint
   system, binds fixed targets and complete fiber/support identity, and preserves
   committed lifecycle coordinates on rejected attempts. Affine wall preservation

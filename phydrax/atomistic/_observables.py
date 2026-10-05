@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import ParticleImageNeighborhoodState
 from ..dynamics import StateLayout, TrajectoryData
 from ._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from ._rollout import AtomisticTrajectory
@@ -141,6 +142,11 @@ class RadialDistributionState(StrictModule):
         state: AtomisticDynamicsState,
         /,
     ) -> "RadialDistributionState":
+        if isinstance(state.neighborhood, ParticleImageNeighborhoodState):
+            raise ValueError(
+                "Radial distributions count pair-once neighborhoods; directed image "
+                "routes are not a pair relation."
+            )
         context = dynamics.potential.context(
             state.kinematics.positions,
             state.neighborhood,

@@ -467,11 +467,70 @@ field views, sparse diffusion, and reusable elliptic solves.
 
 ---
 
+Compatible pressure projections accept the canonical `CochainDiscretization`
+(degrees 0 and 1, including a meshfree positive one-complex from
+`PreparedMeshfreeExteriorCalculus.to_cochain()`) or a `StructuredCochainBridge`.
+The pressure Poisson problem `δ(w d p) = δu - s` is a prepared native
+`ProjectedPCG` solve in the degree-zero Hodge pairing. Its exact kernel is the
+per-component constant subspace of `d0`, and the minimum-norm gauge fixes the
+pressure. No dense pseudoinverse or size budget is involved. Tolerances, step
+limits, resources, preconditioning, and precision come from an optional
+`LinearSolvePolicy`, which must select `ProjectedPCG`.
+`CompatibleVariableDensityProjection` interpolates `w = ρₑ⁻¹` from the
+arithmetic mean of endpoint densities. It requires a diagonal degree-one Hodge
+and rebinds the prepared solve on every call.
+
+Both projections take `preconditioner: CompatiblePressurePreconditioner`,
+either `"none"` (the default) or `"smoothed-aggregation"`. The latter assembles
+`δd` at unit edge weights from the oriented active incidence by native sparse
+assembly and prepares the native smoothed-aggregation V-cycle once, on the host,
+at construction. The per-component constants are its near-nullspace candidates,
+every graph coupling counts as strong, and its transfers respect the Hodge
+pairing. Levels smooth with damped Jacobi (ω = 1/2), and the coarsest level
+uses a symmetric Gauss–Seidel sweep. The result is a fixed, self-adjoint left
+preconditioner for `ProjectedPCG` in the solve's own degree-zero space. Its
+positive definiteness is asserted on coarse levels, where the contraction bound
+of the fine graph Laplacian does not carry over; the independent residual
+acceptance still decides `SUCCESS`. The structural kernel certificate is
+unchanged. It requires diagonal degree-zero and degree-one Hodges and no
+isolated active vertex. It replaces any preconditioning in `solve_policy`,
+which must not declare one; violations raise `ValueError`. The
+variable-density projection keeps the unit-weight hierarchy frozen across
+densities, so the call stays traceable under `jit`, but iteration counts grow
+with the edge-coefficient contrast. The native multigrid numeric refresh is
+host-only. Iterations stay near 15 from 289 to 16641 structured unknowns,
+while unpreconditioned counts grow from 77 to 565. The warm solve is faster
+from about 4000 unknowns, but host setup costs 20–35 s. `"none"` stays the
+default because the smoothed-aggregation route is not admissible for every
+cochain (for example, sparse Hodges). See
+`benchmarks/compatible_projection_scaling.py`.
+
+`IncompressibleProjectionResult` reports divergence before and after, the
+original pressure residual, the compatibility and gauge residuals, kernel
+validity, nullity, the native `LinearSolveResult` (status, iterations,
+precision, derivative contract), the selected `preconditioner` with its native
+`multigrid` setup evidence (level dimensions, grid and operator complexity),
+and a `CompatibleProjectionStatus`.
+A target divergence `s` with a net source on a closed component is refused as
+`INCOMPATIBLE_SOURCE`. A failed native solve is refused as `SOLVE_FAILED`.
+In both cases the committed velocity is the unchanged input, the committed
+pressure is NaN, and the rejected candidate is kept. A graph solenoidal
+projection enforces a discrete constraint. It is not a qualified
+Navier–Stokes velocity.
+
 ::: phydrax.solver.CompatibleIncompressibleProjection
 
 ---
 
 ::: phydrax.solver.CompatibleVariableDensityProjection
+
+---
+
+::: phydrax.solver.IncompressibleProjectionResult
+
+---
+
+::: phydrax.solver.CompatibleProjectionStatus
 
 ---
 

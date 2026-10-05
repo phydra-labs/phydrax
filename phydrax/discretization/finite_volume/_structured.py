@@ -39,7 +39,11 @@ from .._views import FieldTraceSide
 
 
 if TYPE_CHECKING:
-    from ._side_trace import FiniteVolumeFaceReconstruction, PreparedNonlinearFaceTrace
+    from ._side_trace import (
+        FiniteVolumeCoefficientLayout,
+        FiniteVolumeFaceReconstruction,
+        PreparedNonlinearFaceTrace,
+    )
 
 
 def _component_names(values: Sequence[str], /) -> tuple[str, ...]:
@@ -356,6 +360,7 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
         quantity: SideTraceQuantity = "value",
         side: FieldTraceSide = "owner",
         reconstruction: FiniteVolumeFaceReconstruction | None = None,
+        layout: FiniteVolumeCoefficientLayout = "state",
     ) -> PreparedTraceAction:
         """Prepare the cell-average or linear face state on selected faces.
 
@@ -365,7 +370,8 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
         the face) through a per-facet stencil route with an exact transpose.
         Sites are shared by both sides of an interior face and normals point
         out of the side cell. Stencils that leave a bounded axis, periodic
-        seam faces, and nonlinear plans are refused.
+        seam faces, and nonlinear plans are refused. `layout="scalar"` publishes
+        a one-component field on the grid's cell coordinates as a scalar trace.
         """
         from ._side_trace import prepare_finite_volume_side_trace
 
@@ -377,6 +383,7 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
             quantity=quantity,
             side=side,
             reconstruction=reconstruction,
+            layout=layout,
         )
 
     def prepare_nonlinear_face_trace(

@@ -32,10 +32,16 @@ from .._iteration import (
     IterationScope,
 )
 from ._binding import LinearSolveTemplate
+from ._dense_pseudoinverse import fixed_rank_pseudoinverse_action
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
 from ._operators import AbstractLinearOperator, adjoint, transpose
-from ._plans import _derivative_restart, LinearSolvePlan, plan as make_plan
+from ._plans import (
+    _derivative_restart,
+    _preconditioned_operator,
+    LinearSolvePlan,
+    plan as make_plan,
+)
 from ._policies import (
     DenseSVD,
     FGMRES,
@@ -47,6 +53,7 @@ from ._policies import (
     LinearSolvePolicy,
     LSMR,
 )
+from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import prepare_preconditioner, PreparedPreconditioner
 from ._prepared import PreparedLinearSolve
 from ._problems import (
@@ -56,6 +63,8 @@ from ._problems import (
     LinearSystem,
     MinimumNormProblem,
 )
+from ._rank import exact_spectrum_fixed_rank, singular_value_backward_error
+from ._rectangular_rank import RectangularRankCertificate
 from ._results import (
     InitialGuessDiagnostics,
     LinearIterationMetrics,
@@ -66,6 +75,7 @@ from ._results import (
     LinearSolveProvenance,
     LinearSolveResult,
     LinearSolveStatus,
+    MinimumNormEvidence,
 )
 from ._spaces import _coordinate_dtype, AbstractVectorSpace, RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
@@ -80,11 +90,12 @@ from .backends._jax_dense import (
 )
 from .backends._jax_sparse import HostSparseState
 from .backends._native_block_krylov import NativeBlockKrylovBackendOutput
-from .backends._native_krylov import NativeKrylovBackendOutput
+from .backends._native_krylov import _minimum_norm_lsmr, NativeKrylovBackendOutput
 from .backends._provider import AbstractLinearProvider, provider_for
+from .krylov._results import KrylovBreakdownStatus
 
 
-_ProblemT = TypeVar("_ProblemT", bound=AbstractLinearProblem)
+_TreeT = TypeVar("_TreeT")
 
 
 class _PackedRHSLayout(NamedTuple):
@@ -332,7 +343,7 @@ def _bind_for_template(
     if template.problem_signature != _problem_structure(problem):
         raise ValueError("Numerical binding cannot change symbolic problem structure.")
     stop_arrays = selected_plan.policy.differentiation.mode in ("rhs-only", "none")
-    execution_problem = _stop_problem_arrays(problem) if stop_arrays else problem
+    execution_problem = _stop_arrays(problem) if stop_arrays else problem
     # Concrete plan arrays carry no tangent; evaluating stop_gradient eagerly
     # keeps host symbolic data (sparse setup patterns) readable under traces.
     with jax.ensure_compile_time_eval():
@@ -348,7 +359,9 @@ def _bind_for_template(
         )
     preconditioning_state = prepare_preconditioner(
         preparation_plan.preconditioner_plan,
-        execution_problem.operator,
+        _preconditioned_operator(
+            execution_problem, preparation_plan.method, preparation_plan.policy
+        ),
         materialization=preparation_plan.policy.materialization,
         previous=previous_preconditioner,
         numeric_version=numeric_version,
@@ -679,6 +692,23 @@ def solve(
         rhs_layout = planned_layout
     else:
         raise TypeError("Expected an AbstractLinearProblem or PreparedLinearSolve.")
+    execute = (
+        _compiled_solve_prepared
+        if provider_for(prepared.plan.backend).compiled_execution
+        else _solve_prepared
+    )
+    return execute(prepared, rhs, rhs_layout, initial_guess, control, iteration)
+
+
+def _solve_prepared(
+    prepared: PreparedLinearSolve,
+    rhs: PyTree[Any],
+    rhs_layout: RHSLayout | None,
+    initial_guess: PyTree[Any] | AbstractInitialGuessProvider | None,
+    control: LinearSolveControl | None,
+    iteration: IterationPlan | None,
+    /,
+) -> LinearSolveResult:
     has_runtime_overrides = control is not None and any(
         value is not None
         for value in (
@@ -694,7 +724,7 @@ def solve(
     declared_layout = _execution_rhs_layout(prepared, rhs_layout)
 
     problem = (
-        _stop_problem_arrays(prepared.problem)
+        _stop_arrays(prepared.problem)
         if prepared.plan.policy.differentiation.mode in ("rhs-only", "none")
         else prepared.problem
     )
@@ -786,7 +816,17 @@ def solve(
         backend = eqx.tree_at(
             lambda output: output.value,
             backend,
-            _implicit_root_value(prepared, problem, canonical_rhs, backend.value),
+            _implicit_root_value(
+                prepared,
+                problem,
+                canonical_rhs,
+                backend.value,
+                (
+                    backend.multiplier
+                    if isinstance(backend, NativeKrylovBackendOutput)
+                    else None
+                ),
+            ),
         )
 
     canonical_value = (
@@ -838,6 +878,17 @@ def solve(
         )
         convergence_measure = normal_residual
         convergence_threshold = absolute_tolerance + effective_relative * normal_reference
+        if (
+            isinstance(backend, NativeKrylovBackendOutput)
+            and backend.normal_residual_floor is not None
+        ):
+            # LSMR's attainable stationarity: below this roundoff floor of the
+            # returned point no further reduction is meaningful, even when
+            # ||A* b|| << ||A|| ||b|| makes the relative reference smaller.
+            convergence_threshold = jnp.maximum(
+                convergence_threshold,
+                _rhs_broadcast(backend.normal_residual_floor, residual_norm.shape),
+            )
     status = jnp.where(
         (status == int(LinearSolveStatus.SUCCESS))
         & (convergence_measure > convergence_threshold),
@@ -873,6 +924,40 @@ def solve(
                 status,
             ),
         )
+    minimum_norm_audit: _MinimumNormAudit | None = None
+    if isinstance(problem, MinimumNormProblem):
+        minimum_norm_audit = _audit_minimum_norm(
+            prepared,
+            problem,
+            (
+                backend.stationarity_residual
+                if isinstance(backend, NativeKrylovBackendOutput)
+                else None
+            ),
+            canonical_rhs,
+            canonical_value,
+            -canonical_residual,
+            residual_norm,
+            threshold,
+            absolute_tolerance,
+            effective_relative,
+            (
+                None
+                if not isinstance(backend, NativeKrylovBackendOutput)
+                or backend.left_null_direction is None
+                or backend.least_squares_stationary is None
+                else (backend.left_null_direction, backend.least_squares_stationary)
+            ),
+        )
+        status = _minimum_norm_status(status, minimum_norm_audit, finite)
+        normal_residual = minimum_norm_audit.normal_residual
+    derivative_regular: Array | None = None
+    if minimum_norm_audit is not None:
+        derivative_regular = minimum_norm_audit.derivative_regular
+    elif _dense_svd_least_squares_route(prepared, problem):
+        derivative_regular = _rhs_broadcast(
+            _dense_svd_least_squares_regularity(prepared), status.shape
+        )
     converged = status == int(LinearSolveStatus.SUCCESS)
     status_out = _restore_rhs_axes(status, layout)
     residual_out = _restore_rhs_axes(residual_norm, layout)
@@ -902,12 +987,20 @@ def solve(
         "native-block-krylov",
         "lineax",
     ):
-        matvec_count_out = _restore_rhs_axes(
-            _rhs_broadcast(backend.matvec_count, status.shape), layout
-        )
-        adjoint_matvec_count_out = _restore_rhs_axes(
-            _rhs_broadcast(backend.adjoint_matvec_count, status.shape), layout
-        )
+        matvec_count = _rhs_broadcast(backend.matvec_count, status.shape)
+        adjoint_matvec_count = _rhs_broadcast(backend.adjoint_matvec_count, status.shape)
+        if minimum_norm_audit is not None:
+            # Residual recomputation plus the left-null and normal-reference
+            # actions; a backend-supplied witness adds its own left-null action.
+            matvec_count = matvec_count + 1
+            adjoint_matvec_count = adjoint_matvec_count + (
+                3
+                if isinstance(backend, NativeKrylovBackendOutput)
+                and backend.left_null_direction is not None
+                else 2
+            )
+        matvec_count_out = _restore_rhs_axes(matvec_count, layout)
+        adjoint_matvec_count_out = _restore_rhs_axes(adjoint_matvec_count, layout)
     else:
         zero_counts = jnp.zeros(status.shape, dtype=jnp.int32)
         matvec_count_out = _restore_rhs_axes(zero_counts, layout)
@@ -933,11 +1026,14 @@ def solve(
     if prepared.plan.policy.differentiation.mode in ("mathematical", "rhs-only"):
         canonical_value = guard_derivative_validity(
             canonical_value,
-            converged[..., None, :],
+            (converged if derivative_regular is None else converged & derivative_regular)[
+                ..., None, :
+            ],
             failure=prepared.plan.policy.failure.mode,
             message=(
-                "A failed linear solve has no valid mathematical derivative; "
-                "inspect status-mode diagnostics."
+                "A failed linear solve, or a pseudoinverse solve without fixed-rank "
+                "evidence, has no valid mathematical derivative; inspect "
+                "status-mode diagnostics."
             ),
         )
     value = _unpack_value(problem.operator.source, canonical_value, layout)
@@ -1031,6 +1127,262 @@ def solve(
         differentiation=prepared.plan.policy.differentiation,
         iteration_evidence=iteration_evidence,
         initial_guess=initial_guess_evidence,
+        minimum_norm=(
+            None
+            if minimum_norm_audit is None
+            else _minimum_norm_evidence(
+                problem.operator.target, minimum_norm_audit, residual_out, layout
+            )
+        ),
+        derivative_regular=(
+            None
+            if derivative_regular is None
+            else _restore_rhs_axes(derivative_regular, layout)
+        ),
+    )
+
+
+# One stable compiled entry for device-executable providers: repeated solves
+# and numeric refreshes of one prepared structure trace and compile the
+# provider loops, audits and implicit-derivative rules once instead of on
+# every eager call. Prepared arrays and right-hand sides are dynamic arguments.
+_compiled_solve_prepared = eqx.filter_jit(_solve_prepared)
+
+
+class _MinimumNormAudit(NamedTuple):
+    normal_residual: Array
+    stationarity_residual: Array
+    stationarity_available: bool
+    stationarity_verified: Array
+    left_null_residual: Array
+    incompatibility_margin: Array
+    incompatibility_radius: Array
+    incompatible: Array
+    witness: Array
+    rank_certificate: RectangularRankCertificate | None
+    derivative_regular: Array
+
+
+def _audit_minimum_norm(
+    prepared: PreparedLinearSolve,
+    problem: MinimumNormProblem,
+    stationarity_residual: Array | None,
+    rhs: Array,
+    value: Array,
+    residual: Array,
+    residual_norm: Array,
+    constraint_threshold: Array,
+    absolute_tolerance: float | Array,
+    relative_tolerance: Array,
+    left_null_candidate: tuple[Array, Array] | None,
+    /,
+) -> _MinimumNormAudit:
+    """Audit the original constraint, stationarity, and compatibility of one solve.
+
+    Any target vector ``z`` of unit ``N`` norm is a left-null witness: for every
+    source vector ``x'``, ``||b - A x'||_N >= |<z, b>|_N - ||A* z||_M ||x'||_M``.
+    By default ``z = r / ||r||_N`` and least-squares stationarity is
+    ``||A* r|| <= absolute + relative ||A* b||``. A backend may supply its own
+    candidate direction with its confirmed stationarity (Craig's preconditioned
+    residual ``M r``, which lies in ``null(A*)`` at its weighted least-squares
+    point). A finite exclusion radius is only a bounded infeasibility claim.
+    Global numerical-range incompatibility additionally needs an exact null
+    action or independent certified rank and retained-spectrum evidence.
+    """
+    operator = problem.operator
+    source, target = operator.source, operator.target
+    positive = residual_norm > 0.0
+    residual_witness = residual / jnp.where(positive, residual_norm, 1.0)[..., None, :]
+    normal_residual = jnp.where(
+        positive,
+        residual_norm
+        * _coordinate_norm(source, operator.adjoint_mv_block(residual_witness)),
+        0.0,
+    )
+    normal_reference = _coordinate_norm(source, operator.adjoint_mv_block(rhs))
+    if left_null_candidate is None:
+        witness = residual_witness
+        witness_valid = positive
+        least_squares_stationary = normal_residual <= (
+            absolute_tolerance + relative_tolerance * normal_reference
+        )
+    else:
+        direction, confirmed = left_null_candidate
+        direction_norm = _coordinate_norm(target, direction)
+        witness_valid = direction_norm > 0.0
+        witness = direction / jnp.where(witness_valid, direction_norm, 1.0)[..., None, :]
+        least_squares_stationary = _rhs_broadcast(confirmed, residual_norm.shape)
+    left_null = jnp.where(
+        witness_valid,
+        _coordinate_norm(source, operator.adjoint_mv_block(witness)),
+        jnp.nan,
+    )
+    margin = jnp.abs(_coordinate_inner(target, witness, rhs))
+    value_norm = _coordinate_norm(source, value)
+    radius = jnp.where(
+        witness_valid & (left_null > 0.0),
+        (margin - constraint_threshold)
+        / jnp.where(witness_valid & (left_null > 0.0), left_null, 1.0),
+        jnp.where(witness_valid & (margin > constraint_threshold), jnp.inf, 0.0),
+    )
+    certificate, regular = _minimum_norm_regularity(prepared, problem)
+    rank, retained_lower = _certified_minimum_norm_spectrum(
+        operator,
+        certificate,
+        prepared.state if isinstance(prepared.state, DenseSVDState) else None,
+    )
+    rank = _rhs_broadcast(rank, residual_norm.shape)
+    retained_lower = _rhs_broadcast(retained_lower, residual_norm.shape)
+    # A certified retained singular-value lower bound gives
+    # ||P_range z|| <= ||A* z|| / sigma_min. This separates an out-of-range RHS
+    # from an unresolved small retained direction; a finite ball cannot do so.
+    range_leakage = left_null / jnp.where(retained_lower > 0.0, retained_lower, 1.0)
+    certified_separation = (
+        (rank >= 0)
+        & (rank < target.size)
+        & (retained_lower > 0.0)
+        & (margin - range_leakage * _coordinate_norm(target, rhs) > constraint_threshold)
+    )
+    incompatible = (
+        jnp.isfinite(margin)
+        & jnp.isfinite(normal_residual)
+        & (residual_norm > constraint_threshold)
+        & least_squares_stationary
+        & (margin > constraint_threshold)
+        & (((left_null == 0.0) & (rank < target.size)) | certified_separation)
+    )
+    stationarity_available = stationarity_residual is not None
+    if stationarity_residual is not None:
+        stationarity = _rhs_broadcast(stationarity_residual, residual_norm.shape)
+        stationarity_verified = jnp.isfinite(stationarity) & (
+            stationarity <= absolute_tolerance + relative_tolerance * value_norm
+        )
+    else:
+        stationarity = jnp.full_like(residual_norm, jnp.nan)
+        stationarity_verified = jnp.zeros(residual_norm.shape, dtype=jnp.bool_)
+    return _MinimumNormAudit(
+        normal_residual=normal_residual,
+        stationarity_residual=stationarity,
+        stationarity_available=stationarity_available,
+        stationarity_verified=stationarity_verified,
+        left_null_residual=left_null,
+        incompatibility_margin=margin,
+        incompatibility_radius=radius,
+        incompatible=incompatible,
+        witness=witness,
+        rank_certificate=certificate,
+        derivative_regular=_rhs_broadcast(regular, residual_norm.shape),
+    )
+
+
+def _certified_minimum_norm_spectrum(
+    operator: AbstractLinearOperator,
+    certificate: RectangularRankCertificate | None,
+    state: DenseSVDState | None = None,
+    /,
+) -> tuple[Array, Array]:
+    """Independent rank and retained-spectrum lower bound, never a Krylov estimate."""
+    if isinstance(state, DenseSVDState):
+        values = state.reported_singular_values
+        largest = values[..., 0]
+        error = singular_value_backward_error(
+            largest, operator.target.size, operator.source.size
+        )
+        smallest = jnp.min(
+            jnp.where(state.retained, state.singular_values, jnp.inf), axis=-1
+        )
+        return state.rank, smallest - error
+    if certificate is not None:
+        matched = certificate.fixed_rank & certificate.matches(operator)
+        return (
+            jnp.where(matched, certificate.rank, -1),
+            jnp.where(matched, certificate.smallest_retained_singular_value, jnp.nan),
+        )
+    return jnp.asarray(-1, dtype=jnp.int32), jnp.asarray(
+        jnp.nan, dtype=jnp.finfo(_coordinate_dtype(operator.source)).dtype
+    )
+
+
+def _minimum_norm_status(
+    status: Array,
+    audit: _MinimumNormAudit,
+    finite: Array,
+    /,
+) -> Array:
+    preserved = (
+        (status == int(LinearSolveStatus.NONFINITE_INPUT))
+        | (status == int(LinearSolveStatus.NONFINITE_OUTPUT))
+        | (status == int(LinearSolveStatus.USER_STOPPED))
+    )
+    status = jnp.where(
+        audit.incompatible & finite & ~preserved,
+        int(LinearSolveStatus.INCOMPATIBLE_RHS),
+        status,
+    )
+    if not audit.stationarity_available:
+        return status
+    return jnp.where(
+        (status == int(LinearSolveStatus.SUCCESS)) & ~audit.stationarity_verified,
+        int(LinearSolveStatus.STATIONARITY_RESIDUAL_TOO_LARGE),
+        status,
+    )
+
+
+def _minimum_norm_regularity(
+    prepared: PreparedLinearSolve,
+    problem: MinimumNormProblem,
+    /,
+) -> tuple[RectangularRankCertificate | None, Array]:
+    """Rank evidence and implicit-derivative regularity of one minimum-norm solve.
+
+    A dense SVD route decides fixed rank from the complete spectrum it executes
+    (reported in the diagnostics); an iterative route needs the problem's
+    certificate bound to this operator revision. Only the operator derivative
+    needs fixed rank: the right-hand-side derivative of the pseudoinverse
+    solution is the linear map itself. Accepting an out-of-range action still
+    needs independent evidence that its retained-range residual was resolved.
+    """
+    state = prepared.state
+    certificate = problem.rank_certificate
+    match prepared.plan.policy.differentiation.mode:
+        case "mathematical":
+            if isinstance(state, DenseSVDState):
+                rows, columns = state.design.shape[-2:]
+                regular = exact_spectrum_fixed_rank(
+                    state.reported_singular_values,
+                    rows,
+                    columns,
+                    prepared.plan.policy.rank,
+                )
+            elif certificate is not None:
+                regular = certificate.fixed_rank & certificate.matches(problem.operator)
+            else:
+                regular = jnp.asarray(False)
+        case "rhs-only" | "algorithmic" | "none":
+            regular = jnp.asarray(True)
+        case mode:
+            raise ValueError(f"Unknown differentiation mode {mode!r}.")
+    return certificate, regular
+
+
+def _minimum_norm_evidence(
+    target: AbstractVectorSpace,
+    audit: _MinimumNormAudit,
+    constraint_residual: Array,
+    layout: _PackedRHSLayout,
+    /,
+) -> MinimumNormEvidence:
+    return MinimumNormEvidence(
+        constraint_residual=constraint_residual,
+        normal_residual=_restore_rhs_axes(audit.normal_residual, layout),
+        stationarity_residual=_restore_rhs_axes(audit.stationarity_residual, layout),
+        stationarity_verified=_restore_rhs_axes(audit.stationarity_verified, layout),
+        left_null_residual=_restore_rhs_axes(audit.left_null_residual, layout),
+        incompatibility_margin=_restore_rhs_axes(audit.incompatibility_margin, layout),
+        incompatibility_radius=_restore_rhs_axes(audit.incompatibility_radius, layout),
+        incompatible=_restore_rhs_axes(audit.incompatible, layout),
+        left_null_witness=_unpack_value(target, audit.witness, layout),
+        rank_certificate=audit.rank_certificate,
     )
 
 
@@ -1471,7 +1823,7 @@ def _solve_prepared_transformed(
     adjoint_mode: bool,
 ) -> LinearSolveResult:
     problem = (
-        _stop_problem_arrays(prepared.problem)
+        _stop_arrays(prepared.problem)
         if prepared.plan.policy.differentiation.mode in ("rhs-only", "none")
         else prepared.problem
     )
@@ -1915,6 +2267,16 @@ def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array
     return jax.vmap(norm)(flattened).reshape(output_shape)
 
 
+def _coordinate_inner(space: AbstractVectorSpace, left: Array, right: Array, /) -> Array:
+    left_columns, output_shape = _flatten_coordinate_columns(space, left)
+    right_columns, _ = _flatten_coordinate_columns(space, right)
+
+    def inner(left_column: Array, right_column: Array) -> Array:
+        return space.inner(space.unflatten(left_column), space.unflatten(right_column))
+
+    return jax.vmap(inner)(left_columns, right_columns).reshape(output_shape)
+
+
 def _dual_coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
     flattened, output_shape = _flatten_coordinate_columns(space, coordinates)
 
@@ -2050,6 +2412,7 @@ def _implicit_root_value(
     problem: LinearSystem | LeastSquaresProblem | MinimumNormProblem,
     rhs: Array,
     initial: Array,
+    multiplier: Array | None,
     /,
 ) -> Array:
     route = prepared.plan.policy.derivative_solve.route
@@ -2072,8 +2435,10 @@ def _implicit_root_value(
             pass
         case _:
             raise ValueError(f"Unsupported derivative solve route {route!r}.")
+    if _dense_svd_least_squares_route(prepared, problem):
+        return _dense_svd_least_squares_value(prepared, rhs, initial)
     if isinstance(problem, MinimumNormProblem):
-        return _implicit_minimum_norm_value(prepared, problem, rhs, initial)
+        return _implicit_minimum_norm_value(prepared, problem, rhs, initial, multiplier)
     if isinstance(problem, LinearSystem) and isinstance(
         problem.operator, TreeLinearOperator
     ):
@@ -2105,7 +2470,40 @@ def _implicit_root_value(
                 rhs,
             )
 
-    return _implicit_custom_root(residual, initial, prepared.plan)
+    return _implicit_custom_root(
+        residual,
+        initial,
+        prepared.plan,
+        _derivative_preconditioner(prepared, problem),
+    )
+
+
+def _derivative_preconditioner(
+    prepared: PreparedLinearSolve,
+    problem: LinearSystem | LeastSquaresProblem,
+    /,
+) -> AbstractPreconditioner | None:
+    """The prepared primal accelerator reused by implicit derivative solves.
+
+    The tangent solve ``A dx = r`` shares the primal operator, so the prepared
+    preconditioner of ``A`` accelerates it exactly as it does the primal. The
+    cotangent solve ``Aᵀ y = g`` reuses the same action: preconditioners expose
+    no transpose, and ``P ≈ A⁻¹`` is also ``P ≈ A⁻ᵀ`` for the self-adjoint
+    systems that dominate implicit differentiation. Both solves apply it as a
+    flexible right preconditioner and accept only the true residual of the
+    unpreconditioned system, so the accelerator never changes the accepted
+    derivative. Least-squares stationarity differentiates ``AᵀA``, which the
+    prepared action does not approximate. Its arrays are stopped: an
+    accelerator carries no derivative.
+    """
+    state = prepared.preconditioning_state
+    if (
+        state is None
+        or not isinstance(problem, LinearSystem)
+        or problem.operator.batch_shape
+    ):
+        return None
+    return _stop_arrays(state.action)
 
 
 def _implicit_minimum_norm_value(
@@ -2113,36 +2511,249 @@ def _implicit_minimum_norm_value(
     problem: MinimumNormProblem,
     rhs: Array,
     initial: Array,
+    multiplier: Array | None,
     /,
 ) -> Array:
+    """Implicit derivative of ``x = A^+ b`` through the minimum-norm KKT residual.
+
+    The residual ``F(x, y) = (x - A* y, A x - b)`` has a singular multiplier block
+    when rows are redundant, so tangents use the generalized inverse
+    ``G(p, q) = (p + t, (A*)^+ t)`` with ``t = A^+ (q - A p)`` and cotangents its
+    exact coordinate transpose, both through zero-start LSMR on the fixed
+    operator in the declared pairings; no KKT matrix or nullspace is formed. On the
+    certified fixed-rank manifold this is the derivative of the pseudoinverse
+    solution; the caller guards the operator derivative with that rank evidence.
+    """
     operator = problem.operator
-    operator_adjoint = adjoint(operator)
-
-    def dual_action(value: Array) -> Array:
-        return _operator_action(
-            operator,
-            _operator_action(operator_adjoint, value),
+    fixed = _stop_operator_arrays(operator)
+    source, target = operator.source, operator.target
+    source_size = source.size
+    plan = prepared.plan
+    spectrum = jax.lax.stop_gradient(
+        _certified_minimum_norm_spectrum(
+            fixed,
+            problem.rank_certificate,
+            prepared.state if isinstance(prepared.state, DenseSVDState) else None,
         )
-
-    multiplier = _solve_independent_columns(dual_action, rhs, prepared.plan)
-    source_size = operator.source.size
-    augmented_initial = jax.lax.stop_gradient(
-        jnp.concatenate((initial, multiplier), axis=-2)
     )
+    stopped_initial = jax.lax.stop_gradient(initial)
+    dual = (
+        _pseudoinverse_columns(fixed, stopped_initial, plan, spectrum, adjoint=True)
+        if multiplier is None
+        else jax.lax.stop_gradient(multiplier)
+    )
+    augmented_initial = jnp.concatenate((stopped_initial, dual), axis=-2)
 
     def residual(augmented: Array) -> Array:
         value = augmented[..., :source_size, :]
-        dual = augmented[..., source_size:, :]
-        stationarity = value - _operator_action(operator_adjoint, dual)
+        dual_value = augmented[..., source_size:, :]
+        stationarity = value - operator.adjoint_mv_block(dual_value)
         constraint = _operator_action(operator, value) - rhs
         return jnp.concatenate((stationarity, constraint), axis=-2)
 
-    augmented_value = _implicit_custom_root(
+    def solve_tangent(_: Callable[[Array], Array], right: Array) -> Array:
+        primal, constraint = right[..., :source_size, :], right[..., source_size:, :]
+        range_component = _pseudoinverse_columns(
+            fixed, constraint - fixed.mv_block(primal), plan, spectrum, adjoint=False
+        )
+        dual_direction = _pseudoinverse_columns(
+            fixed, range_component, plan, spectrum, adjoint=True
+        )
+        return jnp.concatenate((primal + range_component, dual_direction), axis=-2)
+
+    def solve_cotangent(_: Callable[[Array], Array], right: Array) -> Array:
+        # Coordinate transpose of `solve_tangent`: G^T c = conj(G^H conj(c)), with
+        # G^H (c_x, c_y) = (c_x - M A* v, N v),
+        # v = (A*)^+ (M^-1 c_x + A^+ (N^-1 c_y)) for source/target pairings M, N.
+        conjugated = jnp.conj(right)
+        primal, constraint = (
+            conjugated[..., :source_size, :],
+            conjugated[..., source_size:, :],
+        )
+        lifted = _pseudoinverse_columns(
+            fixed,
+            _inverse_riesz_coordinates(target, constraint),
+            plan,
+            spectrum,
+            adjoint=False,
+        )
+        direction = _pseudoinverse_columns(
+            fixed,
+            _inverse_riesz_coordinates(source, primal) + lifted,
+            plan,
+            spectrum,
+            adjoint=True,
+        )
+        transposed = jnp.concatenate(
+            (
+                primal - _riesz_coordinates(source, fixed.adjoint_mv_block(direction)),
+                _riesz_coordinates(target, direction),
+            ),
+            axis=-2,
+        )
+        return jnp.conj(transposed)
+
+    def tangent_solve(linearized: Callable[[Array], Array], target_: Array) -> Array:
+        return jax.lax.custom_linear_solve(
+            linearized,
+            target_,
+            solve=solve_tangent,
+            transpose_solve=solve_cotangent,
+        )
+
+    augmented_value = custom_root(
         residual,
         augmented_initial,
-        prepared.plan,
+        solve=lambda _, value: value,
+        tangent_solve=tangent_solve,
     )
     return augmented_value[..., :source_size, :]
+
+
+def _pseudoinverse_columns(
+    operator: AbstractLinearOperator,
+    right_hand_side: Array,
+    plan: LinearSolvePlan,
+    spectrum: tuple[Array, Array],
+    /,
+    *,
+    adjoint: bool,
+) -> Array:
+    """Apply ``A^+`` (or ``(A*)^+``) to canonical coordinate columns.
+
+    Each operator-batch and right-hand-side column runs one undamped zero-start
+    LSMR in the declared pairings, accepted by its true residual against the
+    derivative-solve tolerances. Least-squares stationarity alone is insufficient:
+    an out-of-range column also needs an exact null residual or independent rank
+    evidence bounding its unresolved retained-range component.
+    """
+    if right_hand_side.size == 0:
+        return jnp.zeros(
+            right_hand_side.shape[:-2]
+            + (
+                operator.target.size if adjoint else operator.source.size,
+                right_hand_side.shape[-1],
+            ),
+            dtype=right_hand_side.dtype,
+        )
+    domain, codomain = (
+        (operator.target, operator.source)
+        if adjoint
+        else (operator.source, operator.target)
+    )
+    forward_block = operator.adjoint_mv_block if adjoint else operator.mv_block
+    backward_block = operator.mv_block if adjoint else operator.adjoint_mv_block
+    batch_shape = right_hand_side.shape[:-2]
+    rhs_count = right_hand_side.shape[-1]
+    batch_count = prod(batch_shape) if batch_shape else 1
+    flattened = right_hand_side.reshape((batch_count, codomain.size, rhs_count))
+    policy = plan.policy.derivative_solve
+    dtype = right_hand_side.real.dtype
+    relative = jnp.asarray(policy.relative_tolerance, dtype=dtype)
+    absolute = jnp.asarray(policy.absolute_tolerance, dtype=dtype)
+    max_steps = policy.maximum_steps or max(domain.size, codomain.size)
+    ranks = jnp.broadcast_to(spectrum[0], batch_shape).reshape((batch_count,))
+    retained_bounds = jnp.broadcast_to(spectrum[1], batch_shape).reshape((batch_count,))
+
+    def domain_inner(left: Array, right: Array) -> Array:
+        return domain.inner(domain.unflatten(left), domain.unflatten(right))
+
+    def codomain_inner(left: Array, right: Array) -> Array:
+        return codomain.inner(codomain.unflatten(left), codomain.unflatten(right))
+
+    def solve_instance(instance: Array) -> Array:
+        batch_index = instance // rhs_count
+        rhs_index = instance % rhs_count
+        rank = ranks[batch_index]
+        retained_lower = retained_bounds[batch_index]
+        codomain_rank_deficient = (rank >= 0) & (rank < codomain.size)
+        column = flattened[batch_index, :, rhs_index]
+
+        def embedded(vector: Array, size: int) -> Array:
+            block = jnp.zeros((batch_count, size, 1), dtype=right_hand_side.dtype)
+            return (
+                block.at[batch_index, :, 0].set(vector).reshape(batch_shape + (size, 1))
+            )
+
+        def action(vector: Array) -> Array:
+            image = forward_block(embedded(vector, domain.size))
+            return image.reshape((batch_count, codomain.size))[batch_index]
+
+        def adjoint_action(vector: Array) -> Array:
+            image = backward_block(embedded(vector, codomain.size))
+            return image.reshape((batch_count, domain.size))[batch_index]
+
+        column_norm = jnp.sqrt(jnp.maximum(jnp.real(codomain_inner(column, column)), 0.0))
+        constraint_threshold = absolute + relative * column_norm
+        normal_limit = jnp.where(
+            codomain_rank_deficient & (retained_lower > 0.0),
+            jnp.where(jnp.isfinite(retained_lower), retained_lower, 1.0)
+            * constraint_threshold,
+            0.0,
+        )
+        result = _minimum_norm_lsmr(
+            action,
+            adjoint_action,
+            column,
+            domain.size,
+            domain_inner,
+            codomain_inner,
+            max_steps=max_steps,
+            relative=relative,
+            absolute=absolute,
+            condition_limit=float("inf"),
+            normal_residual_limit=normal_limit,
+        )
+        # Stationarity can hide unresolved retained singular directions. Only a
+        # certified range bound (or an exactly null residual) admits a nonzero
+        # least-squares residual as a completed pseudoinverse action.
+        range_residual_bound = result.normal_residual_norm / jnp.where(
+            retained_lower > 0.0, retained_lower, 1.0
+        )
+        range_resolved = (
+            (result.normal_residual_norm == 0.0) & ((rank < 0) | codomain_rank_deficient)
+        ) | (
+            codomain_rank_deficient
+            & (retained_lower > 0.0)
+            & (range_residual_bound <= constraint_threshold)
+        )
+        valid = (
+            jnp.all(jnp.isfinite(result.value))
+            & jnp.isfinite(result.residual_norm)
+            & jnp.isfinite(result.normal_residual_norm)
+            & (
+                (result.residual_norm <= constraint_threshold)
+                | (
+                    (result.breakdown == int(KrylovBreakdownStatus.STAGNATION))
+                    & range_resolved
+                )
+            )
+        )
+        return _checked_callable_value(
+            _CallableLinearSolve(
+                result.value,
+                result.residual_norm,
+                result.iterations,
+                result.breakdown,
+                valid,
+            ),
+            plan.policy.failure.mode,
+            message=(
+                "Implicit minimum-norm derivative solve failed its pseudoinverse "
+                "residual contract."
+            ),
+        )
+
+    solved = jax.vmap(solve_instance)(jnp.arange(batch_count * rhs_count))
+    solved = solved.reshape((batch_count, rhs_count, domain.size))
+    return jnp.swapaxes(solved, -1, -2).reshape(batch_shape + (domain.size, rhs_count))
+
+
+def _stop_operator_arrays(operator: AbstractLinearOperator, /) -> AbstractLinearOperator:
+    return jax.tree.map(
+        lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+        operator,
+    )
 
 
 def _implicit_factored_value(
@@ -2225,22 +2836,18 @@ def _implicit_custom_root(
     residual: Callable[[Array], Array],
     initial: Array,
     plan: LinearSolvePlan,
+    preconditioner: AbstractPreconditioner | None,
     /,
 ) -> Array:
+    def solve_columns(action: Callable[[Array], Array], rhs: Array) -> Array:
+        return _solve_independent_columns(action, rhs, plan, preconditioner)
+
     def tangent_solve(linearized: Callable[[Array], Array], target: Array) -> Array:
         return jax.lax.custom_linear_solve(
             linearized,
             target,
-            solve=lambda action, rhs: _solve_independent_columns(
-                action,
-                rhs,
-                plan,
-            ),
-            transpose_solve=lambda action, rhs: _solve_independent_columns(
-                action,
-                rhs,
-                plan,
-            ),
+            solve=solve_columns,
+            transpose_solve=solve_columns,
         )
 
     return custom_root(
@@ -2255,6 +2862,7 @@ def _solve_independent_columns(
     action: Callable[[Array], Array],
     right_hand_side: Array,
     plan: LinearSolvePlan,
+    preconditioner: AbstractPreconditioner | None,
     /,
 ) -> Array:
     if right_hand_side.size == 0:
@@ -2283,7 +2891,7 @@ def _solve_independent_columns(
             image = action(embedded.reshape(right_hand_side.shape))
             return image.reshape(flattened_rhs.shape)[batch_index, :, rhs_index]
 
-        return _callable_gmres(vector_action, column, plan)
+        return _callable_gmres(vector_action, column, plan, preconditioner)
 
     solved = jax.vmap(solve_instance)(jnp.arange(batch_count * rhs_count))
     solved = solved.reshape((batch_count, rhs_count, dimension))
@@ -2353,6 +2961,102 @@ def _least_squares_root_residual(
     return projected_normal + value - projected_value
 
 
+def _dense_svd_least_squares_route(
+    prepared: PreparedLinearSolve,
+    problem: AbstractLinearProblem,
+    /,
+) -> bool:
+    """Whether an undamped dense SVD least-squares solve is ``A_w^+ b_w``.
+
+    Damped solves are smooth Tikhonov maps differentiated through their normal
+    equations; a rank-cutoff regularized design keeps its projected root.
+    """
+    method = prepared.plan.policy.method
+    return (
+        isinstance(problem, LeastSquaresProblem)
+        and isinstance(prepared.state, DenseSVDState)
+        and prepared.state.source_projection is None
+        and not (isinstance(method, DenseSVD) and method.damping > 0.0)
+    )
+
+
+def _dense_svd_state(prepared: PreparedLinearSolve, /) -> DenseSVDState:
+    state = prepared.state
+    if not isinstance(state, DenseSVDState):
+        raise TypeError("The dense SVD least-squares route requires DenseSVDState.")
+    return state
+
+
+def _dense_svd_least_squares_regularity(prepared: PreparedLinearSolve, /) -> Array:
+    """Fixed-rank evidence of the executed weighted design for an operator derivative.
+
+    ``A_w^+`` is differentiable exactly where its numerical rank is locally
+    constant; the factorization's singular-value gap certifies that.
+    """
+    match prepared.plan.policy.differentiation.mode:
+        case "mathematical":
+            state = _dense_svd_state(prepared)
+            rows, columns = state.design.shape[-2:]
+            return exact_spectrum_fixed_rank(
+                state.singular_values, rows, columns, prepared.plan.policy.rank
+            )
+        case "rhs-only" | "algorithmic" | "none":
+            return jnp.asarray(True)
+        case mode:
+            raise ValueError(f"Unknown differentiation mode {mode!r}.")
+
+
+def _dense_svd_least_squares_value(
+    prepared: PreparedLinearSolve,
+    rhs: Array,
+    initial: Array,
+    /,
+) -> Array:
+    """Primal ``initial`` carrying the exact fixed-rank tangent of ``A_w^+ b_w``.
+
+    The weighted design ``D = W^(1/2) A M^(-1/2)`` (with any stacked regularizer
+    rows) gives ``x = M^(-1/2) D^+ [W^(1/2) b; 0]``. Its complete fixed-rank
+    tangent, including range and nullspace terms, is applied through economy
+    factors by ``fixed_rank_pseudoinverse_action``; the caller refuses it unless
+    the rank is certified fixed.
+    """
+    state = _dense_svd_state(prepared)
+    operator_derivative = prepared.plan.policy.differentiation.mode == "mathematical"
+    design = state.design if operator_derivative else jax.lax.stop_gradient(state.design)
+    weights = state.square_root_weights
+    if weights is not None and not operator_derivative:
+        weights = jax.lax.stop_gradient(weights)
+    left, singular_values, right_adjoint, retained = jax.lax.stop_gradient(
+        (state.u, state.singular_values, state.vh, state.retained)
+    )
+    weighted_rhs = rhs if weights is None else weights[..., :, None] * rhs
+    padding = design.shape[-2] - weighted_rhs.shape[-2]
+    if padding:
+        weighted_rhs = jnp.concatenate(
+            (
+                weighted_rhs,
+                jnp.zeros(
+                    weighted_rhs.shape[:-2] + (padding, weighted_rhs.shape[-1]),
+                    dtype=weighted_rhs.dtype,
+                ),
+            ),
+            axis=-2,
+        )
+    solution = fixed_rank_pseudoinverse_action(
+        design,
+        left,
+        singular_values,
+        right_adjoint,
+        retained,
+        weighted_rhs,
+        state.hermitian,
+    )
+    if state.source_inverse_square_root is not None:
+        solution = state.source_inverse_square_root[..., :, None] * solution
+    # The executed value is kept bit-for-bit; only its tangent comes from A_w^+.
+    return jax.lax.stop_gradient(initial) + (solution - jax.lax.stop_gradient(solution))
+
+
 def _dense_svd_active_projection(
     state: DenseSVDState,
     coordinates: Array,
@@ -2390,6 +3094,7 @@ def _callable_gmres(
     action: Callable[[Array], Array],
     rhs: Array,
     plan: LinearSolvePlan,
+    preconditioner: AbstractPreconditioner | None,
     /,
 ) -> Array:
     dimension = rhs.shape[0]
@@ -2404,6 +3109,7 @@ def _callable_gmres(
         stagnation_iterations=max_steps + 1,
         relative=policy.relative_tolerance,
         absolute=policy.absolute_tolerance,
+        preconditioner=preconditioner,
     )
     return _checked_callable_value(
         result,
@@ -2451,8 +3157,9 @@ def _run_callable_gmres(
     stagnation_iterations: int,
     relative: float,
     absolute: float,
+    preconditioner: AbstractPreconditioner | None = None,
 ) -> _CallableLinearSolve:
-    from .backends._native_krylov import _fgmres_raw
+    from .backends._native_krylov import _fgmres_raw, _preconditioner_action
 
     def inner(left: Array, right: Array) -> Array:
         return jnp.vdot(left, right)
@@ -2460,18 +3167,24 @@ def _run_callable_gmres(
     def identity(vector: Array, _: Array) -> Array:
         return vector
 
+    precondition = (
+        identity
+        if preconditioner is None
+        else _preconditioner_action(preconditioner, preconditioner.space)
+    )
+
     value, auxiliary, _ = _fgmres_raw(
         action,
         rhs,
         jnp.zeros_like(rhs),
         inner,
-        identity,
+        precondition,
         max_steps,
         restart,
         stagnation_iterations,
         jnp.asarray(relative, dtype=rhs.real.dtype),
         jnp.asarray(absolute, dtype=rhs.real.dtype),
-        identity_preconditioner=True,
+        identity_preconditioner=preconditioner is None,
     )
     iterations = auxiliary[0]
     residual_norm = auxiliary[1]
@@ -2500,10 +3213,10 @@ def _run_callable_gmres(
     )
 
 
-def _stop_problem_arrays(problem: _ProblemT, /) -> _ProblemT:
+def _stop_arrays(tree: _TreeT, /) -> _TreeT:
     return jax.tree.map(
         lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
-        problem,
+        tree,
     )
 
 

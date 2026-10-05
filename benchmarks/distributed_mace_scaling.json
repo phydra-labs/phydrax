@@ -1,0 +1,270 @@
+{
+  "configuration": {
+    "atoms_per_owner": 4,
+    "cutoff": 3.0,
+    "density": 0.08,
+    "layers": 2,
+    "owner_counts": [
+      1,
+      2
+    ],
+    "owners": "devices",
+    "repeats": 2,
+    "skin": 0.4,
+    "total_atoms": 8
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "c3da64771d340476710698d4ff1478898af3856f09dec048bb0b034731ea2552",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "e904db69052e74586ff3c14c2d8370715a338a4c57ed3e2cf3f96bc7f5be6a72",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": "--xla_force_host_platform_device_count=2",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "evidence_scope": "functional owner-local execution on forced CPU devices or lanes; not accelerator, multi-host, or scaling-efficiency evidence",
+  "host_load": {
+    "load_average_1_5_15": [
+      6.41357421875,
+      7.71435546875,
+      15.5546875
+    ],
+    "logical_cpus": 10
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "12219a604ac576cbb120b5cd31a8ee173b500d2999f30944ebde086a90672788",
+    "evidence_schema": {
+      "fields": [
+        "configuration",
+        "environment",
+        "evidence_scope",
+        "host_load",
+        "passed",
+        "rows"
+      ],
+      "signature": "3c1d77a5dcd2c97b25f5c8e3ac7f151adc86a580c3d50d1a03c1bb3b44ddcc76"
+    },
+    "fingerprint": "d1fe84da2a4647489086b243717a4a87c781ebfaf314e93c1d3b0fdd9ffc1491",
+    "source_build_fingerprint": "43e0546f845668ab2e891972eed0b8409985dae5c567ece37f7d6690d51870b2"
+  },
+  "passed": true,
+  "rows": [
+    {
+      "active_edges": 84,
+      "atoms": 8,
+      "atoms_per_owner": 8.0,
+      "campaign": "fixed-total",
+      "compilation_seconds": 1.913768042,
+      "compiler": {
+        "argument_bytes": 223668,
+        "bytes_accessed": 322307104,
+        "flops": 64811288,
+        "generated_code_bytes": 0,
+        "output_bytes": 831,
+        "source": "xla",
+        "temporary_bytes": 24804568,
+        "unavailable_reason": null
+      },
+      "execution": "devices",
+      "first_execution_seconds": 0.0459735,
+      "first_interaction_halo_message_bytes": 2244,
+      "halo_columns": 0,
+      "layers": 2,
+      "logical_state_bytes": 250950,
+      "lowering_seconds": 1.905069,
+      "maximum_alias_load": 100,
+      "maximum_degree": 12,
+      "maximum_edge_count": 84,
+      "maximum_halo_load": 0,
+      "migrated_atoms": 0,
+      "owners": 1,
+      "post_migration_execution_seconds": 4.003315084,
+      "prepare_seconds": 3.147484416,
+      "rebuild_seconds": 0.885591167,
+      "successful": true,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.011170292,
+        "mean_seconds": 0.010862396,
+        "median_seconds": 0.010862396,
+        "min_seconds": 0.0105545,
+        "samples_seconds": [
+          0.0105545,
+          0.011170292
+        ],
+        "std_seconds": 0.0003078960000000002
+      }
+    },
+    {
+      "active_edges": 92,
+      "atoms": 8,
+      "atoms_per_owner": 4.0,
+      "campaign": "fixed-total",
+      "compilation_seconds": 2.627622208,
+      "compiler": {
+        "argument_bytes": 200231,
+        "bytes_accessed": 289120640,
+        "flops": 62799984,
+        "generated_code_bytes": 0,
+        "output_bytes": 639,
+        "source": "xla",
+        "temporary_bytes": 24343192,
+        "unavailable_reason": null
+      },
+      "execution": "devices",
+      "first_execution_seconds": 0.075556583,
+      "first_interaction_halo_message_bytes": 2904,
+      "halo_columns": 8,
+      "layers": 2,
+      "logical_state_bytes": 371183,
+      "lowering_seconds": 1.489540875,
+      "maximum_alias_load": 60,
+      "maximum_degree": 16,
+      "maximum_edge_count": 71,
+      "maximum_halo_load": 6,
+      "migrated_atoms": 1,
+      "owners": 2,
+      "post_migration_execution_seconds": 4.834956584,
+      "prepare_seconds": 2.68106825,
+      "rebuild_seconds": 1.058231,
+      "successful": true,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.01277,
+        "mean_seconds": 0.0127529375,
+        "median_seconds": 0.0127529375,
+        "min_seconds": 0.012735875,
+        "samples_seconds": [
+          0.01277,
+          0.012735875
+        ],
+        "std_seconds": 1.7062499999999717e-05
+      }
+    },
+    {
+      "active_edges": 34,
+      "atoms": 4,
+      "atoms_per_owner": 4.0,
+      "campaign": "fixed-per-owner",
+      "compilation_seconds": 1.888800041,
+      "compiler": {
+        "argument_bytes": 200176,
+        "bytes_accessed": 288867680,
+        "flops": 62795264,
+        "generated_code_bytes": 0,
+        "output_bytes": 639,
+        "source": "xla",
+        "temporary_bytes": 24323416,
+        "unavailable_reason": null
+      },
+      "execution": "devices",
+      "first_execution_seconds": 0.045715,
+      "first_interaction_halo_message_bytes": 1452,
+      "halo_columns": 0,
+      "layers": 2,
+      "logical_state_bytes": 185567,
+      "lowering_seconds": 2.018211958,
+      "maximum_alias_load": 71,
+      "maximum_degree": 9,
+      "maximum_edge_count": 34,
+      "maximum_halo_load": 0,
+      "migrated_atoms": 0,
+      "owners": 1,
+      "post_migration_execution_seconds": 3.331192833,
+      "prepare_seconds": 2.285623125,
+      "rebuild_seconds": 0.757449084,
+      "successful": true,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.009798958,
+        "mean_seconds": 0.009596729,
+        "median_seconds": 0.009596729,
+        "min_seconds": 0.0093945,
+        "samples_seconds": [
+          0.0093945,
+          0.009798958
+        ],
+        "std_seconds": 0.00020222899999999995
+      }
+    },
+    {
+      "active_edges": 92,
+      "atoms": 8,
+      "atoms_per_owner": 4.0,
+      "campaign": "fixed-per-owner",
+      "compilation_seconds": 2.701854625,
+      "compiler": {
+        "argument_bytes": 200231,
+        "bytes_accessed": 289120640,
+        "flops": 62799984,
+        "generated_code_bytes": 0,
+        "output_bytes": 639,
+        "source": "xla",
+        "temporary_bytes": 24343192,
+        "unavailable_reason": null
+      },
+      "execution": "devices",
+      "first_execution_seconds": 0.066674959,
+      "first_interaction_halo_message_bytes": 2904,
+      "halo_columns": 8,
+      "layers": 2,
+      "logical_state_bytes": 371183,
+      "lowering_seconds": 0.265240208,
+      "maximum_alias_load": 60,
+      "maximum_degree": 16,
+      "maximum_edge_count": 71,
+      "maximum_halo_load": 6,
+      "migrated_atoms": 1,
+      "owners": 2,
+      "post_migration_execution_seconds": 0.064875084,
+      "prepare_seconds": 0.057569583,
+      "rebuild_seconds": 0.046882041,
+      "successful": true,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.013144333,
+        "mean_seconds": 0.013051354,
+        "median_seconds": 0.013051354,
+        "min_seconds": 0.012958375,
+        "samples_seconds": [
+          0.012958375,
+          0.013144333
+        ],
+        "std_seconds": 9.297899999999998e-05
+      }
+    }
+  ],
+  "workload_id": "94f7e33cb0adb02ddd699f1441604e6eff5ec476f0207fba80f7198124345b83"
+}

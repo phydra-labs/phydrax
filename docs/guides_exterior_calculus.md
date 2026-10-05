@@ -144,6 +144,7 @@ by the declared native resource limits; ordering does not relax those guards.
 | Splines | Compatible spline component spaces and IGA-owned mapped pairing |
 | Fourier | Compact admissible modes, Hermitian Parseval; explicit Nyquist policy |
 | Sphere | Scalar and normalized poloidal/toroidal modes, Betti (1, 0, 1) |
+| Meshfree complex | Cell integrals on an authorized simplicial complex; GMLS-reconstructed sparse metric Gram |
 
 Structured bridge pack/unpack/proxy behavior stays canonical. GraphIR is a
 lowering for diagonal Hodges, not a second calculus. MAC exposes its existing
@@ -157,6 +158,20 @@ Use `active_indices(degree, boundary=...)` to enter the compact coordinates of
 on those compact vectors. Finite-element relative codifferentiation inverts
 the principal metric Gram before zero-extending, rather than masking a full
 metric inverse.
+
+### Meshfree higher degrees
+
+`PreparedMeshfreeCellComplex` (see the
+[meshfree guide](guides_meshfree.md#higher-exterior-degrees)) publishes all
+degrees of an authoritative 2-D, 3-D or codimension-one surface complex as a
+native `CochainDiscretization` with natively admitted `SparseHodge` metrics and
+an exact `DeRhamBridge`. It is not a second exterior algebra: d, δ, relative
+restriction, `trace_map`, harmonic cohomology, `HodgeLaplacePlan` and
+`UnstructuredMaxwellPlan` act on its `cochain` unchanged. Commutation
+R(dα) = d(Rα) holds to quadrature tolerance by Stokes on the authoritative
+cells; the GMLS `sample` route commutes exactly on local polynomials and to
+consistency order otherwise. Abstract radius-clique complexes are research
+records with exact topology only and are refused as geometry authority.
 
 ## Bridges, trajectories and conservation
 

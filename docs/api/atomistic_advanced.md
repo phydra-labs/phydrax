@@ -100,9 +100,57 @@ work.
 
 ## Distributed execution
 
+`DistributedAtomisticPlan` is the slab runtime with transactional migration,
+reductions, PME, and polarization contracts. `halo_short_range_evaluate`
+evaluates a classical program globally and then masks the outputs by owner, and
+is kept as a labeled reference. Owner-local learned execution
+(`OwnerLocalAtomisticPlan`) evaluates each owner's receivers from source-halo
+features layer by layer. It returns reverse cotangents, including the shared
+cell contribution, exactly once. Migration commits the complete accepted state
+as one transaction. See the
+[distributed guide](../guides_atomistic_distributed_execution.md#owner-local-learned-execution).
+Every distributed MACE support tuple is an unreleased candidate. Lane-reference
+owners provide a numerical oracle, not hardware qualification.
+
 ::: phydrax.atomistic.DistributedAtomisticPlan
 
 ::: phydrax.atomistic.DistributedAtomisticState
+
+::: phydrax.atomistic.halo_short_range_evaluate
+
+### Owner-local learned execution
+
+::: phydrax.atomistic.OwnerLocalAtomisticPlan
+
+::: phydrax.atomistic.prepare_owner_local_atomistic
+
+::: phydrax.atomistic.OwnerLocalAtomisticState
+
+::: phydrax.atomistic.OwnerLocalAtomisticTopology
+
+::: phydrax.atomistic.OwnerLocalTopologyEvidence
+
+::: phydrax.atomistic.evaluate_owner_local_atomistic
+
+::: phydrax.atomistic.OwnerLocalAtomisticEvaluation
+
+::: phydrax.atomistic.OwnerLocalExecutionStatus
+
+::: phydrax.atomistic.owner_local_loss_gradient
+
+::: phydrax.atomistic.OwnerLocalLossGradient
+
+::: phydrax.atomistic.rebuild_owner_local_atomistic
+
+::: phydrax.atomistic.OwnerLocalTransition
+
+::: phydrax.atomistic.rebind_owner_local_model
+
+::: phydrax.atomistic.checkpoint_owner_local_atomistic
+
+::: phydrax.atomistic.restore_owner_local_atomistic
+
+::: phydrax.atomistic.OwnerLocalAtomisticCheckpoint
 
 ## Nanoflow observables
 

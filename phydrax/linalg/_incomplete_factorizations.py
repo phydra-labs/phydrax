@@ -31,8 +31,8 @@ from ._sparse_factorizations import (
     refresh_sparse_factorization,
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
-    SparseOrdering,
 )
+from ._sparse_ordering import SparseOrdering
 
 
 class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableState):

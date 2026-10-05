@@ -1,0 +1,1830 @@
+{
+  "benchmark": "mace-execution-scaling",
+  "coupling": [
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 8,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 32,
+      "logical_retained_bytes": 3792,
+      "preparation": {
+        "admission_id": "d48ba97680cf172ae726a34604f2fd9d54688747f0b01fa499ffb7e72e83a9c7",
+        "admission_seconds": 0.01431725,
+        "coefficient_table_seconds": 2.451567125,
+        "declared_coefficient_partial_bytes": 5376,
+        "declared_fragment_bind_bytes": 390856,
+        "declared_layout_bytes": 327680,
+        "declared_role_bind_bytes": {
+          "coefficient": 200128,
+          "harmonic": 194248,
+          "radial": 194248,
+          "receiver": 329416,
+          "source": 390856
+        },
+        "declared_workspace_bytes": 17576,
+        "declared_workspace_elements": {
+          "coefficient": 2197,
+          "harmonic": 2185,
+          "radial": 2176,
+          "receiver": 2176,
+          "source": 2176
+        },
+        "executable_signature_id": "b04ad734186c1922519b1782f25b5b2ffcdfec14ae5b7aa4d976dfd6ff2710e2",
+        "fragment_extent": {
+          "edges": 16,
+          "receivers": 4,
+          "sources": 16
+        },
+        "lowering": "pallas_mosaic_gpu_interpret",
+        "padded_channels": 124,
+        "qualification_scope": "CPU Mosaic GPU interpreter reference verification of the kernel bodies; not GPU correctness, performance or memory qualification",
+        "routing_check_seconds": 6.048761792,
+        "schedule_bytes": 3149,
+        "schedule_seconds": 17.420488375,
+        "structure_seconds": 0.002168417,
+        "target_id": "c20d7e7c8772f6f0510727f9202515e8fa3806b3f86df418738fd27c90f6a537",
+        "tile_count": 2
+      },
+      "route": "accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 3.551157208,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 1850788,
+            "flops": 151993,
+            "generated_code_bytes": 0,
+            "output_bytes": 224,
+            "source": "xla",
+            "temporary_bytes": 506664,
+            "unavailable_reason": null
+          },
+          "first_seconds": 5.774721458,
+          "lowering_seconds": 3.124956292,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 7329,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 147456,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 8.395916208,
+            "mean_seconds": 8.3388579585,
+            "median_seconds": 8.3388579585,
+            "min_seconds": 8.281799709,
+            "samples_seconds": [
+              8.395916208,
+              8.281799709
+            ],
+            "std_seconds": 0.057058249499999825
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 14.026869959,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 12425679,
+            "flops": 945129,
+            "generated_code_bytes": 0,
+            "output_bytes": 2688,
+            "source": "xla",
+            "temporary_bytes": 1316328,
+            "unavailable_reason": null
+          },
+          "first_seconds": 30.381592209,
+          "lowering_seconds": 16.226132375,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 24818,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 6225920,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 29.09660825,
+            "mean_seconds": 28.3789814585,
+            "median_seconds": 28.3789814585,
+            "min_seconds": 27.661354667,
+            "samples_seconds": [
+              27.661354667,
+              29.09660825
+            ],
+            "std_seconds": 0.717626791499999
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 3.025181958,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 1847096,
+            "flops": 151258,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 506664,
+            "unavailable_reason": null
+          },
+          "first_seconds": 6.435129,
+          "lowering_seconds": 2.92966175,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 7193,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 9.184861167,
+            "mean_seconds": 8.780052542,
+            "median_seconds": 8.780052542,
+            "min_seconds": 8.375243917,
+            "samples_seconds": [
+              9.184861167,
+              8.375243917
+            ],
+            "std_seconds": 0.40480862499999937
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 8,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 32,
+      "logical_retained_bytes": 3792,
+      "preparation": {
+        "schedule_bytes": 3149,
+        "schedule_seconds": 12.484317833,
+        "tile_count": 2
+      },
+      "route": "streamed",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 2.038661958,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 702195,
+            "flops": 108878,
+            "generated_code_bytes": 0,
+            "output_bytes": 216,
+            "source": "xla",
+            "temporary_bytes": 95552,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.008402959,
+          "lowering_seconds": 0.922641875,
+          "sampled_peak_increase_bytes": 163840,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.004787667,
+            "mean_seconds": 0.0039630835,
+            "median_seconds": 0.0039630835,
+            "min_seconds": 0.0031385,
+            "samples_seconds": [
+              0.0031385,
+              0.004787667
+            ],
+            "std_seconds": 0.0008245835
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 6.493168708,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 3319108,
+            "flops": 467596,
+            "generated_code_bytes": 0,
+            "output_bytes": 2680,
+            "source": "xla",
+            "temporary_bytes": 184536,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.038846417,
+          "lowering_seconds": 8.751436625,
+          "sampled_peak_increase_bytes": 32768,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.023256792,
+            "mean_seconds": 0.0175996255,
+            "median_seconds": 0.0175996255,
+            "min_seconds": 0.011942459,
+            "samples_seconds": [
+              0.023256792,
+              0.011942459
+            ],
+            "std_seconds": 0.005657166499999999
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 1.69194225,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 698499,
+            "flops": 108143,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 95552,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.005893583,
+          "lowering_seconds": 0.823660791,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.006055208,
+            "mean_seconds": 0.0059995415,
+            "median_seconds": 0.0059995415,
+            "min_seconds": 0.005943875,
+            "samples_seconds": [
+              0.006055208,
+              0.005943875
+            ],
+            "std_seconds": 5.566649999999996e-05
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 8,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 32,
+      "logical_retained_bytes": 3792,
+      "preparation": {
+        "scope": "named dense reference materializing per-edge radial, harmonic and message values"
+      },
+      "route": "dense",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 0.569250125,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 522168,
+            "flops": 115186,
+            "generated_code_bytes": 0,
+            "output_bytes": 216,
+            "source": "xla",
+            "temporary_bytes": 78496,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.008205833,
+          "lowering_seconds": 0.453016917,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.003240959,
+            "mean_seconds": 0.002477771,
+            "median_seconds": 0.002477771,
+            "min_seconds": 0.001714583,
+            "samples_seconds": [
+              0.003240959,
+              0.001714583
+            ],
+            "std_seconds": 0.0007631879999999999
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 1.021282375,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 1738388,
+            "flops": 445248,
+            "generated_code_bytes": 0,
+            "output_bytes": 2680,
+            "source": "xla",
+            "temporary_bytes": 142496,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.00679925,
+          "lowering_seconds": 0.561782834,
+          "sampled_peak_increase_bytes": 49152,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.001054833,
+            "mean_seconds": 0.0007922915,
+            "median_seconds": 0.0007922915,
+            "min_seconds": 0.00052975,
+            "samples_seconds": [
+              0.001054833,
+              0.00052975
+            ],
+            "std_seconds": 0.00026254150000000004
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 0.608168084,
+          "compiler": {
+            "argument_bytes": 2920,
+            "bytes_accessed": 512840,
+            "flops": 114451,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 78304,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.002538584,
+          "lowering_seconds": 0.149359084,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000273958,
+            "mean_seconds": 0.0002493335,
+            "median_seconds": 0.0002493335,
+            "min_seconds": 0.000224709,
+            "samples_seconds": [
+              0.000273958,
+              0.000224709
+            ],
+            "std_seconds": 2.4624499999999994e-05
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 16,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 64,
+      "logical_retained_bytes": 5296,
+      "preparation": {
+        "admission_id": "d48ba97680cf172ae726a34604f2fd9d54688747f0b01fa499ffb7e72e83a9c7",
+        "admission_seconds": 0.000993917,
+        "coefficient_table_seconds": 1.28286275,
+        "declared_coefficient_partial_bytes": 5376,
+        "declared_fragment_bind_bytes": 390856,
+        "declared_layout_bytes": 327680,
+        "declared_role_bind_bytes": {
+          "coefficient": 200128,
+          "harmonic": 194248,
+          "radial": 194248,
+          "receiver": 329416,
+          "source": 390856
+        },
+        "declared_workspace_bytes": 17576,
+        "declared_workspace_elements": {
+          "coefficient": 2197,
+          "harmonic": 2185,
+          "radial": 2176,
+          "receiver": 2176,
+          "source": 2176
+        },
+        "executable_signature_id": "2eae8da0614a219a7195616c14df94eb37b32a5ddc868cfaaf3e8b2dbc9428ad",
+        "fragment_extent": {
+          "edges": 16,
+          "receivers": 4,
+          "sources": 16
+        },
+        "lowering": "pallas_mosaic_gpu_interpret",
+        "padded_channels": 124,
+        "qualification_scope": "CPU Mosaic GPU interpreter reference verification of the kernel bodies; not GPU correctness, performance or memory qualification",
+        "routing_check_seconds": 1.808768375,
+        "schedule_bytes": 7303,
+        "schedule_seconds": 9.477408917,
+        "structure_seconds": 0.000906125,
+        "target_id": "c20d7e7c8772f6f0510727f9202515e8fa3806b3f86df418738fd27c90f6a537",
+        "tile_count": 5
+      },
+      "route": "accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 2.113455291,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 1935376,
+            "flops": 161367,
+            "generated_code_bytes": 0,
+            "output_bytes": 416,
+            "source": "xla",
+            "temporary_bytes": 514920,
+            "unavailable_reason": null
+          },
+          "first_seconds": 9.19833975,
+          "lowering_seconds": 3.744309959,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 10799,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 540672,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 14.360280959,
+            "mean_seconds": 13.91523375,
+            "median_seconds": 13.91523375,
+            "min_seconds": 13.470186541,
+            "samples_seconds": [
+              14.360280959,
+              13.470186541
+            ],
+            "std_seconds": 0.44504720900000017
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 9.59240525,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 13589702,
+            "flops": 986083,
+            "generated_code_bytes": 0,
+            "output_bytes": 3712,
+            "source": "xla",
+            "temporary_bytes": 1857064,
+            "unavailable_reason": null
+          },
+          "first_seconds": 68.082464958,
+          "lowering_seconds": 10.289536416,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 37018,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 29704192,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 73.9721965,
+            "mean_seconds": 72.962170542,
+            "median_seconds": 72.962170542,
+            "min_seconds": 71.952144584,
+            "samples_seconds": [
+              73.9721965,
+              71.952144584
+            ],
+            "std_seconds": 1.010025958
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.248348958,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 1928356,
+            "flops": 159896,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 515112,
+            "unavailable_reason": null
+          },
+          "first_seconds": 9.595670167,
+          "lowering_seconds": 1.642254334,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 10471,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 196608,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 16.597518334,
+            "mean_seconds": 15.078647084,
+            "median_seconds": 15.078647084,
+            "min_seconds": 13.559775834,
+            "samples_seconds": [
+              16.597518334,
+              13.559775834
+            ],
+            "std_seconds": 1.5188712500000001
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 16,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 64,
+      "logical_retained_bytes": 5296,
+      "preparation": {
+        "schedule_bytes": 7303,
+        "schedule_seconds": 0.085226792,
+        "tile_count": 5
+      },
+      "route": "streamed",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 1.769077,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 786815,
+            "flops": 118253,
+            "generated_code_bytes": 0,
+            "output_bytes": 408,
+            "source": "xla",
+            "temporary_bytes": 103040,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.012211167,
+          "lowering_seconds": 0.840055083,
+          "sampled_peak_increase_bytes": 5292032,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.001864333,
+            "mean_seconds": 0.0018469164999999998,
+            "median_seconds": 0.0018469164999999998,
+            "min_seconds": 0.0018295,
+            "samples_seconds": [
+              0.001864333,
+              0.0018295
+            ],
+            "std_seconds": 1.7416499999999978e-05
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 5.340267458,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 3682985,
+            "flops": 503173,
+            "generated_code_bytes": 0,
+            "output_bytes": 3704,
+            "source": "xla",
+            "temporary_bytes": 218328,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.041279375,
+          "lowering_seconds": 4.769601,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.006490208,
+            "mean_seconds": 0.005932728999999999,
+            "median_seconds": 0.005932728999999999,
+            "min_seconds": 0.00537525,
+            "samples_seconds": [
+              0.00537525,
+              0.006490208
+            ],
+            "std_seconds": 0.000557479
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 1.411341584,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 779791,
+            "flops": 116782,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 103232,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.012817,
+          "lowering_seconds": 0.663701125,
+          "sampled_peak_increase_bytes": 2015232,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.008859416,
+            "mean_seconds": 0.0049897705,
+            "median_seconds": 0.0049897705,
+            "min_seconds": 0.001120125,
+            "samples_seconds": [
+              0.008859416,
+              0.001120125
+            ],
+            "std_seconds": 0.0038696455000000003
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "channel_tile": 128,
+        "channels": 4,
+        "degree": 4,
+        "edge_degree": 2,
+        "edge_tile": 16,
+        "hidden_degree": 1,
+        "nodes": 16,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "skew": 0.25
+      },
+      "edges": 64,
+      "logical_retained_bytes": 5296,
+      "preparation": {
+        "scope": "named dense reference materializing per-edge radial, harmonic and message values"
+      },
+      "route": "dense",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 1.10707825,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 1039896,
+            "flops": 230282,
+            "generated_code_bytes": 0,
+            "output_bytes": 408,
+            "source": "xla",
+            "temporary_bytes": 156736,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.00306025,
+          "lowering_seconds": 0.984297417,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000139333,
+            "mean_seconds": 0.0001344165,
+            "median_seconds": 0.0001344165,
+            "min_seconds": 0.0001295,
+            "samples_seconds": [
+              0.000139333,
+              0.0001295
+            ],
+            "std_seconds": 4.9164999999999994e-06
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 0.437545458,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 3453972,
+            "flops": 889840,
+            "generated_code_bytes": 0,
+            "output_bytes": 3704,
+            "source": "xla",
+            "temporary_bytes": 287616,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.005465625,
+          "lowering_seconds": 2.132976417,
+          "sampled_peak_increase_bytes": 163840,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000279375,
+            "mean_seconds": 0.000255604,
+            "median_seconds": 0.000255604,
+            "min_seconds": 0.000231833,
+            "samples_seconds": [
+              0.000231833,
+              0.000279375
+            ],
+            "std_seconds": 2.3771e-05
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 0.881233542,
+          "compiler": {
+            "argument_bytes": 4136,
+            "bytes_accessed": 1021608,
+            "flops": 228811,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 156544,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.00567525,
+          "lowering_seconds": 0.828550042,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.001350292,
+            "mean_seconds": 0.0012069585,
+            "median_seconds": 0.0012069585,
+            "min_seconds": 0.001063625,
+            "samples_seconds": [
+              0.001063625,
+              0.001350292
+            ],
+            "std_seconds": 0.0001433335
+          }
+        }
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "41e39caf2e7d3c8269427094d86f1b660c8c674802b19afeba3b44f2819d8193",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "e904db69052e74586ff3c14c2d8370715a338a4c57ed3e2cf3f96bc7f5be6a72",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "2a808bb79b40ff39b34e82b6c4992752c61fbe0664358f7bb80065d67102c9e8",
+    "evidence_schema": {
+      "fields": [
+        "coupling",
+        "environment",
+        "model",
+        "source_sha256"
+      ],
+      "signature": "56b4c828a7dac2678995821022c9f8b65baa8153531ee5d6f49e8ed2dfa871b9"
+    },
+    "fingerprint": "30172f61f67bed8355f0298e040a91369d7b86bcc53dadd3b15b8710937ef14b",
+    "source_build_fingerprint": "3724488b6dd1c2e1944bdef7aa0f5f56eb44d7a5f1831c1ca8672cc0bfcf686f"
+  },
+  "label": "audit-remediated-cpu-semantic-scaling",
+  "model": [
+    {
+      "case": {
+        "atoms": 8,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 32865,
+      "route": "exact",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 2.336325958,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 6952442,
+            "flops": 718428,
+            "generated_code_bytes": 0,
+            "output_bytes": 216,
+            "source": "xla",
+            "temporary_bytes": 557792,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.021086,
+          "lowering_seconds": 2.124965583,
+          "sampled_peak_increase_bytes": 212992,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.002605708,
+            "mean_seconds": 0.0025831875,
+            "median_seconds": 0.0025831875,
+            "min_seconds": 0.002560667,
+            "samples_seconds": [
+              0.002560667,
+              0.002605708
+            ],
+            "std_seconds": 2.2520500000000002e-05
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 5.358466334,
+          "compiler": {
+            "argument_bytes": 14632,
+            "bytes_accessed": 23842924,
+            "flops": 2284365,
+            "generated_code_bytes": 0,
+            "output_bytes": 14632,
+            "source": "xla",
+            "temporary_bytes": 855512,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.0574105,
+          "lowering_seconds": 6.022979541,
+          "sampled_peak_increase_bytes": 163840,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.006691458,
+            "mean_seconds": 0.006634020500000001,
+            "median_seconds": 0.006634020500000001,
+            "min_seconds": 0.006576583,
+            "samples_seconds": [
+              0.006576583,
+              0.006691458
+            ],
+            "std_seconds": 5.743749999999976e-05
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.32512575,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 6951988,
+            "flops": 718380,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 557536,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.020423792,
+          "lowering_seconds": 1.457082625,
+          "sampled_peak_increase_bytes": 212992,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.002309834,
+            "mean_seconds": 0.002179271,
+            "median_seconds": 0.002179271,
+            "min_seconds": 0.002048708,
+            "samples_seconds": [
+              0.002309834,
+              0.002048708
+            ],
+            "std_seconds": 0.000130563
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 8,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 84453,
+      "preparation_seconds": 1.147814917,
+      "route": "streamed",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 1.862000958,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 6777477,
+            "flops": 733808,
+            "generated_code_bytes": 0,
+            "output_bytes": 216,
+            "source": "xla",
+            "temporary_bytes": 542336,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.031817542,
+          "lowering_seconds": 2.036263916,
+          "sampled_peak_increase_bytes": 147456,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.01339425,
+            "mean_seconds": 0.008496167,
+            "median_seconds": 0.008496167,
+            "min_seconds": 0.003598084,
+            "samples_seconds": [
+              0.01339425,
+              0.003598084
+            ],
+            "std_seconds": 0.004898083
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 1.990961167,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 6777023,
+            "flops": 733760,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 542080,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.019479833,
+          "lowering_seconds": 1.31014575,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.001883917,
+            "mean_seconds": 0.0018544795,
+            "median_seconds": 0.0018544795,
+            "min_seconds": 0.001825042,
+            "samples_seconds": [
+              0.001825042,
+              0.001883917
+            ],
+            "std_seconds": 2.943749999999995e-05
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 8,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 84453,
+      "lowering": "pallas_mosaic_gpu_interpret",
+      "preparation_seconds": 0.076083083,
+      "route": "accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 3.800400875,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 21042544,
+            "flops": 1095663,
+            "generated_code_bytes": 0,
+            "output_bytes": 224,
+            "source": "xla",
+            "temporary_bytes": 3350184,
+            "unavailable_reason": null
+          },
+          "first_seconds": 14.455343,
+          "lowering_seconds": 3.113195958,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 153652,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 98304,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 12.811680459,
+            "mean_seconds": 12.3786145005,
+            "median_seconds": 12.3786145005,
+            "min_seconds": 11.945548542,
+            "samples_seconds": [
+              11.945548542,
+              12.811680459
+            ],
+            "std_seconds": 0.4330659585000003
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 3.151390542,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 21042094,
+            "flops": 1095615,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 3350120,
+            "unavailable_reason": null
+          },
+          "first_seconds": 12.363603375,
+          "lowering_seconds": 2.95569425,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 153440,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 114688,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 13.34206775,
+            "mean_seconds": 12.4997230625,
+            "median_seconds": 12.4997230625,
+            "min_seconds": 11.657378375,
+            "samples_seconds": [
+              11.657378375,
+              13.34206775
+            ],
+            "std_seconds": 0.8423446874999998
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 8,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 32865,
+      "lowering": "pallas_mosaic_gpu_interpret",
+      "route": "trainable_accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 2.825593583,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 21217488,
+            "flops": 1080283,
+            "generated_code_bytes": 0,
+            "output_bytes": 224,
+            "source": "xla",
+            "temporary_bytes": 3334824,
+            "unavailable_reason": null
+          },
+          "first_seconds": 11.440821083,
+          "lowering_seconds": 2.973336417,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 63784,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 114688,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 11.158702792,
+            "mean_seconds": 11.0697077295,
+            "median_seconds": 11.0697077295,
+            "min_seconds": 10.980712667,
+            "samples_seconds": [
+              11.158702792,
+              10.980712667
+            ],
+            "std_seconds": 0.08899506249999956
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 9.58129075,
+          "compiler": {
+            "argument_bytes": 14632,
+            "bytes_accessed": 98032976,
+            "flops": 6349885,
+            "generated_code_bytes": 0,
+            "output_bytes": 14640,
+            "source": "xla",
+            "temporary_bytes": 8905912,
+            "unavailable_reason": null
+          },
+          "first_seconds": 36.911741958,
+          "lowering_seconds": 8.247781042,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 102640,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 245760,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 45.613629958,
+            "mean_seconds": 44.0845884375,
+            "median_seconds": 44.0845884375,
+            "min_seconds": 42.555546917,
+            "samples_seconds": [
+              42.555546917,
+              45.613629958
+            ],
+            "std_seconds": 1.529041520499998
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.739024583,
+          "compiler": {
+            "argument_bytes": 264,
+            "bytes_accessed": 21217038,
+            "flops": 1080235,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 3334760,
+            "unavailable_reason": null
+          },
+          "first_seconds": 11.294202791,
+          "lowering_seconds": 2.0372045,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 63572,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 147456,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 26.706123708,
+            "mean_seconds": 23.891085104,
+            "median_seconds": 23.891085104,
+            "min_seconds": 21.0760465,
+            "samples_seconds": [
+              21.0760465,
+              26.706123708
+            ],
+            "std_seconds": 2.8150386039999997
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 16,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 52955,
+      "route": "exact",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 2.190325875,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 7295433,
+            "flops": 743214,
+            "generated_code_bytes": 0,
+            "output_bytes": 408,
+            "source": "xla",
+            "temporary_bytes": 626592,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.028335916,
+          "lowering_seconds": 1.483709292,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.008048,
+            "mean_seconds": 0.007000667,
+            "median_seconds": 0.007000667,
+            "min_seconds": 0.005953334,
+            "samples_seconds": [
+              0.005953334,
+              0.008048
+            ],
+            "std_seconds": 0.0010473329999999997
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 5.357890625,
+          "compiler": {
+            "argument_bytes": 14824,
+            "bytes_accessed": 24485400,
+            "flops": 2327223,
+            "generated_code_bytes": 0,
+            "output_bytes": 14632,
+            "source": "xla",
+            "temporary_bytes": 952152,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.076647625,
+          "lowering_seconds": 6.228629333,
+          "sampled_peak_increase_bytes": 114688,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.029518583,
+            "mean_seconds": 0.0266711875,
+            "median_seconds": 0.0266711875,
+            "min_seconds": 0.023823792,
+            "samples_seconds": [
+              0.029518583,
+              0.023823792
+            ],
+            "std_seconds": 0.0028473955000000006
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.150445042,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 7294595,
+            "flops": 743126,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 626528,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.025344083,
+          "lowering_seconds": 2.002863042,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.005898083,
+            "mean_seconds": 0.005810854000000001,
+            "median_seconds": 0.005810854000000001,
+            "min_seconds": 0.005723625,
+            "samples_seconds": [
+              0.005898083,
+              0.005723625
+            ],
+            "std_seconds": 8.722899999999987e-05
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 16,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 104543,
+      "preparation_seconds": 0.10428825,
+      "route": "streamed",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 1.549072625,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 7120600,
+            "flops": 758594,
+            "generated_code_bytes": 0,
+            "output_bytes": 408,
+            "source": "xla",
+            "temporary_bytes": 613632,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.023954375,
+          "lowering_seconds": 1.371259084,
+          "sampled_peak_increase_bytes": 0,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.005682875,
+            "mean_seconds": 0.0056200835,
+            "median_seconds": 0.0056200835,
+            "min_seconds": 0.005557292,
+            "samples_seconds": [
+              0.005557292,
+              0.005682875
+            ],
+            "std_seconds": 6.279150000000015e-05
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.226284584,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 7119762,
+            "flops": 758506,
+            "generated_code_bytes": 0,
+            "output_bytes": 72,
+            "source": "xla",
+            "temporary_bytes": 613568,
+            "unavailable_reason": null
+          },
+          "first_seconds": 0.044649583,
+          "lowering_seconds": 1.907521667,
+          "sampled_peak_increase_bytes": 32768,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.016648625,
+            "mean_seconds": 0.0119596665,
+            "median_seconds": 0.0119596665,
+            "min_seconds": 0.007270708,
+            "samples_seconds": [
+              0.016648625,
+              0.007270708
+            ],
+            "std_seconds": 0.0046889585
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 16,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 104543,
+      "lowering": "pallas_mosaic_gpu_interpret",
+      "preparation_seconds": 0.076018875,
+      "route": "accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 3.309901833,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 26431736,
+            "flops": 1120447,
+            "generated_code_bytes": 0,
+            "output_bytes": 416,
+            "source": "xla",
+            "temporary_bytes": 8470632,
+            "unavailable_reason": null
+          },
+          "first_seconds": 46.731653416,
+          "lowering_seconds": 2.492830083,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 168376,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 65536,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 51.398779792,
+            "mean_seconds": 50.00575775,
+            "median_seconds": 50.00575775,
+            "min_seconds": 48.612735708,
+            "samples_seconds": [
+              48.612735708,
+              51.398779792
+            ],
+            "std_seconds": 1.3930220419999984
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 3.676343417,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 26430902,
+            "flops": 1120359,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 8470824,
+            "unavailable_reason": null
+          },
+          "first_seconds": 45.202360208,
+          "lowering_seconds": 2.512483,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 167908,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 65536,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 48.3757985,
+            "mean_seconds": 48.355171104,
+            "median_seconds": 48.355171104,
+            "min_seconds": 48.334543708,
+            "samples_seconds": [
+              48.3757985,
+              48.334543708
+            ],
+            "std_seconds": 0.020627396000001852
+          }
+        }
+      }
+    },
+    {
+      "case": {
+        "atoms": 16,
+        "channel_tile": 128,
+        "channels": 4,
+        "correlation": 2,
+        "edge_tile": 16,
+        "interactions": 2,
+        "precision": "float64",
+        "receiver_tile": 4,
+        "seed": 0,
+        "species": 2
+      },
+      "logical_retained_bytes": 52955,
+      "lowering": "pallas_mosaic_gpu_interpret",
+      "route": "trainable_accelerated",
+      "transforms": {
+        "energy_forces": {
+          "compilation_seconds": 3.04990675,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 26606546,
+            "flops": 1105067,
+            "generated_code_bytes": 0,
+            "output_bytes": 416,
+            "source": "xla",
+            "temporary_bytes": 8455272,
+            "unavailable_reason": null
+          },
+          "first_seconds": 46.165836625,
+          "lowering_seconds": 2.975038792,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 78508,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 49152,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 49.284131334,
+            "mean_seconds": 47.826589271,
+            "median_seconds": 47.826589271,
+            "min_seconds": 46.369047208,
+            "samples_seconds": [
+              49.284131334,
+              46.369047208
+            ],
+            "std_seconds": 1.4575420630000018
+          }
+        },
+        "force_loss_gradient": {
+          "compilation_seconds": 8.047415875,
+          "compiler": {
+            "argument_bytes": 14824,
+            "bytes_accessed": 126507936,
+            "flops": 6392909,
+            "generated_code_bytes": 0,
+            "output_bytes": 14640,
+            "source": "xla",
+            "temporary_bytes": 26031224,
+            "unavailable_reason": null
+          },
+          "first_seconds": 128.815428959,
+          "lowering_seconds": 6.924766166,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 130634,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 49152,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 127.326892375,
+            "mean_seconds": 126.977775604,
+            "median_seconds": 126.977775604,
+            "min_seconds": 126.628658833,
+            "samples_seconds": [
+              127.326892375,
+              126.628658833
+            ],
+            "std_seconds": 0.3491167709999985
+          }
+        },
+        "strain_derivative": {
+          "compilation_seconds": 2.739482208,
+          "compiler": {
+            "argument_bytes": 456,
+            "bytes_accessed": 26605712,
+            "flops": 1104979,
+            "generated_code_bytes": 0,
+            "output_bytes": 88,
+            "source": "xla",
+            "temporary_bytes": 8455464,
+            "unavailable_reason": null
+          },
+          "first_seconds": 50.140490375,
+          "lowering_seconds": 3.037836459,
+          "resource_evidence": {
+            "backends": [
+              "pallas-atomistic:pallas_mosaic_gpu_interpret"
+            ],
+            "checkpoint_staging_bytes": null,
+            "collectives": [],
+            "compilation_cache_bytes": null,
+            "dtypes": [
+              "float64"
+            ],
+            "halo_collective_bytes": null,
+            "memory_basis": "compiler_analysis",
+            "output_backlog_bytes": null,
+            "per_device_peak_bytes": 78040,
+            "per_device_reserve_bytes": null,
+            "per_host_peak_bytes": null,
+            "per_host_reserve_bytes": null
+          },
+          "sampled_peak_increase_bytes": 49152,
+          "status": "measured",
+          "warm": {
+            "count": 2,
+            "max_seconds": 43.623426667,
+            "mean_seconds": 43.2355147085,
+            "median_seconds": 43.2355147085,
+            "min_seconds": 42.84760275,
+            "samples_seconds": [
+              42.84760275,
+              43.623426667
+            ],
+            "std_seconds": 0.3879119584999984
+          }
+        }
+      }
+    }
+  ],
+  "scope": {
+    "compiler": "XLA executable estimates; kernel registers and shared memory excluded",
+    "fragment": "declared per-fragment kernel operand/result bytes; no node/edge scaling",
+    "interpret": "cpu_interpret verifies kernel semantics; not GPU performance evidence",
+    "sampled": "PhaseMemorySampler sampled resident peak above phase baseline; never a bound",
+    "timing": "synchronized host wall time per phase",
+    "workspace": "declared per-program planning bound of the accelerated kernels"
+  },
+  "source_sha256": {
+    "phydrax/backends/atomistic.py": "5efdf3ee2fdeb534ce1ab9bf668c1b1188e50cfeb490350f51af789f0e3ba42d",
+    "phydrax/nn/atomistic/_mace.py": "cfaf4a2fded8c794a40a88ce651b7e90176faddd5fb552106f04bfe52938fe33",
+    "phydrax/nn/atomistic/_mace_kernel_derivatives.py": "99b6b9392035ddf9ce2c3bcebe2273d15dd00354fdb3805216825a97212d5a46",
+    "phydrax/nn/atomistic/_mace_kernels.py": "1dd6924ccf48a0f5059b67ee90fb94837549f60cce219bd86084103d17e61faa",
+    "phydrax/nn/atomistic/_mace_prepare.py": "df49b910e32f905b74d9fd54e262e1d03b6aacfb7144fb04a6374d47ec3ad13d",
+    "phydrax/sparse/_streamed.py": "1261bcce1d6515e3c666edb9680352e8eca67e00dcd9839d9d6f9a17ea92fcc1"
+  },
+  "target": "cpu_interpret"
+}

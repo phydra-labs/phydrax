@@ -46,6 +46,21 @@ benchmarks/*
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py
+# Streamed atomistic drivers and retained CPU/source qualification records.
+!benchmarks/atomistic_streamed_consumers.py
+!benchmarks/atomistic_streamed_consumers.json
+!benchmarks/atomistic_streamed_consumers_baseline.json
+!benchmarks/streamed_relation_scaling.py
+!benchmarks/streamed_relation_scaling.json
+!benchmarks/mace_execution_scaling.py
+!benchmarks/mace_execution_scaling.json
+!benchmarks/distributed_mace_scaling.py
+!benchmarks/distributed_mace_scaling.json
+!benchmarks/mace_checkpoint_campaign.json
+# Meshfree campaign drivers and their retained measurement records.
+!benchmarks/meshfree*.py
+!benchmarks/meshfree*.json
+!benchmarks/compatible_projection_scaling.py
 # Native exterior-calculus drivers and their measured evidence records.
 !benchmarks/cochain_realization.py
 !benchmarks/cochain_realization.json

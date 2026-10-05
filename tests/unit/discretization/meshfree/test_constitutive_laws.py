@@ -10,10 +10,15 @@ import numpy as np
 import pytest
 
 from phydrax.discretization.meshfree._constitutive import (
+    AbstractCoupledEdgeConstitutiveLaw,
     EdgeFeatureField,
     EdgeFrameFeatures,
+    LipschitzCoupledEdgeFlux,
     LipschitzEdgeFlux,
+    MonotoneCoupledEdgeFlux,
     MonotoneEdgeConductance,
+    O3EdgeInvariants,
+    O3EdgeNetwork,
 )
 from phydrax.discretization.meshfree._coverage import (
     EdgeCoverageStatus,
@@ -21,6 +26,16 @@ from phydrax.discretization.meshfree._coverage import (
 )
 from phydrax.nn.layers import Linear
 from phydrax.nn.models import InputConvexNetwork, PartiallyInputConvexNetwork
+from phydrax.nn.operator.layers import (
+    O3TensorProduct,
+    O3TensorProductPath,
+    O3TensorProductPlan,
+)
+from phydrax.nn.operator.representations import (
+    O3IrrepBlock,
+    O3IrrepLayout,
+    O3Representation,
+)
 from phydrax.nn.parameters import IdentityTransform, LowRankUpdate
 from phydrax.units import LENGTH
 
@@ -219,3 +234,300 @@ def test_quantile_box_and_joint_covariance_have_independent_refusal_evidence() -
     assert int(trimmed.assess(jnp.asarray([[1.9]])).status[0]) == int(
         EdgeCoverageStatus.MARGINAL_OUTSIDE
     )
+
+
+# A state with every polar and pseudo irrep type, including two vector channels,
+# so that coupling across multiplicities and irrep types is observable.
+_STATE = O3Representation(
+    scalars=1, pseudoscalars=1, vectors=2, pseudovectors=1, tensors=1
+)
+_PROPER = np.asarray(
+    [[0.36, 0.48, -0.8], [-0.8, 0.6, 0.0], [0.48, 0.64, 0.6]], dtype=np.float64
+)
+_IMPROPER = -_PROPER
+
+
+def _cloud(dimension: int = 3) -> EdgeFrameFeatures:
+    rng = np.random.default_rng(17)
+    points = rng.normal(size=(7, dimension))
+    pairs = np.asarray(
+        [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 0], [1, 4]],
+        dtype=np.int32,
+    )
+    schema = (EdgeFeatureField("s", "scalar"), EdgeFeatureField("v", "vector"))
+    values = (rng.normal(size=7), rng.normal(size=(7, dimension)))
+    return EdgeFrameFeatures(points, pairs, schema, values)
+
+
+def _states(seed: int, scale: float = 1.0) -> jax.Array:
+    rng = np.random.default_rng(seed)
+    return jnp.asarray(scale * rng.normal(size=(8, _STATE.packed_size)))
+
+
+def _monotone_law(background: float = 0.6) -> MonotoneCoupledEdgeFlux:
+    features = _cloud()
+    invariants = O3EdgeInvariants(
+        _STATE,
+        quadratic_representation=O3Representation(
+            scalars=2, pseudoscalars=1, vectors=2, pseudovectors=1, tensors=1
+        ),
+        linear_count=3,
+        key=jr.key(0),
+    )
+    potential = PartiallyInputConvexNetwork(
+        context_size=features.even.shape[1] + features.odd.shape[1],
+        convex_size=invariants.size,
+        width_size=6,
+        depth=2,
+        input_monotonicity="nondecreasing",
+        key=jr.key(1),
+    )
+    return MonotoneCoupledEdgeFlux(
+        invariants,
+        potential,
+        background_conductance=background,
+        odd_size=features.odd.shape[1],
+    )
+
+
+def _lipschitz_law(background: float = 2.0) -> LipschitzCoupledEdgeFlux:
+    features = _cloud()
+    even, odd = features.even.shape[1], features.odd.shape[1]
+    network = O3EdgeNetwork(
+        _STATE,
+        O3Representation(
+            scalars=3, pseudoscalars=1, vectors=2, pseudovectors=2, tensors=1
+        ),
+        context_size=even + odd,
+        key=jr.key(2),
+    )
+    return LipschitzCoupledEdgeFlux(
+        network, even_size=even, odd_size=odd, background_conductance=background
+    )
+
+
+@pytest.mark.parametrize("family", ["monotone", "lipschitz"])
+@pytest.mark.parametrize(
+    "orthogonal", [_PROPER, _IMPROPER], ids=["rotation", "rotoreflection"]
+)
+def test_coupled_flux_is_exactly_reversal_odd_and_o3_covariant(
+    family: str, orthogonal: np.ndarray
+) -> None:
+    law: AbstractCoupledEdgeConstitutiveLaw = (
+        _monotone_law() if family == "monotone" else _lipschitz_law()
+    )
+    features = _cloud()
+    states = _states(3)
+    flux = law.flux(states, features)
+    # Reversal parity holds bit-for-bit, against the feature owner's reorientation
+    # and against an independently constructed reversed edge list.
+    np.testing.assert_array_equal(law.flux(-states, features.reoriented()), -flux)
+    rng = np.random.default_rng(17)
+    points = rng.normal(size=(7, 3))
+    values = (rng.normal(size=7), rng.normal(size=(7, 3)))
+    swapped = EdgeFrameFeatures(
+        points, np.asarray(features.pairs)[:, ::-1], features.schema, values
+    )
+    np.testing.assert_allclose(law.flux(-states, swapped), -flux, rtol=1e-13, atol=1e-13)
+    q = jnp.asarray(orthogonal)
+    assert abs(abs(float(np.linalg.det(orthogonal))) - 1) < 1e-12
+    rotated = law.flux(
+        _STATE.transform(states, q), features.transformed_frame(orthogonal)
+    )
+    np.testing.assert_allclose(rotated, _STATE.transform(flux, q), rtol=1e-11, atol=1e-11)
+
+
+def test_monotone_coupled_flux_is_strongly_monotone_energy_gradient_and_coupled() -> None:
+    law = _monotone_law(background=0.6)
+    features = _cloud()
+    tangents, even, odd = features.tangents, features.even, features.odd
+    assert float(law.monotonicity_lower_bound()) == 0.6
+    assert float(law.lipschitz_bound()) == float("inf")
+    assert law.certificate.potential.input_monotonicity == "nondecreasing"
+    np.testing.assert_allclose(
+        law.flux(jnp.zeros((8, _STATE.packed_size)), features), 0.0, atol=1e-13
+    )
+    for seed in range(4):
+        first = _states(10 + seed, scale=3.0)
+        second = _states(20 + seed, scale=0.5)
+        change = first - second
+        gap = jnp.sum(
+            (law.flux(first, features) - law.flux(second, features)) * change, axis=1
+        )
+        assert bool(jnp.all(gap >= 0.6 * jnp.sum(change * change, axis=1) - 1e-10))
+    states = _states(4, scale=2.0)
+    blocks = law.derivative(states, features)
+    np.testing.assert_allclose(blocks, blocks.transpose(0, 2, 1), atol=1e-11)
+    assert float(jnp.min(jnp.linalg.eigvalsh(blocks))) >= 0.6 - 1e-10
+    # Genuine coupling across multiplicities: the first vector channel's flux
+    # responds to the second vector channel on every edge (a reversal-even
+    # v1.v2 interaction survives the odd symmetrization).
+    assert float(jnp.min(jnp.max(jnp.abs(blocks[:, 2:5, 5:8]), axis=(1, 2)))) > 1e-3
+    energy_gradient = jax.vmap(jax.grad(law.energy))(states, tangents, even, odd)
+    np.testing.assert_allclose(
+        energy_gradient, law.flux(states, features), rtol=1e-11, atol=1e-11
+    )
+    energy = jax.vmap(law.energy)(states, tangents, even, odd)
+    assert bool(jnp.all(energy >= 0.3 * jnp.sum(states * states, axis=1) - 1e-10))
+    linearized = law.linearize(states, features)
+    direction = _states(5)
+    np.testing.assert_allclose(
+        linearized.pushforward(direction),
+        jnp.einsum("eij,ej->ei", blocks, direction),
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    np.testing.assert_allclose(
+        linearized.pullback(direction),
+        jnp.einsum("eji,ej->ei", blocks, direction),
+        rtol=1e-11,
+        atol=1e-11,
+    )
+
+
+def test_coupled_lipschitz_bound_covers_the_whole_output_and_tracks_weights() -> None:
+    law = _lipschitz_law(background=2.0)
+    features = _cloud()
+    tangents, even, odd = features.tangents, features.even, features.odd
+    bound = float(law.certified_lipschitz_bound())
+    assert 0 < bound < float("inf")
+    np.testing.assert_allclose(law.lipschitz_bound(), 2.0 + bound)
+    np.testing.assert_allclose(law.monotonicity_lower_bound(), 2.0 - bound)
+    perturbation = jax.vmap(law.perturbation)
+    worst = 0.0
+    for seed in range(12):
+        first = _states(100 + seed, scale=4.0 / (seed + 1))
+        second = first + _states(200 + seed, scale=10.0 ** (-seed % 4))
+        change = jnp.linalg.norm(
+            perturbation(first, tangents, even, odd)
+            - perturbation(second, tangents, even, odd),
+            axis=1,
+        )
+        worst = max(
+            worst, float(jnp.max(change / jnp.linalg.norm(first - second, axis=1)))
+        )
+    assert worst <= bound
+    jacobians = law.derivative(_states(7, scale=0.3), features) - 2.0 * jnp.eye(
+        _STATE.packed_size
+    )
+    assert float(jnp.max(jnp.linalg.norm(jacobians, ord=2, axis=(1, 2)))) <= bound
+    assert law.network.output_layer.weight is not None
+    scaled = eqx.tree_at(
+        lambda value: value.network.output_layer.weight,
+        law,
+        3.0 * law.network.output_layer.weight,
+    )
+    np.testing.assert_allclose(
+        scaled.certified_lipschitz_bound(), 3.0 * bound, rtol=1e-12
+    )
+
+
+def test_coupled_laws_refuse_unsupported_and_conflicting_models() -> None:
+    features = _cloud()
+    context = features.even.shape[1] + features.odd.shape[1]
+    invariants = _monotone_law().invariants
+
+    def potential(**options: Any) -> PartiallyInputConvexNetwork:
+        settings: dict[str, Any] = {
+            "context_size": context,
+            "convex_size": invariants.size,
+            "width_size": 3,
+            "depth": 1,
+            "input_monotonicity": "nondecreasing",
+            "key": jr.key(4),
+        }
+        settings.update(options)
+        return PartiallyInputConvexNetwork(**settings)
+
+    with pytest.raises(ValueError, match="nondecreasing in every invariant"):
+        MonotoneCoupledEdgeFlux(invariants, potential(input_monotonicity="unconstrained"))
+    with pytest.raises(ValueError, match="softplus"):
+        MonotoneCoupledEdgeFlux(invariants, potential(activation="relu"))
+    with pytest.raises(ValueError, match="invariant vector"):
+        MonotoneCoupledEdgeFlux(invariants, potential(convex_size=invariants.size + 1))
+    with pytest.raises(TypeError, match="input-convex"):
+        MonotoneCoupledEdgeFlux(
+            invariants, cast(Any, Linear(in_size=1, out_size="scalar", rwf=False))
+        )
+    forged = eqx.tree_at(
+        lambda model: model.convex_input_layers[0].weight_transform,
+        potential(),
+        IdentityTransform(),
+    )
+    with pytest.raises(ValueError, match="positive convex-input weights"):
+        MonotoneCoupledEdgeFlux(invariants, forged)
+    external = eqx.tree_at(
+        lambda value: value.quadratic.weight,
+        invariants,
+        None,
+        is_leaf=lambda value: value is None,
+    )
+    with pytest.raises(ValueError, match="own its path weights"):
+        MonotoneCoupledEdgeFlux(external, potential())
+    # A general irrep product with a degree-three output block never matches the
+    # declared Cartesian layout, even though its low-degree blocks would.
+    irreps = O3IrrepLayout(
+        (
+            O3IrrepBlock("s", 0, 1),
+            O3IrrepBlock("p", 0, -1),
+            O3IrrepBlock("v", 1, -1, multiplicity=2),
+            O3IrrepBlock("a", 1, 1),
+            O3IrrepBlock("t", 2, 1),
+        )
+    )
+    frame = O3IrrepLayout(
+        (O3IrrepBlock("s", 0, 1), O3IrrepBlock("v", 1, -1), O3IrrepBlock("t", 2, 1))
+    )
+    high_degree = O3IrrepLayout((O3IrrepBlock("s", 0, 1), O3IrrepBlock("f", 3, -1)))
+    general = eqx.tree_at(
+        lambda value: value.quadratic,
+        invariants,
+        O3TensorProduct(O3TensorProductPlan(irreps, frame, high_degree), key=jr.key(8)),
+    )
+    with pytest.raises(ValueError, match="declared representation"):
+        MonotoneCoupledEdgeFlux(general, potential())
+    plan = invariants.quadratic.plan
+    rescaled = eqx.tree_at(
+        lambda value: value.quadratic,
+        invariants,
+        O3TensorProduct(
+            O3TensorProductPlan(
+                plan.left_representation,
+                plan.right_representation,
+                plan.output_representation,
+                paths=tuple(
+                    O3TensorProductPath(
+                        path.left, path.right, path.output, path_scale=2.0
+                    )
+                    for path in plan.paths
+                ),
+            ),
+            key=jr.key(9),
+        ),
+    )
+    with pytest.raises(ValueError, match="unit-scale paths"):
+        MonotoneCoupledEdgeFlux(rescaled, potential())
+    law = MonotoneCoupledEdgeFlux(invariants, potential(), odd_size=features.odd.shape[1])
+    with pytest.raises(ValueError, match="three-dimensional"):
+        law.flux(jnp.zeros((8, _STATE.packed_size)), _cloud(dimension=2))
+    with pytest.raises(ValueError, match="feature widths"):
+        law.flux(
+            jnp.zeros((8, _STATE.packed_size)),
+            EdgeFrameFeatures(features.points, features.pairs),
+        )
+    with pytest.raises(ValueError, match="no legal"):
+        O3EdgeInvariants(
+            O3Representation(pseudovectors=1),
+            quadratic_representation=O3Representation(scalars=1),
+            linear_count=1,
+            key=jr.key(5),
+        )
+    with pytest.raises(ValueError, match="polar scalar, vector, or tensor"):
+        O3EdgeNetwork(_STATE, O3Representation(pseudovectors=2), key=jr.key(6))
+    network = O3EdgeNetwork(
+        _STATE, O3Representation(scalars=2, vectors=1), context_size=1, key=jr.key(7)
+    )
+    with pytest.raises(ValueError, match="even then odd"):
+        LipschitzCoupledEdgeFlux(network, even_size=1, odd_size=1)
+    with pytest.raises(TypeError, match="O3EdgeNetwork"):
+        LipschitzCoupledEdgeFlux(cast(Any, invariants))

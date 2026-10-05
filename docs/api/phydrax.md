@@ -345,7 +345,15 @@ reduction, including when their stored payloads are non-finite.
 `SparseLinearMap` attaches scalar route coefficients and exposes forward,
 transpose, and conjugate-adjoint actions while preserving trailing payload
 dimensions. `SparseCoordinateOperator` binds the same route algebra to
-`phydrax.linalg` spaces and pairing-aware adjoints. Provider-neutral
+`phydrax.linalg` spaces and pairing-aware adjoints. When its relation is
+host-prepared, construction also fixes one output-major, fixed-width row-gather
+layout per direction: by target row for `mv` and by source column for
+`transpose_mv` and `adjoint_mv`. Each output then sums its routes sequentially
+in route order, which is deterministic on every backend. On CPU the scalar
+result is bitwise equal to the route scatter. A direction whose widest row
+would pad past twice its routes plus outputs keeps the route scatter, as does a
+relation built from traced indices. The layout arrays count toward the
+operator's resident storage. Provider-neutral
 `SparsePattern`, `SparseColoring`, and `SparseDerivativePlan` artifacts support
 native global structural tracing, deterministic coloring, and compressed JAX
 evaluation.

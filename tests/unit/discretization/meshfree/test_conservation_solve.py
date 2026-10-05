@@ -12,18 +12,31 @@ from examples.meshfree_learned_edge_flux import prepare_recovery
 from phydrax.discretization.meshfree._conservation_solve import (
     MeshfreeConservationProblem,
     MeshfreeContractionStatus,
+    MeshfreeCoupledConservationProblem,
     prepare_meshfree_conservation_solve,
+    prepare_meshfree_coupled_conservation_solve,
 )
 from phydrax.discretization.meshfree._constitutive import (
+    AbstractCoupledEdgeConstitutiveLaw,
     EdgeFeatureField,
     EdgeFrameFeatures,
+    LipschitzCoupledEdgeFlux,
     LipschitzEdgeFlux,
+    MonotoneCoupledEdgeFlux,
     MonotoneEdgeConductance,
+    O3EdgeInvariants,
+    O3EdgeNetwork,
 )
 from phydrax.discretization.meshfree._coverage import EdgeFeatureCoverage
+from phydrax.discretization.meshfree._exterior import (
+    MeshfreeCoercivityPolicy,
+    MeshfreeExteriorCalculusPlan,
+    PreparedMeshfreeExteriorCalculus,
+)
 from phydrax.nn.layers import Linear
 from phydrax.nn.models import PartiallyInputConvexNetwork
-from phydrax.nonlinear import NonlinearStatus
+from phydrax.nn.operator.representations import O3Representation
+from phydrax.nonlinear import NonlinearStatus, NonlinearTermination
 from phydrax.solver.coupling import ParameterBinding, RuntimeInput
 from phydrax.units import DIMENSIONLESS
 
@@ -320,3 +333,350 @@ def test_background_solve_and_true_energy_contraction_distinguish_uncertified_bo
         MeshfreeContractionStatus.CONTRACT_UNCERTIFIED
     )
     assert not bool(high.constitutive_evidence.coercivity_certified)
+
+
+def test_unassessed_background_keeps_converged_root_without_property_claims() -> None:
+    side = np.arange(5, dtype=np.float64) / 4
+    points = np.stack(np.meshgrid(side, side, indexing="ij"), axis=-1).reshape(-1, 2)
+    ring = np.any((points == 0) | (points == 1), axis=1)
+    exterior = MeshfreeExteriorCalculusPlan(
+        points,
+        1.01 / 4,
+        80,
+        node_volumes=np.full(25, 1 / 25),
+        dirichlet=ring,
+        coercivity_policy=MeshfreeCoercivityPolicy("unassessed"),
+    ).prepare()
+    model = Linear(in_size=1, out_size="scalar", activation=jax.nn.tanh, rwf=False)
+    model = eqx.tree_at(
+        lambda layer: (layer.weight, layer.bias),
+        model,
+        (jnp.asarray([[0.2]]), jnp.asarray([0.4])),
+    )
+    law = LipschitzEdgeFlux(model, background_conductance=1.0)
+    problem = MeshfreeConservationProblem(exterior, law, source=1.0, boundary_values=0.0)
+    solved = prepare_meshfree_conservation_solve(problem).solve()
+    # The root and the background solve converge; no property audit was run.
+    assert bool(solved.accepted)
+    assert int(solved.primal_status) == int(NonlinearStatus.SUCCESS)
+    assert float(solved.ledger.maximum_equation_defect) < 1e-9
+    evidence = solved.constitutive_evidence
+    assert not bool(evidence.background_assessed)
+    assert int(evidence.background_factor_status) == -1
+    assert bool(evidence.anchored)
+    assert not bool(evidence.coercivity_certified)
+    assert int(evidence.contraction_status) == int(
+        MeshfreeContractionStatus.CONTRACT_UNCERTIFIED
+    )
+
+
+_COUPLED_STATE = O3Representation(scalars=1, vectors=1)
+_TIGHT = NonlinearTermination(
+    absolute_residual=1e-11, relative_residual=1e-11, maximum_steps=64
+)
+
+
+def _coupled_cloud() -> tuple[PreparedMeshfreeExteriorCalculus, EdgeFrameFeatures]:
+    # 57 lattice nodes; the 19 nodes with complete axial stars are equations.
+    exterior = prepare_recovery(size=57, dimension=3, seed=1).prepared.problem.exterior
+    material = np.sin(np.asarray(exterior.points) @ np.asarray([1.0, 2.0, 3.0]))
+    features = EdgeFrameFeatures(
+        exterior.points,
+        exterior.pairs,
+        (EdgeFeatureField("external-material", "scalar"),),
+        (material,),
+        source_id=exterior.incidence.source.space_id,
+    )
+    return exterior, features
+
+
+def _coupled_law(
+    family: str, features: EdgeFrameFeatures
+) -> AbstractCoupledEdgeConstitutiveLaw:
+    even, odd = features.even.shape[1], features.odd.shape[1]
+    if family == "monotone":
+        invariants = O3EdgeInvariants(
+            _COUPLED_STATE,
+            quadratic_representation=O3Representation(scalars=2, vectors=1),
+            linear_count=1,
+            key=jax.random.key(0),
+        )
+        potential = PartiallyInputConvexNetwork(
+            context_size=even + odd,
+            convex_size=invariants.size,
+            width_size=4,
+            depth=1,
+            input_monotonicity="nondecreasing",
+            key=jax.random.key(1),
+        )
+        return MonotoneCoupledEdgeFlux(
+            invariants, potential, background_conductance=0.7, odd_size=odd
+        )
+    network = O3EdgeNetwork(
+        _COUPLED_STATE,
+        O3Representation(scalars=2, vectors=1),
+        context_size=even + odd,
+        key=jax.random.key(2),
+    )
+    return LipschitzCoupledEdgeFlux(
+        network, even_size=even, odd_size=odd, background_conductance=2.0
+    )
+
+
+def test_coupled_monotone_law_block_solve_ledgers_and_implicit_adjoint() -> None:
+    exterior, features = _coupled_cloud()
+    law = _coupled_law("monotone", features)
+    count = exterior.points.shape[0]
+    rng = np.random.default_rng(3)
+    port = phx.ValuePort(
+        "coupled-strength",
+        event_shape=(),
+        component_ids=("strength",),
+        representation="positive-scalar",
+        dimensions=(DIMENSIONLESS,),
+    )
+    binding = ParameterBinding(
+        "strength",
+        port,
+        targets=(RuntimeInput("meshfree", "conductance"),),
+        role="coefficient",
+        derivative=phx.DerivativeSurface.PHYSICAL_PARAMETER,
+    )
+    problem = MeshfreeCoupledConservationProblem(
+        exterior,
+        law,
+        features=features,
+        source=rng.normal(size=(count, 4)),
+        boundary_values=rng.normal(size=(count, 4)),
+        parameter_bindings=(binding,),
+    )
+    prepared = prepare_meshfree_coupled_conservation_solve(
+        problem, parameters={"strength": jnp.asarray(1.0)}, termination=_TIGHT
+    )
+    free = prepared.residual.free_indices
+    assert free.size == 19
+    coefficient = jnp.asarray(1.3)
+    solved = prepared.solve(parameters={"strength": coefficient})
+    assert bool(solved.accepted)
+    assert solved.state.shape == (count, 4)
+    np.testing.assert_array_equal(
+        np.asarray(solved.state)[np.asarray(problem.boundary_mask)],
+        np.asarray(problem.boundary_values)[np.asarray(problem.boundary_mask)],
+    )
+    # Independent host ledger: integrated edge flux per component.
+    pairs = np.asarray(exterior.pairs)
+    flux = np.asarray(solved.edge_flux)
+    integrated = np.zeros((count, 4))
+    np.add.at(integrated, pairs[:, 0], flux)
+    np.add.at(integrated, pairs[:, 1], -flux)
+    sources = np.asarray(exterior.node_volumes)[:, None] * np.asarray(problem.source)
+    np.testing.assert_allclose(
+        integrated[np.asarray(free)], sources[np.asarray(free)], atol=1e-9
+    )
+    assert solved.ledger.balance_defect.shape == (4,)
+    np.testing.assert_allclose(solved.ledger.balance_defect, 0.0, atol=1e-9)
+    np.testing.assert_allclose(solved.ledger.internal_flux_sum, 0.0, atol=1e-10)
+    evidence = solved.constitutive_evidence
+    assert bool(evidence.background_assessed) and bool(evidence.coercivity_certified)
+    np.testing.assert_allclose(evidence.strong_monotonicity_lower_bound, 0.7)
+    cotangent = jnp.asarray(rng.normal(size=(count, 4)))
+
+    def objective(value: jax.Array) -> jax.Array:
+        return jnp.vdot(cotangent, prepared.solve(parameters={"strength": value}).state)
+
+    implicit = jax.grad(objective)(coefficient)
+    step = 1e-5
+    central = (objective(coefficient + step) - objective(coefficient - step)) / (2 * step)
+    np.testing.assert_allclose(implicit, central, rtol=1e-5, atol=1e-9)
+    adjoint = prepared.adjoint(solved, cotangent, parameters={"strength": coefficient})
+    assert bool(adjoint.accepted) and adjoint.value.shape == (19, 4)
+    # dR/dc = (B^T kron I)(a F)/c at the root, so dJ/dc = -<lambda, dR/dc>.
+    explicit = -jnp.vdot(adjoint.value, jnp.asarray(integrated)[free] / coefficient)
+    np.testing.assert_allclose(implicit, explicit, rtol=1e-7, atol=1e-10)
+
+
+def test_coupled_lipschitz_root_converges_without_contraction_certificate() -> None:
+    exterior, features = _coupled_cloud()
+    law = _coupled_law("lipschitz", features)
+    count = exterior.points.shape[0]
+    rng = np.random.default_rng(5)
+    problem = MeshfreeCoupledConservationProblem(
+        exterior,
+        law,
+        features=features,
+        source=0.1 * rng.normal(size=(4,)),
+        boundary_values=0.1 * rng.normal(size=(count, 4)),
+    )
+    # L/b > 1 and b - L < 0: no contraction or monotonicity is certified, yet
+    # Newton converges to a root of the original equations for this data.
+    solved = prepare_meshfree_coupled_conservation_solve(
+        problem, termination=_TIGHT
+    ).solve()
+    assert bool(solved.accepted)
+    assert float(jnp.max(solved.ledger.maximum_equation_defect)) < 1e-9
+    evidence = solved.constitutive_evidence
+    assert bool(evidence.background_assessed)
+    assert float(evidence.contraction_bound) > 1.0
+    assert int(evidence.contraction_status) == int(
+        MeshfreeContractionStatus.CONTRACT_UNCERTIFIED
+    )
+    assert not bool(evidence.coercivity_certified)
+
+
+def test_coupled_law_refuses_planar_frames_and_foreign_component_data() -> None:
+    exterior, features = _coupled_cloud()
+    law = _coupled_law("lipschitz", features)
+    with pytest.raises(ValueError, match="packed component vector"):
+        MeshfreeCoupledConservationProblem(
+            exterior, law, features=features, source=np.zeros(3)
+        )
+    planar = prepare_recovery(size=9, dimension=2).prepared.problem
+    planar_features = EdgeFrameFeatures(
+        planar.exterior.points,
+        planar.exterior.pairs,
+        (EdgeFeatureField("external-material", "scalar"),),
+        (np.zeros(9),),
+        source_id=planar.exterior.incidence.source.space_id,
+    )
+    with pytest.raises(ValueError, match="three-dimensional"):
+        MeshfreeCoupledConservationProblem(planar.exterior, law, features=planar_features)
+
+
+def test_runtime_metric_weights_have_implicit_gradient_and_refuse_nonpositive() -> None:
+    recovery = prepare_recovery(size=12, dimension=2, seed=5)
+    original = recovery.prepared.problem
+    exterior = original.exterior
+    edges = exterior.lengths.size
+    port = phx.ValuePort(
+        "corrected-metric",
+        event_shape=(edges,),
+        component_ids=tuple(f"edge-{index}" for index in range(edges)),
+        representation="positive-edge-metric",
+    )
+    binding = ParameterBinding(
+        "metric",
+        port,
+        targets=(RuntimeInput("meshfree", "metric_weights"),),
+        role="coefficient",
+        derivative=phx.DerivativeSurface.PHYSICAL_PARAMETER,
+    )
+    problem = MeshfreeConservationProblem(
+        exterior,
+        original.law,
+        features=original.features,
+        source=original.source,
+        boundary_values=recovery.reference,
+        parameter_bindings=(binding,),
+        problem_id="corrected-metric-recovery",
+    )
+    base = exterior.metric_result.weights
+    prepared = prepare_meshfree_conservation_solve(
+        problem, parameters={"metric": base}, termination=_TIGHT
+    )
+    pattern = jnp.cos(jnp.arange(edges, dtype=jnp.float64))
+
+    def state(theta: jax.Array) -> jax.Array:
+        weights = base * jnp.exp(theta * pattern)
+        return prepared.solve(parameters={"metric": weights}).state
+
+    cotangent = jnp.linspace(0.2, 1.0, exterior.points.shape[0])
+    point = jnp.asarray(0.1)
+    gradient = jax.grad(lambda theta: jnp.vdot(cotangent, state(theta)))(point)
+    step = 1e-5
+    central = (
+        jnp.vdot(cotangent, state(point + step))
+        - jnp.vdot(cotangent, state(point - step))
+    ) / (2 * step)
+    np.testing.assert_allclose(gradient, central, rtol=1e-5, atol=1e-9)
+    assert abs(float(gradient)) > 1e-8
+    corrected = prepared.solve(parameters={"metric": base * jnp.exp(0.1 * pattern)})
+    assert bool(corrected.accepted)
+    # The coercivity factor is numerically refreshed at the runtime metric.
+    evidence = corrected.constitutive_evidence
+    assert bool(evidence.background_assessed) and bool(evidence.coercivity_certified)
+    refused = prepared.solve(parameters={"metric": base.at[0].set(-1e-3)}, implicit=False)
+    assert not bool(refused.accepted)
+    assert not bool(refused.constitutive_evidence.positive_metric)
+    assert bool(jnp.all(jnp.isnan(refused.state)))
+
+
+def _incidence_balance(pairs: np.ndarray, edge: jax.Array, count: int) -> jax.Array:
+    """Independent ``B.T edge``: minus at each first endpoint, plus at the second."""
+    zeros = jnp.zeros((count,) + edge.shape[1:], dtype=edge.dtype)
+    return zeros.at[pairs[:, 0]].add(-edge).at[pairs[:, 1]].add(edge)
+
+
+def test_streamed_edge_laws_match_incidence_reference_on_fragmented_tiles() -> None:
+    # Two receivers and three events per tile fragment every high-degree node.
+    tiles = phx.sparse.StreamedRelationPlan(receiver_tile=2, edge_tile=3)
+    exterior, features = _coupled_cloud()
+    pairs = np.asarray(exterior.pairs)
+    count = exterior.points.shape[0]
+    rng = np.random.default_rng(17)
+    for family in ("monotone", "lipschitz"):
+        law = _coupled_law(family, features)
+        problem = MeshfreeCoupledConservationProblem(
+            exterior,
+            law,
+            features=features,
+            source=rng.normal(size=(count, 4)),
+            boundary_values=rng.normal(size=(count, 4)),
+        )
+        residual = prepare_meshfree_coupled_conservation_solve(
+            problem, termination=_TIGHT, execution=tiles
+        ).residual
+        args = problem.runtime()
+        state = jnp.asarray(rng.normal(size=(residual.free_indices.size * 4,)))
+
+        def reference(state: jax.Array) -> tuple[jax.Array, jax.Array]:
+            full = residual.reconstruct(state, args)
+            edge = (
+                args.conductance
+                * args.metric_weights[:, None]
+                * law.flux(full[pairs[:, 1]] - full[pairs[:, 0]], features)
+            )
+            return _incidence_balance(pairs, edge, count), -edge
+
+        observed, expected = residual.integrated_flux(state, args), reference(state)
+        for actual, wanted in zip(observed, expected, strict=True):
+            np.testing.assert_allclose(actual, wanted, rtol=1e-12, atol=1e-12)
+        # Action and reaction of every edge cancel in the total balance.
+        np.testing.assert_allclose(jnp.sum(observed[0], axis=0), 0.0, atol=1e-11)
+        tangent = jnp.asarray(rng.normal(size=state.shape))
+        np.testing.assert_allclose(
+            jax.jvp(lambda s: residual.integrated_flux(s, args)[0], (state,), (tangent,))[
+                1
+            ],
+            jax.jvp(lambda s: reference(s)[0], (state,), (tangent,))[1],
+            rtol=1e-11,
+            atol=1e-11,
+        )
+    recovery = prepare_recovery(size=12, dimension=2, seed=5)
+    problem = recovery.prepared.problem
+    parameters = {"constitutive-strength": jnp.asarray(1.3)}
+    tiled = prepare_meshfree_conservation_solve(
+        problem, parameters=parameters, execution=tiles
+    )
+    scalar_args = problem.runtime(parameters=parameters)
+    scalar_pairs = np.asarray(problem.exterior.pairs)
+    full = jnp.asarray(rng.normal(size=problem.source.shape), dtype=jnp.float64)
+    edge = (
+        scalar_args.conductance
+        * scalar_args.metric_weights
+        * tiled.residual.bound_law(scalar_args).flux(
+            full[scalar_pairs[:, 1]] - full[scalar_pairs[:, 0]], problem.features
+        )
+    )
+    integrated, flux = tiled.residual.full_balance(full, scalar_args)
+    np.testing.assert_allclose(flux, edge, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        integrated,
+        _incidence_balance(scalar_pairs, edge, problem.source.shape[0]),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    default = recovery.prepared.solve(parameters=parameters)
+    fragmented = tiled.solve(parameters=parameters)
+    assert bool(default.accepted) and bool(fragmented.accepted)
+    # Both roots are converged to the recovery's Newton termination, not bitwise.
+    np.testing.assert_allclose(fragmented.state, default.state, rtol=0.0, atol=1e-9)

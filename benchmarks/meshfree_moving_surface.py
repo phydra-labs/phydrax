@@ -9,23 +9,81 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
 from benchmarks._io import write_json_atomic
-from benchmarks._runtime import logical_array_bytes, measure_synchronized
+from benchmarks._runtime import logical_array_bytes
 from benchmarks.meshfree_scaling import (
     add_config_arguments,
     apply_baseline,
     config_from_arguments,
-    execution_evidence,
+    configure_precision,
     make_record,
-    measured_phase,
     MeshfreeConfig,
-    unavailable_phases,
+    PhaseRecorder,
 )
+from phydrax.discretization.meshfree import MovingSurfacePlan, MovingSurfaceState
+from phydrax.solver.advanced import AdditiveIMEXScheme
+
+
+_COMPILED_STEP = eqx.filter_jit(MovingSurfacePlan.step)
+
+
+def _step_concentration(
+    plan: MovingSurfacePlan,
+    state: MovingSurfaceState,
+    dt: Array,
+    content: Array,
+    /,
+) -> Array:
+    candidate = eqx.tree_at(lambda old: old.content, state, content)
+    return _COMPILED_STEP(plan, candidate, dt).state.concentration
+
+
+def _method_record(
+    method: AdditiveIMEXScheme,
+    capacity: int,
+    seed: int,
+    config: MeshfreeConfig,
+    analytic: float,
+    /,
+) -> dict[str, Any]:
+    from examples.meshfree_moving_surface_reaction_diffusion import prepare_workflow
+
+    plan, state = prepare_workflow(size=capacity, dimension=3, seed=seed, method=method)
+    dt = jnp.asarray(0.01, dtype=state.content.dtype)
+
+    step = eqx.Partial(_step_concentration, plan, state, dt)
+
+    recorder = PhaseRecorder()
+    result, execution = recorder.compiled_action(
+        step,
+        state.content,
+        budget_bytes=config.resource_bytes,
+        repeats=config.repeats,
+        scope=method,
+    )
+    actual = np.asarray(result)
+    full_step = recorder.run(
+        "solve",
+        lambda: _COMPILED_STEP(plan, state, dt),
+        scope=f"{method}-full-step-evidence",
+    )
+    if not bool(np.asarray(full_step.evidence.successful)):
+        raise AssertionError(f"Native moving surface {method} step refused.")
+    return {
+        "phases": recorder.record(),
+        **execution,
+        "stage_count": plan.tableau.stage_count,
+        "concentration_error": float(np.max(np.abs(actual - analytic))),
+        "successful": bool(np.asarray(full_step.evidence.successful)),
+        "conservation_defect": float(
+            abs(np.asarray(full_step.evidence.conservation_residual))
+        ),
+        "gcl_defect": float(np.asarray(full_step.evidence.gcl_defect)),
+    }
 
 
 def measure_capacity(
@@ -34,6 +92,7 @@ def measure_capacity(
     from examples.meshfree_moving_surface_reaction_diffusion import (
         perform_epoch_transition,
         perform_shift,
+        prepare_shift_plan,
         prepare_workflow,
     )
     from examples.meshfree_surface_laplace_beltrami import surface_plan
@@ -44,10 +103,25 @@ def measure_capacity(
     plan = surface_plan(
         size=capacity, seed=seed, neighbors=config.neighbors, chunk_rows=config.chunk_rows
     )
-    surface, surface_seconds = measure_synchronized(plan.prepare)
+    surface_recorder = PhaseRecorder()
+    surface = surface_recorder.run(
+        "geometry",
+        plan.prepare,
+        scope="surface-neighbor,geometry,quadrature,intrinsic-stencils",
+    )
+    for phase in ("search", "local-fit"):
+        surface_recorder.unavailable(
+            phase, "SurfacePointCloudPlan exposes joint geometry/support admission"
+        )
     values = surface.points[:, 0]
-    surface_execution = execution_evidence(surface.laplace_beltrami.mv, values, config)
-    surface_actual = np.asarray(surface_execution.pop("result"))
+    surface_result, surface_execution = surface_recorder.compiled_action(
+        surface.laplace_beltrami.mv,
+        values,
+        budget_bytes=config.resource_bytes,
+        repeats=config.repeats,
+        scope="laplace-beltrami",
+    )
+    surface_actual = np.asarray(surface_result)
     expected = -2 * np.asarray(values)
     surface_error = float(
         np.linalg.norm(surface_actual - expected) / np.linalg.norm(expected)
@@ -58,44 +132,60 @@ def measure_capacity(
         )
     # A same-support numeric refresh is a genuine owner operation even when the
     # coordinates are unchanged; no fictitious rebuild/compilation is counted.
-    refreshed_surface, surface_refresh_seconds = measure_synchronized(
-        lambda: surface.refresh(surface.points)
+    refreshed_surface = surface_recorder.run(
+        "numeric-refresh", lambda: surface.refresh(surface.points)
     )
     if not bool(np.asarray(refreshed_surface.accepted)):
         raise AssertionError("Fixed-support surface numeric refresh refused.")
-    prepared_workflow, preparation_seconds = measure_synchronized(
-        lambda: prepare_workflow(size=capacity, dimension=3, seed=seed)
+    moving_recorder = PhaseRecorder()
+    prepared_workflow = moving_recorder.run(
+        "assembly",
+        lambda: prepare_workflow(size=capacity, dimension=3, seed=seed),
+        scope="native-moving-graph-and-initial-state-preparation",
     )
-    moving_plan, state, pairs = prepared_workflow
+    moving_plan, state = prepared_workflow
     dt = jnp.asarray(0.01, dtype=state.content.dtype)
-
-    def step(content: Array) -> Array:
-        candidate = eqx.tree_at(lambda old: old.content, state, content)
-        return moving_plan.step(candidate, dt).state.content
-
-    moving_execution = execution_evidence(step, state.content, config)
-    moving_actual = np.asarray(moving_execution.pop("result"))
-    full_step, status_seconds = measure_synchronized(lambda: moving_plan.step(state, dt))
+    time = 0.01
+    analytic = np.exp(-0.1 * time) / (1 + 0.2 * time) ** 2
+    # Every selected stage rule refreshes geometry at its own stages and binds
+    # the one prepared implicit solve template; record each separately.
+    methods = {
+        method: _method_record(method, capacity, seed, config, analytic)
+        for method in ("forward-backward-euler", "ars-222", "ars-443")
+    }
+    full_step = moving_recorder.run(
+        "solve",
+        lambda: _COMPILED_STEP(moving_plan, state, dt),
+        scope="full step with status",
+    )
     if not bool(np.asarray(full_step.evidence.successful)):
         raise AssertionError("Native moving surface step refused.")
-    geometry, geometry_seconds = measure_synchronized(
-        lambda: moving_plan.geometry_refresh(state, state.time + dt, dt, None)
+    geometry = moving_recorder.run(
+        "numeric-refresh",
+        lambda: moving_plan.geometry(state.points, state.time + dt, None),
+        scope="moving geometry refresh",
     )
     if not bool(np.asarray(geometry.successful)):
         raise AssertionError("Native moving numeric geometry refresh refused.")
-    epoch, epoch_seconds = measure_synchronized(
-        lambda: perform_epoch_transition(moving_plan, full_step.state, seed=seed)
+    epoch_transition = moving_recorder.run(
+        "epoch-commit",
+        lambda: perform_epoch_transition(moving_plan, full_step.state, seed=seed),
+        scope="transfer preparation and atomic historical commit",
     )
+    _next_plan, epoch = epoch_transition
     if not epoch.successful:
         raise AssertionError("Native atomic historical epoch transfer refused.")
-    shifted, shift_seconds = measure_synchronized(lambda: perform_shift(full_step.state))
+    shift_plan = prepare_shift_plan(moving_plan)
+    shifted = moving_recorder.run(
+        "transfer",
+        lambda: perform_shift(shift_plan, full_step.state),
+        scope="tangential surface shift through the native stage rule",
+    )
     shifted_state, shift = shifted
-    if not bool(np.asarray(shift.successful)):
+    if not all(bool(np.asarray(item.successful)) for item in shift):
         raise AssertionError("Native tangential surface shift refused.")
-    radius = 1 + 0.2 * float(np.asarray(full_step.state.time))
-    analytic = np.exp(-0.1 * float(np.asarray(full_step.state.time))) / radius**2
     concentration_error = float(
-        np.max(np.abs(moving_actual / np.asarray(full_step.state.measures) - analytic))
+        np.max(np.abs(np.asarray(full_step.state.concentration) - analytic))
     )
     conservation = float(abs(np.asarray(full_step.evidence.conservation_residual)))
     epoch_conservation = float(np.max(np.abs(np.asarray(epoch.conservation_residuals))))
@@ -118,28 +208,8 @@ def measure_capacity(
         raise ValueError(
             "Visible retained surface/lifecycle arrays exceed working-set budget."
         )
-    surface_phases = unavailable_phases()
-    surface_phases.update(surface_execution.pop("phases"))
-    surface_phases["stencil"] = {
-        **measured_phase(surface_seconds),
-        "scope": "surface-neighbor,geometry,quadrature,intrinsic-stencils",
-    }
-    surface_phases["neighbor"] = {
-        "status": "unavailable",
-        "reason": "SurfacePointCloudPlan exposes joint geometry/support admission",
-    }
-    surface_phases["numeric-refresh"] = measured_phase(surface_refresh_seconds)
-    moving_phases = unavailable_phases()
-    moving_phases.update(moving_execution.pop("phases"))
-    moving_phases["assembly"] = {
-        **measured_phase(preparation_seconds),
-        "scope": "native-moving-graph-and-initial-state-preparation",
-    }
-    moving_phases["numeric-refresh"] = measured_phase(geometry_seconds)
-    moving_phases["epoch-transition"] = {
-        **measured_phase(epoch_seconds),
-        "includes_transfer_preparation": True,
-    }
+    surface_phases = surface_recorder.record()
+    moving_phases = moving_recorder.record()
     return {
         "capacity": capacity,
         "seed": seed,
@@ -148,7 +218,10 @@ def measure_capacity(
         "reserved_working_set_bytes": reservation,
         "retained_bytes": None,
         "retained_visible_bytes": retained_visible,
-        "retained_bytes_unavailable_reason": "Native moving callbacks capture operator arrays outside the runtime object walker",
+        "retained_bytes_unavailable_reason": (
+            "Visible PyTree arrays are measured; static preparation and "
+            "compiled/provider cache payloads are not fully traversed"
+        ),
         "surface": {
             "phases": surface_phases,
             **surface_execution,
@@ -156,9 +229,7 @@ def measure_capacity(
         },
         "moving": {
             "phases": moving_phases,
-            **moving_execution,
-            "status_execution_seconds": status_seconds,
-            "shift_seconds": shift_seconds,
+            "methods": methods,
             "concentration_error": concentration_error,
             "conservation_defect": conservation,
             "epoch_conservation_defect": epoch_conservation,
@@ -169,7 +240,7 @@ def measure_capacity(
 
 
 def run(config: MeshfreeConfig = MeshfreeConfig(dimension=3), /) -> dict[str, Any]:
-    jax.config.update("jax_enable_x64", config.precision == "float64")
+    configure_precision(config, supported=("float64",))
     import examples.meshfree_moving_surface_reaction_diffusion as moving_consumer
     import examples.meshfree_surface_laplace_beltrami as surface_consumer
 

@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from fractions import Fraction
+from functools import lru_cache
 from numbers import Integral
+from typing import NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -36,33 +40,53 @@ def su2_fusion(left: int, right: int, /) -> tuple[int, ...]:
 
 
 def _triangle(left: int, right: int, output: int, /) -> bool:
-    return output in su2_fusion(left, right)
+    """Scalar fusion legality: triangle bounds and doubled-spin parity."""
+
+    a, b, c = _spin(left), _spin(right), _spin(output)
+    return abs(a - b) <= c <= a + b and (a + b + c) % 2 == 0
 
 
 def _fact(value: int) -> int:
     return math.factorial(value) if value >= 0 else 0
 
 
-def su2_clebsch_gordan(left: int, right: int, output: int, /) -> Array:
-    """Deterministic Condon--Shortley CG table for doubled spins."""
+class _SU2CouplingEntry(NamedTuple):
+    """One exactly nonzero Condon--Shortley coefficient.
+
+    The coefficient equals ``sign * sqrt(square)``; ``square`` is the exact
+    rational square from Racah's closed form, so mathematical zeros are omitted
+    by exact arithmetic rather than by a floating-point threshold.
+    """
+
+    left: int
+    right: int
+    output: int
+    sign: int
+    square: Fraction
+
+
+@lru_cache(maxsize=None)
+def _su2_clebsch_gordan_entries(
+    left: int, right: int, output: int, /
+) -> tuple[_SU2CouplingEntry, ...]:
+    """Exact nonzero CG entries for doubled spins, ordered by projection index."""
 
     a, b, c = _spin(left), _spin(right), _spin(output)
     if not _triangle(a, b, c):
         raise ValueError("Requested SU2 fusion channel is forbidden.")
-    table = jnp.zeros((a + 1, b + 1, c + 1), dtype=jnp.float64)
+    x1 = (a + b - c) // 2
+    x2 = (c + a - b) // 2
+    x3 = (c - a + b) // 2
+    triangle = Fraction(
+        (c + 1) * _fact(x1) * _fact(x2) * _fact(x3), _fact((a + b + c) // 2 + 1)
+    )
+    entries: list[_SU2CouplingEntry] = []
     for ia, ma in enumerate(range(-a, a + 1, 2)):
         for ib, mb in enumerate(range(-b, b + 1, 2)):
             total_m = ma + mb
             if abs(total_m) > c or (total_m + c) % 2:
                 continue
-            ic = (total_m + c) // 2
-            x1 = (a + b - c) // 2
-            x2 = (c + a - b) // 2
-            x3 = (c - a + b) // 2
-            prefactor = math.sqrt(
-                (c + 1) * _fact(x1) * _fact(x2) * _fact(x3) / _fact((a + b + c) // 2 + 1)
-            )
-            prefactor *= math.sqrt(
+            projections = (
                 _fact((c + total_m) // 2)
                 * _fact((c - total_m) // 2)
                 * _fact((a - ma) // 2)
@@ -70,7 +94,7 @@ def su2_clebsch_gordan(left: int, right: int, output: int, /) -> Array:
                 * _fact((b - mb) // 2)
                 * _fact((b + mb) // 2)
             )
-            terms = []
+            total = Fraction(0)
             for k in range(x1 + 1):
                 arguments = (
                     k,
@@ -82,11 +106,44 @@ def su2_clebsch_gordan(left: int, right: int, output: int, /) -> Array:
                 )
                 if any(value < 0 for value in arguments):
                     continue
-                terms.append(
-                    ((-1.0) ** k) / math.prod(_fact(value) for value in arguments)
+                total += Fraction(
+                    (-1) ** k, math.prod(_fact(value) for value in arguments)
                 )
-            table = table.at[ia, ib, ic].set(prefactor * math.fsum(terms))
-    return table
+            if total == 0:
+                continue
+            entries.append(
+                _SU2CouplingEntry(
+                    left=ia,
+                    right=ib,
+                    output=(total_m + c) // 2,
+                    sign=1 if total > 0 else -1,
+                    square=triangle * projections * total * total,
+                )
+            )
+    return tuple(entries)
+
+
+def _exact_root(square: Fraction, /) -> float:
+    return math.sqrt(square.numerator / square.denominator)
+
+
+def su2_clebsch_gordan(left: int, right: int, output: int, /) -> Array:
+    """Deterministic Condon--Shortley CG table for doubled spins.
+
+    Entries are evaluated from exact rational squares, so accidentally
+    vanishing projections are exact zeros. A forbidden fusion channel raises
+    `ValueError` from scalar triangle/parity legality before the dense table is
+    allocated.
+    """
+
+    a, b, c = _spin(left), _spin(right), _spin(output)
+    entries = _su2_clebsch_gordan_entries(a, b, c)
+    table = np.zeros((a + 1, b + 1, c + 1), dtype=np.float64)
+    for entry in entries:
+        table[entry.left, entry.right, entry.output] = entry.sign * _exact_root(
+            entry.square
+        )
+    return jnp.asarray(table, dtype=jnp.float64)
 
 
 def su2_wigner_3j(

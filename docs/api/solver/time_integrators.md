@@ -203,11 +203,35 @@ tail and retains the last complete endpoint.
 `FixedStepReplayPolicy("block", block_size=...)` retains block-boundary carries and
 recomputes each block. Replay does not change primal values or output retention.
 
+Native method evidence (`FixedStepResult.evidence`) survives under a declared
+bound, `evidence_retention`:
+
+- `"terminal"` (default) keeps the evidence of the last committed step and, as a
+  separate record, of the step whose refusal stopped the rollout, with their step
+  indices (-1 when absent); storage is independent of the step count;
+- `"steps"` also stacks one record per step with a committed mask; entries after
+  the refusal re-evaluate the held state and are not part of the trajectory;
+- `"none"` keeps no method evidence.
+
+`retry_fixed_step` keeps every attempt's evidence and native acceptance along
+the policy's static attempt axis; `evidence` is that of the selected attempt
+(accepted when `successful`, otherwise the last refusal).
+`inactive_fixed_step_retry` returns a held transition with the identical PyTree
+structure for branches that execute no attempt.
+
 ::: phydrax.solver.FixedStepRolloutPlan
 
 ---
 
 ::: phydrax.solver.FixedStepRolloutResult
+
+---
+
+::: phydrax.solver.FixedStepEvidence
+
+---
+
+::: phydrax.solver.FixedStepEvidenceRetention
 
 ::: phydrax.solver.FixedStepReplayPolicy
 

@@ -9,9 +9,10 @@ import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
-from ..sparse import EdgeRelation, gather_routes, mask_routes, route_reduce
+from ..sparse._streamed import PreparedStreamedRelation, StreamedRelationPlan
 from ._graph import ensure_graph
 from ._ir import GraphIR
+from ._route_payload import declared_payload, entity_graph_ids, graph_feature_table
 
 
 def _as_2d(name: str, value: Any, /) -> jnp.ndarray:
@@ -30,33 +31,48 @@ def _mask_array(value: jnp.ndarray, mask: jnp.ndarray | None, /) -> jnp.ndarray:
     return jnp.where(expanded, value, jnp.zeros((), dtype=value.dtype))
 
 
-def _message_relations(
-    graph: GraphIR, node_count: int, owner: str, /
-) -> tuple[EdgeRelation, EdgeRelation]:
-    """Return the sender-to-receiver relation and its receiver-side view."""
+def _execution_plan(execution: StreamedRelationPlan | None, /) -> StreamedRelationPlan:
+    if execution is None:
+        return StreamedRelationPlan()
+    if not isinstance(execution, StreamedRelationPlan):
+        raise TypeError("execution must be a StreamedRelationPlan or None.")
+    return execution
+
+
+def _prepared_messages(
+    graph: GraphIR,
+    node_count: int,
+    execution: StreamedRelationPlan,
+    owner: str,
+    /,
+) -> PreparedStreamedRelation:
+    """Prepare the sender-to-receiver schedule shared by every processor step."""
     if graph.senders is None or graph.receivers is None:
         raise ValueError(f"{owner} requires explicit senders/receivers.")
-    relation = graph.edge_relation(node_count=node_count)
-    return relation, relation.transpose()
+    return execution.prepare(
+        graph.edge_relation(node_count=node_count),
+        owner_id=f"graph:{owner}",
+        source_valid=graph.node_mask,
+        receiver_valid=graph.node_mask,
+    )
 
 
-def _repeat_globals_for_entities(
+def _graph_features(
     globals_: Any | None,
-    counts: jnp.ndarray,
+    counts: Any,
     total_length: int,
+    size: int,
+    dtype: Any,
     /,
-) -> jnp.ndarray | None:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Per-graph feature table and owning-graph entity ids; zero features when absent."""
     if globals_ is None:
-        return None
-    arr = _as_2d("globals", globals_)
-    real_length = int(jnp.asarray(counts).sum())
-    repeated = jnp.repeat(arr, counts, axis=0, total_repeat_length=real_length)
-    pad = int(total_length) - repeated.shape[0]
-    if pad <= 0:
-        return repeated
-    return jnp.concatenate(
-        [repeated, jnp.zeros((pad, repeated.shape[1]), dtype=repeated.dtype)],
-        axis=0,
+        return (
+            jnp.zeros((1, size), dtype=dtype),
+            jnp.zeros((total_length,), dtype=jnp.int32),
+        )
+    return graph_feature_table(_as_2d("globals", globals_)), entity_graph_ids(
+        counts, total_length
     )
 
 
@@ -93,32 +109,69 @@ class RowMLP(StrictModule):
         self.activation = activation
         self.final_activation = final_activation
 
+    def apply_row(self, row: jnp.ndarray, /) -> jnp.ndarray:
+        """Apply the MLP to one feature row."""
+        y = row
+        for layer in self.layers[:-1]:
+            y = self.activation(layer(y))
+        y = self.layers[-1](y)
+        if self.final_activation is not None:
+            y = self.final_activation(y)
+        return y
+
     def __call__(self, x: Any) -> jnp.ndarray:
-        x = _as_2d("x", x)
+        return jax.vmap(self.apply_row)(_as_2d("x", x))
 
-        def apply_one(row: jnp.ndarray) -> jnp.ndarray:
-            y = row
-            for layer in self.layers[:-1]:
-                y = self.activation(layer(y))
-            y = self.layers[-1](y)
-            if self.final_activation is not None:
-                y = self.final_activation(y)
-            return y
 
-        return jax.vmap(apply_one)(x)
+def _edge_update(
+    parameters: tuple[MeshGraphNetBlock, jnp.ndarray, jnp.ndarray],
+    sender: jnp.ndarray,
+    receiver: tuple[jnp.ndarray, jnp.ndarray],
+    edge: tuple[jnp.ndarray, jnp.ndarray],
+    /,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Updated edge latent; it is both the receiver message and the edge output."""
+    block, edge_table, _node_table = parameters
+    latent, graph_id = edge
+    inputs = [latent, sender, receiver[0]]
+    if block.global_size > 0:
+        inputs.append(edge_table[graph_id])
+    delta = block.edge_mlp.apply_row(jnp.concatenate(inputs, axis=-1))
+    updated = latent + delta if block.use_edge_residual else delta
+    return updated, updated
+
+
+def _node_update(
+    parameters: tuple[MeshGraphNetBlock, jnp.ndarray, jnp.ndarray],
+    receiver: tuple[jnp.ndarray, jnp.ndarray],
+    aggregate: jnp.ndarray,
+    /,
+) -> jnp.ndarray:
+    """Receiver epilogue applied once to the complete incoming edge-latent sum."""
+    block, _edge_table, node_table = parameters
+    node, graph_id = receiver
+    inputs = [node, aggregate]
+    if block.global_size > 0:
+        inputs.append(node_table[graph_id])
+    delta = block.node_mlp.apply_row(jnp.concatenate(inputs, axis=-1))
+    return node + delta if block.use_node_residual else delta
 
 
 class MeshGraphNetBlock(StrictModule):
     """Residual message-passing block used by MeshGraphNet-style simulators.
 
-    Edge updates gather sender and receiver latents through
-    `graph.edge_relation()`, and receivers reduce edge latents with
-    `phydrax.sparse.route_reduce`. Routes with `edge_mask=False` are inert: their
-    latents are zero and they contribute nothing to any receiver.
+    Each route evaluates its edge update from sender and receiver latents and
+    every receiver applies its node update once to the sum of its incoming
+    updated edge latents through the prepared streamed relation selected by
+    ``execution``. Updated edge latents are a requested graph-wide output; the
+    MLP hidden activations stay bounded by the plan's edge tile. Routes with
+    `edge_mask=False` are inert: their latents are zero and they contribute
+    nothing to any receiver.
     """
 
     edge_mlp: RowMLP
     node_mlp: RowMLP
+    execution: StreamedRelationPlan
     global_size: int = eqx.field(static=True)
     use_edge_residual: bool = eqx.field(static=True)
     use_node_residual: bool = eqx.field(static=True)
@@ -134,9 +187,11 @@ class MeshGraphNetBlock(StrictModule):
         activation: Callable = jax.nn.silu,
         use_edge_residual: bool = True,
         use_node_residual: bool = True,
+        execution: StreamedRelationPlan | None = None,
         key: jax.Array,
     ) -> None:
         hidden = int(latent_size if hidden_size is None else hidden_size)
+        plan = _execution_plan(execution)
         k_edge, k_node = jax.random.split(key, 2)
         self.edge_mlp = RowMLP(
             3 * int(latent_size) + int(global_size),
@@ -154,6 +209,7 @@ class MeshGraphNetBlock(StrictModule):
             activation=activation,
             key=k_node,
         )
+        self.execution = plan
         self.global_size = int(global_size)
         self.use_edge_residual = bool(use_edge_residual)
         self.use_node_residual = bool(use_node_residual)
@@ -164,59 +220,46 @@ class MeshGraphNetBlock(StrictModule):
             raise ValueError("MeshGraphNetBlock requires node and edge features.")
         node_count = _as_2d("nodes", graph.nodes).shape[0]
         return self._process(
-            graph, *_message_relations(graph, node_count, "MeshGraphNetBlock")
+            graph,
+            _prepared_messages(graph, node_count, self.execution, "MeshGraphNetBlock"),
         )
 
-    def _process(
-        self, graph: GraphIR, relation: EdgeRelation, reverse: EdgeRelation, /
-    ) -> GraphIR:
+    def _process(self, graph: GraphIR, prepared: PreparedStreamedRelation, /) -> GraphIR:
         nodes = _as_2d("nodes", graph.nodes)
         edges = _as_2d("edges", graph.edges)
-        glob_edge = None
-        if self.global_size > 0:
-            glob_edge = _repeat_globals_for_entities(
-                graph.globals,
-                graph.n_edge,
-                relation.capacity,
-            )
-            if glob_edge is None:
-                glob_edge = jnp.zeros(
-                    (relation.capacity, self.global_size),
-                    dtype=nodes.dtype,
-                )
-
-        edge_inputs = [
-            edges,
-            gather_routes(relation, nodes),
-            gather_routes(reverse, nodes),
-        ]
-        if glob_edge is not None:
-            edge_inputs.append(glob_edge)
-        edge_delta = self.edge_mlp(jnp.concatenate(edge_inputs, axis=-1))
-        edges = edges + edge_delta if self.use_edge_residual else edge_delta
-        edges = mask_routes(relation, edges)
-
-        recv_aggr = route_reduce(relation, edges)
-        glob_node = None
-        if self.global_size > 0:
-            glob_node = _repeat_globals_for_entities(
-                graph.globals,
-                graph.n_node,
-                nodes.shape[0],
-            )
-            if glob_node is None:
-                glob_node = jnp.zeros(
-                    (nodes.shape[0], self.global_size),
-                    dtype=nodes.dtype,
-                )
-        node_inputs = [nodes, recv_aggr]
-        if glob_node is not None:
-            node_inputs.append(glob_node)
-        node_delta = self.node_mlp(jnp.concatenate(node_inputs, axis=-1))
-        nodes = nodes + node_delta if self.use_node_residual else node_delta
-        nodes = _mask_array(nodes, graph.node_mask)
-
-        return graph.replace(nodes=nodes, edges=edges, validate=False)
+        globals_ = graph.globals if self.global_size > 0 else None
+        edge_table, edge_ids = _graph_features(
+            globals_, graph.n_edge, edges.shape[0], self.global_size, nodes.dtype
+        )
+        node_table, node_ids = _graph_features(
+            globals_, graph.n_node, nodes.shape[0], self.global_size, nodes.dtype
+        )
+        parameters = (self, edge_table, node_table)
+        receiver_data = (nodes, node_ids)
+        edge_data = (edges, edge_ids)
+        payload = declared_payload(
+            _edge_update,
+            _node_update,
+            parameters,
+            nodes,
+            receiver_data,
+            edge_data,
+            edge_output=True,
+        )
+        result = prepared.evaluate(
+            payload,
+            _edge_update,
+            _node_update,
+            parameters,
+            nodes,
+            receiver_data,
+            edge_data,
+        )
+        return graph.replace(
+            nodes=_mask_array(result.receiver_outputs, graph.node_mask),
+            edges=result.edge_outputs,
+            validate=False,
+        )
 
 
 class MeshGraphNet(StrictModule):
@@ -224,10 +267,10 @@ class MeshGraphNet(StrictModule):
 
     This is the canonical mesh-simulation pattern: encode node and edge
     payloads, run residual message-passing processor steps on latent features,
-    then decode node outputs. All processor steps share one fixed-topology
-    `EdgeRelation` built from the input graph, so a relation prepared by a
-    discretization bridge such as `facet_adjacency` is the same relation a
-    physical residual on that graph reduces over.
+    then decode node outputs. All processor steps share one streamed schedule
+    prepared from the input graph's fixed-topology `EdgeRelation`, so a relation
+    prepared by a discretization bridge such as `facet_adjacency` is the same
+    relation a physical residual on that graph reduces over.
     """
 
     node_encoder: RowMLP
@@ -235,6 +278,7 @@ class MeshGraphNet(StrictModule):
     processors: tuple[MeshGraphNetBlock, ...]
     node_decoder: RowMLP
     edge_decoder: RowMLP | None
+    execution: StreamedRelationPlan
 
     def __init__(
         self,
@@ -249,10 +293,12 @@ class MeshGraphNet(StrictModule):
         mlp_depth: int = 2,
         global_size: int = 0,
         activation: Callable = jax.nn.silu,
+        execution: StreamedRelationPlan | None = None,
         key: jax.Array,
     ) -> None:
         if processor_steps < 0:
             raise ValueError("processor_steps must be non-negative.")
+        plan = _execution_plan(execution)
         hidden = int(latent_size if hidden_size is None else hidden_size)
         key_count = 3 + int(edge_out_size is not None) + int(processor_steps)
         keys = iter(jax.random.split(key, key_count))
@@ -279,6 +325,7 @@ class MeshGraphNet(StrictModule):
                 mlp_depth=mlp_depth,
                 global_size=global_size,
                 activation=activation,
+                execution=plan,
                 key=next(keys),
             )
             for _ in range(int(processor_steps))
@@ -301,6 +348,7 @@ class MeshGraphNet(StrictModule):
                 activation=activation,
                 key=next(keys),
             )
+        self.execution = plan
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
@@ -311,10 +359,12 @@ class MeshGraphNet(StrictModule):
         edges = _mask_array(self.edge_encoder(graph.edges), graph.edge_mask)
         out = graph.replace(nodes=nodes, edges=edges, validate=False)
         if self.processors:
-            # Every processor step shares one fixed-topology relation pair.
-            relations = _message_relations(graph, nodes.shape[0], "MeshGraphNet")
+            # Every processor step shares one prepared fixed-topology schedule.
+            prepared = _prepared_messages(
+                graph, nodes.shape[0], self.execution, "MeshGraphNet"
+            )
             for processor in self.processors:
-                out = processor._process(out, *relations)
+                out = processor._process(out, prepared)
         nodes = _mask_array(self.node_decoder(out.nodes), out.node_mask)
         edges = out.edges
         if self.edge_decoder is not None:

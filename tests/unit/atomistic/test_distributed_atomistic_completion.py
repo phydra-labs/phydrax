@@ -97,15 +97,18 @@ def _plan(
 def _evaluation(atom_energy: Any, forces: Any, virial: Any, name: Any) -> Any:
     atom = jnp.asarray(atom_energy)
     return AtomisticPotentialEvaluation(
-        jnp.sum(atom),
-        jnp.asarray([jnp.sum(atom)]),
-        atom,
-        jnp.asarray(forces),
-        jnp.asarray(virial),
-        jnp.asarray(True),
-        jnp.asarray(True),
-        jnp.asarray(False),
-        name,
+        energy=jnp.sum(atom),
+        term_energies=jnp.asarray([jnp.sum(atom)]),
+        atom_energy=atom,
+        forces=jnp.asarray(forces),
+        virial=jnp.asarray(virial),
+        successful=jnp.asarray(True),
+        neighborhood_successful=jnp.asarray(True),
+        graph_overflow=jnp.asarray(False),
+        strain_derivative=None,
+        stress=None,
+        program_id=name,
+        stress_convention=None,
     )
 
 

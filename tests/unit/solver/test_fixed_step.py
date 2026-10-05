@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -577,3 +578,181 @@ def test_branchwise_retry_commits_nested_state_atomically() -> None:
     assert result.successful
     assert jnp.allclose(result.accepted_state["velocity"], jnp.asarray((1.5, 2.5)))
     assert result.accepted_state["metadata"][0] == 4
+
+
+def _evidence_method(threshold: float) -> Any:
+    """Unit-rate step accepted only for step sizes up to ``threshold``.
+
+    Evidence records the attempted size and the attempt's step index, so an
+    independent oracle identifies exactly which attempt each record came from.
+    """
+
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
+        del time, args
+        candidate = state + step_size
+        successful = step_size <= threshold
+        return phx.solver.FixedStepResult(
+            candidate,
+            jnp.where(successful, candidate, state),
+            successful,
+            jnp.zeros((), dtype=state.dtype),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros((), dtype=state.dtype),
+            evidence={
+                "attempted_size": step_size,
+                "step_index": jnp.asarray(step_index, dtype=jnp.int32),
+            },
+        )
+
+    return phx.solver.CallableFixedStepMethod(step, f"evidence-step-{threshold}")
+
+
+def test_retry_keeps_refused_attempt_evidence_apart_from_the_accepted_attempt() -> None:
+    method = _evidence_method(0.3)
+    retried = phx.solver.retry_fixed_step(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=3, reduction_factor=0.5),
+        jnp.asarray(7),
+        jnp.asarray(0.0),
+        jnp.asarray([1.0]),
+        jnp.asarray(1.0),
+    )
+    assert bool(retried.successful)
+    assert int(retried.retry_count) == 2
+    np.testing.assert_array_equal(retried.attempt_executed, [True] * 4)
+    np.testing.assert_array_equal(retried.attempt_successful, [False, False, True, True])
+    assert retried.attempt_evidence is not None
+    np.testing.assert_allclose(
+        retried.attempt_evidence["attempted_size"], [1.0, 0.5, 0.25, 0.125]
+    )
+    # The selected evidence is the accepted attempt's, not a merge of attempts.
+    assert retried.evidence is not None
+    np.testing.assert_allclose(retried.evidence["attempted_size"], 0.25)
+    np.testing.assert_allclose(retried.accepted_state, [1.25])
+
+    exhausted = phx.solver.retry_fixed_step(
+        method,
+        phx.solver.RobustRetryPolicy(maximum_retries=1, reduction_factor=0.5),
+        jnp.asarray(7),
+        jnp.asarray(0.0),
+        jnp.asarray([1.0]),
+        jnp.asarray(1.0),
+    )
+    assert not bool(exhausted.successful)
+    np.testing.assert_array_equal(exhausted.attempt_successful, [False, False])
+    # With every attempt refused, the last refusal is reported; state is held.
+    assert exhausted.evidence is not None
+    np.testing.assert_allclose(exhausted.evidence["attempted_size"], 0.5)
+    np.testing.assert_array_equal(exhausted.accepted_state, [1.0])
+
+
+@pytest.mark.parametrize("publishes", (True, False), ids=("evidence", "no-evidence"))
+def test_inactive_retry_is_a_held_branch_of_the_executed_retry(publishes: bool) -> None:
+    method = (
+        _evidence_method(0.3)
+        if publishes
+        else phx.solver.SSPRK33FixedStepMethod(
+            lambda time, state, args: jnp.full_like(state, 10.0),
+            transform=ThresholdAcceptedTransform(6.0),
+        )
+    )
+    policy = phx.solver.RobustRetryPolicy(maximum_retries=2)
+    state = jnp.asarray([1.0])
+
+    def transition(active: Any) -> Any:
+        arguments = (method, policy, jnp.asarray(0), jnp.asarray(0.0), state)
+        return jax.lax.cond(
+            active,
+            lambda _: phx.solver.retry_fixed_step(*arguments, jnp.asarray(1.0)),
+            lambda _: phx.solver.inactive_fixed_step_retry(*arguments, jnp.asarray(1.0)),
+            None,
+        )
+
+    held = jax.jit(transition)(jnp.asarray(False))
+    executed = jax.jit(transition)(jnp.asarray(True))
+    assert bool(held.successful)
+    np.testing.assert_array_equal(held.accepted_state, state)
+    np.testing.assert_array_equal(held.attempt_executed, [False] * 3)
+    np.testing.assert_array_equal(executed.attempt_executed, [True] * 3)
+    assert (held.evidence is None) is (not publishes)
+
+
+def _refusing_rollout_problem() -> Any:
+    def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
+        del time, step_size, args
+        candidate = state + 1.0
+        successful = step_index < 2
+        return phx.solver.FixedStepResult(
+            candidate,
+            jnp.where(successful, candidate, state),
+            successful,
+            jnp.zeros(()),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros(()),
+            evidence=(jnp.asarray(step_index, dtype=jnp.int32), candidate),
+        )
+
+    return phx.solver.FixedStepProblem(
+        phx.solver.CallableFixedStepMethod(step, "refusing-evidence-step"),
+        jnp.asarray([0.0]),
+        t0=0.0,
+        t1=0.4,
+        step_size=0.1,
+    )
+
+
+def test_rollout_retains_last_accepted_and_refusing_step_evidence() -> None:
+    problem = _refusing_rollout_problem()
+    terminal = phx.solver.FixedStepRolloutPlan(retention="final").rollout(problem)
+
+    assert not bool(terminal.successful)
+    np.testing.assert_array_equal(terminal.final_state, [2.0])
+    evidence = terminal.evidence
+    assert evidence is not None and evidence.steps is None
+    assert int(evidence.accepted_step) == 1
+    assert int(evidence.accepted[0]) == 1
+    np.testing.assert_array_equal(evidence.accepted[1], [2.0])
+    # The refused candidate is retained while the accepted state stays at 2.
+    assert int(evidence.refused_step) == 2
+    assert int(evidence.refused[0]) == 2
+    np.testing.assert_array_equal(evidence.refused[1], [3.0])
+
+    stacked = phx.solver.FixedStepRolloutPlan(
+        retention="trajectory", evidence_retention="steps"
+    ).rollout(problem)
+    assert stacked.evidence is not None
+    assert stacked.evidence.steps is not None
+    np.testing.assert_array_equal(stacked.evidence.steps[0], [0, 1, 2, 3])
+    np.testing.assert_array_equal(
+        stacked.evidence.step_committed, [True, True, False, False]
+    )
+    assert int(stacked.evidence.refused_step) == 2
+
+    dropped = phx.solver.FixedStepRolloutPlan(evidence_retention="none").rollout(problem)
+    assert dropped.evidence is None
+    with pytest.raises(ValueError):
+        phx.solver.FixedStepRolloutPlan(evidence_retention="every-attempt")  # ty: ignore[invalid-argument-type]
+
+
+def test_rollout_without_method_evidence_and_successful_terminal_record() -> None:
+    plain = phx.solver.FixedStepRolloutPlan().rollout(_additive_problem(3))
+    assert plain.evidence is None
+
+    solution = phx.solver.solve_fixed_step(
+        phx.solver.FixedStepProblem(
+            _evidence_method(1.0),
+            jnp.asarray([0.0]),
+            t0=0.0,
+            t1=0.3,
+            step_size=0.1,
+        )
+    )
+    assert bool(solution.successful)
+    assert solution.evidence is not None
+    assert int(solution.evidence.accepted_step) == 2
+    assert int(solution.evidence.accepted["step_index"]) == 2
+    assert int(solution.evidence.refused_step) == -1

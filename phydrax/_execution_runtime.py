@@ -19,12 +19,25 @@ from ._execution_resources import (
     ExecutionGroupSpec,
     ResourceInventory,
 )
+from ._execution_sampling import sample_device_memory, sample_host_memory
 from ._fingerprint import canonical_fingerprint
 
 
 def discover_resource_inventory() -> ResourceInventory:
-    """Describe every JAX device after runtime bootstrap."""
+    """Describe every JAX device and measure local memory after runtime bootstrap.
 
+    Device capacity is the allocator ``bytes_limit`` when the provider exposes it.
+    Host and device memory samples cover this process's host and addressable
+    devices only; other processes' capacity remains unknown evidence.
+    """
+
+    devices = sorted(jax.devices(), key=lambda item: (item.process_index, item.id))
+    process = jax.process_index()
+    local = tuple(device for device in devices if device.process_index == process)
+    device_memory = sample_device_memory(local)
+    capacity = {
+        sample.key: sample.allocator_limit.value_bytes for sample in device_memory
+    }
     resources = tuple(
         DeviceResource(
             process_index=device.process_index,
@@ -32,12 +45,18 @@ def discover_resource_inventory() -> ResourceInventory:
             local_device_id=device.local_hardware_id,
             platform=device.platform,
             kind=device.device_kind,
+            # A zero allocator limit reports no usable capacity, not a capacity.
+            memory_bytes=capacity.get((device.process_index, device.id)) or None,
         )
-        for device in sorted(
-            jax.devices(), key=lambda item: (item.process_index, item.id)
-        )
+        for device in devices
     )
-    return ResourceInventory(jax.process_count(), jax.process_index(), resources)
+    return ResourceInventory(
+        jax.process_count(),
+        process,
+        resources,
+        host_memory=(sample_host_memory(),),
+        device_memory=device_memory,
+    )
 
 
 def root_execution_group_spec(

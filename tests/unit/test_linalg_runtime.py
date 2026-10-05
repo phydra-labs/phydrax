@@ -846,6 +846,56 @@ def test_prepared_native_krylov_accepts_dynamic_per_solve_controls() -> None:
     )
 
 
+def test_eager_prepared_krylov_solves_refreshes_and_gradients_trace_once() -> None:
+    traces: list[None] = []
+
+    def action(matrix: jax.Array, vector: jax.Array) -> jax.Array:
+        traces.append(None)
+        return matrix @ vector
+
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0])) + 0.1
+    space = la.ArraySpace((4,), dtype=matrix.dtype)
+
+    def system(values: jax.Array) -> la.LinearSystem:
+        operator = la.FunctionLinearOperator(
+            eqx.Partial(action, values),
+            source=space,
+            target=space,
+            properties=_positive_definite_properties(),
+            operator_id="trace-once-pcg",
+            closure_convert=False,
+        )
+        return la.LinearSystem(operator, problem_id="trace-once-pcg")
+
+    policy = la.LinearSolvePolicy(
+        la.PCG(), tolerance=la.TolerancePolicy(relative=1e-13, absolute=0.0, max_steps=8)
+    )
+    prepared = la.prepare(system(matrix), policy)
+    refreshed = la.refresh(prepared, system(2.0 * matrix))
+    first = la.solve(prepared, jnp.ones((4,)))
+    traced = len(traces)
+    rhs = jnp.arange(1.0, 5.0)
+    second = la.solve(prepared, rhs)
+    halved = la.solve(refreshed, jnp.ones((4,)))
+    # Repeated solves and a numeric refresh of one structure reuse the program.
+    assert len(traces) == traced
+    assert bool(first.successful) and bool(second.successful) and bool(halved.successful)
+    np.testing.assert_allclose(second.value, np.linalg.solve(matrix, rhs), rtol=1e-10)
+    np.testing.assert_allclose(halved.value, 0.5 * first.value, rtol=1e-10)
+
+    def loss(values: jax.Array) -> jax.Array:
+        return jnp.sum(la.solve(prepared, values).value ** 2)
+
+    jax.grad(loss)(jnp.ones((4,)))
+    traced = len(traces)
+    gradient = jax.grad(loss)(rhs)
+    assert len(traces) == traced
+    solution = np.linalg.solve(matrix, rhs)
+    np.testing.assert_allclose(
+        gradient, 2.0 * np.linalg.solve(matrix.T, solution), rtol=1e-8
+    )
+
+
 def test_linear_iteration_control_stops_native_krylov_at_a_safe_update() -> None:
     diagonal = jnp.asarray([1.0, 2.0, 4.0, 8.0])
     problem = la.LinearSystem(
@@ -1009,12 +1059,13 @@ def test_auto_planner_routes_general_pairings_to_native_krylov() -> None:
         least_squares_result.value,
         jnp.linalg.solve(normal_matrix, normal_rhs),
     )
-    assert least_squares_result.diagnostics.matvec_count == (
-        least_squares_result.diagnostics.iterations + 3
-    )
-    assert least_squares_result.diagnostics.adjoint_matvec_count == (
-        least_squares_result.diagnostics.iterations + 3
-    )
+    # Each step costs one forward and one adjoint action; true-quantity
+    # confirmations add at most one of each per step, and the least-squares
+    # acceptance reference one adjoint action.
+    iterations = int(least_squares_result.diagnostics.iterations)
+    forward = int(least_squares_result.diagnostics.matvec_count)
+    assert iterations + 3 <= forward <= 2 * iterations + 3
+    assert int(least_squares_result.diagnostics.adjoint_matvec_count) == forward
 
 
 def test_dense_solve_is_differentiable_with_respect_to_operator_values() -> None:

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 import pytest
+from jax import Array
 from jax.typing import DTypeLike
 
 import phydrax as phx
@@ -526,6 +527,110 @@ def test_traced_edge_indices_preserve_runtime_bounds_refusal() -> None:
         compiled(jnp.asarray([0, 3], dtype=jnp.int32)).block_until_ready()
 
 
+def _duplicate_route_relation() -> phx.sparse.EdgeRelation:
+    # Routes 1 and 2 share (target 1, source 1) and coalesce into one entry.
+    return phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 1, 2], dtype=jnp.int32),
+        jnp.asarray([0, 1, 1, 0], dtype=jnp.int32),
+        source_size=3,
+        target_size=2,
+        valid=jnp.asarray([True, True, True, False]),
+    )
+
+
+@pytest.mark.parametrize("block_shape", (None, (2, 3)), ids=("scalar", "block"))
+def test_sparse_coordinate_operator_without_valid_routes_applies_zero(
+    block_shape: tuple[int, int] | None,
+) -> None:
+    # Every route is invalid capacity, so each apply direction has no routes to
+    # reduce; the non-finite padding coefficients must stay inert.
+    target_fiber, source_fiber = (1, 1) if block_shape is None else block_shape
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 2], dtype=jnp.int32),
+        jnp.asarray([1, 0], dtype=jnp.int32),
+        source_size=3,
+        target_size=2,
+        valid=jnp.asarray([False, False]),
+    )
+    operator = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.full((2,) + (() if block_shape is None else block_shape), jnp.nan),
+        source=ArraySpace((3 * source_fiber,), dtype=jnp.float64),
+        target=ArraySpace((2 * target_fiber,), dtype=jnp.float64),
+        block_shape=block_shape,
+    )
+    source = jnp.ones((3 * source_fiber,))
+    target = jnp.ones((2 * target_fiber,))
+
+    np.testing.assert_array_equal(operator.mv(source), np.zeros(2 * target_fiber))
+    np.testing.assert_array_equal(
+        eqx.filter_jit(lambda op, value: op.mv(value))(operator, source),
+        np.zeros(2 * target_fiber),
+    )
+    np.testing.assert_array_equal(
+        operator.transpose_mv(target), np.zeros(3 * source_fiber)
+    )
+    np.testing.assert_array_equal(operator.adjoint_mv(target), np.zeros(3 * source_fiber))
+
+
+def test_host_topology_plans_sparse_solves_with_operator_as_jit_argument() -> None:
+    operator = phx.sparse.SparseCoordinateOperator(
+        _duplicate_route_relation(),
+        jnp.asarray([2.0, 1.0, 3.0, 5.0]),
+        source=ArraySpace((3,), dtype=jnp.float64),
+        target=ArraySpace((2,), dtype=jnp.float64),
+    )
+    # Operator: 4 float64 coefficients, 2x4 int32 indices, 4 bool masks (68 B);
+    # row-gather layouts: int32 route and input slots of width 2 over 2 targets
+    # and over 3 sources (80 B);
+    # coalesced CSR: 2 float64 values, 2 int32 columns, 3 int32 row pointers (36 B).
+    expected_bytes = 68 + 80 + 36
+    traced_bytes: list[int] = []
+
+    def record(value: Any) -> None:
+        traced_bytes.append(phx.linalg.estimate_operator_action_cost(value).storage_bytes)
+
+    eqx.filter_jit(record)(operator)
+    assert phx.linalg.estimate_operator_action_cost(operator).storage_bytes == (
+        expected_bytes
+    )
+    assert traced_bytes == [expected_bytes]
+
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.LSMR(),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=1e-12, absolute=1e-14, max_steps=20
+        ),
+        failure=phx.linalg.FailurePolicy("status"),
+    )
+    compiled = eqx.filter_jit(
+        lambda value, rhs: (
+            phx.linalg.solve(
+                phx.linalg.MinimumNormProblem(value), rhs, policy=policy
+            ).value
+        )
+    )
+    # A = [[2, 0, 0], [0, 4, 0]]: the minimum-norm solution leaves source 2 at 0.
+    np.testing.assert_allclose(
+        compiled(operator, jnp.asarray([1.0, 2.0])), [0.5, 0.5, 0.0], atol=1e-12
+    )
+
+
+def test_traced_topology_refuses_identity_and_cost_estimation() -> None:
+    relation = _duplicate_route_relation()
+    coefficients = jnp.ones((4,), dtype=jnp.float64)
+    with pytest.raises(ValueError, match="host-prepared topology"):
+        eqx.filter_jit(lambda value: phx.sparse.SparseLinearMap(value, coefficients))(
+            relation
+        )
+    with pytest.raises(ValueError, match="host-prepared topology"):
+        eqx.filter_jit(
+            lambda value: phx.linalg.estimate_operator_action_cost(
+                phx.sparse.SparseLinearMap(value, coefficients, operator_id="traced")
+            )
+        )(relation)
+
+
 def test_compile_time_sparse_pattern_admission_preserves_metric_action() -> None:
     metric = np.asarray(
         [[2.0, 0.5, 0.7], [0.5, 3.0, 1.0], [0.7, 1.0, 4.0]],
@@ -898,3 +1003,113 @@ def test_group_reduction_reports_finite_input_arithmetic_overflow() -> None:
     )
     assert not bool(evidence.finite)
     assert not bool(evidence.successful)
+
+
+def test_concrete_row_operator_constructed_under_jit_preserves_actions_and_jvp() -> None:
+    relation = phx.sparse.RowRelation(
+        np.asarray([[0, 1], [1, 2], [2, 0]], dtype=np.int32),
+        source_size=3,
+    )
+    space = ArraySpace((3,), dtype=jnp.float64)
+    coefficients = jnp.asarray([[2.0, -1.0], [3.0, 4.0], [-2.0, 1.0]], dtype=jnp.float64)
+    source = jnp.asarray([1.0, 2.0, -1.0], dtype=jnp.float64)
+    target = jnp.asarray([4.0, -3.0, 2.0], dtype=jnp.float64)
+    matrix = np.asarray([[2.0, -1.0, 0.0], [0.0, 3.0, 4.0], [1.0, 0.0, -2.0]])
+
+    @eqx.filter_jit
+    def forward(values: Array, argument: Array) -> Array:
+        operator = phx.sparse.SparseCoordinateOperator(
+            relation, values, source=space, target=space, operator_id="traced-row-forward"
+        )
+        return operator.mv(argument)
+
+    @eqx.filter_jit
+    def reverse(values: Array, argument: Array) -> Array:
+        operator = phx.sparse.SparseCoordinateOperator(
+            relation, values, source=space, target=space, operator_id="traced-row-reverse"
+        )
+        return operator.transpose_mv(argument)
+
+    np.testing.assert_allclose(forward(coefficients, source), matrix @ np.asarray(source))
+    np.testing.assert_allclose(
+        reverse(coefficients, target), matrix.T @ np.asarray(target)
+    )
+    _, tangent = jax.jvp(
+        lambda values: forward(values, source),
+        (coefficients,),
+        (jnp.ones_like(coefficients),),
+    )
+    np.testing.assert_allclose(tangent, np.asarray([3.0, 1.0, 0.0]))
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+@pytest.mark.parametrize("seeded", [False, True], ids=["unseeded", "seeded"])
+def test_valid_zero_group_event_preserves_coordinate_and_mixed_derivatives(
+    accumulation: phx.sparse.RelationAccumulation, seeded: bool
+) -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32),
+        jnp.asarray([True, False], dtype=jnp.bool_),
+    )
+    initial = (
+        phx.sparse.KeyGroupAccumulation(
+            jnp.asarray([4.0], dtype=jnp.float64),
+            jnp.asarray([0.25], dtype=jnp.float64),
+        )
+        if seeded
+        else None
+    )
+
+    def reduced(theta: Array, coordinate: Array) -> Array:
+        active = theta * coordinate + coordinate * coordinate
+        padded = 7.0 * theta * coordinate
+        result, _ = phx.sparse.reduce_key_groups(
+            groups,
+            jnp.stack((active, padded)),
+            accumulation=accumulation,
+            initial=initial,
+        )
+        return result.value[0]
+
+    theta = jnp.asarray(2.0, dtype=jnp.float64)
+    coordinate = jnp.asarray(0.0, dtype=jnp.float64)
+    coordinate_gradient = jax.grad(reduced, argnums=1)
+    value, tangent = jax.jvp(
+        lambda point: reduced(theta, point), (coordinate,), (jnp.ones_like(coordinate),)
+    )
+    _, pullback = jax.vjp(lambda point: reduced(theta, point), coordinate)
+    np.testing.assert_array_equal(value, 4.25 if seeded else 0.0)
+    np.testing.assert_array_equal(tangent, 2.0)
+    np.testing.assert_array_equal(pullback(jnp.ones_like(value))[0], 2.0)
+    np.testing.assert_array_equal(jax.jit(coordinate_gradient)(theta, coordinate), 2.0)
+    np.testing.assert_array_equal(
+        jax.jit(jax.grad(coordinate_gradient, argnums=0))(theta, coordinate), 1.0
+    )
+
+
+@pytest.mark.parametrize("accumulation", ["fast", "deterministic", "compensated"])
+def test_cancelling_group_subtotal_preserves_parameter_tangent(
+    accumulation: phx.sparse.RelationAccumulation,
+) -> None:
+    groups = phx.sparse.KeyGroupPlan(2, 1, 0).build(
+        jnp.zeros((2,), dtype=jnp.int32), jnp.ones((2,), dtype=jnp.bool_)
+    )
+    initial = phx.sparse.KeyGroupAccumulation(
+        jnp.asarray([3.0], dtype=jnp.float64),
+        jnp.asarray([0.5], dtype=jnp.float64),
+    )
+
+    def reduced(parameter: Array) -> Array:
+        result, _ = phx.sparse.reduce_key_groups(
+            groups,
+            jnp.stack((parameter, jnp.asarray(-2.0, dtype=parameter.dtype))),
+            accumulation=accumulation,
+            initial=initial,
+        )
+        return result.value[0]
+
+    parameter = jnp.asarray(2.0, dtype=jnp.float64)
+    value, tangent = jax.jvp(reduced, (parameter,), (jnp.ones_like(parameter),))
+    np.testing.assert_array_equal(value, 3.5)
+    np.testing.assert_array_equal(tangent, 1.0)
+    np.testing.assert_array_equal(jax.jit(jax.grad(reduced))(parameter), 1.0)

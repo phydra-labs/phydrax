@@ -1,6 +1,9 @@
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
+import phydrax.tensor_network._su2 as su2_module
 from phydrax.operators.quantum import AbelianGroup
 from phydrax.tensor_network._abelian import (
     AbelianLeg,
@@ -225,3 +228,49 @@ def test_su2_contracts() -> None:
     assert jnp.allclose(route_evidence.energy, -0.75)
     assert jnp.allclose(triplet_evidence.energy, 0.25)
     assert singlet_evidence.converged & triplet_evidence.converged
+
+
+@pytest.mark.parametrize(
+    "twice_spins",
+    [(2, 2, 2), (6, 4, 6), (8, 8, 4), (5, 3, 4), (12, 10, 8)],
+    ids=["1x1->1", "3x2->3", "4x4->2", "5/2x3/2->2", "6x5->4"],
+)
+def test_su2_clebsch_gordan_matches_exact_reference_with_exact_zeros(
+    twice_spins: tuple[int, int, int],
+) -> None:
+    wigner = pytest.importorskip("sympy.physics.wigner")
+    sympy = pytest.importorskip("sympy")
+    a, b, c = twice_spins
+    table = su2_clebsch_gordan(a, b, c)
+    for ia, ma in enumerate(range(-a, a + 1, 2)):
+        for ib, mb in enumerate(range(-b, b + 1, 2)):
+            for ic, mc in enumerate(range(-c, c + 1, 2)):
+                exact = wigner.clebsch_gordan(
+                    sympy.Rational(a, 2),
+                    sympy.Rational(b, 2),
+                    sympy.Rational(c, 2),
+                    sympy.Rational(ma, 2),
+                    sympy.Rational(mb, 2),
+                    sympy.Rational(mc, 2),
+                )
+                if exact == 0:
+                    # Accidental and selection-rule zeros are exact, not residues.
+                    assert table[ia, ib, ic] == 0.0
+                else:
+                    assert abs(float(table[ia, ib, ic]) - float(exact)) <= 4e-16
+
+
+@pytest.mark.parametrize(
+    "twice_spins",
+    [(10_000, 10_000, 20_001), (10_000, 10_000, 20_002), (2, 2, 1), (0, 4, 2)],
+    ids=["huge-parity", "huge-triangle", "parity", "triangle"],
+)
+def test_su2_forbidden_channel_refuses_before_dense_table(
+    twice_spins: tuple[int, int, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden_zeros(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("dense CG table allocated before channel legality")
+
+    monkeypatch.setattr(su2_module.np, "zeros", forbidden_zeros)
+    with pytest.raises(ValueError, match="forbidden"):
+        su2_clebsch_gordan(*twice_spins)

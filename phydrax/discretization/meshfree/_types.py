@@ -6,7 +6,9 @@ from typing import Literal, TypeAlias
 
 
 MeshfreeApproximation: TypeAlias = Literal["gmls", "phs-rbf-fd"]
-StencilWeightKernel: TypeAlias = Literal["wendland-c2", "inverse-square"]
+StencilWeightKernel: TypeAlias = Literal[
+    "wendland-c2", "wendland-c4", "compact-polynomial", "inverse-square"
+]
 StencilAcceptance: TypeAlias = Literal["refuse", "mask"]
 
 

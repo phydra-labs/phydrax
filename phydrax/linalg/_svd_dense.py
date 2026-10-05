@@ -1,6 +1,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from typing import assert_never
+
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -13,7 +15,13 @@ from ._spaces import (
     _has_diagonal_pairing,
     AbstractVectorSpace,
 )
-from ._svd_contracts import DenseSVDState, SVDProblem, SVDSolvePlan, SVDSolveStatus
+from ._svd_contracts import (
+    DenseSVDAlgorithm,
+    DenseSVDState,
+    SVDProblem,
+    SVDSolvePlan,
+    SVDSolveStatus,
+)
 
 
 def diagonal_scales(space: AbstractVectorSpace, /) -> tuple[Array, Array]:
@@ -79,12 +87,23 @@ def prepare_dense(problem: SVDProblem, plan: SVDSolvePlan, /) -> DenseSVDState:
     return DenseSVDState(reduced, source, target, status, diagonal)
 
 
-def thin_decomposition(matrix: Array, available: Array, /) -> tuple[Array, Array, Array]:
+def thin_decomposition(
+    matrix: Array, available: Array, algorithm: DenseSVDAlgorithm, /
+) -> tuple[Array, Array, Array]:
     rows, columns = matrix.shape
     rank = min(rows, columns)
+    match algorithm:
+        case "divide-and-conquer":
+            driver = jax.lax.linalg.SvdAlgorithm.DIVIDE_AND_CONQUER
+        case "qr":
+            driver = jax.lax.linalg.SvdAlgorithm.QR
+        case unknown:
+            assert_never(unknown)
 
     def decompose(value: Array) -> tuple[Array, Array, Array]:
-        left, values, right_adjoint = jnp.linalg.svd(value, full_matrices=False)
+        left, values, right_adjoint = jax.lax.linalg.svd(
+            value, full_matrices=False, algorithm=driver
+        )
         return left, values, right_adjoint.conj().T
 
     def unavailable(value: Array) -> tuple[Array, Array, Array]:

@@ -349,3 +349,53 @@ def test_complex_native_dense_solve_has_strict_dtype_jit_parameter_derivative(
         np.testing.assert_allclose(
             jax.jit(jax.jacfwd(mapped))(diagonal), expected, atol=1e-10
         )
+
+
+def test_krylov_derivative_solves_reuse_the_prepared_primal_preconditioner() -> None:
+    """An ill-conditioned SPD solve meets its derivative contract in one step.
+
+    The 1-D Dirichlet Laplacian has condition number ~6e2 at n=40, so a
+    one-step unpreconditioned derivative GMRES cannot meet 1e-10; the exact
+    dense-inverse primal accelerator makes the tangent and cotangent one-step
+    solves. The independent reference is the dense solve with A and Aᵀ.
+    """
+    count = 40
+    laplacian = 2.0 * np.eye(count) - np.eye(count, k=1) - np.eye(count, k=-1)
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.GMRES(restart=count),
+        tolerance=phx.linalg.TolerancePolicy(relative=1e-12, absolute=0.0),
+        derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(
+            relative_tolerance=1e-10, absolute_tolerance=0.0, maximum_steps=1
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("mathematical"),
+        failure=phx.linalg.FailurePolicy("status"),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.DenseInversePreconditionerBuilder()
+        ),
+    )
+
+    def state(scale: jax.Array, rhs: jax.Array) -> jax.Array:
+        system = phx.linalg.LinearSystem(
+            phx.linalg.DenseLinearOperator(scale * jnp.asarray(laplacian))
+        )
+        return phx.linalg.solve(system, rhs, policy=policy).value
+
+    scale = jnp.asarray(1.5)
+    rhs = jnp.cos(jnp.arange(count, dtype=jnp.float64))
+    direction = jnp.sin(jnp.arange(count, dtype=jnp.float64))
+    cotangent = jnp.linspace(-1.0, 1.0, count)
+    matrix = 1.5 * laplacian
+    value = np.linalg.solve(matrix, np.asarray(rhs))
+    reference_tangent = np.linalg.solve(
+        matrix, np.asarray(direction) - 0.5 * laplacian @ value
+    )
+    adjoint = np.linalg.solve(matrix.T, np.asarray(cotangent))
+
+    _, tangent = jax.jvp(state, (scale, rhs), (jnp.asarray(0.5), direction))
+    scale_gradient, rhs_gradient = jax.grad(
+        lambda s, b: jnp.dot(cotangent, state(s, b)), argnums=(0, 1)
+    )(scale, rhs)
+
+    np.testing.assert_allclose(tangent, reference_tangent, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(rhs_gradient, adjoint, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(scale_gradient, -adjoint @ laplacian @ value, rtol=1e-8)

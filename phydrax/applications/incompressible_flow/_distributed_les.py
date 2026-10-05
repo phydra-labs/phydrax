@@ -1222,6 +1222,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             state.moment_states,
             state.trigger_states,
             state.output_cursor,
+            state.evidence,
             state.status,
             state.last_checkpoint_id,
         )
@@ -1239,6 +1240,10 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             accepted_step_size=transition.accepted_step_size,
             retry_count=transition.retry_count,
             attempted_step_sizes=transition.attempted_step_sizes,
+            attempt_executed=transition.attempt_executed,
+            attempt_successful=transition.attempt_successful,
+            evidence=transition.evidence,
+            attempt_evidence=transition.attempt_evidence,
             decision_id=transition.decision_id,
         )
         return self._place_run_state(following), placed_transition
@@ -1251,6 +1256,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             failure=result.failure,
             run_id=result.run_id,
             iteration_session_state=result.iteration_session_state,
+            memory=result.memory,
         )
 
     def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:

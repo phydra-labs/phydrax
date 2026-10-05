@@ -14,6 +14,7 @@ import numpy as np
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike, DTypeLike
 
+from .. import ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import (
@@ -22,18 +23,24 @@ from ..linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ..linalg._costs import _array_tree_storage_bytes
 from ..linalg._operators import _validate_properties
 from ..linalg._spaces import _coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._ops import (
-    block_linear_adjoint_apply,
     block_linear_apply,
     block_linear_transpose_apply,
     linear_adjoint_apply,
     linear_apply,
     linear_transpose_apply,
 )
-from ._relation import EdgeRelation, RowRelation, SparseRelation
+from ._relation import (
+    _coalesced_route_count,
+    _relation_traced,
+    EdgeRelation,
+    RowRelation,
+    SparseRelation,
+)
 
 
 if TYPE_CHECKING:
@@ -64,6 +71,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
 
     relation: SparseRelation
     coefficients: Array
+    _canonical_nnz: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -76,7 +84,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     ) -> None:
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
-        values = jnp.asarray(coefficients)
+        values = _coefficient_values(coefficients)
         route_ndim = len(relation.route_shape)
         if (
             values.ndim < route_ndim
@@ -112,6 +120,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
             raise ValueError("operator_id must be non-empty.")
         self.relation = relation
         self.coefficients = values
+        self._canonical_nnz = _coalesced_route_count(relation)
         self.source = source
         self.target = target
         self.properties = properties_
@@ -198,6 +207,16 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def sparse_storage(self, /) -> SparseStorage:
         return _canonical_sparse_storage(self.relation, self.coefficients)
 
+    def _resident_storage_bytes(self, /) -> int:
+        return _array_tree_storage_bytes(self) + _canonical_storage_bytes(
+            self._canonical_nnz,
+            self.relation,
+            self.coefficients.dtype,
+            self.batch_shape,
+            (1, 1),
+            indices_resident=False,
+        )
+
     def to_scipy(self) -> sp.csr_matrix:
         """Return a host-side CSR matrix, coalescing duplicate linear routes."""
         import scipy.sparse as sp
@@ -224,6 +243,14 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     ``(*relation.route_shape, r_t, r_s)``. Canonical coordinates are ordered
     cell-major, fiber-minor; the source and target sizes include their fibers.
     Without ``block_shape`` coefficients remain scalar and unbatched.
+
+    Host-prepared topology also fixes one output-major row-gather layout per
+    apply direction (by target for ``mv``, by source for the transpose and
+    adjoint). Each output then accumulates its routes sequentially in route
+    order. A direction whose widest output would pad beyond twice its routes
+    plus outputs, or a traced relation, keeps the route scatter. Routes are
+    construction-time structure: coefficients may be replaced in place, but new
+    routes require a new operator.
     """
 
     relation: SparseRelation
@@ -231,6 +258,9 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     accumulation_dtype: np.dtype = eqx.field(static=True)
     block_shape: tuple[int, int] | None = eqx.field(static=True)
     _storage_plan: _SparseStoragePlan | None
+    _canonical_nnz: int | None = eqx.field(static=True)
+    _target_gather: _RowGatherLayout | None
+    _source_gather: _RowGatherLayout | None
 
     def __init__(
         self,
@@ -266,7 +296,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
             raise ValueError(
                 "Vector-space sizes must match sparse relation sizes including fibers."
             )
-        values = jnp.asarray(coefficients)
+        values = _coefficient_values(coefficients)
         coefficient_shape = relation.route_shape + (
             () if block_shape is None else block_shape
         )
@@ -322,6 +352,18 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         self.accumulation_dtype = accumulation_dtype_
         self.block_shape = block_shape
         self._storage_plan = storage_plan
+        if storage_plan is not None:
+            self._canonical_nnz = storage_plan.nnz
+        else:
+            route_count = _coalesced_route_count(relation)
+            self._canonical_nnz = (
+                None if route_count is None else route_count * target_fiber * source_fiber
+            )
+        self._target_gather, self._source_gather = (
+            (None, None)
+            if _relation_traced(edge_relation)
+            else _row_gather_layouts(edge_relation)
+        )
         self.source = source
         self.target = target
         self.properties = properties_
@@ -334,67 +376,61 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         self.batch_shape = ()
         self.operator_id = identifier
 
+    def _coordinate_apply(
+        self, coordinates: Array, /, *, reverse: bool, conjugate: bool
+    ) -> Array:
+        """Apply to flat accumulation-dtype coordinates, forward or reversed."""
+        coefficients = self.coefficients.astype(self.accumulation_dtype)
+        if conjugate:
+            coefficients = jnp.conj(coefficients)
+        layout = self._source_gather if reverse else self._target_gather
+        fibers = self.block_shape
+        if layout is not None:
+            if fibers is None:
+                return layout.apply(
+                    coefficients.reshape((-1,)), coordinates, reverse=reverse
+                )
+            cells = coordinates.reshape((-1, fibers[0] if reverse else fibers[1]))
+            return layout.apply(
+                coefficients.reshape((-1,) + fibers), cells, reverse=reverse
+            ).reshape((-1,))
+        if fibers is not None:
+            if reverse:
+                return block_linear_transpose_apply(
+                    self.relation,
+                    coefficients,
+                    coordinates.reshape(self.relation.output_shape + (fibers[0],)),
+                ).reshape((-1,))
+            return block_linear_apply(
+                self.relation,
+                coefficients,
+                coordinates.reshape(self.relation.input_shape + (fibers[1],)),
+            ).reshape((-1,))
+        relation = (
+            self.relation
+            if isinstance(self.relation, EdgeRelation)
+            else self.relation.as_edge_relation()
+        )
+        apply = linear_transpose_apply if reverse else linear_apply
+        return apply(relation, coefficients.reshape((-1,)), coordinates)
+
     def mv(self, vector: Any, /) -> Any:
         coordinates = self.source.flatten(vector).astype(self.accumulation_dtype)
-        if self.block_shape is not None:
-            output = block_linear_apply(
-                self.relation,
-                self.coefficients.astype(self.accumulation_dtype),
-                coordinates.reshape(self.relation.input_shape + (self.block_shape[1],)),
-            )
-            return self.target.unflatten(
-                output.reshape((-1,)).astype(_coordinate_dtype(self.target))
-            )
-        relation, coefficients = self._edge_form()
-        output = linear_apply(
-            relation,
-            coefficients.astype(self.accumulation_dtype),
-            coordinates,
-        )
+        output = self._coordinate_apply(coordinates, reverse=False, conjugate=False)
         return self.target.unflatten(output.astype(_coordinate_dtype(self.target)))
 
     def transpose_mv(self, vector: Any, /) -> Any:
         coordinates = self.target.flatten(vector).astype(self.accumulation_dtype)
-        if self.block_shape is not None:
-            output = block_linear_transpose_apply(
-                self.relation,
-                self.coefficients.astype(self.accumulation_dtype),
-                coordinates.reshape(self.relation.output_shape + (self.block_shape[0],)),
-            )
-            return self.source.unflatten(
-                output.reshape((-1,)).astype(_coordinate_dtype(self.source))
-            )
-        relation, coefficients = self._edge_form()
-        output = linear_transpose_apply(
-            relation,
-            coefficients.astype(self.accumulation_dtype),
-            coordinates,
-        )
+        output = self._coordinate_apply(coordinates, reverse=True, conjugate=False)
         return self.source.unflatten(output.astype(_coordinate_dtype(self.source)))
 
     def adjoint_mv(self, vector: Any, /) -> Any:
         target_covector = self.target.flatten(self.target.riesz(vector)).astype(
             self.accumulation_dtype
         )
-        if self.block_shape is not None:
-            output = block_linear_adjoint_apply(
-                self.relation,
-                self.coefficients.astype(self.accumulation_dtype),
-                target_covector.reshape(
-                    self.relation.output_shape + (self.block_shape[0],)
-                ),
-            )
-            source_covector = self.source.unflatten(
-                output.reshape((-1,)).astype(_coordinate_dtype(self.source))
-            )
-            return self.source.inverse_riesz(source_covector)
-        relation, coefficients = self._edge_form()
+        output = self._coordinate_apply(target_covector, reverse=True, conjugate=True)
         source_covector = self.source.unflatten(
-            linear_adjoint_apply(
-                relation,
-                coefficients.astype(self.accumulation_dtype),
-                target_covector,
-            ).astype(_coordinate_dtype(self.source))
+            output.astype(_coordinate_dtype(self.source))
         )
         return self.source.inverse_riesz(source_covector)
 
@@ -447,6 +483,54 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         return _canonical_sparse_storage(
             self.relation, self.coefficients, block_shape=self.block_shape
         )
+
+    def _resident_storage_bytes(self, /) -> int:
+        return _array_tree_storage_bytes(self) + _canonical_storage_bytes(
+            self._canonical_nnz,
+            self.relation,
+            self.coefficients.dtype,
+            (),
+            (1, 1) if self.block_shape is None else self.block_shape,
+            indices_resident=self._storage_plan is not None,
+        )
+
+
+def _canonical_storage_bytes(
+    nnz: int | None,
+    relation: SparseRelation,
+    value_dtype: np.dtype,
+    batch_shape: tuple[int, ...],
+    fibers: tuple[int, int],
+    /,
+    *,
+    indices_resident: bool,
+) -> int:
+    """Bytes of the canonical CSR arrays ``sparse_storage`` adds to the operator.
+
+    Uses the entry count read from host topology at construction, so traced
+    executions never synchronize topology. Values are always new; a prepared
+    storage plan already holds the shared indices and row pointers.
+    """
+    if nnz is None:
+        raise ValueError(
+            "Sparse cost estimation requires host-prepared topology; this operator "
+            "was constructed from a traced relation without a storage plan."
+        )
+    values = prod(batch_shape) * nnz * value_dtype.itemsize
+    if indices_resident:
+        return values
+    shape = (
+        prod(relation.output_shape) * fibers[0],
+        prod(relation.input_shape) * fibers[1],
+    )
+    index_dtype = jax.dtypes.canonicalize_dtype(_storage_index_dtype(shape, nnz))
+    return values + (nnz + shape[0] + 1) * index_dtype.itemsize
+
+
+def _storage_index_dtype(shape: tuple[int, int], nnz: int, /) -> np.dtype:
+    """Narrowest admitted CSR index dtype for one canonical storage pattern."""
+    largest = max(*shape, nnz)
+    return np.dtype(np.int32 if largest < np.iinfo(np.int32).max else np.int64)
 
 
 def _assemble_relation_diagonal(
@@ -520,6 +604,116 @@ def _block_edge_relation(
     )
 
 
+# A fixed-width gather pays for ``width * outputs`` slots where the route
+# scatter pays for its routes and the zero-filled outputs; beyond this ratio a
+# skewed direction keeps the scatter.
+_MAX_ROW_GATHER_PADDING = 2
+
+
+@final
+class _RowGatherLayout(StrictModule):
+    """Output-major fixed-width routes of one apply direction (ELL form).
+
+    ``routes[slot, output]`` is the ``slot``-th valid route into ``output`` in
+    route order, or ``route_count`` for padding; ``inputs`` holds the input
+    cell that route reads (zero for padding).
+    """
+
+    routes: Array
+    inputs: Array
+    route_count: int = eqx.field(static=True)
+
+    def apply(self, coefficients: Array, values: Array, /, *, reverse: bool) -> Array:
+        """Sum route-major coefficients times gathered input cells per output.
+
+        Scalar coefficients are ``(routes,)``; matrix fibers are
+        ``(routes, r_t, r_s)``, contracted on ``r_s`` forward or ``r_t`` when
+        ``reverse``.
+        """
+        valid = self.routes < self.route_count
+        gathered = jnp.take(coefficients, self.routes, axis=0, mode="fill", fill_value=0)
+        sources = values[self.inputs]
+        if coefficients.ndim == 1:
+            products = gathered * sources
+        elif reverse:
+            products = ein.contract("wnoi,wno->wni", gathered, sources)
+        else:
+            products = ein.contract("wnoi,wni->wno", gathered, sources)
+        products = jnp.where(
+            valid.reshape(valid.shape + (1,) * (products.ndim - 2)),
+            products,
+            jnp.zeros((), dtype=products.dtype),
+        )
+        if products.shape[0] == 0:
+            # No valid routes: the loop body could not index an empty slot axis.
+            return jnp.zeros(products.shape[1:], dtype=products.dtype)
+        # The loop-carried sum fixes route order per output; unrolled and
+        # reduce-based sums were not bitwise route-ordered on CPU. A
+        # module-level body keeps eager applies on one cached executable.
+        total, _ = jax.lax.fori_loop(
+            0,
+            products.shape[0],
+            _accumulate_slot,
+            (jnp.zeros(products.shape[1:], dtype=products.dtype), products),
+        )
+        return total
+
+
+def _accumulate_slot(slot: Array, carry: tuple[Array, Array], /) -> tuple[Array, Array]:
+    total, products = carry
+    return total + products[slot], products
+
+
+def _row_gather_layout(
+    outputs: np.ndarray,
+    inputs: np.ndarray,
+    valid: np.ndarray,
+    output_size: int,
+    /,
+) -> _RowGatherLayout | None:
+    routes = np.flatnonzero(valid)
+    targets = outputs[routes]
+    counts = np.bincount(targets, minlength=output_size)
+    width = int(counts.max(initial=0))
+    if width * output_size > _MAX_ROW_GATHER_PADDING * (routes.size + output_size):
+        return None
+    if np.any(targets[1:] < targets[:-1]):
+        order = np.argsort(targets, kind="stable")
+        routes, targets = routes[order], targets[order]
+    slots = np.arange(routes.size) - (np.cumsum(counts) - counts)[targets]
+    largest = max(valid.size, output_size, int(inputs.max(initial=0)))
+    index_dtype = np.int32 if largest < np.iinfo(np.int32).max else np.int64
+    gathered_routes = np.full((width, output_size), valid.size, dtype=index_dtype)
+    gathered_routes[slots, targets] = routes
+    gathered_inputs = np.zeros((width, output_size), dtype=index_dtype)
+    gathered_inputs[slots, targets] = inputs[routes]
+    with jax.ensure_compile_time_eval():
+        return _RowGatherLayout(
+            jnp.asarray(gathered_routes),
+            jnp.asarray(gathered_inputs),
+            route_count=valid.size,
+        )
+
+
+def _row_gather_layouts(
+    relation: EdgeRelation, /
+) -> tuple[_RowGatherLayout | None, _RowGatherLayout | None]:
+    """Target-major (forward) and source-major (reverse) layouts of host routes."""
+    source, target, valid = (
+        np.asarray(array).reshape(-1)
+        for array in jax.device_get(
+            (relation.source_indices, relation.target_indices, relation.valid)
+        )
+    )
+    valid = valid.astype(np.bool_)
+    source = np.where(valid, source, 0).astype(np.int64)
+    target = np.where(valid, target, 0).astype(np.int64)
+    return (
+        _row_gather_layout(target, source, valid, relation.target_size),
+        _row_gather_layout(source, target, valid, relation.source_size),
+    )
+
+
 @final
 class _SparseStoragePlan(StrictModule):
     """Host-planned route coalescing, reusable inside numeric JAX refresh."""
@@ -546,6 +740,11 @@ class _SparseStoragePlan(StrictModule):
         block_shape: tuple[int, int] | None = None,
     ) -> None:
         block_shape = _validated_block_shape(block_shape)
+        if _relation_traced(relation):
+            raise ValueError(
+                "Canonical sparse storage requires host-prepared topology; prepare "
+                "the storage plan from concrete relation indices before tracing."
+            )
         edge = (
             relation
             if isinstance(relation, EdgeRelation)
@@ -587,8 +786,7 @@ class _SparseStoragePlan(StrictModule):
             groups = np.zeros((0,), dtype=np.int64)
             canonical_source, canonical_target = source, target
             number_groups = 0
-        largest = max(*shape, number_groups)
-        index_dtype = jnp.int32 if largest < np.iinfo(np.int32).max else jnp.int64
+        index_dtype = _storage_index_dtype(shape, number_groups)
         counts = np.bincount(canonical_target, minlength=shape[0])
         # Host pattern data stays concrete even when planned under a trace, so
         # pattern validation can read it while coefficients remain traced.
@@ -665,16 +863,30 @@ def _canonical_sparse_storage(
     return _SparseStoragePlan(relation, block_shape=block_shape).apply(coefficients)
 
 
+def _coefficient_values(coefficients: ArrayLike, /) -> Array:
+    """Device coefficients; host data is transferred, never staged per shape."""
+    if isinstance(coefficients, jax.Array):
+        return coefficients
+    return jax.device_put(np.asarray(coefficients))
+
+
 def _relation_payload(relation: SparseRelation, /) -> dict[str, object]:
+    # Index and mask arrays enter the identity as content digests (dtype, shape
+    # and bytes) rather than JSON integer lists: equal identity, linear hashing.
+    if _relation_traced(relation):
+        raise ValueError(
+            "A sparse operator identity requires host-prepared topology; pass "
+            "operator_id, or replace the coefficients of a prepared operator."
+        )
     payload: dict[str, object] = {
         "kind": type(relation).__name__,
-        "source_indices": np.asarray(relation.source_indices).tolist(),
-        "valid": np.asarray(relation.valid).tolist(),
+        "source_indices": np.asarray(relation.source_indices),
+        "valid": np.asarray(relation.valid),
         "source_size": relation.source_size,
     }
     if isinstance(relation, EdgeRelation):
         payload["target_size"] = relation.target_size
-        payload["target_indices"] = np.asarray(relation.target_indices).tolist()
+        payload["target_indices"] = np.asarray(relation.target_indices)
     else:
         payload["target_shape"] = list(relation.target_shape)
         payload["case_shape"] = list(relation.case_shape)
