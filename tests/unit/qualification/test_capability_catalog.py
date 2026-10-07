@@ -192,6 +192,11 @@ def test_capability_catalog_scenario_2() -> None:
             profiles=(profile,),
             nonclaims=("not-released",),
         )
+    from phydrax.discretization.spectral._qualification import (
+        DISTRIBUTED_SPECTRAL_NONCLAIMS,
+        DISTRIBUTED_SPECTRAL_REQUIRED_GATES,
+        DISTRIBUTED_SPECTRAL_ROUTES,
+    )
     from phydrax.qualification import builtin_capability_catalog
     from phydrax.rom import rom_capability_catalog
 
@@ -201,10 +206,44 @@ def test_capability_catalog_scenario_2() -> None:
         )
         for entry in rom_capability_catalog()
     }
+    catalog = builtin_capability_catalog()
     declared = {
         declaration.capability: declaration.domain_maturity
-        for declaration in builtin_capability_catalog().declarations
+        for declaration in catalog.declarations
         if declaration.owner == "phydrax.rom"
     }
 
     assert declared == expected
+    spectral = catalog.declaration("distributed-spectral-execution")
+    assert spectral.owner == "phydrax.discretization.spectral"
+    assert spectral.disposition is CapabilityDisposition.CANDIDATE
+    assert spectral.domain_maturity == "unreleased-candidate"
+    assert spectral.nonclaims == tuple(sorted(DISTRIBUTED_SPECTRAL_NONCLAIMS))
+    assert len(spectral.profiles) == 1
+    profile = spectral.profiles[0]
+    assert profile.released is False
+    assert not profile.release_evidence
+    assert set(profile.required_gates) == set(DISTRIBUTED_SPECTRAL_REQUIRED_GATES)
+    assert {
+        "channel-execution",
+        "channel-horizontal-layout",
+        "channel-horizontal-partition",
+        "channel-atomic-zero-mode",
+    } <= set(profile.required_gates)
+    assert {
+        dict(support.attributes)["route"] for support in profile.support_tuples
+    } == set(DISTRIBUTED_SPECTRAL_ROUTES)
+    for support in profile.support_tuples:
+        attributes = dict(support.attributes)
+        assert attributes["backend"] == "jax"
+        if attributes["route"] == "channel-horizontal":
+            assert attributes["transform"] == "execute-channel-horizontal-action"
+            assert attributes["geometry"] == "current-fourier-chebyshev-fourier-channel"
+            assert (
+                attributes["differentiation"] == "channel-action-derivative-not-claimed"
+            )
+        else:
+            assert attributes["transform"] == "full-complex-c2c"
+            assert attributes["geometry"] == "periodic-cartesian"
+            assert attributes["differentiation"] == "directional-jvp-and-hilbert-adjoint"
+        assert attributes["decomposition"] == "regular-divisible-slab-and-pencil"

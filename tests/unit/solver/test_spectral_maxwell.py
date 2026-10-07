@@ -264,6 +264,141 @@ def test_gauss_law_holds_to_roundoff_per_conservation_mode(
         state = result.accepted_state
 
 
+@pytest.mark.parametrize(
+    ("time_dependency", "current_substeps", "pml"),
+    [
+        ("linear-j", None, None),
+        ("multi-j", 4, sp.SpectralPMLPlan((2, 2, 2))),
+    ],
+    ids=["linear-j-width-15", "multi-j-pml-widths-above-12"],
+)
+def test_psatd_executes_only_its_exact_float64_transform_payloads(
+    time_dependency: sp.SpectralTimeDependency,
+    current_substeps: int | None,
+    pml: sp.SpectralPMLPlan | None,
+) -> None:
+    counts = (8, 8, 8)
+    options: dict[str, Any] = {
+        "time_dependency": time_dependency,
+        "current_substeps": current_substeps,
+        "charge_conservation": "update-with-rho",
+    }
+    if pml is not None:
+        options.update(absorber="psatd-pml", pml=pml)
+    solver = sp.SpectralMaxwellPlan(_bridge(counts, 0.125), **options).prepare()
+    execution = solver.transform.plan
+    assert execution.owner_id == solver.plan.owner_id
+    assert execution.precision.physical_dtype == "float64"
+    assert execution.precision.coefficient_dtype == "complex128"
+    assert execution.precision.transform_dtype == "complex128"
+    assert execution.plan_id != execution.numerical_id
+    assert execution.plan_id != execution.execution_id
+
+    intervals = solver.plan.current_intervals
+    source = sp.SpectralMaxwellSource(
+        jnp.zeros((intervals, *counts, 3)),
+        jnp.zeros((intervals, *counts)),
+    )
+    field = solver.field_with_charge(jnp.zeros(counts))
+    advanced = solver.advance(jnp.asarray(0.0), field, source, jnp.asarray(0.05))
+    assert bool(advanced.successful)
+    assert advanced.field.electric.dtype == jnp.float64
+
+    width = 7 + 4 * intervals
+    values = jnp.arange(np.prod(counts) * width, dtype=jnp.float64).reshape(
+        (*counts, width)
+    )
+    coefficients = solver.transform.forward(values)
+    restored = solver.transform.inverse(coefficients)
+    np.testing.assert_allclose(
+        np.asarray(restored), np.asarray(values), rtol=2e-12, atol=5e-12
+    )
+    with pytest.raises(ValueError, match="payload"):
+        solver.transform.forward(jnp.zeros((*counts, 13)))
+
+
+@pytest.mark.parametrize(
+    ("options", "inactive_widths"),
+    [
+        (
+            {
+                "time_dependency": "multi-j",
+                "current_substeps": 4,
+                "charge_conservation": "update-with-rho",
+                "stencil": "finite-order",
+                "stencil_order": 4,
+                "decomposition": "local-guarded",
+                "subdomains": (2, 2, 2),
+                "guard_cells": (2, 2, 2),
+            },
+            (23,),
+        ),
+        (
+            {
+                "stencil": "finite-order",
+                "stencil_order": 4,
+                "absorber": "psatd-pml",
+                "pml": sp.SpectralPMLPlan((2, 2, 2)),
+            },
+            (2, 6, 8, 18),
+        ),
+        (
+            {
+                "absorber": "psatd-pml",
+                "pml": sp.SpectralPMLPlan((2, 2, 2)),
+            },
+            (4, 6, 18),
+        ),
+        (
+            {
+                "grid": "staggered",
+                "stencil": "finite-order",
+                "stencil_order": 4,
+                "absorber": "psatd-pml",
+                "pml": sp.SpectralPMLPlan((2, 2, 2)),
+            },
+            (2, 8),
+        ),
+        (
+            {
+                "stencil": "finite-order",
+                "stencil_order": 4,
+                "decomposition": "local-guarded",
+                "subdomains": (2, 2, 2),
+                "guard_cells": (2, 2, 2),
+                "charge_conservation": "update-with-rho",
+                "absorber": "psatd-pml",
+                "pml": sp.SpectralPMLPlan((2, 2, 2)),
+            },
+            (2, 6, 8, 11, 18, 24),
+        ),
+    ],
+    ids=[
+        "local-guarded-step-width",
+        "finite-collocated-pml",
+        "infinite-collocated-pml",
+        "finite-staggered-pml",
+        "local-guarded-pml-step-widths",
+    ],
+)
+def test_psatd_global_transform_refuses_inactive_route_payloads(
+    options: dict[str, Any], inactive_widths: tuple[int, ...]
+) -> None:
+    counts = (8, 8, 8)
+    solver = sp.SpectralMaxwellPlan(_bridge(counts, 0.125), **options).prepare()
+    intervals = solver.plan.current_intervals
+    source = sp.SpectralMaxwellSource(
+        jnp.zeros((intervals, *counts, 3)),
+        jnp.zeros((intervals, *counts)),
+    )
+    field = solver.field_with_charge(jnp.zeros(counts))
+    result = solver.advance(jnp.asarray(0.0), field, source, jnp.asarray(0.05))
+    assert bool(result.successful)
+    for width in inactive_widths:
+        with pytest.raises(ValueError, match="payload"):
+            solver.transform.forward(jnp.zeros((*counts, width)))
+
+
 # -- absorber, decomposition, and far field ------------------------------------------
 
 
@@ -648,6 +783,24 @@ def test_dipole_far_field_matches_cochain_huygens_result() -> None:
 
 
 # -- restart and compatibility ---------------------------------------------------------
+
+
+def test_psatd_exact_restart_binds_execution_but_numerical_identity_does_not() -> None:
+    bridge = _bridge((8, 8, 8), 0.125)
+    first = sp.SpectralMaxwellPlan(bridge).prepare()
+    topology = D.spectral.SpectralMeshTopology(
+        (1,), devices=(jax.devices()[0],), axis_names=("alternate",)
+    )
+    second = sp.SpectralMaxwellPlan(bridge, topology=topology).prepare()
+    assert first.plan.owner_id == second.plan.owner_id
+    assert first.transform.plan.numerical_id == second.transform.plan.numerical_id
+    assert first.transform.plan.execution_id != second.transform.plan.execution_id
+    assert first.numerical_id == second.numerical_id
+    assert first.solver_id != second.solver_id
+
+    field = first.field_with_charge(jnp.zeros(first.plan.counts))
+    with pytest.raises(ValueError, match="another plan"):
+        second.restore_component(first.restart_component(field))
 
 
 def test_restart_round_trip_continues_bitwise_and_refuses_other_solvers() -> None:

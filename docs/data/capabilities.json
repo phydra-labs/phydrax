@@ -1,5 +1,5 @@
 {
-  "catalog_id": "a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121",
+  "catalog_id": "f626c40e8e117840396e0da5ccfaea692b50d725360a4d043eb233135f6d4903",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -10350,6 +10350,187 @@
       "public_symbols": []
     },
     {
+      "capability": "distributed-spectral-execution",
+      "declaration_id": "fc3296103742cb04cc4b61c901a68a332e8a11c7edcc6c5a8adcdba02fc26b49",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-distributed-spectral-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-dynamic-scheduling",
+        "no-external-fft-provider",
+        "no-forced-or-simulated-device-evidence",
+        "no-implicit-host-gather",
+        "no-les-or-pic-evidence-inheritance",
+        "no-r2c-or-c2r",
+        "no-rank-one-slab",
+        "no-same-host-multi-host-evidence",
+        "no-uneven-shards",
+        "no-unlisted-mixed-transform-sequences",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.spectral",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "distributed-spectral-execution.profile",
+          "profile_id": "e8627548dc7fc9cf4a57d5f8503be2e2347614ca26ed3e024f34cd5d55098a50",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "channel-atomic-zero-mode",
+            "channel-execution",
+            "channel-horizontal-layout",
+            "channel-horizontal-partition",
+            "compiler-memory",
+            "declared-resource",
+            "directional-jvp",
+            "forward-reference",
+            "hilbert-adjoint",
+            "inverse-reference",
+            "no-host-gather",
+            "payload-admission",
+            "physical-multi-device",
+            "physical-multi-host",
+            "precision-policy",
+            "process-qualified-topology",
+            "stage-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "scale-resource",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "20e4a74a239e93134849b661fc7937f43615c425b413a51e7d0ff07b3ac364db"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "pencil-roundtrip",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "29821417ce6846c5d719976056a2f08151c6a7e6d51c8c0a979df2815c1b63b3"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "padded-dealias",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "642117db9f6360e8b900416f83e88059ecd391b560b751b5374b08f81aef5834"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "channel-action-derivative-not-claimed",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "current-fourier-chebyshev-fourier-channel",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "channel-horizontal",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "execute-channel-horizontal-action"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7ddeb9726b91ffc2bfcd3fadff6063f2c50615a6ad98ae8bde91b8ca9ac7928c"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "global-reductions",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8f7a032cf897eb8508f8124565aaf58d12845bfa60fb2f950aa76d5abd42d82f"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "multi-host",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c89e293e9cb33312cc6b65c74a40cfc27aab3b6f005150c33eda308be308bd42"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "slab-roundtrip",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ff654d2d3f575ac248e76de0e697264234771175a0b27b1f2857a8a2164e0f77"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "electrochemistry.porous-electrode",
       "declaration_id": "c832b227ca04697af0252575f3e72c2970796879234011062e78e4a535b3bb1f",
       "dependencies": [],
@@ -20402,7 +20583,7 @@
     },
     {
       "capability": "pic.distributed",
-      "declaration_id": "c7b5a32f7484eb7c6bd01359bd3ac55a173e78c99e6e51c24b08334cf6d90d66",
+      "declaration_id": "3539b749239cb94fa1d403f000507050144f5f658e14b75eff8a09f054743238",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -20419,10 +20600,12 @@
       "owner": "phydrax.solver",
       "profiles": [
         {
-          "dependencies": [],
+          "dependencies": [
+            "e8627548dc7fc9cf4a57d5f8503be2e2347614ca26ed3e024f34cd5d55098a50"
+          ],
           "kind": "capability-profile",
           "name": "pic.distributed.profile",
-          "profile_id": "dfa057072453e2f53d798aea3864bdf16fcd8740fca9b43c38186508e771b61b",
+          "profile_id": "22d63fe12ac0c0d566f3fc4ceabdabb3e5a73300569633169da28581768c3c3e",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -20442,7 +20625,7 @@
               "attributes": {
                 "decomposition": "static-equal-blocks-1d-2d-3d-mesh-restart-repartition",
                 "deposition": "window-local-axis-by-axis-halo-accumulation-plus-uniform",
-                "field_solvers": "cochain-3d-reduced-1d-2d-psatd-global-fft-and-local-guarded",
+                "field_solvers": "cochain-reduced-and-psatd-consumer-configurations",
                 "migration": "fixed-capacity-ppermute-packets-diagonals-atomic-rejection",
                 "precision": "float64",
                 "processes": "per-device-creation-population-stateful-resampling-tile-reserved-identities",
@@ -20450,7 +20633,7 @@
               },
               "capability": "pic.distributed",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "d32c664476360b2e82e4bb711827b5147f82871486c0d3727a83b997e40a9c2b"
+              "support_tuple_id": "44be0f36f4f921cfc3f63748930a204e81055523d2be1eef459e38b6bcc927a6"
             }
           ],
           "version": "candidate"

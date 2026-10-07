@@ -668,10 +668,13 @@ every species, so particle ownership is aligned with the field decomposition. Th
   previous axes' guards, so edge and corner guards of diagonal neighbors arrive without extra
   messages; particles more than `particle_margin` cells outside their block are refused;
 - cochain, reduced, and global-FFT PSATD updates are the base solver's own update,
-  SPMD-partitioned over the same mesh; PSATD global FFTs must run through a
-  `DistributedSpectralExecutionPlan` built on the same mesh (slab schedule on one axis, pencil on
-  two; three-axis meshes are refused for PSATD). Reduced and spectral field arrays are sharded over
-  the blocks; packed cochains are replicated;
+  SPMD-partitioned over the same mesh. PSATD global FFTs run through an owner-bound
+  `DistributedSpectralExecutionPlan` on that exact mesh: slab on one mesh axis or
+  pencil on two; three-axis meshes are refused. The transform uses the PSATD
+  float64/complex128 precision policy and admits the exact `(1, C)` payload set derived
+  from the configured field, current-interval, linear/multi-J, PML, Gauss, antenna,
+  and handoff callsites. Width is not capped at 12. Reduced and spectral field arrays
+  are sharded over the blocks; packed cochains are replicated;
 - local-guarded PSATD (Kirchen et al., Phys. Rev. E 102, 063215 (2020)) runs per device: the owned
   fields, current, and charge receive the plan's `guard_cells` cells exchanged through the same
   halo substrate on every decomposed axis, and each of the device's local-guarded subdomains
@@ -688,10 +691,17 @@ interior block face by `particle_margin` cells must deposit and gather inside th
 whose deposit is not window-local is refused by the same probe: collocated PSATD with even extents
 projects checkerboard charge over the whole grid, and the continuity-projected reduced 2-D current
 spreads over the whole grid, so a reduced 2-D run decomposes only when the guard windows cover the
-grid (reduced 1-D currents are window-local up to their mean current). The distributed solver shares its base
-solver's identity — decomposition changes reduction order, not the discretization — and reports
-execution in `PICDistributedEvidence` (`distributed=True`, mesh shape, local-guarded guards; for
-cochain Maxwell the capability set with `distributed` and `spatial_distribution` set).
+grid (reduced 1-D currents are window-local up to their mean current).
+
+The distributed wrapper retains the base discretization identity, but a prepared
+PSATD base now includes its spectral owner, numerical, execution, and plan identities.
+Topology/layout/stage/payload/resource changes therefore change the PSATD solver and
+PIC restart owners rather than masquerading as a reduction-order-only change.
+`PICDistributedEvidence` records execution (`distributed=True`, mesh shape and
+local-guarded guards; for cochain Maxwell, the capability set with `distributed` and
+`spatial_distribution` set). FFT resources stop at transform
+storage/workspace/liveness and collective traffic; particle, field-history, PML,
+process, and checkpoint capacity remains PIC-owned.
 
 `pic_distribution_support(base)` returns the `PICDistributionSupport` (`route` or `None`, and the
 `basis`) that `distribute_pic_field_solver` enforces: quasi-cylindrical PSATD is refused (its
@@ -712,13 +722,17 @@ withholds; a published distributed protocol is admitted exactly when the base ad
 | `galilean-grid` | — | — | forwarded: particles drift and migrate in grid coordinates |
 | `energy-accounting` | forwarded (replicated cochains) | — | — |
 | `open-domain` | forwarded (every distributed cochain axis is periodic) | — | — |
-| `restart-state` | forwarded; components restart across topologies | forwarded | forwarded |
+| `restart-state` | forwarded; cochain components may restart across admitted topologies | forwarded; reduced components may restart across admitted topologies | forwarded; PSATD/PIC restart requires the exact spectral execution identity |
 | `gauss-projection` | forwarded on the halo-accumulated charge | forwarded | forwarded (FFTs on the PIC mesh) |
 | `relativistic-self-fields` | withheld: needs a grounded boundary on bounded axes, and distributed cochain axes are periodic | — | — |
 
-Each published route is exercised on four forced host devices against the single-device base or an
-analytic reference in `tests/unit/solver/test_distributed_pic_capabilities.py` (functional
-evidence, not hardware scaling).
+Each published route is exercised on four forced host devices against the
+single-device base or an analytic reference in
+`tests/unit/solver/test_distributed_pic_capabilities.py`. This is functional evidence,
+not physical-device, multi-host, scaling, or release evidence. Distributed PSATD
+depends on the separate unreleased `distributed-spectral-execution` candidate, whose
+exact full-complex regular-shard support and process-qualified physical gates cannot
+be inherited from PIC parity.
 
 ```python
 from jax.sharding import Mesh
@@ -781,14 +795,19 @@ restored = phx.solver.PICRestartPlan(other_run).restore(repository, checkpoint)
 restored.state, restored.restart_class  # "bitwise" or "tolerance"
 ```
 
-A restart on the topology that wrote the checkpoint continues bitwise. The decomposition is
-static during a run and changes only at restart: a different mesh (device count, or slabs versus
-blocks) repartitions particles, with their slot-aligned process state, into the new slot blocks
-and process banks by their own positions (slot permutations, so the restored state is exact) and
-is a
-`"tolerance"` restart within `repartition_tolerance`, because the continued run sums deposits in a
-different order. The lifecycle `TopologyRestartPolicy` admits or refuses the relation; the default
-admits tolerance restarts. Components are admitted only by owners with the same identity.
+A cochain or reduced-field restart on the topology that wrote the checkpoint continues
+bitwise. Its decomposition may change only at restart: a different admitted mesh
+repartitions particles, with their slot-aligned process state, into new slot blocks and
+process banks by position. Slot permutations keep restored state exact, while the
+continued run is a `"tolerance"` restart within `repartition_tolerance` because
+deposition reduction order changes. The lifecycle `TopologyRestartPolicy` owns that
+relation; the default admits tolerance restarts.
+
+PSATD/PIC is intentionally stricter. Its field solver and PIC restart components bind
+the full distributed spectral `execution_id`, including topology, layouts, stages,
+payload admission, and FFT resources. A changed PSATD topology is refused rather than
+treated as a topology-neutral numerical checkpoint. Every route still admits a
+component only through the same scientific owner identity.
 
 ## Differentiation and limits
 

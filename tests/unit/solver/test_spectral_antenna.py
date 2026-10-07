@@ -363,6 +363,37 @@ def _refusal_antenna(bridge: Any, **options: Any) -> Any:
     )
 
 
+def test_multi_j_antenna_executes_its_wide_exact_transform_payload() -> None:
+    counts = (8, 8, 16)
+    bridge = _bridge(counts, (0.25, 0.25, 0.25))
+    solver = sp.SpectralMaxwellPlan(
+        bridge,
+        time_dependency="multi-j",
+        current_substeps=4,
+        charge_conservation="update-with-rho",
+        antennas=(_refusal_antenna(bridge),),
+    ).prepare()
+    intervals = solver.plan.current_intervals
+    source = sp.SpectralMaxwellSource(
+        jnp.zeros((intervals, *counts, 3)),
+        jnp.zeros((intervals, *counts)),
+    )
+    field = solver.field_with_charge(jnp.zeros(counts))
+    result = solver.advance(jnp.asarray(0.0), field, source, jnp.asarray(0.05))
+    assert bool(result.successful)
+
+    width = 15 + 4 * intervals
+    values = jnp.arange(np.prod(counts) * width, dtype=jnp.float64).reshape(
+        (*counts, width)
+    )
+    restored = solver.transform.inverse(solver.transform.forward(values))
+    np.testing.assert_allclose(
+        np.asarray(restored), np.asarray(values), rtol=2e-12, atol=5e-12
+    )
+    with pytest.raises(ValueError, match="payload"):
+        solver.transform.forward(jnp.zeros((*counts, width - 1)))
+
+
 _ANTENNA_REFUSALS: dict[str, tuple[dict[str, Any], dict[str, Any], str]] = {
     "local-guarded": (
         {

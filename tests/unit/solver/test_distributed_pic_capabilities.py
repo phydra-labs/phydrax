@@ -10,7 +10,8 @@ distribution refusals, and the consumers' refusals of withheld protocols (a
 one-device mesh builds every distributed wrapper). Every protocol a distributed
 wrapper publishes is exercised numerically on four forced host devices in a
 subprocess (``XLA_FLAGS=--xla_force_host_platform_device_count=4``) against the
-single-device base solver or an analytic reference.
+single-device base solver or an analytic reference. These checks are PIC-owned
+regressions, not physical-device or distributed-spectral qualification evidence.
 """
 
 from __future__ import annotations
@@ -30,6 +31,10 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
+from phydrax.discretization.spectral._qualification import (
+    distributed_spectral_candidate_profiles,
+)
+from phydrax.solver._pic_qualification import pic_distributed_candidate_profiles
 
 
 D = phx.discretization
@@ -282,6 +287,29 @@ _DISTRIBUTED_PUBLISHED_ONLY = {
     "psatd-global-fft": _SPECTRAL_REFUSED,
     "psatd-local-guarded": _SPECTRAL_REFUSED,
 }
+
+
+def test_pic_distributed_profile_references_spectral_owner_without_copying_claims() -> (
+    None
+):
+    spectral = distributed_spectral_candidate_profiles()[0]
+    pic = pic_distributed_candidate_profiles()[0]
+    support = dict(pic.support_tuples[0].attributes)
+
+    assert pic.capability == "pic.distributed"
+    assert pic.dependencies == (spectral.profile_id,)
+    assert support["field_solvers"] == (
+        "cochain-reduced-and-psatd-consumer-configurations"
+    )
+    assert "transform" not in support
+    assert "backend" not in support
+    declaration = phx.qualification.builtin_capability_catalog().declaration(
+        "pic.distributed"
+    )
+    assert declaration.owner == "phydrax.solver"
+    assert tuple(profile.profile_id for profile in declaration.profiles) == (
+        pic.profile_id,
+    )
 
 
 def _structural(solver: Any) -> set[str]:

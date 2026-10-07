@@ -27,6 +27,10 @@ from ._registry import CapabilityProfile, SupportTuple
 # intentionally collapsed without changing the owner selected by the first producer.
 _PROFILE_PROVIDERS = (
     ("phydrax.qualification._core_portfolio", "core_candidate_profiles"),
+    (
+        "phydrax.discretization.spectral._qualification",
+        "distributed_spectral_candidate_profiles",
+    ),
     ("phydrax.discretization.meshfree._profiles", "meshfree_candidate_profiles"),
     ("phydrax.atomistic._mace_profiles", "mace_candidate_profiles"),
     ("phydrax.linalg._svd_qualification", "singular_subspace_candidate_profiles"),
@@ -194,6 +198,13 @@ _PROFILE_PROVIDERS = (
     ),
 )
 
+_CANDIDATE_DECLARATION_PROVIDERS = (
+    (
+        "phydrax.discretization.spectral._qualification",
+        "distributed_spectral_candidate_declarations",
+    ),
+)
+
 
 def _public_owner(module_name: str, /) -> str:
     parts = module_name.split(".")
@@ -249,11 +260,35 @@ def _candidate_declarations() -> tuple[CapabilityDeclaration, ...]:
                 continue
             profiles_by_id[profile.profile_id] = profile
             owner_by_capability.setdefault(profile.capability, owner)
-    return declarations_from_profiles(
-        profiles_by_id.values(),
+
+    specialized: list[CapabilityDeclaration] = []
+    for module_name, function_name in _CANDIDATE_DECLARATION_PROVIDERS:
+        values = _provider(module_name, function_name)()
+        for declaration in values:
+            if not isinstance(declaration, CapabilityDeclaration):
+                raise TypeError(
+                    f"Capability declaration provider {module_name}:{function_name} "
+                    f"returned {type(declaration).__name__}, not CapabilityDeclaration."
+                )
+            for profile in declaration.profiles:
+                discovered = profiles_by_id.get(profile.profile_id)
+                if discovered is None or discovered.to_record() != profile.to_record():
+                    raise ValueError(
+                        "Specialized candidate declarations must bind an exact "
+                        "discovered candidate profile."
+                    )
+            specialized.append(declaration)
+    specialized_capabilities = {value.capability for value in specialized}
+    generic = declarations_from_profiles(
+        (
+            profile
+            for profile in profiles_by_id.values()
+            if profile.capability not in specialized_capabilities
+        ),
         owners=owner_by_capability,
         nonclaim="candidate-not-release-authorized",
     )
+    return (*generic, *specialized)
 
 
 def _operator_declarations() -> tuple[CapabilityDeclaration, ...]:

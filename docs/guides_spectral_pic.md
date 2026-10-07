@@ -93,6 +93,30 @@ Every combination below is refused when the plan is constructed, never at runtim
 `current_substeps` is accepted only with `"multi-j"` (at least two), `galilean_velocity` only
 with a Galilean variant, and `subdomains`/`guard_cells` only with `"local-guarded"`.
 
+For `"global-fft"`, preparation creates one owner-bound
+`DistributedSpectralExecutionPlan` using the PSATD solver's float64/complex128
+`SpectralPrecisionPolicy`. The plan executes full-complex C2C transforms and returns
+complex128 coefficient storage. Its exact admitted trailing payloads are derived
+deterministically from the selected static PSATD features and every transform
+callsite: scalar/vector fields, combined E/B blocks, current intervals, linear-J and
+multi-J terms, PML splits, Gauss projection, antennas, and field handoff. They have
+the canonical form `(1, C)`. There is no hard-coded `C <= 12` ceiling: linear-J
+reaches width 15, and multi-J, PML, or antenna compositions may require wider exact
+entries.
+
+An undeclared `(1, C)` fails before placement. The admitted set and ordered FFT stage
+sequence participate in the transform `execution_id`; precision and transform
+semantics participate in `numerical_id`; the solver's scientific identity is the
+`owner_id` bound by `plan_id`. These identities propagate through
+`PreparedSpectralMaxwell.solver_id`, PIC plan/history identities, restart components,
+field-handoff evidence, and full-wave FEL identities. PSATD/PIC restart is therefore
+execution-exact: another topology, layout, payload set, stage sequence, or resource
+contract does not restore through a numerical-only alias.
+
+The FFT resource report contains transform storage/workspace/live peak and
+algorithmic collective traffic only. Field history, PML/antenna state, particle/PIC
+workflow memory, and restart/checkpoint storage remain PSATD/PIC-owned.
+
 ## Advertised capabilities and distribution
 
 `solver.pic_capabilities` records, per `PICFieldSolverCapability`, whether a prepared spectral
@@ -110,6 +134,15 @@ Configuration refusals of the table in [Compatibility](#compatibility) (PML and 
 the standard variant, antennas only with `"global-fft"` and without observers, `"local-guarded"`
 without `"spectral-correction"`) are properties of the base plan and hold unchanged under
 distribution, because the distributed solver runs the base plan's own update.
+
+The distributed-spectral dependency remains an unreleased, separately owned
+candidate. PIC functional parity cannot confer its physical qualification. Exact
+support is JAX global arrays, full-complex C2C, regular divisible slab/pencil shards,
+and the current horizontal channel action; PSATD uses only slab/pencil. R2C/C2R,
+rank-local or vendor FFT providers, uneven shards, mixed transforms, dynamic
+scheduling, and implicit gather are nonclaims. Forced CPU or same-host meshes are
+functional evidence; actual process-qualified multi-device and multi-host gates are
+separate.
 
 ## Minimal usage
 

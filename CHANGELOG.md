@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Fixed
+- Distributed spectral execution now requires an explicit scientific owner, one
+  `SpectralPrecisionPolicy`, and exact admitted payload shapes. Separate numerical,
+  execution, and owner-bound plan identities cover transform semantics, ordered
+  executable transpose stages, topology/layout, payload, and FFT resources. FFT
+  arithmetic and reductions honor their declared precision roles and refuse
+  unsupported active-JAX dtypes; topology availability is process-qualified, channel
+  plans require Fourier--Chebyshev--Fourier, and rank-one slab plans are refused.
+  FFT reports now own only logical transform storage/workspace/liveness and
+  algorithmic collective traffic; LES, PSATD/PIC, and mixed-cosmology workflows and
+  checkpoints own their own resources. LES admits only scalar/vector/tensor payloads,
+  PSATD derives its exhaustive exact payload widths from configured callsites, and
+  mixed cosmology admits scalar payloads. Exact LES and PSATD/PIC restarts retain
+  execution identity, while topology-neutral mixed checkpoints bind owner plus
+  numerical schema. The old raw dtype and caller-supplied FFT
+  stage/checkpoint/closure-resource constructor arguments have been removed.
 - Streamed deterministic and compensated reductions preserve reverse-mode
   curvature at valid zero events, and failed evaluations invalidate derivatives
   through message-only parameters and array-bearing callbacks. Callback leaves

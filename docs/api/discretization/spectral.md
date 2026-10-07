@@ -471,17 +471,63 @@ evidence. The quasi-cylindrical PSATD solver of
 
 ## Distributed full-complex execution
 
-`DistributedSpectralExecutionPlan` binds slab, pencil, or channel layouts to one real
-`SpectralMeshTopology`. Preparation fixes every physical/modal redistribution,
-canonical/padded shape, precision, transform scale, collective count, local shape, and
-byte bound. Execution keeps JAX `NamedSharding`, performs no host gather, and refuses
-unavailable devices or incompatible global arrays.
+`DistributedSpectralExecutionPlan` binds an explicit scientific `owner_id`, one
+`SpectralPrecisionPolicy`, canonical exact `admitted_payload_shapes`, and a slab,
+pencil, or channel layout to one real `SpectralMeshTopology`. The admitted shapes
+argument is required, canonicalized to a sorted unique tuple, and automatically
+includes `state_shape`. Admission occurs before placement; an equal extent or
+undeclared payload is not accepted by coincidence.
 
-Slab and pencil routes provide full-complex Fourier transforms. The channel schedule
-partitions horizontal Fourier axes while replicating Chebyshev axis 1 and only invokes
-a supplied modal action; it is not a distributed `ChannelStokesPlan`. One-device
-topology is local. Caller meshes provide actual multi-device execution, while
-multi-host launch and scaling evidence remain outside this plan.
+`from_discretization` derives `owner_id` and `precision` from the prepared
+discretization. The direct constructor requires `owner_id`; its optional `precision`
+defaults to float32/complex64. Raw coefficient/accumulation dtypes and caller-supplied
+`stage_count`, `checkpoint_count`, and `closure_workspace_bytes` are not part of the
+API.
+
+The precision policy distinguishes physical, coefficient-storage, transform,
+nonlinear, reduction, certification, output, and checkpoint roles. FFT arithmetic
+uses transform dtype and returns coefficient-storage dtype. Reductions cast before
+magnitude-square and summation. Preparation refuses a requested role that the active
+JAX dtype policy cannot honor; it does not silently narrow it.
+
+The identity boundary is explicit. `numerical_id` covers precision and
+transform/normalization/storage/reduction semantics while excluding topology,
+layouts, resources, and schedule. `execution_id` covers topology, layouts, ordered
+stages, admitted payloads, and FFT resources. Owner-bound `plan_id` composes
+`owner_id`, `numerical_id`, and `execution_id`.
+
+Preparation reports `forward_sequence_id`, `inverse_sequence_id`,
+`padded_forward_sequence_id`, and `padded_inverse_sequence_id`. These identify the
+same private immutable local-transform and public `SpectralTranspose` operations that
+execute. No public stage abstraction is introduced, and `SpectralTranspose` remains
+the public atomic redistribution contract.
+
+`SpectralResourceReport` owns `canonical_storage_bytes`,
+`padded_storage_bytes`, `transform_workspace_bytes`, and `peak_live_bytes`.
+`collective_payload_bytes` is algorithmic communication traffic and is excluded from
+the live-memory ceiling. Workflow stages, closure work, and checkpoint storage belong
+to LES, PSATD/PIC, mixed cosmology, or another consumer and are not FFT resources.
+
+Execution keeps JAX `NamedSharding`, performs no host gather, and refuses unavailable
+process-qualified device keys or incompatible global arrays. Slab requires a
+one-dimensional mesh and rank at least two; pencil requires a two-dimensional mesh,
+rank at least three, and divisible canonical/padded dimensions. Channel accepts
+exactly Fourier--Chebyshev--Fourier, fingerprints its ordered horizontal axes,
+replicates Chebyshev axis 1, and only invokes a supplied modal action; it is not a
+distributed `ChannelStokesPlan`.
+
+The unreleased qualification scope is JAX global arrays, full-complex C2C, regular
+divisible slab/pencil shards, and the current horizontal channel action. R2C/C2R,
+rank-local or vendor providers, uneven shards, mixed transforms, dynamic scheduling,
+and implicit gather are not claimed. Forced-device, one-device, and same-host runs
+cannot establish physical multi-device or multi-host qualification.
+
+Consumer checkpoint boundaries are not interchangeable. LES and PSATD/PIC retain
+exact `execution_id` through restart. Mixed cosmology admits scalar payload only and
+uses a topology-neutral checkpoint schema bound to scientific owner plus
+`numerical_id`; topology/layout/stage/resource identity is deliberately excluded from
+compatibility while each concrete shard artifact still receives its exact execution
+identity.
 
 ::: phydrax.discretization.SpectralMeshTopology
 

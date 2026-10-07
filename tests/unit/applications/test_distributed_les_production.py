@@ -22,10 +22,7 @@ from phydrax.applications.incompressible_flow._distributed_les import (
 from phydrax.applications.incompressible_flow._forcing import (
     ConstantPowerFourierForcingPlan,
 )
-from phydrax.discretization.spectral._distributed import (
-    SpectralMeshTopology,
-    SpectralResourceError,
-)
+from phydrax.discretization.spectral._distributed import SpectralMeshTopology
 from phydrax.discretization.spectral._distributed_les import DistributedPeriodicLESPlan
 from phydrax.equations._incompressible import _PeriodicRotationalDrift
 from phydrax.equations._les_closures import (
@@ -212,6 +209,23 @@ def test_distributed_contracts() -> None:
     )
     assert stage.rates.total_rate.sharding == expected
     assert distributed.qualification_inherited is False
+    assert distributed.backend.execution.admitted_payload_shapes == ((), (3,), (3, 3))
+    assert (
+        distributed.backend.preparation.owner_id
+        == distributed.backend.scientific.grid_filter.discretization.prepared_id
+    )
+    assert (
+        distributed.backend.preparation.precision_policy_id
+        == distributed.backend.execution.precision.policy_id
+    )
+    resource = distributed.backend.preparation.resource
+    assert resource.checkpoint_count == 1
+    assert resource.checkpoint_bytes == resource.retained_state_bytes
+    assert resource.checkpoint_phase_bytes == 2 * resource.retained_state_bytes
+    assert resource.declared_peak_bytes == max(
+        resource.numerical_phase_bytes,
+        resource.checkpoint_phase_bytes,
+    )
 
     eager = stage.rates.total_rate
     compiled = jax.jit(lambda value: distributed(0.0, value, None))(state)
@@ -475,6 +489,9 @@ def test_distributed_production_consumes_plan_and_artifact_restart_is_exact(
     assert transition.accepted_state.sharding == expected
     assert resumed.accepted_state.sharding == expected
     assert evidence.sharding_preserved
+    assert evidence.owner_id == plan.dynamics.backend.execution.owner_id
+    assert evidence.numerical_id == plan.dynamics.backend.execution.numerical_id
+    assert evidence.execution_id == plan.dynamics.backend.execution.execution_id
     assert resumed.last_checkpoint_id == checkpointed.last_checkpoint_id
     assert plan.manifest.topology_id == source.topology.topology_id
     assert (
@@ -503,6 +520,39 @@ def test_distributed_production_consumes_plan_and_artifact_restart_is_exact(
     with pytest.raises(ValueError, match="exactly bind"):
         # ty: ignore[invalid-argument-type]
         changed.prepare(prepared.checkpoint_store)
+
+    (
+        _,
+        _,
+        changed_execution_source,
+        changed_execution_dynamics,
+        _,
+        changed_execution_state,
+    ) = _compiled(checkpoint_count=1, maximum_bytes=1024**3)
+    changed_execution_case = DistributedPeriodicLESProductionCase(
+        changed_execution_dynamics,
+        changed_execution_state,
+        case_id="distributed-les-case",
+    )
+    changed_execution = DistributedPeriodicLESProductionPlan(
+        problem,
+        changed_execution_source,
+        DistributedPeriodicLESMethodPlan("etdrk2", safety_factor=0.8),
+        changed_execution_case,
+        start_time=0.0,
+        end_time=2.0e-4,
+        step_size=1.0e-4,
+        checkpoint_interval=1,
+        segment_steps=1,
+        checkpoint_retention=2,
+    )
+    assert (
+        changed_execution.dynamics.backend.execution.execution_id
+        != plan.dynamics.backend.execution.execution_id
+    )
+    with pytest.raises(ValueError, match="exactly bind"):
+        # ty: ignore[invalid-argument-type]
+        changed_execution.prepare(prepared.checkpoint_store)
 
 
 def test_distributed_production_run_returns_placed_completed_result(
@@ -557,12 +607,14 @@ def test_distributed_production_resource_refusal_precedes_runtime(tmp_path: Any)
             checkpoint_interval=1,
         )
 
-    with pytest.raises(SpectralResourceError) as caught:
+    with pytest.raises(MemoryError, match="LES resource preflight") as caught:
         DistributedPeriodicLESPlan(
             local.algebraic_les,
             _topology(),
             checkpoint_count=1,
             maximum_bytes=128,
         ).prepare()
-    assert caught.value.report.total_bytes > caught.value.report.maximum_bytes
+    refusal: Any = caught.value
+    assert refusal.report.declared_peak_bytes > refusal.report.maximum_bytes
+    assert refusal.report.checkpoint_bytes == refusal.report.retained_state_bytes
     assert not (tmp_path / "unprepared-runtime").exists()

@@ -97,7 +97,6 @@ class DistributedMixedCheckpointEvidence(StrictModule, NonTrainableState):
     payload_bytes_per_checkpoint: int = eqx.field(static=True)
     padding_bytes_per_checkpoint: int = eqx.field(static=True)
     payload_alignment: int = eqx.field(static=True)
-    spectral_reserved_bytes: int = eqx.field(static=True)
     maximum_bytes: int = eqx.field(static=True)
     capacity_sufficient: bool = eqx.field(static=True)
     distributed_checkpoint_executable: bool = eqx.field(static=True)
@@ -279,11 +278,7 @@ class DistributedMixedExecutionPlan(StrictModule):
         ):
             raise ValueError("Distributed particle exchange capacities are invalid.")
         wave = mixed.plan.wave
-        real_dtype = np.dtype(
-            jnp.empty(
-                (), dtype=jnp.dtype(wave.discretization.plan.precision.coefficient_dtype)
-            ).real.dtype
-        )
+        real_dtype = np.dtype(wave.discretization.plan.precision.physical_dtype)
         complex_dtype = np.dtype(wave.discretization.plan.precision.coefficient_dtype)
         wave_bytes = prod(wave.discretization.physical_shape) * complex_dtype.itemsize
         particle_support = mixed.plan.particles.particles
@@ -441,18 +436,10 @@ class DistributedMixedExecutionPlan(StrictModule):
         shape_matches = tuple(self.feasibility.mesh_shape) == tuple(
             self.spectral.spatial_shape
         ) and tuple(self.spectral.spatial_shape) == tuple(wave.discretization.modal_shape)
-        wave_coefficient_dtype = np.dtype(
-            jax.dtypes.canonicalize_dtype(
-                np.dtype(wave.discretization.plan.precision.coefficient_dtype)
-            )
-        )
-        wave_accumulation_dtype = np.dtype(
-            jax.dtypes.canonicalize_dtype(
-                np.dtype(wave.discretization.plan.precision.reduction_dtype)
-            )
-        )
         wave_real_dtype = np.dtype(
-            jnp.empty((), dtype=jnp.dtype(wave_coefficient_dtype)).real.dtype
+            jax.dtypes.canonicalize_dtype(
+                np.dtype(wave.discretization.plan.precision.physical_dtype)
+            )
         )
         particle_support = self.mixed.plan.particles.particles
         particle_dtype = np.dtype(
@@ -478,9 +465,11 @@ class DistributedMixedExecutionPlan(StrictModule):
             and gas_dtype == wave_real_dtype
         )
         spectral_abi = (
-            self.spectral.state_shape == ()
-            and np.dtype(self.spectral.coefficient_dtype) == wave_coefficient_dtype
-            and np.dtype(self.spectral.accumulation_dtype) == wave_accumulation_dtype
+            self.spectral.owner_id == wave.discretization.prepared_id
+            and self.spectral.precision.policy_id
+            == wave.discretization.plan.precision.policy_id
+            and self.spectral.state_shape == ()
+            and self.spectral.admitted_payload_shapes == ((),)
             and precision_matches
         )
         distributed_fft = topology_supported and spectral_abi
@@ -506,12 +495,7 @@ class DistributedMixedExecutionPlan(StrictModule):
             not missing_primitives and not self.spectral.report.host_gather
         )
         dimension = self.mixed.plan.particles.particles.ambient_dimension
-        real_itemsize = (
-            np.dtype(
-                self.mixed.plan.wave.discretization.plan.precision.coefficient_dtype
-            ).itemsize
-            // 2
-        )
+        real_itemsize = particle_dtype.itemsize
         particle_packet_bytes = (
             (2 * dimension + 1) * real_itemsize
             + np.dtype(np.int64).itemsize
@@ -560,10 +544,8 @@ class DistributedMixedExecutionPlan(StrictModule):
             collective_id,
         )
 
-        spectral_reserved = self.spectral.report.resource.checkpoint_bytes
         capacity_sufficient = (
             self.required_checkpoint_bytes <= self.maximum_checkpoint_bytes
-            and spectral_reserved > 0
         )
         covered_values = (
             "wave",
@@ -608,7 +590,6 @@ class DistributedMixedExecutionPlan(StrictModule):
                     self.checkpoint_payload_bytes - self.checkpoint_unpadded_bytes
                 ),
                 "payload_alignment": self.checkpoint_payload_alignment,
-                "spectral_reserved_bytes": spectral_reserved,
                 "maximum_bytes": self.maximum_checkpoint_bytes,
                 "capacity_sufficient": capacity_sufficient,
                 "distributed_checkpoint": distributed_checkpoint,
@@ -624,7 +605,6 @@ class DistributedMixedExecutionPlan(StrictModule):
             self.checkpoint_payload_bytes,
             self.checkpoint_payload_bytes - self.checkpoint_unpadded_bytes,
             self.checkpoint_payload_alignment,
-            spectral_reserved,
             self.maximum_checkpoint_bytes,
             capacity_sufficient,
             distributed_checkpoint,
@@ -673,8 +653,8 @@ class DistributedMixedExecutionPlan(StrictModule):
             reasons.append("mixed execution currently requires a one-axis slab mesh")
         if not spectral_abi:
             reasons.append(
-                "spectral state shape or coefficient/accumulation/component precision "
-                "does not match the mixed physics ABI"
+                "spectral owner, precision policy, or scalar payload ABI does not "
+                "match the mixed physics owner"
             )
         if not capacity_matches:
             reasons.append(
@@ -742,10 +722,10 @@ class PreparedDistributedMixedExecution(StrictModule):
     modal_sharding: NamedSharding = eqx.field(static=True)
     gas_sharding: NamedSharding | None = eqx.field(static=True)
     replicated_sharding: NamedSharding = eqx.field(static=True)
-    checkpoint_physics_id: str = eqx.field(static=True)
+    checkpoint_owner_id: str = eqx.field(static=True)
     checkpoint_schema_id: str = eqx.field(static=True)
-    checkpoint_numeric_id: str = eqx.field(static=True)
-    checkpoint_execution_id: str = eqx.field(static=True)
+    checkpoint_numerical_id: str = eqx.field(static=True)
+    checkpoint_compatibility_id: str = eqx.field(static=True)
     checkpoint_unpadded_bytes: int = eqx.field(static=True)
     checkpoint_payload_bytes: int = eqx.field(static=True)
     checkpoint_payload_alignment: int = eqx.field(static=True)
@@ -800,13 +780,24 @@ class PreparedDistributedMixedExecution(StrictModule):
                     plan.mixed.plan.gas.dynamics.discretization.cell_volumes.dtype
                 ).str,
             }
-        checkpoint_physics_id = plan.mixed.prepared_id
+        checkpoint_owner_id = plan.spectral.owner_id
         checkpoint_schema_id = canonical_fingerprint(
             {
                 "kind": "distributed-mixed-checkpoint-schema",
                 "wave_shape": list(wave.discretization.physical_shape),
+                "wave_dtype": np.dtype(plan.spectral.precision.coefficient_dtype).str,
+                "wave_scale_dtype": np.dtype(
+                    wave.discretization.plan.precision.physical_dtype
+                ).str,
                 "particle_capacity": support.capacity,
                 "particle_dimension": support.ambient_dimension,
+                "particle_coordinate_dtype": np.dtype(support.plan.coordinate_dtype).str,
+                "particle_mass_dtype": np.dtype(support.masses.dtype).str,
+                "particle_stable_id_dtype": np.dtype(np.int64).str,
+                "particle_logical_slot_dtype": np.dtype(np.int32).str,
+                "particle_active_mask_dtype": np.dtype(np.bool_).str,
+                "particle_rng_counter_dtype": np.dtype(np.uint64).str,
+                "particle_owner_dtype": np.dtype(np.int32).str,
                 "gas": gas_schema,
                 "payload_order": [
                     "wave",
@@ -824,29 +815,20 @@ class PreparedDistributedMixedExecution(StrictModule):
                 ],
             }
         )
-        checkpoint_numeric_id = canonical_fingerprint(
-            {
-                "kind": "distributed-mixed-checkpoint-numeric",
-                "wave_coefficient_dtype": np.dtype(plan.spectral.coefficient_dtype).str,
-                "wave_accumulation_dtype": np.dtype(plan.spectral.accumulation_dtype).str,
-                "particle_dtype": np.dtype(support.plan.coordinate_dtype).str,
-                "particle_mass_dtype": np.dtype(support.masses.dtype).str,
-                "gas_dtype": None if gas_schema is None else gas_schema["dtype"],
-            }
-        )
-        checkpoint_execution_id = canonical_fingerprint(
+        checkpoint_numerical_id = plan.spectral.numerical_id
+        checkpoint_compatibility_id = canonical_fingerprint(
             {
                 "kind": "distributed-mixed-topology-neutral-checkpoint",
-                "physics": checkpoint_physics_id,
+                "owner": checkpoint_owner_id,
                 "schema": checkpoint_schema_id,
-                "numeric": checkpoint_numeric_id,
+                "spectral_numerical": checkpoint_numerical_id,
             }
         )
         checkpoint_unpadded_bytes = plan.checkpoint_unpadded_bytes
-        self.checkpoint_physics_id = checkpoint_physics_id
+        self.checkpoint_owner_id = checkpoint_owner_id
         self.checkpoint_schema_id = checkpoint_schema_id
-        self.checkpoint_numeric_id = checkpoint_numeric_id
-        self.checkpoint_execution_id = checkpoint_execution_id
+        self.checkpoint_numerical_id = checkpoint_numerical_id
+        self.checkpoint_compatibility_id = checkpoint_compatibility_id
         self.checkpoint_unpadded_bytes = checkpoint_unpadded_bytes
         self.checkpoint_payload_bytes = plan.checkpoint_payload_bytes
         self.checkpoint_payload_alignment = plan.checkpoint_payload_alignment
@@ -858,10 +840,10 @@ class PreparedDistributedMixedExecution(StrictModule):
                 "particle_runtime": particle_runtime.runtime_id,
                 "physics": plan.mixed.prepared_id,
                 "topology": topology.topology_id,
-                "checkpoint_physics": checkpoint_physics_id,
+                "checkpoint_owner": checkpoint_owner_id,
                 "checkpoint_schema": checkpoint_schema_id,
-                "checkpoint_numeric": checkpoint_numeric_id,
-                "checkpoint_execution": checkpoint_execution_id,
+                "checkpoint_numerical": checkpoint_numerical_id,
+                "checkpoint_compatibility": checkpoint_compatibility_id,
                 "checkpoint_shard_plan": evidence.checkpoint.shard_plan_id,
             }
         )
@@ -933,10 +915,8 @@ class PreparedDistributedMixedExecution(StrictModule):
         if not include_gas and not isinstance(state, WaveParticleCosmologyState):
             raise TypeError("This distributed execution requires a wave-particle state.")
         wave_owner = self.plan.mixed.plan.wave
-        coefficient_dtype = np.dtype(self.plan.spectral.coefficient_dtype)
-        real_dtype = np.dtype(
-            jnp.empty((), dtype=jnp.dtype(coefficient_dtype)).real.dtype
-        )
+        coefficient_dtype = np.dtype(self.plan.spectral.precision.coefficient_dtype)
+        real_dtype = np.dtype(self.plan.spectral.precision.physical_dtype)
         component_dtypes = (
             np.dtype(state.wave.psi.dtype),
             np.dtype(state.particles.positions.dtype),
@@ -1130,7 +1110,7 @@ class PreparedDistributedMixedExecution(StrictModule):
         )
         source = 4.0 * jnp.pi * coupling * contrast
         source_coefficients = self.plan.spectral.to_modal(
-            source.astype(jnp.dtype(self.plan.spectral.coefficient_dtype))
+            source.astype(jnp.dtype(self.plan.spectral.precision.coefficient_dtype))
         )
         eigenvalues = self.plan.mixed.gravity.particle_gravity.gravity.poisson.diagonalization.modal_values
         eigenvalues = jax.device_put(eigenvalues, self.modal_sharding)
@@ -1614,12 +1594,12 @@ class PreparedDistributedMixedExecution(StrictModule):
         if (
             not manifest.complete
             or manifest.analysis_plan_id != self.checkpoint_schema_id
-            or manifest.numeric_revision_id != self.checkpoint_numeric_id
-            or manifest.execution_plan_id != self.checkpoint_execution_id
-            or manifest.diagnostic_ids != (self.checkpoint_physics_id,)
+            or manifest.numeric_revision_id != self.checkpoint_numerical_id
+            or manifest.execution_plan_id != self.checkpoint_compatibility_id
+            or manifest.diagnostic_ids != (self.checkpoint_owner_id,)
         ):
             raise ValueError(
-                "Distributed mixed checkpoint is incomplete or its physics/schema/numeric identity does not match."
+                "Distributed mixed checkpoint is incomplete or its owner/schema/numerical identity does not match."
             )
         self._require_state(prototype)
         payload_sharding = NamedSharding(
