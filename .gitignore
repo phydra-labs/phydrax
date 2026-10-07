@@ -74,6 +74,8 @@ benchmarks/*
 !benchmarks/pic_chain_integration.json
 !benchmarks/spectral_de_rham.py
 !benchmarks/spectral_de_rham.json
+!benchmarks/distributed_spectral.py
+!benchmarks/distributed_spectral.json
 !benchmarks/spline_de_rham.py
 !benchmarks/spline_de_rham.json
 !benchmarks/structured_cochain.py

@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
 from operator import index
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,6 +22,7 @@ from ...typing import checked, parse
 from ._distributed import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
+    SpectralResourceError,
     SpectralResourceReport,
 )
 
@@ -35,21 +37,145 @@ if TYPE_CHECKING:
 
 
 DistributedPeriodicLESSchedule: TypeAlias = Literal["slab", "pencil"]
-# Modal gradient, inverse gradient, modal stress, and stress collective fields.
+# Simultaneously live modal gradient, inverse-gradient, modal-stress, and
+# stress-collective buffers used by one algebraic LES evaluation.
 _PADDED_COMPLEX_WORKSPACE_FIELDS = 36
-# Gradient, viscosity, deviatoric stress, and energy-transfer real work arrays.
+# Simultaneously live gradient, viscosity, deviatoric-stress, and
+# energy-transfer buffers used by one algebraic LES evaluation.
 _PADDED_REAL_WORKSPACE_FIELDS = 20
 # Three waves, squared wave, inverse squared wave, and admissibility mask.
 _RETAINED_REAL_METADATA_FIELDS = 6
-_DISTRIBUTED_FULL_FLOW_STAGE_COUNT = 5
+_LES_PAYLOAD_SHAPES = ((), (3,), (3, 3))
+
+
+@final
+class _DistributedPeriodicLESResourceEvidence(StrictModule, NonTrainableState):
+    """Exact numerical- and checkpoint-phase LES memory evidence."""
+
+    fft_resource: SpectralResourceReport
+    padded_complex_workspace_bytes: int = eqx.field(static=True)
+    padded_real_workspace_bytes: int = eqx.field(static=True)
+    retained_metadata_bytes: int = eqx.field(static=True)
+    closure_workspace_bytes: int = eqx.field(static=True)
+    retained_state_bytes: int = eqx.field(static=True)
+    checkpoint_count: int = eqx.field(static=True)
+    checkpoint_bytes: int = eqx.field(static=True)
+    numerical_phase_bytes: int = eqx.field(static=True)
+    checkpoint_phase_bytes: int = eqx.field(static=True)
+    declared_peak_bytes: int = eqx.field(static=True)
+    maximum_bytes: int = eqx.field(static=True)
+    accepted: bool = eqx.field(static=True)
+    reasons: tuple[str, ...] = eqx.field(static=True)
+    report_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        fft_resource: SpectralResourceReport,
+        /,
+        *,
+        padded_complex_workspace_bytes: int,
+        padded_real_workspace_bytes: int,
+        retained_metadata_bytes: int,
+        retained_state_bytes: int,
+        checkpoint_count: int,
+        maximum_bytes: int,
+        reasons: Sequence[str] = (),
+    ) -> None:
+        if not isinstance(fft_resource, SpectralResourceReport):
+            raise TypeError("fft_resource must be a SpectralResourceReport.")
+        byte_counts = tuple(
+            index(value)
+            for value in (
+                padded_complex_workspace_bytes,
+                padded_real_workspace_bytes,
+                retained_metadata_bytes,
+                retained_state_bytes,
+            )
+        )
+        checkpoints = index(checkpoint_count)
+        maximum = index(maximum_bytes)
+        if any(value < 0 for value in byte_counts) or checkpoints < 0 or maximum <= 0:
+            raise ValueError("LES resource byte counts and limits are invalid.")
+        (
+            padded_complex,
+            padded_real,
+            retained_metadata,
+            retained_state,
+        ) = byte_counts
+        closure_workspace = padded_complex + padded_real + retained_metadata
+        checkpoint_bytes = retained_state * checkpoints
+        numerical_phase = fft_resource.peak_live_bytes + closure_workspace
+        checkpoint_phase = retained_state + checkpoint_bytes
+        declared_peak = max(numerical_phase, checkpoint_phase)
+        refusal_reasons = tuple(fft_resource.reasons) + tuple(
+            str(reason) for reason in reasons
+        )
+        if any(not reason for reason in refusal_reasons):
+            raise ValueError("LES resource refusal reasons must be non-empty.")
+        if declared_peak > maximum:
+            refusal_reasons += (
+                f"required LES peak bytes {declared_peak} exceed maximum_bytes {maximum}",
+            )
+        self.fft_resource = fft_resource
+        self.padded_complex_workspace_bytes = padded_complex
+        self.padded_real_workspace_bytes = padded_real
+        self.retained_metadata_bytes = retained_metadata
+        self.closure_workspace_bytes = closure_workspace
+        self.retained_state_bytes = retained_state
+        self.checkpoint_count = checkpoints
+        self.checkpoint_bytes = checkpoint_bytes
+        self.numerical_phase_bytes = numerical_phase
+        self.checkpoint_phase_bytes = checkpoint_phase
+        self.declared_peak_bytes = declared_peak
+        self.maximum_bytes = maximum
+        self.accepted = not refusal_reasons
+        self.reasons = refusal_reasons
+        self.report_id = canonical_fingerprint(
+            {
+                "kind": "distributed-periodic-les-resource-evidence",
+                "fft_resource": fft_resource.report_id,
+                "padded_complex_workspace_bytes": padded_complex,
+                "padded_real_workspace_bytes": padded_real,
+                "retained_metadata_bytes": retained_metadata,
+                "closure_workspace_bytes": closure_workspace,
+                "retained_state_bytes": retained_state,
+                "checkpoint_count": checkpoints,
+                "checkpoint_bytes": checkpoint_bytes,
+                "numerical_phase_bytes": numerical_phase,
+                "checkpoint_phase_bytes": checkpoint_phase,
+                "declared_peak_bytes": declared_peak,
+                "maximum_bytes": maximum,
+                "accepted": self.accepted,
+                "reasons": list(refusal_reasons),
+            }
+        )
+
+
+class _DistributedPeriodicLESResourceError(MemoryError):
+    """Typed LES refusal retaining exact consumer-owned resource evidence."""
+
+    report: _DistributedPeriodicLESResourceEvidence
+
+    def __init__(self, report: _DistributedPeriodicLESResourceEvidence, /) -> None:
+        self.report = report
+        super().__init__(
+            "Distributed periodic LES resource preflight refused execution: "
+            + "; ".join(report.reasons)
+        )
 
 
 class DistributedPeriodicLESPreparationEvidence(StrictModule, NonTrainableState):
-    """Backend-specific support, resource, and sharding evidence."""
+    """Backend-specific support, identity, resource, and sharding evidence."""
 
     scientific_prepared_id: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
     execution_plan_id: str = eqx.field(static=True)
+    admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    transform_sequence_ids: tuple[str, str, str, str] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     schedule: DistributedPeriodicLESSchedule = eqx.field(static=True)
     retained_shape: tuple[int, int, int] = eqx.field(static=True)
@@ -59,13 +185,13 @@ class DistributedPeriodicLESPreparationEvidence(StrictModule, NonTrainableState)
     padded_modal_layout_id: str = eqx.field(static=True)
     padded_physical_layout_id: str = eqx.field(static=True)
     reduction_axes: tuple[str, ...] = eqx.field(static=True)
-    closure_workspace_bytes: int = eqx.field(static=True)
     host_gather: bool = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
     restart_preserves_sharding: bool = eqx.field(static=True)
     scientific_parity_bound: bool = eqx.field(static=True)
     qualification_inherited: bool = eqx.field(static=True)
-    resource: SpectralResourceReport
+    fft_resource: SpectralResourceReport
+    resource: _DistributedPeriodicLESResourceEvidence
     report_id: str = eqx.field(static=True)
 
 
@@ -89,7 +215,20 @@ class PreparedDistributedPeriodicFourierFilter(StrictModule, NonTrainableState):
             raise TypeError("scientific must be a PreparedPeriodicFourierGridFilter.")
         if not isinstance(execution, DistributedSpectralExecutionPlan):
             raise TypeError("execution must be a DistributedSpectralExecutionPlan.")
-        if execution.spatial_shape != tuple(scientific.discretization.modal_shape):
+        discretization = scientific.discretization
+        if execution.owner_id != discretization.prepared_id:
+            raise ValueError(
+                "Distributed filter execution belongs to a foreign scientific owner."
+            )
+        if execution.precision.policy_id != discretization.plan.precision.policy_id:
+            raise ValueError(
+                "Distributed filter execution has a foreign precision policy."
+            )
+        if execution.admitted_payload_shapes != _LES_PAYLOAD_SHAPES:
+            raise ValueError(
+                "Distributed filter execution does not admit the exact LES payload shapes."
+            )
+        if execution.spatial_shape != tuple(discretization.modal_shape):
             raise ValueError("Distributed filter and retained discretization disagree.")
         live_mask = execution.place_batched(
             scientific.live_mask,
@@ -102,7 +241,20 @@ class PreparedDistributedPeriodicFourierFilter(StrictModule, NonTrainableState):
             {
                 "kind": "prepared-distributed-periodic-fourier-grid-filter",
                 "scientific_filter": scientific.prepared_id,
+                "owner": execution.owner_id,
+                "precision": execution.precision.policy_id,
+                "numerical": execution.numerical_id,
+                "execution": execution.execution_id,
                 "execution_plan": execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in execution.admitted_payload_shapes
+                ],
+                "transform_sequences": [
+                    execution.report.forward_sequence_id,
+                    execution.report.inverse_sequence_id,
+                    execution.report.padded_forward_sequence_id,
+                    execution.report.padded_inverse_sequence_id,
+                ],
                 "topology": execution.topology.topology_id,
                 "layout": execution.modal_layout.layout_id,
                 "sharding": "retained-modal-layout",
@@ -167,9 +319,15 @@ class DistributedPeriodicLESRestartEvidence(StrictModule):
     state: Array
     finite: Array
     sharding_preserved: bool = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
+    execution_plan_id: str = eqx.field(static=True)
+    admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    transform_sequence_ids: tuple[str, str, str, str] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
-    execution_plan_id: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     restart_id: str = eqx.field(static=True)
 
@@ -240,6 +398,9 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
             {
                 "kind": "distributed-periodic-les-plan",
                 "scientific_prepared": scientific.prepared_id,
+                "owner": scientific.grid_filter.discretization.prepared_id,
+                "precision": scientific.grid_filter.discretization.plan.precision.policy_id,
+                "payload_shapes": [list(shape) for shape in _LES_PAYLOAD_SHAPES],
                 "topology": topology.topology_id,
                 "schedule": schedule,
                 "checkpoint_count": checkpoints,
@@ -279,25 +440,50 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
         physical_dtype = np.dtype(discretization.plan.precision.physical_dtype)
         evaluation_points = prod(evaluation)
         retained_points = prod(retained)
-        closure_workspace = (
+        padded_complex_workspace = (
             evaluation_points
-            * (
-                _PADDED_COMPLEX_WORKSPACE_FIELDS * coefficient_dtype.itemsize
-                + _PADDED_REAL_WORKSPACE_FIELDS * physical_dtype.itemsize
-            )
-            + retained_points * _RETAINED_REAL_METADATA_FIELDS * physical_dtype.itemsize
+            * _PADDED_COMPLEX_WORKSPACE_FIELDS
+            * coefficient_dtype.itemsize
         )
-        execution = DistributedSpectralExecutionPlan.from_discretization(
-            plan.topology,
-            discretization,
-            schedule=plan.schedule,
-            padded_shape=evaluation,
-            state_shape=(3,),
-            stage_count=_DISTRIBUTED_FULL_FLOW_STAGE_COUNT,
-            checkpoint_count=plan.checkpoint_count,
-            closure_workspace_bytes=closure_workspace,
-            maximum_bytes=plan.maximum_bytes,
-        ).prepare()
+        padded_real_workspace = (
+            evaluation_points * _PADDED_REAL_WORKSPACE_FIELDS * physical_dtype.itemsize
+        )
+        retained_metadata = (
+            retained_points * _RETAINED_REAL_METADATA_FIELDS * physical_dtype.itemsize
+        )
+        retained_state = retained_points * 3 * coefficient_dtype.itemsize
+
+        def les_resource(
+            fft_resource: SpectralResourceReport, /
+        ) -> _DistributedPeriodicLESResourceEvidence:
+            return _DistributedPeriodicLESResourceEvidence(
+                fft_resource,
+                padded_complex_workspace_bytes=padded_complex_workspace,
+                padded_real_workspace_bytes=padded_real_workspace,
+                retained_metadata_bytes=retained_metadata,
+                retained_state_bytes=retained_state,
+                checkpoint_count=plan.checkpoint_count,
+                maximum_bytes=plan.maximum_bytes,
+            )
+
+        try:
+            execution_plan = DistributedSpectralExecutionPlan.from_discretization(
+                plan.topology,
+                discretization,
+                schedule=plan.schedule,
+                padded_shape=evaluation,
+                state_shape=(3,),
+                admitted_payload_shapes=_LES_PAYLOAD_SHAPES,
+                maximum_bytes=plan.maximum_bytes,
+            )
+        except SpectralResourceError as error:
+            raise _DistributedPeriodicLESResourceError(
+                les_resource(error.report)
+            ) from None
+        execution = execution_plan.prepare()
+        resource = les_resource(execution.report.resource)
+        if not resource.accepted:
+            raise _DistributedPeriodicLESResourceError(resource)
         grid_filter = PreparedDistributedPeriodicFourierFilter(
             scientific.grid_filter,
             execution,
@@ -326,6 +512,12 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             scientific.projector.admissibility_mask,
             representation="modal",
         )
+        sequence_ids = (
+            execution.report.forward_sequence_id,
+            execution.report.inverse_sequence_id,
+            execution.report.padded_forward_sequence_id,
+            execution.report.padded_inverse_sequence_id,
+        )
         backend_id = canonical_fingerprint(
             {
                 "kind": "prepared-distributed-periodic-les",
@@ -333,7 +525,17 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
                 "scientific_prepared": scientific.prepared_id,
                 "model": scientific.model.prepared_id,
                 "filter": grid_filter.prepared_id,
+                "owner": execution.owner_id,
+                "precision": execution.precision.policy_id,
+                "numerical": execution.numerical_id,
+                "execution": execution.execution_id,
                 "execution_plan": execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(sequence_ids),
+                "fft_resource": execution.report.resource.report_id,
+                "les_resource": resource.report_id,
                 "topology": plan.topology.topology_id,
                 "schedule": plan.schedule,
                 "runtime_scope": "distributed-3d-unit-density-full-complex-fourier",
@@ -344,7 +546,17 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             {
                 "kind": "distributed-periodic-les-preparation-evidence",
                 "backend": backend_id,
-                "resource": execution.report.resource.report_id,
+                "owner": execution.owner_id,
+                "precision": execution.precision.policy_id,
+                "numerical": execution.numerical_id,
+                "execution": execution.execution_id,
+                "execution_plan": execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(sequence_ids),
+                "fft_resource": execution.report.resource.report_id,
+                "les_resource": resource.report_id,
                 "retained_shape": list(retained),
                 "evaluation_shape": list(evaluation),
                 "layouts": [
@@ -361,7 +573,13 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
         preparation = DistributedPeriodicLESPreparationEvidence(
             scientific_prepared_id=scientific.prepared_id,
             backend_id=backend_id,
+            owner_id=execution.owner_id,
+            precision_policy_id=execution.precision.policy_id,
+            numerical_id=execution.numerical_id,
+            execution_id=execution.execution_id,
             execution_plan_id=execution.plan_id,
+            admitted_payload_shapes=execution.admitted_payload_shapes,
+            transform_sequence_ids=sequence_ids,
             topology_id=plan.topology.topology_id,
             schedule=plan.schedule,
             retained_shape=retained,
@@ -371,13 +589,13 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             padded_modal_layout_id=execution.padded_modal_layout.layout_id,
             padded_physical_layout_id=execution.padded_physical_layout.layout_id,
             reduction_axes=execution.modal_layout.used_mesh_axes,
-            closure_workspace_bytes=closure_workspace,
             host_gather=False,
             differentiable=True,
             restart_preserves_sharding=True,
             scientific_parity_bound=True,
             qualification_inherited=False,
-            resource=execution.report.resource,
+            fft_resource=execution.report.resource,
+            resource=resource,
             report_id=report_id,
         )
         self.plan = plan
@@ -713,7 +931,15 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             {
                 "kind": "distributed-periodic-les-restart",
                 "backend": self.prepared_id,
+                "owner": self.execution.owner_id,
+                "precision": self.execution.precision.policy_id,
+                "numerical": self.execution.numerical_id,
+                "execution": self.execution.execution_id,
                 "execution_plan": self.execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in self.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(self.preparation.transform_sequence_ids),
                 "topology": self.execution.topology.topology_id,
                 "layout": self.execution.modal_layout.layout_id,
             }
@@ -731,9 +957,15 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             state=value,
             finite=diagnostics.finite,
             sharding_preserved=value.sharding == expected,
+            owner_id=self.execution.owner_id,
+            precision_policy_id=self.execution.precision.policy_id,
+            numerical_id=self.execution.numerical_id,
+            execution_id=self.execution.execution_id,
+            execution_plan_id=self.execution.plan_id,
+            admitted_payload_shapes=self.execution.admitted_payload_shapes,
+            transform_sequence_ids=self.preparation.transform_sequence_ids,
             topology_id=self.execution.topology.topology_id,
             layout_id=self.execution.modal_layout.layout_id,
-            execution_plan_id=self.execution.plan_id,
             backend_id=self.prepared_id,
             restart_id=restart_id,
         )
@@ -743,9 +975,15 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
         """Restore only restart evidence produced for this exact backend identity."""
         if (
             evidence.backend_id != self.prepared_id
+            or evidence.owner_id != self.execution.owner_id
+            or evidence.precision_policy_id != self.execution.precision.policy_id
+            or evidence.numerical_id != self.execution.numerical_id
+            or evidence.execution_id != self.execution.execution_id
+            or evidence.execution_plan_id != self.execution.plan_id
+            or evidence.admitted_payload_shapes != self.execution.admitted_payload_shapes
+            or evidence.transform_sequence_ids != self.preparation.transform_sequence_ids
             or evidence.topology_id != self.execution.topology.topology_id
             or evidence.layout_id != self.execution.modal_layout.layout_id
-            or evidence.execution_plan_id != self.execution.plan_id
             or evidence.restart_id != self._restart_identity()
             or not evidence.sharding_preserved
         ):

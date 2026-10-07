@@ -28,13 +28,23 @@ forcing are explicit application plans; neither is injected automatically.
 
 
 ## Large-eddy simulation
+
 Periodic static algebraic LES compiles into the named incompressible stage and uses
 a current-state ETDRK guard. Periodic dynamic LES compiles with its exact coarser
 test discretization and gains transactional ETDRK production; periodic-uniform MAC
-dynamic LES compiles with a projected explicit method. Distributed slab/pencil
-full-flow production, channel mixed traction, MAC stochastic inflow, KSGS variants,
-learned stress, pressure-stepped unstructured flow, Favre transport, and immersed
-execution retain their route-specific contracts. The normative
+dynamic LES compiles with a projected explicit method.
+
+Distributed slab/pencil full-flow production is scientific-owner-bound. Its
+full-complex FFT plan derives the exact `SpectralPrecisionPolicy`, admits only scalar,
+three-vector, and 3-by-3 tensor payloads, and records separate `numerical_id`,
+`execution_id`, and owner-bound `plan_id`. FFT logical storage/workspace/traffic,
+LES closure and method liveness, and production checkpoint capacity retain separate
+owners. Distributed restart requires the exact execution identity; one-device parity
+does not establish physical multi-device support or scaling.
+
+Channel mixed traction, MAC stochastic inflow, KSGS variants, learned stress,
+pressure-stepped unstructured flow, Favre transport, and immersed execution retain
+their route-specific contracts. The normative
 [LES equations](../equations/les.md) define signs, trace, filters, formulas, identity,
 and AD; the [LES guide](../../guides_large_eddy_simulation.md) owns workflows and
 candidate/refusal status.
@@ -386,6 +396,22 @@ evidence through the existing `QualificationEvidence`, `QualificationMatrix`,
 The base incompressible profile is an external release dependency; an LES campaign
 cannot manufacture or waive it. No support tuple, signature, release decision, or
 artifact status is implied by the producer or a path alone.
+
+### Distributed spectral dependency
+
+Distributed periodic LES depends on the separate unreleased
+`distributed-spectral-execution` capability. Its exact candidate support is
+full-complex C2C JAX global arrays on regular divisible slab/pencil shards and the
+current horizontal Fourier--Chebyshev--Fourier channel action. The candidate gates
+independent forward/inverse, JVP/adjoint, precision, payload, ordered-stage,
+process-qualified topology, no-gather, resource/compiler-memory, physical-device, and
+separate multi-host evidence. It makes no R2C/C2R, vendor/rank-local provider, uneven
+shard, mixed-transform, dynamic-scheduling, or implicit-gather claim.
+
+Forced-device and same-host evidence is inconclusive for the physical gates, and the
+phase-separated `benchmarks/distributed_spectral.py` driver is performance evidence,
+not release authority. LES also retains its own scientific, workflow-resource, and
+exact-restart qualification boundaries.
 
 ## Scalar and variable-density MAC dynamics
 

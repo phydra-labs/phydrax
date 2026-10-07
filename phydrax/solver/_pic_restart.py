@@ -10,17 +10,19 @@ identities and lineage, the field state with its ADE/plasma/CPML/PML memory,
 the particle-boundary ledger, recorders, process states such as radiation
 accumulators and QED photon/pair banks, the staggered field history), the
 moving-window epoch, and auxiliary `PICRestartState` owners (for example
-boosted-frame diagnostic buffers) — into one topology-neutral
-`PICRestartManifest`, and publishes and restores them with
-`phydrax.lifecycle` addressable-shard checkpoints.
+boosted-frame diagnostic buffers) — into one `PICRestartManifest`, and
+publishes and restores them with `phydrax.lifecycle` addressable-shard
+checkpoints.
 
-Every component is admitted only by an owner with the same identity. A
-restart on the topology that wrote the checkpoint is ``"bitwise"``; a restart
-on a different mesh repartitions particles (with their slot-aligned process
-state) into the new slot blocks and process banks by their own positions (slot
-permutations that leave the state exact) and is a ``"tolerance"``
-restart, because the continued run sums deposits in a different order. The
-lifecycle `TopologyRestartPolicy` admits or refuses the relation.
+Every exact component is admitted only by an owner with the same execution
+identity. A restart on the topology that wrote the checkpoint is ``"bitwise"``
+and retains those owners unchanged. An explicitly admitted restart on a
+different mesh first matches the topology-neutral numerical identity and
+component schema, then rebinds only the field, clock, boundary, field-history,
+and moving-window execution owners before repartitioning particles and process
+banks. It is a ``"tolerance"`` restart because the continued run sums deposits
+in a different order. The lifecycle `TopologyRestartPolicy` admits or refuses
+that relation.
 """
 
 from __future__ import annotations
@@ -79,16 +81,18 @@ _PIC_CHECKPOINT_LIMITS = replace(DEFAULT_ARRAY_ARCHIVE_LIMITS, max_members=1 << 
 
 
 class PICRestartManifest(StrictModule, NonTrainableState):
-    """Topology-neutral inventory of one PIC run's restart components.
+    """Execution-owned inventory with a topology-neutral numerical identity.
 
-    ``names``/``owners`` list every component with the identity that admits
-    it; ``shapes``/``dtypes`` are its leaf signatures. ``topology_id`` and
-    ``part_count`` record the execution that wrote it; ``window_component`` and
-    ``auxiliary_names`` identify the moving-window epoch and auxiliary owners'
-    components.
+    ``plan_id`` binds the exact writing execution; ``numerical_id`` admits the
+    explicit topology-change route. ``names``/``owners`` list every exact
+    component owner, while ``shapes``/``dtypes`` are its leaf schema.
+    ``topology_id`` and ``part_count`` record the writing execution;
+    ``window_component`` and ``auxiliary_names`` identify the moving-window
+    epoch and auxiliary owners' components.
     """
 
     plan_id: str = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     part_count: int = eqx.field(static=True)
     names: tuple[str, ...] = eqx.field(static=True)
@@ -102,6 +106,7 @@ class PICRestartManifest(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan_id: str,
+        numerical_id: str,
         topology_id: str,
         part_count: int,
         names: Sequence[str],
@@ -139,6 +144,7 @@ class PICRestartManifest(StrictModule, NonTrainableState):
         if int(part_count) <= 0:
             raise ValueError("part_count must be positive.")
         self.plan_id = str(plan_id)
+        self.numerical_id = str(numerical_id)
         self.topology_id = str(topology_id)
         self.part_count = int(part_count)
         self.names = names_
@@ -155,6 +161,7 @@ class PICRestartManifest(StrictModule, NonTrainableState):
         """Canonical JSON-compatible record (excluding the manifest identity)."""
         return {
             "plan_id": self.plan_id,
+            "numerical_id": self.numerical_id,
             "topology_id": self.topology_id,
             "part_count": self.part_count,
             "names": list(self.names),
@@ -169,6 +176,7 @@ class PICRestartManifest(StrictModule, NonTrainableState):
     def from_record(cls, record: dict[str, Any], /) -> PICRestartManifest:
         return cls(
             record["plan_id"],
+            record["numerical_id"],
             record["topology_id"],
             record["part_count"],
             record["names"],
@@ -183,6 +191,7 @@ class PICRestartManifest(StrictModule, NonTrainableState):
         """Whether two manifests hold the same components with the same leaves."""
         return (
             self.plan_id == other.plan_id
+            and self.numerical_id == other.numerical_id
             and self.names == other.names
             and self.owners == other.owners
             and self.shapes == other.shapes
@@ -252,6 +261,7 @@ class PICRestartPlan(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     part_count: int = eqx.field(static=True)
     analysis_plan_id: str = eqx.field(static=True)
+    exact_plan_id: str = eqx.field(static=True)
     numeric_revision_id: str = eqx.field(static=True)
 
     @checked
@@ -269,9 +279,11 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         if isinstance(run, DistributedElectromagneticPICPlan):
             pic = run.pic
             topology, parts = run.topology_id, run.solver.decomposition.part_count
+            exact_id, numerical_id = run.plan_id, run.numerical_id
         elif isinstance(run, ElectromagneticPICPlan):
             pic = run
             topology, parts = _SINGLE_DEVICE_TOPOLOGY, 1
+            exact_id = numerical_id = pic.plan_id
         else:
             raise TypeError(
                 "run must be an ElectromagneticPICPlan or its distributed plan."
@@ -306,12 +318,13 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         self.limits = limits
         self.topology_id = topology
         self.part_count = parts
-        self.analysis_plan_id = pic.plan_id
+        self.exact_plan_id = exact_id
+        self.analysis_plan_id = numerical_id
         self.numeric_revision_id = canonical_fingerprint(
             {
                 "kind": "pic-restart-inventory",
-                "pic": pic.plan_id,
-                "window": None if window is None else window.plan_id,
+                "pic": numerical_id,
+                "window": window is not None,
                 "auxiliaries": len(auxiliary),
             }
         )
@@ -361,6 +374,7 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         values = tuple(components)
         count = len(self.auxiliaries)
         return PICRestartManifest(
+            self.exact_plan_id,
             self.analysis_plan_id,
             self.topology_id,
             self.part_count,
@@ -479,12 +493,14 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         )
         if source.manifest_id != stored.get("manifest_id"):
             raise ValueError("The PIC restart manifest record is corrupted.")
-        if source.plan_id != self.analysis_plan_id or (
+        if source.numerical_id != self.analysis_plan_id or (
             source.window_component != (self.window is not None)
             or len(source.auxiliary_names) != len(self.auxiliaries)
         ):
             raise ValueError("The PIC restart inventory differs from this run.")
         same = source.topology_id == self.topology_id
+        if same and source.plan_id != self.exact_plan_id:
+            raise ValueError("The exact PIC restart belongs to another execution.")
         restart_class: RestartClass = "bitwise" if same else "tolerance"
         relation = TopologyRestartRelation(
             source.topology_id,
@@ -504,8 +520,15 @@ class PICRestartPlan(StrictModule, NonTrainableState):
             for name, owner in zip(source.names, source.owners, strict=True)
         }
         auxiliary_names = set(source.auxiliary_names)
+        execution_owners = self.pic.execution_restart_owners()
         pic_components = tuple(
-            value
+            PICRestartComponent(
+                value.name,
+                execution_owners[value.name]
+                if not same and value.name in execution_owners
+                else value.owner_id,
+                value.leaves,
+            )
             for name, value in components.items()
             if name != _WINDOW_COMPONENT and name not in auxiliary_names
         )
@@ -517,8 +540,13 @@ class PICRestartPlan(StrictModule, NonTrainableState):
         window = self.window
         if window is not None:
             template = window.initialize(pic_state)
+            component = components[_WINDOW_COMPONENT]
+            if not same:
+                component = PICRestartComponent(
+                    component.name, window.plan_id, component.leaves
+                )
             origin, cells, epoch = restore_component(
-                components[_WINDOW_COMPONENT],
+                component,
                 _WINDOW_COMPONENT,
                 window.plan_id,
                 (template.origin, template.cumulative_cells, template.shift_epoch),

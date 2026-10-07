@@ -442,12 +442,20 @@ discarded. Step evidence gates both
 energy balance.
 
 `DistributedPeriodicLESPlan` wraps one prepared scientific action and refuses a
-simulated topology, channel schedule, non-oversampled stress, or resource excess.
+simulated topology, channel schedule, non-oversampled stress, foreign scientific
+owner, undeclared payload, or resource excess. Its FFT plan derives the owner's
+`SpectralPrecisionPolicy`, admits exactly `()`, `(3,)`, and `(3, 3)`, and binds the
+ordered transform/transpose sequence. Scalar wavenumber-squared data is placed before
+adding its singleton diagonal broadcast axis.
+
 `compile_distributed_periodic_les` adds the complete rotational equation;
 `DistributedPeriodicLESMethodPlan` supplies ETDRK2/4 or SSPRK33/54 with global
 current-state admission; and `DistributedPeriodicLESProductionPlan` keeps segments,
-statistics, checkpoints, and returned states device-resident. Qualification remains
-backend-specific and is never inherited from one-device parity.
+statistics, checkpoints, and returned states device-resident. FFT storage/workspace
+and collective traffic remain core-owned; closure/method liveness and checkpoint
+capacity are LES-owned and admitted separately. LES restart is exact to the owner,
+numerical and execution identities. Qualification remains backend-specific and is
+never inherited from one-device parity.
 
 ## Automatic differentiation
 

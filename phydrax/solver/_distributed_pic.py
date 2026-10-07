@@ -28,9 +28,10 @@ refused). The result is an `AbstractDistributedPICFieldSolver`, so
   inverted locally with the finite-order stencil; only the evidence (Gauss
   residual maxima, energy) is reduced over the mesh.
 
-The distributed solver shares its base solver's identity: decomposition
-changes reduction order, not the discretization, so restart components are
-admitted across topologies and `PICDistributedEvidence` records execution.
+The distributed solver has an execution-bound identity that includes its base
+solver, decomposition, mesh axes, and process-qualified devices. Exact PIC
+restart components therefore remain bound to the distributed execution.
+`PICDistributedEvidence` records that execution separately for inspection.
 Each route-specific solver publishes exactly the optional protocols whose
 distributed route it executes and withholds the others with a stated reason
 (`pic_capabilities`): moving windows are withheld because the window shift
@@ -769,6 +770,7 @@ class AbstractDistributedPICFieldSolver(
     evidence: PICDistributedEvidence
     mesh: Mesh = eqx.field(static=True)
     axis_names: tuple[str, ...] = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
@@ -857,8 +859,19 @@ class AbstractDistributedPICFieldSolver(
         )
         self.mesh = mesh
         self.axis_names = axis_names
-        # Decomposition changes reduction order, not the discretization.
-        self.solver_id = base.solver_id
+        self.numerical_id = (
+            base.numerical_id
+            if isinstance(base, PreparedSpectralMaxwell)
+            else base.solver_id
+        )
+        self.solver_id = canonical_fingerprint(
+            {
+                "kind": "distributed-pic-field-solver",
+                "numerical": self.numerical_id,
+                "base": base.solver_id,
+                "execution": execution_id,
+            }
+        )
         self.spatial_dimension = base.spatial_dimension
         self.field_dtype = base.field_dtype
 
@@ -1463,13 +1476,22 @@ class AbstractDistributedPICFieldSolver(
         base = self.base
         if not isinstance(base, PICRestartState):
             raise RuntimeError("A distributed base solver lost PICRestartState.")
-        return base.restart_component(field)
+        component = base.restart_component(field)
+        return PICRestartComponent(component.name, self.solver_id, component.leaves)
 
     def restore_component(self, component: PICRestartComponent, /) -> Any:
         base = self.base
         if not isinstance(base, PICRestartState):
             raise RuntimeError("A distributed base solver lost PICRestartState.")
-        return base.restore_component(component)
+        if component.name != "field":
+            raise ValueError(f"Restart component {component.name!r} is not 'field'.")
+        if component.owner_id != self.solver_id:
+            raise ValueError(
+                "Restart component 'field' belongs to another plan and is not admitted."
+            )
+        return base.restore_component(
+            PICRestartComponent(component.name, base.solver_id, component.leaves)
+        )
 
 
 _WINDOW_REFUSAL = (
@@ -2152,6 +2174,7 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
 
     pic: ElectromagneticPICPlan
     migration: PICMigrationPlan
+    numerical_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
@@ -2214,6 +2237,13 @@ class DistributedElectromagneticPICPlan(StrictModule, NonTrainableState):
             is_leaf=lambda value: value is None,
         )
         self.migration = migration
+        self.numerical_id = canonical_fingerprint(
+            {
+                "kind": "distributed-electromagnetic-pic-numerical",
+                "solver": solver.numerical_id,
+                "configuration": pic.configuration_id,
+            }
+        )
         self.topology_id = canonical_fingerprint(
             {
                 "kind": "distributed-pic-topology",

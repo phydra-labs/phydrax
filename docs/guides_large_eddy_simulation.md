@@ -293,12 +293,27 @@ distributed = phx.discretization.DistributedPeriodicLESPlan(
 ).prepare()
 ```
 
-Only `slab` and `pencil` schedules are accepted. Preparation binds canonical/padded
-layouts, transposes, global reductions, closure workspace, topology, resource ceiling,
-and the scientific prepared ID. Evaluation keeps `NamedSharding` and performs no host
-gather. `compile_distributed_periodic_les` adds dealiased rotational advection,
-molecular diffusion, forcing, Leray projection, pressure-driving evidence, and the
-distributed SGS action.
+Only `slab` and `pencil` schedules are accepted. The internal
+`DistributedSpectralExecutionPlan.from_discretization` derives the scientific owner
+and its single precision policy and admits exactly the trailing payload shapes `()`,
+`(3,)`, and `(3, 3)`. These cover scalar coefficients, velocity vectors, and velocity
+gradient/stress tensors; no other payload is accepted by matching extent. Scalar
+wavenumber-squared data is placed as a scalar field before the singleton diagonal
+broadcast axis is appended, so admission and placement describe the array actually
+owned by the FFT plan.
+
+Preparation binds canonical/padded layouts, the exact ordered transform/transpose
+sequence, global reductions, topology, and the FFT resource ceiling. Evaluation
+keeps `NamedSharding` and performs no host gather.
+`compile_distributed_periodic_les` adds dealiased rotational advection, molecular
+diffusion, forcing, Leray projection, pressure-driving evidence, and the distributed
+SGS action.
+
+FFT resource evidence counts only logical transform storage, transform workspace,
+peak FFT liveness, and algorithmic collective traffic. Closure arrays, temporal
+method stages, statistics, output, and checkpoint capacity are LES-owned. The LES
+resource report admits their complete live workspace and checkpoint reservation
+against the consumer ceiling; those bytes are not smuggled into the FFT report.
 
 `DistributedPeriodicLESMethodPlan` selects ETDRK2/4 or SSPRK33/54 and enforces the
 globally reduced current-state restriction. `DistributedPeriodicLESStatisticsPlan`
@@ -306,8 +321,13 @@ keeps scalar reductions sharded. `DistributedPeriodicLESProductionPlan` binds th
 full equation, method, statistics, outputs, moments, triggers, and checkpoint capacity
 to a shared runtime configured `device_resident=True`; segment results and restart
 state are re-placed on the exact topology/layout. `checkpoint_count>=1` is required.
-Qualification remains `backend-specific-not-inherited`; parity still does not imply
-scaling or release.
+
+LES restart is execution-exact: the scientific owner, precision/numerical semantics,
+payload admission, topology, layouts, ordered stages, resources, and resulting
+owner-bound plan identity must match. A changed execution is refused before state
+use. Qualification remains `backend-specific-not-inherited`; one-device parity is
+functional evidence and does not imply physical multi-device support, scaling, or
+release.
 
 ## Unstructured low-Mach Favre LES
 
@@ -599,6 +619,17 @@ A finite rate is not conservation evidence, a one-device parity result is not sc
 evidence, and a diagnostic success flag is not release evidence.
 
 ## Qualification and release boundary
+
+Distributed FFT qualification is independently owned by the unreleased
+`distributed-spectral-execution` candidate produced through
+`tools/distributed_execution_qualification.py`. Its exact gates cover independent
+forward/inverse references, directional JVP, Hilbert adjoint, precision policy,
+payload admission, ordered stage identity, process-qualified topology, no host gather,
+declared FFT resources, compiler memory, and separate physical multi-device and
+multi-host evidence. Forced CPU devices, a one-device slab, or several devices on one
+host remain functional evidence and cannot satisfy the physical multi-host gate.
+`benchmarks/distributed_spectral.py` records phase-separated measurements and exact
+identity/environment evidence; it is not itself qualification.
 
 `tools/large_eddy_simulation_qualification.py` is the LES campaign producer:
 

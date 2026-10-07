@@ -161,7 +161,17 @@ def test_fourier_nyquist_admission_matches_leray_and_recovers_pressure() -> None
 def test_fourier_exterior_derivative_preserves_distributed_modal_parity() -> None:
     realization = _complex(6, 3)
     distributed = DistributedSpectralExecutionPlan.from_discretization(
-        SpectralMeshTopology.one_device(), realization.space
+        SpectralMeshTopology.one_device(),
+        realization.space,
+        admitted_payload_shapes=((),),
+    )
+    assert distributed.owner_id == realization.space.prepared_id
+    assert distributed.precision.policy_id == realization.space.plan.precision.policy_id
+    assert distributed.precision.coefficient_dtype == "complex128"
+    assert distributed.numerical_id != distributed.execution_id
+    assert distributed.plan_id not in (
+        distributed.numerical_id,
+        distributed.execution_id,
     )
     modal = (
         jnp.exp(0.11j * jnp.arange(216, dtype=jnp.float64))

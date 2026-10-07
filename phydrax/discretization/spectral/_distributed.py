@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from math import prod
 from operator import index
-from typing import Any, cast, Literal, TypeAlias, TypedDict, Unpack
+from typing import Any, cast, final, Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
@@ -22,19 +23,19 @@ from ..._fingerprint import canonical_fingerprint
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...typing import checked, parse
+from ._precision import SpectralPrecisionPolicy
 
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
 SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
+_SpectralStageOperation: TypeAlias = Literal["fft", "transpose"]
 
 
 class _ForwardedPlanOptions(TypedDict, total=False):
     padded_shape: Sequence[int] | None
     state_shape: Sequence[int]
-    stage_count: int
-    checkpoint_count: int
-    closure_workspace_bytes: int
     maximum_bytes: int
     horizontal_axes: Sequence[int]
 
@@ -44,10 +45,52 @@ class _FromDiscretizationOptions(_ForwardedPlanOptions, total=False):
 
 
 def _positive_shape(shape: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    result = tuple(shape)
+    result = tuple(index(value) for value in shape)
     if not result or any(value <= 0 for value in result):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return result
+
+
+def _payload_shapes(
+    shapes: Sequence[Sequence[int]], state_shape: tuple[int, ...], /
+) -> tuple[tuple[int, ...], ...]:
+    canonical = tuple(
+        sorted(
+            {
+                state_shape,
+                *(tuple(index(dimension) for dimension in shape) for shape in shapes),
+            }
+        )
+    )
+    if any(any(dimension <= 0 for dimension in shape) for shape in canonical):
+        raise ValueError(
+            "admitted_payload_shapes must contain exact shapes with positive dimensions."
+        )
+    return canonical
+
+
+def _require_precision_available(precision: SpectralPrecisionPolicy, /) -> None:
+    requested = (
+        precision.physical_dtype,
+        precision.coefficient_dtype,
+        precision.transform_dtype,
+        precision.nonlinear_dtype,
+        precision.reduction_dtype,
+        precision.certification_dtype,
+        precision.output_dtype,
+        precision.checkpoint_dtype,
+    )
+    unavailable = tuple(
+        dtype
+        for dtype in requested
+        if np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype))).name != dtype
+    )
+    if unavailable:
+        raise ValueError(
+            "The active JAX dtype policy cannot honor requested spectral precision: "
+            + ", ".join(unavailable)
+            + "."
+        )
 
 
 def _mesh_entry_size(entry: str | tuple[str, ...] | None, shape: dict[str, int]) -> int:
@@ -67,12 +110,7 @@ def _partition_entry(entry: Any, /) -> str | tuple[str, ...] | None:
     return value
 
 
-def _complex_accumulation_dtype(dtype: np.dtype, /) -> np.dtype:
-    if jnp.issubdtype(dtype, jnp.complexfloating):
-        return np.dtype(jnp.complex128 if dtype.itemsize > 8 else jnp.complex64)
-    return dtype
-
-
+@final
 class SpectralMeshTopology(StrictModule, NonTrainableState):
     """Caller-visible device mesh with a stable, hardware-exact identity."""
 
@@ -194,18 +232,23 @@ class SpectralMeshTopology(StrictModule, NonTrainableState):
         return prod(self.mesh_shape)
 
     def require_available(self, /) -> None:
-        available = {(device.platform, int(device.id)) for device in jax.devices()}
+        available = {
+            (device.platform, int(device.process_index), int(device.id))
+            for device in jax.devices()
+        }
         missing = tuple(
-            device_id
-            for device_id in self.device_ids
-            if (self.platform, device_id) not in available
+            key
+            for key in self.device_keys
+            if (self.platform, key[0], key[1]) not in available
         )
         if missing:
             raise RuntimeError(
-                f"Spectral topology devices are unavailable in the current JAX process: {missing}."
+                "Spectral topology devices are unavailable in the current JAX "
+                f"process: {missing}."
             )
 
 
+@final
 class SpectralLayout(StrictModule, NonTrainableState):
     """Global array shape and its exact named-mesh partition contract."""
 
@@ -300,6 +343,7 @@ class SpectralLayout(StrictModule, NonTrainableState):
         )
 
 
+@final
 class SpectralTranspose(StrictModule, NonTrainableState):
     """One differentiable all-to-all redistribution between spectral layouts."""
 
@@ -384,17 +428,345 @@ class SpectralTranspose(StrictModule, NonTrainableState):
         return mapped(placed)
 
 
-class SpectralResourceReport(StrictModule, NonTrainableState):
-    """Fail-closed memory preflight for one distributed spectral execution plan."""
+@final
+class _SpectralStage(StrictModule, NonTrainableState):
+    operation: _SpectralStageOperation = eqx.field(static=True)
+    axes: tuple[int, ...] | None = eqx.field(static=True)
+    transpose: SpectralTranspose | None
+    stage_id: str = eqx.field(static=True)
 
-    canonical_bytes: int = eqx.field(static=True)
-    padded_bytes: int = eqx.field(static=True)
-    state_bytes: int = eqx.field(static=True)
-    stage_bytes: int = eqx.field(static=True)
-    collective_bytes: int = eqx.field(static=True)
-    checkpoint_bytes: int = eqx.field(static=True)
-    closure_bytes: int = eqx.field(static=True)
-    total_bytes: int = eqx.field(static=True)
+    def __init__(
+        self,
+        operation: _SpectralStageOperation,
+        /,
+        *,
+        axes: Sequence[int] | None = None,
+        transpose: SpectralTranspose | None = None,
+    ) -> None:
+        operation_ = parse(operation, _SpectralStageOperation, "operation")
+        if operation_ == "fft":
+            axes_ = () if axes is None else tuple(index(axis) for axis in axes)
+            if (
+                not axes_
+                or transpose is not None
+                or any(axis < 0 for axis in axes_)
+                or len(set(axes_)) != len(axes_)
+            ):
+                raise ValueError(
+                    "An FFT stage requires distinct ordered nonnegative axes."
+                )
+        else:
+            if axes is not None or not isinstance(transpose, SpectralTranspose):
+                raise ValueError("A transpose stage requires exactly one transpose.")
+            axes_ = None
+        self.operation = operation_
+        self.axes = axes_
+        self.transpose = transpose
+        self.stage_id = canonical_fingerprint(
+            {
+                "kind": "distributed-spectral-stage",
+                "operation": operation_,
+                "axes": None if axes_ is None else list(axes_),
+                "transpose": (None if transpose is None else transpose.transpose_id),
+            }
+        )
+
+    def apply_local(self, value: Array, /, *, inverse: bool) -> Array:
+        if self.operation == "transpose":
+            if self.transpose is None:
+                raise RuntimeError("Prepared transpose stage is incomplete.")
+            return self.transpose.apply_local(value)
+        if self.axes is None:
+            raise RuntimeError("Prepared FFT stage is incomplete.")
+        transform = jnp.fft.ifft if inverse else jnp.fft.fft
+        result = value
+        for axis in self.axes:
+            result = transform(result, axis=axis, norm="ortho")
+        return result
+
+
+def _sequence_id(
+    sequence: tuple[_SpectralStage, ...],
+    direction: str,
+    source: SpectralLayout,
+    target: SpectralLayout,
+    precision: SpectralPrecisionPolicy,
+    scale: float,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "distributed-spectral-stage-sequence",
+            "direction": direction,
+            "source": source.layout_id,
+            "target": target.layout_id,
+            "padded": source.padded,
+            "transform_dtype": precision.transform_dtype,
+            "normalization": "ortho",
+            "scale": scale,
+            "stages": [stage.stage_id for stage in sequence],
+        }
+    )
+
+
+def _reverse_sequence(
+    forward: tuple[_SpectralStage, ...],
+    transpose_pairs: Sequence[tuple[SpectralTranspose, SpectralTranspose]],
+    /,
+    *,
+    symmetric_suffix_count: int = 0,
+) -> tuple[_SpectralStage, ...]:
+    suffix_count = index(symmetric_suffix_count)
+    if suffix_count < 0 or suffix_count > len(forward):
+        raise ValueError("symmetric_suffix_count lies outside the stage sequence.")
+    core = forward if suffix_count == 0 else forward[:-suffix_count]
+    suffix = () if suffix_count == 0 else forward[-suffix_count:]
+    reverse: list[_SpectralStage] = []
+    for stage in reversed(core):
+        if stage.operation == "fft":
+            reverse.append(stage)
+            continue
+        if stage.transpose is None:
+            raise RuntimeError("Prepared transpose stage is incomplete.")
+        matches = tuple(
+            inverse
+            for direct, inverse in transpose_pairs
+            if direct.transpose_id == stage.transpose.transpose_id
+        )
+        if len(matches) != 1:
+            raise RuntimeError("Prepared stage sequence lacks one reverse transpose.")
+        reverse.append(_SpectralStage("transpose", transpose=matches[0]))
+    reverse.extend(suffix)
+    return tuple(reverse)
+
+
+def _slab_sequence_pair(
+    physical: SpectralLayout,
+    modal: SpectralLayout,
+    mesh_axis: str,
+    spatial_rank: int,
+    /,
+) -> tuple[tuple[_SpectralStage, ...], tuple[_SpectralStage, ...]]:
+    forward_transpose = SpectralTranspose(physical, modal, mesh_axis, 1, 0)
+    inverse_transpose = SpectralTranspose(modal, physical, mesh_axis, 0, 1)
+    forward = (
+        _SpectralStage("fft", axes=range(1, spatial_rank)),
+        _SpectralStage("transpose", transpose=forward_transpose),
+        _SpectralStage("fft", axes=(0,)),
+    )
+    inverse = _reverse_sequence(forward, ((forward_transpose, inverse_transpose),))
+    return forward, inverse
+
+
+def _pencil_sequence_pair(
+    physical: SpectralLayout,
+    middle: SpectralLayout,
+    modal: SpectralLayout,
+    mesh_axes: tuple[str, str],
+    spatial_rank: int,
+    /,
+) -> tuple[tuple[_SpectralStage, ...], tuple[_SpectralStage, ...]]:
+    first, second = mesh_axes
+    first_forward = SpectralTranspose(physical, middle, second, 2, 1)
+    second_forward = SpectralTranspose(middle, modal, first, 2, 0)
+    first_inverse = SpectralTranspose(middle, physical, second, 1, 2)
+    second_inverse = SpectralTranspose(modal, middle, first, 0, 2)
+    suffix = (
+        () if spatial_rank == 3 else (_SpectralStage("fft", axes=range(3, spatial_rank)),)
+    )
+    forward = (
+        _SpectralStage("fft", axes=(2,)),
+        _SpectralStage("transpose", transpose=first_forward),
+        _SpectralStage("fft", axes=(1,)),
+        _SpectralStage("transpose", transpose=second_forward),
+        _SpectralStage("fft", axes=(0,)),
+        *suffix,
+    )
+    inverse = _reverse_sequence(
+        forward,
+        (
+            (first_forward, first_inverse),
+            (second_forward, second_inverse),
+        ),
+        symmetric_suffix_count=len(suffix),
+    )
+    return forward, inverse
+
+
+@dataclass(frozen=True, slots=True)
+class _LayoutPreparation:
+    physical: SpectralLayout
+    modal: SpectralLayout
+    padded_physical: SpectralLayout
+    padded_modal: SpectralLayout
+    forward: tuple[_SpectralStage, ...]
+    inverse: tuple[_SpectralStage, ...]
+    padded_forward: tuple[_SpectralStage, ...]
+    padded_inverse: tuple[_SpectralStage, ...]
+    horizontal_axes: tuple[int, int] | None
+    reasons: tuple[str, ...]
+
+
+def _prepare_layouts(
+    topology: SpectralMeshTopology,
+    shape: tuple[int, ...],
+    padded: tuple[int, ...],
+    trailing: tuple[int, ...],
+    schedule: SpectralSchedule,
+    horizontal_axes: Sequence[int],
+    /,
+) -> _LayoutPreparation:
+    mesh_names = topology.mesh_axis_names
+    mesh_shape = topology.mesh_shape
+    rank = len(shape)
+    full_shape = shape + trailing
+    full_padded = padded + trailing
+    reasons: list[str] = []
+    horizontal: tuple[int, int] | None = None
+    if schedule == "pencil":
+        if len(mesh_shape) != 2 or rank < 3:
+            reasons.append(
+                "pencil execution requires a two-dimensional mesh and spatial "
+                "rank at least three"
+            )
+        if len(mesh_shape) == 2 and rank >= 3:
+            px, py = mesh_shape
+            if shape[0] % px or shape[1] % py or shape[2] % (px * py):
+                reasons.append(
+                    "canonical pencil dimensions are not divisible by their "
+                    "transform partitions"
+                )
+            if padded[0] % px or padded[1] % py or padded[2] % (px * py):
+                reasons.append(
+                    "padded pencil dimensions are not divisible by their "
+                    "transform partitions"
+                )
+            physical_partition = (
+                mesh_names[0],
+                mesh_names[1],
+                None,
+            ) + (None,) * (rank - 3 + len(trailing))
+            modal_partition = (
+                None,
+                None,
+                (mesh_names[1], mesh_names[0]),
+            ) + (None,) * (rank - 3 + len(trailing))
+        else:
+            physical_partition = (None,) * len(full_shape)
+            modal_partition = physical_partition
+    elif schedule == "channel":
+        axes = tuple(index(axis) for axis in horizontal_axes)
+        if (
+            len(axes) != 2
+            or len(set(axes)) != 2
+            or any(axis < 0 or axis >= rank for axis in axes)
+        ):
+            raise ValueError("horizontal_axes must name two distinct spatial axes.")
+        first_axis, second_axis = axes
+        horizontal = (first_axis, second_axis)
+        if rank != 3 or tuple(axis for axis in range(rank) if axis not in axes) != (1,):
+            reasons.append(
+                "channel execution requires exactly Fourier-Chebyshev-Fourier "
+                "axes with replicated Chebyshev axis 1"
+            )
+        if rank == 3 and padded[1] != shape[1]:
+            reasons.append("channel padding cannot resize the replicated Chebyshev axis")
+        if len(mesh_shape) not in (1, 2):
+            reasons.append("channel execution requires a one- or two-dimensional mesh")
+        channel_entries: list[str | tuple[str, ...] | None] = [None] * len(full_shape)
+        for mesh_axis, spatial_axis in enumerate(axes[: len(mesh_shape)]):
+            count = mesh_shape[mesh_axis]
+            if shape[spatial_axis] % count or padded[spatial_axis] % count:
+                reasons.append(
+                    "channel horizontal dimensions are not divisible by their "
+                    "mesh partitions"
+                )
+            channel_entries[spatial_axis] = mesh_names[mesh_axis]
+        physical_partition = tuple(channel_entries)
+        modal_partition = physical_partition
+    else:
+        if len(mesh_shape) != 1:
+            reasons.append("slab execution requires a one-dimensional mesh")
+        if rank < 2:
+            reasons.append("slab execution requires spatial rank at least two")
+        first_axis, second_axis = (0, 1)
+        count = mesh_shape[0] if len(mesh_shape) == 1 else 1
+        if rank >= 2:
+            if shape[first_axis] % count or shape[second_axis] % count:
+                reasons.append(
+                    "canonical slab dimensions are not divisible by the mesh size"
+                )
+            if padded[first_axis] % count or padded[second_axis] % count:
+                reasons.append(
+                    "padded slab dimensions are not divisible by the mesh size"
+                )
+        physical_entries: list[str | tuple[str, ...] | None] = [None] * len(full_shape)
+        modal_entries: list[str | tuple[str, ...] | None] = [None] * len(full_shape)
+        if len(mesh_shape) == 1 and rank >= 2:
+            physical_entries[first_axis] = mesh_names[0]
+            modal_entries[second_axis] = mesh_names[0]
+        physical_partition = tuple(physical_entries)
+        modal_partition = tuple(modal_entries)
+    physical = SpectralLayout(full_shape, physical_partition, "physical", topology)
+    modal = SpectralLayout(full_shape, modal_partition, "modal", topology)
+    padded_physical = SpectralLayout(
+        full_padded, physical_partition, "physical", topology, padded=True
+    )
+    padded_modal = SpectralLayout(
+        full_padded, modal_partition, "modal", topology, padded=True
+    )
+    if schedule == "pencil" and len(mesh_shape) == 2 and rank >= 3:
+        middle_partition = (mesh_names[0], None, mesh_names[1]) + (None,) * (
+            rank - 3 + len(trailing)
+        )
+        middle = SpectralLayout(full_shape, middle_partition, "modal", topology)
+        middle_padded = SpectralLayout(
+            full_padded, middle_partition, "modal", topology, padded=True
+        )
+        forward, inverse = _pencil_sequence_pair(
+            physical,
+            middle,
+            modal,
+            (mesh_names[0], mesh_names[1]),
+            rank,
+        )
+        padded_forward, padded_inverse = _pencil_sequence_pair(
+            padded_physical,
+            middle_padded,
+            padded_modal,
+            (mesh_names[0], mesh_names[1]),
+            rank,
+        )
+    elif schedule == "slab" and len(mesh_shape) == 1 and rank >= 2:
+        forward, inverse = _slab_sequence_pair(physical, modal, mesh_names[0], rank)
+        padded_forward, padded_inverse = _slab_sequence_pair(
+            padded_physical, padded_modal, mesh_names[0], rank
+        )
+    else:
+        forward = inverse = padded_forward = padded_inverse = ()
+    return _LayoutPreparation(
+        physical,
+        modal,
+        padded_physical,
+        padded_modal,
+        forward,
+        inverse,
+        padded_forward,
+        padded_inverse,
+        horizontal,
+        tuple(reasons),
+    )
+
+
+@final
+class SpectralResourceReport(StrictModule, NonTrainableState):
+    """Fail-closed FFT storage, workspace, liveness, and traffic evidence."""
+
+    canonical_storage_bytes: int = eqx.field(static=True)
+    padded_storage_bytes: int = eqx.field(static=True)
+    transform_workspace_bytes: int = eqx.field(static=True)
+    collective_payload_bytes: int = eqx.field(static=True)
+    peak_live_bytes: int = eqx.field(static=True)
     maximum_bytes: int = eqx.field(static=True)
     accepted: bool = eqx.field(static=True)
     reasons: tuple[str, ...] = eqx.field(static=True)
@@ -403,59 +775,63 @@ class SpectralResourceReport(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        canonical_bytes: int,
-        padded_bytes: int,
-        state_bytes: int,
-        stage_bytes: int,
-        collective_bytes: int,
-        checkpoint_bytes: int,
-        closure_bytes: int = 0,
+        canonical_storage_bytes: int,
+        padded_storage_bytes: int,
+        transform_workspace_bytes: int,
+        collective_payload_bytes: int,
+        peak_live_bytes: int,
         maximum_bytes: int,
         reasons: Sequence[str] = (),
     ) -> None:
-        values = tuple(
-            index(value)
-            for value in (
-                canonical_bytes,
-                padded_bytes,
-                state_bytes,
-                stage_bytes,
-                collective_bytes,
-                checkpoint_bytes,
-                closure_bytes,
-            )
+        (
+            canonical,
+            padded,
+            workspace,
+            collective,
+            peak,
+        ) = (
+            index(canonical_storage_bytes),
+            index(padded_storage_bytes),
+            index(transform_workspace_bytes),
+            index(collective_payload_bytes),
+            index(peak_live_bytes),
         )
         maximum = index(maximum_bytes)
-        if any(value < 0 for value in values) or maximum <= 0:
+        if (
+            any(value < 0 for value in (canonical, padded, workspace, collective, peak))
+            or maximum <= 0
+        ):
             raise ValueError(
                 "Spectral resource byte counts must be non-negative and bounded."
             )
-        total = sum(values)
+        if peak != 2 * padded + workspace:
+            raise ValueError(
+                "peak_live_bytes must count one source, one target, and one "
+                "transform workspace buffer."
+            )
         reasons_ = tuple(str(reason) for reason in reasons)
         if any(not reason for reason in reasons_):
             raise ValueError("Resource refusal reasons must be non-empty.")
-        if total > maximum:
-            reasons_ += (f"required bytes {total} exceed maximum_bytes {maximum}",)
+        if peak > maximum:
+            reasons_ += (f"peak live bytes {peak} exceed maximum_bytes {maximum}",)
         accepted = not reasons_
-        (
-            self.canonical_bytes,
-            self.padded_bytes,
-            self.state_bytes,
-            self.stage_bytes,
-            self.collective_bytes,
-            self.checkpoint_bytes,
-            self.closure_bytes,
-        ) = values
-        self.total_bytes = total
+        self.canonical_storage_bytes = canonical
+        self.padded_storage_bytes = padded
+        self.transform_workspace_bytes = workspace
+        self.collective_payload_bytes = collective
+        self.peak_live_bytes = peak
         self.maximum_bytes = maximum
         self.accepted = accepted
         self.reasons = reasons_
         self.report_id = canonical_fingerprint(
             {
                 "kind": "distributed-spectral-resource-report",
-                "bytes": list(values),
-                "total": total,
-                "maximum": maximum,
+                "canonical_storage_bytes": canonical,
+                "padded_storage_bytes": padded,
+                "transform_workspace_bytes": workspace,
+                "collective_payload_bytes": collective,
+                "peak_live_bytes": peak,
+                "maximum_bytes": maximum,
                 "accepted": accepted,
                 "reasons": list(reasons_),
             }
@@ -475,14 +851,186 @@ class SpectralResourceError(MemoryError):
         )
 
 
+def _sequence_ids(
+    layouts: _LayoutPreparation,
+    precision: SpectralPrecisionPolicy,
+    scale: float,
+    padded_scale: float,
+    /,
+) -> tuple[str, str, str, str]:
+    return (
+        _sequence_id(
+            layouts.forward,
+            "physical-to-modal",
+            layouts.physical,
+            layouts.modal,
+            precision,
+            scale,
+        ),
+        _sequence_id(
+            layouts.inverse,
+            "modal-to-physical",
+            layouts.modal,
+            layouts.physical,
+            precision,
+            scale,
+        ),
+        _sequence_id(
+            layouts.padded_forward,
+            "padded-physical-to-modal",
+            layouts.padded_physical,
+            layouts.padded_modal,
+            precision,
+            padded_scale,
+        ),
+        _sequence_id(
+            layouts.padded_inverse,
+            "padded-modal-to-physical",
+            layouts.padded_modal,
+            layouts.padded_physical,
+            precision,
+            padded_scale,
+        ),
+    )
+
+
+def _prepare_fft_resource(
+    shape: tuple[int, ...],
+    padded: tuple[int, ...],
+    admitted: tuple[tuple[int, ...], ...],
+    precision: SpectralPrecisionPolicy,
+    forward: tuple[_SpectralStage, ...],
+    maximum: int,
+    reasons: Sequence[str],
+    /,
+) -> tuple[SpectralResourceReport, int, int]:
+    payload_elements = max(prod(payload) if payload else 1 for payload in admitted)
+    coefficient_itemsize = np.dtype(precision.coefficient_dtype).itemsize
+    transform_itemsize = np.dtype(precision.transform_dtype).itemsize
+    canonical_storage = prod(shape) * payload_elements * coefficient_itemsize
+    padded_storage = prod(padded) * payload_elements * coefficient_itemsize
+    has_fft_stage = any(stage.operation == "fft" for stage in forward)
+    transform_workspace = (
+        prod(padded) * payload_elements * transform_itemsize if has_fft_stage else 0
+    )
+    collective_count = sum(stage.operation == "transpose" for stage in forward)
+    collective_payload = transform_workspace * collective_count
+    resource = SpectralResourceReport(
+        canonical_storage_bytes=canonical_storage,
+        padded_storage_bytes=padded_storage,
+        transform_workspace_bytes=transform_workspace,
+        collective_payload_bytes=collective_payload,
+        peak_live_bytes=2 * padded_storage + transform_workspace,
+        maximum_bytes=maximum,
+        reasons=reasons,
+    )
+    return resource, collective_count, collective_payload
+
+
+def _plan_identities(
+    owner: str,
+    topology: SpectralMeshTopology,
+    shape: tuple[int, ...],
+    padded: tuple[int, ...],
+    lengths: tuple[float, ...],
+    schedule: SpectralSchedule,
+    horizontal: tuple[int, int] | None,
+    precision: SpectralPrecisionPolicy,
+    scale: float,
+    padded_scale: float,
+    layouts: _LayoutPreparation,
+    admitted: tuple[tuple[int, ...], ...],
+    trailing: tuple[int, ...],
+    resource: SpectralResourceReport,
+    sequence_ids: tuple[str, str, str, str],
+    /,
+) -> tuple[str, str, str, str]:
+    transform_families = (
+        ("fourier", "chebyshev", "fourier")
+        if schedule == "channel"
+        else ("fourier",) * len(shape)
+    )
+    numerical_id = canonical_fingerprint(
+        {
+            "kind": "distributed-spectral-numerical-plan",
+            "spatial_shape": list(shape),
+            "padded_shape": list(padded),
+            "transform_families": list(transform_families),
+            "horizontal_axes": None if horizontal is None else list(horizontal),
+            "domain_lengths": list(lengths),
+            "normalization": "ortho",
+            "transform_scale": scale,
+            "padded_transform_scale": padded_scale,
+            "representation": "full-complex-c2c",
+            "coefficient_storage": precision.coefficient_dtype,
+            "transform_compute": precision.transform_dtype,
+            "reduction": precision.reduction_dtype,
+            "precision": precision.policy_id,
+        }
+    )
+    execution_id = canonical_fingerprint(
+        {
+            "kind": "distributed-spectral-execution",
+            "numerical": numerical_id,
+            "topology": topology.topology_id,
+            "schedule": schedule,
+            "layouts": [
+                layouts.physical.layout_id,
+                layouts.modal.layout_id,
+                layouts.padded_physical.layout_id,
+                layouts.padded_modal.layout_id,
+            ],
+            "stage_sequences": list(sequence_ids),
+            "state_shape": list(trailing),
+            "admitted_payload_shapes": [list(payload) for payload in admitted],
+            "resource": resource.report_id,
+        }
+    )
+    plan_id = canonical_fingerprint(
+        {
+            "kind": "owner-bound-distributed-spectral-plan",
+            "owner": owner,
+            "numerical": numerical_id,
+            "execution": execution_id,
+        }
+    )
+    report_id = canonical_fingerprint(
+        {
+            "kind": "distributed-spectral-preparation-report",
+            "owner": owner,
+            "numerical": numerical_id,
+            "execution": execution_id,
+            "precision": precision.policy_id,
+            "resource": resource.report_id,
+        }
+    )
+    return numerical_id, execution_id, plan_id, report_id
+
+
+@final
 class DistributedSpectralPreparationReport(StrictModule, NonTrainableState):
+    owner_id: str = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
     schedule: SpectralSchedule = eqx.field(static=True)
     spatial_shape: tuple[int, ...] = eqx.field(static=True)
     padded_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    physical_layout_id: str = eqx.field(static=True)
+    modal_layout_id: str = eqx.field(static=True)
+    padded_physical_layout_id: str = eqx.field(static=True)
+    padded_modal_layout_id: str = eqx.field(static=True)
     local_physical_shape: tuple[int, ...] = eqx.field(static=True)
     local_modal_shape: tuple[int, ...] = eqx.field(static=True)
     collective_count: int = eqx.field(static=True)
+    collective_payload_bytes: int = eqx.field(static=True)
+    forward_sequence_id: str = eqx.field(static=True)
+    inverse_sequence_id: str = eqx.field(static=True)
+    padded_forward_sequence_id: str = eqx.field(static=True)
+    padded_inverse_sequence_id: str = eqx.field(static=True)
     differentiable: bool = eqx.field(static=True)
     host_gather: bool = eqx.field(static=True)
     zero_mode_atomic: bool = eqx.field(static=True)
@@ -490,12 +1038,14 @@ class DistributedSpectralPreparationReport(StrictModule, NonTrainableState):
     report_id: str = eqx.field(static=True)
 
 
+@final
 class SpectralExecutionResult(StrictModule):
     value: Array
     layout_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class SpectralGlobalDiagnostics(StrictModule):
     total: Array
     maximum_absolute: Array
@@ -506,29 +1056,33 @@ class SpectralGlobalDiagnostics(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
+@final
 class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
-    """Prepared slab/pencil full-complex FFT execution on a real JAX mesh."""
+    """Prepared full-complex slab/pencil FFT or action-only channel execution."""
 
     topology: SpectralMeshTopology
+    owner_id: str = eqx.field(static=True)
+    precision: SpectralPrecisionPolicy
     spatial_shape: tuple[int, ...] = eqx.field(static=True)
     padded_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     schedule: SpectralSchedule = eqx.field(static=True)
     physical_layout: SpectralLayout
     modal_layout: SpectralLayout
     padded_physical_layout: SpectralLayout
     padded_modal_layout: SpectralLayout
-    physical_to_modal: tuple[SpectralTranspose, ...]
-    modal_to_physical: tuple[SpectralTranspose, ...]
-    padded_physical_to_modal: tuple[SpectralTranspose, ...]
-    padded_modal_to_physical: tuple[SpectralTranspose, ...]
+    _forward_sequence: tuple[_SpectralStage, ...] = eqx.field(static=True)
+    _inverse_sequence: tuple[_SpectralStage, ...] = eqx.field(static=True)
+    _padded_forward_sequence: tuple[_SpectralStage, ...] = eqx.field(static=True)
+    _padded_inverse_sequence: tuple[_SpectralStage, ...] = eqx.field(static=True)
     domain_lengths: tuple[float, ...] = eqx.field(static=True)
     transform_scale: float = eqx.field(static=True)
     padded_transform_scale: float = eqx.field(static=True)
-    coefficient_dtype: str = eqx.field(static=True)
-    accumulation_dtype: str = eqx.field(static=True)
     horizontal_axes: tuple[int, int] | None = eqx.field(static=True)
     report: DistributedSpectralPreparationReport
+    numerical_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -538,53 +1092,40 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         spatial_shape: Sequence[int],
         /,
         *,
+        owner_id: str,
+        admitted_payload_shapes: Sequence[Sequence[int]],
+        precision: SpectralPrecisionPolicy | None = None,
         schedule: SpectralSchedule = "slab",
         padded_shape: Sequence[int] | None = None,
         state_shape: Sequence[int] = (),
         domain_lengths: Sequence[float] | None = None,
-        coefficient_dtype: Any = jnp.complex64,
-        accumulation_dtype: Any | None = None,
         transform_scale: float = 1.0,
         padded_transform_scale: float | None = None,
-        stage_count: int = 1,
-        checkpoint_count: int = 0,
-        closure_workspace_bytes: int = 0,
         maximum_bytes: int = 2 * 1024**3,
         horizontal_axes: Sequence[int] = (0, 2),
     ) -> None:
+        owner = canonical_identifier(owner_id, "owner_id")
+        precision_ = (
+            SpectralPrecisionPolicy(jnp.float32) if precision is None else precision
+        )
+        if not isinstance(precision_, SpectralPrecisionPolicy):
+            raise TypeError("precision must be a SpectralPrecisionPolicy or None.")
+        _require_precision_available(precision_)
         shape = _positive_shape(spatial_shape, "spatial_shape")
         padded = (
             shape
             if padded_shape is None
             else _positive_shape(padded_shape, "padded_shape")
         )
-        trailing = tuple(state_shape)
+        trailing = tuple(index(value) for value in state_shape)
         if any(value <= 0 for value in trailing):
             raise ValueError("state_shape dimensions must be positive.")
+        admitted = _payload_shapes(admitted_payload_shapes, trailing)
         if len(padded) != len(shape) or any(
-            b < a for a, b in zip(shape, padded, strict=True)
+            padded_size < size for size, padded_size in zip(shape, padded, strict=True)
         ):
             raise ValueError("padded_shape must componentwise contain spatial_shape.")
-        schedule = parse(schedule, SpectralSchedule, "schedule")
-        dtype = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(coefficient_dtype)))
-        if not jnp.issubdtype(dtype, jnp.complexfloating):
-            raise TypeError(
-                "Distributed C2C execution requires a complex coefficient dtype."
-            )
-        coefficient_real_dtype = np.dtype(jnp.empty((), dtype=dtype).real.dtype)
-        accumulation = np.dtype(
-            jax.dtypes.canonicalize_dtype(
-                coefficient_real_dtype
-                if accumulation_dtype is None
-                else np.dtype(accumulation_dtype)
-            )
-        )
-        if not jnp.issubdtype(accumulation, jnp.floating):
-            raise TypeError("accumulation_dtype must be real floating point.")
-        if accumulation.itemsize < coefficient_real_dtype.itemsize:
-            raise ValueError(
-                "accumulation precision cannot be narrower than coefficient precision."
-            )
+        schedule_ = parse(schedule, SpectralSchedule, "schedule")
         lengths = (
             (2.0 * np.pi,) * len(shape)
             if domain_lengths is None
@@ -607,251 +1148,112 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             or padded_scale <= 0.0
         ):
             raise ValueError("Transform scales must be finite and positive.")
-        stages = index(stage_count)
-        checkpoints = index(checkpoint_count)
-        closure_workspace = index(closure_workspace_bytes)
         maximum = index(maximum_bytes)
-        if stages <= 0 or checkpoints < 0 or closure_workspace < 0 or maximum <= 0:
-            raise ValueError(
-                "stage_count, checkpoint_count, closure_workspace_bytes, and maximum_bytes are invalid."
-            )
-        mesh_names = topology.mesh_axis_names
-        mesh_shape = topology.mesh_shape
-        rank = len(shape)
-        full_shape = shape + trailing
-        full_padded = padded + trailing
-        reasons: list[str] = []
-        horizontal: tuple[int, int] | None = None
-        if schedule == "pencil":
-            if len(mesh_shape) != 2 or rank < 3:
-                reasons.append(
-                    "pencil execution requires a two-dimensional mesh and spatial rank at least three"
-                )
-            if len(mesh_shape) == 2 and rank >= 3:
-                px, py = mesh_shape
-                if shape[0] % px or shape[1] % py or shape[2] % (px * py):
-                    reasons.append(
-                        "canonical pencil dimensions are not divisible by their transform partitions"
-                    )
-                if padded[0] % px or padded[1] % py or padded[2] % (px * py):
-                    reasons.append(
-                        "padded pencil dimensions are not divisible by their transform partitions"
-                    )
-                physical_partition = (
-                    mesh_names[0],
-                    mesh_names[1],
-                    None,
-                ) + (None,) * (rank - 3 + len(trailing))
-                modal_partition = (
-                    None,
-                    None,
-                    (mesh_names[1], mesh_names[0]),
-                ) + (None,) * (rank - 3 + len(trailing))
-            else:
-                physical_partition = (None,) * len(full_shape)
-                modal_partition = physical_partition
-        elif schedule == "channel":
-            axes = tuple(horizontal_axes)
-            if (
-                len(axes) != 2
-                or len(set(axes)) != 2
-                or any(value < 0 or value >= rank for value in axes)
-            ):
-                raise ValueError("horizontal_axes must name two distinct spatial axes.")
-            first_axis, second_axis = axes
-            horizontal = (first_axis, second_axis)
-            if rank != 3 or tuple(axis for axis in range(rank) if axis not in axes) != (
-                1,
-            ):
-                reasons.append(
-                    "channel distribution requires rank three with replicated Chebyshev axis 1"
-                )
-            if rank == 3 and padded[1] != shape[1]:
-                reasons.append(
-                    "channel padding cannot resize the replicated Chebyshev axis"
-                )
-            if len(mesh_shape) not in (1, 2):
-                reasons.append(
-                    "channel execution requires a one- or two-dimensional mesh"
-                )
-            channel_entries: list[str | tuple[str, ...] | None] = [None] * len(full_shape)
-            for mesh_axis, spatial_axis in enumerate(axes[: len(mesh_shape)]):
-                count = mesh_shape[mesh_axis]
-                if shape[spatial_axis] % count or padded[spatial_axis] % count:
-                    reasons.append(
-                        "channel horizontal dimensions are not divisible by their mesh partitions"
-                    )
-                channel_entries[spatial_axis] = mesh_names[mesh_axis]
-            physical_partition = tuple(channel_entries)
-            modal_partition = physical_partition
-        else:
-            if len(mesh_shape) != 1:
-                reasons.append("slab execution requires a one-dimensional mesh")
-            first_axis, second_axis = (0, 1)
-            count = mesh_shape[0] if len(mesh_shape) == 1 else 1
-            if shape[first_axis] % count or shape[second_axis] % count:
-                reasons.append(
-                    "canonical slab dimensions are not divisible by the mesh size"
-                )
-            if padded[first_axis] % count or padded[second_axis] % count:
-                reasons.append(
-                    "padded slab dimensions are not divisible by the mesh size"
-                )
-            physical_entries: list[str | tuple[str, ...] | None] = [None] * len(
-                full_shape
-            )
-            modal_entries: list[str | tuple[str, ...] | None] = [None] * len(full_shape)
-            if len(mesh_shape) == 1:
-                physical_entries[first_axis] = mesh_names[0]
-                modal_entries[second_axis] = mesh_names[0]
-            physical_partition = tuple(physical_entries)
-            modal_partition = tuple(modal_entries)
-        physical = SpectralLayout(full_shape, physical_partition, "physical", topology)
-        modal = SpectralLayout(full_shape, modal_partition, "modal", topology)
-        padded_physical = SpectralLayout(
-            full_padded, physical_partition, "physical", topology, padded=True
+        if maximum <= 0:
+            raise ValueError("maximum_bytes must be positive.")
+        layouts = _prepare_layouts(
+            topology,
+            shape,
+            padded,
+            trailing,
+            schedule_,
+            horizontal_axes,
         )
-        padded_modal = SpectralLayout(
-            full_padded, modal_partition, "modal", topology, padded=True
-        )
-        if schedule == "pencil" and len(mesh_shape) == 2 and rank >= 3:
-            middle_partition = (mesh_names[0], None, mesh_names[1]) + (None,) * (
-                rank - 3 + len(trailing)
-            )
-            middle = SpectralLayout(full_shape, middle_partition, "modal", topology)
-            middle_padded = SpectralLayout(
-                full_padded, middle_partition, "modal", topology, padded=True
-            )
-            forward = (
-                SpectralTranspose(physical, middle, mesh_names[1], 2, 1),
-                SpectralTranspose(middle, modal, mesh_names[0], 2, 0),
-            )
-            reverse = (
-                SpectralTranspose(modal, middle, mesh_names[0], 0, 2),
-                SpectralTranspose(middle, physical, mesh_names[1], 1, 2),
-            )
-            padded_forward = (
-                SpectralTranspose(padded_physical, middle_padded, mesh_names[1], 2, 1),
-                SpectralTranspose(middle_padded, padded_modal, mesh_names[0], 2, 0),
-            )
-            padded_reverse = (
-                SpectralTranspose(padded_modal, middle_padded, mesh_names[0], 0, 2),
-                SpectralTranspose(middle_padded, padded_physical, mesh_names[1], 1, 2),
-            )
-        elif schedule == "slab" and len(mesh_shape) == 1:
-            forward = (
-                SpectralTranspose(
-                    physical,
-                    modal,
-                    mesh_names[0],
-                    second_axis,
-                    first_axis,
-                ),
-            )
-            reverse = (
-                SpectralTranspose(
-                    modal,
-                    physical,
-                    mesh_names[0],
-                    first_axis,
-                    second_axis,
-                ),
-            )
-            padded_forward = (
-                SpectralTranspose(
-                    padded_physical,
-                    padded_modal,
-                    mesh_names[0],
-                    second_axis,
-                    first_axis,
-                ),
-            )
-            padded_reverse = (
-                SpectralTranspose(
-                    padded_modal,
-                    padded_physical,
-                    mesh_names[0],
-                    first_axis,
-                    second_axis,
-                ),
-            )
-        else:
-            forward = reverse = padded_forward = padded_reverse = ()
-        components = prod(trailing) if trailing else 1
-        canonical_bytes = prod(shape) * dtype.itemsize
-        padded_bytes = prod(padded) * dtype.itemsize
-        state_bytes = canonical_bytes * components
-        stage_bytes = padded_bytes * components * stages
-        collective_count = 2 if schedule == "pencil" else 1 if schedule == "slab" else 0
-        collective_bytes = padded_bytes * components * collective_count
-        checkpoint_bytes = state_bytes * checkpoints
-        resource = SpectralResourceReport(
-            canonical_bytes=canonical_bytes,
-            padded_bytes=padded_bytes,
-            state_bytes=state_bytes,
-            stage_bytes=stage_bytes,
-            collective_bytes=collective_bytes,
-            checkpoint_bytes=checkpoint_bytes,
-            closure_bytes=closure_workspace,
-            maximum_bytes=maximum,
-            reasons=reasons,
+        physical = layouts.physical
+        modal = layouts.modal
+        padded_physical = layouts.padded_physical
+        padded_modal = layouts.padded_modal
+        forward = layouts.forward
+        inverse = layouts.inverse
+        padded_forward = layouts.padded_forward
+        padded_inverse = layouts.padded_inverse
+        horizontal = layouts.horizontal_axes
+        sequence_ids = _sequence_ids(layouts, precision_, scale, padded_scale)
+        (
+            forward_id,
+            inverse_id,
+            padded_forward_id,
+            padded_inverse_id,
+        ) = sequence_ids
+        resource, collective_count, collective_payload = _prepare_fft_resource(
+            shape,
+            padded,
+            admitted,
+            precision_,
+            padded_forward,
+            maximum,
+            layouts.reasons,
         )
         if not resource.accepted:
             raise SpectralResourceError(resource)
-        report_id = canonical_fingerprint(
-            {
-                "kind": "distributed-spectral-preparation-report",
-                "schedule": schedule,
-                "shape": list(shape),
-                "padded_shape": list(padded),
-                "state_shape": list(trailing),
-                "topology": topology.topology_id,
-                "resource": resource.report_id,
-            }
+        numerical_id, execution_id, plan_id, report_id = _plan_identities(
+            owner,
+            topology,
+            shape,
+            padded,
+            lengths,
+            schedule_,
+            horizontal,
+            precision_,
+            scale,
+            padded_scale,
+            layouts,
+            admitted,
+            trailing,
+            resource,
+            sequence_ids,
         )
         self.topology = topology
+        self.owner_id = owner
+        self.precision = precision_
         self.spatial_shape = shape
         self.padded_shape = padded
         self.state_shape = trailing
-        self.schedule = schedule
+        self.admitted_payload_shapes = admitted
+        self.schedule = schedule_
         self.physical_layout = physical
         self.modal_layout = modal
         self.padded_physical_layout = padded_physical
         self.padded_modal_layout = padded_modal
-        self.physical_to_modal = forward
-        self.modal_to_physical = reverse
-        self.padded_physical_to_modal = padded_forward
-        self.padded_modal_to_physical = padded_reverse
+        self._forward_sequence = forward
+        self._inverse_sequence = inverse
+        self._padded_forward_sequence = padded_forward
+        self._padded_inverse_sequence = padded_inverse
         self.domain_lengths = lengths
         self.transform_scale = scale
         self.padded_transform_scale = padded_scale
-        self.coefficient_dtype = dtype.str
-        self.accumulation_dtype = accumulation.str
         self.horizontal_axes = horizontal
+        self.numerical_id = numerical_id
+        self.execution_id = execution_id
+        self.plan_id = plan_id
         self.report = DistributedSpectralPreparationReport(
-            schedule=schedule,
+            owner_id=owner,
+            numerical_id=numerical_id,
+            execution_id=execution_id,
+            precision_policy_id=precision_.policy_id,
+            schedule=schedule_,
             spatial_shape=shape,
             padded_shape=padded,
             state_shape=trailing,
+            admitted_payload_shapes=admitted,
+            topology_id=topology.topology_id,
+            physical_layout_id=physical.layout_id,
+            modal_layout_id=modal.layout_id,
+            padded_physical_layout_id=padded_physical.layout_id,
+            padded_modal_layout_id=padded_modal.layout_id,
             local_physical_shape=physical.local_shape(topology),
             local_modal_shape=modal.local_shape(topology),
             collective_count=collective_count,
+            collective_payload_bytes=collective_payload,
+            forward_sequence_id=forward_id,
+            inverse_sequence_id=inverse_id,
+            padded_forward_sequence_id=padded_forward_id,
+            padded_inverse_sequence_id=padded_inverse_id,
             differentiable=True,
             host_gather=False,
             zero_mode_atomic=True,
             resource=resource,
             report_id=report_id,
-        )
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "distributed-spectral-execution-plan",
-                "report": report_id,
-                "dtype": dtype.str,
-                "accumulation_dtype": accumulation.str,
-                "lengths": list(lengths),
-                "transform_scale": scale,
-                "padded_transform_scale": padded_scale,
-            }
         )
 
     @classmethod
@@ -860,6 +1262,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         topology: SpectralMeshTopology,
         discretization: Any,
         /,
+        *,
+        admitted_payload_shapes: Sequence[Sequence[int]],
         **kwargs: Unpack[_FromDiscretizationOptions],
     ) -> "DistributedSpectralExecutionPlan":
         axes = tuple(discretization.axes)
@@ -868,7 +1272,12 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             "schedule",
             "channel" if families == ("fourier", "chebyshev", "fourier") else "slab",
         )
-        if schedule != "channel" and any(family != "fourier" for family in families):
+        if schedule == "channel":
+            if families != ("fourier", "chebyshev", "fourier"):
+                raise ValueError(
+                    "Channel execution requires exactly Fourier-Chebyshev-Fourier axes."
+                )
+        elif any(family != "fourier" for family in families):
             raise ValueError("Distributed C2C plans require all-Fourier discretizations.")
         scale = prod(float(jnp.sqrt(axis.quadrature_weights[0])) for axis in axes)
         padded_shape = kwargs.get("padded_shape")
@@ -882,15 +1291,15 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 float(jnp.sqrt(axis.length / count))
                 for axis, count in zip(axes, padded, strict=True)
             )
-        # ``schedule`` was popped above; only constructor pass-through options remain.
         forwarded = cast(_ForwardedPlanOptions, kwargs)
         return cls(
             topology,
             discretization.modal_shape,
+            owner_id=discretization.prepared_id,
+            precision=discretization.plan.precision,
+            admitted_payload_shapes=admitted_payload_shapes,
             schedule=schedule,
             domain_lengths=tuple(float(axis.length) for axis in axes),
-            coefficient_dtype=jnp.dtype(discretization.plan.precision.coefficient_dtype),
-            accumulation_dtype=jnp.dtype(discretization.plan.precision.reduction_dtype),
             transform_scale=scale,
             padded_transform_scale=padded_scale,
             **forwarded,
@@ -921,8 +1330,14 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Batched spectral values must begin with shape {spatial}; got {shape}."
             )
+        payload = shape[rank:]
+        if payload not in self.admitted_payload_shapes:
+            raise ValueError(
+                f"Spectral payload shape {payload} is not admitted; exact admitted "
+                f"shapes are {self.admitted_payload_shapes}."
+            )
         base = self._layout(representation, padded)
-        partition = base.partition[:rank] + (None,) * (len(shape) - rank)
+        partition = base.partition[:rank] + (None,) * len(payload)
         return SpectralLayout(
             shape,
             partition,
@@ -939,15 +1354,22 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         owner: str,
         /,
     ) -> tuple[Array, SpectralLayout]:
-        value = jnp.asarray(values, dtype=jnp.dtype(self.coefficient_dtype))
-        layout = self._batched_layout(value.shape, representation, padded)
+        input_dtype = jax.dtypes.result_type(values)
+        if not (
+            jnp.issubdtype(input_dtype, jnp.number)
+            or jnp.issubdtype(input_dtype, jnp.bool_)
+        ):
+            raise TypeError(f"{owner} must be a numeric ArrayLike value.")
+        static_shape = np.shape(values)
+        layout = self._batched_layout(static_shape, representation, padded)
+        value = jnp.asarray(values, dtype=jnp.dtype(self.precision.coefficient_dtype))
         self.topology.require_available()
         return jax.device_put(value, layout.sharding(self.topology)), layout
 
     def _validate(
         self, values: ArrayLike, layout: SpectralLayout, owner: str, /
     ) -> Array:
-        value = jnp.asarray(values, dtype=jnp.dtype(self.coefficient_dtype))
+        value = jnp.asarray(values, dtype=jnp.dtype(self.precision.coefficient_dtype))
         if value.shape != layout.global_shape:
             raise ValueError(
                 f"{owner} must have global shape {layout.global_shape}; got {value.shape}."
@@ -975,77 +1397,69 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         representation: SpectralRepresentation,
         padded: bool = False,
     ) -> Array:
-        """Place arbitrary replicated payload axes without changing spatial sharding."""
+        """Place one exact admitted payload shape without changing spatial sharding."""
         placed, _ = self._validate_batched(
             values, representation, padded, "Batched spectral value"
         )
         return placed
 
-    def _forward_local_scaled(self, local: Array, scale: float, /) -> Array:
-        rank = len(self.spatial_shape)
-        if self.schedule == "pencil":
-            value = jnp.fft.fft(local * scale, axis=2, norm="ortho")
-            value = jax.lax.all_to_all(
-                value, self.topology.mesh_axis_names[1], 2, 1, tiled=True
-            )
-            value = jnp.fft.fft(value, axis=1, norm="ortho")
-            value = jax.lax.all_to_all(
-                value, self.topology.mesh_axis_names[0], 2, 0, tiled=True
-            )
-            value = jnp.fft.fft(value, axis=0, norm="ortho")
-            for axis in range(3, rank):
-                value = jnp.fft.fft(value, axis=axis, norm="ortho")
-            return value
+    def _execute_local_sequence(
+        self,
+        local: Array,
+        sequence: tuple[_SpectralStage, ...],
+        scale: float,
+        /,
+        *,
+        inverse: bool,
+    ) -> Array:
         if self.schedule == "channel":
             raise ValueError(
-                "Channel layouts use execute_channel; the Chebyshev axis is not a C2C transform."
+                "Channel layouts use execute_channel; the Chebyshev axis is not "
+                "a C2C transform."
             )
-        value = local * scale
-        for axis in range(1, rank):
-            value = jnp.fft.fft(value, axis=axis, norm="ortho")
-        value = jax.lax.all_to_all(
-            value, self.topology.mesh_axis_names[0], 1, 0, tiled=True
-        )
-        return jnp.fft.fft(value, axis=0, norm="ortho")
+        transform_dtype = jnp.dtype(self.precision.transform_dtype)
+        coefficient_dtype = jnp.dtype(self.precision.coefficient_dtype)
+        value = local.astype(transform_dtype)
+        scale_value = jnp.asarray(scale, dtype=value.real.dtype)
+        if not inverse:
+            value = value * scale_value
+        for stage in sequence:
+            value = stage.apply_local(value, inverse=inverse)
+        if inverse:
+            value = value / scale_value
+        return value.astype(coefficient_dtype)
 
     def _forward_local(self, local: Array, /) -> Array:
-        return self._forward_local_scaled(local, self.transform_scale)
+        return self._execute_local_sequence(
+            local,
+            self._forward_sequence,
+            self.transform_scale,
+            inverse=False,
+        )
 
     def _forward_padded_local(self, local: Array, /) -> Array:
-        return self._forward_local_scaled(local, self.padded_transform_scale)
-
-    def _inverse_local_scaled(self, local: Array, scale: float, /) -> Array:
-        rank = len(self.spatial_shape)
-        if self.schedule == "pencil":
-            value = jnp.fft.ifft(local, axis=0, norm="ortho")
-            value = jax.lax.all_to_all(
-                value, self.topology.mesh_axis_names[0], 0, 2, tiled=True
-            )
-            value = jnp.fft.ifft(value, axis=1, norm="ortho")
-            value = jax.lax.all_to_all(
-                value, self.topology.mesh_axis_names[1], 1, 2, tiled=True
-            )
-            value = jnp.fft.ifft(value, axis=2, norm="ortho")
-            for axis in range(3, rank):
-                value = jnp.fft.ifft(value, axis=axis, norm="ortho")
-            return value / scale
-        if self.schedule == "channel":
-            raise ValueError(
-                "Channel layouts use execute_channel; the Chebyshev axis is not a C2C transform."
-            )
-        value = jnp.fft.ifft(local, axis=0, norm="ortho")
-        value = jax.lax.all_to_all(
-            value, self.topology.mesh_axis_names[0], 0, 1, tiled=True
+        return self._execute_local_sequence(
+            local,
+            self._padded_forward_sequence,
+            self.padded_transform_scale,
+            inverse=False,
         )
-        for axis in range(1, rank):
-            value = jnp.fft.ifft(value, axis=axis, norm="ortho")
-        return value / scale
 
     def _inverse_local(self, local: Array, /) -> Array:
-        return self._inverse_local_scaled(local, self.transform_scale)
+        return self._execute_local_sequence(
+            local,
+            self._inverse_sequence,
+            self.transform_scale,
+            inverse=True,
+        )
 
     def _inverse_padded_local(self, local: Array, /) -> Array:
-        return self._inverse_local_scaled(local, self.padded_transform_scale)
+        return self._execute_local_sequence(
+            local,
+            self._padded_inverse_sequence,
+            self.padded_transform_scale,
+            inverse=True,
+        )
 
     def to_modal(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
         source = self._layout("physical", padded)
@@ -1076,7 +1490,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         return mapped(placed)
 
     def to_modal_batched(self, values: ArrayLike, /, *, padded: bool = False) -> Array:
-        """Transform arbitrary trailing payload axes in one distributed C2C batch."""
+        """Transform one exact admitted trailing payload in a distributed C2C batch."""
         placed, source = self._validate_batched(
             values, "physical", padded, "Batched physical spectral state"
         )
@@ -1094,7 +1508,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
     def to_physical_batched(
         self, coefficients: ArrayLike, /, *, padded: bool = False
     ) -> Array:
-        """Invert arbitrary trailing payload axes without materializing them globally."""
+        """Invert one exact admitted trailing payload without a global materialization."""
         placed, source = self._validate_batched(
             coefficients, "modal", padded, "Batched modal spectral state"
         )
@@ -1144,7 +1558,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         return jax.device_put(result, self.modal_layout.sharding(self.topology))
 
     def pad_modal_batched(self, coefficients: ArrayLike, /) -> Array:
-        """Embed retained modal fields with arbitrary replicated payload axes."""
+        """Embed a retained modal field with one exact admitted payload shape."""
         value, _ = self._validate_batched(
             coefficients, "modal", False, "Batched canonical modal state"
         )
@@ -1204,7 +1618,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         order: int = 1,
         padded: bool = False,
     ) -> Array:
-        """Differentiate modal fields with arbitrary replicated payload axes."""
+        """Differentiate a modal field with one exact admitted payload shape."""
         value, _ = self._validate_batched(
             coefficients, "modal", padded, "Batched modal derivative state"
         )
@@ -1277,30 +1691,29 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         return result if projector is None else self.project(projector, result)
 
     def _global_reductions(
-        self, values: ArrayLike, layout: SpectralLayout, /
+        self, value: Array, layout: SpectralLayout, /
     ) -> tuple[Array, Array, Array, Array]:
-        value = self._validate(values, layout, "Diagnostic state")
-        reduction_dtype = jnp.dtype(self.accumulation_dtype)
-        sum_dtype = _complex_accumulation_dtype(np.dtype(value.dtype))
-        if np.dtype(sum_dtype).itemsize < reduction_dtype.itemsize:
-            sum_dtype = np.dtype(
-                jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
-            )
+        reduction_dtype = jnp.dtype(self.precision.reduction_dtype)
+        sum_dtype = np.dtype(
+            jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
+        )
         axes = layout.used_mesh_axes
 
         def reduce_local(local: Array) -> tuple[Array, Array, Array, Array]:
-            total = jnp.sum(local.astype(sum_dtype))
-            squared = jnp.sum(jnp.square(jnp.abs(local)).astype(reduction_dtype))
+            reduced = local.astype(sum_dtype)
+            magnitude = jnp.abs(reduced)
+            total = jnp.sum(reduced)
+            squared = jnp.sum(magnitude * magnitude, dtype=reduction_dtype)
             maximum = jax.lax.stop_gradient(
-                jnp.max(jnp.abs(local).astype(reduction_dtype), initial=0.0)
+                jnp.max(magnitude, initial=jnp.asarray(0.0, dtype=reduction_dtype))
             )
-            finite = jnp.all(jnp.isfinite(local)).astype(jnp.int32)
+            finite = jnp.all(jnp.isfinite(reduced)).astype(jnp.int32)
             if axes:
                 total = jax.lax.psum(total, axes)
                 squared = jax.lax.psum(squared, axes)
                 maximum = jax.lax.pmax(maximum, axes)
                 finite = jax.lax.pmin(finite, axes)
-            return total, maximum, jnp.sqrt(squared), finite.astype("bool")
+            return total, maximum, jnp.sqrt(squared), finite.astype(jnp.bool_)
 
         mapped = jax.shard_map(
             reduce_local,
@@ -1320,13 +1733,14 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         padded: bool = False,
     ) -> SpectralGlobalDiagnostics:
         layout = self._layout(representation, padded)
-        total, maximum, norm, finite = self._global_reductions(values, layout)
+        value = self._validate(values, layout, "Diagnostic state")
+        total, maximum, norm, finite = self._global_reductions(value, layout)
         return SpectralGlobalDiagnostics(
             total,
             maximum,
             norm,
             finite,
-            self.accumulation_dtype,
+            self.precision.reduction_dtype,
             layout.used_mesh_axes,
             self.plan_id,
         )
@@ -1339,7 +1753,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         representation: SpectralRepresentation = "modal",
         padded: bool = False,
     ) -> SpectralGlobalDiagnostics:
-        """Reduce arbitrary replicated payload axes over every spatial shard."""
+        """Reduce one exact admitted payload shape over every spatial shard."""
         value, layout = self._validate_batched(
             values, representation, padded, "Batched diagnostic state"
         )
@@ -1349,7 +1763,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             maximum,
             norm,
             finite,
-            self.accumulation_dtype,
+            self.precision.reduction_dtype,
             layout.used_mesh_axes,
             self.plan_id,
         )
@@ -1363,7 +1777,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         representation: SpectralRepresentation = "modal",
         padded: bool = False,
     ) -> Array:
-        """Return a shard-reduced complex inner product for arbitrary payload axes."""
+        """Return a shard-reduced inner product for one admitted payload shape."""
         left_value, layout = self._validate_batched(
             left, representation, padded, "Left distributed inner-product state"
         )
@@ -1372,12 +1786,10 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         )
         if right_layout.global_shape != layout.global_shape:
             raise ValueError("Distributed inner-product operands must have equal shape.")
-        sum_dtype = _complex_accumulation_dtype(np.dtype(left_value.dtype))
-        reduction_dtype = np.dtype(self.accumulation_dtype)
-        if np.dtype(sum_dtype).itemsize < reduction_dtype.itemsize:
-            sum_dtype = np.dtype(
-                jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
-            )
+        reduction_dtype = np.dtype(self.precision.reduction_dtype)
+        sum_dtype = np.dtype(
+            jnp.complex128 if reduction_dtype.itemsize > 4 else jnp.complex64
+        )
         axes = layout.used_mesh_axes
 
         def inner_local(left_local: Array, right_local: Array) -> Array:
@@ -1412,7 +1824,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             result = jnp.all(local).astype(jnp.int32)
             if axes:
                 result = jax.lax.pmin(result, axes)
-            return result.astype("bool")
+            return result.astype(jnp.bool_)
 
         mapped = jax.shard_map(
             all_local,
