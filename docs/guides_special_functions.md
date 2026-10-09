@@ -361,8 +361,12 @@ w′(z) = -2 z w(z) + 2 i / sqrt(pi).
 ```
 
 Phydrax evaluates it with Weideman's rational approximation in the upper
-half-plane and the exact reflection identity below it. Dawson's integral uses
-three real rational regimes and satisfies `F′(x) = 1 - 2 x F(x)`.
+half-plane and the exact reflection identity below it; the reflection
+exponential is formed only on lower-half-plane lanes, so no discarded branch
+overflows. Real Dawson values use `jax.scipy.special.dawsn`; Phydrax owns dtype
+promotion, the signed-zero limits `F(±∞) = ±0` with zero derivative, and the
+principal complex continuation. Dawson's integral satisfies
+`F′(x) = 1 - 2 x F(x)`.
 
 ```python
 z = jnp.array([0.0 + 0.5j, 1.0 + 0.5j])
@@ -457,7 +461,7 @@ high-precision reference such as mpmath when auditing isolated hard points.
 
 ## Provenance
 
-The Faddeeva and Dawson kernels are adapted from JAX under Apache-2.0. The
+The Faddeeva kernel is adapted from JAX under Apache-2.0. The
 modified Bessel regime structure is adapted from Numerax under MIT. Airy and
 large-order cylindrical asymptotics are adapted from SciPy XSF, and the
 cylindrical `jv`/`yv` kernels from XSF's bundled Cephes sources, under
