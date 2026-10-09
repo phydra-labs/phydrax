@@ -2084,6 +2084,13 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `phydrax.special.dawsn` evaluates real arguments with
+  `jax.scipy.special.dawsn`, public since JAX 0.11.0, instead of a vendored copy
+  of the same Cody--Paciorek--Thacher kernel. Finite values and derivatives are
+  unchanged; Phydrax retains dtype promotion, the signed-zero limits at infinity
+  with zero derivative, and the complex continuation. `wofz` keeps its own
+  kernel because the JAX implementation forms an overflowing exponential in the
+  discarded upper-half-plane branch.
 - Point Poisson's dissipative example now explicitly binds native point-primary
   tensor axes, `SBPDerivativePlan(interior_order=2)` and `SBPGridNorm`, rather
   than using an unstable constrained degree-one GMLS derivative. The new
