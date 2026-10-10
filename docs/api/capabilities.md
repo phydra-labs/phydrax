@@ -4,15 +4,15 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
+Catalog ID: `cd7b985c801c5ef5d2ab44272f2f442ef7e432fc5275e24d48e3d159f293890e`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 301 |
-| research | 171 |
+| candidate | 303 |
+| research | 172 |
 | internal | 5 |
 | retired | 0 |
 
@@ -82,6 +82,7 @@ Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
 | `application.neuroscience` | `phydrax.applications.neuroscience` | research | application-research | 0 |
 | `application.neutrino` | `phydrax.applications.neutrino` | research | application-research | 0 |
 | `application.nonequilibrium-field` | `phydrax.applications.nonequilibrium_field` | research | application-research | 0 |
+| `application.nuclear-fuel` | `phydrax.applications.nuclear_fuel` | research | application-research | 0 |
 | `application.nucleic-acid-biophysics` | `phydrax.applications.nucleic_acid_biophysics` | research | application-research | 0 |
 | `application.numerical-relativity` | `phydrax.applications.numerical_relativity` | research | application-research | 0 |
 | `application.ocean` | `phydrax.applications.ocean` | research | application-research | 0 |
@@ -340,6 +341,8 @@ Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
 | `nn.operator.waveletneuraloperator` | `phydrax.nn.operator` | research | research | 0 |
 | `nn.operator.weightspaceoperator` | `phydrax.nn.operator` | research | research | 0 |
 | `nonequilibrium-field.fermionic-second-born` | `phydrax.applications` | candidate | candidate | 1 |
+| `nuclear-fuel.performance` | `phydrax.applications.nuclear_fuel` | candidate | candidate | 1 |
+| `nuclear-fuel.release-matrix` | `phydrax.qualification` | candidate | candidate | 1 |
 | `nuclear.activation` | `phydrax.nuclear` | candidate | candidate | 1 |
 | `nuclear.data` | `phydrax.nuclear` | candidate | candidate | 2 |
 | `nuclear.depletion.linear-bateman` | `phydrax.nuclear` | candidate | candidate | 1 |
