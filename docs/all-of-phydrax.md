@@ -214,15 +214,41 @@ Local stencil programs, structured compact/transform-line solves, periodic/bound
 calculus, entropy-conservative SBP flux differencing, and compatible finite-volume MAC
 flow compose without conflating quadrature sites, mesh entities, and field DOFs.
 `DistributedSpectralExecutionPlan` adds actual JAX-mesh full-complex slab and pencil
-FFTs plus a horizontal-partitioned channel action. It fixes every redistribution,
-padded/canonical layout, precision, collective, and byte bound and performs no host
-gather. The channel schedule replicates its Chebyshev axis and does not make the
-separate `ChannelStokesPlan` a distributed line solver.
+FFTs plus a horizontal-partitioned channel action. Each plan requires a scientific
+owner, one `SpectralPrecisionPolicy`, and exact canonical payload shapes containing
+the state shape. It records precision/transform semantics in `numerical_id`,
+topology/layout/ordered-stage/payload/resource semantics in `execution_id`, and binds
+both to the owner in `plan_id`. Local transforms compute in transform precision,
+return coefficient-storage precision, and cast before reductions.
 
-`DistributedPeriodicLESPlan` places the scientific action on slab/pencil layouts;
-the application compiler adds full rotational flow, ETDRK/SSPRK, statistics, and
-device-resident checkpointed production without a host gather. Scientific/backend
-qualification remains exact and is never inherited from one-device parity.
+One private immutable executable stage sequence composes the public
+`SpectralTranspose` operations and supplies the same ordered preparation evidence.
+The FFT report owns logical transform storage/workspace/live peak and algorithmic
+collective traffic only; application stages, closure work, workflows, and checkpoints
+remain consumer-owned. Process-qualified device availability, exact payload
+admission, and no-host-gather execution fail closed.
+
+The channel schedule accepts exactly Fourier--Chebyshev--Fourier, fingerprints the
+ordered horizontal axes, replicates its Chebyshev axis, and does not make the separate
+`ChannelStokesPlan` a distributed line solver. The unreleased candidate covers only
+full-complex C2C JAX global arrays on regular divisible slab/pencil shards and the
+current horizontal channel action. It claims no R2C/C2R, vendor/rank-local provider,
+uneven shard, mixed-transform, dynamic-scheduling, or implicit-gather support;
+forced/same-host evidence cannot establish physical multi-device or multi-host
+qualification.
+
+`DistributedPeriodicLESPlan` admits scalar, three-vector, and 3-by-3 tensor payloads;
+PSATD derives every exact `(1, C)` payload from its configured static features and
+callsites without a fixed width cap; mixed cosmology admits scalar only. LES and
+PSATD/PIC exact restarts retain execution identity. Mixed-cosmology topology-neutral
+checkpoints instead bind scientific owner plus numerical schema, excluding
+topology/layout/stage/resource execution identity while exact shard artifacts still
+change.
+
+The distributed LES application compiler adds full rotational flow, ETDRK/SSPRK,
+statistics, consumer-owned resource admission, and device-resident checkpointed
+production without a host gather. Scientific/backend qualification remains exact and
+is never inherited from one-device parity.
 
 Partition-aware `DistributedLineSolvePlan` supports partitioned Thomas, bounded SPIKE,
 and balanced power-of-two PCR with explicit compatibility, gauge, residual, resource,

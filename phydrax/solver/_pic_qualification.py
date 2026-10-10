@@ -30,6 +30,9 @@ from ..discretization.pic import (
     RelativisticPusher,
     RelativisticPushPlan,
 )
+from ..discretization.spectral._qualification import (
+    distributed_spectral_candidate_profiles,
+)
 from ..qualification import CapabilityProfile, SupportTuple
 from ._cochain_electrostatic import (
     CochainElectrostaticBoundaryPlan,
@@ -495,9 +498,7 @@ def pic_distributed_support_tuples() -> tuple[SupportTuple, ...]:
             "pic.distributed",
             {
                 "decomposition": "static-equal-blocks-1d-2d-3d-mesh-restart-repartition",
-                "field_solvers": (
-                    "cochain-3d-reduced-1d-2d-psatd-global-fft-and-local-guarded"
-                ),
+                "field_solvers": "cochain-reduced-and-psatd-consumer-configurations",
                 "deposition": "window-local-axis-by-axis-halo-accumulation-plus-uniform",
                 "migration": "fixed-capacity-ppermute-packets-diagonals-atomic-rejection",
                 "processes": (
@@ -512,12 +513,14 @@ def pic_distributed_support_tuples() -> tuple[SupportTuple, ...]:
 
 
 def pic_distributed_candidate_profiles() -> tuple[CapabilityProfile, ...]:
+    spectral_profile = distributed_spectral_candidate_profiles()[0]
     return tuple(
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
             "candidate",
             (support,),
+            dependencies=(spectral_profile.profile_id,),
             required_gates=_DISTRIBUTED_GATES,
             released=False,
         )

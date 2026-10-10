@@ -263,23 +263,28 @@ class CompiledDistributedPeriodicLESDynamics(StrictModule, NonTrainableState):
         drift = _DistributedPeriodicFullFlowDrift(
             problem, backend, constant_power_forcing
         )
-        dtype = jnp.dtype(
-            backend.scientific.grid_filter.discretization.plan.precision.coefficient_dtype
-        )
-        diagonal = backend.execution.place_batched(
-            (
-                -problem.viscosity.astype(dtype)
-                * jnp.real(backend.wavenumber_squared).astype(dtype)[..., None]
-            ),
+        dtype = jnp.dtype(backend.execution.precision.coefficient_dtype)
+        scalar_diagonal = backend.execution.place_batched(
+            -problem.viscosity.astype(dtype)
+            * jnp.real(backend.wavenumber_squared).astype(dtype),
             representation="modal",
         )
+        diagonal = scalar_diagonal[..., None]
         compilation_id = canonical_fingerprint(
             {
                 "kind": "compiled-distributed-periodic-incompressible-les",
                 "problem": problem.problem_id,
                 "source_plan": source_plan.plan_id,
                 "backend": backend.prepared_id,
-                "execution": backend.execution.plan_id,
+                "owner": backend.execution.owner_id,
+                "precision": backend.execution.precision.policy_id,
+                "numerical": backend.execution.numerical_id,
+                "execution": backend.execution.execution_id,
+                "execution_plan": backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(backend.preparation.transform_sequence_ids),
                 "topology": backend.execution.topology.topology_id,
                 "layout": backend.execution.modal_layout.layout_id,
                 "nonlinear": drift.nonlinear_id,
@@ -447,7 +452,18 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
                 "dynamics": dynamics.compilation_id,
                 "backend": dynamics.backend.prepared_id,
                 "coordinates": coordinates.coordinate_id,
-                "execution": dynamics.backend.execution.plan_id,
+                "owner": dynamics.backend.execution.owner_id,
+                "precision": dynamics.backend.execution.precision.policy_id,
+                "numerical": dynamics.backend.execution.numerical_id,
+                "execution": dynamics.backend.execution.execution_id,
+                "execution_plan": dynamics.backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape)
+                    for shape in dynamics.backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(
+                    dynamics.backend.preparation.transform_sequence_ids
+                ),
                 "topology": dynamics.backend.execution.topology.topology_id,
                 "layout": dynamics.backend.execution.modal_layout.layout_id,
                 "qualification": "backend-specific-not-inherited",
@@ -693,7 +709,18 @@ class DistributedPeriodicLESStatisticsPlan(StrictModule, NonTrainableState):
                 "kind": "distributed-periodic-les-statistics",
                 "dynamics": dynamics.compilation_id,
                 "backend": dynamics.backend.prepared_id,
-                "execution": dynamics.backend.execution.plan_id,
+                "owner": dynamics.backend.execution.owner_id,
+                "precision": dynamics.backend.execution.precision.policy_id,
+                "numerical": dynamics.backend.execution.numerical_id,
+                "execution": dynamics.backend.execution.execution_id,
+                "execution_plan": dynamics.backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape)
+                    for shape in dynamics.backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(
+                    dynamics.backend.preparation.transform_sequence_ids
+                ),
                 "coordinates": coordinates.coordinate_id,
                 "reductions": dynamics.backend.execution.modal_layout.used_mesh_axes,
                 "host_gather": False,
@@ -880,6 +907,13 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
     backend_id: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     filter_id: str = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
+    execution_id: str = eqx.field(static=True)
+    execution_plan_id: str = eqx.field(static=True)
+    admitted_payload_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    transform_sequence_ids: tuple[str, str, str, str] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -916,6 +950,15 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
                 "backend": backend.prepared_id,
                 "discretization": discretization.prepared_id,
                 "filter": filter_id,
+                "owner": backend.execution.owner_id,
+                "precision": backend.execution.precision.policy_id,
+                "numerical": backend.execution.numerical_id,
+                "execution": backend.execution.execution_id,
+                "execution_plan": backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape) for shape in backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(backend.preparation.transform_sequence_ids),
                 "topology": backend.execution.topology.topology_id,
                 "layout": backend.execution.modal_layout.layout_id,
                 "field": array_tree_fingerprint(concrete),
@@ -929,6 +972,13 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
         self.backend_id = backend.prepared_id
         self.discretization_id = discretization.prepared_id
         self.filter_id = filter_id
+        self.owner_id = backend.execution.owner_id
+        self.precision_policy_id = backend.execution.precision.policy_id
+        self.numerical_id = backend.execution.numerical_id
+        self.execution_id = backend.execution.execution_id
+        self.execution_plan_id = backend.execution.plan_id
+        self.admitted_payload_shapes = backend.execution.admitted_payload_shapes
+        self.transform_sequence_ids = backend.preparation.transform_sequence_ids
         self.topology_id = backend.execution.topology.topology_id
         self.layout_id = backend.execution.modal_layout.layout_id
         self.state_shape = tuple(velocity.shape)
@@ -945,6 +995,13 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
                 "backend": self.backend_id,
                 "discretization": self.discretization_id,
                 "filter": self.filter_id,
+                "owner": self.owner_id,
+                "precision": self.precision_policy_id,
+                "numerical": self.numerical_id,
+                "execution": self.execution_id,
+                "execution_plan": self.execution_plan_id,
+                "payload_shapes": [list(shape) for shape in self.admitted_payload_shapes],
+                "transform_sequences": list(self.transform_sequence_ids),
                 "topology": self.topology_id,
                 "layout": self.layout_id,
                 "initial_condition": initial_condition_id,
@@ -966,6 +1023,13 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
                 "backend": self.backend_id,
                 "discretization": self.discretization_id,
                 "filter": self.filter_id,
+                "owner": self.owner_id,
+                "precision": self.precision_policy_id,
+                "numerical": self.numerical_id,
+                "execution": self.execution_id,
+                "execution_plan": self.execution_plan_id,
+                "payload_shapes": [list(shape) for shape in self.admitted_payload_shapes],
+                "transform_sequences": list(self.transform_sequence_ids),
                 "topology": self.topology_id,
                 "layout": self.layout_id,
                 "field": array_tree_fingerprint(value),
@@ -1052,6 +1116,15 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
             or case.backend_id != dynamics.backend.prepared_id
             or case.discretization_id != discretization.prepared_id
             or case.filter_id != filter_id
+            or case.owner_id != dynamics.backend.execution.owner_id
+            or case.precision_policy_id != dynamics.backend.execution.precision.policy_id
+            or case.numerical_id != dynamics.backend.execution.numerical_id
+            or case.execution_id != dynamics.backend.execution.execution_id
+            or case.execution_plan_id != dynamics.backend.execution.plan_id
+            or case.admitted_payload_shapes
+            != dynamics.backend.execution.admitted_payload_shapes
+            or case.transform_sequence_ids
+            != dynamics.backend.preparation.transform_sequence_ids
             or case.topology_id != dynamics.backend.execution.topology.topology_id
             or case.layout_id != dynamics.backend.execution.modal_layout.layout_id
         ):
@@ -1115,6 +1188,19 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
                 "source_plan": source_plan.plan_id,
                 "backend": dynamics.backend.prepared_id,
                 "dynamics": dynamics.compilation_id,
+                "owner": dynamics.backend.execution.owner_id,
+                "precision": dynamics.backend.execution.precision.policy_id,
+                "numerical": dynamics.backend.execution.numerical_id,
+                "execution": dynamics.backend.execution.execution_id,
+                "execution_plan": dynamics.backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape)
+                    for shape in dynamics.backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(
+                    dynamics.backend.preparation.transform_sequence_ids
+                ),
+                "fft_resource": dynamics.backend.preparation.fft_resource.report_id,
                 "method": prepared_method.method_id,
                 "forcing": dynamics.forcing_id,
                 "statistics": statistics.plan_id,
@@ -1124,7 +1210,7 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
                 "qualification": "backend-specific-not-inherited",
             }
         )
-        precision = dynamics.backend.scientific.grid_filter.discretization.plan.precision
+        precision = dynamics.backend.execution.precision
         manifest = ProductionCaseManifest(
             problem_id=case_identity,
             method_id=prepared_method.method_id,
@@ -1157,6 +1243,19 @@ class DistributedPeriodicLESProductionPlan(StrictModule):
                 "case": case_identity,
                 "source_plan": source_plan.plan_id,
                 "backend": dynamics.backend.prepared_id,
+                "owner": dynamics.backend.execution.owner_id,
+                "precision": dynamics.backend.execution.precision.policy_id,
+                "numerical": dynamics.backend.execution.numerical_id,
+                "execution": dynamics.backend.execution.execution_id,
+                "execution_plan": dynamics.backend.execution.plan_id,
+                "payload_shapes": [
+                    list(shape)
+                    for shape in dynamics.backend.execution.admitted_payload_shapes
+                ],
+                "transform_sequences": list(
+                    dynamics.backend.preparation.transform_sequence_ids
+                ),
+                "fft_resource": dynamics.backend.preparation.fft_resource.report_id,
                 "manifest": manifest.manifest_id,
                 "runtime": runtime_plan.plan_id,
                 "checkpoint_encoding": encoding.encoding_id,

@@ -4,14 +4,14 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `cd7b985c801c5ef5d2ab44272f2f442ef7e432fc5275e24d48e3d159f293890e`
+Catalog ID: `a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 303 |
+| candidate | 304 |
 | research | 172 |
 | internal | 5 |
 | retired | 0 |
@@ -216,6 +216,7 @@ Catalog ID: `cd7b985c801c5ef5d2ab44272f2f442ef7e432fc5275e24d48e3d159f293890e`
 | `diagrammatic-field.sign-free-ct-int-control` | `phydrax.applications` | candidate | candidate | 1 |
 | `dicom-medical-image-admission` | `phydrax.imaging` | candidate | candidate | 4 |
 | `dicom-radiotherapy-admission` | `phydrax.imaging` | candidate | candidate | 4 |
+| `distributed-spectral-execution` | `phydrax.discretization.spectral` | candidate | unreleased-candidate | 1 |
 | `electrochemistry.porous-electrode` | `phydrax.electrochemistry` | candidate | implementation-qualified-candidate | 1 |
 | `electrohydrodynamics.operator-coupled` | `phydrax.electrohydrodynamics` | candidate | implementation-qualified-candidate | 1 |
 | `electromagnetics.cold-plasma-dielectric` | `phydrax.electromagnetics` | candidate | candidate | 1 |

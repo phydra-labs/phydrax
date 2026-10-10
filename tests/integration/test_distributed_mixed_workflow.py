@@ -136,7 +136,10 @@ def _workflow() -> Any:
     )
     topology = phx.discretization.SpectralMeshTopology.one_device()
     spectral = phx.discretization.DistributedSpectralExecutionPlan.from_discretization(
-        topology, space, checkpoint_count=1, maximum_bytes=2**28
+        topology,
+        space,
+        admitted_payload_shapes=((),),
+        maximum_bytes=2**28,
     )
     group = phx.execution.ExecutionGroupSpec(
         "distributed-mixed-integration-group",
@@ -239,13 +242,44 @@ def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination
         state, rng_counters=jnp.arange(16, dtype=jnp.uint64)
     )
     repository = _repository(tmp_path / "distributed-mixed")
+    assert distributed.gas is not None
+    checkpoint_gas = distributed.gas
+    checkpoint_values = (
+        distributed.wave.psi,
+        distributed.wave.scale_factor,
+        distributed.particles.positions,
+        distributed.particles.momenta,
+        distributed.particles.masses,
+        distributed.particles.stable_ids,
+        distributed.particles.logical_slots,
+        distributed.particles.active_mask,
+        distributed.particles.rng_counters,
+        distributed.particles.scale_factor,
+        distributed.particles.owner,
+        checkpoint_gas.cell_average,
+        checkpoint_gas.scale_factor,
+    )
+    expected_unpadded = sum(
+        value.size * np.dtype(value.dtype).itemsize for value in checkpoint_values
+    )
+    assert execution.checkpoint_unpadded_bytes == expected_unpadded
+    assert execution.plan.required_checkpoint_bytes == (
+        execution.plan.checkpoint_count * execution.checkpoint_payload_bytes
+    )
+    assert (
+        execution.checkpoint_owner_id
+        == execution.plan.mixed.plan.wave.discretization.prepared_id
+    )
+    assert execution.checkpoint_numerical_id == execution.plan.spectral.numerical_id
+    assert execution.checkpoint_numerical_id != execution.plan.spectral.execution_id
+    assert execution.checkpoint_compatibility_id != execution.execution_id
     publication = publish_process_checkpoint(
         repository,
         "distributed-mixed-checkpoint",
-        execution.checkpoint_execution_id,
+        execution.checkpoint_compatibility_id,
         execution.checkpoint_tree(distributed),
         analysis_plan_id=execution.checkpoint_schema_id,
-        numeric_revision_id=execution.checkpoint_numeric_id,
+        numeric_revision_id=execution.checkpoint_numerical_id,
         writer_id="distributed-mixed-writer",
         topology_epoch=execution.plan.execution.topology_epoch,
     )
@@ -253,10 +287,10 @@ def test_distributed_checkpoint_has_exact_coverage_and_restores_into_destination
         repository,
         "distributed-mixed-checkpoint",
         execution.checkpoint_schema_id,
-        execution.checkpoint_numeric_id,
-        execution.checkpoint_execution_id,
+        execution.checkpoint_numerical_id,
+        execution.checkpoint_compatibility_id,
         expected_process_count=jax.process_count(),
-        diagnostic_ids=(execution.checkpoint_physics_id,),
+        diagnostic_ids=(execution.checkpoint_owner_id,),
     )
     restored = execution.restore_checkpoint(repository, manifest, distributed)
 
@@ -285,20 +319,20 @@ def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(
     publish_process_checkpoint(
         repository,
         "distributed-mixed-rejection",
-        execution.checkpoint_execution_id,
+        execution.checkpoint_compatibility_id,
         execution.checkpoint_tree(distributed),
         analysis_plan_id=execution.checkpoint_schema_id,
-        numeric_revision_id=execution.checkpoint_numeric_id,
+        numeric_revision_id=execution.checkpoint_numerical_id,
         writer_id="distributed-mixed-rejection-writer",
     )
     manifest = assemble_distributed_checkpoint_from_repository(
         repository,
         "distributed-mixed-rejection",
         execution.checkpoint_schema_id,
-        execution.checkpoint_numeric_id,
-        execution.checkpoint_execution_id,
+        execution.checkpoint_numerical_id,
+        execution.checkpoint_compatibility_id,
         expected_process_count=jax.process_count(),
-        diagnostic_ids=(execution.checkpoint_physics_id,),
+        diagnostic_ids=(execution.checkpoint_owner_id,),
     )
     incomplete = CheckpointManifest(
         manifest.checkpoint_id,
@@ -318,19 +352,44 @@ def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(
         complete=True,
         diagnostic_ids=manifest.diagnostic_ids,
     )
-    physics_substituted = CheckpointManifest(
+    owner_substituted = CheckpointManifest(
         manifest.checkpoint_id,
         manifest.analysis_plan_id,
         manifest.numeric_revision_id,
         manifest.execution_plan_id,
         manifest.shards,
         complete=True,
-        diagnostic_ids=(f"{execution.checkpoint_physics_id}-substituted",),
+        diagnostic_ids=(f"{execution.checkpoint_owner_id}-substituted",),
     )
-    numeric_substituted = CheckpointManifest(
+    source_spectral = execution.plan.spectral
+    changed_spectral = phx.discretization.DistributedSpectralExecutionPlan(
+        source_spectral.topology,
+        source_spectral.spatial_shape,
+        owner_id=source_spectral.owner_id,
+        precision=phx.discretization.SpectralPrecisionPolicy(jnp.float32),
+        admitted_payload_shapes=((),),
+        schedule=source_spectral.schedule,
+        padded_shape=source_spectral.padded_shape,
+        state_shape=source_spectral.state_shape,
+        domain_lengths=source_spectral.domain_lengths,
+        transform_scale=source_spectral.transform_scale,
+        padded_transform_scale=source_spectral.padded_transform_scale,
+        maximum_bytes=source_spectral.report.resource.maximum_bytes,
+    )
+    assert changed_spectral.numerical_id != source_spectral.numerical_id
+    numerical_changed = CheckpointManifest(
         manifest.checkpoint_id,
         manifest.analysis_plan_id,
-        f"{manifest.numeric_revision_id}-substituted",
+        changed_spectral.numerical_id,
+        manifest.execution_plan_id,
+        manifest.shards,
+        complete=True,
+        diagnostic_ids=manifest.diagnostic_ids,
+    )
+    spectral_execution_alias = CheckpointManifest(
+        manifest.checkpoint_id,
+        manifest.analysis_plan_id,
+        execution.plan.spectral.execution_id,
         manifest.execution_plan_id,
         manifest.shards,
         complete=True,
@@ -342,6 +401,8 @@ def test_checkpoint_restore_rejects_incomplete_and_identity_substitution(
     with pytest.raises(ValueError, match="incomplete|identity"):
         execution.restore_checkpoint(repository, substituted, distributed)
     with pytest.raises(ValueError, match="incomplete|identity"):
-        execution.restore_checkpoint(repository, physics_substituted, distributed)
+        execution.restore_checkpoint(repository, owner_substituted, distributed)
     with pytest.raises(ValueError, match="incomplete|identity"):
-        execution.restore_checkpoint(repository, numeric_substituted, distributed)
+        execution.restore_checkpoint(repository, numerical_changed, distributed)
+    with pytest.raises(ValueError, match="incomplete|identity"):
+        execution.restore_checkpoint(repository, spectral_execution_alias, distributed)

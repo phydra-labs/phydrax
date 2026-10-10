@@ -40,6 +40,21 @@
   Factor preparation, application order, scientific provenance, native failures,
   and properties are preserved; setup-only storage remains charged during
   preparation instead of as retained execution state.
+- Distributed spectral execution now requires an explicit scientific owner, one
+  `SpectralPrecisionPolicy`, and exact admitted payload shapes. Separate numerical,
+  execution, and owner-bound plan identities cover transform semantics, ordered
+  executable transpose stages, topology/layout, payload, and FFT resources. FFT
+  arithmetic and reductions honor their declared precision roles and refuse
+  unsupported active-JAX dtypes; topology availability is process-qualified, channel
+  plans require Fourier--Chebyshev--Fourier, and rank-one slab plans are refused.
+  FFT reports now own only logical transform storage/workspace/liveness and
+  algorithmic collective traffic; LES, PSATD/PIC, and mixed-cosmology workflows and
+  checkpoints own their own resources. LES admits only scalar/vector/tensor payloads,
+  PSATD derives its exhaustive exact payload widths from configured callsites, and
+  mixed cosmology admits scalar payloads. Exact LES and PSATD/PIC restarts retain
+  execution identity, while topology-neutral mixed checkpoints bind owner plus
+  numerical schema. The old raw dtype and caller-supplied FFT
+  stage/checkpoint/closure-resource constructor arguments have been removed.
 - Streamed deterministic and compensated reductions preserve reverse-mode
   curvature at valid zero events, and failed evaluations invalidate derivatives
   through message-only parameters and array-bearing callbacks. Callback leaves
@@ -2225,6 +2240,13 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `phydrax.special.dawsn` evaluates real arguments with
+  `jax.scipy.special.dawsn`, public since JAX 0.11.0, instead of a vendored copy
+  of the same Cody--Paciorek--Thacher kernel. Finite values and derivatives are
+  unchanged; Phydrax retains dtype promotion, the signed-zero limits at infinity
+  with zero derivative, and the complex continuation. `wofz` keeps its own
+  kernel because the JAX implementation forms an overflowing exponential in the
+  discarded upper-half-plane branch.
 - Point Poisson's dissipative example now explicitly binds native point-primary
   tensor axes, `SBPDerivativePlan(interior_order=2)` and `SBPGridNorm`, rather
   than using an unstable constrained degree-one GMLS derivative. The new

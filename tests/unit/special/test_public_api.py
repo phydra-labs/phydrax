@@ -3,6 +3,9 @@ import phydrax as phx
 
 def test_special_namespace_is_public() -> None:
     expected = [
+        "RealCartesianHarmonics",
+        "RealHarmonicArgument",
+        "RealHarmonicNormalization",
         "airy",
         "airye",
         "dawsn",
@@ -47,6 +50,7 @@ def test_special_namespace_is_public() -> None:
         "polylog",
         "principal_log",
         "principal_sqrt",
+        "real_harmonic_basis",
         "solid_harmonic_irregular",
         "solid_harmonic_regular",
         "spence",

@@ -63,6 +63,7 @@ from ....discretization.pic import (
 from ....discretization.spectral import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
+    SpectralPrecisionPolicy,
 )
 from ....sparse import SparseLinearMap
 from ....typing import checked, parse
@@ -281,6 +282,51 @@ def _spectral_grid(
 
 
 # -- transforms ---------------------------------------------------------------------
+
+
+def _spectral_payload_shapes(
+    current_intervals: int,
+    /,
+    *,
+    decomposition: SpectralDecomposition,
+    stencil_order: int | None,
+    grid: SpectralGrid,
+    averaged: bool,
+    pml: bool,
+    antennas: bool,
+) -> tuple[tuple[int, int], ...]:
+    """Exact payloads that can reach this plan's distributed global transform."""
+    # Coulomb initialization and Gauss projection are global on both routes.
+    widths = {1, 3, 5, 7}
+    if decomposition == "local-guarded":
+        # Step payloads use _GuardedTransform. Only the final whole-domain
+        # divergence (and PML momentum on staggered grids) reaches this plan.
+        if pml:
+            widths.update((4, 12))
+            if grid == "staggered":
+                widths.update((6, 18))
+        else:
+            widths.update((2, 6))
+        return tuple((1, width) for width in sorted(widths))
+
+    # E+B, three current components per interval, and interval-edge charges;
+    # antennas additionally contribute J, M, and their two declared charges.
+    widths.add(7 + 4 * current_intervals + (8 if antennas else 0))
+    output_width = 6 + (6 if averaged else 0) + (18 if pml else 0)
+    if antennas:
+        output_width += 8
+    widths.add(output_width)
+    if pml:
+        widths.add(12)
+        if stencil_order is None:
+            widths.update((2, 8))
+        else:
+            widths.add(4)
+        if grid == "staggered":
+            widths.update((6, 18))
+    else:
+        widths.update((2, 6))
+    return tuple((1, width) for width in sorted(widths))
 
 
 class _GlobalTransform(StrictModule, NonTrainableState):
@@ -886,6 +932,7 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
     counts: tuple[int, int, int] = eqx.field(static=True)
     spacing: tuple[float, float, float] = eqx.field(static=True)
     origin: tuple[float, float, float] = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -993,31 +1040,37 @@ class SpectralMaxwellPlan(StrictModule, NonTrainableState):
         self.counts = metadata.counts
         self.spacing = metadata.spacing
         self.origin = metadata.origin
-        self.plan_id = canonical_fingerprint(
+        self.owner_id = canonical_fingerprint(
             {
-                "kind": "spectral-maxwell-plan",
+                "kind": "spectral-maxwell-owner",
                 "bridge": bridge.bridge_id,
                 "variant": variant,
                 "time_dependency": time_dependency,
                 "charge_conservation": charge_conservation,
                 "stencil": stencil,
                 "stencil_order": execution.stencil_order,
-                "decomposition": decomposition,
                 "grid": grid,
                 "absorber": absorber,
                 "galilean_velocity": list(execution.galilean_velocity),
                 "current_intervals": execution.current_intervals,
+                "pml": None if pml is None else pml.plan_id,
+                "observers": [value.plan_id for value in observer_values],
+                "antennas": [value.source_id for value in antenna_values],
+                "permittivity": epsilon,
+                "permeability": mu,
+            }
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "spectral-maxwell-plan",
+                "owner": self.owner_id,
+                "decomposition": decomposition,
                 "subdomains": (
                     None if execution.subdomains is None else list(execution.subdomains)
                 ),
                 "guard_cells": (
                     None if execution.guard_cells is None else list(execution.guard_cells)
                 ),
-                "pml": None if pml is None else pml.plan_id,
-                "observers": [value.plan_id for value in observer_values],
-                "antennas": [value.source_id for value in antenna_values],
-                "permittivity": epsilon,
-                "permeability": mu,
                 "topology": topology_.topology_id,
             }
         )
@@ -1315,6 +1368,7 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
     confinement_planes: Array | None
     edge_lengths: Array
     maximum_symbol: float = eqx.field(static=True)
+    numerical_id: str = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
     spatial_dimension: int = eqx.field(static=True)
     field_dtype: RealPrecisionDType = eqx.field(static=True)
@@ -1363,13 +1417,26 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
         topology = plan.topology
         schedule = "slab" if len(topology.mesh_shape) == 1 else "pencil"
         lengths = tuple(n * h for n, h in zip(counts, spacing, strict=True))
+        precision = SpectralPrecisionPolicy(jnp.float64)
+        payload_shapes = _spectral_payload_shapes(
+            plan.current_intervals,
+            decomposition=plan.decomposition,
+            stencil_order=plan.stencil_order,
+            grid=plan.grid,
+            averaged=plan.variant == "averaged-galilean",
+            pml=plan.pml is not None,
+            antennas=bool(plan.antennas),
+        )
         transform = _GlobalTransform(
             DistributedSpectralExecutionPlan(
                 topology,
                 counts,
+                owner_id=plan.owner_id,
+                precision=precision,
+                admitted_payload_shapes=payload_shapes,
                 schedule=schedule,
+                state_shape=(1, 3),
                 domain_lengths=lengths,
-                coefficient_dtype=jnp.complex128,
             ).prepare()
         )
         guarded = None
@@ -1472,12 +1539,28 @@ class PreparedSpectralMaxwell(AbstractPreparedPICFieldSolver, NonTrainableState)
         self.maximum_symbol = float(np.linalg.norm(corner))
         self.spatial_dimension = 3
         self.field_dtype = "float64"
+        self.numerical_id = canonical_fingerprint(
+            {
+                "kind": "prepared-spectral-maxwell-numerical",
+                "owner": plan.owner_id,
+                "transform": transform.plan.numerical_id,
+                "decomposition": plan.decomposition,
+                "subdomains": (
+                    None if plan.subdomains is None else list(plan.subdomains)
+                ),
+                "guard_cells": (
+                    None if plan.guard_cells is None else list(plan.guard_cells)
+                ),
+                "transfers": [value.prepared_id for value in transfer_values],
+                "currents": [value.plan_id for value in current_values],
+            }
+        )
         self.solver_id = canonical_fingerprint(
             {
                 "kind": "prepared-spectral-maxwell",
-                "plan": plan.plan_id,
-                "transfers": [value.prepared_id for value in transfer_values],
-                "currents": [value.plan_id for value in current_values],
+                "numerical": self.numerical_id,
+                "transform_execution": transform.plan.execution_id,
+                "transform_plan": transform.plan.plan_id,
             }
         )
 

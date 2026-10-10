@@ -14,6 +14,13 @@ import numpy.typing as npt
 
 import phydrax as phx
 import phydrax.typing as pt
+from phydrax.discretization import (
+    DistributedSpectralExecutionPlan,
+    SpectralExecutionResult,
+    SpectralGlobalDiagnostics,
+    SpectralMeshTopology,
+    SpectralPrecisionPolicy,
+)
 from phydrax.equations import ChemicalComponentCatalog
 from phydrax.linalg.svd import (
     prepare_svd,
@@ -152,3 +159,41 @@ def atomistic_execution(
         potential, batch, execution, batch.positions, topology=topology
     )
     assert_type(derivatives, phx.atomistic.AtomisticEnergyDerivatives)
+
+
+def distributed_spectral_consumer(
+    topology: SpectralMeshTopology,
+    state: jax.Array,
+    vector_state: jax.Array,
+) -> None:
+    precision = phx.discretization.SpectralPrecisionPolicy(
+        jnp.float32,
+        coefficient_dtype=jnp.complex64,
+        transform_dtype=jnp.complex64,
+        reduction_dtype=jnp.float32,
+    )
+    assert_type(precision, SpectralPrecisionPolicy)
+    plan = phx.discretization.DistributedSpectralExecutionPlan(
+        topology,
+        (8, 8, 8),
+        owner_id="installed-distributed-spectral",
+        precision=precision,
+        admitted_payload_shapes=((), (3,)),
+        state_shape=(),
+        padded_shape=(12, 12, 12),
+        maximum_bytes=64 * 1024**2,
+    ).prepare()
+    assert_type(plan, DistributedSpectralExecutionPlan)
+    assert_type(plan.owner_id, str)
+    assert_type(plan.numerical_id, str)
+    assert_type(plan.execution_id, str)
+    assert_type(plan.plan_id, str)
+    assert_type(plan.to_modal(state), jax.Array)
+    assert_type(plan.to_physical(plan.to_modal(state)), jax.Array)
+    assert_type(plan.to_modal_batched(vector_state), jax.Array)
+    result = plan.execute_transform(state, direction="physical_to_modal")
+    assert_type(result, SpectralExecutionResult)
+    assert_type(result.value, jax.Array)
+    diagnostics = plan.diagnostics(result.value)
+    assert_type(diagnostics, SpectralGlobalDiagnostics)
+    assert_type(diagnostics.total, jax.Array)

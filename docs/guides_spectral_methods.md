@@ -601,24 +601,64 @@ variable SGS stress explicitly.
 ## Distributed spectral execution
 
 `SpectralMeshTopology` binds a real caller-visible JAX `Mesh`, its shape, axis names,
-platform, and device IDs. Construction never simulates unavailable devices.
-`DistributedSpectralExecutionPlan` then prepares one of three fixed schedules:
+platform, and process-qualified device keys `(process_index, device_id)`. Construction
+and `prepare()` require those exact devices to remain visible to the current JAX
+process; neither numeric device IDs alone nor simulated devices establish
+availability.
 
-- `slab`: one-dimensional mesh and all-Fourier full-complex transforms;
+`DistributedSpectralExecutionPlan` is an owner-bound, JAX-native, full-complex C2C
+execution plan. It prepares one of three fixed schedules:
+
+- `slab`: a one-dimensional mesh, spatial rank at least two, and all-Fourier
+  full-complex transforms;
 - `pencil`: a two-dimensional mesh, spatial rank at least three, and divisible
   canonical and padded transform dimensions;
-- `channel`: rank-three Fourier–Chebyshev–Fourier layout with the Chebyshev axis 1
-  replicated and only the two horizontal axes partitioned.
+- `channel`: exactly a rank-three Fourier--Chebyshev--Fourier discretization, with
+  the Chebyshev axis 1 replicated and the ordered pair of horizontal Fourier axes
+  partitioned.
 
-Preparation fixes physical/modal and padded layouts, every all-to-all transpose,
-coefficient and accumulation precision, normalization, local shapes, collective count,
-checkpoint/stage memory, and a hard byte ceiling. `prepare()` verifies that the named
-devices remain available. `place`, `execute_transform`, `pad_modal`, `unpad_modal`,
-`modal_derivative`, and `diagnostics` preserve the prepared sharding and perform no
-host gather; `rotational_nonlinear` is restricted to periodic three-dimensional vector
-plans. Channel execution calls a supplied modal action through `execute_channel`; it
-does not implement a distributed Chebyshev transform or turn `ChannelStokesPlan` into
-a distributed line solve.
+Every plan uses one `SpectralPrecisionPolicy`. Physical storage, coefficient storage,
+transform arithmetic, nonlinear arithmetic, reduction, certification, output, and
+checkpoint precision retain their distinct policy roles. Local FFTs cast to the
+transform dtype and return coefficient-storage dtype. Global diagnostics and inner
+products cast operands to reduction precision before magnitude-square or summation.
+A requested role that the active JAX dtype policy cannot represent is refused rather
+than silently canonicalized to a narrower dtype.
+
+Construction requires an explicit scientific `owner_id`. The optional `precision`
+defaults to the float32/complex64 spectral policy; `from_discretization` instead
+derives both owner and precision from the prepared discretization. The required
+`admitted_payload_shapes` are canonicalized to a sorted unique tuple with
+`state_shape` included automatically. A batched transform whose trailing shape is not
+admitted fails before placement or FFT execution. There is no arbitrary “up to this
+width” payload rule.
+
+The plan exposes three deliberately different identities:
+
+- `numerical_id` binds precision plus transform, normalization, coefficient-storage,
+  and reduction semantics, but excludes topology, layouts, resources, and scheduling;
+- `execution_id` binds topology, layouts, the ordered executable stage sequence,
+  admitted payloads, and FFT resource evidence;
+- `plan_id` binds the scientific owner to both the numerical and execution identities.
+
+One private immutable stage sequence drives execution and identity. Its preparation
+evidence records the same ordered local-transform and public `SpectralTranspose`
+operations that execute; the canonical and padded forward and inverse directions do
+not maintain separate handwritten transpose descriptions. Swapping channel horizontal
+axes therefore changes execution identity.
+
+The core resource report owns only logical FFT storage, FFT workspaces and their live
+peak, plus algorithmic collective traffic. Traffic is communication evidence, not
+resident memory. LES stages and closure work, mixed-cosmology workflow reservations,
+and LES/PIC checkpoint bytes are budgeted and refused by those consumers, not charged
+to the FFT plan.
+
+`place`, `execute_transform`, `pad_modal`, `unpad_modal`, `modal_derivative`, and
+`diagnostics` preserve the prepared `NamedSharding` and perform no host gather;
+`rotational_nonlinear` is restricted to periodic three-dimensional vector plans.
+Channel execution calls a supplied modal action through `execute_channel`; it neither
+performs a mixed Fourier/Chebyshev transform nor turns `ChannelStokesPlan` into a
+distributed line solve.
 
 ```python
 topology = phx.discretization.SpectralMeshTopology.one_device()
@@ -626,6 +666,8 @@ distributed = phx.discretization.DistributedSpectralExecutionPlan.from_discretiz
     topology,
     prepared_spectral_space,
     schedule="slab",
+    state_shape=(),
+    admitted_payload_shapes=((),),
     maximum_bytes=memory_limit,
 ).prepare()
 modal = distributed.execute_transform(
@@ -634,18 +676,48 @@ modal = distributed.execute_transform(
 )
 ```
 
-The one-device topology is the local route. A caller-supplied mesh defines the
-actual multi-device route; the plan never invents devices or claims scaling.
-Multi-host meshes use the shared `phydrax.execution` bootstrap and scheduler
-substrate. Performance and platform support still require exact qualification
-evidence.
+This is a clean constructor cutover: raw coefficient/accumulation dtype arguments and
+caller-supplied FFT `stage_count`, `checkpoint_count`, and
+`closure_workspace_bytes` no longer exist. Use a precision policy, exact payload
+admission, and the appropriate consumer-owned workflow/checkpoint budget instead.
+
+The one-device topology is the local route. A caller-supplied mesh defines an actual
+multi-device route; the plan never invents devices or claims scaling. Exact candidate
+support is JAX global arrays, full-complex C2C transforms, regular divisible slab and
+pencil shards, and the current horizontal channel action. It does not claim R2C/C2R
+packing, rank-local or vendor FFT providers, uneven shards, mixed transforms, dynamic
+scheduling, or implicit gather.
+
+Forced-CPU and one-device runs provide functional evidence only. Physical
+multi-device evidence requires actual process-qualified devices; multi-host evidence
+is a separate gate and cannot be inferred from a same-host mesh. The unreleased
+`distributed-spectral-execution` candidate and
+`benchmarks/distributed_spectral.py` retain exact owner, numerical, execution, plan,
+topology, layout, stage-sequence, precision, payload, resource, host, and process
+evidence. Neither a passing candidate nor one-device parity authorizes release or
+performance/scaling claims.
+
+Consumer boundaries remain distinct. Distributed LES admits exactly `()`, `(3,)`,
+and `(3, 3)` and owns its live closure/method/checkpoint reservation. PSATD derives
+every exact `(1, C)` payload from its configured static features and transform
+callsites, including linear-J width 15 and potentially wider multi-J/PML/antenna
+compositions; it has no arbitrary width cap. Mixed cosmology admits only `()` and
+owns its complete workflow/checkpoint bytes.
+
+LES and PSATD/PIC restarts bind exact execution identity. Mixed cosmology is the
+intentional exception: its topology-neutral checkpoint compatibility binds the
+scientific owner and numerical schema, excluding topology, layout, stage, and
+resource execution identity. Its destination-sharded execution artifacts still
+receive new execution IDs; an old execution ID is never accepted as a numerical
+compatibility alias.
 
 Static periodic LES first prepares its sharding-preserving scientific action on
 `slab` or `pencil`. `compile_distributed_periodic_les` then adds complete rotational
 flow; `DistributedPeriodicLESMethodPlan` selects ETDRK2/4 or SSPRK33/54; and
 `DistributedPeriodicLESProductionPlan` keeps segments, statistics, checkpoint state,
-and returned arrays device-resident. Resource, topology, parity, and production IDs
-remain backend-specific with `qualification_inherited=False`.
+and returned arrays device-resident. Its exact restart identity includes spectral
+execution identity, while resource, topology, parity, and production evidence remain
+backend-specific with `qualification_inherited=False`.
 
 ## Nonlinear evaluation and dealiasing
 

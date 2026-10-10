@@ -2,13 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Distributed execution qualification with physical-provider fail closure."""
+"""Distributed spectral qualification with physical-provider fail closure."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from phydrax.discretization.spectral._qualification import (
+    distributed_spectral_candidate_profiles,
+    distributed_spectral_support_tuples,
+)
+from phydrax.qualification._evidence import SupportDependency
 from phydrax.qualification._reference import ReferenceArtifactManifest
+from phydrax.qualification._registry import SupportTuple
 from tools._commercial_qualification import (
     assemble_candidate_profile,
     availability_observation,
@@ -21,7 +27,12 @@ from tools._commercial_qualification import (
 )
 
 
-CAPABILITY = "distributed-execution"
+CAPABILITY = "distributed-spectral-execution"
+_OWNER_PROFILE = distributed_spectral_candidate_profiles()[0]
+_OWNER_SUPPORT_BY_ROUTE = {
+    dict(value.attributes)["route"]: value
+    for value in distributed_spectral_support_tuples()
+}
 
 
 def _gate(name: str, category: str, description: str, /) -> GateDefinition:
@@ -32,388 +43,175 @@ _SPECTRAL_API = (
     "phydrax.discretization.spectral._distributed:SpectralMeshTopology",
     "phydrax.discretization.spectral._distributed:DistributedSpectralExecutionPlan",
     "phydrax.discretization.spectral._distributed:SpectralGlobalDiagnostics",
+    "phydrax.discretization.spectral._distributed:SpectralResourceReport",
+    "phydrax.discretization.spectral._distributed:SpectralTranspose",
 )
-_LINE_API = (
-    "phydrax.linalg._distributed_line:StructuredSolveTopologyPlan",
-    "phydrax.linalg._distributed_line:DistributedLineSolvePlan",
-    "phydrax.linalg._distributed_line:PreparedDistributedLineSolve",
+_CHANNEL_API = _SPECTRAL_API + (
+    "phydrax.discretization.spectral._distributed:"
+    "DistributedSpectralExecutionPlan.execute_channel",
 )
-_SUBSTRATE_API = (
-    "phydrax.execution:ExecutionPolicy",
-    "phydrax.execution:ExecutionRuntime",
-    "phydrax.execution:DistributedIndexEpochPlan",
-    "phydrax.lifecycle:publish_process_checkpoint",
-    "phydrax.lifecycle:restore_global_array_from_checkpoint",
-    "phydrax.linalg:solve_distributed_pcg",
+_FORWARD_GATE = _gate(
+    "forward-reference",
+    "scientific",
+    "The distributed forward transform agrees with an independent full-complex reference.",
 )
-_MULTI_DEVICE_GATE = _gate(
-    "multi-device-execution",
+_INVERSE_GATE = _gate(
+    "inverse-reference",
+    "scientific",
+    "The distributed inverse transform agrees with an independent full-complex reference.",
+)
+_DIRECTIONAL_JVP_GATE = _gate(
+    "directional-jvp",
+    "scientific",
+    "Forward- and inverse-direction JVPs agree with independent linear references.",
+)
+_HILBERT_ADJOINT_GATE = _gate(
+    "hilbert-adjoint",
+    "scientific",
+    "The complex Hilbert adjoints satisfy the declared normalization pairing.",
+)
+_PRECISION_GATE = _gate(
+    "precision-policy",
+    "scientific",
+    "Execution honors the exact transform, storage, and accumulation precision policy.",
+)
+_PAYLOAD_GATE = _gate(
+    "payload-admission",
+    "scientific",
+    "Every exercised payload has one exact admitted shape including the state shape.",
+)
+_STAGE_IDENTITY_GATE = _gate(
+    "stage-identity",
     "operational",
-    "The route executes on at least two observed physical devices without simulation.",
+    "Executed forward, inverse, and padded stage sequences match their fingerprints.",
 )
-_RESOURCE_GATE = _gate(
-    "resource-preflight",
+_TOPOLOGY_GATE = _gate(
+    "process-qualified-topology",
+    "operational",
+    "Observed devices are bound to the executing JAX process topology.",
+)
+_NO_GATHER_GATE = _gate(
+    "no-host-gather",
+    "operational",
+    "Execution completes without an implicit host or global gather.",
+)
+_DECLARED_RESOURCE_GATE = _gate(
+    "declared-resource",
     "performance",
-    "The exact global shape and sharding topology fit the declared device budget.",
+    "Observed logical storage, workspace, liveness, and collective traffic fit the declared budget.",
 )
+_COMPILER_MEMORY_GATE = _gate(
+    "compiler-memory",
+    "performance",
+    "Compiler and runtime memory observations remain within the retained bound.",
+)
+_PHYSICAL_MULTI_DEVICE_GATE = _gate(
+    "physical-multi-device",
+    "operational",
+    "The route executes on at least two process-qualified physical devices.",
+)
+_PHYSICAL_MULTI_HOST_GATE = _gate(
+    "physical-multi-host",
+    "operational",
+    "The route executes across at least two observed physical hosts and processes.",
+)
+_CHANNEL_EXECUTION_GATE = _gate(
+    "channel-execution",
+    "scientific",
+    "execute_channel agrees with an independent horizontal channel reference.",
+)
+_CHANNEL_LAYOUT_GATE = _gate(
+    "channel-horizontal-layout",
+    "operational",
+    "The declared Fourier–Chebyshev–Fourier horizontal layout is preserved.",
+)
+_CHANNEL_PARTITION_GATE = _gate(
+    "channel-horizontal-partition",
+    "operational",
+    "Only the ordered horizontal Fourier axes use the prepared regular partition.",
+)
+_CHANNEL_ZERO_MODE_GATE = _gate(
+    "channel-atomic-zero-mode",
+    "scientific",
+    "The atomic horizontal zero mode matches the independent channel reference.",
+)
+_SPECTRAL_GATES = (
+    _FORWARD_GATE,
+    _INVERSE_GATE,
+    _DIRECTIONAL_JVP_GATE,
+    _HILBERT_ADJOINT_GATE,
+    _PRECISION_GATE,
+    _PAYLOAD_GATE,
+    _STAGE_IDENTITY_GATE,
+    _TOPOLOGY_GATE,
+    _NO_GATHER_GATE,
+    _DECLARED_RESOURCE_GATE,
+    _COMPILER_MEMORY_GATE,
+    _PHYSICAL_MULTI_DEVICE_GATE,
+)
+_CHANNEL_GATES = (
+    _CHANNEL_EXECUTION_GATE,
+    _CHANNEL_ZERO_MODE_GATE,
+    _PRECISION_GATE,
+    _PAYLOAD_GATE,
+    _CHANNEL_LAYOUT_GATE,
+    _CHANNEL_PARTITION_GATE,
+    _TOPOLOGY_GATE,
+    _NO_GATHER_GATE,
+    _DECLARED_RESOURCE_GATE,
+    _COMPILER_MEMORY_GATE,
+    _PHYSICAL_MULTI_DEVICE_GATE,
+)
+_MULTI_HOST_GATES = (
+    _FORWARD_GATE,
+    _TOPOLOGY_GATE,
+    _NO_GATHER_GATE,
+    _DECLARED_RESOURCE_GATE,
+    _PHYSICAL_MULTI_DEVICE_GATE,
+    _PHYSICAL_MULTI_HOST_GATE,
+)
+
+
+def _route(name: str, /) -> RouteDefinition:
+    return RouteDefinition(
+        name,
+        _SPECTRAL_GATES,
+        _SPECTRAL_API,
+        dependency_scope="deployment",
+    )
 
 
 ROUTES: dict[str, RouteDefinition] = {
-    "slab": RouteDefinition(
-        "slab",
-        (
-            _gate(
-                "slab-roundtrip",
-                "scientific",
-                "Distributed slab forward and inverse transforms satisfy round-trip tolerance.",
-            ),
-            _gate(
-                "slab-parseval",
-                "scientific",
-                "Slab physical and modal energies satisfy Parseval normalization.",
-            ),
-            _gate(
-                "slab-global-reduction",
-                "scientific",
-                "Global slab reductions equal the deterministic full-domain reference.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SPECTRAL_API,
-        dependency_scope="deployment",
-    ),
-    "pencil": RouteDefinition(
-        "pencil",
-        (
-            _gate(
-                "pencil-roundtrip",
-                "scientific",
-                "Pencil all-to-all transforms satisfy the exact round-trip criterion.",
-            ),
-            _gate(
-                "pencil-transpose",
-                "scientific",
-                "Every prepared pencil transpose preserves the global field.",
-            ),
-            _gate(
-                "pencil-global-reduction",
-                "scientific",
-                "Pencil reductions equal the deterministic global reference.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SPECTRAL_API
-        + ("phydrax.discretization.spectral._distributed:SpectralTranspose",),
-        dependency_scope="deployment",
-    ),
-    "padded": RouteDefinition(
-        "padded",
-        (
-            _gate(
-                "padded-roundtrip",
-                "scientific",
-                "Distributed padded transforms preserve retained modal coefficients.",
-            ),
-            _gate(
-                "padded-alias-suppression",
-                "scientific",
-                "Distributed padding suppresses aliased products at the declared cutoff.",
-            ),
-            _gate(
-                "padded-hermitian-closure",
-                "scientific",
-                "Padded execution retains the declared Hermitian spectral closure.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SPECTRAL_API,
-        dependency_scope="deployment",
-    ),
-    "channel": RouteDefinition(
-        "channel",
-        (
-            _gate(
-                "channel-transform-roundtrip",
-                "scientific",
-                "Distributed Fourier-channel transforms satisfy route-exact round-trip tolerance.",
-            ),
-            _gate(
-                "channel-line-solve",
-                "scientific",
-                "The wall-normal distributed line solve satisfies its residual criterion.",
-            ),
-            _gate(
-                "channel-global-reduction",
-                "scientific",
-                "Channel diagnostics reduce over the complete global domain.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SPECTRAL_API + _LINE_API,
-        dependency_scope="deployment",
-    ),
-    "global-reductions": RouteDefinition(
+    name: _route(name)
+    for name in (
+        "slab-roundtrip",
+        "pencil-roundtrip",
+        "padded-dealias",
         "global-reductions",
-        (
-            _gate(
-                "global-sum",
-                "scientific",
-                "Distributed total equals the deterministic full-domain sum.",
-            ),
-            _gate(
-                "global-l2",
-                "scientific",
-                "Distributed L2 norm equals the deterministic full-domain norm.",
-            ),
-            _gate(
-                "global-maximum",
-                "scientific",
-                "Distributed maximum equals the full-domain maximum.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SPECTRAL_API,
-        dependency_scope="deployment",
-    ),
-    "substrate": RouteDefinition(
-        "substrate",
-        (
-            _gate(
-                "runtime-bootstrap",
-                "operational",
-                "Every process observes the same process set and execution-group identity.",
-            ),
-            _gate(
-                "process-local-ingress",
-                "scientific",
-                "Each process loads only its canonical local batch with exact global masking.",
-            ),
-            _gate(
-                "weighted-global-reduction",
-                "scientific",
-                "Masked weighted global reduction equals the canonical serial objective.",
-            ),
-            _gate(
-                "distributed-pcg",
-                "scientific",
-                "Ownership-aware distributed PCG satisfies its global residual criterion.",
-            ),
-            _gate(
-                "topology-neutral-checkpoint",
-                "operational",
-                "Addressable shards publish once and restore into the destination topology.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _SUBSTRATE_API,
-        dependency_scope="deployment",
-    ),
-    "line-local": RouteDefinition(
-        "line-local",
-        (
-            _gate(
-                "line-local-residual",
-                "scientific",
-                "Line-contiguous local solves satisfy the exact tridiagonal residual.",
-            ),
-            _gate(
-                "line-local-batch-equivalence",
-                "scientific",
-                "Transverse sharding equals the unsharded batched line reference.",
-            ),
-            _gate(
-                "line-local-resource",
-                "performance",
-                "Local factors fit the declared factor and workspace budget.",
-            ),
-            _gate(
-                "line-local-execution",
-                "operational",
-                "The line axis remains local and no split-line algorithm is substituted.",
-            ),
-        ),
-        _LINE_API
-        + ("phydrax.linalg._distributed_line:PreparedTransverseBatchLineSolve",),
-        dependency_scope="deployment",
-    ),
-    "partitioned-thomas": RouteDefinition(
-        "partitioned-thomas",
-        (
-            _gate(
-                "thomas-residual",
-                "scientific",
-                "Partitioned Thomas reconstruction satisfies the global line residual.",
-            ),
-            _gate(
-                "thomas-interface",
-                "scientific",
-                "Reduced interface values agree across every contiguous partition.",
-            ),
-            _gate(
-                "thomas-uneven-tail",
-                "scientific",
-                "Uneven final partitions retain the full physical line.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _LINE_API,
-        dependency_scope="deployment",
-    ),
-    "spike": RouteDefinition(
-        "spike",
-        (
-            _gate(
-                "spike-residual",
-                "scientific",
-                "SPIKE reconstruction satisfies the global line residual.",
-            ),
-            _gate(
-                "spike-interface",
-                "scientific",
-                "SPIKE reduced-interface elimination meets its determinant criterion.",
-            ),
-            _gate(
-                "spike-communication",
-                "scientific",
-                "Observed neighbor and collective rounds match the prepared SPIKE route.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _LINE_API,
-        dependency_scope="deployment",
-    ),
-    "pcr": RouteDefinition(
-        "pcr",
-        (
-            _gate(
-                "pcr-residual",
-                "scientific",
-                "Parallel cyclic reduction satisfies the global line residual.",
-            ),
-            _gate(
-                "pcr-padding",
-                "scientific",
-                "PCR internal power-of-two padding does not change physical-line values.",
-            ),
-            _gate(
-                "pcr-communication",
-                "scientific",
-                "Observed collective rounds match the prepared PCR topology.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        _LINE_API,
-        dependency_scope="deployment",
-    ),
-    "topology-restart": RouteDefinition(
-        "topology-restart",
-        (
-            _gate(
-                "restart-state-equivalence",
-                "scientific",
-                "Restored canonical state meets the admitted bitwise or tolerance relation.",
-            ),
-            _gate(
-                "restart-direct-shards",
-                "scientific",
-                "Canonical byte ranges restore directly into complete destination shards.",
-            ),
-            _gate(
-                "restart-resource-bound",
-                "performance",
-                "Direct restoration stays within the declared segment and staging bounds.",
-            ),
-            _MULTI_DEVICE_GATE,
-            _gate(
-                "restart-admission",
-                "operational",
-                "The exact source-target relation is admitted by the exact restart policy.",
-            ),
-            _gate(
-                "restart-cache-exclusion",
-                "operational",
-                "Execution caches never participate in topology-changing restoration.",
-            ),
-        ),
-        (
-            "phydrax.lifecycle._restart_topology:TopologyRestartRelation",
-            "phydrax.lifecycle._restart_topology:RestartAdmission",
-            "phydrax.lifecycle._restart_topology:prepare_direct_restore",
-            "phydrax.lifecycle._restart_topology:execute_direct_restore",
-        ),
-        dependency_scope="deployment",
-    ),
-    "multiblock-extruded": RouteDefinition(
-        "multiblock-extruded",
-        (
-            _gate(
-                "extruded-axis-invariance",
-                "scientific",
-                "The extruded transform commutes with every certified block coupling.",
-            ),
-            _gate(
-                "multiblock-mortar-continuity",
-                "scientific",
-                "Global multiblock mortar continuity meets tolerance.",
-            ),
-            _gate(
-                "multiblock-global-residual",
-                "scientific",
-                "The global coupled solve satisfies its declared residual.",
-            ),
-            _RESOURCE_GATE,
-            _MULTI_DEVICE_GATE,
-        ),
-        (
-            "phydrax.linalg._distributed_line:ExtrudedAxisInvarianceCertificate",
-            "phydrax.linalg._distributed_line:MultiblockExtrudedReductionPlan",
-        ),
-        dependency_scope="deployment",
-    ),
-    "scale-resource": RouteDefinition(
-        "scale-resource",
-        (
-            _gate(
-                "scale-solution-equivalence",
-                "scientific",
-                "Scaled execution retains the admitted solution tolerance.",
-            ),
-            _gate(
-                "observed-resource-record",
-                "performance",
-                "At least one exact observed resource record is bound.",
-            ),
-            _gate(
-                "forecast-resource-record",
-                "performance",
-                "Forecast bounds bind included observations and the exact forecast model.",
-            ),
-            _MULTI_DEVICE_GATE,
-            _gate(
-                "scale-topology-executed",
-                "operational",
-                "The recorded scale topology is the physically executed topology.",
-            ),
-        ),
-        (
-            "phydrax.qualification._evidence:ObservedResourceRecord",
-            "phydrax.qualification._evidence:ForecastResourceRecord",
-            "phydrax.discretization.spectral._distributed:SpectralResourceReport",
-        ),
-        dependency_scope="deployment",
-    ),
+    )
 }
-
-_MULTI_DEVICE_ROUTES = frozenset(route for route in ROUTES if route != "line-local")
+ROUTES["channel-horizontal"] = RouteDefinition(
+    "channel-horizontal",
+    _CHANNEL_GATES,
+    _CHANNEL_API,
+    dependency_scope="deployment",
+)
+ROUTES["scale-resource"] = RouteDefinition(
+    "scale-resource",
+    _SPECTRAL_GATES,
+    _SPECTRAL_API
+    + (
+        "phydrax.qualification._evidence:ObservedResourceRecord",
+        "phydrax.qualification._evidence:ForecastResourceRecord",
+    ),
+    dependency_scope="deployment",
+)
+ROUTES["multi-host"] = RouteDefinition(
+    "multi-host",
+    _MULTI_HOST_GATES,
+    _SPECTRAL_API,
+    dependency_scope="deployment",
+)
 
 
 def _resource_presence(
@@ -425,6 +223,102 @@ def _resource_presence(
     return True if values else {"unavailable_reason": reason}
 
 
+def _availability(request: Mapping[str, object], /) -> Mapping[str, object] | None:
+    value = request.get("availability")
+    if value is not None and not isinstance(value, Mapping):
+        raise TypeError("availability must be a mapping.")
+    return value
+
+
+def _process_topology_observation(
+    availability: Mapping[str, object] | None, /
+) -> bool | dict[str, object]:
+    if availability is None:
+        return {"unavailable_reason": "jax-topology-availability-not-recorded"}
+    if availability.get("simulated", False) is True:
+        return {"unavailable_reason": "jax-topology-simulation-is-not-qualification"}
+    if availability.get("forced", False) is True:
+        return {"unavailable_reason": "jax-topology-forced-device-is-not-qualification"}
+    if availability.get("process_qualified") is not True:
+        return {"unavailable_reason": "jax-topology-is-not-process-qualified"}
+    process_count = availability.get("process_count")
+    if type(process_count) is not int or process_count < 1:
+        return {"unavailable_reason": "jax-topology-process-count-not-observed"}
+    return True
+
+
+def _physical_multi_device_observation(
+    availability: Mapping[str, object] | None, /
+) -> bool | dict[str, object]:
+    if availability is not None and availability.get("forced", False) is True:
+        return {
+            "unavailable_reason": "jax-multi-device-forced-device-is-not-qualification"
+        }
+    observed = availability_observation(
+        availability,
+        provider="jax-multi-device",
+        minimum_devices=2,
+        require_hardware=True,
+    )
+    if observed is not True:
+        return observed
+    if availability is None or availability.get("physical") is not True:
+        return {"unavailable_reason": "jax-multi-device-physical-devices-not-observed"}
+    if availability.get("process_qualified") is not True:
+        return {"unavailable_reason": "jax-multi-device-is-not-process-qualified"}
+    return True
+
+
+def _physical_multi_host_observation(
+    availability: Mapping[str, object] | None, /
+) -> bool | dict[str, object]:
+    device_observation = _physical_multi_device_observation(availability)
+    if device_observation is not True:
+        return device_observation
+    if availability is None:
+        return {"unavailable_reason": "jax-multi-host-availability-not-recorded"}
+    if availability.get("same_host", False) is True:
+        return {"unavailable_reason": "jax-multi-host-same-host-is-not-qualification"}
+    process_count = availability.get("process_count")
+    host_count = availability.get("host_count")
+    if type(process_count) is not int or process_count < 2:
+        return {"unavailable_reason": "jax-multi-host-requires-two-processes"}
+    if type(host_count) is not int or host_count < 2:
+        return {"unavailable_reason": "jax-multi-host-requires-two-physical-hosts"}
+    return True
+
+
+def _require_owner_admission(route: str, request: Mapping[str, object], /) -> None:
+    support_value = request.get("support_tuple")
+    if isinstance(support_value, SupportTuple):
+        support = support_value
+    elif isinstance(support_value, Mapping):
+        support = SupportTuple.from_record(support_value)
+    else:
+        raise TypeError("support_tuple must be a SupportTuple or serialized mapping.")
+    dependency_value = request.get("support_dependency")
+    if isinstance(dependency_value, SupportDependency):
+        dependency = dependency_value
+    elif isinstance(dependency_value, Mapping):
+        dependency = SupportDependency.from_record(dependency_value)
+    else:
+        raise TypeError(
+            "support_dependency must be a SupportDependency or serialized mapping."
+        )
+    expected = _OWNER_SUPPORT_BY_ROUTE[route]
+    if support.support_tuple_id != expected.support_tuple_id:
+        raise ValueError(
+            "Distributed spectral evidence must bind the exact owner-local SupportTuple."
+        )
+    if (
+        dependency.profile_id != _OWNER_PROFILE.profile_id
+        or dependency.support_tuple_id != expected.support_tuple_id
+    ):
+        raise ValueError(
+            "Distributed spectral evidence cannot inherit a consumer capability profile."
+        )
+
+
 def produce_candidate(
     route: str,
     request: Mapping[str, object],
@@ -433,42 +327,46 @@ def produce_candidate(
     reference_manifest: ReferenceArtifactManifest | Mapping[str, object] | None = None,
     reference_payload: bytes | None = None,
 ) -> dict[str, object]:
-    """Produce one distributed candidate, never passing simulated hardware."""
+    """Produce one owner-local candidate with fail-closed physical evidence."""
 
     if route not in ROUTES:
-        raise ValueError(f"Unknown distributed execution route {route!r}.")
+        raise ValueError(f"Unknown distributed spectral route {route!r}.")
+    _require_owner_admission(route, request)
     prepared = dict(request)
-    if route in _MULTI_DEVICE_ROUTES:
-        availability = request.get("availability")
-        if availability is not None and not isinstance(availability, Mapping):
-            raise TypeError("availability must be a mapping.")
+    availability = _availability(request)
+    prepared = with_observation(
+        prepared,
+        "process-qualified-topology",
+        _process_topology_observation(availability),
+    )
+    prepared = with_observation(
+        prepared,
+        "physical-multi-device",
+        _physical_multi_device_observation(availability),
+    )
+    if route == "multi-host":
         prepared = with_observation(
             prepared,
-            "multi-device-execution",
-            availability_observation(
-                availability,
-                provider="jax-multi-device",
-                minimum_devices=2,
-                require_hardware=True,
-            ),
+            "physical-multi-host",
+            _physical_multi_host_observation(availability),
         )
     if route == "scale-resource":
         prepared = with_observation(
             prepared,
-            "observed-resource-record",
+            "declared-resource",
             _resource_presence(
                 prepared,
                 "observed_resource_records",
-                "observed-resource-record-not-supplied",
+                "declared-resource-record-not-supplied",
             ),
         )
         prepared = with_observation(
             prepared,
-            "forecast-resource-record",
+            "compiler-memory",
             _resource_presence(
                 prepared,
                 "forecast_resource_records",
-                "forecast-resource-record-not-supplied",
+                "compiler-memory-record-not-supplied",
             ),
         )
     return make_candidate_artifact(
@@ -479,6 +377,10 @@ def produce_candidate(
         reference_payload=reference_payload,
         extra_record={
             "execution": "physical-provider-only",
+            "forced_device_qualification_permitted": False,
+            "les_evidence_inherited": False,
+            "pic_evidence_inherited": False,
+            "same_host_multi_host_qualification_permitted": False,
             "simulated_qualification_permitted": False,
         },
     )
@@ -488,7 +390,7 @@ def assemble_profile(
     artifacts: Sequence[Mapping[str, object]],
     /,
     *,
-    name: str = "distributed-execution.candidate",
+    name: str = "distributed-spectral-execution.profile",
     provider: str = "phydrax",
 ) -> dict[str, object]:
     return assemble_candidate_profile(artifacts, name=name, provider=provider)
@@ -496,9 +398,9 @@ def assemble_profile(
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_cli_parser(
-        "Create unsigned distributed-execution qualification candidates.",
+        "Create unsigned distributed-spectral qualification candidates.",
         ROUTES,
-        profile_name="distributed-execution.candidate",
+        profile_name="distributed-spectral-execution.profile",
     )
     run_cli(parser, ROUTES, CAPABILITY, argv, producer=produce_candidate)
 
