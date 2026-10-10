@@ -223,7 +223,6 @@ This development surface does not solve current-collector conduction, tab
 contact, or a thermal macro field and is not part of the released thermal-ECM
 support tuple.
 
-::: phydrax.applications.battery.SpatialBatteryCellPlan
 
 ## Nonclaims
 

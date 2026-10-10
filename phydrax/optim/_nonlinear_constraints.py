@@ -28,6 +28,8 @@ from ..linalg import (
     DenseLU,
     LinearSolvePolicy,
     LinearSystem,
+    prepare_linearization,
+    PreparedLinearization,
     solve as solve_linear,
 )
 from ._bounds import ProjectedLBFGS
@@ -102,6 +104,8 @@ def _constraint_layout(
     parameters: PyTree[Any],
     args: Any,
     /,
+    *,
+    value_shapes: tuple[PyTree[jax.ShapeDtypeStruct], ...] | None = None,
 ) -> _ConstraintLayout:
     def materialize_dynamic(
         bound: PyTree[Any], template: PyTree[jax.ShapeDtypeStruct], *, name: str
@@ -241,9 +245,13 @@ def _constraint_layout(
         offset += size
 
     for constraint_index, constraint in enumerate(problem.constraints):
-        value_shape = jax.eval_shape(
-            lambda candidate: constraint.value(candidate, args),
-            parameters,
+        value_shape = (
+            jax.eval_shape(
+                lambda candidate: constraint.value(candidate, args),
+                parameters,
+            )
+            if value_shapes is None
+            else value_shapes[constraint_index]
         )
         coordinate_count = sum(
             specification.size for specification in jax.tree.leaves(value_shape)
@@ -312,7 +320,16 @@ def _canonical_constraints(
     args: Any,
     /,
 ) -> tuple[Array, Array]:
-    values = _flat_constraint_values(problem, parameters, args)
+    return _canonical_constraint_values(
+        layout, _flat_constraint_values(problem, parameters, args)
+    )
+
+
+def _canonical_constraint_values(
+    layout: _ConstraintLayout,
+    values: Array,
+    /,
+) -> tuple[Array, Array]:
     equality = values[layout.equality_indices] - layout.lower[layout.equality_indices]
     lower_bounds = layout.lower[layout.lower_indices]
     upper_bounds = layout.upper[layout.upper_indices]
@@ -379,6 +396,69 @@ def _derivatives(
     )
 
 
+def _augmented_derivatives(
+    problem: MinimizationProblem,
+    layout: _ConstraintLayout,
+    parameters: PyTree[Any],
+    args: Any,
+    /,
+) -> tuple[_Unravel, Array, Array, Array, Array, PreparedLinearization]:
+    """Prepare objective and constraint actions at the same physical point."""
+    flat_parameters, unravel = ravel_pytree(parameters)
+
+    def values(candidate: Array) -> tuple[Array, Array, Array]:
+        point = unravel(candidate)
+        value = problem.value(point, args)[0]
+        equality, inequality = _canonical_constraints(problem, layout, point, args)
+        return value, equality, inequality
+
+    linearization = prepare_linearization(values, flat_parameters)
+    value, equality, inequality = linearization.primal
+    gradient = linearization.source.flatten(
+        linearization.vjp(
+            (
+                jnp.ones_like(value),
+                jnp.zeros_like(equality),
+                jnp.zeros_like(inequality),
+            )
+        )
+    )
+    return unravel, value, gradient, equality, inequality, linearization
+
+
+def _augmented_lagrangian_gradient(
+    objective_gradient: Array,
+    equality: Array,
+    inequality: Array,
+    linearization: PreparedLinearization,
+    equality_multipliers: Array,
+    inequality_multipliers: Array,
+    /,
+) -> Array:
+    # Separate pullbacks retain the established objective + equality + inequality
+    # accumulation order without materializing either constraint Jacobian.
+    zero = jnp.zeros((), dtype=objective_gradient.dtype)
+    equality_gradient = linearization.source.flatten(
+        linearization.vjp(
+            (
+                zero,
+                equality_multipliers,
+                jnp.zeros_like(inequality),
+            )
+        )
+    )
+    inequality_gradient = linearization.source.flatten(
+        linearization.vjp(
+            (
+                zero,
+                jnp.zeros_like(equality),
+                inequality_multipliers,
+            )
+        )
+    )
+    return objective_gradient + equality_gradient + inequality_gradient
+
+
 def _lagrangian_gradient(
     objective_gradient: Array,
     equality_jacobian: Array,
@@ -418,6 +498,25 @@ def _kkt_metrics(
         equality_multipliers,
         inequality_multipliers,
     )
+    return _stationarity_kkt_metrics(
+        problem,
+        parameters,
+        lagrangian_gradient,
+        equality,
+        inequality,
+        inequality_multipliers,
+    )
+
+
+def _stationarity_kkt_metrics(
+    problem: MinimizationProblem,
+    parameters: PyTree[Any],
+    lagrangian_gradient: Array,
+    equality: Array,
+    inequality: Array,
+    inequality_multipliers: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
     stationarity = _stationarity_norm(lagrangian_gradient)
     primal = _constraint_violation(equality, inequality)
     if problem.bounds is not None:
@@ -429,7 +528,7 @@ def _kkt_metrics(
     complementarity = (
         _max_abs(inequality_multipliers * inequality)
         if inequality.size
-        else jnp.asarray(0.0, dtype=objective_gradient.dtype)
+        else jnp.asarray(0.0, dtype=lagrangian_gradient.dtype)
     )
     optimality = jnp.maximum(jnp.maximum(primal, dual), complementarity)
     return primal, dual, complementarity, optimality
@@ -1007,17 +1106,15 @@ def _solve_augmented_lagrangian(
             )
             (
                 _,
-                unravel,
                 _,
                 objective_gradient,
                 candidate_equality,
                 candidate_inequality,
-                equality_jacobian,
-                inequality_jacobian,
-            ) = _derivatives(problem, layout, candidate_parameters, args)
+                linearization,
+            ) = _augmented_derivatives(problem, layout, candidate_parameters, args)
             next_objective_evaluations = objective_evaluations + 1
             next_gradient_evaluations = gradient_evaluations + 1
-            next_constraint_evaluations = constraint_evaluations + 2 * len(
+            next_constraint_evaluations = constraint_evaluations + len(
                 problem.constraints
             )
             equality_multipliers = (
@@ -1027,16 +1124,20 @@ def _solve_augmented_lagrangian(
                 0.0,
                 state.inequality_multipliers + state.penalty * candidate_inequality,
             )
-            primal, _, _, optimality = _kkt_metrics(
-                problem,
-                candidate_parameters,
-                unravel,
+            lagrangian_gradient = _augmented_lagrangian_gradient(
                 objective_gradient,
                 candidate_equality,
                 candidate_inequality,
-                equality_jacobian,
-                inequality_jacobian,
+                linearization,
                 equality_multipliers,
+                inequality_multipliers,
+            )
+            primal, _, _, optimality = _stationarity_kkt_metrics(
+                problem,
+                candidate_parameters,
+                lagrangian_gradient,
+                candidate_equality,
+                candidate_inequality,
                 inequality_multipliers,
             )
             initial_optimality = jnp.where(
@@ -1074,7 +1175,7 @@ def _solve_augmented_lagrangian(
                 gradient_evaluations=next_gradient_evaluations,
                 residual_evaluations=residual_evaluations,
                 jvp_evaluations=jvp_evaluations,
-                vjp_evaluations=vjp_evaluations,
+                vjp_evaluations=vjp_evaluations + 3,
                 hvp_evaluations=hvp_evaluations,
                 jacobian_evaluations=jacobian_evaluations,
                 constraint_evaluations=next_constraint_evaluations,
@@ -1109,28 +1210,30 @@ def _solve_augmented_lagrangian(
     ).astype(jnp.int32)
 
     (
-        _,
         unravel,
         final_value,
         objective_gradient,
         equality,
         inequality,
-        equality_jacobian,
-        inequality_jacobian,
-    ) = _derivatives(problem, layout, state.parameters, args)
+        linearization,
+    ) = _augmented_derivatives(problem, layout, state.parameters, args)
     objective_evaluations = state.objective_evaluations + 1
     gradient_evaluations = state.gradient_evaluations + 1
-    constraint_evaluations = state.constraint_evaluations + 2 * len(problem.constraints)
-    primal, dual, complementarity, final_optimality = _kkt_metrics(
-        problem,
-        state.parameters,
-        unravel,
+    constraint_evaluations = state.constraint_evaluations + len(problem.constraints)
+    lagrangian_gradient = _augmented_lagrangian_gradient(
         objective_gradient,
         equality,
         inequality,
-        equality_jacobian,
-        inequality_jacobian,
+        linearization,
         state.equality_multipliers,
+        state.inequality_multipliers,
+    )
+    primal, dual, complementarity, final_optimality = _stationarity_kkt_metrics(
+        problem,
+        state.parameters,
+        lagrangian_gradient,
+        equality,
+        inequality,
         state.inequality_multipliers,
     )
     eligible_for_success = (
@@ -1146,13 +1249,6 @@ def _solve_augmented_lagrangian(
         int(OptimizationStatus.SUCCESS),
         status,
     ).astype(jnp.int32)
-    lagrangian_gradient = _lagrangian_gradient(
-        objective_gradient,
-        equality_jacobian,
-        inequality_jacobian,
-        state.equality_multipliers,
-        state.inequality_multipliers,
-    )
     active_constraints = _active_constraint_count(
         inequality,
         tolerance=termination.absolute_optimality,
@@ -1167,7 +1263,7 @@ def _solve_augmented_lagrangian(
         gradient_evaluations=gradient_evaluations,
         residual_evaluations=state.residual_evaluations,
         jvp_evaluations=state.jvp_evaluations,
-        vjp_evaluations=state.vjp_evaluations,
+        vjp_evaluations=state.vjp_evaluations + 3,
         hvp_evaluations=state.hvp_evaluations,
         jacobian_evaluations=state.jacobian_evaluations,
         constraint_evaluations=constraint_evaluations,
@@ -1196,8 +1292,9 @@ def _solve_augmented_lagrangian(
         matrix_free=inner_method.capabilities.matrix_free,
         implicit_differentiation=True,
         notes=(
-            "Inequalities use projected multiplier updates; diagnostics report "
-            "primal, dual, and complementarity KKT residuals."
+            "Inequalities use projected multiplier updates; prepared constraint "
+            "pullbacks report primal, dual, and complementarity KKT residuals "
+            "without materializing constraint Jacobians."
         ),
     )
     certificate = _constraint_certificate(

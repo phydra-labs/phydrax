@@ -160,9 +160,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             geometry_id = self.discretization.geometry_id
             stage_evidence = jnp.asarray(True)
             active_cells = jnp.ones((self.discretization.cell_count,), dtype=jnp.bool_)
-            face_active = jnp.ones_like(
-                self.discretization.face_measures, dtype=jnp.bool_
-            )
+            face_active = self.discretization.face_block.active_mask
         else:
             if not isinstance(stage_metrics, FiniteVolumeStageMetrics):
                 raise TypeError("stage_metrics must be FiniteVolumeStageMetrics or None.")
@@ -219,7 +217,12 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
                 jnp.finfo(conductivity.dtype).tiny,
             )
         )
-        center_difference = cell_centers[safe_neighbor] - cell_centers[owner]
+        from ._unstructured import _neighbor_centers_in_owner_frame
+
+        center_difference = (
+            _neighbor_centers_in_owner_frame(self.discretization, cell_centers)
+            - cell_centers[owner]
+        )
         distance = jnp.linalg.norm(center_difference, axis=-1)
         safe_distance = jnp.maximum(distance, 64.0 * jnp.finfo(distance.dtype).eps)
         temperature_jump = temperature[safe_neighbor] - temperature[owner]

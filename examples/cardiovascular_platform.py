@@ -165,7 +165,6 @@ def _blocked_release(case: Any) -> Any:
     )
     profile = cardio.CardiovascularCommercialSupportProfile(
         "cardiovascular.local-non-phi",
-        "qualification-example",
         support,
         claims,
         cardio.CardiovascularResourcePolicy(3600, 2**30, 2**28, 1),

@@ -64,7 +64,7 @@ public-release profile. See [Differential privacy](guides_privacy.md).
 
 ### Sampling: point batches vs axis-based grids
 
-PhydraX exposes two typed plans and matching batch schemas:
+Phydrax exposes two typed plans and matching batch schemas:
 
 - `PointSampling` → `PointBatch` for paired collocation and scattered data;
 - `GridSampling` → `GridBatch` for basis/spectral operators and neural operators
@@ -267,9 +267,30 @@ pairings and PCG exclude ghosts/padding and make convergence consensus global.
 Slurm ranked steps and Kubernetes indexed Jobs provide managed process launch.
 Hardware scaling and vendor support remain exact evidence-specific claims.
 
+`phydrax.geometry` and `phydrax.meshing` now compose native source authority,
+construction, certification, adaptation, distribution, and solver-state
+transitions. Implemented source-bound routes include planar/curve/parametric
+surface generation; constrained PLC tetrahedra; occupied-image compartments;
+structured, swept, quad, hex, and polyhedral families on their exact admitted
+sources; translational quotient simplices; advancing layer/core workflows; and
+moving overset connectivity. `CellMeshingResult` publishes a canonical
+`CellMesh`, independent `CellGeometrySpec`, organization, source associations,
+route-specific certification, resource evidence, and runtime identity. Exact
+source rows and scientific IDs remain distinct from binary64 execution carriers.
+Embedded FEM uses tangent Gram metrics and physical manifold measure rather than
+an ambient-volume surrogate.
+
+This implementation inventory is not a release statement. The generated native
+meshing profiles remain unsigned candidates or open research combinations.
+Optional OCCT/OCP, Gmsh, Mmg, fTetWild, Manifold, OpenVDB, Poisson, VoroCrust,
+Omega_h, TIOGA, METIS, and SciPy/Qhull boundaries never become native evidence.
+The original curved ADVANCING period-x=1 layer source is exactly nonperiodic and
+remains blocked; final W15 qualification, like-for-like performance, leadership,
+and authenticated release artifacts have not been produced.
+
 
 The S1 isogeometric path binds two clamped isotropic B-spline grids to a
-positive, mean-one-gauge NURBS control net and an exactly isoparametric scalar
+positive, authored-scale NURBS control net and an exactly isoparametric scalar
 H1 field. It covers regular, untrimmed, full-dimensional two-dimensional
 single-patch volume maps, explicit Gauss quadrature, homogeneous strong traces
 or natural Neumann boundaries, and matrix-free sum-factorized finite-element

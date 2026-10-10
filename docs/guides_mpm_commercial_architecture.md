@@ -28,6 +28,14 @@ target observables, prohibited uses, risk class, and accuracy/UQ objective.
 traceability matrix. A release assessment is claim-specific; no generic
 certification is implied.
 
+Internal capability profiles have no version field. Exact support tuples,
+provider identity, required gates, dependencies, and release evidence determine
+their canonical IDs. The commercial profile also binds its support and standards
+matrices and explicit `MPMCommercialProfileKind` qualification category; release
+assessments bind that commercial profile ID. The category is not a provider
+release. External standards retain their named
+authoritative revisions in the traceability matrix.
+
 ## Transaction authority
 
 `PreparedMPMDynamics` remains the numerical kernel. It owns one attempt and

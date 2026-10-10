@@ -16,6 +16,13 @@ exact-predicate intersection of its cell faces against earlier layers, the wall,
 and the obstacles before it is accepted; collisions resolve only through the
 control's explicit collision policy, and every rejection carries the offending
 wall vertices and locations.
+
+Periodic source walls retain their declared identification in both the layer
+volume and cap. Smooth sectors join through quotient edge incidence; fan and
+corner columns retain construction ancestry, and schedule heights and collision
+reductions synchronize across complete column/vertex orbits. Source associations
+and material-domain ownership remain bound to ``BoundaryLayerMesh.source_wall``,
+``wall_association`` and ``source_domain``, rather than inferred from coordinates.
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import (
     CellBlock,
+    CellGeometrySpec,
     CellMesh,
     CellValidityCertificate,
     CellValidityPolicy,
@@ -47,6 +55,9 @@ from ..discretization import (
     certify_cell_geometry_validity,
     point_triangle_distance,
 )
+from ..discretization._cell_geometry_validity import cell_geometry_id
+from ..geometry._mesh_certificates import MeshCertificateLimits, PiecewiseLinearDomain
+from ..geometry._meshing_domain import MeshingDomain
 from ..optim import (
     AcceleratedProximalGradient,
     OptimizationStatus,
@@ -55,6 +66,7 @@ from ..optim import (
     SimplexIndicator,
 )
 from ..typing import checked
+from ._association import GeometryAssociation
 from ._audit_topology import _orient3d, _triangle_pairs_intersect
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._controls import (
@@ -64,6 +76,7 @@ from ._controls import (
     BoundaryLayerRoute,
 )
 from ._scope import MeshingEntityKind
+from ._sweep import generate_sweep, SweepControl, SweepMapKind
 from ._trace import MeshingStageKind
 
 
@@ -204,6 +217,11 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     achieved_thicknesses[k]``) is NaN. The explicit ``terminated_vertex_count``,
     ``reduced_vertex_count``, and ``merged_vertex_count`` record why columns
     stopped short of or shrank the requested schedule.
+    ``column_thicknesses`` and ``column_active`` retain each measured vertex
+    column interval; inactive intervals are NaN, not a fabricated zero layer.
+    ``active_column_counts`` measures surviving support instead of presuming
+    every requested layer exists everywhere. Physical growth and minimum
+    thickness bounds are checked on these intervals before publication.
     """
 
     requested_thicknesses: tuple[float, ...] = eqx.field(static=True)
@@ -212,6 +230,9 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     maximum_thicknesses: Array
     achieved_growth_rates: Array
     layer_active: Array
+    column_thicknesses: Array
+    column_active: Array
+    active_column_counts: Array
     column_count: int = eqx.field(static=True)
     fan_column_count: int = eqx.field(static=True)
     corner_patch_count: int = eqx.field(static=True)
@@ -280,6 +301,30 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "achieved_growth_rates must be finite between active layers and NaN otherwise."
             )
+        column_active = np.asarray(values["column_active"], dtype=np.bool_)
+        column_thicknesses = np.asarray(values["column_thicknesses"], dtype=np.float64)
+        column_shape = (len(requested), int(values["column_count"]))
+        if (
+            column_active.shape != column_shape
+            or column_thicknesses.shape != column_shape
+        ):
+            raise ValueError(
+                "Measured column thickness and support arrays have invalid shapes."
+            )
+        if (
+            np.any(~np.isfinite(column_thicknesses[column_active]))
+            or np.any(~np.isnan(column_thicknesses[~column_active]))
+            or not np.array_equal(np.any(column_active, axis=1), layer_active)
+            or np.any(column_active[1:] & ~column_active[:-1])
+        ):
+            raise ValueError(
+                "Measured columns require finite carried intervals and nested active support."
+            )
+        self.column_thicknesses = jnp.asarray(column_thicknesses)
+        self.column_active = jnp.asarray(column_active)
+        self.active_column_counts = jnp.asarray(
+            np.sum(column_active, axis=1), dtype=jnp.int64
+        )
         for name, array in arrays.items():
             setattr(self, name, jnp.asarray(array))
         self.layer_active = jnp.asarray(layer_active)
@@ -318,6 +363,8 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
                 "arrays": {
                     **{name: array_tree_fingerprint(arrays[name]) for name in arrays},
                     "layer_active": array_tree_fingerprint(layer_active),
+                    "column_active": array_tree_fingerprint(column_active),
+                    "column_thicknesses": array_tree_fingerprint(column_thicknesses),
                 },
                 **{name: int(values[name]) for name in integers},
                 "minimum_visibility": self.minimum_visibility,
@@ -339,6 +386,9 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     input wall-mesh vertex to its layer-mesh vertex (``-1`` when unused), and
     ``layer_index`` gives each layer cell (global ID order) its schedule layer;
     transition pyramids closing quadrilateral cap faces carry the layer count.
+    ``column_index`` records the generated front-face column responsible for
+    each cell, including collapse templates and transition pyramids. It binds
+    tangential adaptation groups by construction, not coordinate coincidence.
     """
 
     mesh: CellMesh
@@ -346,9 +396,13 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
     wall_vertices: Array
     cap_vertices: Array
     layer_index: Array
+    column_index: Array
     validity: CellValidityCertificate
     evidence: BoundaryLayerEvidence
-    control_id: str = eqx.field(static=True)
+    control: BoundaryLayerControl
+    source_wall: CellMesh
+    wall_association: GeometryAssociation | None
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None
     policy_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -364,31 +418,107 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
         evidence: BoundaryLayerEvidence,
         /,
         *,
-        control_id: str,
+        column_index: np.ndarray,
+        control: BoundaryLayerControl,
+        source_wall: CellMesh,
+        wall_association: GeometryAssociation | None,
+        source_domain: MeshingDomain | PiecewiseLinearDomain | None,
         policy_id: str,
     ) -> None:
-        if not isinstance(mesh, CellMesh) or not isinstance(cap, (CellMesh, type(None))):
-            raise TypeError("mesh must be CellMesh and cap CellMesh or None.")
-        cap_ids = np.asarray(cap_vertices, dtype=np.int64)
-        layers = np.asarray(layer_index, dtype=np.int32)
+        _wall_selection(source_wall, control, wall_association, source_domain)
+        cap_input = np.asarray(cap_vertices)
+        wall_input = np.asarray(wall_vertices)
+        layer_input = np.asarray(layer_index)
+        if any(
+            not np.issubdtype(value.dtype, np.integer)
+            for value in (cap_input, wall_input, layer_input)
+        ):
+            raise TypeError(
+                "Layer/cap/wall identities and schedule intervals must be integers."
+            )
+        cap_ids = cap_input.astype(np.int64, copy=False)
+        wall_ids = wall_input.astype(np.int64, copy=False)
+        layers = layer_input.astype(np.int32, copy=False)
         cell_count = sum(block.cell_count for block in mesh.blocks)
-        if layers.shape != (cell_count,):
-            raise ValueError("layer_index must hold one entry per layer cell.")
-        cap_points = np.empty((0, 3)) if cap is None else np.asarray(cap.coordinates)
+        if (
+            layers.shape != (cell_count,)
+            or np.any(layers < 0)
+            or np.any(layers > len(evidence.requested_thicknesses))
+        ):
+            raise ValueError(
+                "layer_index must hold one declared interval per layer cell."
+            )
+        cell_columns = np.asarray(column_index)
+        if (
+            cell_columns.shape != (cell_count,)
+            or not np.issubdtype(cell_columns.dtype, np.integer)
+            or np.any(cell_columns < 0)
+        ):
+            raise ValueError(
+                "column_index must identify the generated front face of every layer cell."
+            )
+        vertex_count = mesh.coordinates.shape[0]
+        if (
+            wall_ids.shape != (source_wall.coordinates.shape[0],)
+            or np.any(wall_ids < -1)
+            or np.any(wall_ids >= vertex_count)
+        ):
+            raise ValueError(
+                "wall_vertices must hold layer vertex IDs or -1 for unused wall vertices."
+            )
+        if (
+            np.any(cap_ids < 0)
+            or np.any(cap_ids >= vertex_count)
+            or np.unique(cap_ids).size != cap_ids.size
+        ):
+            raise ValueError(
+                "Cap vertex identities must be distinct declared layer vertices."
+            )
+        cap_points = (
+            np.empty((0, 3), dtype=np.float64)
+            if cap is None
+            else np.asarray(cap.coordinates, dtype=np.float64)
+        )
         if cap_ids.shape != (cap_points.shape[0],) or not np.array_equal(
-            np.asarray(mesh.coordinates)[cap_ids], cap_points
+            np.asarray(mesh.coordinates, dtype=np.float64)[cap_ids].view(np.uint64),
+            cap_points.view(np.uint64),
         ):
             raise ValueError("Cap vertices must be bitwise layer-mesh vertices.")
+        used_wall = wall_ids >= 0
+        if not np.array_equal(
+            np.asarray(mesh.coordinates, dtype=np.float64)[wall_ids[used_wall]].view(
+                np.uint64
+            ),
+            np.asarray(source_wall.coordinates, dtype=np.float64)[used_wall].view(
+                np.uint64
+            ),
+        ):
+            raise ValueError(
+                "Realized wall identities must preserve their actual source coordinates bitwise."
+            )
         if validity.certified_valid_count != cell_count:
             raise ValueError("Every boundary-layer cell must be certified valid.")
+        geometry = CellGeometrySpec.affine(mesh)
+        if (
+            validity.topology_id != mesh.topology_id
+            or validity.geometry_layout_id != geometry.geometry_layout_id
+            or validity.geometry_id != cell_geometry_id(geometry)
+        ):
+            raise ValueError(
+                "Layer validity must bind the actual coordinate map and topology."
+            )
         self.mesh = mesh
         self.cap = cap
-        self.wall_vertices = jnp.asarray(np.asarray(wall_vertices, dtype=np.int64))
+        self.wall_vertices = jnp.asarray(wall_ids)
         self.cap_vertices = jnp.asarray(cap_ids)
         self.layer_index = jnp.asarray(layers)
+        self.column_index = jnp.asarray(cell_columns, dtype=jnp.int64)
         self.validity = validity
         self.evidence = evidence
-        self.control_id = str(control_id)
+        self.control = control
+        self.source_wall = source_wall
+        self.wall_association = wall_association
+        self.source_domain = source_domain
         self.policy_id = str(policy_id)
         self.result_id = canonical_fingerprint(
             {
@@ -396,18 +526,34 @@ class BoundaryLayerMesh(StrictModule, NonTrainableState):
                 "mesh": mesh.mesh_id,
                 "cap": None if cap is None else cap.mesh_id,
                 "layers": array_tree_fingerprint(layers),
+                "columns": array_tree_fingerprint(cell_columns),
                 "evidence": evidence.evidence_id,
                 "validity": validity.certificate_id,
                 "control": self.control_id,
+                "source_wall": source_wall.mesh_id,
+                "wall_association": None
+                if wall_association is None
+                else wall_association.association_id,
+                "source_domain": None
+                if source_domain is None
+                else source_domain.domain_id,
+                "wall_vertices": array_tree_fingerprint(wall_ids),
                 "policy": self.policy_id,
             }
         )
+
+    @property
+    def control_id(self) -> str:
+        return self.control.control_id
 
     @property
     def closed_cap(self) -> bool:
         """Whether a cap exists and every cap edge is shared by exactly two faces."""
         if self.cap is None:
             return False
+        if self.cap.periodic_topology is not None:
+            boundary = self.cap.periodic_topology.quotient.entities(1).subset("boundary")
+            return not bool(np.any(np.asarray(boundary.mask)))
         faces, arity = _mesh_faces(self.cap)
         _, counts = _edge_table(faces, arity)[1:3]
         return bool(np.all(counts == 2))
@@ -717,6 +863,7 @@ class _Sectors:
     incidence_sector: np.ndarray
     sector_vertex: np.ndarray
     face_count: int
+    orbits: np.ndarray
 
     def at(self, vertices: np.ndarray, faces: np.ndarray, /) -> np.ndarray:
         """Sector of each (vertex, wall face) incidence; absent pairs return garbage."""
@@ -756,7 +903,90 @@ def _sectors(wall: _Wall, split: np.ndarray, /) -> _Sectors:
     sector = rank[relabel.reshape(-1)]
     sector_vertex = np.empty((first.size,), dtype=np.int64)
     sector_vertex[sector] = vertices
-    return _Sectors(keys, sector, sector_vertex, face_count)
+    return _Sectors(keys, sector, sector_vertex, face_count, np.arange(first.size))
+
+
+def _periodic_sectors(
+    source: CellMesh,
+    wall: _Wall,
+    sectors: _Sectors,
+    split: np.ndarray,
+    feature_angle: float,
+    /,
+) -> tuple[_Sectors, np.ndarray]:
+    """Join smooth sector incidences through authoritative quotient edge orbits."""
+    from ..discretization._periodic_topology import _lifted_loops
+
+    topology = source.periodic_topology
+    if topology is None:
+        raise ValueError("Periodic sectors require a bound source topology.")
+    orbit, _, _ = (np.asarray(value) for value in topology.orbits(1))
+    vertex_roots = np.asarray(topology.vertex_representatives)
+    rotations = topology.orbit_isometries(0)[:, :3, :3]
+    edge_rows = {
+        tuple(sorted(corners.tolist())): int(row)
+        for rows, loops in _lifted_loops(source, 1)
+        for row, corners in zip(rows, loops, strict=True)
+    }
+    roots = np.arange(sectors.sector_vertex.size, dtype=np.int64)
+
+    def root(index: int) -> int:
+        while index != roots[index]:
+            roots[index] = roots[roots[index]]
+            index = int(roots[index])
+        return index
+
+    groups: dict[int, list[int]] = {}
+    for edge, corners in enumerate(wall.edges):
+        groups.setdefault(int(orbit[edge_rows[tuple(corners.tolist())]]), []).append(edge)
+    for edges in groups.values():
+        if np.any(split[edges]):
+            continue
+        members: dict[int, list[tuple[int, np.ndarray]]] = {}
+        for edge in edges:
+            for face in wall.edge_faces[edge]:
+                if face < 0 or not wall.grow[face]:
+                    continue
+                for vertex in wall.edges[edge]:
+                    sector = int(sectors.at(np.asarray(vertex), np.asarray(face)))
+                    normal = wall.normals[face] @ rotations[vertex]
+                    members.setdefault(int(vertex_roots[vertex]), []).append(
+                        (sector, normal)
+                    )
+        for incidences in members.values():
+            normals = np.asarray([normal for _, normal in incidences])
+            if np.any(normals @ normals.T < np.cos(feature_angle)):
+                continue
+            old = np.asarray([root(sector) for sector, _ in incidences], dtype=np.int64)
+            roots[old] = np.min(old)
+    roots = np.asarray([root(index) for index in range(roots.size)], dtype=np.int64)
+    return _Sectors(
+        sectors.incidence_keys,
+        sectors.incidence_sector,
+        sectors.sector_vertex,
+        sectors.face_count,
+        roots,
+    ), rotations[sectors.sector_vertex]
+
+
+def _synchronize_periodic_directions(
+    wall: _Wall, directions: _Directions, sectors: _Sectors, rotations: np.ndarray, /
+) -> _Directions:
+    """Make seam columns share one visible direction in their representative chart."""
+    canonical = (directions.direction[:, None, :] @ rotations)[:, 0, :]
+    total = np.zeros_like(canonical)
+    np.add.at(total, sectors.orbits, canonical)
+    canonical, _ = _unit(total[sectors.orbits])
+    direction = (rotations @ canonical[..., None])[..., 0]
+    visibility = np.min(np.sum(directions.normals * direction[:, None], axis=-1), axis=1)
+    if np.any(visibility <= 0.0):
+        raise _failure(
+            MeshingFailureCategory.CONTROL_CONFLICT,
+            "Periodic wall sectors have no shared visible growth direction.",
+            sectors.sector_vertex[visibility <= 0.0],
+            wall.points,
+        )
+    return _Directions(direction, visibility, directions.normals, directions.unconverged)
 
 
 # ---------------------------------------------------------------- column directions
@@ -940,6 +1170,7 @@ class _Front:
     wall_face: np.ndarray
     fan_column_count: int
     corner_patch_count: int
+    column_orbits: np.ndarray
 
 
 def _fan_lists(
@@ -1004,12 +1235,16 @@ def _build_front(
     directions: _Directions,
     control: BoundaryLayerControl,
     /,
+    *,
+    sector_orbits: np.ndarray | None = None,
 ) -> _Front:
     sector_count = sectors.sector_vertex.size
     column_vertex = [sectors.sector_vertex]
     column_direction = [directions.direction]
     column_kind = [np.full((sector_count,), _SECTOR, dtype=np.int64)]
     next_column = sector_count
+    roots = np.arange(sector_count) if sector_orbits is None else sector_orbits
+    column_keys: list[tuple[int, ...]] = [(0, int(root)) for root in roots]
     ridges, ends, sector_a, sector_b, subdivisions = _fan_lists(
         wall, sectors, split, directions.direction, control.feature_angle
     )
@@ -1035,6 +1270,12 @@ def _build_front(
                 column_direction.append(values)
                 column_kind.append(np.full((count,), _FAN, dtype=np.int64))
                 next_column += count
+                root_a, root_b = int(roots[low]), int(roots[high])
+                for position in range(1, count + 1):
+                    fraction = position if root_a <= root_b else count + 1 - position
+                    column_keys.append(
+                        (1, min(root_a, root_b), max(root_a, root_b), fraction, count + 1)
+                    )
             fans = fan_groups[key]
             ordered = fans if first == low else fans[::-1]
             lists[index, side] = [first, *(int(value) for value in ordered), second]
@@ -1073,6 +1314,14 @@ def _build_front(
         value, _ = _unit(np.sum(column_direction_[cycle], axis=0))
         extra_vertex.append(vertex)
         extra_direction.append(value)
+        column_keys.append(
+            (
+                2,
+                *sorted(
+                    {int(roots[column]) for column in cycle if column < sector_count}
+                ),
+            )
+        )
         ring = np.asarray(cycle, dtype=np.int64)
         rows = np.stack((np.full(ring.shape, center), ring, np.roll(ring, -1)), axis=1)
         first = column_direction_[ring]
@@ -1123,6 +1372,11 @@ def _build_front(
     wall_face = np.concatenate(
         (wall_rows, np.full((strips_.shape[0] + corner_faces.shape[0],), -1))
     )
+    key_roots: dict[tuple[int, ...], int] = {}
+    column_orbits = np.asarray(
+        [key_roots.setdefault(key, row) for row, key in enumerate(column_keys)],
+        dtype=np.int64,
+    )
     return _Front(
         column_vertex_,
         column_direction_,
@@ -1133,6 +1387,7 @@ def _build_front(
         wall_face,
         int(np.count_nonzero(np.concatenate(column_kind) == _FAN)),
         len(corners),
+        column_orbits,
     )
 
 
@@ -1409,7 +1664,9 @@ def _positions(front: _Front, columns: _Columns, points: np.ndarray, /) -> np.nd
     return np.concatenate((points, level_points.transpose(1, 0, 2).reshape(-1, 3)))
 
 
-def _front_rows(front: _Front, columns: _Columns, /) -> Any:
+def _front_rows(
+    front: _Front, columns: _Columns, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Front faces, splitting wall quads whose vertices carry different layer counts."""
     counts = columns.count[front.column_vertex]
     face_counts = np.where(front.faces >= 0, counts[np.maximum(front.faces, 0)], -1)
@@ -1429,64 +1686,97 @@ def _front_rows(front: _Front, columns: _Columns, /) -> Any:
         (front.faces[keep], np.pad(halves, ((0, 0), (0, 1)), constant_values=-1))
     )
     arity = np.concatenate((front.arity[keep], np.full((halves.shape[0],), 3)))
-    return rows, arity
+    column_ids = np.concatenate(
+        (np.flatnonzero(keep), np.repeat(np.flatnonzero(split), 2))
+    )
+    return rows, arity, column_ids
 
 
 def _layer_cells(
-    rows: Any, arity: Any, bottom_ids: Any, top_ids: Any, /
-) -> dict[str, np.ndarray]:
-    """Standard cells of one layer from front faces and their collapse pattern."""
+    rows: np.ndarray,
+    arity: np.ndarray,
+    bottom_ids: np.ndarray,
+    top_ids: np.ndarray,
+    column_ids: np.ndarray,
+    /,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Standard collapse templates and their authoritative front-face columns."""
     cells: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
+    owners: dict[str, list[np.ndarray]] = {name: [] for name in _VOLUME_KINDS}
+
+    def emit(
+        kind: str, candidate: np.ndarray, mask: np.ndarray, parents: np.ndarray, /
+    ) -> None:
+        cells[kind].append(candidate[mask])
+        owners[kind].append(parents[mask])
+
     safe = np.maximum(rows, 0)
     bottom = bottom_ids[safe]
     top = top_ids[safe]
     vertical = bottom == top
     triangle = arity == 3
+    parents = column_ids[triangle]
     b, t, v = bottom[triangle][:, :3], top[triangle][:, :3], vertical[triangle][:, :3]
     collapsed = np.sum(v, axis=1)
     pinched = (b[:, 0] == b[:, 1]) & (b[:, 1] == b[:, 2])
-    cells["prism"].append(np.concatenate((b, t), axis=1)[(collapsed == 0) & ~pinched])
-    corner = (collapsed == 0) & pinched
-    cells["tetrahedron"].append(
-        np.stack((t[:, 0], t[:, 2], t[:, 1], b[:, 0]), axis=1)[corner]
+    emit("prism", np.concatenate((b, t), axis=1), (collapsed == 0) & ~pinched, parents)
+    emit(
+        "tetrahedron",
+        np.stack((t[:, 0], t[:, 2], t[:, 1], b[:, 0]), axis=1),
+        (collapsed == 0) & pinched,
+        parents,
     )
     for lead in range(3):
         i, j, k = lead, (lead + 1) % 3, (lead + 2) % 3
-        one = (collapsed == 1) & v[:, i] & ~pinched
-        cells["pyramid"].append(
-            np.stack((b[:, j], t[:, j], t[:, k], b[:, k], b[:, i]), axis=1)[one]
+        emit(
+            "pyramid",
+            np.stack((b[:, j], t[:, j], t[:, k], b[:, k], b[:, i]), axis=1),
+            (collapsed == 1) & v[:, i] & ~pinched,
+            parents,
         )
-        two = (collapsed == 2) & ~v[:, k] & ~pinched
-        cells["tetrahedron"].append(
-            np.stack((b[:, i], b[:, j], b[:, k], t[:, k]), axis=1)[two]
+        emit(
+            "tetrahedron",
+            np.stack((b[:, i], b[:, j], b[:, k], t[:, k]), axis=1),
+            (collapsed == 2) & ~v[:, k] & ~pinched,
+            parents,
         )
     quad = arity == 4
+    parents = column_ids[quad]
     b, t, v = bottom[quad], top[quad], vertical[quad]
     pair_v = v[:, 0] & v[:, 1]
     pair_w = v[:, 2] & v[:, 3]
     none = ~np.any(v, axis=1)
     pinched = (b[:, 0] == b[:, 1]) & (b[:, 2] == b[:, 3])
-    cells["hexahedron"].append(np.concatenate((b, t), axis=1)[none & ~pinched])
-    cells["prism"].append(
-        np.stack((b[:, 0], t[:, 0], t[:, 1], b[:, 3], t[:, 3], t[:, 2]), axis=1)[
-            none & pinched
-        ]
+    emit("hexahedron", np.concatenate((b, t), axis=1), none & ~pinched, parents)
+    emit(
+        "prism",
+        np.stack((b[:, 0], t[:, 0], t[:, 1], b[:, 3], t[:, 3], t[:, 2]), axis=1),
+        none & pinched,
+        parents,
     )
-    cells["tetrahedron"].append(
-        np.stack((b[:, 2], t[:, 2], t[:, 3], b[:, 0]), axis=1)[pinched & pair_v & ~pair_w]
+    emit(
+        "tetrahedron",
+        np.stack((b[:, 2], t[:, 2], t[:, 3], b[:, 0]), axis=1),
+        pinched & pair_v & ~pair_w,
+        parents,
     )
-    cells["tetrahedron"].append(
-        np.stack((b[:, 0], t[:, 0], t[:, 1], b[:, 2]), axis=1)[pinched & pair_w & ~pair_v]
+    emit(
+        "tetrahedron",
+        np.stack((b[:, 0], t[:, 0], t[:, 1], b[:, 2]), axis=1),
+        pinched & pair_w & ~pair_v,
+        parents,
     )
-    cells["prism"].append(
-        np.stack((b[:, 0], b[:, 3], t[:, 3], b[:, 1], b[:, 2], t[:, 2]), axis=1)[
-            ~pinched & pair_v & ~pair_w
-        ]
+    emit(
+        "prism",
+        np.stack((b[:, 0], b[:, 3], t[:, 3], b[:, 1], b[:, 2], t[:, 2]), axis=1),
+        ~pinched & pair_v & ~pair_w,
+        parents,
     )
-    cells["prism"].append(
-        np.stack((b[:, 2], b[:, 1], t[:, 1], b[:, 3], b[:, 0], t[:, 0]), axis=1)[
-            ~pinched & pair_w & ~pair_v
-        ]
+    emit(
+        "prism",
+        np.stack((b[:, 2], b[:, 1], t[:, 1], b[:, 3], b[:, 0], t[:, 0]), axis=1),
+        ~pinched & pair_w & ~pair_v,
+        parents,
     )
     half = (b[:, 0] == b[:, 1]) ^ (b[:, 2] == b[:, 3])
     irregular = half | (
@@ -1494,10 +1784,16 @@ def _layer_cells(
     )
     if np.any(irregular):
         raise ValueError("Quadrilateral front faces admit only paired side collapses.")
-    return {
-        name: np.concatenate(values).reshape(-1, _CELL_ARITY[name]).astype(np.int64)
-        for name, values in cells.items()
-    }
+    return (
+        {
+            name: np.concatenate(values).reshape(-1, _CELL_ARITY[name]).astype(np.int64)
+            for name, values in cells.items()
+        },
+        {
+            name: np.concatenate(values).astype(np.int64)
+            for name, values in owners.items()
+        },
+    )
 
 
 def _cell_triangles(
@@ -1732,6 +2028,7 @@ def _merge_pairs(
 class _Resolution:
     columns: _Columns
     cells: list[dict[str, np.ndarray]]
+    cell_columns: list[dict[str, np.ndarray]]
     points: np.ndarray
     detected: int
     iterations: int
@@ -1854,28 +2151,49 @@ def _grow_layers(
     policy: BoundaryLayerPolicy,
     graph: Any,
     /,
+    *,
+    vertex_orbits: np.ndarray | None = None,
 ) -> _Resolution:
     layers = columns.levels.size - 1
     base = wall.points.shape[0]
     detected = 0
     iterations = 0
     for _ in range(policy.maximum_collision_iterations + 1):
+        if vertex_orbits is not None:
+            scale = np.full_like(columns.scale, np.inf)
+            count = np.full_like(columns.count, layers)
+            stretch = np.zeros_like(columns.stretch)
+            np.minimum.at(scale, vertex_orbits, columns.scale)
+            np.minimum.at(count, vertex_orbits, columns.count)
+            np.maximum.at(stretch, front.column_orbits, columns.stretch)
+            columns = _Columns(
+                columns.levels,
+                stretch[front.column_orbits],
+                scale[vertex_orbits],
+                count[vertex_orbits],
+                columns.merged_top,
+            )
         accepted: list[dict[str, np.ndarray]] = []
+        accepted_columns: list[dict[str, np.ndarray]] = []
         points = _positions(front, columns, wall.points)
-        rows, arity = _front_rows(front, columns)
+        rows, arity, column_ids = _front_rows(front, columns)
         for layer in range(layers):
-            cells = _layer_cells(
+            cells, cell_columns = _layer_cells(
                 rows,
                 arity,
                 _level_ids(front, columns, base, layer),
                 _level_ids(front, columns, base, layer + 1),
+                column_ids,
             )
             bad, hits = _certify_cells(points, cells, accepted, environment, policy)
             if any(np.any(mask) for mask in bad.values()):
                 break
             accepted.append(cells)
+            accepted_columns.append(cell_columns)
         else:
-            return _Resolution(columns, accepted, points, detected, iterations)
+            return _Resolution(
+                columns, accepted, accepted_columns, points, detected, iterations
+            )
         detected += hits
         iterations += 1
         offending = np.unique(
@@ -1952,13 +2270,14 @@ def _require_first_layer(wall: _Wall, count: np.ndarray, /) -> None:
 
 def _cap_faces(
     front: _Front, columns: _Columns, base: int, /
-) -> tuple[np.ndarray, np.ndarray]:
-    rows, arity = _front_rows(front, columns)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    rows, arity, column_ids = _front_rows(front, columns)
     layers = columns.levels.size - 1
     ids = _level_ids(front, columns, base, layers)
     top = np.where(rows >= 0, ids[np.maximum(rows, 0)], -1)
     faces = []
-    for row, size in zip(top, arity, strict=True):
+    parent_columns: list[int] = []
+    for row, size, parent in zip(top, arity, column_ids, strict=True):
         loop = [int(value) for value in row[:size]]
         distinct = []
         for value in loop:
@@ -1968,13 +2287,18 @@ def _cap_faces(
             distinct.pop()
         if len(distinct) >= 3:
             faces.append(distinct + [-1] * (4 - len(distinct)))
+            parent_columns.append(int(parent))
     cap = np.asarray(faces, dtype=np.int64).reshape(-1, 4)
     keys = np.sort(np.where(cap >= 0, cap, np.iinfo(np.int64).max), axis=1)
     _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
     # Merged opposing fronts share their top faces, which become interior.
     single = counts[inverse.reshape(-1)] == 1
     cap = cap[single]
-    return cap, np.where(cap[:, 3] < 0, 3, 4)
+    return (
+        cap,
+        np.where(cap[:, 3] < 0, 3, 4),
+        np.asarray(parent_columns, dtype=np.int64)[single],
+    )
 
 
 def _cap_pyramids(
@@ -2035,7 +2359,7 @@ def _cap_pyramids(
 
 def _measured_thicknesses(
     wall: _Wall, front: _Front, columns: _Columns, points: np.ndarray, /
-) -> Any:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     layers = columns.levels.size - 1
     grow_triangles, _ = _split_polygons(wall.faces[wall.grow], wall.arity[wall.grow])
     total = front.column_vertex.size
@@ -2058,10 +2382,97 @@ def _measured_thicknesses(
             mean[layer] = np.mean(values)
             minimum[layer] = np.min(values)
             maximum[layer] = np.max(values)
-    return mean, minimum, maximum, active
+    return mean, minimum, maximum, active, np.where(carried, increments, np.nan), carried
+
+
+def _require_measured_schedule(
+    points: np.ndarray,
+    column_vertices: np.ndarray,
+    evidence: BoundaryLayerEvidence,
+    control: BoundaryLayerControl,
+    /,
+) -> None:
+    """Apply physical thickness and growth bounds to every carried interval."""
+    thickness = np.asarray(evidence.column_thicknesses, dtype=np.float64)
+    active = np.asarray(evidence.column_active, dtype=np.bool_)
+    requested = np.asarray(control.schedule.thicknesses, dtype=np.float64)
+    scale = max(float(np.max(np.ptp(points, axis=0))), float(np.max(requested)))
+    tolerance = 1024.0 * np.finfo(np.float64).eps * scale
+    short = active & (
+        thickness < control.minimum_thickness_fraction * requested[:, None] - tolerance
+    )
+    invalid = active & (thickness <= 0.0)
+    bad = short | invalid
+    if control.growth_rate_bounds is not None:
+        lower, upper = control.growth_rate_bounds
+        paired = active[1:] & active[:-1]
+        safe = np.where(active[:-1] & (thickness[:-1] > 0.0), thickness[:-1], 1.0)
+        growth = thickness[1:] / safe
+        ratio_tolerance = 1024.0 * np.finfo(np.float64).eps * max(1.0, upper)
+        bad[1:] |= paired & (
+            (growth < lower - ratio_tolerance) | (growth > upper + ratio_tolerance)
+        )
+    if np.any(bad):
+        vertices = column_vertices[np.any(bad, axis=0)]
+        raise _failure(
+            MeshingFailureCategory.CONTROL_CONFLICT,
+            "Measured active layer columns violate the requested physical thickness or growth bounds.",
+            vertices,
+            points,
+        )
 
 
 # ---------------------------------------------------------------- entry points
+
+
+def _periodic_layer_vertices(
+    source: CellMesh, front: _Front, columns: _Columns, point_count: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Propagate wall-orbit and schedule identities to every constructed vertex."""
+    topology = source.periodic_topology
+    if topology is None:
+        raise ValueError("Layer vertex orbits require periodic source topology.")
+    base = source.coordinates.shape[0]
+    total = front.column_vertex.size
+    roots = np.arange(point_count, dtype=np.int64)
+    shifts = np.zeros((point_count, topology.cell.rank), dtype=np.int64)
+    roots[:base] = np.asarray(topology.vertex_representatives)
+    shifts[:base] = np.asarray(topology.vertex_shifts)
+    column_shifts = (
+        shifts[front.column_vertex] - shifts[front.column_vertex[front.column_orbits]]
+    )
+    for level in range(1, columns.levels.size):
+        rows = base + (level - 1) * total + np.arange(total)
+        roots[rows] = base + (level - 1) * total + front.column_orbits
+        shifts[rows] = column_shifts
+    return roots, shifts
+
+
+def _bind_layer_periodic_mesh(
+    source: CellMesh,
+    target: CellMesh,
+    retained: np.ndarray,
+    roots: np.ndarray,
+    shifts: np.ndarray,
+    /,
+) -> CellMesh:
+    """Bind a compact layer/cap carrier using construction identities, never proximity."""
+    from ..discretization import PeriodicMeshTopology
+
+    topology = source.periodic_topology
+    if topology is None:
+        raise ValueError("Periodic layer binding requires periodic source topology.")
+    labels = roots[retained]
+    _, first, inverse = np.unique(labels, return_index=True, return_inverse=True)
+    representatives = first[inverse]
+    exponents = shifts[retained] - shifts[retained[representatives]]
+    descriptor = PeriodicMeshTopology(target, topology.cell, representatives, exponents)
+    return CellMesh(
+        target.coordinates,
+        target.blocks,
+        vertex_global_ids=target.vertex_global_ids,
+        periodic_topology=descriptor,
+    )
 
 
 def _grow_boundary_layers(
@@ -2074,8 +2485,27 @@ def _grow_boundary_layers(
     control: BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     /,
+    *,
+    source_wall: CellMesh,
+    wall_association: GeometryAssociation | None,
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
 ) -> BoundaryLayerMesh:
     """Grow certified layers from ``grow`` faces of one oriented surface mesh."""
+    source_faces, source_arity = _mesh_faces(source_wall)
+    if (
+        not np.array_equal(
+            points.view(np.uint64),
+            np.asarray(source_wall.coordinates, dtype=np.float64).view(np.uint64),
+        )
+        or not np.array_equal(faces, source_faces)
+        or not np.array_equal(arity, source_arity)
+        or not np.array_equal(
+            grow, _wall_selection(source_wall, control, wall_association, source_domain)
+        )
+    ):
+        raise ValueError(
+            "The raw layer front must bind its exact source wall and physical selection."
+        )
     if not np.any(grow):
         raise ValueError("Boundary layers require at least one wall face.")
     # Layer certification decides exact coplanar contacts; no filtered fallback.
@@ -2083,8 +2513,19 @@ def _grow_boundary_layers(
     wall = _analyze_wall(points, faces, arity, grow, control.feature_angle)
     split = _split_ridges(wall, control.corner)
     sectors = _sectors(wall, split)
+    rotations = None
+    if source_wall.periodic_topology is not None:
+        sectors, rotations = _periodic_sectors(
+            source_wall, wall, sectors, split, control.feature_angle
+        )
     directions = _sector_directions(wall, sectors, control, policy)
-    front = _build_front(wall, sectors, split, directions, control)
+    if rotations is not None:
+        directions = _synchronize_periodic_directions(
+            wall, directions, sectors, rotations
+        )
+    front = _build_front(
+        wall, sectors, split, directions, control, sector_orbits=sectors.orbits
+    )
     stretch = _probe_stretch(wall, front)
     too_stretched = stretch > control.maximum_corner_stretch
     if np.any(too_stretched):
@@ -2109,7 +2550,21 @@ def _grow_boundary_layers(
     environment = _Environment(
         wall_triangles, ~grown, obstacle_points, obstacle_triangles
     )
-    resolution = _grow_layers(wall, front, columns, environment, control, policy, graph)
+    vertex_orbits = (
+        None
+        if source_wall.periodic_topology is None
+        else np.asarray(source_wall.periodic_topology.vertex_representatives)
+    )
+    resolution = _grow_layers(
+        wall,
+        front,
+        columns,
+        environment,
+        control,
+        policy,
+        graph,
+        vertex_orbits=vertex_orbits,
+    )
     return _assemble(
         wall,
         front,
@@ -2120,6 +2575,9 @@ def _grow_boundary_layers(
         environment,
         control,
         policy,
+        source_wall=source_wall,
+        wall_association=wall_association,
+        source_domain=source_domain,
     )
 
 
@@ -2172,10 +2630,19 @@ def _assemble(
     control: BoundaryLayerControl,
     policy: BoundaryLayerPolicy,
     /,
+    *,
+    source_wall: CellMesh,
+    wall_association: GeometryAssociation | None,
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
 ) -> BoundaryLayerMesh:
     columns = resolution.columns
     layers = columns.levels.size - 1
-    cap, cap_arity = _cap_faces(front, columns, wall.points.shape[0])
+    cap, cap_arity, cap_columns = _cap_faces(front, columns, wall.points.shape[0])
+    transition_columns = (
+        cap_columns[cap_arity == 4]
+        if policy.simplex_cap
+        else np.empty((0,), dtype=np.int64)
+    )
     all_points = resolution.points
     pyramids = {
         name: np.empty((0, _CELL_ARITY[name]), dtype=np.int64) for name in _VOLUME_KINDS
@@ -2186,6 +2653,7 @@ def _assemble(
         )
     cells = {}
     layer_index = []
+    column_index: list[np.ndarray] = []
     for name in _VOLUME_KINDS:
         rows = [values[name] for values in resolution.cells] + [pyramids[name]]
         cells[name] = np.concatenate(rows)
@@ -2193,9 +2661,19 @@ def _assemble(
         layer_index.extend(
             np.full((values.shape[0],), layer) for layer, values in enumerate(rows)
         )
+        column_index.extend(values[name] for values in resolution.cell_columns)
+        column_index.append(
+            transition_columns if name == "pyramid" else np.empty((0,), dtype=np.int64)
+        )
     mesh, used = _cell_mesh(all_points, cells)
     remap = np.full((all_points.shape[0],), -1, dtype=np.int64)
     remap[used] = np.arange(used.size)
+    periodic_vertices = None
+    if source_wall.periodic_topology is not None:
+        periodic_vertices = _periodic_layer_vertices(
+            source_wall, front, columns, all_points.shape[0]
+        )
+        mesh = _bind_layer_periodic_mesh(source_wall, mesh, used, *periodic_vertices)
     certificate = certify_cell_geometry_validity(mesh, policy=policy.validity)
     invalid = np.asarray(certificate.status) != int(CellValidityStatus.CERTIFIED_VALID)
     if np.any(invalid):
@@ -2213,8 +2691,12 @@ def _assemble(
             all_points,
         )
     cap_mesh, cap_vertices = _cap_mesh(all_points, cap, cap_arity)
-    mean, minimum, maximum, active = _measured_thicknesses(
-        wall, front, columns, resolution.points
+    if cap_mesh is not None and periodic_vertices is not None:
+        cap_mesh = _bind_layer_periodic_mesh(
+            source_wall, cap_mesh, cap_vertices, *periodic_vertices
+        )
+    mean, minimum, maximum, active, column_thicknesses, column_active = (
+        _measured_thicknesses(wall, front, columns, resolution.points)
     )
     wall_scale = columns.scale[wall.wall_vertices]
     evidence = BoundaryLayerEvidence(
@@ -2224,6 +2706,8 @@ def _assemble(
         maximum_thicknesses=maximum,
         achieved_growth_rates=mean[1:] / mean[:-1],
         layer_active=active,
+        column_thicknesses=column_thicknesses,
+        column_active=column_active,
         column_count=front.column_vertex.size,
         fan_column_count=front.fan_column_count,
         corner_patch_count=front.corner_patch_count,
@@ -2246,6 +2730,7 @@ def _assemble(
         cell_counts=tuple((block.cell_kind, block.cell_count) for block in mesh.blocks),
         certified_valid_count=certificate.certified_valid_count,
     )
+    _require_measured_schedule(wall.points, front.column_vertex, evidence, control)
     return BoundaryLayerMesh(
         mesh,
         cap_mesh,
@@ -2254,8 +2739,390 @@ def _assemble(
         np.concatenate(layer_index),
         certificate,
         evidence,
-        control_id=control.control_id,
+        column_index=np.concatenate(column_index),
+        control=control,
+        source_wall=source_wall,
+        wall_association=wall_association,
+        source_domain=source_domain,
         policy_id=policy.policy_id,
+    )
+
+
+def _wall_selection(
+    wall: CellMesh,
+    control: BoundaryLayerControl,
+    association: GeometryAssociation | None,
+    domain: MeshingDomain | PiecewiseLinearDomain | None,
+    /,
+) -> np.ndarray:
+    """Resolve physical wall identities against explicitly associated mesh cells."""
+    if domain is not None and not isinstance(
+        domain, (MeshingDomain, PiecewiseLinearDomain)
+    ):
+        raise TypeError(
+            "source_domain must be MeshingDomain, PiecewiseLinearDomain, or None."
+        )
+    if wall.topological_dimension != 2 or wall.ambient_dimension != 3:
+        raise ValueError("The source wall must be a surface mesh in three dimensions.")
+    cells = wall.entity_set(2)
+    identifiers = np.sort(np.asarray(cells.entity_ids, dtype=np.int64))
+    scope = control.wall_scope
+    selected = np.asarray(scope.entity_ids, dtype=np.int64)
+    if scope.entity_dimension != 2:
+        raise ValueError("A physical wall scope must select surface faces.")
+    if association is not None:
+        if not isinstance(association, GeometryAssociation):
+            raise TypeError("wall_association must be GeometryAssociation or None.")
+        if (
+            association.target_entity_set_id != cells.entity_set_id
+            or not np.array_equal(
+                np.sort(np.asarray(association.target_global_ids)), identifiers
+            )
+            or not association.complete
+        ):
+            raise ValueError(
+                "A physical wall association must completely bind the actual source wall cells."
+            )
+    if scope.entity_kind is MeshingEntityKind.MESH:
+        if (
+            scope.source_id != wall.mesh_id
+            or scope.source_revision != wall.numeric_version
+            or scope.entity_set_id != cells.entity_set_id
+        ):
+            raise ValueError("The mesh wall scope must bind its exact source wall mesh.")
+        if np.setdiff1d(selected, identifiers).size:
+            raise ValueError(
+                "The physical wall scope selects mesh cells absent from its source."
+            )
+        return np.isin(identifiers, selected)
+    if (
+        scope.entity_kind is not MeshingEntityKind.GEOMETRY
+        or association is None
+        or domain is None
+    ):
+        raise ValueError(
+            "Geometry wall scopes require their authoritative domain and source-to-wall cell association."
+        )
+    if (
+        association.source_id != scope.source_id
+        or association.source_revision != scope.source_revision
+        or np.any(np.asarray(association.source_dimensions) != 2)
+        or np.any(np.asarray(association.source_indices) < 0)
+    ):
+        raise ValueError(
+            "The physical geometry wall scope must match the association's source revision and face identities."
+        )
+    if (
+        domain.source_id != scope.source_id
+        or domain.source_revision != scope.source_revision
+    ):
+        raise ValueError(
+            "The physical wall domain must bind the declared original source revision."
+        )
+    if isinstance(domain, MeshingDomain):
+        if scope.entity_set_id != domain.entity_set_id(2):
+            raise ValueError(
+                "The wall scope must bind the domain's exact qualified face entity set."
+            )
+        slots = dict(
+            zip(
+                zip(domain.source_indices[2], domain.source_occurrences[2], strict=True),
+                domain.scope_indices(2),
+                strict=True,
+            )
+        )
+        classes = tuple(
+            zip(
+                np.asarray(association.source_indices, dtype=np.int64).tolist(),
+                association.source_occurrence_paths,
+                strict=True,
+            )
+        )
+        if any(key not in slots for key in classes):
+            raise ValueError(
+                "The wall association names definition/occurrence faces absent from its actual domain."
+            )
+        source_indices = np.asarray([slots[key] for key in classes], dtype=np.int64)
+    else:
+        if any(association.source_occurrence_paths):
+            raise ValueError(
+                "Piecewise-linear source facets cannot carry CAD occurrence paths."
+            )
+        source_indices = np.asarray(association.source_indices, dtype=np.int64)
+        if np.any(source_indices >= domain.facets.shape[0]):
+            raise ValueError(
+                "The wall association names source facets absent from its declared domain."
+            )
+    if np.setdiff1d(selected, source_indices).size:
+        raise ValueError(
+            "Every requested physical wall face must occur in the source wall mesh."
+        )
+    rows = np.argsort(np.asarray(association.target_global_ids), kind="stable")
+    return np.isin(source_indices[rows], selected)
+
+
+def _sweep_layer_evidence(
+    wall: CellMesh,
+    faces: np.ndarray,
+    arity: np.ndarray,
+    source_vertices: np.ndarray,
+    level_points: np.ndarray,
+    mesh: CellMesh,
+    certificate: CellValidityCertificate,
+    control: BoundaryLayerControl,
+    axis: np.ndarray,
+    /,
+) -> BoundaryLayerEvidence:
+    """Measure the swept carrier against its actual selected source triangles."""
+    points = np.asarray(wall.coordinates, dtype=np.float64)
+    triangles, _ = _split_polygons(faces, arity)
+    distances = _nearest_distances(
+        points[triangles], level_points.reshape(-1, 3)
+    ).reshape(level_points.shape[:2])
+    thicknesses = np.diff(distances, axis=0)
+    mean = np.mean(thicknesses, axis=1)
+    normals, _ = _newell_normals(points, faces, arity)
+    visibility = normals @ axis
+    _, edges, counts, _ = _edge_table(faces, arity)
+    rim = np.unique(edges[counts == 1])
+    steps = np.linalg.norm(np.diff(level_points, axis=0), axis=-1)
+    if np.any(thicknesses <= 0.0):
+        raise _failure(
+            MeshingFailureCategory.CONTROL_CONFLICT,
+            "Exact sweep intervals must advance away from their selected wall.",
+            source_vertices[np.any(thicknesses <= 0.0, axis=0)],
+            points,
+        )
+    evidence = BoundaryLayerEvidence(
+        requested_thicknesses=control.schedule.thicknesses,
+        achieved_thicknesses=mean,
+        minimum_thicknesses=np.min(thicknesses, axis=1),
+        maximum_thicknesses=np.max(thicknesses, axis=1),
+        achieved_growth_rates=mean[1:] / mean[:-1],
+        layer_active=np.ones(mean.shape, dtype=np.bool_),
+        column_thicknesses=thicknesses,
+        column_active=np.ones(thicknesses.shape, dtype=np.bool_),
+        column_count=source_vertices.size,
+        fan_column_count=0,
+        corner_patch_count=0,
+        convex_ridge_count=0,
+        concave_ridge_count=0,
+        rim_vertex_count=rim.size,
+        minimum_visibility=np.min(visibility),
+        maximum_stretch=np.max(steps / thicknesses),
+        unconverged_visibility_count=0,
+        collision_policy=control.collision,
+        predicted_collision_vertex_count=0,
+        detected_collision_count=0,
+        resolution_iterations=0,
+        reduced_vertex_count=0,
+        terminated_vertex_count=0,
+        merged_vertex_count=0,
+        minimum_scale=np.min(
+            thicknesses
+            / np.asarray(control.schedule.thicknesses, dtype=np.float64)[:, None]
+        ),
+        cell_counts=tuple((block.cell_kind, block.cell_count) for block in mesh.blocks),
+        certified_valid_count=certificate.certified_valid_count,
+    )
+    _require_measured_schedule(points, source_vertices, evidence, control)
+    return evidence
+
+
+def _require_sweep_scope_binding(
+    domain: MeshingDomain | PiecewiseLinearDomain | None,
+    control: BoundaryLayerControl,
+    profile: CellMesh,
+    cap_points: np.ndarray,
+    /,
+) -> None:
+    """Consume the exact wall/cap/volume declarations of the source slab."""
+    if not isinstance(domain, PiecewiseLinearDomain):
+        raise ValueError(
+            "Native EXACT_SWEEP requires its independently authored piecewise-linear source slab."
+        )
+    cap, volume = control.cap_scope, control.volume_scope
+    if (
+        cap is None
+        or volume is None
+        or control.wall_scope.entity_kind is not MeshingEntityKind.GEOMETRY
+    ):
+        raise ValueError(
+            "Native EXACT_SWEEP requires geometry-bound source wall, cap, and volume scopes."
+        )
+    for scope in (control.wall_scope, cap, volume):
+        if (scope.source_id, scope.source_revision) != (
+            domain.source_id,
+            domain.source_revision,
+        ):
+            raise ValueError(
+                "Exact sweep scopes must bind their actual source slab revision."
+            )
+    if not np.array_equal(
+        np.asarray(volume.entity_ids), np.arange(len(domain.region_ids), dtype=np.int64)
+    ):
+        raise ValueError(
+            "Exact sweep volume scope must cover every region of its source slab."
+        )
+    faces, arity = _mesh_faces(profile)
+    triangles, _ = _split_polygons(faces, arity)
+    for scope, points in (
+        (control.wall_scope, np.asarray(profile.coordinates)),
+        (cap, cap_points),
+    ):
+        source_rows = np.asarray(scope.entity_ids, dtype=np.int64)
+        if np.any(source_rows < 0) or np.any(source_rows >= domain.facets.shape[0]):
+            raise ValueError(
+                "Exact sweep wall/cap scope names facets absent from its source slab."
+            )
+        # Vertex tuples are exact binary64 source values. Sorting removes only
+        # face orientation, not geometry, triangulation, or multiplicity.
+        actual = sorted(
+            tuple(sorted(tuple(point) for point in points[row])) for row in triangles
+        )
+        declared = sorted(
+            tuple(sorted(tuple(point) for point in domain.vertices[row]))
+            for row in domain.facets[source_rows]
+        )
+        if actual != declared:
+            raise ValueError(
+                "Exact swept wall and cap must retain every declared source facet exactly."
+            )
+
+
+def _prepare_swept_boundary_layers(
+    wall: CellMesh,
+    control: BoundaryLayerControl,
+    sweep: SweepControl,
+    /,
+    *,
+    wall_association: GeometryAssociation | None,
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None,
+    policy: BoundaryLayerPolicy | None,
+    certificate_limits: MeshCertificateLimits | None,
+) -> BoundaryLayerMesh:
+    """Assemble an independent native extrusion with canonical layer identities."""
+    if not isinstance(sweep, SweepControl):
+        raise TypeError("sweep_control must be SweepControl.")
+    if sweep.kind is not SweepMapKind.EXTRUSION or sweep.closed:
+        raise ValueError("Exact boundary layers require an open native EXTRUSION.")
+    if sweep.schedule.schedule_id != control.schedule.schedule_id:
+        raise ValueError(
+            "The exact sweep must own the boundary-layer control's original schedule."
+        )
+    policy_ = BoundaryLayerPolicy(simplex_cap=False) if policy is None else policy
+    if not isinstance(policy_, BoundaryLayerPolicy):
+        raise TypeError("policy must be BoundaryLayerPolicy or None.")
+    if policy_.simplex_cap:
+        raise ValueError(
+            "Exact sweep authoring retains its original cap rather than adding transition pyramids."
+        )
+    grow = _wall_selection(wall, control, wall_association, source_domain)
+    faces, arity = _mesh_faces(wall)
+    faces, arity = faces[grow], arity[grow]
+    if not faces.shape[0]:
+        raise ValueError("An exact sweep requires selected source wall cells.")
+    points = np.asarray(wall.coordinates, dtype=np.float64)
+    axis = np.asarray(sweep.axis, dtype=np.float64)
+    normals, _ = _newell_normals(points, faces, arity)
+    if not np.allclose(normals, axis[None, :], atol=1e-12, rtol=0.0):
+        raise ValueError(
+            "Exact boundary-layer extrusion requires planar walls oriented along its declared axis."
+        )
+    source_vertices = np.unique(faces[faces >= 0])
+    local = np.full(points.shape[0], -1, dtype=np.int64)
+    local[source_vertices] = np.arange(source_vertices.size)
+    profile_blocks = tuple(
+        CellBlock(_BLOCK_NAMES[kind], kind, local[faces[arity == size, :size]])
+        for kind, size in (("triangle", 3), ("quadrilateral", 4))
+        if np.any(arity == size)
+    )
+    # Sweep profiles intentionally have no quotient descriptor: the exact
+    # station/source ancestry below lifts the original wall orbits to the volume.
+    profile = CellMesh(points[source_vertices], profile_blocks)
+    construction = generate_sweep(profile, sweep, certificate_limits=certificate_limits)
+    level_points = np.asarray(construction.mesh.coordinates, dtype=np.float64).reshape(
+        len(control.schedule.thicknesses) + 1,
+        source_vertices.size,
+        3,
+    )
+    _require_sweep_scope_binding(source_domain, control, profile, level_points[-1])
+    from ._reference_root_composition import affine_reference_root_frame
+
+    for block in construction.mesh.blocks:
+        for vertices in np.asarray(block.vertices):
+            affine_reference_root_frame(
+                np.asarray(construction.mesh.coordinates)[vertices], block.cell_kind
+            )
+    cells = {
+        kind: np.empty((0, _CELL_ARITY[kind]), dtype=np.int64) for kind in _VOLUME_KINDS
+    }
+    layer_indices, column_indices = [], []
+    layers = len(control.schedule.thicknesses)
+    for block in construction.mesh.blocks:
+        cells[block.cell_kind] = np.asarray(block.vertices, dtype=np.int64)
+        size = 3 if block.cell_kind == "prism" else 4
+        parents = np.flatnonzero(arity == size)
+        layer_indices.append(np.repeat(np.arange(layers, dtype=np.int32), parents.size))
+        column_indices.append(np.tile(parents, layers))
+    mesh, retained = _cell_mesh(
+        np.asarray(construction.mesh.coordinates, dtype=np.float64), cells
+    )
+    cap_faces = np.where(
+        faces >= 0, local[np.maximum(faces, 0)] + layers * source_vertices.size, -1
+    )
+    cap, cap_vertices = _cap_mesh(np.asarray(mesh.coordinates), cap_faces, arity)
+    if wall.periodic_topology is not None:
+        topology = wall.periodic_topology
+        base_roots = np.asarray(topology.vertex_representatives, dtype=np.int64)[
+            source_vertices
+        ]
+        base_shifts = np.asarray(topology.vertex_shifts, dtype=np.int64)[source_vertices]
+        roots = (
+            base_roots[None, :]
+            + np.arange(layers + 1, dtype=np.int64)[:, None] * points.shape[0]
+        ).reshape(-1)
+        shifts = np.tile(base_shifts, (layers + 1, 1))
+        mesh = _bind_layer_periodic_mesh(wall, mesh, retained, roots, shifts)
+        if cap is not None:
+            cap = _bind_layer_periodic_mesh(wall, cap, cap_vertices, roots, shifts)
+    certificate = certify_cell_geometry_validity(mesh, policy=policy_.validity)
+    level_points = np.asarray(mesh.coordinates, dtype=np.float64).reshape(
+        layers + 1, source_vertices.size, 3
+    )
+    evidence = _sweep_layer_evidence(
+        wall,
+        faces,
+        arity,
+        source_vertices,
+        level_points,
+        mesh,
+        certificate,
+        control,
+        axis,
+    )
+    wall_vertices = np.full(points.shape[0], -1, dtype=np.int64)
+    wall_vertices[source_vertices] = np.arange(source_vertices.size)
+    return BoundaryLayerMesh(
+        mesh,
+        cap,
+        wall_vertices,
+        cap_vertices,
+        np.concatenate(layer_indices),
+        certificate,
+        evidence,
+        column_index=np.concatenate(column_indices),
+        control=control,
+        source_wall=wall,
+        wall_association=wall_association,
+        source_domain=source_domain,
+        policy_id=canonical_fingerprint(
+            {
+                "kind": "exact-sweep-boundary-layer-policy",
+                "policy": policy_.policy_id,
+                "sweep": construction.control_id,
+            }
+        ),
     )
 
 
@@ -2264,23 +3131,48 @@ def prepare_boundary_layers(
     control: BoundaryLayerControl,
     /,
     *,
+    wall_association: GeometryAssociation | None = None,
+    source_domain: MeshingDomain | PiecewiseLinearDomain | None = None,
     obstacles: CellMesh | None = None,
     policy: BoundaryLayerPolicy | None = None,
+    sweep_control: SweepControl | None = None,
+    certificate_limits: MeshCertificateLimits | None = None,
 ) -> BoundaryLayerMesh:
-    """Grow the ADVANCING layers of ``control`` from an oriented surface mesh.
+    """Realize native ADVANCING or explicitly authored EXACT_SWEEP layers.
 
     ``wall`` is a triangle/quadrilateral surface in three dimensions whose face
-    orientation points in the growth direction. ``control.wall_scope`` must bind
-    its cells; unselected cells are fixed adjacent surfaces along which rim
-    columns slide. ``obstacles`` are further fixed surfaces the layers must not
-    cross (their orientation is irrelevant).
+    orientation points in the growth direction. ``control.wall_scope`` binds
+    its cells. EXACT_SWEEP requires an EXTRUSION ``sweep_control`` with the same
+    schedule; its independently authored stations are never obtained from
+    numerically advanced physical columns. Both routes publish freshly measured
+    wall-distance evidence and retain authoritative wall/source ownership.
     """
     if not isinstance(wall, CellMesh):
         raise TypeError("wall must be CellMesh.")
     if not isinstance(control, BoundaryLayerControl):
         raise TypeError("control must be BoundaryLayerControl.")
+    if control.route is BoundaryLayerRoute.EXACT_SWEEP:
+        if sweep_control is None:
+            raise ValueError("EXACT_SWEEP requires its explicit native SweepControl.")
+        if obstacles is not None:
+            raise ValueError("EXACT_SWEEP does not admit advancing obstacle resolution.")
+        return _prepare_swept_boundary_layers(
+            wall,
+            control,
+            sweep_control,
+            wall_association=wall_association,
+            source_domain=source_domain,
+            policy=policy,
+            certificate_limits=certificate_limits,
+        )
     if control.route is not BoundaryLayerRoute.ADVANCING:
-        raise ValueError("prepare_boundary_layers realizes ADVANCING controls only.")
+        raise ValueError(
+            "prepare_boundary_layers realizes ADVANCING and EXACT_SWEEP controls only."
+        )
+    if sweep_control is not None or certificate_limits is not None:
+        raise ValueError(
+            "Native sweep inputs require an EXACT_SWEEP boundary-layer control."
+        )
     if obstacles is not None and not isinstance(obstacles, CellMesh):
         raise TypeError("obstacles must be CellMesh or None.")
     policy_ = BoundaryLayerPolicy() if policy is None else policy
@@ -2288,21 +3180,9 @@ def prepare_boundary_layers(
         raise TypeError("policy must be BoundaryLayerPolicy or None.")
     if wall.topological_dimension != 2 or wall.ambient_dimension != 3:
         raise ValueError("Boundary-layer walls are surfaces in three dimensions.")
-    scope = control.wall_scope
-    cells = wall.entity_set(2)
-    if (
-        scope.entity_kind is not MeshingEntityKind.MESH
-        or scope.source_id != wall.mesh_id
-        or scope.source_revision != wall.numeric_version
-        or scope.entity_set_id != cells.entity_set_id
-    ):
-        raise ValueError("control.wall_scope must bind the cells of the wall mesh.")
-    selected = np.asarray(scope.entity_ids, dtype=np.int64)
-    identifiers = np.sort(np.asarray(cells.entity_ids, dtype=np.int64))
-    if np.setdiff1d(selected, identifiers).size:
-        raise ValueError("control.wall_scope selects cells absent from the wall mesh.")
+    grow = _wall_selection(wall, control, wall_association, source_domain)
     faces, arity = _mesh_faces(wall)
-    grow = np.isin(identifiers, selected)
+    # Face rows and the resolved physical selection share global cell ID order.
     if obstacles is None:
         obstacle_points = np.empty((0, 3))
         obstacle_triangles = np.empty((0, 3), dtype=np.int64)
@@ -2321,6 +3201,9 @@ def prepare_boundary_layers(
         obstacle_triangles,
         control,
         policy_,
+        source_wall=wall,
+        wall_association=wall_association,
+        source_domain=source_domain,
     )
 
 

@@ -90,7 +90,6 @@ def surface_chemistry_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"formulation": formulation}),),
             required_gates=("site-balance", "analytic-control", "public-workflow"),
         )

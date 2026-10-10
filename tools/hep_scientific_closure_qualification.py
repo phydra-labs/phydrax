@@ -26,7 +26,6 @@ def qualification_record() -> Any:
         support_attributes={"profile": "reference", "device": "cpu", "dtype": "float64"},
         profile_name="hep.scientific-closure.reference",
         provider="phydrax",
-        provider_version="current",
         release_evidence=(),
         released=False,
         campaign_id="hep-scientific-closure-campaign",

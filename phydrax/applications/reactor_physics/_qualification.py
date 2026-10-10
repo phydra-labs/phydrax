@@ -13,7 +13,6 @@ def reactor_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     diffusion = CapabilityProfile(
         "reactor.diffusion.one-dimensional-multigroup",
         "phydrax",
-        "candidate",
         (
             SupportTuple(
                 "reactor.neutron-diffusion",
@@ -36,7 +35,6 @@ def reactor_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     kinetics = CapabilityProfile(
         "reactor.kinetics.point-delayed-neutron",
         "phydrax",
-        "candidate",
         (
             SupportTuple(
                 "reactor.point-kinetics",

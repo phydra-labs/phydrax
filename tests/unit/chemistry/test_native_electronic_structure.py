@@ -28,9 +28,7 @@ def _hydrogen_dimer() -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        # ty: ignore[invalid-argument-type]
         [_H_EXPONENTS, _H_EXPONENTS],
-        # ty: ignore[invalid-argument-type]
         [_H_COEFFICIENTS, _H_COEFFICIENTS],
         source_id="sto-3g-hydrogen-fixture",
     ).prepare(system)
@@ -47,7 +45,6 @@ def test_contracted_gaussian_integrals_obey_normalization_and_permutation_symmet
     integrals = phx.operators.quantum.gaussian.molecular_integrals(
         basis,
         positions_bohr,
-        # ty: ignore[invalid-argument-type]
         [1.0, 1.0],
     )
 

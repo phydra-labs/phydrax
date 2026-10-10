@@ -17,6 +17,7 @@ import zlib
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import cast, Iterator, Protocol
 
@@ -53,6 +54,23 @@ _METADATA_LIMIT = 8 * 1024 * 1024
 _POINTER_LIMIT = 64 * 1024
 _DEFAULT_CHUNK_LIMIT = 64 * 1024 * 1024
 FailureInjector = Callable[[str], None]
+
+
+@lru_cache(maxsize=8)
+def _parsed_manifest(payload: bytes, /) -> ArtifactManifest:
+    """Reuse decoding of identical bounded bytes, never a mutable artifact path.
+
+    Readers still check current pointer, payload checksum, commit marker, and
+    immutable-root ownership on every access. Eight metadata-sized entries bound
+    retained bytes independently of the number of restored arrays.
+    """
+    return ArtifactManifest.from_record(_json_record(payload))
+
+
+def _read_manifest_record(payload: bytes, /) -> ArtifactManifest:
+    if len(payload) > _METADATA_LIMIT:
+        return ArtifactManifest.from_record(_json_record(payload))
+    return _parsed_manifest(payload)
 
 
 class HPCFilesystemProfile(StrictModule, NonTrainableState):
@@ -1106,7 +1124,7 @@ class POSIXArtifactRepository:
         )
         if hashlib.sha256(manifest_payload).hexdigest() != pointer["manifest_sha256"]:
             raise RepositoryCorruptionError("Artifact manifest checksum failed.")
-        manifest = ArtifactManifest.from_record(_json_record(manifest_payload))
+        manifest = _read_manifest_record(manifest_payload)
         if (
             manifest.manifest_id != pointer["manifest_id"]
             or manifest.transaction_id != pointer["transaction_id"]
@@ -1780,7 +1798,7 @@ class S3ArtifactRepository:
         ).data
         if hashlib.sha256(manifest_payload).hexdigest() != pointer["manifest_sha256"]:
             raise RepositoryCorruptionError("Artifact manifest checksum failed.")
-        manifest = ArtifactManifest.from_record(_json_record(manifest_payload))
+        manifest = _read_manifest_record(manifest_payload)
         if (
             manifest.manifest_id != pointer["manifest_id"]
             or manifest.transaction_id != pointer["transaction_id"]

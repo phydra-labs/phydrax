@@ -60,10 +60,10 @@ narrow, evidence-free candidates:
 - `protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical`
 - `rna.ensemble.adenine-riboswitch.declared-protocol.canonical`
 
-Every returned `CapabilityProfile` has `released=False` and default version
-`candidate`. A candidate name is not release evidence and is not discoverable as
-a qualified capability until an externally signed/reviewed release path supplies
-all required gates.
+Every returned `CapabilityProfile` has `released=False`. Profiles identify their
+provider and exact support tuples without an internal version field. A candidate
+name is not release evidence and is not discoverable as a qualified capability
+until an externally signed/reviewed release path supplies all required gates.
 
 ::: phydrax.qualification
     options:

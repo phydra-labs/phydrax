@@ -73,10 +73,14 @@ Integral homology uses chain-compatible Smith transformations: incoming boundari
 are expressed in an exact kernel basis before torsion invariant factors are computed.
 It never infers torsion from selected finite fields.
 
-`CertifiedImplicitCover` consumes externally established interval value and gradient
-bounds. `CertifiedImplicitTopology` binds those bounds to a finite topology and an
-explicit theorem identifier. Failure to establish regularity leaves certification
-false.
+`CertifiedImplicitCover` binds interval value and gradient-component bounds to a
+source id, design-state id and declared box domain, and decides exactly whether the
+boxes tile that domain. Covers built by the public constructor record
+`bound_origin="user_supplied"`; `establish_implicit_cover` derives Lipschitz
+enclosures from owner-established field bounds. `CertifiedImplicitTopology` checks a
+named premise (`regular_value` or the Plantinga-Vegter `small_normal_variation`) on
+every box and is certified only for a complete cover satisfying it; `established`
+reports whether the bounds were supplied or established.
 
 `CellMapEnclosure` is an outer multivalued cell map with a declared index pair.
 `compute_conley_homology_index` computes relative homology only after isolation

@@ -84,7 +84,6 @@ def _candidate(domain_ok: Any = True, ledger_ok: Any = True) -> Any:
     return CapabilityProfile(
         "battery.oed-model-candidate",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     ), support
@@ -414,7 +413,6 @@ def _trusted_model_contract(calibration: Any, *, trust_key: Any = b"oed-secret")
     profile_coordinates = {
         "provider": "phydrax-tests",
         "name": "battery.linear-oed-model",
-        "version": "1",
     }
     release_subject_id = canonical_fingerprint(
         {
@@ -493,7 +491,6 @@ def _trusted_model_contract(calibration: Any, *, trust_key: Any = b"oed-secret")
     profile = CapabilityProfile(
         profile_coordinates["name"],
         profile_coordinates["provider"],
-        profile_coordinates["version"],
         (release_support,),
         required_gates=("smoothness", "derivative"),
         release_evidence=gates,
@@ -1002,7 +999,6 @@ def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejecte
     zero_gate_profile = CapabilityProfile(
         profile.name,
         profile.provider,
-        profile.version,
         (support,),
         released=True,
     )
@@ -1052,7 +1048,6 @@ def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejecte
     wrong_citation_profile = CapabilityProfile(
         profile.name,
         profile.provider,
-        profile.version,
         (support,),
         required_gates=("smoothness", "derivative"),
         release_evidence=wrong_citation_gates,
@@ -1084,7 +1079,6 @@ def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejecte
     unreleased = CapabilityProfile(
         "battery.unreleased-linear-oed",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     )

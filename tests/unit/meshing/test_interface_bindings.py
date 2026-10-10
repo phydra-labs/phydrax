@@ -44,20 +44,20 @@ def _rectangle(x0: float, x1: float) -> TopoDS_Face:
     return BRepBuilderAPI_MakeFace(polygon.Wire()).Face()
 
 
-def _plate_projection(width: float) -> phx.geometry.PreparedBRepProjection:
+def _plate_projection(width: float) -> phx.interchange.PreparedOcctProjection:
     """Two rectangles sharing the B-Rep edge x = 0; ``width`` sets the right one."""
     shape = BRepAlgoAPI_Fuse(_rectangle(-1.0, 0.0), _rectangle(0.0, width)).Shape()
-    model = phx.geometry.model_from_occt_shape(
+    model = phx.interchange.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         linear_deflection=0.05,
         angular_deflection=0.2,
     )
-    return phx.geometry.prepare_brep_projection(model, shape, embedding=_EMBEDDING)
+    return phx.interchange.prepare_occt_projection(model, shape, embedding=_EMBEDDING)
 
 
 def _entity_at(
-    projection: phx.geometry.PreparedBRepProjection,
+    projection: phx.interchange.PreparedOcctProjection,
     dimension: int,
     point: tuple[float, float],
 ) -> str:
@@ -100,7 +100,7 @@ class PlateSide:
 
 
 def _plate_side(
-    projection: phx.geometry.PreparedBRepProjection,
+    projection: phx.interchange.PreparedOcctProjection,
     name: str,
     bounds: tuple[float, float],
     count: int,
@@ -165,7 +165,7 @@ def _wall(side: PlateSide, wall_entity: str) -> MeshInterfaceAttachment:
 class Plate:
     """Two independently meshed parts of one two-face B-Rep revision."""
 
-    projection: phx.geometry.PreparedBRepProjection
+    projection: phx.interchange.PreparedOcctProjection
     wall_entity: str
     left_face: str
     source: InterfaceSource

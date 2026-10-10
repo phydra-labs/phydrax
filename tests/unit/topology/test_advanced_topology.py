@@ -289,13 +289,18 @@ def test_advanced_topology_scenario_4() -> None:
         jnp.asarray([[[0.0], [1.0]], [[1.0], [2.0]]]),
         jnp.asarray([-1.0, 1.0]),
         jnp.asarray([1.0, 2.0]),
-        jnp.asarray([0.5, 0.0]),
+        jnp.asarray([[0.5], [-1.0]]),
+        jnp.asarray([[1.5], [1.0]]),
+        domain=jnp.asarray([[0.0], [2.0]]),
+        source_id="interval-field",
+        state_id="state-0",
     )
     certified = phx.geometry.CertifiedImplicitTopology(
         cover,
         complex.topology,
-        theorem="regular-value-box-cover",
+        premise="regular_value",
     )
 
     assert local.homology.degree(2).dimension == 1
-    assert bool(certified.certified)
+    assert certified.certified
+    assert not certified.established

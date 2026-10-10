@@ -17,8 +17,6 @@ from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
 from ..conditions._base import AbstractMomentCondition
 from ..integration import (
     AdaptiveIntegration,
-    CallerIntegration,
-    FixedIntegration,
     IntegrationRealization,
     IntegrationSource,
     PerStepIntegration,
@@ -30,13 +28,6 @@ from ._integrated import (
     checked_estimate_field,
     resolve_term_realization,
     validate_condition_source,
-)
-
-
-_SOURCE_TYPES = (
-    PerStepIntegration,
-    FixedIntegration,
-    CallerIntegration,
 )
 
 
@@ -65,8 +56,6 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
                 "MomentPenalty does not support AdaptiveIntegration; "
                 "solver-managed adaptive collocation requires ResidualPenalty."
             )
-        if not isinstance(source, _SOURCE_TYPES):
-            raise TypeError("MomentPenalty requires a typed IntegrationSource.")
         if isinstance(source, PerStepIntegration) and _requires_random_key(source.plan):
             raise ValueError(
                 "MomentPenalty cannot square a resampled stochastic integration "

@@ -28,7 +28,6 @@ def soap_film_tunnel_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 "terminal-velocity-uniform-flow",

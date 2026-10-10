@@ -1,9 +1,11 @@
 # Three-dimensional geometry domains
 
-Three-dimensional analytic primitives, simplicial meshes, OCCT B-Reps,
+Three-dimensional analytic primitives, simplicial meshes, native B-Reps,
 fixed-topology differentiable B-Reps, and reconstructed solids all lower to
-`CompiledGeometry`. `phydrax.domain.GeometryDomain` is the thin labeled adapter
-used by fields, components, integration, constraints, and sampling.
+`CompiledGeometry`. Live OCCT shapes are a separate optional interchange
+boundary, not the native B-Rep representation or a query fallback.
+`phydrax.domain.GeometryDomain` is the thin labeled adapter used by fields,
+components, integration, constraints, and sampling.
 
 ```python
 import phydrax as phx
@@ -29,15 +31,19 @@ arrays, `TriangleMesh`, Meshio data, or Meshio-supported paths. Surface meshes
 must be finite, nondegenerate, consistently oriented, watertight, and enclose
 nonzero volume.
 
-STEP, IGES, and BREP input lowers to `BRepSource`, preserving face patches,
-trims, topology identities, and import provenance:
+Native STEP and IGES readers, plus the native codec for supported externally
+defined OCCT BRep text profiles, return `CadImportResult.model` while preserving
+their exact represented face/edge carriers, trims, topology identities, units,
+coverage, and import provenance. The BRep text format name does not imply that
+an OCCT runtime was loaded. Pass the model to `BRepSource`; query tessellations
+do not replace exact CAD authority. Native construction uses the same model
+contract:
 
 ```python
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-
-model = phx.geometry.model_from_occt_shape(
-    BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
-    linear_deflection=0.1,
+model = phx.geometry.brep_box(
+    (0.0, 0.0, 0.0),
+    (1.0, 2.0, 3.0),
+    coordinate_contract=phx.SpatialCoordinateContract.si(),
 )
 solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())
 print(solid.geometry.field_certificate)

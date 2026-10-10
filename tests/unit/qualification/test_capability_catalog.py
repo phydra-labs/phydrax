@@ -24,7 +24,6 @@ def _candidate(capability: str = "core.linear-solve") -> CapabilityProfile:
     return CapabilityProfile(
         f"{capability}.profile",
         "phydrax",
-        "candidate",
         (SupportTuple(capability, {"precision": "float64"}),),
         required_gates=("numerical",),
     )
@@ -133,7 +132,6 @@ def test_capability_catalog_scenario_1() -> None:
     profile = CapabilityProfile(
         "core.linear-solve.profile",
         "phydrax",
-        "1",
         (support,),
         required_gates=gates,
         release_evidence=release_evidence,
@@ -177,7 +175,6 @@ def test_capability_catalog_scenario_2() -> None:
     profile = CapabilityProfile(
         "core.linear-solve.profile",
         "phydrax",
-        "1",
         (support,),
         required_gates=("numerical",),
         release_evidence=(gate,),
@@ -196,7 +193,7 @@ def test_capability_catalog_scenario_2() -> None:
     from phydrax.rom import rom_capability_catalog
 
     expected = {
-        entry.profile(provider="phydrax", version="candidate").capability: (
+        entry.profile(provider="phydrax").capability: (
             entry.maturity.name.lower().replace("_", "-")
         )
         for entry in rom_capability_catalog()
@@ -208,3 +205,37 @@ def test_capability_catalog_scenario_2() -> None:
     }
 
     assert declared == expected
+
+
+def test_native_meshing_catalog_keeps_qualification_and_leadership_open() -> None:
+    from phydrax.qualification import builtin_capability_catalog
+
+    declarations = tuple(
+        declaration
+        for declaration in builtin_capability_catalog().declarations
+        if declaration.capability.startswith("meshing.native.")
+    )
+    assert declarations
+    for declaration in declarations:
+        assert declaration.disposition in (
+            CapabilityDisposition.CANDIDATE,
+            CapabilityDisposition.RESEARCH,
+        )
+        assert all(not profile.released for profile in declaration.profiles)
+        assert "docs/guides_meshing.md" in declaration.documentation
+        assert (
+            "focused-test-and-tooling-passes-are-not-final-qualification-artifacts"
+            in declaration.nonclaims
+        )
+        assert "final-like-for-like-leadership-campaign-not-run" in declaration.nonclaims
+
+    for capability in (
+        "meshing.native.mandatory-periodic-combination",
+        "meshing.native.mandatory-hybrid-layers",
+    ):
+        declaration = next(item for item in declarations if item.capability == capability)
+        assert declaration.disposition is CapabilityDisposition.CANDIDATE
+        assert (
+            "historical-curved-periodic-narrow-gap-source-remains-an-immutable-exact-negative"
+            in declaration.nonclaims
+        )

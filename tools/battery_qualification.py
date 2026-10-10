@@ -101,7 +101,6 @@ _PROFILE_FIELDS = frozenset(
         "kind",
         "name",
         "provider",
-        "version",
         "support_tuples",
         "dependencies",
         "required_gates",

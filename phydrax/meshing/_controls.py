@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellMesh
+from ..geometry.brep._patches import AbstractCurve, AbstractSurfacePatch
 from ..typing import checked
 from . import _organization
 from ._metric import MeshMetricField
@@ -548,12 +550,77 @@ class BoundaryLayerControl(StrictModule, NonTrainableState):
         )
 
 
+def _bound_periodic_orbits(
+    source_scope: MeshingScope,
+    target_scope: MeshingScope,
+    source_entity_ids: ArrayLike | None,
+    orientations: ArrayLike | None,
+    identity: bool,
+    /,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Validate explicit target-to-source entity orbits and their witnesses."""
+
+    if source_entity_ids is None:
+        if orientations is not None:
+            raise ValueError("Periodic orientations require explicit source_entity_ids.")
+        return None, None
+    targets = np.asarray(target_scope.entity_ids)
+    paired = np.asarray(source_entity_ids)
+    if not np.issubdtype(paired.dtype, np.integer) or paired.shape != targets.shape:
+        raise ValueError(
+            "source_entity_ids must hold one integer source entity per target entity."
+        )
+    paired = paired.astype(np.int64)
+    if (
+        source_scope.entity_dimension != target_scope.entity_dimension
+        or not np.array_equal(np.sort(paired), np.asarray(source_scope.entity_ids))
+    ):
+        raise ValueError(
+            "Bound periodic orbits must pair equal-dimension scopes bijectively."
+        )
+    if (
+        not identity
+        and source_scope.scope_id == target_scope.scope_id
+        and np.any(paired == targets)
+    ):
+        raise ValueError(
+            "A periodic entity cannot be its own image under a non-identity transform."
+        )
+    if source_scope.entity_dimension == 0:
+        if orientations is not None:
+            raise ValueError("Point orbits carry no orientation witnesses.")
+        return paired, None
+    if orientations is None:
+        raise ValueError("Bound edge and face orbits require orientation witnesses.")
+    signs = np.asarray(orientations)
+    if (
+        not np.issubdtype(signs.dtype, np.integer)
+        or signs.shape != targets.shape
+        or np.any(np.abs(signs) != 1)
+    ):
+        raise ValueError("Periodic orientation witnesses must be ±1 per bound pair.")
+    return paired, signs.astype(np.int32)
+
+
 class PeriodicConstraint(StrictModule, NonTrainableState):
+    """Periodic identification of two source scopes under one affine isometry.
+
+    ``transform`` maps source to target coordinates and must be a homogeneous
+    Euclidean isometry; ``orientation_preserving`` records whether its linear
+    part is proper. Optional ``source_entity_ids`` bind explicit entity orbits:
+    one source entity per target-scope entity, in target order, with ``±1``
+    ``orientations`` for edges and faces. Unbound constraints leave the pairing
+    to the realizing provider's geometric correspondence.
+    """
+
     source_scope: MeshingScope
     target_scope: MeshingScope
     transform: Array
+    source_entity_ids: Array | None
+    orientations: Array | None
     tolerance: float = eqx.field(static=True)
     conforming_required: bool = eqx.field(static=True)
+    orientation_preserving: bool = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -565,6 +632,8 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
         *,
         tolerance: float = 1.0e-10,
         conforming_required: bool = True,
+        source_entity_ids: ArrayLike | None = None,
+        orientations: ArrayLike | None = None,
     ) -> None:
         if not isinstance(source_scope, MeshingScope) or not isinstance(
             target_scope, MeshingScope
@@ -580,26 +649,50 @@ class PeriodicConstraint(StrictModule, NonTrainableState):
             np.eye(matrix.shape[0])[-1],
         ):
             raise ValueError("Periodic transform must be finite and homogeneous.")
-        if abs(np.linalg.det(matrix[:-1, :-1])) <= np.finfo(np.float64).eps:
+        linear = matrix[:-1, :-1]
+        determinant = np.linalg.det(linear)
+        if abs(determinant) <= np.finfo(np.float64).eps:
             raise ValueError("Periodic transform must be invertible.")
+        # Periodic identification preserves lengths; the bound covers rounding
+        # of an orthonormal matrix assembled from trigonometric values.
+        if not np.allclose(
+            linear.T @ linear,
+            np.eye(linear.shape[0]),
+            rtol=0.0,
+            atol=128.0 * np.finfo(np.float64).eps,
+        ):
+            raise ValueError("Periodic transform must be a Euclidean isometry.")
         threshold = float(tolerance)
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("Periodic tolerance must be finite and non-negative.")
+        paired, signs = _bound_periodic_orbits(
+            source_scope,
+            target_scope,
+            source_entity_ids,
+            orientations,
+            bool(np.array_equal(matrix, np.eye(matrix.shape[0]))),
+        )
         self.source_scope = source_scope
         self.target_scope = target_scope
         self.transform = jnp.asarray(matrix)
+        self.source_entity_ids = None if paired is None else jnp.asarray(paired)
+        self.orientations = None if signs is None else jnp.asarray(signs)
         self.tolerance = threshold
         self.conforming_required = bool(conforming_required)
-        self.constraint_id = canonical_fingerprint(
-            {
-                "kind": "periodic-meshing-constraint",
-                "source_scope": source_scope.scope_id,
-                "target_scope": target_scope.scope_id,
-                "transform": array_tree_fingerprint(matrix),
-                "tolerance": threshold,
-                "conforming_required": bool(conforming_required),
-            }
-        )
+        self.orientation_preserving = bool(determinant > 0.0)
+        identity = {
+            "kind": "periodic-meshing-constraint",
+            "source_scope": source_scope.scope_id,
+            "target_scope": target_scope.scope_id,
+            "transform": array_tree_fingerprint(matrix),
+            "tolerance": threshold,
+            "conforming_required": bool(conforming_required),
+        }
+        if paired is not None:
+            identity["orbits"] = array_tree_fingerprint(
+                {"source_entity_ids": paired, "orientations": signs}
+            )
+        self.constraint_id = canonical_fingerprint(identity)
 
 
 class BackgroundMetricMode(StrEnum):
@@ -745,6 +838,198 @@ class SurfaceReconstructionControl(StrictModule, NonTrainableState):
         )
 
 
+@final
+class TransfiniteCurveControl(StrictModule, NonTrainableState):
+    """An explicitly oriented, trimmed source curve and exact interval count."""
+
+    curve: AbstractCurve
+    source_id: str = eqx.field(static=True)
+    parameter_range: tuple[float, float] = eqx.field(static=True)
+    intervals: int = eqx.field(static=True)
+    reversed: bool = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        curve: AbstractCurve,
+        source_id: str,
+        parameter_range: tuple[float, float],
+        intervals: int,
+        /,
+        *,
+        reversed: bool = False,
+    ) -> None:
+        if not isinstance(curve, AbstractCurve):
+            raise TypeError("curve must be an AbstractCurve.")
+        if not isinstance(source_id, str) or not isinstance(reversed, bool):
+            raise TypeError(
+                "Curve source identity must be a string and reversed must be bool."
+            )
+        if not source_id.strip():
+            raise ValueError("A transfinite curve requires explicit source identity.")
+        if isinstance(intervals, bool) or not isinstance(intervals, int) or intervals < 1:
+            raise ValueError("intervals must be a positive integer.")
+        bounds = curve.validate_range(*parameter_range)
+        self.curve = curve
+        self.source_id = source_id
+        self.parameter_range = bounds
+        self.intervals = intervals
+        self.reversed = bool(reversed)
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "transfinite-curve-control",
+                "source": source_id,
+                "curve": array_tree_fingerprint(curve),
+                "range": bounds,
+                "intervals": intervals,
+                "reversed": self.reversed,
+            }
+        )
+
+
+@final
+class TransfiniteSurfaceControl(StrictModule, NonTrainableState):
+    """A source face chart mapped to the two increasing logical face axes."""
+
+    surface: AbstractSurfacePatch
+    parameter_box: Array
+    source_id: str = eqx.field(static=True)
+    intervals: tuple[int, int] = eqx.field(static=True)
+    permutation: tuple[int, int] = eqx.field(static=True)
+    flips: tuple[bool, bool] = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        surface: AbstractSurfacePatch,
+        source_id: str,
+        parameter_box: ArrayLike,
+        intervals: tuple[int, int],
+        /,
+        *,
+        permutation: tuple[int, int] = (0, 1),
+        flips: tuple[bool, bool] = (False, False),
+    ) -> None:
+        if not isinstance(surface, AbstractSurfacePatch):
+            raise TypeError("surface must be an AbstractSurfacePatch.")
+        if not isinstance(source_id, str):
+            raise TypeError("Surface source identity must be a string.")
+        if any(
+            isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
+        ) or any(not isinstance(flip, bool) for flip in flips):
+            raise TypeError(
+                "Surface permutations require integer axes and boolean flips."
+            )
+        if not source_id.strip():
+            raise ValueError("A transfinite face requires explicit source identity.")
+        if len(intervals) != 2 or any(
+            isinstance(n, bool) or not isinstance(n, int) or n < 1 for n in intervals
+        ):
+            raise ValueError("Face intervals must be two positive integers.")
+        if sorted(permutation) != [0, 1] or len(flips) != 2:
+            raise ValueError(
+                "Face orientation requires an axis permutation and two flips."
+            )
+        box = surface.validate_parameter_box(parameter_box)
+        self.surface = surface
+        self.parameter_box = jnp.asarray(box, dtype=jnp.float64)
+        self.source_id = source_id
+        self.intervals = intervals
+        self.permutation = permutation
+        self.flips = (flips[0], flips[1])
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "transfinite-surface-control",
+                "source": source_id,
+                "surface": array_tree_fingerprint(surface),
+                "box": box,
+                "intervals": intervals,
+                "permutation": permutation,
+                "flips": self.flips,
+            }
+        )
+
+
+@final
+class BlockInterfaceControl(StrictModule, NonTrainableState):
+    """Exact logical face gluing; no geometric proximity implies adjacency.
+
+    Faces are ``2 * axis + side``. The permutation transposes the second face
+    into first-face axes; flips then reverse those axes. ``conforming=False``
+    leaves both carriers independent and requires a declared MeshCoupling.
+    """
+
+    first_block: str = eqx.field(static=True)
+    second_block: str = eqx.field(static=True)
+    first_face: int = eqx.field(static=True)
+    second_face: int = eqx.field(static=True)
+    permutation: tuple[int, ...] = eqx.field(static=True)
+    flips: tuple[bool, ...] = eqx.field(static=True)
+    conforming: bool = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        first_block: str,
+        first_face: int,
+        second_block: str,
+        second_face: int,
+        permutation: tuple[int, ...],
+        flips: tuple[bool, ...],
+        /,
+        *,
+        conforming: bool = True,
+        tolerance: float = 1e-12,
+    ) -> None:
+        dimension = len(permutation)
+        if not isinstance(first_block, str) or not isinstance(second_block, str):
+            raise TypeError("Interface block identities must be strings.")
+        if not isinstance(conforming, bool) or any(
+            not isinstance(flip, bool) for flip in flips
+        ):
+            raise TypeError("Interface conformity and flips must be boolean.")
+        if any(
+            isinstance(axis, bool) or not isinstance(axis, int) for axis in permutation
+        ):
+            raise TypeError("Interface permutations require integer axes.")
+        if dimension not in (1, 2) or sorted(permutation) != list(range(dimension)):
+            raise ValueError("Interface permutation must contain each face axis once.")
+        if len(flips) != dimension:
+            raise ValueError("Interface flips must match the face dimension.")
+        if not first_block.strip() or not second_block.strip():
+            raise ValueError("Interfaces require explicit block names.")
+        if any(
+            isinstance(face, bool)
+            or not isinstance(face, int)
+            or not 0 <= face < 2 * (dimension + 1)
+            for face in (first_face, second_face)
+        ):
+            raise ValueError("Interface face is outside the logical block.")
+        tolerance_ = finite_real_scalar(tolerance, "tolerance")
+        if tolerance_ < 0.0:
+            raise ValueError("tolerance must be nonnegative.")
+        self.first_block = first_block
+        self.second_block = second_block
+        self.first_face = first_face
+        self.second_face = second_face
+        self.permutation = permutation
+        self.flips = tuple(bool(value) for value in flips)
+        self.conforming = bool(conforming)
+        self.tolerance = tolerance_
+        self.control_id = canonical_fingerprint(
+            {
+                "kind": "block-interface-control",
+                "first": (first_block, first_face),
+                "second": (second_block, second_face),
+                "permutation": permutation,
+                "flips": self.flips,
+                "conforming": self.conforming,
+                "tolerance": tolerance_,
+            }
+        )
+
+
 __all__ = [
     "BackgroundMetricControl",
     "BackgroundMetricMode",
@@ -761,4 +1046,7 @@ __all__ = [
     "RegionControl",
     "RegionSeed",
     "SurfaceReconstructionControl",
+    "TransfiniteCurveControl",
+    "TransfiniteSurfaceControl",
+    "BlockInterfaceControl",
 ]

@@ -206,12 +206,19 @@ def solve_lineax(
         guesses = initial_guess
     else:
         guesses = initial_guess / state.source_inverse_square_root[:, None]
-    value, status, iterations, condition, matvec_count, adjoint_matvec_count = jax.vmap(
-        solve_one
-    )(
-        jnp.swapaxes(rhs, 0, 1),
-        jnp.swapaxes(guesses, 0, 1),
-    )
+    rhs_columns = jnp.swapaxes(rhs, 0, 1)
+    guess_columns = jnp.swapaxes(guesses, 0, 1)
+    if rhs.shape[1] == 1:
+        # As in the native Krylov backend, one column runs unbatched. A unit
+        # vmap axis shares no work, and XLA CPU YNN reduce fusions that
+        # broadcast across it miscompile `a / sqrt(sum(d * d))` to infinities
+        # (jaxlib 0.11.2), corrupting Lineax CG's periodic true residual.
+        columns = jax.tree.map(
+            lambda item: item[None], solve_one(rhs_columns[0], guess_columns[0])
+        )
+    else:
+        columns = jax.vmap(solve_one)(rhs_columns, guess_columns)
+    value, status, iterations, condition, matvec_count, adjoint_matvec_count = columns
     value = jnp.swapaxes(value, 0, 1)
     if state.source_inverse_square_root is not None:
         value = state.source_inverse_square_root[:, None] * value

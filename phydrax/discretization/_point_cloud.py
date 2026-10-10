@@ -50,6 +50,41 @@ from .meshfree._stencils import (
 from .spatial import MortonAddressPlan
 
 
+def _point_cloud_plan_id(
+    points: np.ndarray,
+    weights: np.ndarray,
+    boundary: np.ndarray,
+    normals: np.ndarray,
+    boundary_weights: np.ndarray | None,
+    neighborhood: MeshfreeNeighborhoodPlan,
+    policy: LocalStencilPolicy,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "point-cloud-plan",
+            "points": array_tree_fingerprint(points),
+            "weights": array_tree_fingerprint(weights),
+            "boundary": array_tree_fingerprint(boundary),
+            "boundary_normals": array_tree_fingerprint(normals),
+            "boundary_weights": (
+                None
+                if boundary_weights is None
+                else array_tree_fingerprint(boundary_weights)
+            ),
+            "neighborhood": neighborhood.plan_id,
+            "approximation": policy.approximation,
+            "degree": policy.polynomial_degree,
+            "phs_power": policy.phs_power,
+            "weight_kernel": policy.weight_kernel,
+            "coordinate_order": policy.coordinate_order,
+            "condition_limit": policy.condition_limit,
+            "amplification_limit": policy.amplification_limit,
+            "acceptance": policy.acceptance,
+        }
+    )
+
+
 @final
 class PointCloudPlan(StrictModule):
     points: Array
@@ -166,32 +201,114 @@ class PointCloudPlan(StrictModule):
         self.neighbors = neighborhood.neighbors
         self.maximum_candidates = neighborhood.maximum_candidates
         self.target_chunk_size = neighborhood.target_chunk_size
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "point-cloud-plan",
-                "points": array_tree_fingerprint(points_),
-                "weights": array_tree_fingerprint(weights),
-                "boundary": array_tree_fingerprint(boundary),
-                "boundary_normals": array_tree_fingerprint(normals),
-                "boundary_weights": (
-                    None
-                    if boundary_weights is None
-                    else array_tree_fingerprint(boundary_weights)
-                ),
-                "neighborhood": neighborhood.plan_id,
-                "approximation": policy.approximation,
-                "degree": policy.polynomial_degree,
-                "phs_power": policy.phs_power,
-                "weight_kernel": policy.weight_kernel,
-                "coordinate_order": policy.coordinate_order,
-                "condition_limit": policy.condition_limit,
-                "amplification_limit": policy.amplification_limit,
-                "acceptance": policy.acceptance,
-            }
+        self.plan_id = _point_cloud_plan_id(
+            points_,
+            weights,
+            boundary,
+            normals,
+            boundary_weights,
+            neighborhood,
+            policy,
         )
 
     def prepare(self, /) -> PreparedPointCloudDiscretization:
         return PreparedPointCloudDiscretization(self)
+
+
+def _require_point_cloud_plan_integrity(plan: PointCloudPlan, /) -> None:
+    """Validate exact retained science without normalizing stored normals again."""
+    if type(plan) is not PointCloudPlan:
+        raise TypeError("Point-cloud integrity requires its exact owning plan.")
+    banks = (plan.points, plan.quadrature_weights, plan.boundary_normals)
+    if plan.boundary_quadrature_weights is not None:
+        banks = (*banks, plan.boundary_quadrature_weights)
+    if any(
+        not isinstance(bank, jax.Array) or not jnp.issubdtype(bank.dtype, jnp.floating)
+        for bank in banks
+    ):
+        raise TypeError(
+            "Retained point geometry and quadrature require real inexact JAX banks."
+        )
+    points = _points(plan.points, "points", unique=True)
+    weights = np.asarray(plan.quadrature_weights, dtype=np.float64)
+    boundary = np.asarray(plan.boundary_mask)
+    normals = np.asarray(plan.boundary_normals, dtype=np.float64)
+    boundary_weights = (
+        None
+        if plan.boundary_quadrature_weights is None
+        else np.asarray(plan.boundary_quadrature_weights, dtype=np.float64)
+    )
+    if (
+        weights.shape != points.shape[:1]
+        or np.any(~np.isfinite(weights))
+        or np.any(weights <= 0.0)
+    ):
+        raise ValueError("Retained point quadrature weights must be finite and positive.")
+    if boundary.dtype != np.dtype(np.bool_) or boundary.shape != points.shape[:1]:
+        raise ValueError(
+            "Retained point boundary mask must be Boolean with shape (points,)."
+        )
+    if normals.shape != points.shape or np.any(~np.isfinite(normals)):
+        raise ValueError("Retained point normals must be finite with point-cloud shape.")
+    lengths = np.linalg.norm(normals[boundary], axis=1)
+    normalization_roundoff = (
+        8 * points.shape[1] * jnp.finfo(plan.boundary_normals.dtype).eps
+    )
+    if np.any(np.abs(lengths - 1.0) > normalization_roundoff):
+        raise ValueError("Retained point boundary normals are not unit-normalized.")
+    if boundary_weights is not None and (
+        boundary_weights.shape != points.shape[:1]
+        or np.any(~np.isfinite(boundary_weights))
+        or np.any(boundary_weights[boundary] <= 0.0)
+        or np.any(boundary_weights[~boundary] != 0.0)
+    ):
+        raise ValueError(
+            "Retained boundary quadrature must be positive only on boundary points."
+        )
+    if type(plan.stencil) is not LocalStencilPolicy:
+        raise TypeError("Retained point plan requires its exact owning stencil policy.")
+    policy = LocalStencilPolicy(
+        approximation=plan.stencil.approximation,
+        polynomial_degree=plan.stencil.polynomial_degree,
+        phs_power=plan.stencil.phs_power,
+        weight_kernel=plan.stencil.weight_kernel,
+        support=plan.stencil.support,
+        coordinate_order=plan.stencil.coordinate_order,
+        condition_limit=plan.stencil.condition_limit,
+        amplification_limit=plan.stencil.amplification_limit,
+        acceptance=plan.stencil.acceptance,
+        chunk_rows=plan.stencil.chunk_rows,
+    )
+    if policy.polynomial_degree < 2:
+        raise ValueError(
+            "Retained point-cloud derivatives require polynomial degree at least two."
+        )
+    neighborhood = MeshfreeNeighborhoodPlan(
+        points,
+        plan.neighbors,
+        source_ids=np.asarray(plan.point_ids),
+        address=plan.address,
+        maximum_candidates=plan.maximum_candidates,
+        target_chunk_size=plan.target_chunk_size,
+        envelope=policy.support,
+    )
+    if neighborhood.neighbors < math.comb(
+        points.shape[1] + policy.polynomial_degree, policy.polynomial_degree
+    ):
+        raise ValueError("Retained point neighbors do not cover the polynomial basis.")
+    identity = _point_cloud_plan_id(
+        points,
+        weights,
+        boundary,
+        normals,
+        boundary_weights,
+        neighborhood,
+        policy,
+    )
+    if identity != plan.plan_id:
+        raise ValueError(
+            "Retained point plan differs from its actual scientific banks and controls."
+        )
 
 
 @final

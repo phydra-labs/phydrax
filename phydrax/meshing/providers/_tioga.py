@@ -19,7 +19,6 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
 from .._assembly import MeshAssembly, MeshPart
-from .._canonical import certify_cell_mesh
 from .._contracts import (
     MeshingCapability,
     MeshingDerivativeMode,
@@ -202,6 +201,10 @@ class TiogaDonorEvidence(StrictModule, NonTrainableState):
         raw_weights: ArrayLike,
         /,
     ) -> None:
+        if coupling.field_query is not None or coupling.donor_weights is None:
+            raise ValueError(
+                "TIOGA comparison evidence requires its explicit vertex-linear stencil mode."
+            )
         cells, weights = (
             np.asarray(donor_cell_ids),
             np.asarray(raw_weights, dtype=np.float64),
@@ -822,55 +825,6 @@ def _provider_info(identity: NativeWorkerIdentity, ranks: int, /) -> MeshingProv
     )
 
 
-def _moved_part(part: MeshPart, coordinates: ArrayLike, /) -> MeshPart:
-    carrier = part.carrier
-    points = np.asarray(coordinates)
-    if points.dtype.kind not in "iuf":
-        raise TypeError("TIOGA motion coordinates must be real arrays.")
-    points = points.astype(np.float64)
-    # ty: ignore[unresolved-attribute]
-    current = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
-    if points.shape != current.shape or not np.all(np.isfinite(points)):
-        raise ValueError(
-            f"TIOGA motion of {part.name!r} requires finite coordinates of shape {current.shape}."
-        )
-    if np.array_equal(points, current):
-        return part
-    # ty: ignore[unresolved-attribute]
-    if carrier.boundary is not None or carrier.associations:
-        raise MeshingFailure(
-            MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-            f"TIOGA motion cannot carry the geometry-bound boundary or associations of {part.name!r}.",
-        )
-    # ty: ignore[unresolved-attribute]
-    mesh = carrier.mesh.with_coordinates(
-        points,
-        numeric_version=canonical_fingerprint(
-            {
-                "kind": "tioga-motion",
-                # ty: ignore[unresolved-attribute]
-                "mesh": carrier.mesh.mesh_id,
-                "coordinates": array_tree_fingerprint(points),
-            }
-        ),
-    )
-    return MeshPart(
-        part.name,
-        certify_cell_mesh(
-            mesh,
-            part.coordinate_contract,
-            # ty: ignore[unresolved-attribute]
-            patches=carrier.patches,
-            # ty: ignore[unresolved-attribute]
-            zones=carrier.zones,
-            # ty: ignore[unresolved-attribute]
-            labels=carrier.labels,
-            # ty: ignore[unresolved-attribute]
-            attributes=carrier.attributes,
-        ),
-    )
-
-
 class TiogaProvider:
     """TIOGA overset assembly through one persistent collective worker session.
 
@@ -1029,7 +983,7 @@ class TiogaProvider:
             )
         provider = _provider_info(identity, self.options.ranks)
         parts = tuple(
-            _moved_part(part, coordinates[part.name])
+            part.with_coordinates(coordinates[part.name], motion_id="tioga-motion")
             if part.name in coordinates
             else part
             for part in previous.assembly.parts

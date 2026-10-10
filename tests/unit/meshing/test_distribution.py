@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_available
 from phydrax.meshing._assembly import MeshPart
 from phydrax.meshing._distribution import MeshDistribution
 
@@ -125,7 +126,7 @@ def test_distribution_scenario_1() -> None:
     part = _cell_part()
     with pytest.raises(TypeError, match="integer vector"):
         phx.discretization.CellPartition(np.asarray([0.2, 1.0]), 2)
-    with pytest.raises(ValueError, match="every partition|Every partition"):
+    with pytest.raises(ValueError, match="must own at least one cell"):
         phx.discretization.CellPartition(np.asarray([0, 0]), 2)
     with pytest.raises(ValueError, match="adjacency reach"):
         MeshDistribution(
@@ -354,7 +355,7 @@ def _brute_force_halos(part: Any, owner: Any, part_count: Any, width: Any) -> An
     return halos
 
 
-def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
+def test_provider_and_metis_routes_take_explicit_ownership_or_fail_closed(
     monkeypatch: Any,
 ) -> None:
     part, _ = _quad_mesh(4, 4)
@@ -370,16 +371,62 @@ def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
     graph = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.GRAPH, 2)
     with pytest.raises(ValueError, match="PROVIDER"):
         phx.meshing.prepare_mesh_distribution(part, policy=graph, ownership=owners)
+    metis = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.METIS, 2)
     with monkeypatch.context() as patched:
         patched.setenv("PHYDRAX_METIS_LIBRARY", "/nonexistent/libmetis.dylib")
         with pytest.raises(phx.meshing.MetisUnavailableError, match="missing"):
-            phx.meshing.prepare_mesh_distribution(part, policy=graph)
+            phx.meshing.prepare_mesh_distribution(part, policy=metis)
 
 
-def test_graph_route_partitions_with_metis_deterministically() -> None:
-    part, _ = _quad_mesh(10, 10)
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
+def test_graph_route_partitions_natively_without_metis(monkeypatch: Any) -> None:
+    monkeypatch.setenv("PHYDRAX_METIS_LIBRARY", "/nonexistent/libmetis.dylib")
+    part, _ = _quad_mesh(12, 12)
     policy = phx.meshing.MeshPartitionPolicy(
         phx.meshing.MeshPartitionKind.GRAPH, 4, maximum_imbalance=1.1
+    )
+    first = phx.meshing.prepare_mesh_distribution(part, policy=policy)
+    second = phx.meshing.prepare_mesh_distribution(part, policy=policy)
+    np.testing.assert_array_equal(first.partition.cell_owner, second.partition.cell_owner)
+    assert np.unique(np.asarray(first.partition.cell_owner)).size == 4
+    assert first.evidence.kind is phx.meshing.MeshPartitionKind.GRAPH
+    assert first.evidence.provenance.startswith("graph-multilevel:balanced:")
+    assert float(first.evidence.imbalance) <= 1.1
+    curve = phx.meshing.prepare_mesh_distribution(
+        part,
+        policy=phx.meshing.MeshPartitionPolicy(
+            phx.meshing.MeshPartitionKind.HILBERT, 4, maximum_imbalance=1.1
+        ),
+    )
+    assert int(first.evidence.edge_cut) <= int(curve.evidence.edge_cut)
+    with pytest.raises(phx.meshing.MetisUnavailableError):
+        phx.meshing.prepare_mesh_distribution(
+            part,
+            policy=phx.meshing.MeshPartitionPolicy(
+                phx.meshing.MeshPartitionKind.METIS, 4
+            ),
+        )
+
+
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
+def test_graph_route_records_quantized_real_cell_weights() -> None:
+    part, _ = _quad_mesh(8, 8)
+    weights = np.linspace(0.5, 2.5, 128)
+    distribution = phx.meshing.prepare_mesh_distribution(
+        part,
+        policy=phx.meshing.MeshPartitionPolicy(
+            phx.meshing.MeshPartitionKind.GRAPH, 3, maximum_imbalance=1.05
+        ),
+        cell_weights=weights,
+    )
+    assert ":quantized-weights:" in distribution.evidence.provenance
+    assert float(distribution.evidence.imbalance) <= 1.05 + 1e-9
+
+
+def test_metis_comparison_route_partitions_deterministically() -> None:
+    part, _ = _quad_mesh(10, 10)
+    policy = phx.meshing.MeshPartitionPolicy(
+        phx.meshing.MeshPartitionKind.METIS, 4, maximum_imbalance=1.1
     )
     try:
         first = phx.meshing.prepare_mesh_distribution(part, policy=policy)

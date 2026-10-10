@@ -220,7 +220,6 @@ def population_balance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, attrs),),
             required_gates=("moment-balance", "positivity", "refinement"),
         )

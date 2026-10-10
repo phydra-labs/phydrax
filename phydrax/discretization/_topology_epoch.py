@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ..linalg import AbstractLinearOperator
 from ..typing import checked
 from ._transfer import FieldTransfer
@@ -98,6 +99,46 @@ class TopologyEpoch(StrictModule, NonTrainableState):
         return epoch
 
 
+def _require_epoch_binding(
+    source: TopologyEpoch, target: TopologyEpoch, transfer: FieldTransfer, /
+) -> None:
+    """Admit only the scientific endpoints owned by the prepared field action."""
+    binding = transfer.geometry
+    if binding is None:
+        raise ValueError("An epoch transition requires actual topology/geometry binding.")
+    if (
+        source.topology_id != binding.source_topology_id
+        or target.topology_id != binding.target_topology_id
+    ):
+        raise ValueError(
+            "Epoch topology identities do not match the prepared field transfer."
+        )
+    if (
+        source.geometry_id != binding.source_geometry_id
+        or target.geometry_id != binding.target_geometry_id
+    ):
+        raise ValueError(
+            "Epoch geometry identities do not match the prepared field transfer."
+        )
+
+
+def _staged_image_matches(staged: Array, values: Array, /) -> Array:
+    """Whether a staged target is the transition image within storage roundoff.
+
+    The admissible difference is the roundoff of the coarser of the staged
+    storage dtype and the transfer dtype, so state stored in lower precision than
+    the transfer space is compared at the precision it can represent.
+    """
+
+    eps = max(
+        float(jnp.finfo(jnp.real(staged).dtype).eps),
+        float(jnp.finfo(jnp.real(values).dtype).eps),
+    )
+    tiny = float(jnp.finfo(jnp.real(values).dtype).tiny)
+    scale = jnp.maximum(jnp.max(jnp.abs(values)), tiny)
+    return jnp.max(jnp.abs(staged - values)) <= 100 * eps * scale
+
+
 class TopologyEpochTransitionResult(StrictModule):
     """Transferred values with their content ledger.
 
@@ -155,8 +196,6 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         *,
         measure_defect_bound: ArrayLike | None = None,
     ) -> None:
-        if not isinstance(source, TopologyEpoch) or not isinstance(target, TopologyEpoch):
-            raise TypeError("Topology transition endpoints must be TopologyEpoch values.")
         if target.index != source.index + 1 or source.epoch_id == target.epoch_id:
             raise ValueError(
                 "Topology transitions must connect consecutive distinct epochs."
@@ -197,6 +236,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
                 "measure_defect_bound must be finite, nonnegative, and one per source "
                 "DOF."
             )
+        _require_epoch_binding(source, target, transfer)
         self.source, self.target, self.transfer = source, target, transfer
         self.source_measures, self.target_measures = (
             jnp.asarray(source_measure),
@@ -303,10 +343,7 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         staged = jnp.asarray(target.value).reshape(-1)
         if staged.shape != result.values.shape:
             raise ValueError("Staged target does not match the target field space.")
-        # The staged image must match within roundoff of the transported values.
-        finfo = jnp.finfo(jnp.real(result.values).dtype)
-        scale = jnp.maximum(jnp.max(jnp.abs(result.values)), finfo.tiny)
-        image = jnp.max(jnp.abs(staged - result.values)) <= 100 * finfo.eps * scale
+        image = _staged_image_matches(staged, result.values)
         return CompositionTransport(
             "physical-remap",
             (source.entry_id,),
@@ -320,7 +357,154 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
         )
 
 
+class FieldEpochTransitionResult(StrictModule):
+    """Transferred values of one non-conservative epoch transition.
+
+    ``successful`` combines the owner's certified transfer evidence with the
+    finiteness of the transferred values.
+    """
+
+    values: Array
+    successful: Array
+    differentiation_available: Array
+
+
+class FieldEpochTransition(StrictModule, NonTrainableState):
+    """Explicit fixed non-conservative field transfer between two topology epochs.
+
+    The transfer carries checked semantics (interpolation, compatible Piola
+    transfer, projection) rather than a content ledger: its evidence is the
+    owner's certificate ``evidence_passed`` (reproduction, continuity, and
+    commuting defects within tolerance). Conservative transfers form a
+    :class:`TopologyEpochTransition`, whose content ledger this class never
+    replaces.
+    """
+
+    source: TopologyEpoch
+    target: TopologyEpoch
+    transfer: FieldTransfer
+    evidence_passed: bool = eqx.field(static=True)
+    transition_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: TopologyEpoch,
+        target: TopologyEpoch,
+        transfer: FieldTransfer,
+        /,
+        *,
+        evidence_passed: bool,
+        evidence_id: str,
+    ) -> None:
+        if not isinstance(source, TopologyEpoch) or not isinstance(target, TopologyEpoch):
+            raise TypeError("Field transition endpoints must be TopologyEpoch values.")
+        if target.index != source.index + 1 or source.epoch_id == target.epoch_id:
+            raise ValueError(
+                "Field transitions must connect consecutive distinct epochs."
+            )
+        if not isinstance(transfer, FieldTransfer):
+            raise TypeError("Field transition requires FieldTransfer.")
+        if not isinstance(evidence_passed, bool):
+            raise TypeError("evidence_passed must be an explicit host bool.")
+        properties = transfer.properties
+        if (
+            properties.semantics == "unspecified"
+            or properties.conservative
+            or properties.differentiable_geometry
+            or transfer.hilbert_adjoint_operator is None
+            or transfer.dual_pullback_operator is None
+        ):
+            raise ValueError(
+                "A field epoch transition needs declared non-conservative semantics, "
+                "dual/adjoint operators, and nondifferentiable geometry; conservative "
+                "transfers form a TopologyEpochTransition."
+            )
+        evidence = canonical_identifier(evidence_id, "evidence_id")
+        _require_epoch_binding(source, target, transfer)
+        self.source, self.target, self.transfer = source, target, transfer
+        self.evidence_passed = evidence_passed
+        self.transition_id = canonical_fingerprint(
+            {
+                "kind": "field-epoch-transition",
+                "source": source.epoch_id,
+                "target": target.epoch_id,
+                "transfer": transfer.transfer_id,
+                "evidence": evidence,
+                "evidence_passed": evidence_passed,
+            }
+        )
+
+    def apply(self, values: ArrayLike, /) -> FieldEpochTransitionResult:
+        flat = jnp.asarray(values).reshape(-1)
+        source_space = self.transfer.primal_operator.source
+        target_space = self.transfer.primal_operator.target
+        if flat.shape != (source_space.size,):
+            raise ValueError("Field transition values do not match the source space.")
+        result = target_space.flatten(
+            self.transfer.primal_operator.mv(source_space.unflatten(flat))
+        )
+        successful = jnp.asarray(self.evidence_passed) & jnp.all(jnp.isfinite(result))
+        return FieldEpochTransitionResult(result, successful, jnp.asarray(False))
+
+    def transpose(self, target_cotangent: ArrayLike, /) -> Array:
+        """Pull a target cotangent back through the declared Hilbert adjoint."""
+
+        flat = jnp.asarray(target_cotangent).reshape(-1)
+        adjoint = self.transfer.hilbert_adjoint_operator
+        if adjoint is None:
+            raise RuntimeError("Field transition lost its required Hilbert adjoint.")
+        if flat.shape != (adjoint.source.size,):
+            raise ValueError("Field transition cotangent does not match target space.")
+        return adjoint.target.flatten(adjoint.mv(adjoint.source.unflatten(flat)))
+
+    def require_differentiable_topology(self) -> None:
+        raise ValueError(
+            "Topology selection is nondifferentiable; differentiate only within one fixed epoch."
+        )
+
+    def composition_transport(
+        self, source: CompositionEntry, target: CompositionEntry, /
+    ) -> CompositionTransport:
+        """Physical-remap evidence of this transition for one composition state entry.
+
+        Entry structure identities are the epoch IDs. The transport reports no
+        content (the transfer is not conservative) and succeeds only when the
+        owner evidence passed and `target` is the transition image of `source`
+        within roundoff.
+        """
+
+        # Lazy: the lifecycle package sits above the discretization owners.
+        from ..lifecycle import CompositionEntry, CompositionTransport
+
+        if not isinstance(source, CompositionEntry) or not isinstance(
+            target, CompositionEntry
+        ):
+            raise TypeError("Composition transports bind CompositionEntry values.")
+        if (
+            source.structure_id != self.source.epoch_id
+            or target.structure_id != self.target.epoch_id
+        ):
+            raise ValueError(
+                "Composition entries do not live on this transition's topology epochs."
+            )
+        result = self.apply(source.value)
+        staged = jnp.asarray(target.value).reshape(-1)
+        if staged.shape != result.values.shape:
+            raise ValueError("Staged target does not match the target field space.")
+        image = _staged_image_matches(staged, result.values)
+        return CompositionTransport(
+            "physical-remap",
+            (source.entry_id,),
+            (target,),
+            source_structure_ids=(self.source.epoch_id,),
+            route_id=self.transition_id,
+            successful=result.successful & image,
+        )
+
+
 __all__ = [
+    "FieldEpochTransition",
+    "FieldEpochTransitionResult",
     "TopologyEpoch",
     "TopologyEpochTransition",
     "TopologyEpochTransitionResult",

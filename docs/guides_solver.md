@@ -696,7 +696,7 @@ because synchronization changes execution timing.
 ### Logging and TensorBoard
 
 `solve(...)` emits structured Loguru events and can independently write TensorBoard
-metrics. PhydraX logging is disabled by default; configure a process-level sink and
+metrics. Phydrax logging is disabled by default; configure a process-level sink and
 enable it before training.
 
 - `log_every`: `training.step.completed` cadence. The default `0` disables sampled

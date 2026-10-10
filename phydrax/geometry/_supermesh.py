@@ -47,6 +47,7 @@ from ..ein import contract
 
 
 if TYPE_CHECKING:
+    from ..discretization._cell_geometry import CellGeometrySpec
     from ..discretization._cell_mesh import CellMesh
 
 
@@ -116,6 +117,7 @@ class CommonRefinementPolicy(StrictModule):
     maximum_candidate_pairs: int = eqx.field(static=True)
     maximum_accepted_pairs: int = eqx.field(static=True)
     maximum_memory_bytes: int = eqx.field(static=True)
+    maximum_exact_work: int = eqx.field(static=True)
     second_moments: bool = eqx.field(static=True)
     overlap_simplices: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
@@ -129,6 +131,7 @@ class CommonRefinementPolicy(StrictModule):
         maximum_candidate_pairs: int = 50_000_000,
         maximum_accepted_pairs: int = 50_000_000,
         maximum_memory_bytes: int = 4 * 1024**3,
+        maximum_exact_work: int = 100_000_000,
         second_moments: bool = False,
         overlap_simplices: bool = False,
     ) -> None:
@@ -150,9 +153,11 @@ class CommonRefinementPolicy(StrictModule):
         candidates = _limit(maximum_candidate_pairs, "maximum_candidate_pairs")
         accepted = _limit(maximum_accepted_pairs, "maximum_accepted_pairs")
         memory = _limit(maximum_memory_bytes, "maximum_memory_bytes")
+        exact_work = _limit(maximum_exact_work, "maximum_exact_work")
         self.predicate_mode = predicate_mode
         self.coverage = coverage
         self.coverage_tolerance = tolerance
+        self.maximum_exact_work = exact_work
         self.maximum_candidate_pairs = candidates
         self.maximum_accepted_pairs = accepted
         self.maximum_memory_bytes = memory
@@ -167,6 +172,7 @@ class CommonRefinementPolicy(StrictModule):
                 "maximum_candidate_pairs": candidates,
                 "maximum_accepted_pairs": accepted,
                 "maximum_memory_bytes": memory,
+                "maximum_exact_work": exact_work,
                 "second_moments": second_moments,
                 "overlap_simplices": overlap_simplices,
             }
@@ -311,6 +317,9 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
     source_cell_global_ids: Array
     target_cell_global_ids: Array
     source_mesh_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
+    target_geometry_id: str = eqx.field(static=True)
+    volume_error_bounds: Array | None
     target_mesh_id: str = eqx.field(static=True)
     source_topology_id: str = eqx.field(static=True)
     target_topology_id: str = eqx.field(static=True)
@@ -327,6 +336,8 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
         identities: tuple[str, str, str, str],
         policy: CommonRefinementPolicy,
         evidence: CommonRefinementEvidence,
+        geometry_ids: tuple[str, str] | None = None,
+        volume_error_bounds: np.ndarray | None = None,
     ) -> None:
         if not isinstance(policy, CommonRefinementPolicy) or not isinstance(
             evidence, CommonRefinementEvidence
@@ -382,6 +393,23 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
             self.source_topology_id,
             self.target_topology_id,
         ) = identities
+        self.source_geometry_id, self.target_geometry_id = (
+            (identities[0], identities[1]) if geometry_ids is None else geometry_ids
+        )
+        errors = (
+            None
+            if volume_error_bounds is None
+            else np.asarray(volume_error_bounds, dtype=np.float64)
+        )
+        if errors is not None and (
+            errors.shape != (count,)
+            or np.any(errors < 0)
+            or not np.all(np.isfinite(errors))
+        ):
+            raise ValueError(
+                "Common-refinement publication errors must align with overlap entries."
+            )
+        self.volume_error_bounds = None if errors is None else jnp.asarray(errors)
         self.policy = policy
         self.evidence = evidence
         self.refinement_id = canonical_fingerprint(
@@ -389,6 +417,9 @@ class PreparedCommonRefinement(StrictModule, NonTrainableState):
                 "kind": "prepared-common-refinement",
                 "source_mesh": identities[0],
                 "target_mesh": identities[1],
+                "source_geometry": self.source_geometry_id,
+                "target_geometry": self.target_geometry_id,
+                "volume_errors": array_tree_fingerprint(errors),
                 "policy": policy.policy_id,
                 "evidence": evidence.evidence_id,
                 "target_offsets": array_tree_fingerprint(offsets),
@@ -1274,6 +1305,8 @@ def prepare_common_refinement(
     /,
     *,
     policy: CommonRefinementPolicy = CommonRefinementPolicy(),
+    source_geometry: CellGeometrySpec | None = None,
+    target_geometry: CellGeometrySpec | None = None,
 ) -> PreparedCommonRefinement:
     """Certify the common refinement of two cell meshes of one dimension.
 
@@ -1283,6 +1316,12 @@ def prepare_common_refinement(
     """
 
     _validate_meshes(source, target, policy)
+    if source_geometry is not None or target_geometry is not None:
+        from ._exact_power_refinement import prepare_exact_power_refinement
+
+        return prepare_exact_power_refinement(
+            source, target, source_geometry, target_geometry, policy
+        )
     _meshcore.load_meshcore()
     identities = (
         source.mesh_id,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -15,8 +16,64 @@ import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import orient2d, PredicateMode, resolve_host_predicate_mode
 from .._strict import StrictModule
 from ..linalg import orthonormal_frame
+from ..typing import Dim, HostBool, HostFloat64, HostInt32, parse, Scope
+
+
+def overlapping_box_pairs(
+    lower: np.ndarray, upper: np.ndarray, maximum_pairs: int, /
+) -> tuple[np.ndarray | None, int]:
+    """Every ``(i, j)``, ``i < j``, whose closed 2D boxes overlap, and the work.
+
+    Candidates come from a uniform bucket grid. Rounded box-to-bucket maps are
+    monotone, so closed overlapping boxes share the bucket of a common point;
+    long collinear chains (chart seams) meet only their neighbours instead of
+    the whole active set of a sweep. Returns ``None`` when bucket incidences
+    or candidate pairs exceed ``maximum_pairs``.
+    """
+    count = lower.shape[0]
+    if count < 2:
+        return np.empty((0, 2), dtype=np.int64), 0
+    origin = np.min(lower, axis=0)
+    extent = np.max(upper, axis=0) - origin
+    size = np.where(extent > 0.0, extent / np.ceil(np.sqrt(count)), 1.0)
+    first_cell = np.floor((lower - origin) / size).astype(np.int64)
+    last_cell = np.floor((upper - origin) / size).astype(np.int64)
+    spans = last_cell - first_cell + 1
+    incidences = spans[:, 0] * spans[:, 1]
+    if int(np.sum(incidences)) > maximum_pairs:
+        return None, maximum_pairs
+    rows = np.repeat(np.arange(count, dtype=np.int64), incidences)
+    offsets = np.arange(rows.size, dtype=np.int64) - np.repeat(
+        np.cumsum(incidences) - incidences, incidences
+    )
+    columns = spans[rows, 1]
+    keys = (first_cell[rows, 0] + offsets // columns) * (
+        int(np.max(last_cell[:, 1])) + 1
+    ) + (first_cell[rows, 1] + offsets % columns)
+    order = np.lexsort((rows, keys))
+    keys, rows = keys[order], rows[order]
+    starts = np.flatnonzero(np.concatenate(([True], keys[1:] != keys[:-1])))
+    sizes = np.diff(np.concatenate((starts, [keys.size])))
+    work = int(np.sum(sizes * (sizes - 1) // 2))
+    if work > maximum_pairs:
+        return None, maximum_pairs
+    blocks = [
+        np.stack(np.triu_indices(int(length), 1), axis=1) + int(start)
+        for start, length in zip(starts, sizes, strict=True)
+        if length > 1
+    ]
+    if not blocks:
+        return np.empty((0, 2), dtype=np.int64), work
+    pairs = np.unique(rows[np.concatenate(blocks)], axis=0)
+    left, right = pairs[:, 0], pairs[:, 1]
+    overlap = np.all(
+        (upper[right] >= lower[left]) & (lower[right] <= upper[left]), axis=1
+    )
+    return pairs[overlap], work
 
 
 class AbstractBoundaryMap(StrictModule):
@@ -46,24 +103,665 @@ class AbstractBoundaryMap(StrictModule):
         raise NotImplementedError
 
 
-class TrimDomain(StrictModule):
-    """Oriented polygonal trim domain in a two-dimensional chart."""
+class AbstractTrimCurve(StrictModule):
+    """Oriented exact curve in a two-dimensional chart.
 
-    outer: Array
-    holes: tuple[Array, ...]
+    Trim consumers use two capabilities: pointwise evaluation over
+    ``parameter_interval`` and a conservative axis-aligned enclosure of any
+    sub-arc. The enclosure contains the arc and therefore its chord, which makes
+    chord winding exact for every point outside the enclosure.
+    """
 
-    def __init__(self, outer: npt.ArrayLike, holes: Sequence[npt.ArrayLike] = ()) -> None:
-        outer_host = np.asarray(outer, dtype=np.float64)
-        hole_hosts = tuple(np.asarray(hole, dtype=np.float64) for hole in holes)
-        if outer_host.ndim != 2 or outer_host.shape[1] != 2 or outer_host.shape[0] < 3:
-            raise ValueError("TrimDomain.outer must have shape (num_points >= 3, 2).")
-        if any(
-            hole.ndim != 2 or hole.shape[1] != 2 or hole.shape[0] < 3
-            for hole in hole_hosts
+    @property
+    @abstractmethod
+    def parameter_interval(self) -> tuple[float, float]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def evaluate(self, parameters: Array, /) -> Array:
+        """Chart coordinates ``(..., 2)`` at curve parameters ``(...)``."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def enclosure(self, first: float, last: float, /) -> np.ndarray:
+        """Conservative ``(2, 2)`` box ``[lower, upper]`` of the arc ``[first, last]``."""
+        raise NotImplementedError
+
+    def derivative_bounds(
+        self,
+        first: float,
+        last: float,
+        /,
+        *,
+        order: int = 1,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Conservative oriented jets; unsupported capability is explicit."""
+        raise NotImplementedError(
+            "This trim curve does not provide interval derivative bounds."
+        )
+
+    def shares_endpoint(self, other: AbstractTrimCurve, /) -> bool:
+        """Whether this end and the next start are one exact source parameter."""
+        return False
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 2
+
+    @property
+    def parameter_domain(self) -> tuple[float, float]:
+        return self.parameter_interval
+
+    @property
+    def period(self) -> float | None:
+        return None
+
+    def validate_range(self, first: float, last: float, /) -> tuple[float, float]:
+        lower, upper = self.parameter_interval
+        if not (
+            np.isfinite(first) and np.isfinite(last) and lower <= first < last <= upper
         ):
-            raise ValueError("Every trim hole must have shape (num_points >= 3, 2).")
-        self.outer = jnp.asarray(outer_host, dtype=jnp.float64)
-        self.holes = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in hole_hosts)
+            raise ValueError("A trim curve range must lie inside its parameter interval.")
+        return float(first), float(last)
+
+    def bounding_box(self, first: float, last: float, /) -> np.ndarray:
+        self.validate_range(first, last)
+        return self.enclosure(first, last)
+
+
+class _LoopVertexDim(Dim):
+    """Vertices of a polygonal trim loop or of a certified chord cover."""
+
+
+class _ArcDim(Dim):
+    """Certified arcs of a curve trim loop."""
+
+
+class _TrimPointDim(Dim):
+    """Classified chart points."""
+
+
+class _TrimLoopDim(Dim):
+    """Loops of one trim domain (outer first, then holes)."""
+
+
+class TrimTopologyEvidence(StrictModule):
+    """Source/chord isotopy proof, bound to the exact loop and chord polygon."""
+
+    certified: bool = eqx.field(static=True)
+    unresolved_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
+    pairs_checked: int = eqx.field(static=True)
+    budget_exhausted: bool = eqx.field(static=True)
+    loop_id: str = eqx.field(static=True)
+    chord_id: str = eqx.field(static=True)
+
+
+class PolygonTrimLoop(StrictModule):
+    """Explicit affine trim loop: a closed polygon of chart points."""
+
+    __strict_contract__ = True
+
+    vertices: HostFloat64[_LoopVertexDim, Literal[2]]
+
+    def __init__(self, vertices: npt.ArrayLike) -> None:
+        host = np.asarray(vertices, dtype=np.float64)
+        if host.ndim != 2 or host.shape[1] != 2 or host.shape[0] < 3:
+            raise ValueError("A polygon trim loop must have shape (num_points >= 3, 2).")
+        if not np.all(np.isfinite(host)):
+            raise ValueError("Polygon trim loop vertices must be finite.")
+        host = np.array(host, dtype=np.float64)
+        host.setflags(write=False)
+        self.vertices = host
+
+    @property
+    def chords(self) -> np.ndarray:
+        return self.vertices
+
+    @property
+    def identity(self) -> dict[str, object]:
+        return {"kind": "polygon", "vertices": array_tree_fingerprint(self.vertices)}
+
+
+class CurveTrimLoop(StrictModule):
+    """Oriented trim curves with a certified chord cover and bounded joins.
+
+    Each curve is split into arcs until every arc enclosure has a diagonal no
+    larger than ``tolerance``. The chord polygon of the arc endpoints classifies
+    chart points exactly outside the union of arc enclosures (the approximation
+    band); `TrimDomain.classify` resolves points inside the band by refining the
+    exact curves. By default joins must be exact up to directed roundoff. A
+    positive ``relative_closure_tolerance`` explicitly retains an already
+    validated source-domain coincidence bound, authorizing declared topology
+    without claiming exact geometric coincidence.
+    """
+
+    __strict_contract__ = True
+
+    curves: tuple[AbstractTrimCurve, ...]
+    chords: HostFloat64[_ArcDim, Literal[2]]
+    source_chords: HostFloat64[_ArcDim, Literal[2]]
+    arc_curves: HostInt32[_ArcDim]
+    arc_first: HostFloat64[_ArcDim]
+    arc_last: HostFloat64[_ArcDim]
+    arc_lower: HostFloat64[_ArcDim, Literal[2]]
+    arc_upper: HostFloat64[_ArcDim, Literal[2]]
+    junction_lower: HostFloat64[_LoopVertexDim, Literal[2]]
+    junction_upper: HostFloat64[_LoopVertexDim, Literal[2]]
+    tolerance: float = eqx.field(static=True)
+    relative_closure_tolerance: float = eqx.field(static=True)
+    closure_tolerance: float = eqx.field(static=True)
+    closure_gap: float = eqx.field(static=True)
+    chord_endpoint_error: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        curves: Sequence[AbstractTrimCurve],
+        *,
+        tolerance: float,
+        maximum_arcs: int = 65536,
+        arc_parameters: Sequence[npt.ArrayLike] | None = None,
+        chord_vertices: npt.ArrayLike | None = None,
+        relative_closure_tolerance: float = 0.0,
+    ) -> None:
+        curves_ = tuple(curves)
+        if not curves_ or any(
+            not isinstance(curve, AbstractTrimCurve) for curve in curves_
+        ):
+            raise TypeError("A curve trim loop requires AbstractTrimCurve values.")
+        tolerance_ = float(tolerance)
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("Curve trim loop tolerance must be finite and positive.")
+        if maximum_arcs < len(curves_):
+            raise ValueError("maximum_arcs cannot be smaller than the curve count.")
+        starts = []
+        ends = []
+        for curve in curves_:
+            first, last = curve.parameter_interval
+            points = np.asarray(
+                curve.evaluate(jnp.asarray((first, last), dtype=jnp.float64)),
+                dtype=np.float64,
+            )
+            starts.append(points[0])
+            ends.append(points[1])
+        gaps = [
+            float(np.max(np.abs(ends[index] - starts[(index + 1) % len(curves_)])))
+            for index in range(len(curves_))
+        ]
+        closure_gap = max(gaps)
+        maximum_endpoint = float(np.max(np.abs(np.asarray((*starts, *ends)))))
+        roundoff_tolerance = float(
+            128.0 * np.finfo(np.float64).eps * (1.0 + maximum_endpoint)
+        )
+        relative_tolerance = float(relative_closure_tolerance)
+        if not np.isfinite(relative_tolerance) or relative_tolerance < 0.0:
+            raise ValueError(
+                "relative_closure_tolerance must be finite and non-negative."
+            )
+        closure_tolerance = max(
+            roundoff_tolerance,
+            relative_tolerance * max(1.0, maximum_endpoint),
+        )
+        exact_joins = [
+            curve.shares_endpoint(curves_[(index + 1) % len(curves_)])
+            for index, curve in enumerate(curves_)
+        ]
+        if any(
+            gap > closure_tolerance and not exact
+            for gap, exact in zip(gaps, exact_joins, strict=True)
+        ):
+            raise ValueError(f"Curve trim loop is not closed (gap {closure_gap:.3e}).")
+        arcs: list[tuple[int, float, float, np.ndarray, np.ndarray]] = []
+        if arc_parameters is not None and len(arc_parameters) != len(curves_):
+            raise ValueError(
+                "arc_parameters must provide one ordered partition per curve."
+            )
+        for index, curve in enumerate(curves_):
+            first, last = curve.parameter_interval
+            if arc_parameters is None:
+                arcs.extend(
+                    _certified_arcs(
+                        curve, index, first, last, tolerance_, maximum_arcs - len(arcs)
+                    )
+                )
+                continue
+            partition = np.asarray(arc_parameters[index], dtype=np.float64)
+            if (
+                partition.ndim != 1
+                or partition.size < 2
+                or not np.all(np.isfinite(partition))
+                or partition[0] != first
+                or partition[-1] != last
+                or np.any(np.diff(partition) <= 0)
+            ):
+                raise ValueError(
+                    "Prescribed arc partitions must cover each full curve interval in order."
+                )
+            if len(arcs) + partition.size - 1 > maximum_arcs:
+                raise ValueError("Prescribed trim cover exceeds its arc capacity.")
+            points = np.asarray(curve.evaluate(jnp.asarray(partition)))
+            for lower, upper, start in zip(
+                partition[:-1], partition[1:], points[:-1], strict=True
+            ):
+                box, _ = _arc_record(curve, float(lower), float(upper), start)
+                if np.linalg.norm(box[1] - box[0]) > tolerance_:
+                    raise ValueError(
+                        "A prescribed arc enclosure exceeds the requested cover tolerance."
+                    )
+                arcs.append((index, float(lower), float(upper), start, box))
+        if chord_vertices is not None and arc_parameters is None:
+            raise ValueError(
+                "Prescribed chords require prescribed source arc partitions."
+            )
+        self.curves = curves_
+        self.source_chords = np.asarray([arc[3] for arc in arcs], dtype=np.float64)
+        self.chords = np.asarray(
+            [arc[3] for arc in arcs] if chord_vertices is None else chord_vertices,
+            dtype=np.float64,
+        )
+        if self.chords.shape != (len(arcs), 2) or not np.all(np.isfinite(self.chords)):
+            raise ValueError(
+                "Prescribed chord vertices must be finite and aligned with the arc partition."
+            )
+        endpoint_error = 0.0
+        for vertex, arc in zip(self.chords, arcs, strict=True):
+            curve = curves_[arc[0]]
+            endpoint_box = np.asarray(curve.enclosure(arc[1], arc[1]))
+            endpoint_error = max(
+                endpoint_error,
+                float(np.max(np.nextafter(np.abs(endpoint_box - vertex), np.inf))),
+            )
+        self.chord_endpoint_error = endpoint_error
+        self.arc_curves = np.asarray([arc[0] for arc in arcs], dtype=np.int32)
+        self.arc_first = np.asarray([arc[1] for arc in arcs], dtype=np.float64)
+        self.arc_last = np.asarray([arc[2] for arc in arcs], dtype=np.float64)
+        boxes = np.asarray([arc[4] for arc in arcs], dtype=np.float64)
+        following_chord = np.roll(self.chords, -1, axis=0)
+        self.arc_lower = np.minimum(boxes[:, 0], np.minimum(self.chords, following_chord))
+        self.arc_upper = np.maximum(boxes[:, 1], np.maximum(self.chords, following_chord))
+        following = np.roll(np.asarray(starts), -1, axis=0)
+        junction_boxes = []
+        for index, curve in enumerate(curves_):
+            next_curve = curves_[(index + 1) % len(curves_)]
+            end = curve.parameter_interval[1]
+            start = next_curve.parameter_interval[0]
+            first_box = np.asarray(curve.enclosure(end, end))
+            second_box = np.asarray(next_curve.enclosure(start, start))
+            junction_boxes.append(
+                np.stack(
+                    (
+                        np.minimum(first_box[0], second_box[0]),
+                        np.maximum(first_box[1], second_box[1]),
+                    )
+                )
+            )
+        junction_boxes_ = np.asarray(junction_boxes)
+        self.junction_lower = np.nextafter(
+            np.minimum(junction_boxes_[:, 0], np.minimum(ends, following)), -np.inf
+        )
+        self.junction_upper = np.nextafter(
+            np.maximum(junction_boxes_[:, 1], np.maximum(ends, following)), np.inf
+        )
+        self.tolerance = tolerance_
+        self.relative_closure_tolerance = relative_tolerance
+        self.closure_tolerance = closure_tolerance
+        self.closure_gap = closure_gap
+
+    @property
+    def identity(self) -> dict[str, object]:
+        return {
+            "kind": "curves",
+            "curve_types": [type(curve).__name__ for curve in self.curves],
+            "curves": array_tree_fingerprint(self.curves),
+            "tolerance": self.tolerance,
+            "relative_closure_tolerance": self.relative_closure_tolerance,
+            "closure_tolerance": self.closure_tolerance,
+            "closure_gap": self.closure_gap,
+            "arc_partition": array_tree_fingerprint(
+                (self.arc_curves, self.arc_first, self.arc_last)
+            ),
+            "chords": array_tree_fingerprint(self.chords),
+        }
+
+    def certify_topology(
+        self, /, *, maximum_pairs: int = 200_000
+    ) -> TrimTopologyEvidence:
+        """Prove source/chord isotopy for this bounded chord cover.
+
+        Source arcs and adjacent pairs must be monotone along a separating
+        projection, and nonadjacent homotopy boxes must be disjoint. Ambiguous
+        covers require a tighter caller-selected cover, not a sampled topology
+        decision. Source joins are either exact or remain inside the explicit
+        directed closure bound retained by this loop.
+        """
+        if (
+            isinstance(maximum_pairs, bool)
+            or not isinstance(maximum_pairs, int)
+            or maximum_pairs < 1
+        ):
+            raise ValueError("maximum_pairs must be a positive integer.")
+        unresolved: set[tuple[int, int]] = set()
+        work = 0
+        exhausted = False
+        count = self.chords.shape[0]
+
+        def positive_projection(
+            bounds: tuple[np.ndarray, np.ndarray], direction: np.ndarray
+        ) -> bool:
+            if not np.all(np.isfinite(bounds)) or not np.all(np.isfinite(direction)):
+                return False
+            terms = np.minimum(bounds[0] * direction, bounds[1] * direction)
+            margin = 16 * np.finfo(np.float64).eps * np.sum(np.abs(terms))
+            return bool(np.sum(terms) - margin > 0)
+
+        derivative_bounds = []
+        for arc in range(count):
+            curve = self.curves[int(self.arc_curves[arc])]
+            try:
+                bounds = curve.derivative_bounds(
+                    float(self.arc_first[arc]), float(self.arc_last[arc])
+                )
+            except (NotImplementedError, ValueError):
+                bounds = (np.full(2, -np.inf), np.full(2, np.inf))
+            derivative_bounds.append(bounds)
+            direction = self.chords[(arc + 1) % count] - self.chords[arc]
+            if not positive_projection(bounds, direction):
+                unresolved.add((arc, arc))
+        for arc in range(count):
+            following = (arc + 1) % count
+            first_curve = int(self.arc_curves[arc])
+            second_curve = int(self.arc_curves[following])
+            if first_curve != second_curve or following == 0:
+                if not self.curves[first_curve].shares_endpoint(
+                    self.curves[second_curve]
+                ):
+                    first_parameter = self.curves[first_curve].parameter_interval[1]
+                    second_parameter = self.curves[second_curve].parameter_interval[0]
+                    endpoints = np.asarray(
+                        (
+                            self.curves[first_curve].evaluate(
+                                jnp.asarray(first_parameter, dtype=jnp.float64)
+                            ),
+                            self.curves[second_curve].evaluate(
+                                jnp.asarray(second_parameter, dtype=jnp.float64)
+                            ),
+                        )
+                    )
+                    if (
+                        float(np.max(np.abs(endpoints[0] - endpoints[1])))
+                        > self.closure_tolerance
+                    ):
+                        unresolved.add((arc, following))
+            direction = self.chords[(arc + 2) % count] - self.chords[arc]
+            chord_a = self.chords[following] - self.chords[arc]
+            chord_b = self.chords[(arc + 2) % count] - self.chords[following]
+            if not (
+                positive_projection(derivative_bounds[arc], direction)
+                and positive_projection(derivative_bounds[following], direction)
+                and positive_projection((chord_a, chord_a), direction)
+                and positive_projection((chord_b, chord_b), direction)
+            ):
+                unresolved.add((arc, following))
+
+        # Bucketed boxes rather than a quadratic candidate-pair matrix.
+        pairs, work = overlapping_box_pairs(self.arc_lower, self.arc_upper, maximum_pairs)
+        if pairs is None:
+            exhausted = True
+        else:
+            for arc, other in pairs.tolist():
+                if (arc - other) % count not in (1, count - 1):
+                    unresolved.add((arc, other))
+        return TrimTopologyEvidence(
+            not unresolved and not exhausted,
+            tuple(sorted(unresolved)),
+            min(work, maximum_pairs),
+            exhausted,
+            canonical_fingerprint(self.identity),
+            canonical_fingerprint(array_tree_fingerprint(self.chords)),
+        )
+
+
+@eqx.filter_jit
+def _trim_points(curve: AbstractTrimCurve, parameters: Array, /) -> Array:
+    """One stable lowering; original curve numerical leaves remain dynamic."""
+    return curve.evaluate(parameters)
+
+
+def _arc_record(
+    curve: AbstractTrimCurve, first: float, last: float, start: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclosure of one arc, widened to contain its evaluated endpoints."""
+    box = np.asarray(curve.enclosure(first, last), dtype=np.float64)
+    if box.shape != (2, 2) or not np.all(np.isfinite(box)):
+        raise ValueError("Trim curve enclosures must be finite (2, 2) boxes.")
+    end = np.asarray(_trim_points(curve, jnp.asarray(last, dtype=jnp.float64)))
+    lower = np.minimum(box[0], np.minimum(start, end))
+    upper = np.maximum(box[1], np.maximum(start, end))
+    return np.stack((lower, upper)), end
+
+
+def _certified_arcs(
+    curve: AbstractTrimCurve,
+    index: int,
+    first: float,
+    last: float,
+    tolerance: float,
+    capacity: int,
+    /,
+) -> list[tuple[int, float, float, np.ndarray, np.ndarray]]:
+    start = np.asarray(_trim_points(curve, jnp.asarray(first, dtype=jnp.float64)))
+    pending = [(first, last, start)]
+    accepted: list[tuple[int, float, float, np.ndarray, np.ndarray]] = []
+    while pending:
+        lower, upper, point = pending.pop()
+        box, _ = _arc_record(curve, lower, upper, point)
+        if np.linalg.norm(box[1] - box[0]) <= tolerance:
+            accepted.append((index, lower, upper, point, box))
+            if len(accepted) > capacity:
+                raise ValueError("Curve trim loop exceeds its arc capacity.")
+            continue
+        middle = 0.5 * (lower + upper)
+        if not lower < middle < upper:
+            raise ValueError("Curve trim enclosure cannot reach the requested tolerance.")
+        middle_point = np.asarray(_trim_points(curve, jnp.asarray(middle, jnp.float64)))
+        pending.append((middle, upper, middle_point))
+        pending.append((lower, middle, point))
+    return accepted
+
+
+type TrimLoop = PolygonTrimLoop | CurveTrimLoop
+
+
+def _as_loop(value: TrimLoop | npt.ArrayLike, /) -> TrimLoop:
+    if isinstance(value, (PolygonTrimLoop, CurveTrimLoop)):
+        return value
+    return PolygonTrimLoop(value)
+
+
+class TrimBoxClassification(StrictModule):
+    """Whole-box trim decisions; overlap/limits are explicit unresolved rows."""
+
+    __strict_contract__ = True
+
+    inside: HostBool[_TrimPointDim]
+    resolved: HostBool[_TrimPointDim]
+    refinements: HostInt32[_TrimPointDim]
+
+    def __init__(
+        self, inside: npt.ArrayLike, resolved: npt.ArrayLike, refinements: npt.ArrayLike
+    ) -> None:
+        scope = Scope()
+        self.inside = parse(
+            np.asarray(inside, dtype=np.bool_),
+            HostBool[_TrimPointDim],
+            "inside",
+            scope=scope,
+        )
+        self.resolved = parse(
+            np.asarray(resolved, dtype=np.bool_),
+            HostBool[_TrimPointDim],
+            "resolved",
+            scope=scope,
+        )
+        self.refinements = parse(
+            np.asarray(refinements, dtype=np.int32),
+            HostInt32[_TrimPointDim],
+            "refinements",
+            scope=scope,
+        )
+
+
+class TrimClassification(StrictModule):
+    """Exact point-in-trim decisions with per-point evidence.
+
+    ``inside`` is meaningful where ``resolved`` holds. ``boundary`` marks points
+    exactly on a polygon edge or within the refined enclosure of a curve arc at
+    the refinement budget; such points are unresolved unless they lie exactly on
+    an affine edge. ``winding`` holds the exact chord winding number per loop.
+    """
+
+    __strict_contract__ = True
+
+    inside: HostBool[_TrimPointDim]
+    boundary: HostBool[_TrimPointDim]
+    resolved: HostBool[_TrimPointDim]
+    winding: HostInt32[_TrimPointDim, _TrimLoopDim]
+    refinements: HostInt32[_TrimPointDim]
+
+    def __init__(
+        self,
+        *,
+        inside: npt.ArrayLike,
+        boundary: npt.ArrayLike,
+        resolved: npt.ArrayLike,
+        winding: npt.ArrayLike,
+        refinements: npt.ArrayLike,
+    ) -> None:
+        scope = Scope()
+        self.inside = parse(
+            np.asarray(inside, dtype=np.bool_),
+            HostBool[_TrimPointDim],
+            "inside",
+            scope=scope,
+        )
+        self.boundary = parse(
+            np.asarray(boundary, dtype=np.bool_),
+            HostBool[_TrimPointDim],
+            "boundary",
+            scope=scope,
+        )
+        self.resolved = parse(
+            np.asarray(resolved, dtype=np.bool_),
+            HostBool[_TrimPointDim],
+            "resolved",
+            scope=scope,
+        )
+        self.winding = parse(
+            np.asarray(winding, dtype=np.int32),
+            HostInt32[_TrimPointDim, _TrimLoopDim],
+            "winding",
+            scope=scope,
+        )
+        self.refinements = parse(
+            np.asarray(refinements, dtype=np.int32),
+            HostInt32[_TrimPointDim],
+            "refinements",
+            scope=scope,
+        )
+
+
+def _exact_winding(
+    point: np.ndarray, chords: np.ndarray, mode: PredicateMode, /
+) -> tuple[int, bool]:
+    """Exact winding number of a closed chord polygon and on-edge detection."""
+    start = chords
+    end = np.roll(chords, -1, axis=0)
+    signs = np.asarray(
+        orient2d(start, end, np.broadcast_to(point, start.shape), mode=mode).signs,
+        dtype=np.int8,
+    )
+    upward = (start[:, 1] <= point[1]) & (end[:, 1] > point[1])
+    downward = (end[:, 1] <= point[1]) & (start[:, 1] > point[1])
+    winding = int(np.sum(upward & (signs > 0)) - np.sum(downward & (signs < 0)))
+    within = ((np.minimum(start, end) <= point) & (point <= np.maximum(start, end))).all(
+        axis=1
+    )
+    return winding, bool(np.any((signs == 0) & within))
+
+
+def _refined_chords(
+    loop: CurveTrimLoop, point: np.ndarray, maximum_depth: int, /
+) -> tuple[np.ndarray, bool, int]:
+    """Chord polygon whose arc enclosures exclude ``point`` where resolvable."""
+    chords: list[np.ndarray] = []
+    # Numerical endpoint agreement is not exact endpoint equality. Never make
+    # an exact membership decision inside the junction uncertainty boxes.
+    unresolved = bool(
+        np.any(
+            np.all(
+                (point >= loop.junction_lower) & (point <= loop.junction_upper), axis=1
+            )
+        )
+    )
+    refinements = 0
+    for arc in range(loop.chords.shape[0]):
+        lower, upper = loop.arc_lower[arc], loop.arc_upper[arc]
+        if np.any(point < lower) or np.any(point > upper):
+            chords.append(loop.source_chords[arc])
+            continue
+        curve = loop.curves[int(loop.arc_curves[arc])]
+        stack = [(float(loop.arc_first[arc]), float(loop.arc_last[arc]), 0)]
+        start = loop.source_chords[arc]
+        pieces: list[np.ndarray] = []
+        while stack:
+            first, last, depth = stack.pop()
+            box, _ = _arc_record(curve, first, last, start)
+            outside = np.any(point < box[0]) or np.any(point > box[1])
+            middle = 0.5 * (first + last)
+            if outside or depth >= maximum_depth or not first < middle < last:
+                unresolved |= not outside
+                pieces.append(start)
+                start = np.asarray(_trim_points(curve, jnp.asarray(last, jnp.float64)))
+                continue
+            refinements += 1
+            stack.append((middle, last, depth + 1))
+            stack.append((first, middle, depth + 1))
+        chords.extend(pieces)
+    return np.asarray(chords, dtype=np.float64), unresolved, refinements
+
+
+class TrimDomain(StrictModule):
+    """Oriented trim domain in a two-dimensional chart.
+
+    Loops are explicit affine polygons (`PolygonTrimLoop`; array inputs are
+    converted once) or chains of exact curves (`CurveTrimLoop`). A point is
+    inside when it has nonzero winding about the outer loop and zero winding
+    about every hole.
+    """
+
+    outer: TrimLoop
+    holes: tuple[TrimLoop, ...]
+    trim_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        outer: TrimLoop | npt.ArrayLike,
+        holes: Sequence[TrimLoop | npt.ArrayLike] = (),
+    ) -> None:
+        outer_ = _as_loop(outer)
+        holes_ = tuple(_as_loop(hole) for hole in holes)
+        self.outer = outer_
+        self.holes = holes_
+        self.trim_id = canonical_fingerprint(
+            {
+                "kind": "trim-domain",
+                "outer": outer_.identity,
+                "holes": [hole.identity for hole in holes_],
+            }
+        )
+
+    @property
+    def loops(self) -> tuple[TrimLoop, ...]:
+        return (self.outer, *self.holes)
 
     @staticmethod
     def _inside_loop(points: Array, loop: Array) -> Array:
@@ -80,11 +778,198 @@ class TrimDomain(StrictModule):
         return jnp.sum(crossing & (x < intersection), axis=-1) % 2 == 1
 
     def contains(self, reference: Array, /) -> Array:
+        """Traceable chord-cover membership.
+
+        Exact for polygon loops; for curve loops it agrees with the exact curves
+        outside each loop's certified approximation band (`classify` resolves
+        points inside the band).
+        """
         reference_ = jnp.asarray(reference, dtype=jnp.float64)
-        inside = self._inside_loop(reference_, self.outer)
+        inside = self._inside_loop(reference_, jnp.asarray(self.outer.chords))
         for hole in self.holes:
-            inside &= ~self._inside_loop(reference_, hole)
+            inside &= ~self._inside_loop(reference_, jnp.asarray(hole.chords))
         return inside
+
+    def in_band(self, reference: Array, /) -> Array:
+        """Whether points lie in any curve loop's approximation band."""
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
+        band = jnp.zeros(reference_.shape[:-1], dtype=jnp.bool_)
+        for loop in self.loops:
+            if isinstance(loop, CurveTrimLoop):
+                lower = jnp.concatenate(
+                    (jnp.asarray(loop.arc_lower), jnp.asarray(loop.junction_lower))
+                )
+                upper = jnp.concatenate(
+                    (jnp.asarray(loop.arc_upper), jnp.asarray(loop.junction_upper))
+                )
+                point = reference_[..., None, :]
+                band |= jnp.any(
+                    jnp.all((point >= lower) & (point <= upper), axis=-1), axis=-1
+                )
+        return band
+
+    def classify_boxes(
+        self,
+        reference: npt.ArrayLike,
+        /,
+        *,
+        maximum_depth: int = 48,
+        maximum_refinements: int = 100_000,
+    ) -> TrimBoxClassification:
+        """Classify a complete closed rectangle by excluding its source boundary.
+
+        A winding decision at the center is used only AFTER source arc/junction
+        enclosures prove no boundary meets any point of that rectangle.
+        """
+        boxes = np.asarray(reference, dtype=np.float64)
+        if (
+            boxes.ndim != 3
+            or boxes.shape[1:] != (2, 2)
+            or not np.all(np.isfinite(boxes))
+            or np.any(boxes[:, 0] > boxes[:, 1])
+        ):
+            raise ValueError(
+                "Trim box queries require finite (num_boxes,2,2) lower/upper rectangles."
+            )
+        if maximum_depth < 0 or maximum_refinements < 0:
+            raise ValueError("Trim refinement budgets must be nonnegative.")
+        inside = np.zeros(boxes.shape[0], dtype=np.bool_)
+        resolved = np.ones(boxes.shape[0], dtype=np.bool_)
+        work = np.zeros(boxes.shape[0], dtype=np.int32)
+        used = 0
+
+        def disjoint(a: np.ndarray, b: np.ndarray) -> bool:
+            return bool(np.any(a[1] < b[0]) or np.any(b[1] < a[0]))
+
+        for row in range(boxes.shape[0]):
+            query = np.asarray(boxes[row], dtype=np.float64)
+            windings = []
+            for loop in self.loops:
+                if isinstance(loop, PolygonTrimLoop):
+                    vertices = loop.vertices
+                    corners = np.asarray(
+                        (
+                            query[0],
+                            (query[1, 0], query[0, 1]),
+                            query[1],
+                            (query[0, 0], query[1, 1]),
+                        )
+                    )
+                    for start, end in zip(
+                        vertices, np.roll(vertices, -1, axis=0), strict=True
+                    ):
+                        edge_box = np.stack(
+                            (np.minimum(start, end), np.maximum(start, end))
+                        )
+                        if disjoint(query, edge_box):
+                            continue
+                        signs = np.asarray(
+                            orient2d(
+                                np.broadcast_to(start, corners.shape),
+                                np.broadcast_to(end, corners.shape),
+                                corners,
+                                mode=PredicateMode.EXACT,
+                            ).signs
+                        )
+                        if not (np.all(signs > 0) or np.all(signs < 0)):
+                            resolved[row] = False
+                            break
+                    chords = vertices
+                else:
+                    chords_list = []
+                    for lower, upper in zip(
+                        loop.junction_lower, loop.junction_upper, strict=True
+                    ):
+                        if not disjoint(query, np.stack((lower, upper))):
+                            resolved[row] = False
+                            break
+                    for arc in range(loop.source_chords.shape[0]):
+                        curve = loop.curves[int(loop.arc_curves[arc])]
+                        pending = [
+                            (float(loop.arc_first[arc]), float(loop.arc_last[arc]), 0)
+                        ]
+                        while pending:
+                            first, last, depth = pending.pop()
+                            box = np.asarray(curve.enclosure(first, last))
+                            if disjoint(query, box):
+                                chords_list.append(
+                                    np.asarray(curve.evaluate(jnp.asarray(first)))
+                                )
+                                continue
+                            middle = 0.5 * (first + last)
+                            if (
+                                depth >= maximum_depth
+                                or used >= maximum_refinements
+                                or not first < middle < last
+                            ):
+                                resolved[row] = False
+                                break
+                            used += 1
+                            work[row] += 1
+                            pending.append((middle, last, depth + 1))
+                            pending.append((first, middle, depth + 1))
+                        if not resolved[row]:
+                            break
+                    chords = np.asarray(chords_list)
+                if not resolved[row]:
+                    break
+                winding, _ = _exact_winding(
+                    0.5 * (query[0] + query[1]), chords, PredicateMode.EXACT
+                )
+                windings.append(winding)
+            if resolved[row]:
+                inside[row] = windings[0] != 0 and all(
+                    value == 0 for value in windings[1:]
+                )
+        return TrimBoxClassification(inside, resolved, work)
+
+    def classify(
+        self,
+        reference: npt.ArrayLike,
+        /,
+        *,
+        mode: PredicateMode = PredicateMode.EXACT,
+        maximum_depth: int = 48,
+    ) -> TrimClassification:
+        """Exact host classification with bounded refinement of curve loops."""
+        mode_ = resolve_host_predicate_mode(mode)
+        points = np.asarray(reference, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 2:
+            raise ValueError("reference must have shape (num_points, 2).")
+        if not np.all(np.isfinite(points)):
+            raise ValueError("Trim classification reference points must be finite.")
+        if maximum_depth < 0:
+            raise ValueError("maximum_depth must be nonnegative.")
+        loops = self.loops
+        winding = np.zeros((points.shape[0], len(loops)), dtype=np.int32)
+        boundary = np.zeros((points.shape[0],), dtype=np.bool_)
+        resolved = np.ones((points.shape[0],), dtype=np.bool_)
+        refinements = np.zeros((points.shape[0],), dtype=np.int32)
+        for row in range(points.shape[0]):
+            point = np.asarray(points[row], dtype=np.float64)
+            for column, loop in enumerate(loops):
+                if isinstance(loop, CurveTrimLoop):
+                    chords, unresolved, count = _refined_chords(
+                        loop, point, maximum_depth
+                    )
+                    refinements[row] += count
+                    if unresolved:
+                        boundary[row] = True
+                        resolved[row] = False
+                else:
+                    chords = loop.vertices
+                value, on_edge = _exact_winding(point, chords, mode_)
+                winding[row, column] = value
+                if on_edge and isinstance(loop, PolygonTrimLoop):
+                    boundary[row] = True
+        inside = (winding[:, 0] != 0) & np.all(winding[:, 1:] == 0, axis=1)
+        return TrimClassification(
+            inside=inside & ~boundary,
+            boundary=boundary,
+            resolved=resolved,
+            winding=winding,
+            refinements=refinements,
+        )
 
 
 class BoundaryFrame(StrictModule):
@@ -254,6 +1139,56 @@ class BoundaryAtlas(StrictModule):
             lambda index, coordinate: jax.lax.switch(index, branches, coordinate)
         )(flat_indices, flat_reference)
         return values.reshape(indices.shape)
+
+    def classify_reference(
+        self,
+        chart_indices: npt.ArrayLike,
+        reference: npt.ArrayLike,
+        /,
+        *,
+        mode: PredicateMode = PredicateMode.EXACT,
+        maximum_depth: int = 48,
+    ) -> TrimClassification:
+        """Exact host trim classification of flat ``(num_points,)`` chart points.
+
+        Untrimmed charts classify every point as inside and resolved.
+        """
+        indices = np.asarray(chart_indices, dtype=np.int32).reshape((-1,))
+        points = np.asarray(reference, dtype=np.float64)
+        if self.reference_dimension != 2:
+            raise ValueError("Trim classification requires two-dimensional charts.")
+        if points.shape != (indices.shape[0], 2):
+            raise ValueError("reference must have shape (num_points, 2).")
+        if np.any((indices < 0) | (indices >= self.num_charts)):
+            raise ValueError("chart_indices lie outside the atlas.")
+        loop_count = max(
+            (1 + len(trim.holes) for trim in self.trim_domains if trim is not None),
+            default=1,
+        )
+        count = indices.shape[0]
+        inside = np.ones((count,), dtype=np.bool_)
+        boundary = np.zeros((count,), dtype=np.bool_)
+        resolved = np.ones((count,), dtype=np.bool_)
+        winding = np.zeros((count, loop_count), dtype=np.int32)
+        refinements = np.zeros((count,), dtype=np.int32)
+        for chart in np.unique(indices):
+            trim = self.trim_domains[int(chart)]
+            if trim is None:
+                continue
+            rows = np.flatnonzero(indices == chart)
+            result = trim.classify(points[rows], mode=mode, maximum_depth=maximum_depth)
+            inside[rows] = result.inside
+            boundary[rows] = result.boundary
+            resolved[rows] = result.resolved
+            winding[rows, : result.winding.shape[1]] = result.winding
+            refinements[rows] = result.refinements
+        return TrimClassification(
+            inside=inside,
+            boundary=boundary,
+            resolved=resolved,
+            winding=winding,
+            refinements=refinements,
+        )
 
     def differential(self, chart_indices: Array, reference: Array, /) -> Array:
         """Return chart derivatives with shape ``(..., ambient_dim, reference_dimension)``."""
@@ -677,7 +1612,14 @@ BoundaryMap = AbstractBoundaryMap
 
 __all__ = [
     "AbstractBoundaryMap",
+    "AbstractTrimCurve",
+    "CurveTrimLoop",
+    "TrimBoxClassification",
+    "TrimTopologyEvidence",
+    "PolygonTrimLoop",
+    "TrimClassification",
     "TrimDomain",
+    "TrimLoop",
     "BoundaryAtlas",
     "BoundaryFrame",
     "BoundaryMap",

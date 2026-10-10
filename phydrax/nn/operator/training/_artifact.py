@@ -27,7 +27,7 @@ from ...._model._component import ExecutionCapabilities
 from ...._model._ports import PortMapping, ValuePort
 from ...._model._structure import (
     deserialize_model_leaf as _deserialize_leaf,
-    model_from_structure_recipe as _materialized_recipe,
+    deserialize_model_tree as _deserialize_tree,
     model_recipe_template as _recipe_template,
     model_structure_recipe as _structure_recipe,
     preflight_model_tree_serialization as _preflight_serialization,
@@ -746,26 +746,27 @@ def load_trained_operator(
         _preflight_serialization(stream, (model_template, pipeline_template))
     except (OSError, TypeError, ValueError) as error:
         raise ValueError("Operator artifact model leaf inventory is invalid.") from error
-    if portable_recipe is not None:
-        model_template = _materialized_recipe(
-            portable_recipe,
-            limits=_OPERATOR_RECIPE_LIMITS,
-        )
-        pipeline_template = (
-            None
-            if manifest.output_pipeline_recipe is None
-            else _materialized_recipe(
-                manifest.output_pipeline_recipe,
-                limits=_OPERATOR_RECIPE_LIMITS,
-            )
-        )
-        stream.seek(0)
     try:
-        execution_model, output_pipeline = eqx.tree_deserialise_leaves(
-            stream,
-            (model_template, pipeline_template),
-            filter_spec=_deserialize_leaf,
-        )
+        if portable_recipe is None:
+            execution_model, output_pipeline = eqx.tree_deserialise_leaves(
+                stream,
+                (model_template, pipeline_template),
+                filter_spec=_deserialize_leaf,
+            )
+        else:
+            # Portable recipes restore one object per shared array or module.
+            execution_model = _deserialize_tree(
+                stream, portable_recipe, limits=_OPERATOR_RECIPE_LIMITS
+            )
+            output_pipeline = (
+                None
+                if manifest.output_pipeline_recipe is None
+                else _deserialize_tree(
+                    stream,
+                    manifest.output_pipeline_recipe,
+                    limits=_OPERATOR_RECIPE_LIMITS,
+                )
+            )
         # Deserialization bypasses constructors; restored structural contracts
         # are checked once on the complete model and pipeline.
         validate_tree((execution_model, output_pipeline))
@@ -902,17 +903,17 @@ def load_operator_training_state(
         raise ValueError(
             "Operator artifact training leaf inventory is invalid."
         ) from error
-    if manifest.training_recipe is not None:
-        template = _materialized_recipe(
-            manifest.training_recipe,
-            limits=_OPERATOR_RECIPE_LIMITS,
-        )
-        stream.seek(0)
     try:
-        state = eqx.tree_deserialise_leaves(
-            stream,
-            template,
-            filter_spec=_deserialize_leaf,
+        state = (
+            eqx.tree_deserialise_leaves(
+                stream,
+                template,
+                filter_spec=_deserialize_leaf,
+            )
+            if manifest.training_recipe is None
+            else _deserialize_tree(
+                stream, manifest.training_recipe, limits=_OPERATOR_RECIPE_LIMITS
+            )
         )
     except (EOFError, OSError, TypeError, ValueError) as error:
         raise ValueError("Operator artifact training payload is invalid.") from error

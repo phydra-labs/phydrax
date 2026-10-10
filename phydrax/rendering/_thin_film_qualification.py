@@ -34,7 +34,6 @@ def thin_film_appearance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             colorimetry.capability,
             "phydrax",
-            "candidate",
             (colorimetry,),
             required_gates=(
                 "srgb-transfer-endpoints",
@@ -47,7 +46,6 @@ def thin_film_appearance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             appearance.capability,
             "phydrax",
-            "candidate",
             (appearance,),
             required_gates=(
                 "interference-colorimetry-composition",

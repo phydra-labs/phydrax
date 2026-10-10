@@ -1,25 +1,9 @@
 //
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
-// Incremental 3D Delaunay and regular triangulations (Bowyer-Watson).
-//
-// The triangulation of the convex hull is closed by ghost tetrahedra: every
-// hull facet carries one tetrahedron whose remaining vertex is kInfinite.
-// Every tetrahedron (v0, v1, v2, v3) is positively oriented: orient3d > 0 for
-// finite ones, and for ghosts substituting a point strictly beyond the hull
-// facet for the infinite vertex gives orient3d > 0.  n[k] is the neighbor
-// across the facet opposite v[k]; the structure is always a closed
-// pseudomanifold (every facet shared by exactly two tetrahedra).
-//
-// Conflicts are exact and index-ordered: a finite tetrahedron conflicts with p
-// iff insphere_sos (power3d_sos for weighted points) > 0.  A ghost conflicts
-// iff p lies strictly beyond its hull facet; when p is coplanar with the facet
-// it conflicts iff its finite neighbor does (the neighbor's circumsphere, or
-// orthosphere, restricted to the facet plane is the facet's circumcircle, so
-// this is the limit of the perturbed predicate at the hull).  The triangulation
-// is the regular triangulation of the symbolically perturbed lifting, hence
-// the conflict region of p is connected and star-shaped from p, and the
-// visibility walk is acyclic.
+// 3D Delaunay and regular triangulation entry points: point-set construction
+// and the prepared incremental triangulation handle (see triangulation3d.hpp
+// for the construction invariants).
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -32,465 +16,57 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
+#include "triangulation3d.hpp"
 
 namespace phx::mc {
 namespace {
 
-constexpr int32_t kInfinite = -1;
-constexpr int32_t kDead = -2;
-constexpr std::size_t kMaxTetSlots = static_cast<std::size_t>(std::numeric_limits<int32_t>::max());
-
-// Per-insertion conflict cache states, valid while Tet::stamp equals the
-// current insertion stamp.
-enum : std::uint8_t { kNoConflict = 0, kConflict = 1, kInCavity = 2 };
-
-struct Tet {
-  int32_t v[4];
-  int32_t n[4];
-  std::uint32_t stamp;
-  std::uint8_t state;
-};
-
-bool is_ghost(const Tet& tet) {
-  return tet.v[0] == kInfinite || tet.v[1] == kInfinite || tet.v[2] == kInfinite ||
-         tet.v[3] == kInfinite;
+// Deduplicated BRIO insertion of a validated point set: vertex_map receives
+// the deduplication map and alive the surviving vertices.
+int32_t build_point_set(Triangulation3D& triangulation, const double* points,
+                        int64_t point_count, const double* weights,
+                        NativeVector<int32_t>& vertex_map, NativeVector<char>& alive) {
+  MemoryScope memory(triangulation.memory_owner());
+  const auto representatives =
+      deduplicate_points(points, point_count, 3, weights, vertex_map);
+  const auto order = brio_hilbert_order(points, 3, representatives);
+  alive.assign(static_cast<std::size_t>(point_count), 0);
+  for (int32_t vertex : representatives) {
+    alive[static_cast<std::size_t>(vertex)] = 1;
+  }
+  return triangulation.build(order, alive);
 }
 
-int vertex_slot(const Tet& tet, int32_t vertex) {
-  for (int k = 0; k < 4; ++k) {
-    if (tet.v[k] == vertex) {
-      return k;
-    }
-  }
-  return -1;
-}
-
-int neighbor_slot(const Tet& tet, int32_t neighbor) {
-  for (int k = 0; k < 4; ++k) {
-    if (tet.n[k] == neighbor) {
-      return k;
-    }
-  }
-  return -1;
-}
-
-// Unordered vertex pair key; the infinite vertex maps to 0.
-std::uint64_t edge_key(int32_t a, int32_t b) {
-  const int32_t low = std::min(a, b);
-  const int32_t high = std::max(a, b);
-  return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(low + 1)) << 32) |
-         static_cast<std::uint64_t>(static_cast<std::uint32_t>(high + 1));
-}
-
-// (b - a) x (c - a) vanishes iff the orientations of the three coordinate-plane
-// projections vanish; each is an exact orient2d.
-bool collinear(const double* a, const double* b, const double* c) {
-  for (int axis = 0; axis < 3; ++axis) {
-    const int i = (axis + 1) % 3;
-    const int j = (axis + 2) % 3;
-    const double pa[2] = {a[i], a[j]};
-    const double pb[2] = {b[i], b[j]};
-    const double pc[2] = {c[i], c[j]};
-    if (orient2d(pa, pb, pc) != 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-class Triangulation3D {
- public:
-  Triangulation3D(const double* points, const double* weights, int64_t point_count,
-                  int64_t max_tetrahedra)
-      : points_(points),
-        weights_(weights),
-        max_tetrahedra_(max_tetrahedra),
-        vertex_stamp_(static_cast<std::size_t>(point_count), 0U) {}
-
-  // Inserts `order` (distinct points) incrementally.  alive[v] is cleared for
-  // redundant or removed weighted vertices.
-  int32_t build(const std::vector<int32_t>& order, std::vector<char>& alive) {
-    const std::size_t count = order.size();
-    if (count < 4) {
-      return PHX_MC_DEGENERATE_INPUT;
-    }
-    const int32_t a = order[0];
-    int32_t b = order[1];
-    std::size_t third = 2;
-    while (third < count && collinear(point(a), point(b), point(order[third]))) {
-      ++third;
-    }
-    if (third == count) {
-      return PHX_MC_DEGENERATE_INPUT;
-    }
-    int32_t c = order[third];
-    std::size_t fourth = third + 1;
-    int sign = 0;
-    while (fourth < count &&
-           (sign = orient3d(point(a), point(b), point(c), point(order[fourth]))) == 0) {
-      ++fourth;
-    }
-    if (fourth == count) {
-      return PHX_MC_DEGENERATE_INPUT;
-    }
-    const int32_t d = order[fourth];
-    if (sign < 0) {
-      std::swap(b, c);
-    }
-    tets_.reserve(7 * count + 16);
-    int32_t status = initialize(a, b, c, d);
-    for (std::size_t k = 2; k < count && status == PHX_MC_OK; ++k) {
-      if (k != third && k != fourth) {
-        status = insert(order[k], alive);
+// Canonical mesh of the finite cells, with facet constraints and regions when
+// the complex carries labels.
+NativeUniquePtr<phx_mc_mesh> mesh_of(const Triangulation3D& triangulation,
+                                    const double* points, int64_t point_count,
+                                    NativeVector<int32_t> vertex_map) {
+  MemoryScope memory(triangulation.memory_owner());
+  auto result = make_native_unique<phx_mc_mesh>();
+  const TetrahedralComplex& complex = triangulation.complex();
+  triangulation.collect_cells(result->cells);
+  if (complex.labeled()) {
+    result->cell_constraints.reserve(result->cells.size());
+    result->cell_regions.reserve(result->cells.size() / 4);
+    for (std::size_t t = 0; t < complex.tets.size(); ++t) {
+      const Tetrahedron& tet = complex.tets[t];
+      if (tet.v[0] == kDeadVertex || is_ghost(tet)) {
+        continue;
       }
-    }
-    return status;
-  }
-
-  void collect_cells(std::vector<int32_t>& cells) const {
-    cells.clear();
-    cells.reserve(static_cast<std::size_t>(finite_count_) * 4);
-    for (const Tet& tet : tets_) {
-      if (tet.v[0] != kDead && !is_ghost(tet)) {
-        cells.insert(cells.end(), tet.v, tet.v + 4);
-      }
-    }
-  }
-
- private:
-  struct BoundaryFace {
-    int32_t tet;       // cavity tetrahedron
-    int32_t slot;      // facet opposite tets_[tet].v[slot]
-    int32_t outside;   // non-conflicting neighbor across the facet
-    int32_t back;      // slot of `tet` in tets_[outside].n
-  };
-
-  // Open-addressing slot of the facet table; valid while stamp == link_stamp_.
-  struct LinkSlot {
-    std::uint64_t key;
-    int32_t tet;  // -1 once both occurrences are linked
-    int32_t slot;
-    std::uint32_t stamp;
-  };
-
-  const double* point(int32_t vertex) const {
-    return points_ + 3 * static_cast<int64_t>(vertex);
-  }
-
-  // orient3d of `tet` with v[slot] replaced by p.
-  int orient_with(const Tet& tet, int slot, int32_t p) const {
-    const double* q[4];
-    for (int k = 0; k < 4; ++k) {
-      q[k] = point(k == slot ? p : tet.v[k]);
-    }
-    return orient3d(q[0], q[1], q[2], q[3]);
-  }
-
-  bool finite_conflict(const Tet& tet, int32_t p) const {
-    const int32_t* v = tet.v;
-    if (weights_ == nullptr) {
-      return insphere_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p), v[0],
-                          v[1], v[2], v[3], p) > 0;
-    }
-    return power3d_sos(point(v[0]), point(v[1]), point(v[2]), point(v[3]), point(p),
-                       weights_[v[0]], weights_[v[1]], weights_[v[2]], weights_[v[3]],
-                       weights_[p], v[0], v[1], v[2], v[3], p) > 0;
-  }
-
-  bool conflict(int32_t t, int32_t p) {
-    Tet& tet = tets_[static_cast<std::size_t>(t)];
-    if (tet.stamp == stamp_value_) {
-      return tet.state != kNoConflict;
-    }
-    const int slot = vertex_slot(tet, kInfinite);
-    bool result = false;
-    if (slot < 0) {
-      result = finite_conflict(tet, p);
-    } else {
-      const int side = orient_with(tet, slot, p);
-      result = side > 0 || (side == 0 && conflict(tet.n[slot], p));
-    }
-    tet.stamp = stamp_value_;
-    tet.state = result ? kConflict : kNoConflict;
-    return result;
-  }
-
-  // Visibility walk from the hint: returns a finite tetrahedron containing p
-  // (closed) or a ghost whose hull facet has p strictly beyond it.
-  int32_t locate(int32_t p) {
-    int32_t t = hint_;
-    {
-      const Tet& start = tets_[static_cast<std::size_t>(t)];
-      const int slot = vertex_slot(start, kInfinite);
-      if (slot >= 0) {
-        t = start.n[slot];
-      }
-    }
-    int32_t previous = -1;
-    for (;;) {
-      const Tet& tet = tets_[static_cast<std::size_t>(t)];
-      const int first = static_cast<int>(splitmix64(walk_step_++) & 3U);
-      int32_t next = -1;
-      for (int i = 0; i < 4; ++i) {
-        const int k = (first + i) & 3;
-        // p is strictly on this side of the facet just crossed.
-        if (tet.n[k] == previous) {
-          continue;
-        }
-        if (orient_with(tet, k, p) < 0) {
-          next = tet.n[k];
-          break;
-        }
-      }
-      if (next < 0) {
-        return t;
-      }
-      previous = t;
-      t = next;
-      if (is_ghost(tets_[static_cast<std::size_t>(t)])) {
-        return t;
-      }
-    }
-  }
-
-  int32_t allocate() {
-    if (!free_.empty()) {
-      const int32_t id = free_.back();
-      free_.pop_back();
-      return id;
-    }
-    if (tets_.size() >= kMaxTetSlots) {
-      return -1;
-    }
-    tets_.push_back(Tet{});
-    return static_cast<int32_t>(tets_.size() - 1);
-  }
-
-  // Links the facets through `center` of the tetrahedra `ids` (a closed fan
-  // around center): each such facet is keyed by its two other vertices and
-  // must occur exactly twice.
-  bool link_star(const std::vector<int32_t>& ids, int32_t center) {
-    std::size_t capacity = 64;
-    while (capacity < 6 * ids.size()) {
-      capacity <<= 1;
-    }
-    if (link_table_.size() < capacity) {
-      link_table_.assign(capacity, LinkSlot{0, 0, 0, 0U});
-      link_stamp_ = 0;
-    }
-    ++link_stamp_;
-    const std::size_t mask = link_table_.size() - 1;
-    std::size_t pending = 0;
-    for (int32_t id : ids) {
-      Tet& tet = tets_[static_cast<std::size_t>(id)];
-      const int apex = vertex_slot(tet, center);
-      for (int s = 0; s < 4; ++s) {
-        if (s == apex) {
-          continue;
-        }
-        int32_t pair[2];
-        int count = 0;
-        for (int r = 0; r < 4; ++r) {
-          if (r != s && r != apex) {
-            pair[count++] = tet.v[r];
-          }
-        }
-        const std::uint64_t key = edge_key(pair[0], pair[1]);
-        std::size_t h = static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> 32) & mask;
-        for (;;) {
-          LinkSlot& entry = link_table_[h];
-          if (entry.stamp != link_stamp_) {
-            entry = LinkSlot{key, id, s, link_stamp_};
-            ++pending;
-            break;
-          }
-          if (entry.key == key) {
-            if (entry.tet < 0) {
-              return false;
-            }
-            tet.n[s] = entry.tet;
-            tets_[static_cast<std::size_t>(entry.tet)].n[entry.slot] = id;
-            entry.tet = -1;
-            --pending;
-            break;
-          }
-          h = (h + 1) & mask;
-        }
-      }
-    }
-    return pending == 0;
-  }
-
-  int32_t initialize(int32_t a, int32_t b, int32_t c, int32_t d) {
-    if (max_tetrahedra_ < 1) {
-      return PHX_MC_CAPACITY_EXCEEDED;
-    }
-    const int32_t root = allocate();
-    tets_[static_cast<std::size_t>(root)] = Tet{{a, b, c, d}, {-1, -1, -1, -1}, 0U, kNoConflict};
-    std::vector<int32_t> ghosts;
-    for (int k = 0; k < 4; ++k) {
-      const int32_t ghost = allocate();
-      Tet tet = tets_[static_cast<std::size_t>(root)];
-      tet.v[k] = kInfinite;
-      // Odd permutation of the facet: the outside becomes the positive side.
-      const int first = k == 0 ? 1 : 0;
-      const int second = k <= 1 ? 2 : 1;
-      std::swap(tet.v[first], tet.v[second]);
-      tet.n[0] = tet.n[1] = tet.n[2] = tet.n[3] = -1;
-      tet.n[k] = root;
-      tets_[static_cast<std::size_t>(ghost)] = tet;
-      tets_[static_cast<std::size_t>(root)].n[k] = ghost;
-      ghosts.push_back(ghost);
-    }
-    if (!link_star(ghosts, kInfinite)) {
-      return PHX_MC_INTERNAL_ERROR;
-    }
-    finite_count_ = 1;
-    hint_ = root;
-    return PHX_MC_OK;
-  }
-
-  int32_t insert(int32_t p, std::vector<char>& alive) {
-    ++stamp_value_;
-    const int32_t origin = locate(p);
-    if (!conflict(origin, p)) {
-      // Only a weighted point lying above the lower hull can be conflict-free.
-      if (weights_ == nullptr) {
-        return PHX_MC_INTERNAL_ERROR;
-      }
-      alive[static_cast<std::size_t>(p)] = 0;
-      hint_ = origin;
-      return PHX_MC_OK;
-    }
-
-    cavity_.clear();
-    boundary_.clear();
-    stack_.clear();
-    tets_[static_cast<std::size_t>(origin)].state = kInCavity;
-    cavity_.push_back(origin);
-    stack_.push_back(origin);
-    while (!stack_.empty()) {
-      const int32_t t = stack_.back();
-      stack_.pop_back();
       for (int k = 0; k < 4; ++k) {
-        const int32_t neighbor = tets_[static_cast<std::size_t>(t)].n[k];
-        if (tets_[static_cast<std::size_t>(neighbor)].stamp == stamp_value_ &&
-            tets_[static_cast<std::size_t>(neighbor)].state == kInCavity) {
-          continue;
-        }
-        if (conflict(neighbor, p)) {
-          tets_[static_cast<std::size_t>(neighbor)].state = kInCavity;
-          cavity_.push_back(neighbor);
-          stack_.push_back(neighbor);
-        } else {
-          const int back = neighbor_slot(tets_[static_cast<std::size_t>(neighbor)], t);
-          if (back < 0) {
-            return PHX_MC_INTERNAL_ERROR;
-          }
-          boundary_.push_back({t, k, neighbor, back});
-        }
+        result->cell_constraints.push_back(complex.constraint(static_cast<int32_t>(t), k));
       }
+      result->cell_regions.push_back(complex.region(static_cast<int32_t>(t)));
     }
-
-    // Vertices of the cavity absent from its boundary lose their whole star.
-    for (const BoundaryFace& face : boundary_) {
-      const Tet& tet = tets_[static_cast<std::size_t>(face.tet)];
-      for (int s = 0; s < 4; ++s) {
-        if (s != face.slot && tet.v[s] >= 0) {
-          vertex_stamp_[static_cast<std::size_t>(tet.v[s])] = stamp_value_;
-        }
-      }
-    }
-    removed_.clear();
-    int64_t removed_finite = 0;
-    for (int32_t t : cavity_) {
-      const Tet& tet = tets_[static_cast<std::size_t>(t)];
-      if (!is_ghost(tet)) {
-        ++removed_finite;
-      }
-      for (int s = 0; s < 4; ++s) {
-        const int32_t vertex = tet.v[s];
-        if (vertex >= 0 && vertex_stamp_[static_cast<std::size_t>(vertex)] != stamp_value_) {
-          vertex_stamp_[static_cast<std::size_t>(vertex)] = stamp_value_;
-          removed_.push_back(vertex);
-        }
-      }
-    }
-    if (!removed_.empty() && weights_ == nullptr) {
-      return PHX_MC_INTERNAL_ERROR;
-    }
-
-    created_.clear();
-    int64_t created_finite = 0;
-    for (const BoundaryFace& face : boundary_) {
-      Tet tet = tets_[static_cast<std::size_t>(face.tet)];
-      tet.v[face.slot] = p;
-      tet.n[0] = tet.n[1] = tet.n[2] = tet.n[3] = -1;
-      tet.n[face.slot] = face.outside;
-      tet.stamp = 0U;
-      tet.state = kNoConflict;
-      if (!is_ghost(tet)) {
-        ++created_finite;
-      }
-      created_.push_back(tet);
-    }
-    if (finite_count_ - removed_finite + created_finite > max_tetrahedra_) {
-      return PHX_MC_CAPACITY_EXCEEDED;
-    }
-
-    new_ids_.clear();
-    for (std::size_t i = 0; i < created_.size(); ++i) {
-      int32_t id = -1;
-      if (i < cavity_.size()) {
-        id = cavity_[i];
-      } else {
-        id = allocate();
-        if (id < 0) {
-          return PHX_MC_CAPACITY_EXCEEDED;
-        }
-      }
-      new_ids_.push_back(id);
-    }
-    for (std::size_t i = created_.size(); i < cavity_.size(); ++i) {
-      Tet& dead = tets_[static_cast<std::size_t>(cavity_[i])];
-      dead.v[0] = dead.v[1] = dead.v[2] = dead.v[3] = kDead;
-      free_.push_back(cavity_[i]);
-    }
-    for (std::size_t i = 0; i < created_.size(); ++i) {
-      tets_[static_cast<std::size_t>(new_ids_[i])] = created_[i];
-      const BoundaryFace& face = boundary_[i];
-      tets_[static_cast<std::size_t>(face.outside)].n[face.back] = new_ids_[i];
-    }
-    if (!link_star(new_ids_, p)) {
-      return PHX_MC_INTERNAL_ERROR;
-    }
-    for (int32_t vertex : removed_) {
-      alive[static_cast<std::size_t>(vertex)] = 0;
-    }
-    finite_count_ += created_finite - removed_finite;
-    hint_ = new_ids_.back();
-    return PHX_MC_OK;
   }
-
-  const double* points_;
-  const double* weights_;
-  int64_t max_tetrahedra_;
-  std::vector<Tet> tets_;
-  std::vector<std::uint32_t> vertex_stamp_;
-  std::vector<int32_t> free_;
-  std::uint32_t stamp_value_ = 0;
-  std::uint64_t walk_step_ = 0;
-  int64_t finite_count_ = 0;
-  int32_t hint_ = 0;
-  std::vector<int32_t> cavity_;
-  std::vector<int32_t> stack_;
-  std::vector<BoundaryFace> boundary_;
-  std::vector<int32_t> removed_;
-  std::vector<Tet> created_;
-  std::vector<int32_t> new_ids_;
-  std::vector<LinkSlot> link_table_;
-  std::uint32_t link_stamp_ = 0;
-};
+  result->dimension = 3;
+  result->input_point_count = point_count;
+  result->points.assign(points, points + 3 * point_count);
+  result->vertex_map = std::move(vertex_map);
+  canonicalize_cells(*result);
+  return result;
+}
 
 int32_t triangulate_3d(int64_t point_count, const double* points, const double* weights,
                        bool weighted, int64_t max_tetrahedra, phx_mc_mesh** mesh) {
@@ -504,40 +80,340 @@ int32_t triangulate_3d(int64_t point_count, const double* points, const double* 
   if (point_count > 0 && (points == nullptr || (weighted && weights == nullptr))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
+  if (point_count >= 4 && active_execution_scope != nullptr &&
+      !active_execution_scope->admit(5)) return active_execution_scope->status();
+  MemoryOwner memory_owner = scratch_memory_owner();
+  if (!memory_owner) memory_owner = std::make_shared<BoundedMemoryResource>();
+  MemoryScope memory(memory_owner);
   const double* active_weights = weighted ? weights : nullptr;
   int32_t status = validate_points(points, point_count, 3, active_weights);
   if (status != PHX_MC_OK) {
     return status;
   }
-  std::vector<int32_t> vertex_map;
-  const std::vector<int32_t> representatives =
-      deduplicate_points(points, point_count, 3, active_weights, vertex_map);
-  const std::vector<int32_t> order = brio_hilbert_order(points, 3, representatives);
-
-  std::vector<char> alive(static_cast<std::size_t>(point_count), 0);
-  for (int32_t vertex : representatives) {
-    alive[static_cast<std::size_t>(vertex)] = 1;
-  }
-  auto result = std::make_unique<phx_mc_mesh>();
-  {
-    Triangulation3D triangulation(points, active_weights, point_count, max_tetrahedra);
-    status = triangulation.build(order, alive);
-    if (status != PHX_MC_OK) {
-      return status;
-    }
-    triangulation.collect_cells(result->cells);
+  InsertionLimits limits;
+  limits.max_tetrahedra = max_tetrahedra;
+  Triangulation3D triangulation(points, active_weights, point_count, limits);
+  NativeVector<int32_t> vertex_map;
+  NativeVector<char> alive;
+  status = build_point_set(triangulation, points, point_count, active_weights, vertex_map, alive);
+  if (status != PHX_MC_OK) {
+    return status;
   }
   for (int32_t& target : vertex_map) {
     if (target >= 0 && alive[static_cast<std::size_t>(target)] == 0) {
       target = -1;
     }
   }
-  result->dimension = 3;
-  result->input_point_count = point_count;
-  result->points.assign(points, points + 3 * point_count);
-  result->vertex_map = std::move(vertex_map);
-  canonicalize_cells(*result);
-  *mesh = result.release();
+  *mesh = mesh_of(triangulation, points, point_count, std::move(vertex_map)).release();
+  return PHX_MC_OK;
+}
+
+}  // namespace
+}  // namespace phx::mc
+
+// Prepared incremental Delaunay triangulation: every submitted point receives
+// the next vertex id; vertex_map[id] is id for a vertex, the id of an earlier
+// identical point, or -1 when the insertion was refused.
+struct phx_mc_triangulation_3d : phx::mc::NativeAllocatedObject {
+  explicit phx_mc_triangulation_3d(phx::mc::MemoryOwner owner = phx::mc::scratch_memory_owner())
+      : memory_owner(std::move(owner)),
+        points(phx::mc::NativeAllocator<double>(memory_owner)),
+        vertex_map(phx::mc::NativeAllocator<int32_t>(memory_owner)),
+        alive(phx::mc::NativeAllocator<char>(memory_owner)) {}
+  phx::mc::MemoryOwner memory_owner;
+  phx::mc::NativeVector<double> points;
+  phx::mc::NativeVector<int32_t> vertex_map;
+  phx::mc::NativeVector<char> alive;
+  phx::mc::NativeUniquePtr<phx::mc::Triangulation3D> triangulation;
+  int64_t max_vertices = 0;
+  int64_t committed = 0;
+  int64_t refused = 0;
+  std::size_t peak_bytes = 0;
+  // Set when a commit contradicted the star-shapedness premise after
+  // writing; every later call reports PHX_MC_INTERNAL_ERROR.
+  bool broken = false;
+
+  int64_t vertex_count() const { return static_cast<int64_t>(vertex_map.size()); }
+
+  std::size_t retained_bytes() const { return memory_owner->live_bytes(); }
+
+  void record_peak() { peak_bytes = memory_owner->peak_bytes(); }
+
+  bool live_vertex(int64_t id) const {
+    return id >= 0 && id < vertex_count() && vertex_map[static_cast<std::size_t>(id)] == id;
+  }
+};
+
+namespace phx::mc {
+namespace {
+
+using Handle = phx_mc_triangulation_3d;
+
+int32_t create(int64_t point_count, const double* points, int64_t max_vertices,
+               int64_t max_tetrahedra, int64_t max_cavity, Handle** out) {
+  if (out == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  *out = nullptr;
+  if (point_count < 0 || max_vertices < point_count || max_vertices > kMaxMeshPoints ||
+      max_tetrahedra < 0 || max_cavity < 1 || (point_count > 0 && points == nullptr)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  if (point_count >= 4 && active_execution_scope != nullptr &&
+      !active_execution_scope->admit(5)) return active_execution_scope->status();
+  MemoryOwner memory_owner = scratch_memory_owner();
+  if (!memory_owner) memory_owner = std::make_shared<BoundedMemoryResource>();
+  MemoryScope memory(memory_owner);
+  int32_t status = validate_points(points, point_count, 3, nullptr);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  auto handle = make_native_unique<Handle>(memory_owner);
+  handle->max_vertices = max_vertices;
+  handle->points.assign(points, points + 3 * point_count);
+  // The initial point set is built like phx_mc_delaunay_3d; the cavity bound
+  // applies to later insertions.
+  InsertionLimits limits;
+  limits.max_tetrahedra = max_tetrahedra;
+  handle->triangulation =
+      make_native_unique<Triangulation3D>(handle->points.data(), nullptr, point_count, limits);
+  status = build_point_set(*handle->triangulation, handle->points.data(), point_count, nullptr,
+                           handle->vertex_map, handle->alive);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  handle->triangulation->limits().max_cavity = static_cast<std::size_t>(max_cavity);
+  handle->record_peak();
+  *out = handle.release();
+  return PHX_MC_OK;
+}
+
+int32_t check_handle(const Handle* handle) {
+  if (handle == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  return handle->broken ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+}
+
+// Readiness of a handle about to change or walk: a batch work limit left by an
+// allocation failure escaping mid-batch no longer applies.
+int32_t ready(Handle* handle) {
+  const int32_t status = check_handle(handle);
+  if (status == PHX_MC_OK) {
+    handle->triangulation->limits().work_limit = std::numeric_limits<int64_t>::max();
+  }
+  return status;
+}
+
+// Inserts one batch: validated as a whole, ids assigned in submission order,
+// exact duplicates within the batch share their first occurrence, insertion
+// in BRIO order (the result does not depend on it) under one work budget.
+// Outputs are written as items complete, so an allocation failure escaping
+// mid-batch leaves them describing exactly the committed items.
+int32_t insert(Handle* handle, int64_t count, const double* points, int64_t work_limit,
+               int32_t* vertices, int32_t* item_status) {
+  int32_t status = ready(handle);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  MemoryScope memory(handle->memory_owner);
+  if (count < 0 || work_limit < 0 || vertices == nullptr || item_status == nullptr ||
+      !addressable(count, 3, sizeof(double)) || (count > 0 && points == nullptr)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  status = validate_points(points, count, 3, nullptr);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  const int64_t base = handle->vertex_count();
+  if (count > handle->max_vertices - base) {
+    return PHX_MC_CAPACITY_EXCEEDED;
+  }
+  std::fill_n(vertices, count, -1);
+  std::fill_n(item_status, count, PHX_MC_CAPACITY_EXCEEDED);
+  NativeVector<int32_t> local_map;
+  const auto representatives = deduplicate_points(points, count, 3, nullptr, local_map);
+  const auto order = brio_hilbert_order(points, 3, representatives);
+  // Growth is reserved before any state changes.
+  const std::size_t total = static_cast<std::size_t>(base + count);
+  Triangulation3D& triangulation = *handle->triangulation;
+  reserve_for(handle->vertex_map, total);
+  reserve_for(handle->alive, total);
+  triangulation.reserve_vertices(static_cast<int64_t>(total));
+  reserve_for(handle->points, 3 * total);
+  // Coordinate relocation is immediately followed by a no-allocation bind.
+  // No later reservation can leave the accepted complex borrowing freed data.
+  triangulation.rebind(handle->points.data(), base);
+  handle->points.insert(handle->points.end(), points, points + 3 * count);
+  triangulation.rebind(handle->points.data(), static_cast<int64_t>(total));
+  handle->vertex_map.resize(total, -1);
+  handle->alive.resize(total, 0);
+  InsertionLimits& limits = triangulation.limits();
+  limits.work_limit = triangulation.work() > std::numeric_limits<int64_t>::max() - work_limit
+                          ? std::numeric_limits<int64_t>::max()
+                          : triangulation.work() + work_limit;
+  bool exhausted = false;
+  for (int32_t local : order) {
+    if (exhausted) {
+      break;
+    }
+    const int32_t id = static_cast<int32_t>(base + local);
+    int32_t duplicate = -1;
+    const int32_t result = triangulation.insert(id, handle->alive, &duplicate);
+    if (result == PHX_MC_INTERNAL_ERROR) {
+      handle->broken = true;
+      return PHX_MC_INTERNAL_ERROR;
+    }
+    item_status[local] = result;
+    if (result == PHX_MC_OK) {
+      const int32_t target = duplicate >= 0 ? duplicate : id;
+      handle->vertex_map[static_cast<std::size_t>(id)] = target;
+      handle->alive[static_cast<std::size_t>(id)] = duplicate >= 0 ? 0 : 1;
+      handle->committed += duplicate >= 0 ? 0 : 1;
+      vertices[local] = target;
+    } else {
+      ++handle->refused;
+      exhausted = triangulation.refusal() == Refusal::kWork;
+    }
+  }
+  limits.work_limit = std::numeric_limits<int64_t>::max();
+  for (int64_t i = 0; i < count; ++i) {
+    const int32_t representative = local_map[static_cast<std::size_t>(i)];
+    const int32_t target =
+        handle->vertex_map[static_cast<std::size_t>(base + representative)];
+    handle->vertex_map[static_cast<std::size_t>(base + i)] = target;
+    vertices[i] = target;
+    item_status[i] = item_status[representative];
+  }
+  handle->record_peak();
+  return PHX_MC_OK;
+}
+
+int32_t constrain_facets(Handle* handle, int64_t count, const int32_t* facets,
+                         const int32_t* ids, int32_t* item_status) {
+  int32_t status = ready(handle);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  MemoryScope memory(handle->memory_owner);
+  if (count < 0 || item_status == nullptr || !addressable(count, 3, sizeof(int32_t)) ||
+      (count > 0 && (facets == nullptr || ids == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  Triangulation3D& triangulation = *handle->triangulation;
+  TetrahedralComplex& complex = triangulation.complex();
+  complex.enable_labels();
+  for (int64_t i = 0; i < count; ++i) {
+    const int32_t* f = facets + 3 * i;
+    int32_t t = -1;
+    int slot = -1;
+    const bool valid = ids[i] >= 0 && handle->live_vertex(f[0]) && handle->live_vertex(f[1]) &&
+                       handle->live_vertex(f[2]) && f[0] != f[1] && f[0] != f[2] &&
+                       f[1] != f[2] && triangulation.find_facet(f[0], f[1], f[2], t, slot);
+    int32_t result = PHX_MC_INVALID_INPUT;
+    if (valid) {
+      const int32_t existing = complex.constraint(t, slot);
+      if (existing == kNoConstraint) {
+        complex.set_facet_constraint(t, slot, ids[i]);
+        triangulation.count_constrained_facet();
+        result = PHX_MC_OK;
+      } else if (existing == ids[i]) {
+        result = PHX_MC_OK;
+      }
+    }
+    item_status[i] = result;
+  }
+  handle->record_peak();
+  return PHX_MC_OK;
+}
+
+int32_t label_regions(Handle* handle, int64_t count, const double* seeds, const int32_t* labels,
+                      int32_t* item_status) {
+  int32_t status = ready(handle);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  MemoryScope memory(handle->memory_owner);
+  if (count < 0 || item_status == nullptr || !addressable(count, 3, sizeof(double)) ||
+      (count > 0 && (seeds == nullptr || labels == nullptr))) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  status = validate_points(seeds, count, 3, nullptr);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  Triangulation3D& triangulation = *handle->triangulation;
+  TetrahedralComplex& complex = triangulation.complex();
+  complex.enable_labels();
+  NativeVector<int32_t> proposed(complex.tets.size(), kNoRegion);
+  NativeVector<int32_t> proposed_status(static_cast<std::size_t>(count), PHX_MC_INVALID_INPUT);
+  std::fill_n(item_status, count, PHX_MC_CAPACITY_EXCEEDED);
+  for (int64_t i = 0; i < count; ++i) {
+    const double* seed = seeds + 3 * i;
+    const int32_t t = triangulation.locate(seed);
+    int32_t result = PHX_MC_INVALID_INPUT;
+    if (labels[i] >= 0 && t >= 0 && triangulation.location(t, seed) == 0) {
+      const int32_t existing = proposed[static_cast<std::size_t>(t)];
+      if (existing == kNoRegion) {
+        triangulation.flood_region(t, labels[i], proposed);
+        result = PHX_MC_OK;
+      } else if (existing == labels[i]) {
+        result = PHX_MC_OK;
+      }
+    }
+    proposed_status[static_cast<std::size_t>(i)] = result;
+  }
+  for (std::size_t t = 0; t < proposed.size(); ++t) {
+    complex.set_region(static_cast<int32_t>(t), proposed[t]);
+  }
+  std::copy(proposed_status.begin(), proposed_status.end(), item_status);
+  handle->record_peak();
+  return PHX_MC_OK;
+}
+
+int32_t locate(Handle* handle, int64_t count, const double* points, int32_t* cells,
+               int8_t* locations, int32_t* item_status) {
+  int32_t status = ready(handle);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  MemoryScope memory(handle->memory_owner);
+  if (count < 0 || cells == nullptr || locations == nullptr || item_status == nullptr ||
+      !addressable(count, 4, sizeof(double)) || (count > 0 && points == nullptr)) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  Triangulation3D& triangulation = *handle->triangulation;
+  for (int64_t i = 0; i < count; ++i) {
+    const double* p = points + 3 * i;
+    const int32_t result = validate_points(p, 1, 3, nullptr);
+    int32_t* cell = cells + 4 * i;
+    std::fill_n(cell, 4, -1);
+    locations[i] = -1;
+    if (result == PHX_MC_OK) {
+      // The walk is unbudgeted outside insertion batches.
+      const int32_t t = triangulation.locate(p);
+      std::copy_n(triangulation.tet(t).v, 4, cell);
+      canonicalize_cell(cell, nullptr, 4);
+      locations[i] = static_cast<int8_t>(triangulation.location(t, p));
+    }
+    item_status[i] = result;
+  }
+  return PHX_MC_OK;
+}
+
+int32_t finalize(const Handle* handle, phx_mc_mesh** mesh) {
+  if (mesh == nullptr) {
+    return PHX_MC_INVALID_ARGUMENT;
+  }
+  *mesh = nullptr;
+  const int32_t status = check_handle(handle);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  MemoryScope memory(handle->memory_owner);
+  *mesh = mesh_of(*handle->triangulation, handle->points.data(), handle->vertex_count(),
+                  handle->vertex_map)
+              .release();
   return PHX_MC_OK;
 }
 
@@ -558,6 +434,90 @@ int32_t phx_mc_regular_3d(int64_t point_count, const double* points, const doubl
   return phx::mc::guarded([&] {
     return phx::mc::triangulate_3d(point_count, points, weights, true, max_tetrahedra, mesh);
   });
+}
+
+int32_t phx_mc_triangulation_3d_create(int64_t point_count, const double* points,
+                                       int64_t max_vertices, int64_t max_tetrahedra,
+                                       int64_t max_cavity,
+                                       phx_mc_triangulation_3d** triangulation) {
+  return phx::mc::guarded([&] {
+    return phx::mc::create(point_count, points, max_vertices, max_tetrahedra, max_cavity,
+                           triangulation);
+  });
+}
+
+int32_t phx_mc_triangulation_3d_insert(phx_mc_triangulation_3d* triangulation, int64_t count,
+                                       const double* points, int64_t work_limit,
+                                       int32_t* vertices, int32_t* item_status) {
+  return phx::mc::guarded([&] {
+    return phx::mc::insert(triangulation, count, points, work_limit, vertices, item_status);
+  });
+}
+
+int32_t phx_mc_triangulation_3d_constrain_facets(phx_mc_triangulation_3d* triangulation,
+                                                 int64_t count, const int32_t* facets,
+                                                 const int32_t* constraint_ids,
+                                                 int32_t* item_status) {
+  return phx::mc::guarded([&] {
+    return phx::mc::constrain_facets(triangulation, count, facets, constraint_ids, item_status);
+  });
+}
+
+int32_t phx_mc_triangulation_3d_label_regions(phx_mc_triangulation_3d* triangulation,
+                                              int64_t seed_count, const double* seeds,
+                                              const int32_t* labels, int32_t* item_status) {
+  return phx::mc::guarded([&] {
+    return phx::mc::label_regions(triangulation, seed_count, seeds, labels, item_status);
+  });
+}
+
+int32_t phx_mc_triangulation_3d_locate(phx_mc_triangulation_3d* triangulation, int64_t count,
+                                       const double* points, int32_t* cells, int8_t* locations,
+                                       int32_t* item_status) {
+  return phx::mc::guarded([&] {
+    return phx::mc::locate(triangulation, count, points, cells, locations, item_status);
+  });
+}
+
+int32_t phx_mc_triangulation_3d_statistics(const phx_mc_triangulation_3d* triangulation,
+                                           int64_t* values) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (triangulation == nullptr || values == nullptr) {
+      return PHX_MC_INVALID_ARGUMENT;
+    }
+    phx::mc::MemoryScope memory(triangulation->memory_owner);
+    const phx::mc::Triangulation3D& state = *triangulation->triangulation;
+    const phx::mc::TetrahedralComplex& complex = state.complex();
+    int64_t live = 0;
+    for (int64_t id = 0; id < triangulation->vertex_count(); ++id) {
+      live += triangulation->live_vertex(id) ? 1 : 0;
+    }
+    values[PHX_MC_TRIANGULATION_3D_VERTEX_IDS] = triangulation->vertex_count();
+    values[PHX_MC_TRIANGULATION_3D_LIVE_VERTICES] = live;
+    values[PHX_MC_TRIANGULATION_3D_FINITE_CELLS] = complex.finite_count;
+    values[PHX_MC_TRIANGULATION_3D_GHOST_CELLS] = complex.live_count() - complex.finite_count;
+    values[PHX_MC_TRIANGULATION_3D_CELL_SLOTS] = static_cast<int64_t>(complex.tets.size());
+    values[PHX_MC_TRIANGULATION_3D_FREE_SLOTS] = static_cast<int64_t>(complex.free_slots.size());
+    values[PHX_MC_TRIANGULATION_3D_CONSTRAINED_FACETS] = state.constrained_facets();
+    values[PHX_MC_TRIANGULATION_3D_WORK] = state.work();
+    values[PHX_MC_TRIANGULATION_3D_COMMITTED] = triangulation->committed;
+    values[PHX_MC_TRIANGULATION_3D_REFUSED] = triangulation->refused;
+    values[PHX_MC_TRIANGULATION_3D_LARGEST_CAVITY] =
+        static_cast<int64_t>(state.largest_cavity());
+    values[PHX_MC_TRIANGULATION_3D_RETAINED_BYTES] =
+        static_cast<int64_t>(triangulation->retained_bytes());
+    values[PHX_MC_TRIANGULATION_3D_PEAK_BYTES] = static_cast<int64_t>(triangulation->peak_bytes);
+    return triangulation->broken ? PHX_MC_INTERNAL_ERROR : PHX_MC_OK;
+  });
+}
+
+int32_t phx_mc_triangulation_3d_finalize(const phx_mc_triangulation_3d* triangulation,
+                                         phx_mc_mesh** mesh) {
+  return phx::mc::guarded([&] { return phx::mc::finalize(triangulation, mesh); });
+}
+
+void phx_mc_triangulation_3d_free(phx_mc_triangulation_3d* triangulation) {
+  phx::mc::destroy_native_object(triangulation);
 }
 
 }  // extern "C"

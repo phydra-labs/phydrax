@@ -15,7 +15,6 @@ def frequency_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, attrs),),
             required_gates=("convention", "analytic-control", "public-workflow"),
         )

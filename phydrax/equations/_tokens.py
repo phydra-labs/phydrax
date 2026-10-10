@@ -419,6 +419,11 @@ def tokenize_pde_ir(
             scalar=parameter.components,
             dimension=parameter.dimension,
         )
+        append_attribute(
+            f"representation_{parameter.representation}",
+            parent=root,
+            depth=1,
+        )
         if parameter.value is None:
             append_attribute("parameter_value_absent", parent=root, depth=1)
         elif isinstance(parameter.value, (int, float)):

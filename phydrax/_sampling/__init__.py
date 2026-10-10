@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
+
 from ._adaptation import (
     adapt_proposal_scale,
     AdaptiveProposalState,
@@ -22,18 +25,37 @@ from ._designs import (
     materialize_design,
     seed_from_key,
 )
-from ._hamiltonian import (
-    adapt_hamiltonian_kernel,
-    HamiltonianAdaptationPlan,
-    HamiltonianAdaptationResult,
-    HamiltonianChainState,
-    HamiltonianIterationMetrics,
-    HamiltonianSampleResult,
-    initialize_hamiltonian_state,
-    prepare_hamiltonian_kernel,
-    PreparedHamiltonianKernel,
-    sample_hamiltonian,
+
+
+_HAMILTONIAN_EXPORTS = frozenset(
+    (
+        "adapt_hamiltonian_kernel",
+        "HamiltonianAdaptationPlan",
+        "HamiltonianAdaptationResult",
+        "HamiltonianChainState",
+        "HamiltonianIterationMetrics",
+        "HamiltonianSampleResult",
+        "initialize_hamiltonian_state",
+        "prepare_hamiltonian_kernel",
+        "PreparedHamiltonianKernel",
+        "sample_hamiltonian",
+    )
 )
+
+
+if TYPE_CHECKING:
+    from ._hamiltonian import (
+        adapt_hamiltonian_kernel,
+        HamiltonianAdaptationPlan,
+        HamiltonianAdaptationResult,
+        HamiltonianChainState,
+        HamiltonianIterationMetrics,
+        HamiltonianSampleResult,
+        initialize_hamiltonian_state,
+        prepare_hamiltonian_kernel,
+        PreparedHamiltonianKernel,
+        sample_hamiltonian,
+    )
 from ._markov import (
     MarkovIterationMetrics,
     MarkovSampleResult,
@@ -78,6 +100,18 @@ from ._types import (
     SobolDesign,
     UnitDesign,
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _HAMILTONIAN_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("._hamiltonian", __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _HAMILTONIAN_EXPORTS)
 
 
 __all__ = [

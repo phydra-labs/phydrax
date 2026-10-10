@@ -84,7 +84,6 @@ def conformal_bootstrap_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=gates[support.capability],
             released=False,

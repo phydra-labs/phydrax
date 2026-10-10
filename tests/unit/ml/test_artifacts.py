@@ -346,9 +346,7 @@ def test_ml_artifact_rejects_billion_element_recipe_before_device_allocation(
             if node["kind"] == "array":
                 node["shape"] = [65_536, 65_536]
                 return
-            if node["kind"] == "dataclass":
-                pending.extend(node["fields"].values())
-            elif node["kind"] in ("tuple", "list", "set", "frozenset"):
+            if node["kind"] in ("dataclass", "tuple", "list", "set", "frozenset"):
                 pending.extend(node["items"])
             elif node["kind"] in ("mapping", "frozendict", "mappingproxy"):
                 pending.extend(item for pair in node["items"] for item in pair)
@@ -406,9 +404,7 @@ def test_ml_artifact_binds_recipe_shape_to_exact_leaf_inventory(
             if node["kind"] == "array":
                 node["shape"] = [3, 3]
                 return
-            if node["kind"] == "dataclass":
-                pending.extend(node["fields"].values())
-            elif node["kind"] in ("tuple", "list", "set", "frozenset"):
+            if node["kind"] in ("dataclass", "tuple", "list", "set", "frozenset"):
                 pending.extend(node["items"])
             elif node["kind"] in ("mapping", "frozendict", "mappingproxy"):
                 pending.extend(item for pair in node["items"] for item in pair)

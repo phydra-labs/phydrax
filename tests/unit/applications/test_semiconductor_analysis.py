@@ -15,6 +15,8 @@ import pytest
 import phydrax as phx
 from phydrax.applications import semiconductor as sc
 from phydrax.linalg import GMRES, LinearSolvePolicy, TolerancePolicy
+from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
+from phydrax.solver import DAESolvePolicy
 
 
 jax.config.update("jax_enable_x64", True)
@@ -90,41 +92,6 @@ def test_semiconductor_analysis_scenario_1() -> None:
     np.testing.assert_allclose(
         p, jnp.broadcast_to(device.plan.intrinsic_density, p.shape), rtol=2e-7
     )
-    source = _triangle_result()
-    device = _triangle_device(source)
-    point = device.equilibrium()
-    transition = _geometry_transition(source, 1.0)
-    target = _triangle_device(transition.target)
-    accepted = sc.semiconductor_reprepare(
-        device, point, target, transition, source_result=source
-    )
-    assert bool(accepted.accepted)
-    np.testing.assert_allclose(
-        accepted.evidence.reinitialized_counts,
-        accepted.evidence.source_counts,
-        rtol=1e-12,
-    )
-    np.testing.assert_allclose(accepted.coordinates, point.coordinates, atol=1e-12)
-
-    enlarged = _geometry_transition(source, 2.0)
-    enlarged_device = _triangle_device(enlarged.target)
-    rejected = sc.semiconductor_reprepare(
-        device, point, enlarged_device, enlarged, source_result=source
-    )
-    assert not bool(rejected.accepted)
-    assert rejected.prepared is device
-    np.testing.assert_array_equal(rejected.coordinates, point.coordinates)
-    # Remapping itself conserves. The reservoir consistency projection would
-    # create carriers in the expanded physical volume, so it must not commit.
-    np.testing.assert_allclose(
-        rejected.evidence.transferred_counts, rejected.evidence.source_counts, rtol=1e-12
-    )
-    assert not bool(rejected.evidence.conservative)
-
-    with pytest.raises(ValueError, match="revision"):
-        sc.semiconductor_reprepare(
-            device, point, target, transition, source_result=transition.target
-        )
     length, area, slope = 4e-6, 1e-12, 5e6
     device = sc.PreparedSemiconductorDevice(sc.pn_junction(21, length=length, area=area))
     equilibrium = device.equilibrium()
@@ -350,12 +317,12 @@ def _triangle_result() -> Any:
     return phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
 
 
-def _triangle_device(result: Any) -> Any:
+def _triangle_device(result: Any, material: Any = None) -> Any:
     support = sc.TransportSupport.from_meshing(result, transverse_measure=1e-6)
     patch = phx.meshing.MeshPatch("reservoir", support.node_scope())
     plan = sc.DevicePlan(
         support,
-        sc.SemiconductorMaterial.silicon(),
+        sc.SemiconductorMaterial.silicon() if material is None else material,
         contacts=(sc.OhmicContact("reservoir", patch),),
     )
     return sc.PreparedSemiconductorDevice(plan)
@@ -398,3 +365,137 @@ def _geometry_transition(source_result: Any, scale: Any) -> Any:
         phx.meshing.MeshTransitionKind.REMESH,
         vertex_stencil=stencil,
     )
+
+
+def test_reprepare_publishes_conserved_inventories_through_one_rebind() -> None:
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    transition = _geometry_transition(source, 1.0)
+    target = _triangle_device(transition.target)
+    result = sc.semiconductor_reprepare(
+        device, point, target, transition, source_result=source, epoch_index=4
+    )
+    receipt = result.receipt
+    assert bool(result.accepted)
+    assert receipt.published and receipt.boundary_accepted
+    assert receipt.transport_accepted == (True,)
+    assert receipt.remapped == ("semiconductor/operating-point",)
+    assert receipt.reprepared == ("semiconductor/device", "semiconductor/mesh")
+    assert receipt.composition.structure_id != receipt.source_structure_id
+    assert result.prepared is result.candidate_prepared
+    evidence = result.evidence
+    assert evidence.inventories == ("electrons", "holes", "donors", "acceptors")
+    assert all(bool(item.successful) for item in evidence.redistribution)
+    (transport,) = receipt.transports
+    assert transport.kind == "physical-remap"
+    np.testing.assert_array_equal(transport.source_content, evidence.source_inventory)
+    np.testing.assert_array_equal(
+        transport.target_content, evidence.reinitialized_inventory
+    )
+    assert bool(
+        jnp.all(
+            jnp.abs(evidence.reinitialized_inventory - evidence.source_inventory)
+            <= evidence.inventory_tolerance
+        )
+    )
+    np.testing.assert_allclose(result.coordinates, point.coordinates, atol=1e-12)
+
+
+def test_reprepare_rejected_conservation_retains_exact_accepted_source() -> None:
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    enlarged = _geometry_transition(source, 2.0)
+    result = sc.semiconductor_reprepare(
+        device,
+        point,
+        _triangle_device(enlarged.target),
+        enlarged,
+        source_result=source,
+        epoch_index=0,
+    )
+    receipt = result.receipt
+    assert not bool(result.accepted)
+    assert not receipt.published
+    assert receipt.boundary_accepted
+    assert receipt.transport_accepted == (False,)
+    assert receipt.composition.composition_id == receipt.source_composition_id
+    assert result.prepared is device
+    assert result.coordinates is point.coordinates
+    np.testing.assert_array_equal(result.coordinate_rates, 0.0)
+    # Redistribution itself conserves. The reservoir consistency projection
+    # would create carriers in the expanded physical volume, so it must not commit.
+    evidence = result.evidence
+    np.testing.assert_allclose(
+        evidence.transferred_inventory, evidence.source_inventory, rtol=1e-12
+    )
+    assert not bool(evidence.conservative)
+    assert bool(jnp.any(jnp.abs(evidence.inventory_error) > evidence.inventory_tolerance))
+
+
+def test_reprepare_failed_reclosure_retains_exact_accepted_source() -> None:
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    transition = _geometry_transition(source, 1.5)
+    # One Newton step cannot reach an exactly zero residual.
+    policy = DAESolvePolicy(
+        initialization_method=NewtonKrylov(),
+        initialization_termination=NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=1,
+        ),
+    )
+    result = sc.semiconductor_reprepare(
+        device,
+        point,
+        _triangle_device(transition.target),
+        transition,
+        source_result=source,
+        epoch_index=0,
+        policy=policy,
+    )
+    assert not bool(result.evidence.initialization_valid)
+    assert not result.receipt.published
+    assert not result.receipt.boundary_accepted
+    assert result.prepared is device
+    assert result.coordinates is point.coordinates
+
+
+def test_reprepare_refuses_mismatched_material_identity() -> None:
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    transition = _geometry_transition(source, 1.0)
+    silicon = sc.SemiconductorMaterial.silicon()
+    # Same name, provenance and shapes; only the permittivity differs.
+    other = eqx.tree_at(lambda item: item.permittivity, silicon, 2 * silicon.permittivity)
+    with pytest.raises(ValueError, match="same-material"):
+        sc.semiconductor_reprepare(
+            device,
+            point,
+            _triangle_device(transition.target, other),
+            transition,
+            source_result=source,
+            epoch_index=0,
+        )
+
+
+def test_reprepare_refuses_stale_mesh_revision() -> None:
+    source = _triangle_result()
+    device = _triangle_device(source)
+    point = device.equilibrium()
+    transition = _geometry_transition(source, 1.0)
+    with pytest.raises(ValueError, match="revision"):
+        sc.semiconductor_reprepare(
+            device,
+            point,
+            _triangle_device(transition.target),
+            transition,
+            source_result=transition.target,
+            epoch_index=0,
+        )

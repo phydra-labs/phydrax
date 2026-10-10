@@ -6,17 +6,19 @@
 // value carries a rigorous absolute bound on its distance from the exact real
 // result of the same expression on the exact inputs.  A sign is certified when
 // |value| > bound; otherwise callers re-evaluate the expression with exact
-// expansion arithmetic.
+// arithmetic owned by the caller.
 //
 // Bound propagation for round-to-nearest binary64 with unit roundoff u = 2^-53:
-//   fl(a + b):  |err| <= ea + eb + u |fl(a + b)|
-//   fl(a * b):  |err| <= |a| eb + |b| ea + ea eb + u |fl(a * b)| + eta
-// where eta = 2^-1074 covers gradual underflow of a product.  The bound itself
-// is computed in floating point and inflated by (1 + 2^-50) per operation,
-// which dominates the at most three roundings of the bound expression.
+//   fl(a + b):  |err| <= ea + eb + u/(1-u) |fl(a + b)|
+//   fl(a * b):  |err| <= |a| eb + |b| ea + ea eb
+//                         + u/(1-u) |fl(a * b)| + eta
+// where eta = 2^-1074 covers gradual underflow of a product. Every operation
+// on nonnegative bounds rounds outward independently. Multiplicative inflation
+// cannot recover contributions already lost to subnormal rounding.
 #pragma once
 
 #include <cmath>
+#include <limits>
 
 namespace phx::mc {
 
@@ -45,22 +47,41 @@ struct Approx {
 };
 
 namespace detail {
-inline constexpr double kUnitRoundoff = 0x1p-53;
-inline constexpr double kBoundInflation = 1.0 + 0x1p-50;
+// An upward-rounded value of u/(1-u), not just u: the error is expressed in
+// terms of the rounded result rather than the exact pre-rounding value.
+inline constexpr double kRoundedResultError = 0x1.0000000000001p-53;
 inline constexpr double kUnderflowEta = 0x1p-1074;
+
+inline double add_upper(double a, double b) {
+  if (a == 0.0) {
+    return b;
+  }
+  if (b == 0.0) {
+    return a;
+  }
+  return std::nextafter(a + b, std::numeric_limits<double>::infinity());
+}
+
+inline double multiply_upper(double a, double b) {
+  return a == 0.0 || b == 0.0
+             ? 0.0
+             : std::nextafter(a * b, std::numeric_limits<double>::infinity());
+}
 }  // namespace detail
 
 inline Approx operator+(Approx a, Approx b) {
   const double value = a.value + b.value;
-  const double bound =
-      (a.bound + b.bound + detail::kUnitRoundoff * std::fabs(value)) * detail::kBoundInflation;
+  const double bound = detail::add_upper(
+      detail::add_upper(a.bound, b.bound),
+      detail::multiply_upper(detail::kRoundedResultError, std::fabs(value)));
   return {value, bound};
 }
 
 inline Approx operator-(Approx a, Approx b) {
   const double value = a.value - b.value;
-  const double bound =
-      (a.bound + b.bound + detail::kUnitRoundoff * std::fabs(value)) * detail::kBoundInflation;
+  const double bound = detail::add_upper(
+      detail::add_upper(a.bound, b.bound),
+      detail::multiply_upper(detail::kRoundedResultError, std::fabs(value)));
   return {value, bound};
 }
 
@@ -68,16 +89,17 @@ inline Approx operator-(Approx a) { return {-a.value, a.bound}; }
 
 inline Approx operator*(Approx a, Approx b) {
   const double value = a.value * b.value;
+  const double rounding = detail::add_upper(
+      detail::multiply_upper(detail::kRoundedResultError, std::fabs(value)),
+      detail::kUnderflowEta);
   if (a.bound == 0.0 && b.bound == 0.0) {
-    return {value,
-            (detail::kUnitRoundoff * std::fabs(value) + detail::kUnderflowEta) *
-                detail::kBoundInflation};
+    return {value, rounding};
   }
-  const double propagated =
-      std::fabs(a.value) * b.bound + std::fabs(b.value) * a.bound + a.bound * b.bound;
-  const double bound =
-      (propagated + detail::kUnitRoundoff * std::fabs(value) + detail::kUnderflowEta) *
-      detail::kBoundInflation * detail::kBoundInflation;
+  const double propagated = detail::add_upper(
+      detail::add_upper(detail::multiply_upper(std::fabs(a.value), b.bound),
+                        detail::multiply_upper(std::fabs(b.value), a.bound)),
+      detail::multiply_upper(a.bound, b.bound));
+  const double bound = detail::add_upper(propagated, rounding);
   return {value, bound};
 }
 

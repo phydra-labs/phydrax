@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 
+from .._array_archive import ArrayArchiveLimits, DEFAULT_ARRAY_ARCHIVE_LIMITS
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -23,6 +25,395 @@ RestartClass: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
 PayloadClass: TypeAlias = Literal["restart-state", "execution-cache"]
 ChunkRangeReader: TypeAlias = Callable[["CanonicalRestartChunk", int, int], bytes]
 DestinationShardWriter: TypeAlias = Callable[["DestinationShard", int, bytes], None]
+
+
+MeshingArrayRole: TypeAlias = Literal[
+    "entity-ids",
+    "geometry",
+    "topology",
+    "lineage",
+    "epoch",
+    "evidence",
+    "state",
+    "constraints",
+    "allocator",
+    "source-record",
+    "pending-work",
+]
+_MESHING_REFERENCE_NAMES = (
+    "source_topology_id",
+    "source_geometry_id",
+    "topology_id",
+    "geometry_id",
+    "result_id",
+    "source_revision_id",
+    "coordinate_contract_id",
+    "lineage_id",
+    "epoch_id",
+    "evidence_id",
+    "transfer_id",
+    "request_id",
+)
+_OPTIONAL_MESHING_REFERENCE_NAMES = frozenset(
+    ("source_topology_id", "source_geometry_id", "lineage_id", "transfer_id")
+)
+_REQUIRED_MESHING_ROLES = frozenset(
+    ("entity-ids", "geometry", "topology", "epoch", "evidence")
+)
+
+
+class MeshingCheckpointState(StrictModule, NonTrainableState):
+    """Scientific checkpoint binding, not a mesh or an execution-state carrier.
+
+    Array names identify decomposition-neutral logical arrays supplied separately
+    to the addressable-shard publisher. Incidences and lineage refer to stable
+    scientific IDs; neither former rank numbers nor prepared local slots define
+    their identity. ``source_closure`` retains actual owning certification inputs,
+    the accepted report, associations and native authoring records admitted by the
+    owning source-closure validator. Its canonical recipe and complete numerical
+    content digest bind every authored field to the same accepted state. Source
+    numerical roles are declared automatically; scientific archive limits remain
+    explicit admission controls, not checkpoint identity fields.
+    """
+
+    source_topology_id: str | None = eqx.field(static=True)
+    source_geometry_id: str | None = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    result_id: str = eqx.field(static=True)
+    source_revision_id: str = eqx.field(static=True)
+    coordinate_contract_id: str = eqx.field(static=True)
+    lineage_id: str | None = eqx.field(static=True)
+    epoch_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+    transfer_id: str | None = eqx.field(static=True)
+    request_id: str = eqx.field(static=True)
+    mesh_epoch: int = eqx.field(static=True)
+    array_roles: tuple[tuple[str, MeshingArrayRole], ...] = eqx.field(static=True)
+    checkpoint_state_id: str = eqx.field(static=True)
+    source_recipe_json: str | None = eqx.field(static=True)
+    source_content_digest: str | None = eqx.field(static=True)
+    source_closure_id: str | None = eqx.field(static=True)
+    source_closure: Mapping[str, Any] | None
+    source_owner_index: int = eqx.field(static=True)
+    source_array_bindings: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    source_logical_array_names: tuple[str, ...] = eqx.field(static=True)
+    source_logical_content_digest: str | None = eqx.field(static=True)
+    source_logical_arrays: Mapping[str, jax.Array] | None
+    source_owner_states: tuple[MeshingCheckpointState, ...]
+
+    def __init__(
+        self,
+        *,
+        source_topology_id: str | None,
+        source_geometry_id: str | None,
+        topology_id: str,
+        geometry_id: str,
+        result_id: str,
+        source_revision_id: str,
+        coordinate_contract_id: str,
+        lineage_id: str | None,
+        epoch_id: str,
+        evidence_id: str,
+        transfer_id: str | None,
+        request_id: str,
+        mesh_epoch: int,
+        array_roles: Sequence[tuple[str, MeshingArrayRole]],
+        source_closure: Mapping[str, Any] | None = None,
+        source_recipe_json: str | None = None,
+        source_content_digest: str | None = None,
+        source_owner_index: int | None = None,
+        source_array_bindings: Mapping[str, str] | None = None,
+        source_logical_arrays: Mapping[str, jax.Array] | None = None,
+        source_logical_array_names: Sequence[str] = (),
+        source_logical_content_digest: str | None = None,
+        source_owner_states: Sequence[MeshingCheckpointState] = (),
+        limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        maximum_source_chunk_bytes: int = 1 << 20,
+    ) -> None:
+        required_references = {
+            "topology_id": topology_id,
+            "geometry_id": geometry_id,
+            "result_id": result_id,
+            "source_revision_id": source_revision_id,
+            "coordinate_contract_id": coordinate_contract_id,
+            "epoch_id": epoch_id,
+            "evidence_id": evidence_id,
+            "request_id": request_id,
+        }
+        required_references = {
+            name: _identifier(value, name) for name, value in required_references.items()
+        }
+        optional_references = {
+            "source_topology_id": source_topology_id,
+            "source_geometry_id": source_geometry_id,
+            "lineage_id": lineage_id,
+            "transfer_id": transfer_id,
+        }
+        optional_references = {
+            name: None if value is None else _identifier(value, name)
+            for name, value in optional_references.items()
+        }
+        references = {**required_references, **optional_references}
+        if type(mesh_epoch) is not int or mesh_epoch < 0:
+            raise ValueError("mesh_epoch must be a non-negative integer.")
+        from ._distributed_checkpoint import (
+            _admit_meshing_source_logical_arrays,
+            _prepare_meshing_source_binding,
+            _validate_meshing_source_references,
+        )
+
+        owner_index = (
+            (
+                jax.process_index()
+                if source_closure is not None or source_recipe_json is not None
+                else 0
+            )
+            if source_owner_index is None
+            else source_owner_index
+        )
+        if type(owner_index) is not int or owner_index < 0:
+            raise ValueError("source_owner_index must be a non-negative integer.")
+        source_logical_arrays = _admit_meshing_source_logical_arrays(
+            source_logical_arrays, maximum_chunk_bytes=maximum_source_chunk_bytes
+        )
+        bindings = {} if source_array_bindings is None else dict(source_array_bindings)
+        (
+            source_recipe_json,
+            source_content_digest,
+            source_roles,
+            logical_names,
+            logical_digest,
+            source_logical_arrays,
+        ) = _prepare_meshing_source_binding(
+            source_closure,
+            source_recipe_json,
+            source_content_digest,
+            owner_index=owner_index,
+            array_bindings=bindings,
+            logical_arrays=source_logical_arrays,
+            logical_array_names=source_logical_array_names,
+            logical_content_digest=source_logical_content_digest,
+            limits=limits,
+            maximum_chunk_bytes=maximum_source_chunk_bytes,
+        )
+        owner_states = tuple(source_owner_states)
+        if any(type(state) is not MeshingCheckpointState for state in owner_states):
+            raise TypeError(
+                "source_owner_states must contain exact meshing checkpoint states."
+            )
+        if owner_states and (
+            tuple(state.source_owner_index for state in owner_states)
+            != tuple(range(len(owner_states)))
+            or any(state.source_owner_states for state in owner_states)
+        ):
+            raise ValueError(
+                "Source owner records must cover original owners exactly once."
+            )
+        if source_closure is not None:
+            _validate_meshing_source_references(source_closure, references)
+        source_closure_id = (
+            None
+            if source_recipe_json is None
+            else canonical_fingerprint(
+                {
+                    "recipe": source_recipe_json,
+                    "array_digest": source_content_digest,
+                }
+            )
+        )
+        supplied_roles = tuple(array_roles)
+        if any(role == "source-record" for _, role in supplied_roles):
+            if {item for item in supplied_roles if item[1] == "source-record"} != set(
+                source_roles
+            ):
+                raise ValueError("Source record roles must exactly match their recipe.")
+        else:
+            supplied_roles += source_roles
+        roles = tuple(
+            sorted(
+                (
+                    _identifier(name, "array name"),
+                    parse(role, MeshingArrayRole, "array role"),
+                )
+                for name, role in supplied_roles
+            )
+        )
+        if len({name for name, _ in roles}) != len(roles):
+            raise ValueError("Meshing checkpoint array names must be unique.")
+        required_roles = _REQUIRED_MESHING_ROLES | (
+            {"lineage"} if optional_references["lineage_id"] is not None else set()
+        )
+        has_declared_state = (source_closure is None and source_recipe_json is None) or (
+            source_closure is not None
+            and bool(source_closure.get("accepted_data", {}).get("fields", {}))
+        )
+        if has_declared_state:
+            required_roles |= {"state"}
+        if not required_roles.issubset(role for _, role in roles):
+            raise ValueError("Meshing checkpoint lacks required scientific array roles.")
+        self.source_topology_id = optional_references["source_topology_id"]
+        self.source_geometry_id = optional_references["source_geometry_id"]
+        self.topology_id = required_references["topology_id"]
+        self.geometry_id = required_references["geometry_id"]
+        self.result_id = required_references["result_id"]
+        self.source_revision_id = required_references["source_revision_id"]
+        self.coordinate_contract_id = required_references["coordinate_contract_id"]
+        self.lineage_id = optional_references["lineage_id"]
+        self.epoch_id = required_references["epoch_id"]
+        self.evidence_id = required_references["evidence_id"]
+        self.transfer_id = optional_references["transfer_id"]
+        self.request_id = required_references["request_id"]
+        self.mesh_epoch = mesh_epoch
+        self.array_roles = roles
+        self.source_recipe_json = source_recipe_json
+        self.source_content_digest = source_content_digest
+        self.source_closure_id = source_closure_id
+        self.source_closure = source_closure
+        self.source_owner_index = owner_index
+        self.source_array_bindings = tuple(sorted(bindings.items()))
+        self.source_logical_array_names = logical_names
+        self.source_logical_content_digest = logical_digest
+        self.source_logical_arrays = source_logical_arrays
+        self.source_owner_states = owner_states
+        self.checkpoint_state_id = canonical_fingerprint(
+            {
+                **references,
+                "mesh_epoch": mesh_epoch,
+                "array_roles": roles,
+                "source_recipe_json": source_recipe_json,
+                "source_content_digest": source_content_digest,
+                "source_closure_id": source_closure_id,
+                "source_owner_index": owner_index,
+                "source_array_bindings": self.source_array_bindings,
+                "source_logical_array_names": logical_names,
+                "source_logical_content_digest": logical_digest,
+            }
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return bounded immutable metadata; numerical arrays are separate."""
+        return {
+            "source_topology_id": self.source_topology_id,
+            "source_geometry_id": self.source_geometry_id,
+            "topology_id": self.topology_id,
+            "geometry_id": self.geometry_id,
+            "result_id": self.result_id,
+            "source_revision_id": self.source_revision_id,
+            "coordinate_contract_id": self.coordinate_contract_id,
+            "lineage_id": self.lineage_id,
+            "epoch_id": self.epoch_id,
+            "evidence_id": self.evidence_id,
+            "transfer_id": self.transfer_id,
+            "request_id": self.request_id,
+            "mesh_epoch": self.mesh_epoch,
+            "array_roles": [list(item) for item in self.array_roles],
+            "source_recipe_json": self.source_recipe_json,
+            "source_content_digest": self.source_content_digest,
+            "source_owner_index": self.source_owner_index,
+            "source_array_bindings": [list(item) for item in self.source_array_bindings],
+            "source_logical_array_names": list(self.source_logical_array_names),
+            "source_logical_content_digest": self.source_logical_content_digest,
+        }
+
+    def source_array_name(self, recipe_name: str, /) -> str:
+        """Return the exact checkpoint path binding for one canonical source leaf."""
+        from ._distributed_checkpoint import _source_array_name
+
+        return _source_array_name(
+            recipe_name, self.source_owner_index, dict(self.source_array_bindings)
+        )
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any],
+        /,
+        *,
+        source_closure: Mapping[str, Any] | None = None,
+        source_logical_arrays: Mapping[str, jax.Array] | None = None,
+        source_owner_states: Sequence[MeshingCheckpointState] = (),
+        limits: ArrayArchiveLimits = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        maximum_source_chunk_bytes: int = 1 << 20,
+    ) -> MeshingCheckpointState:
+        """Restore through the normal validated construction boundary."""
+        if set(payload) != {
+            *_MESHING_REFERENCE_NAMES,
+            "mesh_epoch",
+            "array_roles",
+            "source_recipe_json",
+            "source_content_digest",
+            "source_owner_index",
+            "source_array_bindings",
+            "source_logical_array_names",
+            "source_logical_content_digest",
+        }:
+            raise ValueError("Meshing checkpoint metadata fields are invalid.")
+        if any(
+            not isinstance(payload[name], str)
+            and not (name in _OPTIONAL_MESHING_REFERENCE_NAMES and payload[name] is None)
+            for name in _MESHING_REFERENCE_NAMES
+        ):
+            raise TypeError(
+                "Meshing checkpoint references require strings or owning typed absence."
+            )
+        roles = payload["array_roles"]
+        if not isinstance(roles, list) or any(
+            not isinstance(item, list)
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not isinstance(item[1], str)
+            for item in roles
+        ):
+            raise TypeError("Meshing checkpoint array roles are invalid.")
+        bindings = payload["source_array_bindings"]
+        if (
+            not isinstance(bindings, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not isinstance(item[0], str)
+                or not isinstance(item[1], str)
+                for item in bindings
+            )
+            or len({item[0] for item in bindings}) != len(bindings)
+        ):
+            raise ValueError("Meshing checkpoint source array bindings are invalid.")
+        logical_names = payload["source_logical_array_names"]
+        if not isinstance(logical_names, list) or any(
+            not isinstance(name, str) for name in logical_names
+        ):
+            raise ValueError("Meshing checkpoint source logical names are invalid.")
+        return cls(
+            source_topology_id=payload["source_topology_id"],
+            source_geometry_id=payload["source_geometry_id"],
+            topology_id=payload["topology_id"],
+            geometry_id=payload["geometry_id"],
+            result_id=payload["result_id"],
+            source_revision_id=payload["source_revision_id"],
+            coordinate_contract_id=payload["coordinate_contract_id"],
+            lineage_id=payload["lineage_id"],
+            epoch_id=payload["epoch_id"],
+            evidence_id=payload["evidence_id"],
+            transfer_id=payload["transfer_id"],
+            request_id=payload["request_id"],
+            mesh_epoch=payload["mesh_epoch"],
+            source_closure=source_closure,
+            source_recipe_json=payload["source_recipe_json"],
+            source_content_digest=payload["source_content_digest"],
+            source_owner_index=payload["source_owner_index"],
+            source_array_bindings=dict(bindings),
+            source_logical_arrays=source_logical_arrays,
+            source_logical_array_names=logical_names,
+            source_logical_content_digest=payload["source_logical_content_digest"],
+            source_owner_states=source_owner_states,
+            limits=limits,
+            maximum_source_chunk_bytes=maximum_source_chunk_bytes,
+            array_roles=tuple(
+                (name, parse(role, MeshingArrayRole, "array role"))
+                for name, role in roles
+            ),
+        )
 
 
 class TopologyRestartRelation(StrictModule, NonTrainableState):
@@ -689,6 +1080,8 @@ __all__ = [
     "RestartChunkMapping",
     "RestartClass",
     "RestartExecutionReport",
+    "MeshingArrayRole",
+    "MeshingCheckpointState",
     "TopologyRestartPolicy",
     "TopologyRestartRelation",
     "admit_topology_restart",

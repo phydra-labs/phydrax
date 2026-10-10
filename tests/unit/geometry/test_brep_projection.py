@@ -22,13 +22,15 @@ _EDGE = phx.geometry.BRepEntityDimension.EDGE
 
 
 def _bound(shape: Any, embedding: Any = None) -> Any:
-    model = phx.geometry.model_from_occt_shape(
+    model = phx.interchange.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         linear_deflection=0.05,
         angular_deflection=0.2,
     )
-    return model, phx.geometry.prepare_brep_projection(model, shape, embedding=embedding)
+    return model, phx.interchange.prepare_occt_projection(
+        model, shape, embedding=embedding
+    )
 
 
 def _project(projection: Any, points: Any, dimension: Any, index: Any) -> Any:
@@ -133,13 +135,13 @@ def test_brep_projection_scenario_1() -> None:
 
 def test_brep_projection_scenario_2() -> None:
     shape = BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape()
-    model = phx.geometry.model_from_occt_shape(
+    model = phx.interchange.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         linear_deflection=0.1,
         angular_deflection=0.3,
     )
-    remodeled = phx.geometry.model_from_occt_shape(
+    remodeled = phx.interchange.model_from_occt_shape(
         shape,
         coordinate_contract=_CONTRACT,
         linear_deflection=0.05,
@@ -149,7 +151,7 @@ def test_brep_projection_scenario_2() -> None:
     # Tessellating the shape does not change its exact-geometry revision.
     assert remodeled.source_revision == model.source_revision
     with pytest.raises(ValueError, match="revision digest"):
-        phx.geometry.prepare_brep_projection(
+        phx.interchange.prepare_occt_projection(
             model, BRepPrimAPI_MakeCylinder(1.0, 3.0).Shape()
         )
     polygon = BRepBuilderAPI_MakePolygon()
@@ -174,3 +176,49 @@ def test_brep_projection_scenario_2() -> None:
     np.testing.assert_allclose(face.points, [[2**-0.5, 2**-0.5], [1.5, 0.0]])
     np.testing.assert_allclose(face.residuals, [1.0 - 2**-0.5, 0.0], atol=1e-12)
     assert np.all(np.isnan(np.asarray(face.normals)))
+
+
+def test_native_projection_agrees_with_occt_on_independent_samples() -> None:
+    _, occt = _bound(BRepPrimAPI_MakeCylinder(1.0, 2.0).Shape())
+    model = phx.geometry.brep_cylinder(1.0, 2.0, coordinate_contract=_CONTRACT)
+    native = phx.geometry.prepare_brep_projection(model)
+    points = np.random.default_rng(7).uniform(
+        (-2.0, -2.0, -0.5), (2.0, 2.0, 2.5), (48, 3)
+    )
+    lateral = model.physical_tags.index("cylinder")
+    reference = _project(occt, points, _FACE, 0)
+    result = _project(native, points, _FACE, lateral)
+    reference_unique = np.asarray(reference.status) == _STATUS.UNIQUE
+    native_resolved = np.isin(
+        np.asarray(result.status),
+        (_STATUS.UNIQUE, _STATUS.SEAM),
+    )
+    assert np.any(reference_unique)
+    assert np.all(native_resolved[reference_unique])
+
+    # OCCT is an independent physical oracle where it reports a unique point.
+    # Native results additionally preserve the cylinder's nonunique seam chart.
+    np.testing.assert_allclose(
+        np.asarray(result.residuals)[reference_unique],
+        np.asarray(reference.residuals)[reference_unique],
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.points)[reference_unique],
+        np.asarray(reference.points)[reference_unique],
+        atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.normals)[reference_unique],
+        np.asarray(reference.normals)[reference_unique],
+        atol=1e-9,
+    )
+    classified = native.classify(points, tolerance=0.3)
+    reference_classified = occt.classify(points, tolerance=0.3)
+    np.testing.assert_array_equal(classified.dimensions, reference_classified.dimensions)
+    np.testing.assert_allclose(
+        classified.residuals, reference_classified.residuals, atol=1e-9
+    )
+    located = native.locate_solids(points)
+    reference_located = occt.locate_solids(points)
+    np.testing.assert_array_equal(located.status, reference_located.status)

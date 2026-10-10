@@ -19,6 +19,7 @@ from ...discretization._cell_complex import (
     TetrahedralConnectivity,
 )
 from ...discretization._hexahedral import HexahedralConnectivity
+from ...geometry.brep._projection_contracts import brep_entity_id
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import audit_cell_mesh
@@ -34,7 +35,6 @@ from .._contracts import (
 )
 from .._controls import BackgroundMetricControl, BackgroundMetricMode
 from .._organization import MeshAttribute, MeshPatch, MeshZone
-from .._quality import evaluate_cell_quality
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._sizing import ProximitySizeControl, SizeControlStrength, UniformSizeControl
 from .._trace import (
@@ -66,11 +66,13 @@ from ._gmsh_evidence import (
     _semantic_surface_evidence,
 )
 from ._gmsh_import import (
+    _CadEntityMap,
     _CadImportCache,
     _resolve_cad_entity_map,
     _resolve_planar_cad_entity_map,
     _source_scale,
 )
+from ._gmsh_inventory import _cad_occurrence_inventory
 from ._gmsh_layers import (
     _apply_boundary_layer_field,
     _apply_planar_band_constraints,
@@ -105,7 +107,7 @@ class _Generation:
     semantic_surface: bool
     requested_kinds: set[str]
     target: float | None
-    cad_entities: object
+    cad_entities: _CadEntityMap | None
     size_fields: _SizeFields
     sweep: object
     band_generation: object
@@ -175,11 +177,11 @@ def _prepare_generation(
 ) -> _Generation:
     source = plan.source
     specification = plan.specification
-    report = source.report
     entry = cache.acquire(source)
     shape = entry.shape
     limits = specification.limits
-    if report.num_faces + report.num_edges + report.num_vertices > limits.maximum_faces:
+    inventory = _cad_occurrence_inventory(source)
+    if sum(len(rows) for rows in inventory.entities[:3]) > limits.maximum_faces:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
             "BRep entity count exceeds the meshing limit.",
@@ -206,11 +208,11 @@ def _prepare_generation(
     cache.import_shapes(gmsh, entry)
     if semantic_volume:
         cad_entities = cache.entity_map(
-            entry, "volume", lambda: _resolve_cad_entity_map(gmsh, source, shape)
+            entry, "volume", lambda: _resolve_cad_entity_map(gmsh, source, entry)
         )
     elif semantic_surface:
         cad_entities = cache.entity_map(
-            entry, "planar", lambda: _resolve_planar_cad_entity_map(gmsh, source, shape)
+            entry, "planar", lambda: _resolve_planar_cad_entity_map(gmsh, source, entry)
         )
     else:
         cad_entities = None
@@ -592,7 +594,6 @@ def _organize(
             mesh,
             extraction.top,
             canonical.row_orders,
-            # ty: ignore[invalid-argument-type]
             cad_entities,
         )
         surface_evidence = _semantic_surface_evidence(
@@ -603,7 +604,6 @@ def _organize(
             extraction.node_tags,
             canonical.source_to_corner,
             cell_solid_ids,
-            # ty: ignore[invalid-argument-type]
             cad_entities,
             plan.plan_id,
         )
@@ -621,6 +621,7 @@ def _organize(
             specification,
             cell_solid_ids,
             surface_evidence.mesh_face_source,
+            cad_entities,
         )
         cell_entity_set = mesh.entity_set(3)
         cell_association = GeometryAssociation(
@@ -630,12 +631,30 @@ def _organize(
             cell_entity_set.entity_set_id,
             cell_entity_set.entity_ids,
             tuple(
-                f"{report.source_revision}:solid:{int(owner)}" for owner in cell_solid_ids
+                brep_entity_id(
+                    report.source_revision,
+                    3,
+                    cad_entities.inventory.entities[3][int(owner)].index,
+                    occurrence_path=cad_entities.inventory.entities[3][
+                        int(owner)
+                    ].occurrence_path,
+                )
+                for owner in cell_solid_ids
             ),
             np.zeros((cell_solid_ids.size,), dtype=np.float64),
             exact=True,
             source_dimensions=np.full((cell_solid_ids.size,), 3, dtype=np.int8),
-            source_indices=np.asarray(cell_solid_ids, dtype=np.int64),
+            source_indices=np.asarray(
+                [
+                    cad_entities.inventory.entities[3][int(owner)].index
+                    for owner in cell_solid_ids
+                ],
+                dtype=np.int64,
+            ),
+            source_occurrence_paths=tuple(
+                cad_entities.inventory.entities[3][int(owner)].occurrence_path
+                for owner in cell_solid_ids
+            ),
         )
         return _Organization(
             mesh,
@@ -665,7 +684,6 @@ def _organize(
             canonical.row_orders,
             extraction.node_tags,
             canonical.source_to_corner,
-            # ty: ignore[invalid-argument-type]
             cad_entities,
             generation.geometry_order,
         )
@@ -830,15 +848,11 @@ def _size_compliance(
         if control.strength is SizeControlStrength.HARD:
             policy = specification.size_compliance
             if control.minimum_size is not None:
-                tolerance = policy.absolute_tolerance + (
-                    policy.relative_tolerance * abs(control.minimum_size)
-                )
+                tolerance = policy.tolerance(control.minimum_size)
                 if minimum_edge < control.minimum_size - tolerance:
                     issues.append(f"minimum_size:{control.control_id}")
             if control.maximum_size is not None:
-                tolerance = policy.absolute_tolerance + (
-                    policy.relative_tolerance * abs(control.maximum_size)
-                )
+                tolerance = policy.tolerance(control.maximum_size)
                 if maximum_edge > control.maximum_size + tolerance:
                     issues.append(f"maximum_size:{control.control_id}")
     achieved.append(("size_field_count", float(size_field_count)))
@@ -859,11 +873,9 @@ def _audit_gmsh_mesh(
     /,
 ) -> Any:
     mesh = organization.mesh
-    quality_evaluation = evaluate_cell_quality(mesh, mesh.coordinates)
     audit = audit_cell_mesh(
         mesh,
         geometry,
-        quality_evaluation,
         patches=organization.patches,
         associations=organization.associations,
         attributes=organization.attributes,
@@ -1229,6 +1241,20 @@ def _execute_brep(
         {
             "kind": "gmsh-cell-meshing-result",
             "source_revision": report.source_revision,
+            "cad_correspondence": None
+            if generation.cad_entities is None
+            else generation.cad_entities.correspondence_id,
+            "native_export_digest": None
+            if generation.cad_entities is None
+            else generation.cad_entities.native_export_digest,
+            "qualified_source_entities": None
+            if generation.cad_entities is None
+            else tuple(
+                tuple(
+                    (entity.kind, entity.index, entity.occurrence_path) for entity in rows
+                )
+                for rows in generation.cad_entities.inventory.entities
+            ),
             "plan": plan.plan_id,
             "mesh": mesh.mesh_id,
             "associations": tuple(

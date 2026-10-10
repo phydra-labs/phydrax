@@ -453,3 +453,17 @@ def _serial(model: Any, inputs: Any, layout: Any) -> Any:
         )
         outputs.append(member[0](member[1]))
     return jnp.stack(outputs)
+
+
+def _closure_converted(weights: jax.Array) -> Any:
+    return eqx.filter_closure_convert(lambda x: x * weights, jnp.zeros(2))
+
+
+def test_closure_converted_constants_are_visible_unless_held_statically() -> None:
+    converted = _closure_converted(jnp.full(2, 3.0))
+    visible = _PlanOwner(jnp.ones(2), converted)
+    assert phx.require_parameter_roles(visible, context="x").unclassified == ()
+
+    hidden = _PlanOwner(jnp.ones(2), _StaticPlan(converted))
+    with pytest.raises(ValueError, match="jaxpr constant 0"):
+        phx.require_parameter_roles(hidden, context="unit training")

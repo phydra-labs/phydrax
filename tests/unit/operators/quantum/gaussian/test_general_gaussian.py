@@ -38,9 +38,7 @@ def test_general_gaussian_scenario_1() -> None:
         gaussian.GaussianShellPlan(
             11,
             angular,
-            # ty: ignore[invalid-argument-type]
             [0.7],
-            # ty: ignore[invalid-argument-type]
             [1.0],
             representation=gaussian.GaussianShellRepresentation.REAL_SPHERICAL,
         )
@@ -57,7 +55,6 @@ def test_general_gaussian_scenario_1() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [17])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
-        # ty: ignore[invalid-argument-type]
         [gaussian.GaussianShellPlan(17, 1, [0.8, 0.25], [0.7, 0.3])],
         source_id="p-gradient",
     ).prepare(system)
@@ -79,7 +76,6 @@ def test_general_gaussian_scenario_2() -> None:
     structure, system = _system([1], [[0.0, 0.0, 0.0]], [23])
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan(
-        # ty: ignore[invalid-argument-type]
         [gaussian.GaussianShellPlan(23, 1, [0.6], [1.0])],
         source_id="p-factorization",
     ).prepare(system)

@@ -93,7 +93,6 @@ def material_spectroscopy_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_GATES,
             released=False,

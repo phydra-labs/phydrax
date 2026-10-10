@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any, cast, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
+import equinox.internal as eqxi
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -45,6 +46,7 @@ from .._results import LinearIterationMetrics, LinearSolveStatus
 from .._spaces import AbstractVectorSpace
 from .._structured_operators import RowGramLinearOperator
 from .._subspaces import LinearSubspace, NullspacePolicy
+from ..krylov._decompositions import _gated_input, _norm_from_squared
 from ..krylov._results import KrylovBreakdownStatus
 
 
@@ -1011,7 +1013,7 @@ def _pcg_batched_raw(
 
         def execute(operand: _PCGBatchedCarry) -> _PCGBatchedCarry:
             x, r, z, p, rho_, iterations, active, breakdown, action_count = operand
-            image = batched_action(p)
+            image = batched_action(_gated_input(executing[None, :], p, initial))
             denominator = jnp.real(batched_inner(p, image))
             invalid = (
                 ~jnp.isfinite(denominator)
@@ -1031,7 +1033,9 @@ def _pcg_batched_raw(
             any_nominated = jnp.any(nominated)
 
             def confirm(_: None) -> tuple[Array, Array]:
-                true_residual = rhs - batched_action(candidate_x)
+                true_residual = rhs - batched_action(
+                    _gated_input(executing[None, :], candidate_x, initial)
+                )
                 return true_residual, _norm(true_residual, batched_inner)
 
             confirmed_r, confirmed_norm = jax.lax.cond(
@@ -1045,7 +1049,8 @@ def _pcg_batched_raw(
             converged = executing & (norm <= threshold)
             replaced = nominated & ~converged
             candidate_z = batched_precondition(
-                candidate_r, jnp.asarray(index + 1, dtype=jnp.int32)
+                _gated_input(executing[None, :], candidate_r, residual),
+                jnp.asarray(index + 1, dtype=jnp.int32),
             )
             next_rho = jnp.real(batched_inner(candidate_r, candidate_z))
             beta = jnp.where(
@@ -1190,10 +1195,11 @@ def _pcg_raw(
             confirmations,
             observed,
         ) = current
+        executing = active & (index < step_limit)
 
         def execute(operand: _PCGCarry) -> _PCGCarry:
             x_, r_, z_, p_, rho_i, _, _, _, confirmations_i, observed_i = operand
-            image = action(p_)
+            image = action(_gated_input(executing, p_, initial))
             denominator = jnp.real(inner(p_, image))
             invalid = (
                 ~jnp.isfinite(denominator)
@@ -1212,14 +1218,17 @@ def _pcg_raw(
             nominated = recursive_norm <= threshold
             candidate_r, norm = jax.lax.cond(
                 nominated,
-                lambda: _confirmed_residual(action, inner, rhs, candidate_x),
+                lambda: _confirmed_residual(
+                    action, inner, rhs, _gated_input(executing, candidate_x, initial)
+                ),
                 lambda: (recursive_r, recursive_norm),
             )
             converged = norm <= threshold
             replaced = nominated & ~converged
             next_confirmations = confirmations_i + nominated.astype(jnp.int32)
             candidate_z = precondition(
-                candidate_r, jnp.asarray(index + 1, dtype=jnp.int32)
+                _gated_input(executing, candidate_r, residual),
+                jnp.asarray(index + 1, dtype=jnp.int32),
             )
             next_rho = jnp.real(inner(candidate_r, candidate_z))
             beta = jnp.where(
@@ -1263,12 +1272,7 @@ def _pcg_raw(
                 next_iteration,
             )
 
-        return jax.lax.cond(
-            active & (index < step_limit),
-            execute,
-            lambda operand: operand,
-            current,
-        )
+        return jax.lax.cond(executing, execute, lambda operand: operand, current)
 
     if _fixed_trip(driver):
         # Lazy: phydrax._numerics imports sampling, which imports linalg.
@@ -1357,7 +1361,7 @@ def _minres_raw(
     residual = rhs - action(initial)
     y = precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     beta_one_squared = jnp.real(inner(residual, y))
-    beta_one = jnp.sqrt(jnp.maximum(beta_one_squared, 0.0))
+    beta_one = _norm_from_squared(beta_one_squared)
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     real_dtype = rhs.real.dtype
@@ -1391,13 +1395,16 @@ def _minres_raw(
         iteration_state,
     )
 
-    def gram_stationarity(point: Array, index: Array) -> tuple[Array, Array]:
+    def gram_stationarity(
+        point: Array, index: Array, executing: Array
+    ) -> tuple[Array, Array]:
         """True ``||r||_M = sqrt(<r, M r>)`` and ``||B* M r|| = sqrt(<M r, A M r>)``."""
-        true_residual = rhs - action(point)
-        witness = precondition(true_residual, index)
+        true_residual = rhs - action(_gated_input(executing, point, initial))
+        witness = precondition(_gated_input(executing, true_residual, residual), index)
+        image = action(_gated_input(executing, witness, initial))
         return (
-            jnp.sqrt(jnp.maximum(jnp.real(inner(true_residual, witness)), 0.0)),
-            jnp.sqrt(jnp.maximum(jnp.real(inner(witness, action(witness))), 0.0)),
+            _norm_from_squared(inner(true_residual, witness)),
+            _norm_from_squared(inner(witness, image)),
         )
 
     def step(index: Array, current: _MINRESCarry) -> _MINRESCarry:
@@ -1422,6 +1429,7 @@ def _minres_raw(
             breakdown,
             observed,
         ) = current
+        executing = active & (index < step_limit)
 
         def execute(operand: _MINRESCarry) -> _MINRESCarry:
             (
@@ -1449,7 +1457,7 @@ def _minres_raw(
             # floor would discard the basis of a small-norm operator or rhs.
             safe_beta = jnp.where(beta_i > 0.0, beta_i, 1.0)
             v = y_i / safe_beta.astype(y_i.dtype)
-            next_y = action(v)
+            next_y = action(_gated_input(executing, v, initial))
             next_y = jax.lax.cond(
                 index > 0,
                 lambda value: (
@@ -1467,16 +1475,17 @@ def _minres_raw(
             next_r1 = r2_
             next_r2 = next_y
             preconditioned = precondition(
-                next_r2, jnp.asarray(index + 1, dtype=jnp.int32)
+                _gated_input(executing, next_r2, residual),
+                jnp.asarray(index + 1, dtype=jnp.int32),
             )
             beta_squared = jnp.real(inner(next_r2, preconditioned))
-            next_beta = jnp.sqrt(jnp.maximum(beta_squared, 0.0))
+            next_beta = _norm_from_squared(beta_squared)
             old_epsilon = epsln_i
             delta = cosine_i * dbar_i + sine_i * alpha
             gbar = sine_i * dbar_i - cosine_i * alpha
             next_epsln = sine_i * next_beta
             next_dbar = -cosine_i * next_beta
-            gamma = jnp.sqrt(gbar * gbar + next_beta * next_beta)
+            gamma = _norm_from_squared(gbar * gbar + next_beta * next_beta)
             safe_gamma = jnp.where(gamma > 0.0, gamma, epsilon)
             next_cosine = gbar / safe_gamma
             next_sine = next_beta / safe_gamma
@@ -1493,13 +1502,15 @@ def _minres_raw(
             # beta_0 normalizes the RHS, not the operator's Lanczos matrix.
             operator_beta = jnp.where(index > 0, beta_i, 0.0)
             next_tnorm2 = tnorm2_i + alpha * alpha + operator_beta**2 + next_beta**2
-            anorm = jnp.sqrt(next_tnorm2)
+            anorm = _norm_from_squared(next_tnorm2)
             residual_estimate = jnp.abs(next_phibar)
             nominated = residual_estimate <= threshold
             infinity = jnp.asarray(jnp.inf, dtype=real_dtype)
             true_norm = jax.lax.cond(
                 nominated,
-                lambda: _norm(rhs - action(next_x), inner),
+                lambda: _norm(
+                    rhs - action(_gated_input(executing, next_x, initial)), inner
+                ),
                 lambda: infinity,
             )
             converged = nominated & (true_norm <= threshold)
@@ -1511,7 +1522,9 @@ def _minres_raw(
                 )
                 previous_norm_m, previous_adjoint = jax.lax.cond(
                     stationary_nominated,
-                    lambda: gram_stationarity(x_, jnp.asarray(index, dtype=jnp.int32)),
+                    lambda: gram_stationarity(
+                        x_, jnp.asarray(index, dtype=jnp.int32), executing
+                    ),
                     lambda: (infinity, infinity),
                 )
                 stationary = stationary_nominated & (
@@ -1584,12 +1597,7 @@ def _minres_raw(
                 next_iteration,
             )
 
-        return jax.lax.cond(
-            active & (index < step_limit),
-            execute,
-            lambda operand: operand,
-            current,
-        )
+        return jax.lax.cond(executing, execute, lambda operand: operand, current)
 
     result = _gated_loop(
         step,
@@ -1643,6 +1651,10 @@ def _fgmres_raw(
     threshold = absolute + relative * rhs_norm
     residual = rhs - action(initial)
     residual_norm = _norm(residual, inner)
+    # Gated-off Arnoldi steps precondition the first Krylov vector of the solve.
+    first_basis = residual / jnp.where(residual_norm > 0.0, residual_norm, 1.0).astype(
+        residual.dtype
+    )
     finite = jnp.isfinite(residual_norm) & jnp.all(jnp.isfinite(initial))
     active = finite & (residual_norm > threshold) & ~_iteration_stop(iteration_state)
     initial_breakdown = jnp.where(
@@ -1697,6 +1709,9 @@ def _fgmres_raw(
             executed_cycles,
             observed,
         ) = state
+        cycle_executing = (
+            cycle_active & (iterations < step_limit) & (iterations < max_steps)
+        )
 
         def execute_cycle(operand: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
             (
@@ -1766,6 +1781,7 @@ def _fgmres_raw(
                 can_execute = (
                     inner_active & (iteration_ < step_limit) & (iteration_ < max_steps)
                 )
+                step_executing = cycle_executing & can_execute
 
                 def execute_arnoldi(inner_operand: _ArnoldiCarry) -> _ArnoldiCarry:
                     (
@@ -1782,13 +1798,17 @@ def _fgmres_raw(
                         stagnant_i,
                         observed_i,
                     ) = inner_operand
-                    vector = basis_i[local_index].astype(rhs.dtype)
+                    vector = _gated_input(
+                        step_executing,
+                        basis_i[local_index].astype(rhs.dtype),
+                        first_basis,
+                    )
                     transformed = (
                         vector
                         if identity_preconditioner
                         else precondition(vector, iteration_i)
                     )
-                    image = action(transformed)
+                    image = action(_gated_input(step_executing, transformed, initial))
                     projection = jnp.zeros((restart,), dtype=rhs.dtype)
 
                     # Early exit bounds the modified Gram-Schmidt passes by the
@@ -1978,7 +1998,7 @@ def _fgmres_raw(
                     )
 
                 return jax.lax.cond(
-                    can_execute,
+                    step_executing,
                     execute_arnoldi,
                     lambda inner_operand: inner_operand,
                     current,
@@ -1987,7 +2007,8 @@ def _fgmres_raw(
             def inner_condition(current: _ArnoldiCarry) -> Array:
                 iteration = current[6]
                 return (
-                    current[7]
+                    cycle_executing
+                    & current[7]
                     & (iteration - starting_iterations < restart)
                     & (iteration < step_limit)
                     & (iteration < max_steps)
@@ -2039,7 +2060,9 @@ def _fgmres_raw(
                 coefficients[:, None] * update_basis,
                 axis=0,
             )
-            candidate_residual = rhs - action(candidate)
+            candidate_residual = rhs - action(
+                _gated_input(cycle_executing, candidate, initial)
+            )
             candidate_norm = _norm(candidate_residual, inner)
             finite_candidate = (
                 jnp.isfinite(candidate_norm)
@@ -2102,9 +2125,24 @@ def _fgmres_raw(
                 inner_iteration_state,
             )
 
+        def execute_lanes(operand: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
+            executed = execute_cycle(operand)
+            return jax.tree.map(
+                lambda new, old: jnp.where(cycle_executing, new, old),
+                executed,
+                operand,
+            )
+
+        # The cond nests the checkpointed Arnoldi scan, so its predicate must
+        # stay unbatched. A batched predicate turns the cond into a select whose
+        # reverse mode rematerializes the scan on zero-filled residuals for
+        # gated-off lanes, including the operator's closure constants. The
+        # cycle instead runs while any lane executes, as a select-converted cond
+        # would, and gated-off lanes keep their carry. Unbatched, the cond is
+        # unchanged and skips every cycle after the solve stops.
         return jax.lax.cond(
-            cycle_active & (iterations < step_limit) & (iterations < max_steps),
-            execute_cycle,
+            eqxi.unvmap_any(cycle_executing),
+            execute_lanes,
             lambda operand: operand,
             state,
         )
@@ -2327,7 +2365,7 @@ def _lsmr_raw(
     )
     v = adjoint((u_operator, u_regularizer))
     alpha = _norm(v, source_inner)
-    v = v / jnp.where(alpha > 0.0, alpha, 1.0)
+    v = v / jnp.where(alpha > 0.0, alpha, 1.0).astype(v.dtype)
     norm_b = _target_norm(rhs, target_inner)
     state = _LSMRState(
         iteration=jnp.asarray(0, dtype=jnp.int32),
@@ -2386,18 +2424,39 @@ def _lsmr_raw(
         return roundoff * norm_a * residual_norm
 
     def step(index: Array, current: _LSMRState) -> _LSMRState:
+        executing = current.active & (index < step_limit)
+
         def execute(value: _LSMRState) -> _LSMRState:
-            image_operator, image_regularizer = action(value.v)
-            next_u_operator = image_operator - value.alpha * value.u_operator
-            next_u_regularizer = image_regularizer - value.alpha * value.u_regularizer
+            image_operator, image_regularizer = action(
+                _gated_input(executing, value.v, initial)
+            )
+            next_u_operator = (
+                image_operator
+                - value.alpha.astype(value.u_operator.dtype) * value.u_operator
+            )
+            next_u_regularizer = (
+                image_regularizer
+                - value.alpha.astype(value.u_regularizer.dtype) * value.u_regularizer
+            )
             next_beta = _target_norm((next_u_operator, next_u_regularizer), target_inner)
             next_u_operator, next_u_regularizer = _target_scale(
                 (next_u_operator, next_u_regularizer),
                 1.0 / jnp.where(next_beta > 0.0, next_beta, 1.0),
             )
-            next_v = adjoint((next_u_operator, next_u_regularizer)) - next_beta * value.v
+            next_v = (
+                adjoint(
+                    _gated_input(
+                        executing,
+                        (next_u_operator, next_u_regularizer),
+                        (u_operator, u_regularizer),
+                    )
+                )
+                - next_beta.astype(value.v.dtype) * value.v
+            )
             next_alpha = _norm(next_v, source_inner)
-            next_v = next_v / jnp.where(next_alpha > 0.0, next_alpha, 1.0)
+            next_v = next_v / jnp.where(next_alpha > 0.0, next_alpha, 1.0).astype(
+                next_v.dtype
+            )
             chat, shat, alphahat = _symmetric_orthogonalization(
                 value.alphabar, jnp.asarray(damping, dtype=value.alphabar.dtype)
             )
@@ -2414,12 +2473,19 @@ def _lsmr_raw(
                 1.0,
                 value.rho * value.rhobar,
             )
-            hbar = value.h - value.hbar * (theta_bar * rho / safe_denominator)
+            hbar = value.h - value.hbar * (theta_bar * rho / safe_denominator).astype(
+                value.hbar.dtype
+            )
             x = (
                 value.x
-                + (zeta / jnp.where(rho * rho_bar == 0.0, 1.0, rho * rho_bar)) * hbar
+                + (zeta / jnp.where(rho * rho_bar == 0.0, 1.0, rho * rho_bar)).astype(
+                    hbar.dtype
+                )
+                * hbar
             )
-            h = next_v - value.h * (theta_new / jnp.where(rho == 0.0, 1.0, rho))
+            h = next_v - value.h * (theta_new / jnp.where(rho == 0.0, 1.0, rho)).astype(
+                value.h.dtype
+            )
             beta_acute = chat * value.betadd
             beta_check = -shat * value.betadd
             beta_hat = cosine * beta_acute
@@ -2470,7 +2536,9 @@ def _lsmr_raw(
 
                 infinity = jnp.asarray(jnp.inf, dtype=residual_norm.dtype)
                 confirmed_residual, confirmed_normal = jax.lax.cond(
-                    triggered, lambda: true_quantities(x), lambda: (infinity, infinity)
+                    triggered,
+                    lambda: true_quantities(_gated_input(executing, x, initial)),
+                    lambda: (infinity, infinity),
                 )
                 converged = confirmed_residual <= residual_threshold
                 stationary = (
@@ -2494,7 +2562,9 @@ def _lsmr_raw(
                 ) | (residual_norm <= residual_threshold)
                 infinity = jnp.asarray(jnp.inf, dtype=residual_norm.dtype)
                 confirmed_residual, confirmed_normal = jax.lax.cond(
-                    triggered, lambda: true_quantities(x), lambda: (infinity, infinity)
+                    triggered,
+                    lambda: true_quantities(_gated_input(executing, x, initial)),
+                    lambda: (infinity, infinity),
                 )
                 # Unconfirmed steps carry infinite placeholders (and an infinite
                 # floor), so acceptance is gated on the confirmation itself.
@@ -2583,12 +2653,7 @@ def _lsmr_raw(
                 next_iteration,
             )
 
-        return jax.lax.cond(
-            current.active & (index < step_limit),
-            execute,
-            lambda value: value,
-            current,
-        )
+        return jax.lax.cond(executing, execute, lambda value: value, current)
 
     state = _gated_loop(
         step,
@@ -2809,11 +2874,7 @@ def _space_norm(space: AbstractVectorSpace, vector: Array) -> Array:
 
 
 def _norm(vector: Array, inner: _Inner) -> Array:
-    # Value-identical to sqrt(max(<v, v>, 0)), including NaN propagation, with a
-    # finite derivative at an exact zero (exact breakdown under fixed trip).
-    squared = jnp.maximum(jnp.real(inner(vector, vector)), 0.0)
-    zero = squared == 0.0
-    return jnp.where(zero, 0.0, jnp.sqrt(jnp.where(zero, 1.0, squared)))
+    return _norm_from_squared(inner(vector, vector))
 
 
 def _safe_abs(value: Array) -> Array:
@@ -2823,7 +2884,7 @@ def _safe_abs(value: Array) -> Array:
 
 
 def _target_norm(value: _TargetPair, inner: _TargetInner) -> Array:
-    return jnp.sqrt(jnp.maximum(jnp.real(inner(value, value)), 0.0))
+    return _norm_from_squared(inner(value, value))
 
 
 def _target_subtract(left: _TargetPair, right: _TargetPair) -> _TargetPair:
@@ -2831,7 +2892,10 @@ def _target_subtract(left: _TargetPair, right: _TargetPair) -> _TargetPair:
 
 
 def _target_scale(value: _TargetPair, scalar: Array) -> _TargetPair:
-    return scalar * value[0], scalar * value[1]
+    return (
+        scalar.astype(value[0].dtype) * value[0],
+        scalar.astype(value[1].dtype) * value[1],
+    )
 
 
 def _symmetric_orthogonalization(left: Array, right: Array) -> tuple[Array, Array, Array]:

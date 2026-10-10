@@ -346,6 +346,10 @@ def ceres_least_squares(
     termination: OptimizationTermination | None = None,
     args: Any = None,
 ) -> LeastSquaresResult:
+    if problem.trial_policy is not None:
+        raise ValueError(
+            "The Ceres boundary does not implement an identified native trial policy."
+        )
     if not callable(solver):
         raise TypeError("solver must be callable.")
     termination_ = OptimizationTermination() if termination is None else termination

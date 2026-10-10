@@ -22,7 +22,6 @@ def thin_film_interference_candidate_profiles() -> tuple[CapabilityProfile, ...]
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 "single-interface-fresnel-limit",

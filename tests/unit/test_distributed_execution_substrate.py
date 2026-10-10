@@ -511,7 +511,7 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
             "analysis_plan_id": "analysis-huge",
             "numeric_revision_id": "revision-huge",
             "execution_plan_id": "execution-huge",
-            "logical_name": "array-0",
+            "payload_offset": "0",
             "array_path": "['value']",
             "global_shape": "[1000000000]",
             "dtype": "<f8",

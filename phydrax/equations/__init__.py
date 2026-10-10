@@ -2,1078 +2,1723 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Serializable, validated equation representations for physics-aware models."""
+"""Lazy public equations facade; equation families load from canonical owners."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from ..discretization.discrete_velocity._energy_equilibrium import (
-    EnergyEquilibriumEvidence,
-    EnergyEquilibriumResult,
-    EnergyEquilibriumStatus,
-    PositiveEnergyEquilibriumPlan,
-)
-from ..discretization.discrete_velocity._hybrid import (
-    AtomicHybridUpdateEvidence,
-    AtomicHybridUpdateResult,
-    CommonFVKineticFluxEvidence,
-    ConformingFVKineticState,
-    FixedConformingFVKineticInterfacePlan,
-    KineticShockSensorEvidence,
-    KineticShockSensorPlan,
-)
-from ..discretization.discrete_velocity._smooth_compressible import (
-    smooth_compressible_d2v17_method,
-    smooth_compressible_d2v37_off_lattice_method,
-    SmoothCompressibleCollisionEvidence,
-    SmoothCompressibleD2VKineticMethod,
-    SmoothCompressibleEquilibriumEvidence,
-    SmoothCompressibleKineticState,
-    SmoothCompressibleLearnedCollisionResult,
-    SmoothCompressibleLearnedEquilibriumEvidence,
-    SmoothCompressibleMoments,
-    SmoothCompressibleRealizabilityEvidence,
-)
-from . import advanced, fem, trefftz, vem
-from ._ablating_material import (
-    AblatingMaterialAdvance,
-    AblatingMaterialEvaluation,
-    AblatingMaterialState,
-    PorousAblatingMaterialPlan,
-)
-from ._additional_entropy import (
-    ideal_mhd_entropy_pair,
-    shallow_water_energy_pair,
-)
-from ._barotropic import (
-    AbstractBarotropicMaterial,
-    CavitationBarotropicBranch,
-    CavitationBarotropicState,
-    HomogeneousEquilibriumCavitationMaterial,
-    TaitBarotropicMaterial,
-)
-from ._barotropic_euler import BarotropicEulerSystem
-from ._cfd_dem import (
-    AbstractHydrodynamicClosurePlan,
-    CFDEMCouplingEvaluation,
-    evaluate_unresolved_cfd_dem,
-    FluidParticleSample,
-    HydrodynamicClosureResult,
-    StokesDragPlan,
-    UnresolvedCFDEMCouplingPlan,
-)
-from ._channel_flow import (
-    ChannelVelocityDiagnostics,
-    compile_channel_flow,
-    CompiledChannelFlowDynamics,
-)
-from ._channel_les import (
-    channel_les_filter,
-    ChannelLESDiagnostics,
-    ChannelLESEnergyLedger,
-    ChannelLESEvaluation,
-    ChannelLESExplicitRestriction,
-    ChannelLESFilterGeometry,
-    compile_channel_les,
-    CompiledChannelLESDynamics,
-)
-from ._charged_radiation_interactions import (
-    ChargedRadiationMaterialEvaluation,
-    ChargedRadiationMaterialLibrary,
-    ChargedRadiationParticleKind,
-    sample_bremsstrahlung_photon,
-)
-from ._chemical_calibration import (
-    ChemicalCalibrationParameter,
-    ChemicalCalibrationPlan,
-    ChemicalParameterCoordinate,
-)
-from ._chemical_components import ChemicalComponentCatalog
-from ._chemical_conditional_affine import (
-    ChemicalAffinePivot,
-    ChemicalConditionalAffineAssembly,
-    ChemicalConditionalAffineCertificate,
-    ChemicalConditionalAffineDrivers,
-    ChemicalConditionalAffinePlan,
-    ChemicalConditionalAffineResult,
-    ChemicalConditionalAffineStatus,
-    ChemicalReactionDirection,
-    PreparedChemicalConditionalAffine,
-)
-from ._chemical_mechanism import (
-    ChemicalMechanismEvidence,
-    ChemicalMechanismIR,
-    ChemicalRateEvaluation,
-    ChemicalReactionSpec,
-    PreparedChemicalMechanism,
-)
-from ._chemical_mechanism_yaml import (
-    ChemicalMechanismImportReport,
-    load_chemical_mechanism_yaml,
-)
-from ._chemical_rates import (
-    AbstractChemicalRatePlan,
-    ArrheniusRatePlan,
-    ButlerVolmerRatePlan,
-    ChebyshevRatePlan,
-    ChemicalRateKind,
-    ChemicalRateRuntime,
-    LindemannRatePlan,
-    PhotolysisRatePlan,
-    PLogRatePlan,
-    StickingRatePlan,
-    SurfaceCoverageRatePlan,
-    ThirdBodyRatePlan,
-    TroeRatePlan,
-)
-from ._chemical_species import (
-    ChemicalPhaseKind,
-    ChemicalPhaseSpec,
-    ChemicalSpeciesSchema,
-)
-from ._chemical_thermodynamics import (
-    AbstractSpeciesThermodynamicsPlan,
-    NASAPolynomialKind,
-    NASASpeciesThermodynamicsPlan,
-    PolynomialSpeciesThermodynamicsPlan,
-    SpeciesThermodynamicEvaluation,
-    UNIVERSAL_GAS_CONSTANT,
-)
-from ._compile import (
-    compile_pde_expression,
-    compile_pde_problem,
-    compile_pde_residual_term,
-    CompiledPDECondition,
-    CompiledPDEEquation,
-    CompiledPDEProblem,
-    DifferentialBackend,
-    IntegralCompiler,
-    make_pde_operator,
-)
-from ._conservation import (
-    compile_conservation_problem,
-    CompiledConservationProblem,
-    ConservationProblemIR,
-)
-from ._dem_material import DEMMaterialTable
-from ._diagnostic_photon import (
-    DiagnosticPhotonCoefficientEvaluation,
-    DiagnosticPhotonCoefficientRole,
-    DiagnosticPhotonCoefficientTable,
-    DiagnosticPhotonInterpolationEvidence,
-    DiagnosticPhotonInterpolationPolicy,
-    PhotonEnergyGrid,
-)
-from ._discrete_element import (
-    compile_discrete_element_problem,
-    CompiledDiscreteElementProblem,
-    DiscreteElementProblemIR,
-)
-from ._discrete_velocity import __all__ as _discrete_velocity_all
-from ._dynamic_les import (
-    AbstractBackscatterPolicy,
-    AbstractDenominatorRegularization,
-    AbstractDynamicLESAveraging,
-    AdditiveDenominatorRegularization,
-    AllowSignedBackscatter,
-    BoundedFractionBackscatter,
-    DynamicLESInputs,
-    DynamicLESProvenance,
-    DynamicLESResult,
-    DynamicSmagorinskyPlan,
-    ExactDenominatorRegularization,
-    GermanoLeastSquaresEvidence,
-    GlobalDynamicLESAveraging,
-    HomogeneousPlaneDynamicLESAveraging,
-    LagrangianDynamicLESAveraging,
-    LagrangianDynamicLESState,
-    LocalKernelDynamicLESAveraging,
-    NonnegativeBackscatterClip,
-    PreparedDynamicSmagorinskyPlan,
-)
-from ._electrochemistry import (
-    AbstractElectrochemicalClosure,
-    ElectrochemicalLocalFields,
-    ElectrolyteTransportParameters,
-    FARADAY_CONSTANT,
-    IdealDiluteElectrochemicalClosure,
-)
-from ._electrolytic_nematic import (
-    ElectrolyticNematicClosure,
-    ElectrolyticNematicFields,
-    ElectrolyticNematicParameters,
-)
-from ._entropy_pair import (
-    ConvexEntropyPair,
-    ConvexEntropyValidationReport,
-    ideal_gas_euler_entropy_pair,
-    validate_convex_entropy_pair,
-)
-from ._exterior_compile import (
-    compile_exterior_pde,
-    CompiledExteriorPDE,
-    ExteriorPDERealization,
-)
-from ._favre_les import (
-    FavreLESFieldContract,
-    FavreLESInputEvidence,
-    FavreLESInputs,
-    FavreLESResult,
-    FavreLESResultEvidence,
-    PreparedFavreLESModel,
-)
-from ._fd_boundary_lowering import (
-    BoundaryTarget,
-    FDBoundaryBinding,
-    FDInterfaceBinding,
-    FDInterfaceConditionKind,
-    lower_fd_boundaries,
-    lower_fd_interfaces,
-    prepare_fd_boundary_program,
-    prepare_fd_boundary_runtime,
-    prepare_fd_interfaces,
-    PreparedFDBoundaryPair,
-    PreparedFDBoundaryProgram,
-    PreparedFDInterface,
-)
-from ._fd_compile import (
-    compile_finite_difference_pde,
-    CompiledFiniteDifferenceDynamics,
-    FiniteDifferenceCompilationPolicy,
-)
-from ._finite_element_functional import FiniteElementFunctional
-from ._finite_element_material import (
-    AbstractConstitutiveModel,
-    ConstitutiveModel,
-    ConstitutiveResponse,
-    LearnedConstitutiveModel,
-    MaterialCheckpointPayload,
-    MaterialIntegrationPlan,
-    MaterialSiteId,
-    MaterialState,
-    MaterialTransaction,
-)
-from ._finite_element_variational import (
-    CellBilinearAction,
-    CellEnergyAction,
-    CellResidualAction,
-    compile_finite_element_functional,
-    compile_finite_element_problem,
-    CompiledFiniteElementProblem,
-    ExteriorFacetAction,
-    finite_element_form_from_functional,
-    FiniteElementAction,
-    FiniteElementExecutionContext,
-    FiniteElementExecutionPolicy,
-    FiniteElementForm,
-    InteriorFacetAction,
-    LocalFunctionalAction,
-    PairwiseVolumeFluxAction,
-    PreparedFiniteElementMass,
-    PreparedOperatorAction,
-    SIPGFacetAction,
-)
-from ._finite_volume_advanced import (
-    BedloadSedimentPlan,
-    HydrostaticLayerCoupling,
-    MultilayerShallowWaterSystem,
-    ShallowWaterExnerSystem,
-)
-from ._finite_volume_verification import (
-    couette_velocity_profile,
-    double_rarefaction_verification_case,
-    euler_riemann_verification_case,
-    finite_volume_convergence_result,
-    finite_volume_error_norms,
-    FiniteVolumeConservationBudget,
-    FiniteVolumeConvergenceResult,
-    FiniteVolumeErrorNorms,
-    FiniteVolumeVerificationCase,
-    lax_verification_case,
-    periodic_advection_verification_case,
-    poiseuille_velocity_profile,
-    sod_verification_case,
-    woodward_colella_verification_case,
-)
-from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
-from ._flip_inspection import flip_inspection_frames
-from ._force_free import (
-    ForceFreeConstraintEvaluation,
-    ForceFreeCurrentEvaluation,
-    ForceFreeProjectionResult,
-    GRForceFreeSystem,
-)
-from ._form_compile import PDEFormGeometry, PDEFormTrace
-from ._gas_dynamics import (
-    FavreLESCoupledRate,
-    HomogeneousMixtureCompressibleNavierStokesSystem,
-    HomogeneousMixtureEulerSystem,
-)
-from ._gas_transport_properties import (
-    AbstractGasTransportPropertyPlan,
-    GasTransportPropertyEvaluation,
-    KineticTheoryGasTransportPlan,
-    LogPolynomialGasTransportPlan,
-    ReferencePowerLawGasTransportPlan,
-)
-from ._homogeneous_thermodynamics import (
-    AbstractMolarHelmholtzTerm,
-    DensityEnergyStateResult,
-    HomogeneousChemicalEvaluation,
-    HomogeneousHelmholtzPlan,
-    HomogeneousThermodynamicEvaluation,
-    IdealGasReferenceHelmholtzTerm,
-    ThermodynamicDomainEvidence,
-    ZeroResidualHelmholtzTerm,
-)
-from ._hybrid_turbulence import (
-    DelayedDetachedEddyPlan,
-    HybridRANSLESGridScalePlan,
-    HybridTurbulenceEvaluation,
-)
-from ._hyperbolic_systems import (
-    AbstractAdmissibleSystem,
-    AbstractCharacteristicSystem,
-    AbstractConservationSystem,
-    AbstractEntropyDiffusionSystem,
-    AbstractEntropySystem,
-    AbstractNormalCharacteristicSystem,
-    AbstractNormalFrameSystem,
-    AbstractNormalReflectionSystem,
-    CompressibleNavierStokesSystem,
-    ConservationDiffusionEvaluation,
-    EulerSystem,
-    IdealMHDSystem,
-    PrimitiveTemperatureCapability,
-    PrimitiveVelocityCapability,
-    ScalarConservationSystem,
-    ShallowWaterSystem,
-)
-from ._incident_wave import IncidentWavePlan, WaveComponent, WaveSample
-from ._incompressible import (
-    compile_periodic_incompressible_flow,
-    CompiledIncompressibleSpectralDynamics,
-    IncompressibleFlowProblem,
-)
-from ._integral_rewrite import (
-    IntegralResidualProgram,
-    rewrite_strong_to_integral,
-    StrongToIntegralRewriteSpec,
-)
-from ._ionized_gas import (
-    IonizedMixtureThermodynamicsPlan,
-    IonizedMultitemperatureEulerSystem,
-    IonizedMultitemperatureNavierStokesSystem,
-    IonizedThermodynamicEvaluation,
-    PlasmaQuasiNeutralityEvidence,
-)
-from ._ir import (
-    as_expression,
-    PDECondition,
-    PDEConditionKind,
-    PDECoordinate,
-    PDECoordinateKind,
-    PDEEquation,
-    PDEExpression,
-    PDEExpressionOp,
-    PDEField,
-    PDELiteral,
-    PDEParameter,
-    PDEProblemIR,
-    PDERegion,
-    PDERegionKind,
-    PDERepresentation,
-)
-from ._kinetic_gas import (
-    DiscreteMaxwellianResult,
-    KineticBreakdownEvidence,
-    KineticBreakdownPlan,
-    KineticCollisionResult,
-    MaxwellGasSurfaceBoundary,
-    MolecularVelocityQuadrature,
-    MonatomicBGKCollisionPlan,
-    PopulationUpwindFluxPlan,
-    PositiveDiscreteMaxwellianPlan,
-    ShakhovCollisionPlan,
-)
-from ._ksgs import (
-    AbstractKSGSPlan,
-    BuoyancyKSGSInputs,
-    BuoyancyKSGSPlan,
-    DynamicKSGSInputs,
-    DynamicKSGSPlan,
-    KSGSCoefficients,
-    KSGSContributions,
-    KSGSEvidence,
-    KSGSInputs,
-    KSGSResult,
-    KSGSState,
-    KSGSTransportResult,
-    LowReKSGSCoefficients,
-    LowReKSGSInputs,
-    LowReKSGSPlan,
-    replace_ksgs_kinetic_energy,
-    StaticKSGSPlan,
-)
-from ._lagrangian_fluid import (
-    BarotropicFluidProblemIR,
-    compile_barotropic_sph_problem,
-    CompiledBarotropicSPHProblem,
-)
-from ._lattice_boltzmann import (
-    compile_lattice_boltzmann_problem,
-    CompiledLatticeBoltzmannProblem,
-    LatticeBoltzmannProblem,
-    snapshot_lattice_boltzmann_geometry,
-)
-from ._lattice_boltzmann_color_gradient import (
-    __all__ as _lattice_boltzmann_color_gradient_all,
-)
-from ._lattice_boltzmann_free_energy import (
-    __all__ as _lattice_boltzmann_free_energy_all,
-)
-from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
-from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
-from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
-from ._learned_stress import (
-    LEARNED_STRESS_FEATURE_NAME,
-    LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS,
-    LEARNED_STRESS_VELOCITY_GRADIENT_UNITS,
-    MACLearnedStressPlan,
-    MACLearnedStressStage,
-    PeriodicLearnedStressPlan,
-    PeriodicLearnedStressStage,
-    PreparedMACLearnedStress,
-    PreparedPeriodicLearnedStress,
-)
-from ._les_closures import (
-    AbstractAlgebraicLESModel,
-    AlgebraicLESInputs,
-    AlgebraicLESResult,
-    AMDLESPlan,
-    LESFilterScale,
-    LESParameterProvenance,
-    PreparedAlgebraicLESModel,
-    ResolvedLESFilter,
-    SmagorinskyLESPlan,
-    VremanLESPlan,
-    WALELESPlan,
-)
-from ._linear_boltzmann import (
-    MultigroupSlabTransportProblem,
-    SlabTransportBoundaryPlan,
-    TransportBoundaryKind,
-)
-from ._mac_binary_alloy import (
-    compile_mac_binary_alloy,
-    CompiledMACBinaryAlloyDynamics,
-    MACBinaryAlloyDiagnostics,
-    MACBinaryAlloyStage,
-    MACBinaryAlloyStepRestriction,
-)
-from ._mac_dynamic_les import (
-    MACDynamicLESPlan,
-    MACDynamicLESStage,
-    MACExplicitTestFilterPlan,
-    PreparedMACDynamicLES,
-    PreparedMACExplicitTestFilter,
-)
-from ._mac_enthalpy_porosity import (
-    compile_mac_enthalpy_porosity,
-    CompiledMACEnthalpyPorosityDynamics,
-    MACEnthalpyPorosityDiagnostics,
-    MACEnthalpyPorosityProblem,
-    MACEnthalpyPorosityStage,
-    MACEnthalpyPorosityStepRestriction,
-)
-from ._mac_incompressible import (
-    compile_mac_incompressible_flow,
-    CompiledMACIncompressibleDynamics,
-    MACIncompressibleDiagnostics,
-    MACIncompressibleRateComponents,
-    MACLESStepRestriction,
-)
-from ._mac_les import (
-    MACAlgebraicLESPlan,
-    MACLESStageResult,
-    PreparedMACAlgebraicLES,
-)
-from ._mac_penalty_ib_cfd_dem import (
-    evaluate_mac_penalty_ib_cfd_dem,
-    IBPenaltyPlan,
-    MACPenaltyIBCFDEMCouplingPlan,
-    MACPenaltyIBEvaluation,
-    MACPenaltyIBStatus,
-)
-from ._mac_scalar_buoyancy import (
-    compile_mac_scalar_buoyancy,
-    CompiledMACScalarBuoyancyDynamics,
-    MACBuoyancyLaw,
-    MACBuoyancyLedger,
-    MACKSGSStageResult,
-    MACScalarBuoyancyDiagnostics,
-    MACScalarBuoyancyStage,
-    MACScalarBuoyancyStepRestriction,
-    PreparedMACKSGS,
-)
-from ._mac_variable_density import (
-    compile_mac_variable_density_flow,
-    CompiledMACVariableDensityDynamics,
-    MACVariableDensityDiagnostics,
-    MACVariableDensityFlowProblem,
-    MACVariableDensityRateResult,
-    MACVariableDensityState,
-    MACVariableDensityStepRestriction,
-    MACVariableDensityStepResult,
-)
-from ._manufactured import (
-    ManufacturedConvergencePlan,
-    ManufacturedConvergenceResult,
-    ManufacturedNorm,
-    ManufacturedPDECase,
-    ManufacturedSpatialOperator,
-)
-from ._material_point import (
-    AbstractImplicitMPMConstitutivePlan,
-    AbstractMPMConstitutivePlan,
-    compile_material_point_problem,
-    CompiledMaterialPointProblem,
-    ExternalMPMAcceleration,
-    MaterialPointArguments,
-    MaterialPointProblemIR,
-    MPMConstitutiveCapabilities,
-    MPMConstitutiveResponse,
-    MPMKinematics,
-    MPMLinearizedConstitutiveResponse,
-)
-from ._materials import (
-    AbstractThermodynamicMaterial,
-    IdealGasMaterial,
-    NobleAbelStiffenedGasMaterial,
-    StiffenedGasMaterial,
-    TwoMaterialEOSClosure,
-    TwoMaterialEOSReport,
-    TwoMaterialPrimitiveState,
-)
-from ._matter_radiation_interactions import (
-    AnnihilationKinematics,
-    atomic_relaxation,
-    AtomicRelaxationResult,
-    bethe_heitler_pair_cross_section_m2,
-    bremsstrahlung_suppression_factor,
-    BremsstrahlungSpectrumRoute,
-    cherenkov_step_spectral_yield,
-    cherenkov_yield_in_band,
-    delta_ray_kinematics,
-    DeltaRayKinematics,
-    FoilStackTransitionRadiationPlan,
-    longo_shower_profile,
-    positron_annihilation_in_flight,
-    sample_bethe_heitler_pair_kinetic_energies,
-    sample_bremsstrahlung_fraction,
-    SeltzerBergerBremsstrahlungTable,
-)
-from ._mechanical_load_action import (
-    MechanicalLoadAction,
-    MechanicalLoadActionEvaluation,
-    NeuralCoordinateTrace,
-)
-from ._mixed_dimensional import (
-    BulkDGTransportEvidence,
-    BulkDGTransportPlan,
-    MixedDimensionalMassLedger,
-    MixedDimensionalSources,
-    MixedDimensionalStepResult,
-    MixedDimensionalTransportPlan,
-    MixedDimensionalTransportState,
-    NetworkTransportPlan,
-    PermeabilityExchangePlan,
-    PreparedBulkDGTransport,
-    PreparedMixedDimensionalTransport,
-    PreparedNetworkTransport,
-    ReservoirCouplingPlan,
-)
-from ._mixture_transport import (
-    MixtureAveragedTransportPlan,
-    MixtureTransportEvaluation,
-    StefanMaxwellEvidence,
-    StefanMaxwellTransportEvaluation,
-    StefanMaxwellTransportPlan,
-)
-from ._multiphase import (
-    TwoMaterialVOFDiagnostics,
-    TwoMaterialVOFStateLayout,
-    TwoMaterialVOFSystem,
-)
-from ._multiphase_electrolyte import (
-    MultiphaseElectrolyteClosure,
-    MultiphaseElectrolyteFields,
-    MultiphaseElectrolyteParameters,
-)
-from ._nematic import (
-    beris_edwards_constitutive_fields,
-    BerisEdwardsConstitutiveFields,
-    BerisEdwardsParameters,
-    LandauDeGennesClosure,
-    LandauDeGennesParameters,
-    NematicTensorBasis,
-    NematicThermodynamicFields,
-)
-from ._nematic_anchoring import (
-    NematicAnchoringFields,
-    NematicAnchoringKind,
-    NematicAnchoringPlan,
-)
-from ._nonequilibrium_gas import (
-    TwoTemperatureMixtureEulerSystem,
-    TwoTemperatureMixtureNavierStokesSystem,
-    TwoTemperatureRecovery,
-    TwoTemperatureThermodynamicEvaluation,
-    TwoTemperatureThermodynamicsPlan,
-)
-from ._nonlte_radiation import (
-    AVOGADRO_CONSTANT,
-    NonLTELevelPopulationPlan,
-    NonLTEPopulationEvaluation,
-    NonLTERadiationCoefficientEvaluation,
-    NonLTERadiationCoefficientPlan,
-    PLANCK_CONSTANT,
-)
-from ._particle_conversion import (
-    compile_particle_conversion_problem,
-    CompiledParticleConversionProblem,
-    ParticleConversionBatchEvaluation,
-    ParticleConversionEvaluation,
-    ParticleConversionProblemIR,
-    ParticleConversionRejectionReason,
-    PreparedParticleConversionDynamics,
-)
-from ._particle_reaction import (
-    EvaporationPhaseChangePlan,
-    ParticlePhaseChangeEvaluation,
-    ParticleReactionEvaluation,
-    ParticleReactionLocation,
-    ParticleReactionProcessPlan,
-    ShrinkingCoreConversionPlan,
-    ShrinkingCoreEvaluation,
-    ShrinkingCoreState,
-)
-from ._particle_thermochemistry import (
-    evaluate_particle_transport,
-    ParticleThermochemicalMaterialBundle,
-    ParticleThermodynamicMaterialPlan,
-    ParticleThermodynamicState,
-    ParticleTransportBoundary,
-    ParticleTransportEvaluation,
-    ParticleTransportMaterialPlan,
-)
-from ._peng_robinson import (
-    peng_robinson_roots,
-    PengRobinsonParameters,
-    PengRobinsonResidualHelmholtzTerm,
-    PengRobinsonRootSet,
-)
-from ._periodic_dynamic_les import (
-    PeriodicDynamicLESPlan,
-    PeriodicDynamicLESStage,
-    PeriodicFourierTestFilterPlan,
-    PreparedPeriodicDynamicLES,
-    PreparedPeriodicFourierTestFilter,
-)
-from ._periodic_les import (
-    PeriodicAlgebraicLESPlan,
-    PeriodicAlgebraicLESStage,
-    PeriodicFourierGridFilterPlan,
-    PeriodicIncompressibleRateComponents,
-    PeriodicIncompressibleStage,
-    PeriodicLESStepRestriction,
-    PreparedPeriodicAlgebraicLES,
-    PreparedPeriodicFourierGridFilter,
-)
-from ._phase_change import (
-    AntoineSaturationPressurePlan,
-    SaturationPressureEvaluation,
-)
-from ._phase_field import (
-    AbstractBulkFreeEnergy,
-    BinaryFreeEnergyEvaluation,
-    BulkPotentialDomain,
-    CallableBulkFreeEnergy,
-    double_well_chemical_derivative,
-    double_well_free_energy_density,
-    DoubleWellFreeEnergy,
-    evaluate_binary_free_energy,
-    PolynomialBulkFreeEnergy,
-)
-from ._plasma_chemistry import (
-    PlasmaChemicalRateEvaluation,
-    PreparedPlasmaMechanism,
-    ReactionTemperatureSpec,
-)
-from ._plasma_transport import (
-    AmbipolarPlasmaTransportPlan,
-    PlasmaTransportEvaluation,
-)
-from ._radiation_interactions import (
-    compton_electron_cosine,
-    ComptonKinematics,
-    doppler_scattered_energy,
-    RadiationCrossSectionEvaluation,
-    RadiationCrossSectionLibrary,
-    RadiationInteractionKind,
-    sample_compton_profile_momentum,
-    sample_sauter_cosine,
-)
-from ._radiation_material import (
-    radiation_means,
-    RadiationCoefficientEvaluation,
-    RadiationCoefficientRole,
-    RadiationCoefficientTable,
-    RadiationMatterExchangePlan,
-    RadiationMatterExchangeResult,
-    RadiationMeanEvaluation,
-    RadiationScaleContract,
-    SpectralFrequencyGrid,
-)
-from ._radiation_moments import MultigroupM1RadiationSystem
-from ._radiative import (
-    RadiativeCoolingBoundsPolicy,
-    TabulatedCoolingCurve,
-    TabulatedCoolingEvaluation,
-)
-from ._randomized_compile import (
-    analyze_randomized_compilation,
-    compile_pde_randomized_term,
-    CompiledRandomizedPDETerm,
-    RandomizedCompilationReport,
-    RandomizedDifferentialMethod,
-    RandomizedDifferentialPlan,
-    RandomizedExecutionBackend,
-    RandomizedNodeCoupling,
-    RandomizedPopulation,
-)
-from ._reactive_cfd_dem import (
-    ParticleContinuumExchangeEvaluation,
-    ParticleContinuumExchangePlan,
-    ReactiveCFDDEMCouplingPlan,
-)
-from ._reactive_monolithic import (
-    CellwiseReactiveFluidImplicitPlan,
-    ReactiveFluidImplicitState,
-    ReactiveMonolithicCouplingPlan,
-    ReactiveMonolithicResidualEvaluation,
-    ReactiveMonolithicRouteCertificate,
-    ReactiveMonolithicStage,
-    ReactiveMonolithicUnknown,
-)
-from ._relativistic_angular_radiation import (
-    DiscreteOrdinatesRadiationPlan,
-    GRRadiationAngularClosureEvaluation,
-    MonteCarloRadiationClosureEvaluation,
-    MonteCarloRadiationClosurePlan,
-    VariableEddingtonTensorClosurePlan,
-)
-from ._relativistic_eos import (
-    AbstractRelativisticEOS,
-    GammaLawEOS,
-    HybridColdThermalEOS,
-    PiecewisePolytropicEOS,
-    RELATIVISTIC_EOS_ACAUSAL,
-    RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH,
-    RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN,
-    RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN,
-    RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN,
-    RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN,
-    RELATIVISTIC_EOS_NONCONVERGED,
-    RELATIVISTIC_EOS_NONFINITE,
-    relativistic_eos_status_name,
-    RELATIVISTIC_EOS_SUCCESS,
-    RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN,
-    RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN,
-    RELATIVISTIC_EOS_UNSTABLE,
-    RelativisticEOSDomainEvidence,
-    RelativisticEOSState,
-    RelativisticEOSStatus,
-    RelativisticEOSTableEvidence,
-    TabulatedFiniteTemperatureEOS,
-)
-from ._relativistic_hydrodynamics import (
-    RelativisticFluidEvaluation,
-    RelativisticHydrodynamicsLayout,
-    SRHDSystem,
-    valencia_geometric_source_from_projection,
-    ValenciaGeometrySource,
-    ValenciaGRHDSystem,
-)
-from ._relativistic_mhd import (
-    IdealValenciaGRMHDSystem,
-    ValenciaHLLEBounds,
-    ValenciaHLLEFlux,
-    ValenciaPrimitiveRecovery,
-    ValenciaRecoveryStatus,
-)
-from ._relativistic_multigroup_radiation import (
-    GRMultigroupM1ClosureEvaluation,
-    GRMultigroupM1RadiationSystem,
-    GRMultigroupRadiationInteractionPlan,
-    GRMultigroupRadiationMatterExchange,
-)
-from ._relativistic_neutrino import (
-    GRNeutrinoInteractionPlan,
-    GRNeutrinoM1ClosureEvaluation,
-    GRNeutrinoM1System,
-    GRNeutrinoMatterExchange,
-    NeutrinoSpecies,
-)
-from ._relativistic_radiation import (
-    GRGrayM1ClosureEvaluation,
-    GRGrayM1RadiationSystem,
-)
-from ._relativistic_radiation_interaction import (
-    AbstractGRGrayOpacityPlan,
-    CompositeGRGrayOpacityPlan,
-    ConstantGRGrayOpacityPlan,
-    GRGrayOpacityEvaluation,
-    GRGrayRadiationInteractionPlan,
-    GRRadiationMatterExchange,
-)
-from ._resistive_grmhd import (
-    RelativisticOhmEvaluation,
-    ResistiveGRMHDOhmicClosure,
-)
-from ._semidiscrete import (
-    BoundaryLift,
-    compile_semidiscrete_dae,
-    compile_semidiscrete_pde,
-    CompiledDiscreteDynamics,
-    CompiledDiscreteResidual,
-    DiscreteStateLayout,
-    ResolvedSemidiscreteMethod,
-    SemidiscreteCompilationMethod,
-    SemidiscreteDAEStructuralReport,
-)
-from ._serialize import (
-    pde_ir_from_dict,
-    pde_ir_from_json,
-    pde_ir_hash,
-    pde_ir_to_dict,
-    pde_ir_to_json,
-)
-from ._shallow_water_sources import ShallowWaterCoriolisSource
-from ._solid_liquid_phase_change import (
-    BinaryAlloyEnthalpyState,
-    BinaryAlloyPhaseDiagramPlan,
-    SolidLiquidEnthalpyPlan,
-    SolidLiquidEnthalpyState,
-    SolidLiquidPhaseStatus,
-)
-from ._spalart_allmaras import (
-    SpalartAllmarasArguments,
-    SpalartAllmarasCompressibleSystem,
-    SpalartAllmarasEvaluation,
-    SpalartAllmarasNegativePlan,
-)
-from ._sparse_flip import (
-    compile_sparse_flip_problem,
-    CompiledSparseFLIPProblem,
-    SparseFLIPDiagnostics,
-    SparseFLIPRuntimeState,
-    SparseFLIPStepResult,
-)
-from ._spectral_compile import (
-    compile_spectral_pde,
-    CompiledSpectralDynamics,
-    SpectralStateLayout,
-)
-from ._spectral_residual import (
-    CaseGroupedSpectralResidual,
-    compile_spectral_residual,
-    CompiledSpectralResidual,
-    SpectralConditionHandling,
-    SpectralResidualCompilationReport,
-    SpectralResidualDataLayout,
-    SpectralResidualScope,
-)
-from ._sst import SSTEvaluation, SSTTurbulencePlan
-from ._stencil_compile import (
-    compile_stencil_dynamics,
-    CompiledStencilDynamics,
-    StencilStateLayout,
-)
-from ._superconducting_material import (
-    SuperconductingMaterialEvaluation,
-    SuperconductingMaterialLawPlan,
-)
-from ._surface_chemistry import (
-    GasSurfaceChemicalEvaluation,
-    GasSurfaceReactionSpec,
-    PreparedGasSurfaceMechanism,
-    SurfaceChemicalState,
-    SurfaceSpeciesSchema,
-)
-from ._thermal_modes import (
-    ThermalModeEvaluation,
-    ThermalModeSchema,
-    ThermalModeSpec,
-    ThermalModeTemperatureResult,
-)
-from ._thermodynamics import (
-    AbstractKineticThermodynamicClosure,
-    BinaryPhaseThermodynamicClosure,
-    BinaryThermodynamicLocalFields,
-    BinaryThermodynamicParameters,
-    ThermodynamicForceRepresentation,
-)
-from ._tokens import (
-    pad_pde_tokens,
-    PDE_OPERATOR_VOCABULARY,
-    PDE_TOKEN_ATTRIBUTES,
-    PDE_TOKEN_KINDS,
-    PDETokenBatch,
-    stack_pde_tokens,
-    tokenize_pde_ir,
-)
-from ._transport_closures import (
-    AbstractTransportClosure,
-    ConstantTransport,
-    PrandtlTransport,
-    SutherlandTransport,
-    TransportProperties,
-)
-from ._unstructured_les import (
-    PreparedUnstructuredLowMachLES,
-    UnstructuredLowMachLESConservationEvidence,
-    UnstructuredLowMachLESFluxLedger,
-    UnstructuredLowMachLESPlan,
-    UnstructuredLowMachLESRateResult,
-    UnstructuredLowMachLESState,
-)
-from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
-from ._variational import (
-    BoundaryLoadAction,
-    coefficient,
-    DiffusionAction,
-    MassAction,
-    SourceAction,
-    TensorDiffusionAction,
-    VariationalCoefficient,
-)
-from ._vof_phase_change import (
-    AbstractVOFMassTransferPlan,
-    ConservativePhaseTransferEvaluation,
-    InterfaceHeatResistancePhaseChangePlan,
-    KunzCavitationPlan,
-    MerkleCavitationPlan,
-    SchnerrSauerCavitationPlan,
-    StefanHeatFluxPhaseChangePlan,
-    TemperatureRelaxationPhaseChangePlan,
-    TwoMaterialVOFPhaseChangePlan,
-    VOFPhaseChangeDifferentialSource,
-    VOFPhaseChangeStepResult,
-)
-from ._vortex_particles import (
-    compile_vortex_particle_flow,
-    CompiledVortexParticleFlow,
-    VortexParticleFlowProblem,
-)
-from ._weakly_compressible import (
-    compile_weakly_compressible_sph_problem,
-    CompiledWeaklyCompressibleSPHProblem,
-    WeaklyCompressibleFluidProblemIR,
-)
-from .advanced import GLMIdealMHDSystem
-from .fem import FiniteElementMassPolicy
-from .trefftz import (
-    AbstractTrefftzBasis,
-    audit_trial_space,
-    biharmonic_normal_derivative_functional,
-    biharmonic_robin_functional,
-    biharmonic_value_functional,
-    BiharmonicPotential2D,
-    ComplexAffineNormalization,
-    ConstrainedHolomorphicPotential,
-    ConstrainedMeromorphicPotential,
-    DiskHolomorphicTraceLift,
-    DiskHolomorphicTracePlan,
-    DomainHolomorphicCertificate,
-    HarmonicPolynomialBasis,
-    HarmonicPotential2D,
-    HelmholtzPlaneWaveBasis,
-    holomorphic_period_functional,
-    HolomorphicAffineCoefficientMap,
-    HolomorphicBranchBundle,
-    HolomorphicConstraintComponent,
-    HolomorphicConstraintLiftEvidence,
-    HolomorphicConstraintOperatorEvidence,
-    HolomorphicConstraintOperatorPlan,
-    HolomorphicConstraintProjector,
-    HolomorphicContourFunctional,
-    HolomorphicFactorGaugeReport,
-    HolomorphicFactorizationEvidence,
-    HolomorphicJet,
-    HolomorphicJetFunctionalTerm,
-    HolomorphicLinearFrame,
-    HolomorphicLinearFrameCertificate,
-    HolomorphicLinearFunctional,
-    HolomorphicMapCertificate,
-    HolomorphicMultiIndexSet,
-    HolomorphicMultiJet,
-    HolomorphicParameterCoverage,
-    HolomorphicPointFunctional,
-    HolomorphicPolynomialFrame,
-    HolomorphicPolynomialPotential,
-    HolomorphicPotentialProvider,
-    HolomorphicProductPotential,
-    HolomorphicProjectionState,
-    HolomorphicTraceCertificate,
-    HolomorphicTraceEvidenceKind,
-    LinearMonogenicField,
-    LinearTrefftzField,
-    MeromorphicLinearFrame,
-    MeromorphicLinearFrameCertificate,
-    MeromorphicMapCertificate,
-    MeromorphicVariableProjectionPlan,
-    MonogenicPolynomialBasis,
-    MultiIndex,
-    MultivariableHolomorphicPotentialProvider,
-    plane_elasticity_displacement_functional,
-    plane_elasticity_stress_functional,
-    plane_elasticity_traction_functional,
-    PlaneElasticityPotential2D,
-    PlaneIsotropicMaterial,
-    PluriharmonicCertificate,
-    PluriharmonicPotential,
-    PoleClearanceReport,
-    PoleSet,
-    PolyharmonicAlmansiBasis,
-    PreparedHolomorphicConstraintOperator,
-    ProjectedHolomorphicPotential,
-    sample_unit_directions,
-    SimilarityNormalization,
-    TrainablePoleSet,
-    TrefftzResourceBudget,
-    TrefftzResourceEvidence,
-    trial_space_certificate,
-    TrialSpaceAuditReport,
-    TrialSpaceCertificate,
-    TrialValidityRegion,
-)
-from .vem import (
-    compile_virtual_element_problem,
-    CompiledVirtualElementProblem,
-    evaluate_virtual_element_reconstruction,
-    evaluate_virtual_element_trace,
-    prepare_virtual_element_field_reconstruction,
-    project_virtual_element_field,
-    VirtualElementAction,
-    VirtualElementExecutionContext,
-    VirtualElementExecutionPolicy,
-    VirtualElementForm,
-    VirtualElementReconstruction,
-    VirtualElementReconstructionChannel,
-    VirtualElementRobinAction,
-)
 
+_SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
+    "AMDLESPlan": ("._les_closures", "AMDLESPlan"),
+    "AVOGADRO_CONSTANT": ("._nonlte_radiation", "AVOGADRO_CONSTANT"),
+    "AblatingMaterialAdvance": ("._ablating_material", "AblatingMaterialAdvance"),
+    "AblatingMaterialEvaluation": ("._ablating_material", "AblatingMaterialEvaluation"),
+    "AblatingMaterialState": ("._ablating_material", "AblatingMaterialState"),
+    "AbstractAdmissibleSystem": ("._hyperbolic_systems", "AbstractAdmissibleSystem"),
+    "AbstractAlgebraicLESModel": ("._les_closures", "AbstractAlgebraicLESModel"),
+    "AbstractBackscatterPolicy": ("._dynamic_les", "AbstractBackscatterPolicy"),
+    "AbstractBarotropicMaterial": ("._barotropic", "AbstractBarotropicMaterial"),
+    "AbstractBulkFreeEnergy": ("._phase_field", "AbstractBulkFreeEnergy"),
+    "AbstractCharacteristicSystem": (
+        "._hyperbolic_systems",
+        "AbstractCharacteristicSystem",
+    ),
+    "AbstractChemicalRatePlan": ("._chemical_rates", "AbstractChemicalRatePlan"),
+    "AbstractConservationSystem": ("._hyperbolic_systems", "AbstractConservationSystem"),
+    "AbstractConstitutiveModel": (
+        "._finite_element_material",
+        "AbstractConstitutiveModel",
+    ),
+    "AbstractDenominatorRegularization": (
+        "._dynamic_les",
+        "AbstractDenominatorRegularization",
+    ),
+    "AbstractDynamicLESAveraging": ("._dynamic_les", "AbstractDynamicLESAveraging"),
+    "AbstractElectrochemicalClosure": (
+        "._electrochemistry",
+        "AbstractElectrochemicalClosure",
+    ),
+    "AbstractEntropyDiffusionSystem": (
+        "._hyperbolic_systems",
+        "AbstractEntropyDiffusionSystem",
+    ),
+    "AbstractEntropySystem": ("._hyperbolic_systems", "AbstractEntropySystem"),
+    "AbstractGRGrayOpacityPlan": (
+        "._relativistic_radiation_interaction",
+        "AbstractGRGrayOpacityPlan",
+    ),
+    "AbstractGasTransportPropertyPlan": (
+        "._gas_transport_properties",
+        "AbstractGasTransportPropertyPlan",
+    ),
+    "AbstractHydrodynamicClosurePlan": ("._cfd_dem", "AbstractHydrodynamicClosurePlan"),
+    "AbstractImplicitMPMConstitutivePlan": (
+        "._material_point",
+        "AbstractImplicitMPMConstitutivePlan",
+    ),
+    "AbstractKSGSPlan": ("._ksgs", "AbstractKSGSPlan"),
+    "AbstractKineticThermodynamicClosure": (
+        "._thermodynamics",
+        "AbstractKineticThermodynamicClosure",
+    ),
+    "AbstractMPMConstitutivePlan": ("._material_point", "AbstractMPMConstitutivePlan"),
+    "AbstractMolarHelmholtzTerm": (
+        "._homogeneous_thermodynamics",
+        "AbstractMolarHelmholtzTerm",
+    ),
+    "AbstractNormalCharacteristicSystem": (
+        "._hyperbolic_systems",
+        "AbstractNormalCharacteristicSystem",
+    ),
+    "AbstractNormalFrameSystem": ("._hyperbolic_systems", "AbstractNormalFrameSystem"),
+    "AbstractNormalReflectionSystem": (
+        "._hyperbolic_systems",
+        "AbstractNormalReflectionSystem",
+    ),
+    "AbstractRelativisticEOS": ("._relativistic_eos", "AbstractRelativisticEOS"),
+    "AbstractSpeciesThermodynamicsPlan": (
+        "._chemical_thermodynamics",
+        "AbstractSpeciesThermodynamicsPlan",
+    ),
+    "AbstractThermodynamicMaterial": ("._materials", "AbstractThermodynamicMaterial"),
+    "AbstractTransportClosure": ("._transport_closures", "AbstractTransportClosure"),
+    "AbstractTrefftzBasis": (".trefftz", "AbstractTrefftzBasis"),
+    "AbstractVOFMassTransferPlan": ("._vof_phase_change", "AbstractVOFMassTransferPlan"),
+    "AdditiveDenominatorRegularization": (
+        "._dynamic_les",
+        "AdditiveDenominatorRegularization",
+    ),
+    "AlgebraicLESInputs": ("._les_closures", "AlgebraicLESInputs"),
+    "AlgebraicLESResult": ("._les_closures", "AlgebraicLESResult"),
+    "AllowSignedBackscatter": ("._dynamic_les", "AllowSignedBackscatter"),
+    "AmbipolarPlasmaTransportPlan": (
+        "._plasma_transport",
+        "AmbipolarPlasmaTransportPlan",
+    ),
+    "AnnihilationKinematics": (
+        "._matter_radiation_interactions",
+        "AnnihilationKinematics",
+    ),
+    "AntoineSaturationPressurePlan": ("._phase_change", "AntoineSaturationPressurePlan"),
+    "ArrheniusRatePlan": ("._chemical_rates", "ArrheniusRatePlan"),
+    "AtomicRelaxationResult": (
+        "._matter_radiation_interactions",
+        "AtomicRelaxationResult",
+    ),
+    "BarotropicEulerSystem": ("._barotropic_euler", "BarotropicEulerSystem"),
+    "BarotropicFluidProblemIR": ("._lagrangian_fluid", "BarotropicFluidProblemIR"),
+    "BedloadSedimentPlan": ("._finite_volume_advanced", "BedloadSedimentPlan"),
+    "BerisEdwardsConstitutiveFields": ("._nematic", "BerisEdwardsConstitutiveFields"),
+    "BerisEdwardsParameters": ("._nematic", "BerisEdwardsParameters"),
+    "BiharmonicPotential2D": (".trefftz", "BiharmonicPotential2D"),
+    "BinaryAlloyEnthalpyState": (
+        "._solid_liquid_phase_change",
+        "BinaryAlloyEnthalpyState",
+    ),
+    "BinaryAlloyPhaseDiagramPlan": (
+        "._solid_liquid_phase_change",
+        "BinaryAlloyPhaseDiagramPlan",
+    ),
+    "BinaryFreeEnergyEvaluation": ("._phase_field", "BinaryFreeEnergyEvaluation"),
+    "BinaryPhaseThermodynamicClosure": (
+        "._thermodynamics",
+        "BinaryPhaseThermodynamicClosure",
+    ),
+    "BinaryThermodynamicLocalFields": (
+        "._thermodynamics",
+        "BinaryThermodynamicLocalFields",
+    ),
+    "BinaryThermodynamicParameters": (
+        "._thermodynamics",
+        "BinaryThermodynamicParameters",
+    ),
+    "BoundaryLift": ("._semidiscrete", "BoundaryLift"),
+    "BoundaryLoadAction": ("._variational", "BoundaryLoadAction"),
+    "BoundaryTarget": ("._fd_boundary_lowering", "BoundaryTarget"),
+    "BoundedFractionBackscatter": ("._dynamic_les", "BoundedFractionBackscatter"),
+    "BremsstrahlungSpectrumRoute": (
+        "._matter_radiation_interactions",
+        "BremsstrahlungSpectrumRoute",
+    ),
+    "BulkDGTransportEvidence": ("._mixed_dimensional", "BulkDGTransportEvidence"),
+    "BulkDGTransportPlan": ("._mixed_dimensional", "BulkDGTransportPlan"),
+    "BulkPotentialDomain": ("._phase_field", "BulkPotentialDomain"),
+    "BuoyancyKSGSInputs": ("._ksgs", "BuoyancyKSGSInputs"),
+    "BuoyancyKSGSPlan": ("._ksgs", "BuoyancyKSGSPlan"),
+    "ButlerVolmerRatePlan": ("._chemical_rates", "ButlerVolmerRatePlan"),
+    "CFDEMCouplingEvaluation": ("._cfd_dem", "CFDEMCouplingEvaluation"),
+    "CallableBulkFreeEnergy": ("._phase_field", "CallableBulkFreeEnergy"),
+    "CaseGroupedSpectralResidual": ("._spectral_residual", "CaseGroupedSpectralResidual"),
+    "CavitationBarotropicBranch": ("._barotropic", "CavitationBarotropicBranch"),
+    "CavitationBarotropicState": ("._barotropic", "CavitationBarotropicState"),
+    "CellBilinearAction": ("._finite_element_variational", "CellBilinearAction"),
+    "CellEnergyAction": ("._finite_element_variational", "CellEnergyAction"),
+    "CellResidualAction": ("._finite_element_variational", "CellResidualAction"),
+    "CellwiseReactiveFluidImplicitPlan": (
+        "._reactive_monolithic",
+        "CellwiseReactiveFluidImplicitPlan",
+    ),
+    "ChannelLESDiagnostics": ("._channel_les", "ChannelLESDiagnostics"),
+    "ChannelLESEnergyLedger": ("._channel_les", "ChannelLESEnergyLedger"),
+    "ChannelLESEvaluation": ("._channel_les", "ChannelLESEvaluation"),
+    "ChannelLESExplicitRestriction": ("._channel_les", "ChannelLESExplicitRestriction"),
+    "ChannelLESFilterGeometry": ("._channel_les", "ChannelLESFilterGeometry"),
+    "ChannelVelocityDiagnostics": ("._channel_flow", "ChannelVelocityDiagnostics"),
+    "ChargedRadiationMaterialEvaluation": (
+        "._charged_radiation_interactions",
+        "ChargedRadiationMaterialEvaluation",
+    ),
+    "ChargedRadiationMaterialLibrary": (
+        "._charged_radiation_interactions",
+        "ChargedRadiationMaterialLibrary",
+    ),
+    "ChargedRadiationParticleKind": (
+        "._charged_radiation_interactions",
+        "ChargedRadiationParticleKind",
+    ),
+    "ChebyshevRatePlan": ("._chemical_rates", "ChebyshevRatePlan"),
+    "ChemicalAffinePivot": ("._chemical_conditional_affine", "ChemicalAffinePivot"),
+    "ChemicalCalibrationParameter": (
+        "._chemical_calibration",
+        "ChemicalCalibrationParameter",
+    ),
+    "ChemicalCalibrationPlan": ("._chemical_calibration", "ChemicalCalibrationPlan"),
+    "ChemicalComponentCatalog": ("._chemical_components", "ChemicalComponentCatalog"),
+    "ChemicalConditionalAffineAssembly": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffineAssembly",
+    ),
+    "ChemicalConditionalAffineCertificate": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffineCertificate",
+    ),
+    "ChemicalConditionalAffineDrivers": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffineDrivers",
+    ),
+    "ChemicalConditionalAffinePlan": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffinePlan",
+    ),
+    "ChemicalConditionalAffineResult": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffineResult",
+    ),
+    "ChemicalConditionalAffineStatus": (
+        "._chemical_conditional_affine",
+        "ChemicalConditionalAffineStatus",
+    ),
+    "ChemicalMechanismEvidence": ("._chemical_mechanism", "ChemicalMechanismEvidence"),
+    "ChemicalMechanismIR": ("._chemical_mechanism", "ChemicalMechanismIR"),
+    "ChemicalMechanismImportReport": (
+        "._chemical_mechanism_yaml",
+        "ChemicalMechanismImportReport",
+    ),
+    "ChemicalParameterCoordinate": (
+        "._chemical_calibration",
+        "ChemicalParameterCoordinate",
+    ),
+    "ChemicalPhaseKind": ("._chemical_species", "ChemicalPhaseKind"),
+    "ChemicalPhaseSpec": ("._chemical_species", "ChemicalPhaseSpec"),
+    "ChemicalRateEvaluation": ("._chemical_mechanism", "ChemicalRateEvaluation"),
+    "ChemicalRateKind": ("._chemical_rates", "ChemicalRateKind"),
+    "ChemicalRateRuntime": ("._chemical_rates", "ChemicalRateRuntime"),
+    "ChemicalReactionDirection": (
+        "._chemical_conditional_affine",
+        "ChemicalReactionDirection",
+    ),
+    "ChemicalReactionSpec": ("._chemical_mechanism", "ChemicalReactionSpec"),
+    "ChemicalSpeciesSchema": ("._chemical_species", "ChemicalSpeciesSchema"),
+    "CompiledBarotropicSPHProblem": (
+        "._lagrangian_fluid",
+        "CompiledBarotropicSPHProblem",
+    ),
+    "CompiledChannelFlowDynamics": ("._channel_flow", "CompiledChannelFlowDynamics"),
+    "CompiledChannelLESDynamics": ("._channel_les", "CompiledChannelLESDynamics"),
+    "CompiledConservationProblem": ("._conservation", "CompiledConservationProblem"),
+    "CompiledDiscreteDynamics": ("._semidiscrete", "CompiledDiscreteDynamics"),
+    "CompiledDiscreteElementProblem": (
+        "._discrete_element",
+        "CompiledDiscreteElementProblem",
+    ),
+    "CompiledDiscreteResidual": ("._semidiscrete", "CompiledDiscreteResidual"),
+    "CompiledExteriorPDE": ("._exterior_compile", "CompiledExteriorPDE"),
+    "CompiledFLIPProblem": ("._flip", "CompiledFLIPProblem"),
+    "CompiledFiniteDifferenceDynamics": (
+        "._fd_compile",
+        "CompiledFiniteDifferenceDynamics",
+    ),
+    "CompiledFiniteElementProblem": (
+        "._finite_element_variational",
+        "CompiledFiniteElementProblem",
+    ),
+    "CompiledIncompressibleSpectralDynamics": (
+        "._incompressible",
+        "CompiledIncompressibleSpectralDynamics",
+    ),
+    "CompiledLatticeBoltzmannProblem": (
+        "._lattice_boltzmann",
+        "CompiledLatticeBoltzmannProblem",
+    ),
+    "CompiledMACBinaryAlloyDynamics": (
+        "._mac_binary_alloy",
+        "CompiledMACBinaryAlloyDynamics",
+    ),
+    "CompiledMACEnthalpyPorosityDynamics": (
+        "._mac_enthalpy_porosity",
+        "CompiledMACEnthalpyPorosityDynamics",
+    ),
+    "CompiledMACIncompressibleDynamics": (
+        "._mac_incompressible",
+        "CompiledMACIncompressibleDynamics",
+    ),
+    "CompiledMACScalarBuoyancyDynamics": (
+        "._mac_scalar_buoyancy",
+        "CompiledMACScalarBuoyancyDynamics",
+    ),
+    "CompiledMACVariableDensityDynamics": (
+        "._mac_variable_density",
+        "CompiledMACVariableDensityDynamics",
+    ),
+    "CompiledMaterialPointProblem": ("._material_point", "CompiledMaterialPointProblem"),
+    "CompiledPDECondition": ("._compile", "CompiledPDECondition"),
+    "CompiledPDEEquation": ("._compile", "CompiledPDEEquation"),
+    "CompiledPDEProblem": ("._compile", "CompiledPDEProblem"),
+    "CompiledParticleConversionProblem": (
+        "._particle_conversion",
+        "CompiledParticleConversionProblem",
+    ),
+    "CompiledRandomizedPDETerm": ("._randomized_compile", "CompiledRandomizedPDETerm"),
+    "CompiledSparseFLIPProblem": ("._sparse_flip", "CompiledSparseFLIPProblem"),
+    "CompiledSpectralDynamics": ("._spectral_compile", "CompiledSpectralDynamics"),
+    "CompiledSpectralResidual": ("._spectral_residual", "CompiledSpectralResidual"),
+    "CompiledStencilDynamics": ("._stencil_compile", "CompiledStencilDynamics"),
+    "CompiledVirtualElementProblem": (".vem", "CompiledVirtualElementProblem"),
+    "CompiledVortexParticleFlow": ("._vortex_particles", "CompiledVortexParticleFlow"),
+    "CompiledWeaklyCompressibleSPHProblem": (
+        "._weakly_compressible",
+        "CompiledWeaklyCompressibleSPHProblem",
+    ),
+    "ComplexAffineNormalization": (".trefftz", "ComplexAffineNormalization"),
+    "CompositeGRGrayOpacityPlan": (
+        "._relativistic_radiation_interaction",
+        "CompositeGRGrayOpacityPlan",
+    ),
+    "CompressibleNavierStokesSystem": (
+        "._hyperbolic_systems",
+        "CompressibleNavierStokesSystem",
+    ),
+    "ComptonKinematics": ("._radiation_interactions", "ComptonKinematics"),
+    "ConservationDiffusionEvaluation": (
+        "._hyperbolic_systems",
+        "ConservationDiffusionEvaluation",
+    ),
+    "ConservationProblemIR": ("._conservation", "ConservationProblemIR"),
+    "ConservativePhaseTransferEvaluation": (
+        "._vof_phase_change",
+        "ConservativePhaseTransferEvaluation",
+    ),
+    "ConstantGRGrayOpacityPlan": (
+        "._relativistic_radiation_interaction",
+        "ConstantGRGrayOpacityPlan",
+    ),
+    "ConstantTransport": ("._transport_closures", "ConstantTransport"),
+    "ConstitutiveModel": ("._finite_element_material", "ConstitutiveModel"),
+    "ConstitutiveResponse": ("._finite_element_material", "ConstitutiveResponse"),
+    "ConstrainedHolomorphicPotential": (".trefftz", "ConstrainedHolomorphicPotential"),
+    "ConstrainedMeromorphicPotential": (".trefftz", "ConstrainedMeromorphicPotential"),
+    "ConvexEntropyPair": ("._entropy_pair", "ConvexEntropyPair"),
+    "ConvexEntropyValidationReport": ("._entropy_pair", "ConvexEntropyValidationReport"),
+    "DEMMaterialTable": ("._dem_material", "DEMMaterialTable"),
+    "DelayedDetachedEddyPlan": ("._hybrid_turbulence", "DelayedDetachedEddyPlan"),
+    "DeltaRayKinematics": ("._matter_radiation_interactions", "DeltaRayKinematics"),
+    "DensityEnergyStateResult": (
+        "._homogeneous_thermodynamics",
+        "DensityEnergyStateResult",
+    ),
+    "DiagnosticPhotonCoefficientEvaluation": (
+        "._diagnostic_photon",
+        "DiagnosticPhotonCoefficientEvaluation",
+    ),
+    "DiagnosticPhotonCoefficientRole": (
+        "._diagnostic_photon",
+        "DiagnosticPhotonCoefficientRole",
+    ),
+    "DiagnosticPhotonCoefficientTable": (
+        "._diagnostic_photon",
+        "DiagnosticPhotonCoefficientTable",
+    ),
+    "DiagnosticPhotonInterpolationEvidence": (
+        "._diagnostic_photon",
+        "DiagnosticPhotonInterpolationEvidence",
+    ),
+    "DiagnosticPhotonInterpolationPolicy": (
+        "._diagnostic_photon",
+        "DiagnosticPhotonInterpolationPolicy",
+    ),
+    "DifferentialBackend": ("._compile", "DifferentialBackend"),
+    "DiffusionAction": ("._variational", "DiffusionAction"),
+    "DiscreteElementProblemIR": ("._discrete_element", "DiscreteElementProblemIR"),
+    "DiscreteMaxwellianResult": ("._kinetic_gas", "DiscreteMaxwellianResult"),
+    "DiscreteOrdinatesRadiationPlan": (
+        "._relativistic_angular_radiation",
+        "DiscreteOrdinatesRadiationPlan",
+    ),
+    "DiscreteStateLayout": ("._semidiscrete", "DiscreteStateLayout"),
+    "DiskHolomorphicTraceLift": (".trefftz", "DiskHolomorphicTraceLift"),
+    "DiskHolomorphicTracePlan": (".trefftz", "DiskHolomorphicTracePlan"),
+    "DomainHolomorphicCertificate": (".trefftz", "DomainHolomorphicCertificate"),
+    "DoubleWellFreeEnergy": ("._phase_field", "DoubleWellFreeEnergy"),
+    "DynamicKSGSInputs": ("._ksgs", "DynamicKSGSInputs"),
+    "DynamicKSGSPlan": ("._ksgs", "DynamicKSGSPlan"),
+    "DynamicLESInputs": ("._dynamic_les", "DynamicLESInputs"),
+    "DynamicLESProvenance": ("._dynamic_les", "DynamicLESProvenance"),
+    "DynamicLESResult": ("._dynamic_les", "DynamicLESResult"),
+    "DynamicSmagorinskyPlan": ("._dynamic_les", "DynamicSmagorinskyPlan"),
+    "ElectrochemicalLocalFields": ("._electrochemistry", "ElectrochemicalLocalFields"),
+    "ElectrolyteTransportParameters": (
+        "._electrochemistry",
+        "ElectrolyteTransportParameters",
+    ),
+    "ElectrolyticNematicClosure": (
+        "._electrolytic_nematic",
+        "ElectrolyticNematicClosure",
+    ),
+    "ElectrolyticNematicFields": ("._electrolytic_nematic", "ElectrolyticNematicFields"),
+    "ElectrolyticNematicParameters": (
+        "._electrolytic_nematic",
+        "ElectrolyticNematicParameters",
+    ),
+    "EulerSystem": ("._hyperbolic_systems", "EulerSystem"),
+    "EvaporationPhaseChangePlan": ("._particle_reaction", "EvaporationPhaseChangePlan"),
+    "ExactDenominatorRegularization": ("._dynamic_les", "ExactDenominatorRegularization"),
+    "ExteriorFacetAction": ("._finite_element_variational", "ExteriorFacetAction"),
+    "ExteriorPDERealization": ("._exterior_compile", "ExteriorPDERealization"),
+    "ExternalMPMAcceleration": ("._material_point", "ExternalMPMAcceleration"),
+    "FARADAY_CONSTANT": ("._electrochemistry", "FARADAY_CONSTANT"),
+    "FDBoundaryBinding": ("._fd_boundary_lowering", "FDBoundaryBinding"),
+    "FDInterfaceBinding": ("._fd_boundary_lowering", "FDInterfaceBinding"),
+    "FDInterfaceConditionKind": ("._fd_boundary_lowering", "FDInterfaceConditionKind"),
+    "FLIPProblemIR": ("._flip", "FLIPProblemIR"),
+    "FavreLESCoupledRate": ("._gas_dynamics", "FavreLESCoupledRate"),
+    "FavreLESFieldContract": ("._favre_les", "FavreLESFieldContract"),
+    "FavreLESInputEvidence": ("._favre_les", "FavreLESInputEvidence"),
+    "FavreLESInputs": ("._favre_les", "FavreLESInputs"),
+    "FavreLESResult": ("._favre_les", "FavreLESResult"),
+    "FavreLESResultEvidence": ("._favre_les", "FavreLESResultEvidence"),
+    "FiniteDifferenceCompilationPolicy": (
+        "._fd_compile",
+        "FiniteDifferenceCompilationPolicy",
+    ),
+    "FiniteElementAction": ("._finite_element_variational", "FiniteElementAction"),
+    "FiniteElementExecutionContext": (
+        "._finite_element_variational",
+        "FiniteElementExecutionContext",
+    ),
+    "FiniteElementExecutionPolicy": (
+        "._finite_element_variational",
+        "FiniteElementExecutionPolicy",
+    ),
+    "FiniteElementForm": ("._finite_element_variational", "FiniteElementForm"),
+    "FiniteElementFunctional": ("._finite_element_functional", "FiniteElementFunctional"),
+    "FiniteElementMassPolicy": (".fem", "FiniteElementMassPolicy"),
+    "FiniteVolumeConservationBudget": (
+        "._finite_volume_verification",
+        "FiniteVolumeConservationBudget",
+    ),
+    "FiniteVolumeConvergenceResult": (
+        "._finite_volume_verification",
+        "FiniteVolumeConvergenceResult",
+    ),
+    "FiniteVolumeErrorNorms": ("._finite_volume_verification", "FiniteVolumeErrorNorms"),
+    "FiniteVolumeVerificationCase": (
+        "._finite_volume_verification",
+        "FiniteVolumeVerificationCase",
+    ),
+    "FluidParticleSample": ("._cfd_dem", "FluidParticleSample"),
+    "FoilStackTransitionRadiationPlan": (
+        "._matter_radiation_interactions",
+        "FoilStackTransitionRadiationPlan",
+    ),
+    "ForceFreeConstraintEvaluation": ("._force_free", "ForceFreeConstraintEvaluation"),
+    "ForceFreeCurrentEvaluation": ("._force_free", "ForceFreeCurrentEvaluation"),
+    "ForceFreeProjectionResult": ("._force_free", "ForceFreeProjectionResult"),
+    "GLMIdealMHDSystem": (".advanced", "GLMIdealMHDSystem"),
+    "GRForceFreeSystem": ("._force_free", "GRForceFreeSystem"),
+    "GRGrayM1ClosureEvaluation": (
+        "._relativistic_radiation",
+        "GRGrayM1ClosureEvaluation",
+    ),
+    "GRGrayM1RadiationSystem": ("._relativistic_radiation", "GRGrayM1RadiationSystem"),
+    "GRGrayOpacityEvaluation": (
+        "._relativistic_radiation_interaction",
+        "GRGrayOpacityEvaluation",
+    ),
+    "GRGrayRadiationInteractionPlan": (
+        "._relativistic_radiation_interaction",
+        "GRGrayRadiationInteractionPlan",
+    ),
+    "GRMultigroupM1ClosureEvaluation": (
+        "._relativistic_multigroup_radiation",
+        "GRMultigroupM1ClosureEvaluation",
+    ),
+    "GRMultigroupM1RadiationSystem": (
+        "._relativistic_multigroup_radiation",
+        "GRMultigroupM1RadiationSystem",
+    ),
+    "GRMultigroupRadiationInteractionPlan": (
+        "._relativistic_multigroup_radiation",
+        "GRMultigroupRadiationInteractionPlan",
+    ),
+    "GRMultigroupRadiationMatterExchange": (
+        "._relativistic_multigroup_radiation",
+        "GRMultigroupRadiationMatterExchange",
+    ),
+    "GRNeutrinoInteractionPlan": ("._relativistic_neutrino", "GRNeutrinoInteractionPlan"),
+    "GRNeutrinoM1ClosureEvaluation": (
+        "._relativistic_neutrino",
+        "GRNeutrinoM1ClosureEvaluation",
+    ),
+    "GRNeutrinoM1System": ("._relativistic_neutrino", "GRNeutrinoM1System"),
+    "GRNeutrinoMatterExchange": ("._relativistic_neutrino", "GRNeutrinoMatterExchange"),
+    "GRRadiationAngularClosureEvaluation": (
+        "._relativistic_angular_radiation",
+        "GRRadiationAngularClosureEvaluation",
+    ),
+    "GRRadiationMatterExchange": (
+        "._relativistic_radiation_interaction",
+        "GRRadiationMatterExchange",
+    ),
+    "GammaLawEOS": ("._relativistic_eos", "GammaLawEOS"),
+    "GasSurfaceChemicalEvaluation": (
+        "._surface_chemistry",
+        "GasSurfaceChemicalEvaluation",
+    ),
+    "GasSurfaceReactionSpec": ("._surface_chemistry", "GasSurfaceReactionSpec"),
+    "GasTransportPropertyEvaluation": (
+        "._gas_transport_properties",
+        "GasTransportPropertyEvaluation",
+    ),
+    "GermanoLeastSquaresEvidence": ("._dynamic_les", "GermanoLeastSquaresEvidence"),
+    "GlobalDynamicLESAveraging": ("._dynamic_les", "GlobalDynamicLESAveraging"),
+    "HarmonicPolynomialBasis": (".trefftz", "HarmonicPolynomialBasis"),
+    "HarmonicPotential2D": (".trefftz", "HarmonicPotential2D"),
+    "HelmholtzPlaneWaveBasis": (".trefftz", "HelmholtzPlaneWaveBasis"),
+    "HolomorphicAffineCoefficientMap": (".trefftz", "HolomorphicAffineCoefficientMap"),
+    "HolomorphicBranchBundle": (".trefftz", "HolomorphicBranchBundle"),
+    "HolomorphicConstraintComponent": (".trefftz", "HolomorphicConstraintComponent"),
+    "HolomorphicConstraintLiftEvidence": (
+        ".trefftz",
+        "HolomorphicConstraintLiftEvidence",
+    ),
+    "HolomorphicConstraintOperatorEvidence": (
+        ".trefftz",
+        "HolomorphicConstraintOperatorEvidence",
+    ),
+    "HolomorphicConstraintOperatorPlan": (
+        ".trefftz",
+        "HolomorphicConstraintOperatorPlan",
+    ),
+    "HolomorphicConstraintProjector": (".trefftz", "HolomorphicConstraintProjector"),
+    "HolomorphicContourFunctional": (".trefftz", "HolomorphicContourFunctional"),
+    "HolomorphicFactorGaugeReport": (".trefftz", "HolomorphicFactorGaugeReport"),
+    "HolomorphicFactorizationEvidence": (".trefftz", "HolomorphicFactorizationEvidence"),
+    "HolomorphicJet": (".trefftz", "HolomorphicJet"),
+    "HolomorphicJetFunctionalTerm": (".trefftz", "HolomorphicJetFunctionalTerm"),
+    "HolomorphicLinearFrame": (".trefftz", "HolomorphicLinearFrame"),
+    "HolomorphicLinearFrameCertificate": (
+        ".trefftz",
+        "HolomorphicLinearFrameCertificate",
+    ),
+    "HolomorphicLinearFunctional": (".trefftz", "HolomorphicLinearFunctional"),
+    "HolomorphicMapCertificate": (".trefftz", "HolomorphicMapCertificate"),
+    "HolomorphicMultiIndexSet": (".trefftz", "HolomorphicMultiIndexSet"),
+    "HolomorphicMultiJet": (".trefftz", "HolomorphicMultiJet"),
+    "HolomorphicParameterCoverage": (".trefftz", "HolomorphicParameterCoverage"),
+    "HolomorphicPointFunctional": (".trefftz", "HolomorphicPointFunctional"),
+    "HolomorphicPolynomialFrame": (".trefftz", "HolomorphicPolynomialFrame"),
+    "HolomorphicPolynomialPotential": (".trefftz", "HolomorphicPolynomialPotential"),
+    "HolomorphicPotentialProvider": (".trefftz", "HolomorphicPotentialProvider"),
+    "HolomorphicProductPotential": (".trefftz", "HolomorphicProductPotential"),
+    "HolomorphicProjectionState": (".trefftz", "HolomorphicProjectionState"),
+    "HolomorphicTraceCertificate": (".trefftz", "HolomorphicTraceCertificate"),
+    "HolomorphicTraceEvidenceKind": (".trefftz", "HolomorphicTraceEvidenceKind"),
+    "HomogeneousChemicalEvaluation": (
+        "._homogeneous_thermodynamics",
+        "HomogeneousChemicalEvaluation",
+    ),
+    "HomogeneousEquilibriumCavitationMaterial": (
+        "._barotropic",
+        "HomogeneousEquilibriumCavitationMaterial",
+    ),
+    "HomogeneousHelmholtzPlan": (
+        "._homogeneous_thermodynamics",
+        "HomogeneousHelmholtzPlan",
+    ),
+    "HomogeneousMixtureCompressibleNavierStokesSystem": (
+        "._gas_dynamics",
+        "HomogeneousMixtureCompressibleNavierStokesSystem",
+    ),
+    "HomogeneousMixtureEulerSystem": ("._gas_dynamics", "HomogeneousMixtureEulerSystem"),
+    "HomogeneousPlaneDynamicLESAveraging": (
+        "._dynamic_les",
+        "HomogeneousPlaneDynamicLESAveraging",
+    ),
+    "HomogeneousThermodynamicEvaluation": (
+        "._homogeneous_thermodynamics",
+        "HomogeneousThermodynamicEvaluation",
+    ),
+    "HybridColdThermalEOS": ("._relativistic_eos", "HybridColdThermalEOS"),
+    "HybridRANSLESGridScalePlan": ("._hybrid_turbulence", "HybridRANSLESGridScalePlan"),
+    "HybridTurbulenceEvaluation": ("._hybrid_turbulence", "HybridTurbulenceEvaluation"),
+    "HydrodynamicClosureResult": ("._cfd_dem", "HydrodynamicClosureResult"),
+    "HydrostaticLayerCoupling": ("._finite_volume_advanced", "HydrostaticLayerCoupling"),
+    "IBPenaltyPlan": ("._mac_penalty_ib_cfd_dem", "IBPenaltyPlan"),
+    "IdealDiluteElectrochemicalClosure": (
+        "._electrochemistry",
+        "IdealDiluteElectrochemicalClosure",
+    ),
+    "IdealGasMaterial": ("._materials", "IdealGasMaterial"),
+    "IdealGasReferenceHelmholtzTerm": (
+        "._homogeneous_thermodynamics",
+        "IdealGasReferenceHelmholtzTerm",
+    ),
+    "IdealMHDSystem": ("._hyperbolic_systems", "IdealMHDSystem"),
+    "IdealValenciaGRMHDSystem": ("._relativistic_mhd", "IdealValenciaGRMHDSystem"),
+    "IncidentWavePlan": ("._incident_wave", "IncidentWavePlan"),
+    "IncompressibleFlowProblem": ("._incompressible", "IncompressibleFlowProblem"),
+    "IntegralCompiler": ("._compile", "IntegralCompiler"),
+    "IntegralResidualProgram": ("._integral_rewrite", "IntegralResidualProgram"),
+    "InterfaceHeatResistancePhaseChangePlan": (
+        "._vof_phase_change",
+        "InterfaceHeatResistancePhaseChangePlan",
+    ),
+    "InteriorFacetAction": ("._finite_element_variational", "InteriorFacetAction"),
+    "IonizedMixtureThermodynamicsPlan": (
+        "._ionized_gas",
+        "IonizedMixtureThermodynamicsPlan",
+    ),
+    "IonizedMultitemperatureEulerSystem": (
+        "._ionized_gas",
+        "IonizedMultitemperatureEulerSystem",
+    ),
+    "IonizedMultitemperatureNavierStokesSystem": (
+        "._ionized_gas",
+        "IonizedMultitemperatureNavierStokesSystem",
+    ),
+    "IonizedThermodynamicEvaluation": ("._ionized_gas", "IonizedThermodynamicEvaluation"),
+    "KSGSCoefficients": ("._ksgs", "KSGSCoefficients"),
+    "KSGSContributions": ("._ksgs", "KSGSContributions"),
+    "KSGSEvidence": ("._ksgs", "KSGSEvidence"),
+    "KSGSInputs": ("._ksgs", "KSGSInputs"),
+    "KSGSResult": ("._ksgs", "KSGSResult"),
+    "KSGSState": ("._ksgs", "KSGSState"),
+    "KSGSTransportResult": ("._ksgs", "KSGSTransportResult"),
+    "KineticBreakdownEvidence": ("._kinetic_gas", "KineticBreakdownEvidence"),
+    "KineticBreakdownPlan": ("._kinetic_gas", "KineticBreakdownPlan"),
+    "KineticCollisionResult": ("._kinetic_gas", "KineticCollisionResult"),
+    "KineticTheoryGasTransportPlan": (
+        "._gas_transport_properties",
+        "KineticTheoryGasTransportPlan",
+    ),
+    "KunzCavitationPlan": ("._vof_phase_change", "KunzCavitationPlan"),
+    "LEARNED_STRESS_FEATURE_NAME": ("._learned_stress", "LEARNED_STRESS_FEATURE_NAME"),
+    "LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS": (
+        "._learned_stress",
+        "LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS",
+    ),
+    "LEARNED_STRESS_VELOCITY_GRADIENT_UNITS": (
+        "._learned_stress",
+        "LEARNED_STRESS_VELOCITY_GRADIENT_UNITS",
+    ),
+    "LESFilterScale": ("._les_closures", "LESFilterScale"),
+    "LESParameterProvenance": ("._les_closures", "LESParameterProvenance"),
+    "LagrangianDynamicLESAveraging": ("._dynamic_les", "LagrangianDynamicLESAveraging"),
+    "LagrangianDynamicLESState": ("._dynamic_les", "LagrangianDynamicLESState"),
+    "LandauDeGennesClosure": ("._nematic", "LandauDeGennesClosure"),
+    "LandauDeGennesParameters": ("._nematic", "LandauDeGennesParameters"),
+    "LatticeBoltzmannProblem": ("._lattice_boltzmann", "LatticeBoltzmannProblem"),
+    "LearnedConstitutiveModel": ("._finite_element_material", "LearnedConstitutiveModel"),
+    "LindemannRatePlan": ("._chemical_rates", "LindemannRatePlan"),
+    "LinearMonogenicField": (".trefftz", "LinearMonogenicField"),
+    "LinearTrefftzField": (".trefftz", "LinearTrefftzField"),
+    "LocalFunctionalAction": ("._finite_element_variational", "LocalFunctionalAction"),
+    "LocalKernelDynamicLESAveraging": ("._dynamic_les", "LocalKernelDynamicLESAveraging"),
+    "LogPolynomialGasTransportPlan": (
+        "._gas_transport_properties",
+        "LogPolynomialGasTransportPlan",
+    ),
+    "LowReKSGSCoefficients": ("._ksgs", "LowReKSGSCoefficients"),
+    "LowReKSGSInputs": ("._ksgs", "LowReKSGSInputs"),
+    "LowReKSGSPlan": ("._ksgs", "LowReKSGSPlan"),
+    "MACAlgebraicLESPlan": ("._mac_les", "MACAlgebraicLESPlan"),
+    "MACBinaryAlloyDiagnostics": ("._mac_binary_alloy", "MACBinaryAlloyDiagnostics"),
+    "MACBinaryAlloyStage": ("._mac_binary_alloy", "MACBinaryAlloyStage"),
+    "MACBinaryAlloyStepRestriction": (
+        "._mac_binary_alloy",
+        "MACBinaryAlloyStepRestriction",
+    ),
+    "MACBuoyancyLaw": ("._mac_scalar_buoyancy", "MACBuoyancyLaw"),
+    "MACBuoyancyLedger": ("._mac_scalar_buoyancy", "MACBuoyancyLedger"),
+    "MACDynamicLESPlan": ("._mac_dynamic_les", "MACDynamicLESPlan"),
+    "MACDynamicLESStage": ("._mac_dynamic_les", "MACDynamicLESStage"),
+    "MACEnthalpyPorosityDiagnostics": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityDiagnostics",
+    ),
+    "MACEnthalpyPorosityProblem": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityProblem",
+    ),
+    "MACEnthalpyPorosityStage": ("._mac_enthalpy_porosity", "MACEnthalpyPorosityStage"),
+    "MACEnthalpyPorosityStepRestriction": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityStepRestriction",
+    ),
+    "MACExplicitTestFilterPlan": ("._mac_dynamic_les", "MACExplicitTestFilterPlan"),
+    "MACIncompressibleDiagnostics": (
+        "._mac_incompressible",
+        "MACIncompressibleDiagnostics",
+    ),
+    "MACIncompressibleRateComponents": (
+        "._mac_incompressible",
+        "MACIncompressibleRateComponents",
+    ),
+    "MACKSGSStageResult": ("._mac_scalar_buoyancy", "MACKSGSStageResult"),
+    "MACLESStageResult": ("._mac_les", "MACLESStageResult"),
+    "MACLESStepRestriction": ("._mac_incompressible", "MACLESStepRestriction"),
+    "MACLearnedStressPlan": ("._learned_stress", "MACLearnedStressPlan"),
+    "MACLearnedStressStage": ("._learned_stress", "MACLearnedStressStage"),
+    "MACPenaltyIBCFDEMCouplingPlan": (
+        "._mac_penalty_ib_cfd_dem",
+        "MACPenaltyIBCFDEMCouplingPlan",
+    ),
+    "MACPenaltyIBEvaluation": ("._mac_penalty_ib_cfd_dem", "MACPenaltyIBEvaluation"),
+    "MACPenaltyIBStatus": ("._mac_penalty_ib_cfd_dem", "MACPenaltyIBStatus"),
+    "MACScalarBuoyancyDiagnostics": (
+        "._mac_scalar_buoyancy",
+        "MACScalarBuoyancyDiagnostics",
+    ),
+    "MACScalarBuoyancyStage": ("._mac_scalar_buoyancy", "MACScalarBuoyancyStage"),
+    "MACScalarBuoyancyStepRestriction": (
+        "._mac_scalar_buoyancy",
+        "MACScalarBuoyancyStepRestriction",
+    ),
+    "MACVariableDensityDiagnostics": (
+        "._mac_variable_density",
+        "MACVariableDensityDiagnostics",
+    ),
+    "MACVariableDensityFlowProblem": (
+        "._mac_variable_density",
+        "MACVariableDensityFlowProblem",
+    ),
+    "MACVariableDensityRateResult": (
+        "._mac_variable_density",
+        "MACVariableDensityRateResult",
+    ),
+    "MACVariableDensityState": ("._mac_variable_density", "MACVariableDensityState"),
+    "MACVariableDensityStepRestriction": (
+        "._mac_variable_density",
+        "MACVariableDensityStepRestriction",
+    ),
+    "MACVariableDensityStepResult": (
+        "._mac_variable_density",
+        "MACVariableDensityStepResult",
+    ),
+    "MPMConstitutiveCapabilities": ("._material_point", "MPMConstitutiveCapabilities"),
+    "MPMConstitutiveResponse": ("._material_point", "MPMConstitutiveResponse"),
+    "MPMKinematics": ("._material_point", "MPMKinematics"),
+    "MPMLinearizedConstitutiveResponse": (
+        "._material_point",
+        "MPMLinearizedConstitutiveResponse",
+    ),
+    "ManufacturedConvergencePlan": ("._manufactured", "ManufacturedConvergencePlan"),
+    "ManufacturedConvergenceResult": ("._manufactured", "ManufacturedConvergenceResult"),
+    "ManufacturedNorm": ("._manufactured", "ManufacturedNorm"),
+    "ManufacturedPDECase": ("._manufactured", "ManufacturedPDECase"),
+    "ManufacturedSpatialOperator": ("._manufactured", "ManufacturedSpatialOperator"),
+    "MassAction": ("._variational", "MassAction"),
+    "MaterialCheckpointPayload": (
+        "._finite_element_material",
+        "MaterialCheckpointPayload",
+    ),
+    "MaterialIntegrationPlan": ("._finite_element_material", "MaterialIntegrationPlan"),
+    "MaterialPointArguments": ("._material_point", "MaterialPointArguments"),
+    "MaterialPointProblemIR": ("._material_point", "MaterialPointProblemIR"),
+    "MaterialSiteId": ("._finite_element_material", "MaterialSiteId"),
+    "MaterialState": ("._finite_element_material", "MaterialState"),
+    "MaterialTransaction": ("._finite_element_material", "MaterialTransaction"),
+    "MaxwellGasSurfaceBoundary": ("._kinetic_gas", "MaxwellGasSurfaceBoundary"),
+    "MechanicalLoadAction": ("._mechanical_load_action", "MechanicalLoadAction"),
+    "MechanicalLoadActionEvaluation": (
+        "._mechanical_load_action",
+        "MechanicalLoadActionEvaluation",
+    ),
+    "MerkleCavitationPlan": ("._vof_phase_change", "MerkleCavitationPlan"),
+    "MeromorphicLinearFrame": (".trefftz", "MeromorphicLinearFrame"),
+    "MeromorphicLinearFrameCertificate": (
+        ".trefftz",
+        "MeromorphicLinearFrameCertificate",
+    ),
+    "MeromorphicMapCertificate": (".trefftz", "MeromorphicMapCertificate"),
+    "MeromorphicVariableProjectionPlan": (
+        ".trefftz",
+        "MeromorphicVariableProjectionPlan",
+    ),
+    "MixedDimensionalMassLedger": ("._mixed_dimensional", "MixedDimensionalMassLedger"),
+    "MixedDimensionalSources": ("._mixed_dimensional", "MixedDimensionalSources"),
+    "MixedDimensionalStepResult": ("._mixed_dimensional", "MixedDimensionalStepResult"),
+    "MixedDimensionalTransportPlan": (
+        "._mixed_dimensional",
+        "MixedDimensionalTransportPlan",
+    ),
+    "MixedDimensionalTransportState": (
+        "._mixed_dimensional",
+        "MixedDimensionalTransportState",
+    ),
+    "MixtureAveragedTransportPlan": (
+        "._mixture_transport",
+        "MixtureAveragedTransportPlan",
+    ),
+    "MixtureTransportEvaluation": ("._mixture_transport", "MixtureTransportEvaluation"),
+    "MolecularVelocityQuadrature": ("._kinetic_gas", "MolecularVelocityQuadrature"),
+    "MonatomicBGKCollisionPlan": ("._kinetic_gas", "MonatomicBGKCollisionPlan"),
+    "MonogenicPolynomialBasis": (".trefftz", "MonogenicPolynomialBasis"),
+    "MonteCarloRadiationClosureEvaluation": (
+        "._relativistic_angular_radiation",
+        "MonteCarloRadiationClosureEvaluation",
+    ),
+    "MonteCarloRadiationClosurePlan": (
+        "._relativistic_angular_radiation",
+        "MonteCarloRadiationClosurePlan",
+    ),
+    "MultiIndex": (".trefftz", "MultiIndex"),
+    "MultigroupM1RadiationSystem": ("._radiation_moments", "MultigroupM1RadiationSystem"),
+    "MultigroupSlabTransportProblem": (
+        "._linear_boltzmann",
+        "MultigroupSlabTransportProblem",
+    ),
+    "MultilayerShallowWaterSystem": (
+        "._finite_volume_advanced",
+        "MultilayerShallowWaterSystem",
+    ),
+    "MultiphaseElectrolyteClosure": (
+        "._multiphase_electrolyte",
+        "MultiphaseElectrolyteClosure",
+    ),
+    "MultiphaseElectrolyteFields": (
+        "._multiphase_electrolyte",
+        "MultiphaseElectrolyteFields",
+    ),
+    "MultiphaseElectrolyteParameters": (
+        "._multiphase_electrolyte",
+        "MultiphaseElectrolyteParameters",
+    ),
+    "MultivariableHolomorphicPotentialProvider": (
+        ".trefftz",
+        "MultivariableHolomorphicPotentialProvider",
+    ),
+    "NASAPolynomialKind": ("._chemical_thermodynamics", "NASAPolynomialKind"),
+    "NASASpeciesThermodynamicsPlan": (
+        "._chemical_thermodynamics",
+        "NASASpeciesThermodynamicsPlan",
+    ),
+    "NematicAnchoringFields": ("._nematic_anchoring", "NematicAnchoringFields"),
+    "NematicAnchoringKind": ("._nematic_anchoring", "NematicAnchoringKind"),
+    "NematicAnchoringPlan": ("._nematic_anchoring", "NematicAnchoringPlan"),
+    "NematicTensorBasis": ("._nematic", "NematicTensorBasis"),
+    "NematicThermodynamicFields": ("._nematic", "NematicThermodynamicFields"),
+    "NetworkTransportPlan": ("._mixed_dimensional", "NetworkTransportPlan"),
+    "NeuralCoordinateTrace": ("._mechanical_load_action", "NeuralCoordinateTrace"),
+    "NeutrinoSpecies": ("._relativistic_neutrino", "NeutrinoSpecies"),
+    "NobleAbelStiffenedGasMaterial": ("._materials", "NobleAbelStiffenedGasMaterial"),
+    "NonLTELevelPopulationPlan": ("._nonlte_radiation", "NonLTELevelPopulationPlan"),
+    "NonLTEPopulationEvaluation": ("._nonlte_radiation", "NonLTEPopulationEvaluation"),
+    "NonLTERadiationCoefficientEvaluation": (
+        "._nonlte_radiation",
+        "NonLTERadiationCoefficientEvaluation",
+    ),
+    "NonLTERadiationCoefficientPlan": (
+        "._nonlte_radiation",
+        "NonLTERadiationCoefficientPlan",
+    ),
+    "NonnegativeBackscatterClip": ("._dynamic_les", "NonnegativeBackscatterClip"),
+    "PDECondition": ("._ir", "PDECondition"),
+    "PDEConditionKind": ("._ir", "PDEConditionKind"),
+    "PDECoordinate": ("._ir", "PDECoordinate"),
+    "PDECoordinateKind": ("._ir", "PDECoordinateKind"),
+    "PDEEquation": ("._ir", "PDEEquation"),
+    "PDEExpression": ("._ir", "PDEExpression"),
+    "PDEExpressionOp": ("._ir", "PDEExpressionOp"),
+    "PDEField": ("._ir", "PDEField"),
+    "PDEFormGeometry": ("._form_compile", "PDEFormGeometry"),
+    "PDEFormTrace": ("._form_compile", "PDEFormTrace"),
+    "PDELiteral": ("._ir", "PDELiteral"),
+    "PDEParameter": ("._ir", "PDEParameter"),
+    "PDEProblemIR": ("._ir", "PDEProblemIR"),
+    "PDERegion": ("._ir", "PDERegion"),
+    "PDERegionKind": ("._ir", "PDERegionKind"),
+    "PDERepresentation": ("._ir", "PDERepresentation"),
+    "PDETokenBatch": ("._tokens", "PDETokenBatch"),
+    "PDEValueType": ("._validate", "PDEValueType"),
+    "PDE_OPERATOR_VOCABULARY": ("._tokens", "PDE_OPERATOR_VOCABULARY"),
+    "PDE_TOKEN_ATTRIBUTES": ("._tokens", "PDE_TOKEN_ATTRIBUTES"),
+    "PDE_TOKEN_KINDS": ("._tokens", "PDE_TOKEN_KINDS"),
+    "PLANCK_CONSTANT": ("._nonlte_radiation", "PLANCK_CONSTANT"),
+    "PLogRatePlan": ("._chemical_rates", "PLogRatePlan"),
+    "PairwiseVolumeFluxAction": (
+        "._finite_element_variational",
+        "PairwiseVolumeFluxAction",
+    ),
+    "ParticleContinuumExchangeEvaluation": (
+        "._reactive_cfd_dem",
+        "ParticleContinuumExchangeEvaluation",
+    ),
+    "ParticleContinuumExchangePlan": (
+        "._reactive_cfd_dem",
+        "ParticleContinuumExchangePlan",
+    ),
+    "ParticleConversionBatchEvaluation": (
+        "._particle_conversion",
+        "ParticleConversionBatchEvaluation",
+    ),
+    "ParticleConversionEvaluation": (
+        "._particle_conversion",
+        "ParticleConversionEvaluation",
+    ),
+    "ParticleConversionProblemIR": (
+        "._particle_conversion",
+        "ParticleConversionProblemIR",
+    ),
+    "ParticleConversionRejectionReason": (
+        "._particle_conversion",
+        "ParticleConversionRejectionReason",
+    ),
+    "ParticlePhaseChangeEvaluation": (
+        "._particle_reaction",
+        "ParticlePhaseChangeEvaluation",
+    ),
+    "ParticleReactionEvaluation": ("._particle_reaction", "ParticleReactionEvaluation"),
+    "ParticleReactionLocation": ("._particle_reaction", "ParticleReactionLocation"),
+    "ParticleReactionProcessPlan": ("._particle_reaction", "ParticleReactionProcessPlan"),
+    "ParticleThermochemicalMaterialBundle": (
+        "._particle_thermochemistry",
+        "ParticleThermochemicalMaterialBundle",
+    ),
+    "ParticleThermodynamicMaterialPlan": (
+        "._particle_thermochemistry",
+        "ParticleThermodynamicMaterialPlan",
+    ),
+    "ParticleThermodynamicState": (
+        "._particle_thermochemistry",
+        "ParticleThermodynamicState",
+    ),
+    "ParticleTransportBoundary": (
+        "._particle_thermochemistry",
+        "ParticleTransportBoundary",
+    ),
+    "ParticleTransportEvaluation": (
+        "._particle_thermochemistry",
+        "ParticleTransportEvaluation",
+    ),
+    "ParticleTransportMaterialPlan": (
+        "._particle_thermochemistry",
+        "ParticleTransportMaterialPlan",
+    ),
+    "PengRobinsonParameters": ("._peng_robinson", "PengRobinsonParameters"),
+    "PengRobinsonResidualHelmholtzTerm": (
+        "._peng_robinson",
+        "PengRobinsonResidualHelmholtzTerm",
+    ),
+    "PengRobinsonRootSet": ("._peng_robinson", "PengRobinsonRootSet"),
+    "PeriodicAlgebraicLESPlan": ("._periodic_les", "PeriodicAlgebraicLESPlan"),
+    "PeriodicAlgebraicLESStage": ("._periodic_les", "PeriodicAlgebraicLESStage"),
+    "PeriodicDynamicLESPlan": ("._periodic_dynamic_les", "PeriodicDynamicLESPlan"),
+    "PeriodicDynamicLESStage": ("._periodic_dynamic_les", "PeriodicDynamicLESStage"),
+    "PeriodicFourierGridFilterPlan": ("._periodic_les", "PeriodicFourierGridFilterPlan"),
+    "PeriodicFourierTestFilterPlan": (
+        "._periodic_dynamic_les",
+        "PeriodicFourierTestFilterPlan",
+    ),
+    "PeriodicIncompressibleRateComponents": (
+        "._periodic_les",
+        "PeriodicIncompressibleRateComponents",
+    ),
+    "PeriodicIncompressibleStage": ("._periodic_les", "PeriodicIncompressibleStage"),
+    "PeriodicLESStepRestriction": ("._periodic_les", "PeriodicLESStepRestriction"),
+    "PeriodicLearnedStressPlan": ("._learned_stress", "PeriodicLearnedStressPlan"),
+    "PeriodicLearnedStressStage": ("._learned_stress", "PeriodicLearnedStressStage"),
+    "PermeabilityExchangePlan": ("._mixed_dimensional", "PermeabilityExchangePlan"),
+    "PhotolysisRatePlan": ("._chemical_rates", "PhotolysisRatePlan"),
+    "PhotonEnergyGrid": ("._diagnostic_photon", "PhotonEnergyGrid"),
+    "PiecewisePolytropicEOS": ("._relativistic_eos", "PiecewisePolytropicEOS"),
+    "PlaneElasticityPotential2D": (".trefftz", "PlaneElasticityPotential2D"),
+    "PlaneIsotropicMaterial": (".trefftz", "PlaneIsotropicMaterial"),
+    "PlasmaChemicalRateEvaluation": (
+        "._plasma_chemistry",
+        "PlasmaChemicalRateEvaluation",
+    ),
+    "PlasmaQuasiNeutralityEvidence": ("._ionized_gas", "PlasmaQuasiNeutralityEvidence"),
+    "PlasmaTransportEvaluation": ("._plasma_transport", "PlasmaTransportEvaluation"),
+    "PluriharmonicCertificate": (".trefftz", "PluriharmonicCertificate"),
+    "PluriharmonicPotential": (".trefftz", "PluriharmonicPotential"),
+    "PoleClearanceReport": (".trefftz", "PoleClearanceReport"),
+    "PoleSet": (".trefftz", "PoleSet"),
+    "PolyharmonicAlmansiBasis": (".trefftz", "PolyharmonicAlmansiBasis"),
+    "PolynomialBulkFreeEnergy": ("._phase_field", "PolynomialBulkFreeEnergy"),
+    "PolynomialSpeciesThermodynamicsPlan": (
+        "._chemical_thermodynamics",
+        "PolynomialSpeciesThermodynamicsPlan",
+    ),
+    "PopulationUpwindFluxPlan": ("._kinetic_gas", "PopulationUpwindFluxPlan"),
+    "PorousAblatingMaterialPlan": ("._ablating_material", "PorousAblatingMaterialPlan"),
+    "PositiveDiscreteMaxwellianPlan": ("._kinetic_gas", "PositiveDiscreteMaxwellianPlan"),
+    "PrandtlTransport": ("._transport_closures", "PrandtlTransport"),
+    "PreparedAlgebraicLESModel": ("._les_closures", "PreparedAlgebraicLESModel"),
+    "PreparedBulkDGTransport": ("._mixed_dimensional", "PreparedBulkDGTransport"),
+    "PreparedChemicalConditionalAffine": (
+        "._chemical_conditional_affine",
+        "PreparedChemicalConditionalAffine",
+    ),
+    "PreparedChemicalMechanism": ("._chemical_mechanism", "PreparedChemicalMechanism"),
+    "PreparedDynamicSmagorinskyPlan": ("._dynamic_les", "PreparedDynamicSmagorinskyPlan"),
+    "PreparedFDBoundaryPair": ("._fd_boundary_lowering", "PreparedFDBoundaryPair"),
+    "PreparedFDBoundaryProgram": ("._fd_boundary_lowering", "PreparedFDBoundaryProgram"),
+    "PreparedFDInterface": ("._fd_boundary_lowering", "PreparedFDInterface"),
+    "PreparedFavreLESModel": ("._favre_les", "PreparedFavreLESModel"),
+    "PreparedFiniteElementMass": (
+        "._finite_element_variational",
+        "PreparedFiniteElementMass",
+    ),
+    "PreparedGasSurfaceMechanism": ("._surface_chemistry", "PreparedGasSurfaceMechanism"),
+    "PreparedHolomorphicConstraintOperator": (
+        ".trefftz",
+        "PreparedHolomorphicConstraintOperator",
+    ),
+    "PreparedMACAlgebraicLES": ("._mac_les", "PreparedMACAlgebraicLES"),
+    "PreparedMACDynamicLES": ("._mac_dynamic_les", "PreparedMACDynamicLES"),
+    "PreparedMACExplicitTestFilter": (
+        "._mac_dynamic_les",
+        "PreparedMACExplicitTestFilter",
+    ),
+    "PreparedMACKSGS": ("._mac_scalar_buoyancy", "PreparedMACKSGS"),
+    "PreparedMACLearnedStress": ("._learned_stress", "PreparedMACLearnedStress"),
+    "PreparedMixedDimensionalTransport": (
+        "._mixed_dimensional",
+        "PreparedMixedDimensionalTransport",
+    ),
+    "PreparedNetworkTransport": ("._mixed_dimensional", "PreparedNetworkTransport"),
+    "PreparedOperatorAction": ("._finite_element_variational", "PreparedOperatorAction"),
+    "PreparedParticleConversionDynamics": (
+        "._particle_conversion",
+        "PreparedParticleConversionDynamics",
+    ),
+    "PreparedPeriodicAlgebraicLES": ("._periodic_les", "PreparedPeriodicAlgebraicLES"),
+    "PreparedPeriodicDynamicLES": (
+        "._periodic_dynamic_les",
+        "PreparedPeriodicDynamicLES",
+    ),
+    "PreparedPeriodicFourierGridFilter": (
+        "._periodic_les",
+        "PreparedPeriodicFourierGridFilter",
+    ),
+    "PreparedPeriodicFourierTestFilter": (
+        "._periodic_dynamic_les",
+        "PreparedPeriodicFourierTestFilter",
+    ),
+    "PreparedPeriodicLearnedStress": (
+        "._learned_stress",
+        "PreparedPeriodicLearnedStress",
+    ),
+    "PreparedPlasmaMechanism": ("._plasma_chemistry", "PreparedPlasmaMechanism"),
+    "PreparedUnstructuredLowMachLES": (
+        "._unstructured_les",
+        "PreparedUnstructuredLowMachLES",
+    ),
+    "PrimitiveTemperatureCapability": (
+        "._hyperbolic_systems",
+        "PrimitiveTemperatureCapability",
+    ),
+    "PrimitiveVelocityCapability": (
+        "._hyperbolic_systems",
+        "PrimitiveVelocityCapability",
+    ),
+    "ProjectedHolomorphicPotential": (".trefftz", "ProjectedHolomorphicPotential"),
+    "RELATIVISTIC_EOS_ACAUSAL": ("._relativistic_eos", "RELATIVISTIC_EOS_ACAUSAL"),
+    "RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH",
+    ),
+    "RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_NONCONVERGED": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_NONCONVERGED",
+    ),
+    "RELATIVISTIC_EOS_NONFINITE": ("._relativistic_eos", "RELATIVISTIC_EOS_NONFINITE"),
+    "RELATIVISTIC_EOS_SUCCESS": ("._relativistic_eos", "RELATIVISTIC_EOS_SUCCESS"),
+    "RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN": (
+        "._relativistic_eos",
+        "RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN",
+    ),
+    "RELATIVISTIC_EOS_UNSTABLE": ("._relativistic_eos", "RELATIVISTIC_EOS_UNSTABLE"),
+    "RadiationCoefficientEvaluation": (
+        "._radiation_material",
+        "RadiationCoefficientEvaluation",
+    ),
+    "RadiationCoefficientRole": ("._radiation_material", "RadiationCoefficientRole"),
+    "RadiationCoefficientTable": ("._radiation_material", "RadiationCoefficientTable"),
+    "RadiationCrossSectionEvaluation": (
+        "._radiation_interactions",
+        "RadiationCrossSectionEvaluation",
+    ),
+    "RadiationCrossSectionLibrary": (
+        "._radiation_interactions",
+        "RadiationCrossSectionLibrary",
+    ),
+    "RadiationInteractionKind": ("._radiation_interactions", "RadiationInteractionKind"),
+    "RadiationMatterExchangePlan": (
+        "._radiation_material",
+        "RadiationMatterExchangePlan",
+    ),
+    "RadiationMatterExchangeResult": (
+        "._radiation_material",
+        "RadiationMatterExchangeResult",
+    ),
+    "RadiationMeanEvaluation": ("._radiation_material", "RadiationMeanEvaluation"),
+    "RadiationScaleContract": ("._radiation_material", "RadiationScaleContract"),
+    "RadiativeCoolingBoundsPolicy": ("._radiative", "RadiativeCoolingBoundsPolicy"),
+    "RandomizedCompilationReport": (
+        "._randomized_compile",
+        "RandomizedCompilationReport",
+    ),
+    "RandomizedDifferentialMethod": (
+        "._randomized_compile",
+        "RandomizedDifferentialMethod",
+    ),
+    "RandomizedDifferentialPlan": ("._randomized_compile", "RandomizedDifferentialPlan"),
+    "RandomizedExecutionBackend": ("._randomized_compile", "RandomizedExecutionBackend"),
+    "RandomizedNodeCoupling": ("._randomized_compile", "RandomizedNodeCoupling"),
+    "RandomizedPopulation": ("._randomized_compile", "RandomizedPopulation"),
+    "ReactionTemperatureSpec": ("._plasma_chemistry", "ReactionTemperatureSpec"),
+    "ReactiveCFDDEMCouplingPlan": ("._reactive_cfd_dem", "ReactiveCFDDEMCouplingPlan"),
+    "ReactiveFluidImplicitState": ("._reactive_monolithic", "ReactiveFluidImplicitState"),
+    "ReactiveMonolithicCouplingPlan": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicCouplingPlan",
+    ),
+    "ReactiveMonolithicResidualEvaluation": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicResidualEvaluation",
+    ),
+    "ReactiveMonolithicRouteCertificate": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicRouteCertificate",
+    ),
+    "ReactiveMonolithicStage": ("._reactive_monolithic", "ReactiveMonolithicStage"),
+    "ReactiveMonolithicUnknown": ("._reactive_monolithic", "ReactiveMonolithicUnknown"),
+    "ReferencePowerLawGasTransportPlan": (
+        "._gas_transport_properties",
+        "ReferencePowerLawGasTransportPlan",
+    ),
+    "RelativisticEOSDomainEvidence": (
+        "._relativistic_eos",
+        "RelativisticEOSDomainEvidence",
+    ),
+    "RelativisticEOSState": ("._relativistic_eos", "RelativisticEOSState"),
+    "RelativisticEOSStatus": ("._relativistic_eos", "RelativisticEOSStatus"),
+    "RelativisticEOSTableEvidence": (
+        "._relativistic_eos",
+        "RelativisticEOSTableEvidence",
+    ),
+    "RelativisticFluidEvaluation": (
+        "._relativistic_hydrodynamics",
+        "RelativisticFluidEvaluation",
+    ),
+    "RelativisticHydrodynamicsLayout": (
+        "._relativistic_hydrodynamics",
+        "RelativisticHydrodynamicsLayout",
+    ),
+    "RelativisticOhmEvaluation": ("._resistive_grmhd", "RelativisticOhmEvaluation"),
+    "ReservoirCouplingPlan": ("._mixed_dimensional", "ReservoirCouplingPlan"),
+    "ResistiveGRMHDOhmicClosure": ("._resistive_grmhd", "ResistiveGRMHDOhmicClosure"),
+    "ResolvedLESFilter": ("._les_closures", "ResolvedLESFilter"),
+    "ResolvedSemidiscreteMethod": ("._semidiscrete", "ResolvedSemidiscreteMethod"),
+    "SIPGFacetAction": ("._finite_element_variational", "SIPGFacetAction"),
+    "SRHDSystem": ("._relativistic_hydrodynamics", "SRHDSystem"),
+    "SSTEvaluation": ("._sst", "SSTEvaluation"),
+    "SSTTurbulencePlan": ("._sst", "SSTTurbulencePlan"),
+    "SaturationPressureEvaluation": ("._phase_change", "SaturationPressureEvaluation"),
+    "ScalarConservationSystem": ("._hyperbolic_systems", "ScalarConservationSystem"),
+    "SchnerrSauerCavitationPlan": ("._vof_phase_change", "SchnerrSauerCavitationPlan"),
+    "SeltzerBergerBremsstrahlungTable": (
+        "._matter_radiation_interactions",
+        "SeltzerBergerBremsstrahlungTable",
+    ),
+    "SemidiscreteCompilationMethod": ("._semidiscrete", "SemidiscreteCompilationMethod"),
+    "SemidiscreteDAEStructuralReport": (
+        "._semidiscrete",
+        "SemidiscreteDAEStructuralReport",
+    ),
+    "ShakhovCollisionPlan": ("._kinetic_gas", "ShakhovCollisionPlan"),
+    "ShallowWaterCoriolisSource": (
+        "._shallow_water_sources",
+        "ShallowWaterCoriolisSource",
+    ),
+    "ShallowWaterExnerSystem": ("._finite_volume_advanced", "ShallowWaterExnerSystem"),
+    "ShallowWaterSystem": ("._hyperbolic_systems", "ShallowWaterSystem"),
+    "ShrinkingCoreConversionPlan": ("._particle_reaction", "ShrinkingCoreConversionPlan"),
+    "ShrinkingCoreEvaluation": ("._particle_reaction", "ShrinkingCoreEvaluation"),
+    "ShrinkingCoreState": ("._particle_reaction", "ShrinkingCoreState"),
+    "SimilarityNormalization": (".trefftz", "SimilarityNormalization"),
+    "SlabTransportBoundaryPlan": ("._linear_boltzmann", "SlabTransportBoundaryPlan"),
+    "SmagorinskyLESPlan": ("._les_closures", "SmagorinskyLESPlan"),
+    "SolidLiquidEnthalpyPlan": ("._solid_liquid_phase_change", "SolidLiquidEnthalpyPlan"),
+    "SolidLiquidEnthalpyState": (
+        "._solid_liquid_phase_change",
+        "SolidLiquidEnthalpyState",
+    ),
+    "SolidLiquidPhaseStatus": ("._solid_liquid_phase_change", "SolidLiquidPhaseStatus"),
+    "SourceAction": ("._variational", "SourceAction"),
+    "SpalartAllmarasArguments": ("._spalart_allmaras", "SpalartAllmarasArguments"),
+    "SpalartAllmarasCompressibleSystem": (
+        "._spalart_allmaras",
+        "SpalartAllmarasCompressibleSystem",
+    ),
+    "SpalartAllmarasEvaluation": ("._spalart_allmaras", "SpalartAllmarasEvaluation"),
+    "SpalartAllmarasNegativePlan": ("._spalart_allmaras", "SpalartAllmarasNegativePlan"),
+    "SparseFLIPDiagnostics": ("._sparse_flip", "SparseFLIPDiagnostics"),
+    "SparseFLIPRuntimeState": ("._sparse_flip", "SparseFLIPRuntimeState"),
+    "SparseFLIPStepResult": ("._sparse_flip", "SparseFLIPStepResult"),
+    "SpeciesThermodynamicEvaluation": (
+        "._chemical_thermodynamics",
+        "SpeciesThermodynamicEvaluation",
+    ),
+    "SpectralConditionHandling": ("._spectral_residual", "SpectralConditionHandling"),
+    "SpectralFrequencyGrid": ("._radiation_material", "SpectralFrequencyGrid"),
+    "SpectralResidualCompilationReport": (
+        "._spectral_residual",
+        "SpectralResidualCompilationReport",
+    ),
+    "SpectralResidualDataLayout": ("._spectral_residual", "SpectralResidualDataLayout"),
+    "SpectralResidualScope": ("._spectral_residual", "SpectralResidualScope"),
+    "SpectralStateLayout": ("._spectral_compile", "SpectralStateLayout"),
+    "StaticKSGSPlan": ("._ksgs", "StaticKSGSPlan"),
+    "StefanHeatFluxPhaseChangePlan": (
+        "._vof_phase_change",
+        "StefanHeatFluxPhaseChangePlan",
+    ),
+    "StefanMaxwellEvidence": ("._mixture_transport", "StefanMaxwellEvidence"),
+    "StefanMaxwellTransportEvaluation": (
+        "._mixture_transport",
+        "StefanMaxwellTransportEvaluation",
+    ),
+    "StefanMaxwellTransportPlan": ("._mixture_transport", "StefanMaxwellTransportPlan"),
+    "StencilStateLayout": ("._stencil_compile", "StencilStateLayout"),
+    "StickingRatePlan": ("._chemical_rates", "StickingRatePlan"),
+    "StiffenedGasMaterial": ("._materials", "StiffenedGasMaterial"),
+    "StokesDragPlan": ("._cfd_dem", "StokesDragPlan"),
+    "StrongToIntegralRewriteSpec": ("._integral_rewrite", "StrongToIntegralRewriteSpec"),
+    "SuperconductingMaterialEvaluation": (
+        "._superconducting_material",
+        "SuperconductingMaterialEvaluation",
+    ),
+    "SuperconductingMaterialLawPlan": (
+        "._superconducting_material",
+        "SuperconductingMaterialLawPlan",
+    ),
+    "SurfaceChemicalState": ("._surface_chemistry", "SurfaceChemicalState"),
+    "SurfaceCoverageRatePlan": ("._chemical_rates", "SurfaceCoverageRatePlan"),
+    "SurfaceSpeciesSchema": ("._surface_chemistry", "SurfaceSpeciesSchema"),
+    "SutherlandTransport": ("._transport_closures", "SutherlandTransport"),
+    "TabulatedCoolingCurve": ("._radiative", "TabulatedCoolingCurve"),
+    "TabulatedCoolingEvaluation": ("._radiative", "TabulatedCoolingEvaluation"),
+    "TabulatedFiniteTemperatureEOS": (
+        "._relativistic_eos",
+        "TabulatedFiniteTemperatureEOS",
+    ),
+    "TaitBarotropicMaterial": ("._barotropic", "TaitBarotropicMaterial"),
+    "TemperatureRelaxationPhaseChangePlan": (
+        "._vof_phase_change",
+        "TemperatureRelaxationPhaseChangePlan",
+    ),
+    "TensorDiffusionAction": ("._variational", "TensorDiffusionAction"),
+    "ThermalModeEvaluation": ("._thermal_modes", "ThermalModeEvaluation"),
+    "ThermalModeSchema": ("._thermal_modes", "ThermalModeSchema"),
+    "ThermalModeSpec": ("._thermal_modes", "ThermalModeSpec"),
+    "ThermalModeTemperatureResult": ("._thermal_modes", "ThermalModeTemperatureResult"),
+    "ThermodynamicDomainEvidence": (
+        "._homogeneous_thermodynamics",
+        "ThermodynamicDomainEvidence",
+    ),
+    "ThermodynamicForceRepresentation": (
+        "._thermodynamics",
+        "ThermodynamicForceRepresentation",
+    ),
+    "ThirdBodyRatePlan": ("._chemical_rates", "ThirdBodyRatePlan"),
+    "TrainablePoleSet": (".trefftz", "TrainablePoleSet"),
+    "TransportBoundaryKind": ("._linear_boltzmann", "TransportBoundaryKind"),
+    "TransportProperties": ("._transport_closures", "TransportProperties"),
+    "TrefftzResourceBudget": (".trefftz", "TrefftzResourceBudget"),
+    "TrefftzResourceEvidence": (".trefftz", "TrefftzResourceEvidence"),
+    "TrialSpaceAuditReport": (".trefftz", "TrialSpaceAuditReport"),
+    "TrialSpaceCertificate": (".trefftz", "TrialSpaceCertificate"),
+    "TrialValidityRegion": (".trefftz", "TrialValidityRegion"),
+    "TroeRatePlan": ("._chemical_rates", "TroeRatePlan"),
+    "TwoMaterialEOSClosure": ("._materials", "TwoMaterialEOSClosure"),
+    "TwoMaterialEOSReport": ("._materials", "TwoMaterialEOSReport"),
+    "TwoMaterialPrimitiveState": ("._materials", "TwoMaterialPrimitiveState"),
+    "TwoMaterialVOFDiagnostics": ("._multiphase", "TwoMaterialVOFDiagnostics"),
+    "TwoMaterialVOFPhaseChangePlan": (
+        "._vof_phase_change",
+        "TwoMaterialVOFPhaseChangePlan",
+    ),
+    "TwoMaterialVOFStateLayout": ("._multiphase", "TwoMaterialVOFStateLayout"),
+    "TwoMaterialVOFSystem": ("._multiphase", "TwoMaterialVOFSystem"),
+    "TwoTemperatureMixtureEulerSystem": (
+        "._nonequilibrium_gas",
+        "TwoTemperatureMixtureEulerSystem",
+    ),
+    "TwoTemperatureMixtureNavierStokesSystem": (
+        "._nonequilibrium_gas",
+        "TwoTemperatureMixtureNavierStokesSystem",
+    ),
+    "TwoTemperatureRecovery": ("._nonequilibrium_gas", "TwoTemperatureRecovery"),
+    "TwoTemperatureThermodynamicEvaluation": (
+        "._nonequilibrium_gas",
+        "TwoTemperatureThermodynamicEvaluation",
+    ),
+    "TwoTemperatureThermodynamicsPlan": (
+        "._nonequilibrium_gas",
+        "TwoTemperatureThermodynamicsPlan",
+    ),
+    "UNIVERSAL_GAS_CONSTANT": ("._chemical_thermodynamics", "UNIVERSAL_GAS_CONSTANT"),
+    "UnresolvedCFDEMCouplingPlan": ("._cfd_dem", "UnresolvedCFDEMCouplingPlan"),
+    "UnstructuredLowMachLESConservationEvidence": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESConservationEvidence",
+    ),
+    "UnstructuredLowMachLESFluxLedger": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESFluxLedger",
+    ),
+    "UnstructuredLowMachLESPlan": ("._unstructured_les", "UnstructuredLowMachLESPlan"),
+    "UnstructuredLowMachLESRateResult": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESRateResult",
+    ),
+    "UnstructuredLowMachLESState": ("._unstructured_les", "UnstructuredLowMachLESState"),
+    "VOFPhaseChangeDifferentialSource": (
+        "._vof_phase_change",
+        "VOFPhaseChangeDifferentialSource",
+    ),
+    "VOFPhaseChangeStepResult": ("._vof_phase_change", "VOFPhaseChangeStepResult"),
+    "ValenciaGRHDSystem": ("._relativistic_hydrodynamics", "ValenciaGRHDSystem"),
+    "ValenciaGeometrySource": ("._relativistic_hydrodynamics", "ValenciaGeometrySource"),
+    "ValenciaHLLEBounds": ("._relativistic_mhd", "ValenciaHLLEBounds"),
+    "ValenciaHLLEFlux": ("._relativistic_mhd", "ValenciaHLLEFlux"),
+    "ValenciaPrimitiveRecovery": ("._relativistic_mhd", "ValenciaPrimitiveRecovery"),
+    "ValenciaRecoveryStatus": ("._relativistic_mhd", "ValenciaRecoveryStatus"),
+    "VariableEddingtonTensorClosurePlan": (
+        "._relativistic_angular_radiation",
+        "VariableEddingtonTensorClosurePlan",
+    ),
+    "VariationalCoefficient": ("._variational", "VariationalCoefficient"),
+    "VirtualElementAction": (".vem", "VirtualElementAction"),
+    "VirtualElementExecutionContext": (".vem", "VirtualElementExecutionContext"),
+    "VirtualElementExecutionPolicy": (".vem", "VirtualElementExecutionPolicy"),
+    "VirtualElementForm": (".vem", "VirtualElementForm"),
+    "VirtualElementReconstruction": (".vem", "VirtualElementReconstruction"),
+    "VirtualElementReconstructionChannel": (
+        ".vem",
+        "VirtualElementReconstructionChannel",
+    ),
+    "VirtualElementRobinAction": (".vem", "VirtualElementRobinAction"),
+    "VortexParticleFlowProblem": ("._vortex_particles", "VortexParticleFlowProblem"),
+    "VremanLESPlan": ("._les_closures", "VremanLESPlan"),
+    "WALELESPlan": ("._les_closures", "WALELESPlan"),
+    "WaveComponent": ("._incident_wave", "WaveComponent"),
+    "WaveSample": ("._incident_wave", "WaveSample"),
+    "WeaklyCompressibleFluidProblemIR": (
+        "._weakly_compressible",
+        "WeaklyCompressibleFluidProblemIR",
+    ),
+    "ZeroResidualHelmholtzTerm": (
+        "._homogeneous_thermodynamics",
+        "ZeroResidualHelmholtzTerm",
+    ),
+    "analyze_randomized_compilation": (
+        "._randomized_compile",
+        "analyze_randomized_compilation",
+    ),
+    "as_expression": ("._ir", "as_expression"),
+    "atomic_relaxation": ("._matter_radiation_interactions", "atomic_relaxation"),
+    "audit_trial_space": (".trefftz", "audit_trial_space"),
+    "beris_edwards_constitutive_fields": (
+        "._nematic",
+        "beris_edwards_constitutive_fields",
+    ),
+    "bethe_heitler_pair_cross_section_m2": (
+        "._matter_radiation_interactions",
+        "bethe_heitler_pair_cross_section_m2",
+    ),
+    "biharmonic_normal_derivative_functional": (
+        ".trefftz",
+        "biharmonic_normal_derivative_functional",
+    ),
+    "biharmonic_robin_functional": (".trefftz", "biharmonic_robin_functional"),
+    "biharmonic_value_functional": (".trefftz", "biharmonic_value_functional"),
+    "bremsstrahlung_suppression_factor": (
+        "._matter_radiation_interactions",
+        "bremsstrahlung_suppression_factor",
+    ),
+    "channel_les_filter": ("._channel_les", "channel_les_filter"),
+    "cherenkov_step_spectral_yield": (
+        "._matter_radiation_interactions",
+        "cherenkov_step_spectral_yield",
+    ),
+    "cherenkov_yield_in_band": (
+        "._matter_radiation_interactions",
+        "cherenkov_yield_in_band",
+    ),
+    "coefficient": ("._variational", "coefficient"),
+    "compile_barotropic_sph_problem": (
+        "._lagrangian_fluid",
+        "compile_barotropic_sph_problem",
+    ),
+    "compile_channel_flow": ("._channel_flow", "compile_channel_flow"),
+    "compile_channel_les": ("._channel_les", "compile_channel_les"),
+    "compile_conservation_problem": ("._conservation", "compile_conservation_problem"),
+    "compile_discrete_element_problem": (
+        "._discrete_element",
+        "compile_discrete_element_problem",
+    ),
+    "compile_exterior_pde": ("._exterior_compile", "compile_exterior_pde"),
+    "compile_finite_difference_pde": ("._fd_compile", "compile_finite_difference_pde"),
+    "compile_finite_element_functional": (
+        "._finite_element_variational",
+        "compile_finite_element_functional",
+    ),
+    "compile_finite_element_problem": (
+        "._finite_element_variational",
+        "compile_finite_element_problem",
+    ),
+    "compile_flip_problem": ("._flip", "compile_flip_problem"),
+    "compile_lattice_boltzmann_problem": (
+        "._lattice_boltzmann",
+        "compile_lattice_boltzmann_problem",
+    ),
+    "compile_mac_binary_alloy": ("._mac_binary_alloy", "compile_mac_binary_alloy"),
+    "compile_mac_enthalpy_porosity": (
+        "._mac_enthalpy_porosity",
+        "compile_mac_enthalpy_porosity",
+    ),
+    "compile_mac_incompressible_flow": (
+        "._mac_incompressible",
+        "compile_mac_incompressible_flow",
+    ),
+    "compile_mac_scalar_buoyancy": (
+        "._mac_scalar_buoyancy",
+        "compile_mac_scalar_buoyancy",
+    ),
+    "compile_mac_variable_density_flow": (
+        "._mac_variable_density",
+        "compile_mac_variable_density_flow",
+    ),
+    "compile_material_point_problem": (
+        "._material_point",
+        "compile_material_point_problem",
+    ),
+    "compile_particle_conversion_problem": (
+        "._particle_conversion",
+        "compile_particle_conversion_problem",
+    ),
+    "compile_pde_expression": ("._compile", "compile_pde_expression"),
+    "compile_pde_problem": ("._compile", "compile_pde_problem"),
+    "compile_pde_randomized_term": (
+        "._randomized_compile",
+        "compile_pde_randomized_term",
+    ),
+    "compile_pde_residual_term": ("._compile", "compile_pde_residual_term"),
+    "compile_periodic_incompressible_flow": (
+        "._incompressible",
+        "compile_periodic_incompressible_flow",
+    ),
+    "compile_semidiscrete_dae": ("._semidiscrete", "compile_semidiscrete_dae"),
+    "compile_semidiscrete_pde": ("._semidiscrete", "compile_semidiscrete_pde"),
+    "compile_sparse_flip_problem": ("._sparse_flip", "compile_sparse_flip_problem"),
+    "compile_spectral_pde": ("._spectral_compile", "compile_spectral_pde"),
+    "compile_spectral_residual": ("._spectral_residual", "compile_spectral_residual"),
+    "compile_stencil_dynamics": ("._stencil_compile", "compile_stencil_dynamics"),
+    "compile_virtual_element_problem": (".vem", "compile_virtual_element_problem"),
+    "compile_vortex_particle_flow": (
+        "._vortex_particles",
+        "compile_vortex_particle_flow",
+    ),
+    "compile_weakly_compressible_sph_problem": (
+        "._weakly_compressible",
+        "compile_weakly_compressible_sph_problem",
+    ),
+    "compton_electron_cosine": ("._radiation_interactions", "compton_electron_cosine"),
+    "couette_velocity_profile": (
+        "._finite_volume_verification",
+        "couette_velocity_profile",
+    ),
+    "delta_ray_kinematics": ("._matter_radiation_interactions", "delta_ray_kinematics"),
+    "doppler_scattered_energy": ("._radiation_interactions", "doppler_scattered_energy"),
+    "double_rarefaction_verification_case": (
+        "._finite_volume_verification",
+        "double_rarefaction_verification_case",
+    ),
+    "double_well_chemical_derivative": (
+        "._phase_field",
+        "double_well_chemical_derivative",
+    ),
+    "double_well_free_energy_density": (
+        "._phase_field",
+        "double_well_free_energy_density",
+    ),
+    "euler_riemann_verification_case": (
+        "._finite_volume_verification",
+        "euler_riemann_verification_case",
+    ),
+    "evaluate_binary_free_energy": ("._phase_field", "evaluate_binary_free_energy"),
+    "evaluate_mac_penalty_ib_cfd_dem": (
+        "._mac_penalty_ib_cfd_dem",
+        "evaluate_mac_penalty_ib_cfd_dem",
+    ),
+    "evaluate_particle_transport": (
+        "._particle_thermochemistry",
+        "evaluate_particle_transport",
+    ),
+    "evaluate_unresolved_cfd_dem": ("._cfd_dem", "evaluate_unresolved_cfd_dem"),
+    "evaluate_virtual_element_reconstruction": (
+        ".vem",
+        "evaluate_virtual_element_reconstruction",
+    ),
+    "evaluate_virtual_element_trace": (".vem", "evaluate_virtual_element_trace"),
+    "finite_element_form_from_functional": (
+        "._finite_element_variational",
+        "finite_element_form_from_functional",
+    ),
+    "finite_volume_convergence_result": (
+        "._finite_volume_verification",
+        "finite_volume_convergence_result",
+    ),
+    "finite_volume_error_norms": (
+        "._finite_volume_verification",
+        "finite_volume_error_norms",
+    ),
+    "flip_inspection_frames": ("._flip_inspection", "flip_inspection_frames"),
+    "holomorphic_period_functional": (".trefftz", "holomorphic_period_functional"),
+    "ideal_gas_euler_entropy_pair": ("._entropy_pair", "ideal_gas_euler_entropy_pair"),
+    "ideal_mhd_entropy_pair": ("._additional_entropy", "ideal_mhd_entropy_pair"),
+    "infer_expression_type": ("._validate", "infer_expression_type"),
+    "lax_verification_case": ("._finite_volume_verification", "lax_verification_case"),
+    "load_chemical_mechanism_yaml": (
+        "._chemical_mechanism_yaml",
+        "load_chemical_mechanism_yaml",
+    ),
+    "longo_shower_profile": ("._matter_radiation_interactions", "longo_shower_profile"),
+    "lower_fd_boundaries": ("._fd_boundary_lowering", "lower_fd_boundaries"),
+    "lower_fd_interfaces": ("._fd_boundary_lowering", "lower_fd_interfaces"),
+    "make_pde_operator": ("._compile", "make_pde_operator"),
+    "pad_pde_tokens": ("._tokens", "pad_pde_tokens"),
+    "pde_ir_from_dict": ("._serialize", "pde_ir_from_dict"),
+    "pde_ir_from_json": ("._serialize", "pde_ir_from_json"),
+    "pde_ir_hash": ("._serialize", "pde_ir_hash"),
+    "pde_ir_to_dict": ("._serialize", "pde_ir_to_dict"),
+    "pde_ir_to_json": ("._serialize", "pde_ir_to_json"),
+    "peng_robinson_roots": ("._peng_robinson", "peng_robinson_roots"),
+    "periodic_advection_verification_case": (
+        "._finite_volume_verification",
+        "periodic_advection_verification_case",
+    ),
+    "plane_elasticity_displacement_functional": (
+        ".trefftz",
+        "plane_elasticity_displacement_functional",
+    ),
+    "plane_elasticity_stress_functional": (
+        ".trefftz",
+        "plane_elasticity_stress_functional",
+    ),
+    "plane_elasticity_traction_functional": (
+        ".trefftz",
+        "plane_elasticity_traction_functional",
+    ),
+    "poiseuille_velocity_profile": (
+        "._finite_volume_verification",
+        "poiseuille_velocity_profile",
+    ),
+    "positron_annihilation_in_flight": (
+        "._matter_radiation_interactions",
+        "positron_annihilation_in_flight",
+    ),
+    "prepare_fd_boundary_program": (
+        "._fd_boundary_lowering",
+        "prepare_fd_boundary_program",
+    ),
+    "prepare_fd_boundary_runtime": (
+        "._fd_boundary_lowering",
+        "prepare_fd_boundary_runtime",
+    ),
+    "prepare_fd_interfaces": ("._fd_boundary_lowering", "prepare_fd_interfaces"),
+    "prepare_virtual_element_field_reconstruction": (
+        ".vem",
+        "prepare_virtual_element_field_reconstruction",
+    ),
+    "project_virtual_element_field": (".vem", "project_virtual_element_field"),
+    "radiation_means": ("._radiation_material", "radiation_means"),
+    "relativistic_eos_status_name": (
+        "._relativistic_eos",
+        "relativistic_eos_status_name",
+    ),
+    "replace_ksgs_kinetic_energy": ("._ksgs", "replace_ksgs_kinetic_energy"),
+    "rewrite_strong_to_integral": ("._integral_rewrite", "rewrite_strong_to_integral"),
+    "sample_bethe_heitler_pair_kinetic_energies": (
+        "._matter_radiation_interactions",
+        "sample_bethe_heitler_pair_kinetic_energies",
+    ),
+    "sample_bremsstrahlung_fraction": (
+        "._matter_radiation_interactions",
+        "sample_bremsstrahlung_fraction",
+    ),
+    "sample_bremsstrahlung_photon": (
+        "._charged_radiation_interactions",
+        "sample_bremsstrahlung_photon",
+    ),
+    "sample_compton_profile_momentum": (
+        "._radiation_interactions",
+        "sample_compton_profile_momentum",
+    ),
+    "sample_sauter_cosine": ("._radiation_interactions", "sample_sauter_cosine"),
+    "sample_unit_directions": (".trefftz", "sample_unit_directions"),
+    "shallow_water_energy_pair": ("._additional_entropy", "shallow_water_energy_pair"),
+    "snapshot_lattice_boltzmann_geometry": (
+        "._lattice_boltzmann",
+        "snapshot_lattice_boltzmann_geometry",
+    ),
+    "sod_verification_case": ("._finite_volume_verification", "sod_verification_case"),
+    "stack_pde_tokens": ("._tokens", "stack_pde_tokens"),
+    "tokenize_pde_ir": ("._tokens", "tokenize_pde_ir"),
+    "trial_space_certificate": (".trefftz", "trial_space_certificate"),
+    "valencia_geometric_source_from_projection": (
+        "._relativistic_hydrodynamics",
+        "valencia_geometric_source_from_projection",
+    ),
+    "validate_convex_entropy_pair": ("._entropy_pair", "validate_convex_entropy_pair"),
+    "validate_pde_ir": ("._validate", "validate_pde_ir"),
+    "woodward_colella_verification_case": (
+        "._finite_volume_verification",
+        "woodward_colella_verification_case",
+    ),
+    "AtomicHybridUpdateEvidence": (
+        "..discretization.discrete_velocity._hybrid",
+        "AtomicHybridUpdateEvidence",
+    ),
+    "AtomicHybridUpdateResult": (
+        "..discretization.discrete_velocity._hybrid",
+        "AtomicHybridUpdateResult",
+    ),
+    "CommonFVKineticFluxEvidence": (
+        "..discretization.discrete_velocity._hybrid",
+        "CommonFVKineticFluxEvidence",
+    ),
+    "ConformingFVKineticState": (
+        "..discretization.discrete_velocity._hybrid",
+        "ConformingFVKineticState",
+    ),
+    "FixedConformingFVKineticInterfacePlan": (
+        "..discretization.discrete_velocity._hybrid",
+        "FixedConformingFVKineticInterfacePlan",
+    ),
+    "KineticShockSensorEvidence": (
+        "..discretization.discrete_velocity._hybrid",
+        "KineticShockSensorEvidence",
+    ),
+    "KineticShockSensorPlan": (
+        "..discretization.discrete_velocity._hybrid",
+        "KineticShockSensorPlan",
+    ),
+    "EnergyEquilibriumEvidence": (
+        "..discretization.discrete_velocity._energy_equilibrium",
+        "EnergyEquilibriumEvidence",
+    ),
+    "EnergyEquilibriumResult": (
+        "..discretization.discrete_velocity._energy_equilibrium",
+        "EnergyEquilibriumResult",
+    ),
+    "EnergyEquilibriumStatus": (
+        "..discretization.discrete_velocity._energy_equilibrium",
+        "EnergyEquilibriumStatus",
+    ),
+    "PositiveEnergyEquilibriumPlan": (
+        "..discretization.discrete_velocity._energy_equilibrium",
+        "PositiveEnergyEquilibriumPlan",
+    ),
+    "advanced": (".advanced", None),
+    "fem": (".fem", None),
+    "trefftz": (".trefftz", None),
+    "vem": (".vem", None),
+    "SmoothCompressibleCollisionEvidence": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleCollisionEvidence",
+    ),
+    "SmoothCompressibleD2VKineticMethod": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleD2VKineticMethod",
+    ),
+    "SmoothCompressibleEquilibriumEvidence": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleEquilibriumEvidence",
+    ),
+    "SmoothCompressibleKineticState": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleKineticState",
+    ),
+    "SmoothCompressibleLearnedCollisionResult": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleLearnedCollisionResult",
+    ),
+    "SmoothCompressibleLearnedEquilibriumEvidence": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleLearnedEquilibriumEvidence",
+    ),
+    "SmoothCompressibleMoments": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleMoments",
+    ),
+    "SmoothCompressibleRealizabilityEvidence": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "SmoothCompressibleRealizabilityEvidence",
+    ),
+    "smooth_compressible_d2v17_method": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "smooth_compressible_d2v17_method",
+    ),
+    "smooth_compressible_d2v37_off_lattice_method": (
+        "..discretization.discrete_velocity._smooth_compressible",
+        "smooth_compressible_d2v37_off_lattice_method",
+    ),
+}
 
 _FACADE_EXPORT_MODULES = (
     "._discrete_velocity",
@@ -1085,7 +1730,1109 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
+if TYPE_CHECKING:
+    from ..discretization.discrete_velocity._energy_equilibrium import (
+        EnergyEquilibriumEvidence,
+        EnergyEquilibriumResult,
+        EnergyEquilibriumStatus,
+        PositiveEnergyEquilibriumPlan,
+    )
+    from ..discretization.discrete_velocity._hybrid import (
+        AtomicHybridUpdateEvidence,
+        AtomicHybridUpdateResult,
+        CommonFVKineticFluxEvidence,
+        ConformingFVKineticState,
+        FixedConformingFVKineticInterfacePlan,
+        KineticShockSensorEvidence,
+        KineticShockSensorPlan,
+    )
+    from ..discretization.discrete_velocity._smooth_compressible import (
+        smooth_compressible_d2v17_method,
+        smooth_compressible_d2v37_off_lattice_method,
+        SmoothCompressibleCollisionEvidence,
+        SmoothCompressibleD2VKineticMethod,
+        SmoothCompressibleEquilibriumEvidence,
+        SmoothCompressibleKineticState,
+        SmoothCompressibleLearnedCollisionResult,
+        SmoothCompressibleLearnedEquilibriumEvidence,
+        SmoothCompressibleMoments,
+        SmoothCompressibleRealizabilityEvidence,
+    )
+    from . import advanced, fem, trefftz, vem
+    from ._ablating_material import (
+        AblatingMaterialAdvance,
+        AblatingMaterialEvaluation,
+        AblatingMaterialState,
+        PorousAblatingMaterialPlan,
+    )
+    from ._additional_entropy import (
+        ideal_mhd_entropy_pair,
+        shallow_water_energy_pair,
+    )
+    from ._barotropic import (
+        AbstractBarotropicMaterial,
+        CavitationBarotropicBranch,
+        CavitationBarotropicState,
+        HomogeneousEquilibriumCavitationMaterial,
+        TaitBarotropicMaterial,
+    )
+    from ._barotropic_euler import (
+        BarotropicEulerSystem,
+    )
+    from ._cfd_dem import (
+        AbstractHydrodynamicClosurePlan,
+        CFDEMCouplingEvaluation,
+        evaluate_unresolved_cfd_dem,
+        FluidParticleSample,
+        HydrodynamicClosureResult,
+        StokesDragPlan,
+        UnresolvedCFDEMCouplingPlan,
+    )
+    from ._channel_flow import (
+        ChannelVelocityDiagnostics,
+        compile_channel_flow,
+        CompiledChannelFlowDynamics,
+    )
+    from ._channel_les import (
+        channel_les_filter,
+        ChannelLESDiagnostics,
+        ChannelLESEnergyLedger,
+        ChannelLESEvaluation,
+        ChannelLESExplicitRestriction,
+        ChannelLESFilterGeometry,
+        compile_channel_les,
+        CompiledChannelLESDynamics,
+    )
+    from ._charged_radiation_interactions import (
+        ChargedRadiationMaterialEvaluation,
+        ChargedRadiationMaterialLibrary,
+        ChargedRadiationParticleKind,
+        sample_bremsstrahlung_photon,
+    )
+    from ._chemical_calibration import (
+        ChemicalCalibrationParameter,
+        ChemicalCalibrationPlan,
+        ChemicalParameterCoordinate,
+    )
+    from ._chemical_components import (
+        ChemicalComponentCatalog,
+    )
+    from ._chemical_conditional_affine import (
+        ChemicalAffinePivot,
+        ChemicalConditionalAffineAssembly,
+        ChemicalConditionalAffineCertificate,
+        ChemicalConditionalAffineDrivers,
+        ChemicalConditionalAffinePlan,
+        ChemicalConditionalAffineResult,
+        ChemicalConditionalAffineStatus,
+        ChemicalReactionDirection,
+        PreparedChemicalConditionalAffine,
+    )
+    from ._chemical_mechanism import (
+        ChemicalMechanismEvidence,
+        ChemicalMechanismIR,
+        ChemicalRateEvaluation,
+        ChemicalReactionSpec,
+        PreparedChemicalMechanism,
+    )
+    from ._chemical_mechanism_yaml import (
+        ChemicalMechanismImportReport,
+        load_chemical_mechanism_yaml,
+    )
+    from ._chemical_rates import (
+        AbstractChemicalRatePlan,
+        ArrheniusRatePlan,
+        ButlerVolmerRatePlan,
+        ChebyshevRatePlan,
+        ChemicalRateKind,
+        ChemicalRateRuntime,
+        LindemannRatePlan,
+        PhotolysisRatePlan,
+        PLogRatePlan,
+        StickingRatePlan,
+        SurfaceCoverageRatePlan,
+        ThirdBodyRatePlan,
+        TroeRatePlan,
+    )
+    from ._chemical_species import (
+        ChemicalPhaseKind,
+        ChemicalPhaseSpec,
+        ChemicalSpeciesSchema,
+    )
+    from ._chemical_thermodynamics import (
+        AbstractSpeciesThermodynamicsPlan,
+        NASAPolynomialKind,
+        NASASpeciesThermodynamicsPlan,
+        PolynomialSpeciesThermodynamicsPlan,
+        SpeciesThermodynamicEvaluation,
+        UNIVERSAL_GAS_CONSTANT,
+    )
+    from ._compile import (
+        compile_pde_expression,
+        compile_pde_problem,
+        compile_pde_residual_term,
+        CompiledPDECondition,
+        CompiledPDEEquation,
+        CompiledPDEProblem,
+        DifferentialBackend,
+        IntegralCompiler,
+        make_pde_operator,
+    )
+    from ._conservation import (
+        compile_conservation_problem,
+        CompiledConservationProblem,
+        ConservationProblemIR,
+    )
+    from ._dem_material import (
+        DEMMaterialTable,
+    )
+    from ._diagnostic_photon import (
+        DiagnosticPhotonCoefficientEvaluation,
+        DiagnosticPhotonCoefficientRole,
+        DiagnosticPhotonCoefficientTable,
+        DiagnosticPhotonInterpolationEvidence,
+        DiagnosticPhotonInterpolationPolicy,
+        PhotonEnergyGrid,
+    )
+    from ._discrete_element import (
+        compile_discrete_element_problem,
+        CompiledDiscreteElementProblem,
+        DiscreteElementProblemIR,
+    )
+    from ._dynamic_les import (
+        AbstractBackscatterPolicy,
+        AbstractDenominatorRegularization,
+        AbstractDynamicLESAveraging,
+        AdditiveDenominatorRegularization,
+        AllowSignedBackscatter,
+        BoundedFractionBackscatter,
+        DynamicLESInputs,
+        DynamicLESProvenance,
+        DynamicLESResult,
+        DynamicSmagorinskyPlan,
+        ExactDenominatorRegularization,
+        GermanoLeastSquaresEvidence,
+        GlobalDynamicLESAveraging,
+        HomogeneousPlaneDynamicLESAveraging,
+        LagrangianDynamicLESAveraging,
+        LagrangianDynamicLESState,
+        LocalKernelDynamicLESAveraging,
+        NonnegativeBackscatterClip,
+        PreparedDynamicSmagorinskyPlan,
+    )
+    from ._electrochemistry import (
+        AbstractElectrochemicalClosure,
+        ElectrochemicalLocalFields,
+        ElectrolyteTransportParameters,
+        FARADAY_CONSTANT,
+        IdealDiluteElectrochemicalClosure,
+    )
+    from ._electrolytic_nematic import (
+        ElectrolyticNematicClosure,
+        ElectrolyticNematicFields,
+        ElectrolyticNematicParameters,
+    )
+    from ._entropy_pair import (
+        ConvexEntropyPair,
+        ConvexEntropyValidationReport,
+        ideal_gas_euler_entropy_pair,
+        validate_convex_entropy_pair,
+    )
+    from ._exterior_compile import (
+        compile_exterior_pde,
+        CompiledExteriorPDE,
+        ExteriorPDERealization,
+    )
+    from ._favre_les import (
+        FavreLESFieldContract,
+        FavreLESInputEvidence,
+        FavreLESInputs,
+        FavreLESResult,
+        FavreLESResultEvidence,
+        PreparedFavreLESModel,
+    )
+    from ._fd_boundary_lowering import (
+        BoundaryTarget,
+        FDBoundaryBinding,
+        FDInterfaceBinding,
+        FDInterfaceConditionKind,
+        lower_fd_boundaries,
+        lower_fd_interfaces,
+        prepare_fd_boundary_program,
+        prepare_fd_boundary_runtime,
+        prepare_fd_interfaces,
+        PreparedFDBoundaryPair,
+        PreparedFDBoundaryProgram,
+        PreparedFDInterface,
+    )
+    from ._fd_compile import (
+        compile_finite_difference_pde,
+        CompiledFiniteDifferenceDynamics,
+        FiniteDifferenceCompilationPolicy,
+    )
+    from ._finite_element_functional import (
+        FiniteElementFunctional,
+    )
+    from ._finite_element_material import (
+        AbstractConstitutiveModel,
+        ConstitutiveModel,
+        ConstitutiveResponse,
+        LearnedConstitutiveModel,
+        MaterialCheckpointPayload,
+        MaterialIntegrationPlan,
+        MaterialSiteId,
+        MaterialState,
+        MaterialTransaction,
+    )
+    from ._finite_element_variational import (
+        CellBilinearAction,
+        CellEnergyAction,
+        CellResidualAction,
+        compile_finite_element_functional,
+        compile_finite_element_problem,
+        CompiledFiniteElementProblem,
+        ExteriorFacetAction,
+        finite_element_form_from_functional,
+        FiniteElementAction,
+        FiniteElementExecutionContext,
+        FiniteElementExecutionPolicy,
+        FiniteElementForm,
+        InteriorFacetAction,
+        LocalFunctionalAction,
+        PairwiseVolumeFluxAction,
+        PreparedFiniteElementMass,
+        PreparedOperatorAction,
+        SIPGFacetAction,
+    )
+    from ._finite_volume_advanced import (
+        BedloadSedimentPlan,
+        HydrostaticLayerCoupling,
+        MultilayerShallowWaterSystem,
+        ShallowWaterExnerSystem,
+    )
+    from ._finite_volume_verification import (
+        couette_velocity_profile,
+        double_rarefaction_verification_case,
+        euler_riemann_verification_case,
+        finite_volume_convergence_result,
+        finite_volume_error_norms,
+        FiniteVolumeConservationBudget,
+        FiniteVolumeConvergenceResult,
+        FiniteVolumeErrorNorms,
+        FiniteVolumeVerificationCase,
+        lax_verification_case,
+        periodic_advection_verification_case,
+        poiseuille_velocity_profile,
+        sod_verification_case,
+        woodward_colella_verification_case,
+    )
+    from ._flip import (
+        compile_flip_problem,
+        CompiledFLIPProblem,
+        FLIPProblemIR,
+    )
+    from ._flip_inspection import (
+        flip_inspection_frames,
+    )
+    from ._force_free import (
+        ForceFreeConstraintEvaluation,
+        ForceFreeCurrentEvaluation,
+        ForceFreeProjectionResult,
+        GRForceFreeSystem,
+    )
+    from ._form_compile import (
+        PDEFormGeometry,
+        PDEFormTrace,
+    )
+    from ._gas_dynamics import (
+        FavreLESCoupledRate,
+        HomogeneousMixtureCompressibleNavierStokesSystem,
+        HomogeneousMixtureEulerSystem,
+    )
+    from ._gas_transport_properties import (
+        AbstractGasTransportPropertyPlan,
+        GasTransportPropertyEvaluation,
+        KineticTheoryGasTransportPlan,
+        LogPolynomialGasTransportPlan,
+        ReferencePowerLawGasTransportPlan,
+    )
+    from ._homogeneous_thermodynamics import (
+        AbstractMolarHelmholtzTerm,
+        DensityEnergyStateResult,
+        HomogeneousChemicalEvaluation,
+        HomogeneousHelmholtzPlan,
+        HomogeneousThermodynamicEvaluation,
+        IdealGasReferenceHelmholtzTerm,
+        ThermodynamicDomainEvidence,
+        ZeroResidualHelmholtzTerm,
+    )
+    from ._hybrid_turbulence import (
+        DelayedDetachedEddyPlan,
+        HybridRANSLESGridScalePlan,
+        HybridTurbulenceEvaluation,
+    )
+    from ._hyperbolic_systems import (
+        AbstractAdmissibleSystem,
+        AbstractCharacteristicSystem,
+        AbstractConservationSystem,
+        AbstractEntropyDiffusionSystem,
+        AbstractEntropySystem,
+        AbstractNormalCharacteristicSystem,
+        AbstractNormalFrameSystem,
+        AbstractNormalReflectionSystem,
+        CompressibleNavierStokesSystem,
+        ConservationDiffusionEvaluation,
+        EulerSystem,
+        IdealMHDSystem,
+        PrimitiveTemperatureCapability,
+        PrimitiveVelocityCapability,
+        ScalarConservationSystem,
+        ShallowWaterSystem,
+    )
+    from ._incident_wave import (
+        IncidentWavePlan,
+        WaveComponent,
+        WaveSample,
+    )
+    from ._incompressible import (
+        compile_periodic_incompressible_flow,
+        CompiledIncompressibleSpectralDynamics,
+        IncompressibleFlowProblem,
+    )
+    from ._integral_rewrite import (
+        IntegralResidualProgram,
+        rewrite_strong_to_integral,
+        StrongToIntegralRewriteSpec,
+    )
+    from ._ionized_gas import (
+        IonizedMixtureThermodynamicsPlan,
+        IonizedMultitemperatureEulerSystem,
+        IonizedMultitemperatureNavierStokesSystem,
+        IonizedThermodynamicEvaluation,
+        PlasmaQuasiNeutralityEvidence,
+    )
+    from ._ir import (
+        as_expression,
+        PDECondition,
+        PDEConditionKind,
+        PDECoordinate,
+        PDECoordinateKind,
+        PDEEquation,
+        PDEExpression,
+        PDEExpressionOp,
+        PDEField,
+        PDELiteral,
+        PDEParameter,
+        PDEProblemIR,
+        PDERegion,
+        PDERegionKind,
+        PDERepresentation,
+    )
+    from ._kinetic_gas import (
+        DiscreteMaxwellianResult,
+        KineticBreakdownEvidence,
+        KineticBreakdownPlan,
+        KineticCollisionResult,
+        MaxwellGasSurfaceBoundary,
+        MolecularVelocityQuadrature,
+        MonatomicBGKCollisionPlan,
+        PopulationUpwindFluxPlan,
+        PositiveDiscreteMaxwellianPlan,
+        ShakhovCollisionPlan,
+    )
+    from ._ksgs import (
+        AbstractKSGSPlan,
+        BuoyancyKSGSInputs,
+        BuoyancyKSGSPlan,
+        DynamicKSGSInputs,
+        DynamicKSGSPlan,
+        KSGSCoefficients,
+        KSGSContributions,
+        KSGSEvidence,
+        KSGSInputs,
+        KSGSResult,
+        KSGSState,
+        KSGSTransportResult,
+        LowReKSGSCoefficients,
+        LowReKSGSInputs,
+        LowReKSGSPlan,
+        replace_ksgs_kinetic_energy,
+        StaticKSGSPlan,
+    )
+    from ._lagrangian_fluid import (
+        BarotropicFluidProblemIR,
+        compile_barotropic_sph_problem,
+        CompiledBarotropicSPHProblem,
+    )
+    from ._lattice_boltzmann import (
+        compile_lattice_boltzmann_problem,
+        CompiledLatticeBoltzmannProblem,
+        LatticeBoltzmannProblem,
+        snapshot_lattice_boltzmann_geometry,
+    )
+    from ._learned_stress import (
+        LEARNED_STRESS_FEATURE_NAME,
+        LEARNED_STRESS_VELOCITY_GRADIENT_COMPONENTS,
+        LEARNED_STRESS_VELOCITY_GRADIENT_UNITS,
+        MACLearnedStressPlan,
+        MACLearnedStressStage,
+        PeriodicLearnedStressPlan,
+        PeriodicLearnedStressStage,
+        PreparedMACLearnedStress,
+        PreparedPeriodicLearnedStress,
+    )
+    from ._les_closures import (
+        AbstractAlgebraicLESModel,
+        AlgebraicLESInputs,
+        AlgebraicLESResult,
+        AMDLESPlan,
+        LESFilterScale,
+        LESParameterProvenance,
+        PreparedAlgebraicLESModel,
+        ResolvedLESFilter,
+        SmagorinskyLESPlan,
+        VremanLESPlan,
+        WALELESPlan,
+    )
+    from ._linear_boltzmann import (
+        MultigroupSlabTransportProblem,
+        SlabTransportBoundaryPlan,
+        TransportBoundaryKind,
+    )
+    from ._mac_binary_alloy import (
+        compile_mac_binary_alloy,
+        CompiledMACBinaryAlloyDynamics,
+        MACBinaryAlloyDiagnostics,
+        MACBinaryAlloyStage,
+        MACBinaryAlloyStepRestriction,
+    )
+    from ._mac_dynamic_les import (
+        MACDynamicLESPlan,
+        MACDynamicLESStage,
+        MACExplicitTestFilterPlan,
+        PreparedMACDynamicLES,
+        PreparedMACExplicitTestFilter,
+    )
+    from ._mac_enthalpy_porosity import (
+        compile_mac_enthalpy_porosity,
+        CompiledMACEnthalpyPorosityDynamics,
+        MACEnthalpyPorosityDiagnostics,
+        MACEnthalpyPorosityProblem,
+        MACEnthalpyPorosityStage,
+        MACEnthalpyPorosityStepRestriction,
+    )
+    from ._mac_incompressible import (
+        compile_mac_incompressible_flow,
+        CompiledMACIncompressibleDynamics,
+        MACIncompressibleDiagnostics,
+        MACIncompressibleRateComponents,
+        MACLESStepRestriction,
+    )
+    from ._mac_les import (
+        MACAlgebraicLESPlan,
+        MACLESStageResult,
+        PreparedMACAlgebraicLES,
+    )
+    from ._mac_penalty_ib_cfd_dem import (
+        evaluate_mac_penalty_ib_cfd_dem,
+        IBPenaltyPlan,
+        MACPenaltyIBCFDEMCouplingPlan,
+        MACPenaltyIBEvaluation,
+        MACPenaltyIBStatus,
+    )
+    from ._mac_scalar_buoyancy import (
+        compile_mac_scalar_buoyancy,
+        CompiledMACScalarBuoyancyDynamics,
+        MACBuoyancyLaw,
+        MACBuoyancyLedger,
+        MACKSGSStageResult,
+        MACScalarBuoyancyDiagnostics,
+        MACScalarBuoyancyStage,
+        MACScalarBuoyancyStepRestriction,
+        PreparedMACKSGS,
+    )
+    from ._mac_variable_density import (
+        compile_mac_variable_density_flow,
+        CompiledMACVariableDensityDynamics,
+        MACVariableDensityDiagnostics,
+        MACVariableDensityFlowProblem,
+        MACVariableDensityRateResult,
+        MACVariableDensityState,
+        MACVariableDensityStepRestriction,
+        MACVariableDensityStepResult,
+    )
+    from ._manufactured import (
+        ManufacturedConvergencePlan,
+        ManufacturedConvergenceResult,
+        ManufacturedNorm,
+        ManufacturedPDECase,
+        ManufacturedSpatialOperator,
+    )
+    from ._material_point import (
+        AbstractImplicitMPMConstitutivePlan,
+        AbstractMPMConstitutivePlan,
+        compile_material_point_problem,
+        CompiledMaterialPointProblem,
+        ExternalMPMAcceleration,
+        MaterialPointArguments,
+        MaterialPointProblemIR,
+        MPMConstitutiveCapabilities,
+        MPMConstitutiveResponse,
+        MPMKinematics,
+        MPMLinearizedConstitutiveResponse,
+    )
+    from ._materials import (
+        AbstractThermodynamicMaterial,
+        IdealGasMaterial,
+        NobleAbelStiffenedGasMaterial,
+        StiffenedGasMaterial,
+        TwoMaterialEOSClosure,
+        TwoMaterialEOSReport,
+        TwoMaterialPrimitiveState,
+    )
+    from ._matter_radiation_interactions import (
+        AnnihilationKinematics,
+        atomic_relaxation,
+        AtomicRelaxationResult,
+        bethe_heitler_pair_cross_section_m2,
+        bremsstrahlung_suppression_factor,
+        BremsstrahlungSpectrumRoute,
+        cherenkov_step_spectral_yield,
+        cherenkov_yield_in_band,
+        delta_ray_kinematics,
+        DeltaRayKinematics,
+        FoilStackTransitionRadiationPlan,
+        longo_shower_profile,
+        positron_annihilation_in_flight,
+        sample_bethe_heitler_pair_kinetic_energies,
+        sample_bremsstrahlung_fraction,
+        SeltzerBergerBremsstrahlungTable,
+    )
+    from ._mechanical_load_action import (
+        MechanicalLoadAction,
+        MechanicalLoadActionEvaluation,
+        NeuralCoordinateTrace,
+    )
+    from ._mixed_dimensional import (
+        BulkDGTransportEvidence,
+        BulkDGTransportPlan,
+        MixedDimensionalMassLedger,
+        MixedDimensionalSources,
+        MixedDimensionalStepResult,
+        MixedDimensionalTransportPlan,
+        MixedDimensionalTransportState,
+        NetworkTransportPlan,
+        PermeabilityExchangePlan,
+        PreparedBulkDGTransport,
+        PreparedMixedDimensionalTransport,
+        PreparedNetworkTransport,
+        ReservoirCouplingPlan,
+    )
+    from ._mixture_transport import (
+        MixtureAveragedTransportPlan,
+        MixtureTransportEvaluation,
+        StefanMaxwellEvidence,
+        StefanMaxwellTransportEvaluation,
+        StefanMaxwellTransportPlan,
+    )
+    from ._multiphase import (
+        TwoMaterialVOFDiagnostics,
+        TwoMaterialVOFStateLayout,
+        TwoMaterialVOFSystem,
+    )
+    from ._multiphase_electrolyte import (
+        MultiphaseElectrolyteClosure,
+        MultiphaseElectrolyteFields,
+        MultiphaseElectrolyteParameters,
+    )
+    from ._nematic import (
+        beris_edwards_constitutive_fields,
+        BerisEdwardsConstitutiveFields,
+        BerisEdwardsParameters,
+        LandauDeGennesClosure,
+        LandauDeGennesParameters,
+        NematicTensorBasis,
+        NematicThermodynamicFields,
+    )
+    from ._nematic_anchoring import (
+        NematicAnchoringFields,
+        NematicAnchoringKind,
+        NematicAnchoringPlan,
+    )
+    from ._nonequilibrium_gas import (
+        TwoTemperatureMixtureEulerSystem,
+        TwoTemperatureMixtureNavierStokesSystem,
+        TwoTemperatureRecovery,
+        TwoTemperatureThermodynamicEvaluation,
+        TwoTemperatureThermodynamicsPlan,
+    )
+    from ._nonlte_radiation import (
+        AVOGADRO_CONSTANT,
+        NonLTELevelPopulationPlan,
+        NonLTEPopulationEvaluation,
+        NonLTERadiationCoefficientEvaluation,
+        NonLTERadiationCoefficientPlan,
+        PLANCK_CONSTANT,
+    )
+    from ._particle_conversion import (
+        compile_particle_conversion_problem,
+        CompiledParticleConversionProblem,
+        ParticleConversionBatchEvaluation,
+        ParticleConversionEvaluation,
+        ParticleConversionProblemIR,
+        ParticleConversionRejectionReason,
+        PreparedParticleConversionDynamics,
+    )
+    from ._particle_reaction import (
+        EvaporationPhaseChangePlan,
+        ParticlePhaseChangeEvaluation,
+        ParticleReactionEvaluation,
+        ParticleReactionLocation,
+        ParticleReactionProcessPlan,
+        ShrinkingCoreConversionPlan,
+        ShrinkingCoreEvaluation,
+        ShrinkingCoreState,
+    )
+    from ._particle_thermochemistry import (
+        evaluate_particle_transport,
+        ParticleThermochemicalMaterialBundle,
+        ParticleThermodynamicMaterialPlan,
+        ParticleThermodynamicState,
+        ParticleTransportBoundary,
+        ParticleTransportEvaluation,
+        ParticleTransportMaterialPlan,
+    )
+    from ._peng_robinson import (
+        peng_robinson_roots,
+        PengRobinsonParameters,
+        PengRobinsonResidualHelmholtzTerm,
+        PengRobinsonRootSet,
+    )
+    from ._periodic_dynamic_les import (
+        PeriodicDynamicLESPlan,
+        PeriodicDynamicLESStage,
+        PeriodicFourierTestFilterPlan,
+        PreparedPeriodicDynamicLES,
+        PreparedPeriodicFourierTestFilter,
+    )
+    from ._periodic_les import (
+        PeriodicAlgebraicLESPlan,
+        PeriodicAlgebraicLESStage,
+        PeriodicFourierGridFilterPlan,
+        PeriodicIncompressibleRateComponents,
+        PeriodicIncompressibleStage,
+        PeriodicLESStepRestriction,
+        PreparedPeriodicAlgebraicLES,
+        PreparedPeriodicFourierGridFilter,
+    )
+    from ._phase_change import (
+        AntoineSaturationPressurePlan,
+        SaturationPressureEvaluation,
+    )
+    from ._phase_field import (
+        AbstractBulkFreeEnergy,
+        BinaryFreeEnergyEvaluation,
+        BulkPotentialDomain,
+        CallableBulkFreeEnergy,
+        double_well_chemical_derivative,
+        double_well_free_energy_density,
+        DoubleWellFreeEnergy,
+        evaluate_binary_free_energy,
+        PolynomialBulkFreeEnergy,
+    )
+    from ._plasma_chemistry import (
+        PlasmaChemicalRateEvaluation,
+        PreparedPlasmaMechanism,
+        ReactionTemperatureSpec,
+    )
+    from ._plasma_transport import (
+        AmbipolarPlasmaTransportPlan,
+        PlasmaTransportEvaluation,
+    )
+    from ._radiation_interactions import (
+        compton_electron_cosine,
+        ComptonKinematics,
+        doppler_scattered_energy,
+        RadiationCrossSectionEvaluation,
+        RadiationCrossSectionLibrary,
+        RadiationInteractionKind,
+        sample_compton_profile_momentum,
+        sample_sauter_cosine,
+    )
+    from ._radiation_material import (
+        radiation_means,
+        RadiationCoefficientEvaluation,
+        RadiationCoefficientRole,
+        RadiationCoefficientTable,
+        RadiationMatterExchangePlan,
+        RadiationMatterExchangeResult,
+        RadiationMeanEvaluation,
+        RadiationScaleContract,
+        SpectralFrequencyGrid,
+    )
+    from ._radiation_moments import (
+        MultigroupM1RadiationSystem,
+    )
+    from ._radiative import (
+        RadiativeCoolingBoundsPolicy,
+        TabulatedCoolingCurve,
+        TabulatedCoolingEvaluation,
+    )
+    from ._randomized_compile import (
+        analyze_randomized_compilation,
+        compile_pde_randomized_term,
+        CompiledRandomizedPDETerm,
+        RandomizedCompilationReport,
+        RandomizedDifferentialMethod,
+        RandomizedDifferentialPlan,
+        RandomizedExecutionBackend,
+        RandomizedNodeCoupling,
+        RandomizedPopulation,
+    )
+    from ._reactive_cfd_dem import (
+        ParticleContinuumExchangeEvaluation,
+        ParticleContinuumExchangePlan,
+        ReactiveCFDDEMCouplingPlan,
+    )
+    from ._reactive_monolithic import (
+        CellwiseReactiveFluidImplicitPlan,
+        ReactiveFluidImplicitState,
+        ReactiveMonolithicCouplingPlan,
+        ReactiveMonolithicResidualEvaluation,
+        ReactiveMonolithicRouteCertificate,
+        ReactiveMonolithicStage,
+        ReactiveMonolithicUnknown,
+    )
+    from ._relativistic_angular_radiation import (
+        DiscreteOrdinatesRadiationPlan,
+        GRRadiationAngularClosureEvaluation,
+        MonteCarloRadiationClosureEvaluation,
+        MonteCarloRadiationClosurePlan,
+        VariableEddingtonTensorClosurePlan,
+    )
+    from ._relativistic_eos import (
+        AbstractRelativisticEOS,
+        GammaLawEOS,
+        HybridColdThermalEOS,
+        PiecewisePolytropicEOS,
+        RELATIVISTIC_EOS_ACAUSAL,
+        RELATIVISTIC_EOS_COLD_CONSTRAINT_MISMATCH,
+        RELATIVISTIC_EOS_COMPOSITION_ABOVE_DOMAIN,
+        RELATIVISTIC_EOS_COMPOSITION_BELOW_DOMAIN,
+        RELATIVISTIC_EOS_DENSITY_ABOVE_DOMAIN,
+        RELATIVISTIC_EOS_DENSITY_BELOW_DOMAIN,
+        RELATIVISTIC_EOS_NONCONVERGED,
+        RELATIVISTIC_EOS_NONFINITE,
+        relativistic_eos_status_name,
+        RELATIVISTIC_EOS_SUCCESS,
+        RELATIVISTIC_EOS_THERMAL_ABOVE_DOMAIN,
+        RELATIVISTIC_EOS_THERMAL_BELOW_DOMAIN,
+        RELATIVISTIC_EOS_UNSTABLE,
+        RelativisticEOSDomainEvidence,
+        RelativisticEOSState,
+        RelativisticEOSStatus,
+        RelativisticEOSTableEvidence,
+        TabulatedFiniteTemperatureEOS,
+    )
+    from ._relativistic_hydrodynamics import (
+        RelativisticFluidEvaluation,
+        RelativisticHydrodynamicsLayout,
+        SRHDSystem,
+        valencia_geometric_source_from_projection,
+        ValenciaGeometrySource,
+        ValenciaGRHDSystem,
+    )
+    from ._relativistic_mhd import (
+        IdealValenciaGRMHDSystem,
+        ValenciaHLLEBounds,
+        ValenciaHLLEFlux,
+        ValenciaPrimitiveRecovery,
+        ValenciaRecoveryStatus,
+    )
+    from ._relativistic_multigroup_radiation import (
+        GRMultigroupM1ClosureEvaluation,
+        GRMultigroupM1RadiationSystem,
+        GRMultigroupRadiationInteractionPlan,
+        GRMultigroupRadiationMatterExchange,
+    )
+    from ._relativistic_neutrino import (
+        GRNeutrinoInteractionPlan,
+        GRNeutrinoM1ClosureEvaluation,
+        GRNeutrinoM1System,
+        GRNeutrinoMatterExchange,
+        NeutrinoSpecies,
+    )
+    from ._relativistic_radiation import (
+        GRGrayM1ClosureEvaluation,
+        GRGrayM1RadiationSystem,
+    )
+    from ._relativistic_radiation_interaction import (
+        AbstractGRGrayOpacityPlan,
+        CompositeGRGrayOpacityPlan,
+        ConstantGRGrayOpacityPlan,
+        GRGrayOpacityEvaluation,
+        GRGrayRadiationInteractionPlan,
+        GRRadiationMatterExchange,
+    )
+    from ._resistive_grmhd import (
+        RelativisticOhmEvaluation,
+        ResistiveGRMHDOhmicClosure,
+    )
+    from ._semidiscrete import (
+        BoundaryLift,
+        compile_semidiscrete_dae,
+        compile_semidiscrete_pde,
+        CompiledDiscreteDynamics,
+        CompiledDiscreteResidual,
+        DiscreteStateLayout,
+        ResolvedSemidiscreteMethod,
+        SemidiscreteCompilationMethod,
+        SemidiscreteDAEStructuralReport,
+    )
+    from ._serialize import (
+        pde_ir_from_dict,
+        pde_ir_from_json,
+        pde_ir_hash,
+        pde_ir_to_dict,
+        pde_ir_to_json,
+    )
+    from ._shallow_water_sources import (
+        ShallowWaterCoriolisSource,
+    )
+    from ._solid_liquid_phase_change import (
+        BinaryAlloyEnthalpyState,
+        BinaryAlloyPhaseDiagramPlan,
+        SolidLiquidEnthalpyPlan,
+        SolidLiquidEnthalpyState,
+        SolidLiquidPhaseStatus,
+    )
+    from ._spalart_allmaras import (
+        SpalartAllmarasArguments,
+        SpalartAllmarasCompressibleSystem,
+        SpalartAllmarasEvaluation,
+        SpalartAllmarasNegativePlan,
+    )
+    from ._sparse_flip import (
+        compile_sparse_flip_problem,
+        CompiledSparseFLIPProblem,
+        SparseFLIPDiagnostics,
+        SparseFLIPRuntimeState,
+        SparseFLIPStepResult,
+    )
+    from ._spectral_compile import (
+        compile_spectral_pde,
+        CompiledSpectralDynamics,
+        SpectralStateLayout,
+    )
+    from ._spectral_residual import (
+        CaseGroupedSpectralResidual,
+        compile_spectral_residual,
+        CompiledSpectralResidual,
+        SpectralConditionHandling,
+        SpectralResidualCompilationReport,
+        SpectralResidualDataLayout,
+        SpectralResidualScope,
+    )
+    from ._sst import (
+        SSTEvaluation,
+        SSTTurbulencePlan,
+    )
+    from ._stencil_compile import (
+        compile_stencil_dynamics,
+        CompiledStencilDynamics,
+        StencilStateLayout,
+    )
+    from ._superconducting_material import (
+        SuperconductingMaterialEvaluation,
+        SuperconductingMaterialLawPlan,
+    )
+    from ._surface_chemistry import (
+        GasSurfaceChemicalEvaluation,
+        GasSurfaceReactionSpec,
+        PreparedGasSurfaceMechanism,
+        SurfaceChemicalState,
+        SurfaceSpeciesSchema,
+    )
+    from ._thermal_modes import (
+        ThermalModeEvaluation,
+        ThermalModeSchema,
+        ThermalModeSpec,
+        ThermalModeTemperatureResult,
+    )
+    from ._thermodynamics import (
+        AbstractKineticThermodynamicClosure,
+        BinaryPhaseThermodynamicClosure,
+        BinaryThermodynamicLocalFields,
+        BinaryThermodynamicParameters,
+        ThermodynamicForceRepresentation,
+    )
+    from ._tokens import (
+        pad_pde_tokens,
+        PDE_OPERATOR_VOCABULARY,
+        PDE_TOKEN_ATTRIBUTES,
+        PDE_TOKEN_KINDS,
+        PDETokenBatch,
+        stack_pde_tokens,
+        tokenize_pde_ir,
+    )
+    from ._transport_closures import (
+        AbstractTransportClosure,
+        ConstantTransport,
+        PrandtlTransport,
+        SutherlandTransport,
+        TransportProperties,
+    )
+    from ._unstructured_les import (
+        PreparedUnstructuredLowMachLES,
+        UnstructuredLowMachLESConservationEvidence,
+        UnstructuredLowMachLESFluxLedger,
+        UnstructuredLowMachLESPlan,
+        UnstructuredLowMachLESRateResult,
+        UnstructuredLowMachLESState,
+    )
+    from ._validate import (
+        infer_expression_type,
+        PDEValueType,
+        validate_pde_ir,
+    )
+    from ._variational import (
+        BoundaryLoadAction,
+        coefficient,
+        DiffusionAction,
+        MassAction,
+        SourceAction,
+        TensorDiffusionAction,
+        VariationalCoefficient,
+    )
+    from ._vof_phase_change import (
+        AbstractVOFMassTransferPlan,
+        ConservativePhaseTransferEvaluation,
+        InterfaceHeatResistancePhaseChangePlan,
+        KunzCavitationPlan,
+        MerkleCavitationPlan,
+        SchnerrSauerCavitationPlan,
+        StefanHeatFluxPhaseChangePlan,
+        TemperatureRelaxationPhaseChangePlan,
+        TwoMaterialVOFPhaseChangePlan,
+        VOFPhaseChangeDifferentialSource,
+        VOFPhaseChangeStepResult,
+    )
+    from ._vortex_particles import (
+        compile_vortex_particle_flow,
+        CompiledVortexParticleFlow,
+        VortexParticleFlowProblem,
+    )
+    from ._weakly_compressible import (
+        compile_weakly_compressible_sph_problem,
+        CompiledWeaklyCompressibleSPHProblem,
+        WeaklyCompressibleFluidProblemIR,
+    )
+    from .advanced import (
+        GLMIdealMHDSystem,
+    )
+    from .fem import (
+        FiniteElementMassPolicy,
+    )
+    from .trefftz import (
+        AbstractTrefftzBasis,
+        audit_trial_space,
+        biharmonic_normal_derivative_functional,
+        biharmonic_robin_functional,
+        biharmonic_value_functional,
+        BiharmonicPotential2D,
+        ComplexAffineNormalization,
+        ConstrainedHolomorphicPotential,
+        ConstrainedMeromorphicPotential,
+        DiskHolomorphicTraceLift,
+        DiskHolomorphicTracePlan,
+        DomainHolomorphicCertificate,
+        HarmonicPolynomialBasis,
+        HarmonicPotential2D,
+        HelmholtzPlaneWaveBasis,
+        holomorphic_period_functional,
+        HolomorphicAffineCoefficientMap,
+        HolomorphicBranchBundle,
+        HolomorphicConstraintComponent,
+        HolomorphicConstraintLiftEvidence,
+        HolomorphicConstraintOperatorEvidence,
+        HolomorphicConstraintOperatorPlan,
+        HolomorphicConstraintProjector,
+        HolomorphicContourFunctional,
+        HolomorphicFactorGaugeReport,
+        HolomorphicFactorizationEvidence,
+        HolomorphicJet,
+        HolomorphicJetFunctionalTerm,
+        HolomorphicLinearFrame,
+        HolomorphicLinearFrameCertificate,
+        HolomorphicLinearFunctional,
+        HolomorphicMapCertificate,
+        HolomorphicMultiIndexSet,
+        HolomorphicMultiJet,
+        HolomorphicParameterCoverage,
+        HolomorphicPointFunctional,
+        HolomorphicPolynomialFrame,
+        HolomorphicPolynomialPotential,
+        HolomorphicPotentialProvider,
+        HolomorphicProductPotential,
+        HolomorphicProjectionState,
+        HolomorphicTraceCertificate,
+        HolomorphicTraceEvidenceKind,
+        LinearMonogenicField,
+        LinearTrefftzField,
+        MeromorphicLinearFrame,
+        MeromorphicLinearFrameCertificate,
+        MeromorphicMapCertificate,
+        MeromorphicVariableProjectionPlan,
+        MonogenicPolynomialBasis,
+        MultiIndex,
+        MultivariableHolomorphicPotentialProvider,
+        plane_elasticity_displacement_functional,
+        plane_elasticity_stress_functional,
+        plane_elasticity_traction_functional,
+        PlaneElasticityPotential2D,
+        PlaneIsotropicMaterial,
+        PluriharmonicCertificate,
+        PluriharmonicPotential,
+        PoleClearanceReport,
+        PoleSet,
+        PolyharmonicAlmansiBasis,
+        PreparedHolomorphicConstraintOperator,
+        ProjectedHolomorphicPotential,
+        sample_unit_directions,
+        SimilarityNormalization,
+        TrainablePoleSet,
+        TrefftzResourceBudget,
+        TrefftzResourceEvidence,
+        trial_space_certificate,
+        TrialSpaceAuditReport,
+        TrialSpaceCertificate,
+        TrialValidityRegion,
+    )
+    from .vem import (
+        compile_virtual_element_problem,
+        CompiledVirtualElementProblem,
+        evaluate_virtual_element_reconstruction,
+        evaluate_virtual_element_trace,
+        prepare_virtual_element_field_reconstruction,
+        project_virtual_element_field,
+        VirtualElementAction,
+        VirtualElementExecutionContext,
+        VirtualElementExecutionPolicy,
+        VirtualElementForm,
+        VirtualElementReconstruction,
+        VirtualElementReconstructionChannel,
+        VirtualElementRobinAction,
+    )
+
+
 def __getattr__(name: str) -> Any:
+    owner = _SYMBOL_MODULES.get(name)
+    if owner is not None:
+        module_name, symbol = owner
+        module = import_module(module_name, __package__)
+        value = module if symbol is None else getattr(module, symbol)
+        globals()[name] = value
+        return value
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -1801,22 +3548,33 @@ __all__ = [
     "ReactiveMonolithicRouteCertificate",
     "ReactiveMonolithicStage",
     "ReactiveMonolithicUnknown",
-]
-
-__all__ += [
-    name
-    for name in (
-        *_discrete_velocity_all,
-        *_lattice_boltzmann_color_gradient_all,
-        *_lattice_boltzmann_free_energy_all,
-        *_lattice_boltzmann_profiles_all,
-        *_lattice_boltzmann_species_all,
-        *_lattice_boltzmann_thermal_all,
-    )
-    if name not in __all__
-]
-
-__all__ += [
+    "AbstractConservativeDVMSource",
+    "ConservativeDVMSourceEvidence",
+    "ConservativeRelaxationDVMSource",
+    "DiscreteVelocityAdvectionSystem",
+    "DiscreteVelocitySourceComposition",
+    "ColorGradientLatticeBoltzmannProblem",
+    "CompiledColorGradientLatticeBoltzmannProblem",
+    "compile_color_gradient_lattice_boltzmann_problem",
+    "CompiledFreeEnergyLatticeBoltzmannProblem",
+    "FreeEnergyLatticeBoltzmannProblem",
+    "compile_free_energy_lattice_boltzmann_problem",
+    "ParabolicVelocityParameters",
+    "ParabolicVelocityProfilePlan",
+    "WomersleyVelocityParameters",
+    "WomersleyVelocityProfilePlan",
+    "CompiledSpeciesLatticeBoltzmannProblem",
+    "SpeciesLatticeBoltzmannProblemIR",
+    "SpeciesLatticeBoltzmannTransportResult",
+    "SpeciesPopulationStream",
+    "advance_species_lattice_boltzmann",
+    "compile_species_lattice_boltzmann_problem",
+    "CompiledThermalLatticeBoltzmannProblem",
+    "ThermalLatticeBoltzmannProblemIR",
+    "ThermalLatticeBoltzmannTransportResult",
+    "ThermalPopulationStream",
+    "advance_thermal_lattice_boltzmann",
+    "compile_thermal_lattice_boltzmann_problem",
     "AtomicHybridUpdateEvidence",
     "AtomicHybridUpdateResult",
     "CommonFVKineticFluxEvidence",
@@ -1838,9 +3596,6 @@ __all__ += [
     "SmoothCompressibleRealizabilityEvidence",
     "smooth_compressible_d2v17_method",
     "smooth_compressible_d2v37_off_lattice_method",
-]
-
-__all__ += [
     "AbstractBulkFreeEnergy",
     "BinaryFreeEnergyEvaluation",
     "BulkPotentialDomain",
@@ -1855,17 +3610,12 @@ __all__ += [
     "BinaryThermodynamicLocalFields",
     "BinaryThermodynamicParameters",
     "ThermodynamicForceRepresentation",
-]
-
-__all__ += [
     "CompiledVortexParticleFlow",
     "VortexParticleFlowProblem",
     "compile_vortex_particle_flow",
-]
-
-__all__ += ["IncidentWavePlan", "WaveComponent", "WaveSample"]
-
-__all__ += [
+    "IncidentWavePlan",
+    "WaveComponent",
+    "WaveSample",
     "AVOGADRO_CONSTANT",
     "AblatingMaterialAdvance",
     "AblatingMaterialEvaluation",
@@ -1896,9 +3646,6 @@ __all__ += [
     "SSTTurbulencePlan",
     "SurfaceChemicalState",
     "SurfaceSpeciesSchema",
-]
-
-__all__ += [
     "AbstractRelativisticEOS",
     "AbstractGRGrayOpacityPlan",
     "CompositeGRGrayOpacityPlan",

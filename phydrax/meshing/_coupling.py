@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import IntEnum, StrEnum
-from typing import Any
+from fractions import Fraction
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,18 +21,118 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
     CellLocationStatus,
+    CellMesh,
     PreparedSimplicialCellLocator,
     SimplicialLocationPolicy,
 )
+from ..discretization._field_query import PreparedFieldQuery
+from ..discretization._periodic_topology import _lifted_loops
 from ..discretization.fem import (
     discontinuous_element,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     PreparedFiniteElementCellMap,
 )
+from ..ein import contract
+from ..typing import parse
 from ._assembly import MeshPart
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
+
+
+OversetValueAction: TypeAlias = Literal[
+    "invariant", "polar-vector", "contravariant-vector"
+]
+
+
+def _encoded_image_isometry(matrix: np.ndarray, /) -> bool:
+    """Prove Euclidean Gram identity of the original binary64 coefficients."""
+    dimension = matrix.shape[0]
+    coefficients = tuple(tuple(Fraction(float(value)) for value in row) for row in matrix)
+    return all(
+        sum(
+            (
+                coefficients[row][first] * coefficients[row][second]
+                for row in range(dimension)
+            ),
+            Fraction(0),
+        )
+        == Fraction(1 if first == second else 0)
+        for first in range(dimension)
+        for second in range(dimension)
+    )
+
+
+def _query_image_action(
+    query: PreparedFieldQuery,
+    target_points: Array,
+    dimension: int,
+    rotation: ArrayLike | None,
+    translation: ArrayLike | None,
+    source_image_rotation: ArrayLike | None,
+    target_image_rotation: ArrayLike | None,
+    action: OversetValueAction,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    if (rotation is None) != (translation is None):
+        raise ValueError("Overset isometries require both rotation and translation.")
+    images = tuple(
+        None if image is None else np.asarray(image, dtype=np.float64)
+        for image in (source_image_rotation, target_image_rotation)
+    )
+    for image in images:
+        if image is not None:
+            if image.shape != (dimension, dimension) or not np.all(np.isfinite(image)):
+                raise ValueError(
+                    "Original source image maps must retain finite ambient coordinate axes."
+                )
+            if action == "polar-vector" and not _encoded_image_isometry(image):
+                raise ValueError(
+                    "Polar-vector actions require exact encoded source-image isometries; use contravariant-vector for an affine map."
+                )
+    matrix, offset = None, None
+    points = np.asarray(query.points)
+    target_sites = np.asarray(target_points)
+    if rotation is not None and translation is not None:
+        matrix, offset = (
+            np.asarray(rotation, dtype=np.float64),
+            np.asarray(translation, dtype=np.float64),
+        )
+        if (
+            matrix.shape != (dimension, dimension)
+            or offset.shape != (dimension,)
+            or not np.all(np.isfinite(matrix))
+            or not np.all(np.isfinite(offset))
+        ):
+            raise ValueError("Overset transform shape or finite values are invalid.")
+        if not np.allclose(
+            matrix.T @ matrix, np.eye(dimension, dtype=np.float64), rtol=0, atol=tolerance
+        ):
+            raise ValueError(
+                "Overset transform must satisfy its near-isometry admission premise."
+            )
+        if action == "polar-vector" and not _encoded_image_isometry(matrix):
+            raise ValueError(
+                "Polar-vector actions require an exact encoded isometry; use contravariant-vector for an affine map."
+            )
+        matched = np.allclose(
+            points @ matrix.T + offset, target_sites, rtol=0, atol=tolerance
+        )
+    else:
+        matched = np.array_equal(points, target_sites)
+    if matrix is not None or any(image is not None for image in images):
+        if any(query.derivative):
+            raise ValueError(
+                "Overset images require value queries, not derivative components."
+            )
+        if action != "invariant" and query.value_shape != (dimension,):
+            raise ValueError(f"Overset images require ambient {action} value queries.")
+    if not matched:
+        raise ValueError(
+            "Field-query points must follow the target vertex scope order under its image map."
+        )
+    return matrix, offset, images[0], images[1]
 
 
 class MeshCouplingKind(StrEnum):
@@ -57,6 +158,7 @@ class CouplingSearchStatus(IntEnum):
     AMBIGUOUS = 3
     NONFINITE = 4
     UNRESOLVED = 5
+    RESOURCE_EXCEEDED = 6
 
 
 class CouplingSearchEvidence(StrictModule, NonTrainableState):
@@ -311,11 +413,181 @@ class ConformalCoupling(_PointPairCoupling):
         )
 
 
+def _paired_rows(
+    source_scope: MeshingScope,
+    target_scope: MeshingScope,
+    source_ids: ArrayLike | None,
+    /,
+) -> np.ndarray:
+    """Source-scope rows paired with target-scope entities, in target order."""
+
+    ids = np.asarray(source_scope.entity_ids)
+    paired = ids if source_ids is None else np.asarray(source_ids)
+    if paired.shape != np.asarray(target_scope.entity_ids).shape or not np.issubdtype(
+        paired.dtype, np.integer
+    ):
+        raise ValueError("One integer source entity ID is required per target entity.")
+    if not np.array_equal(np.sort(paired), ids):
+        raise ValueError("Periodic entity pairs must be a complete bijection.")
+    return np.searchsorted(ids, paired).astype(np.int32)
+
+
+def _cell_mesh(part: MeshPart, /) -> CellMesh:
+    carrier = part.carrier
+    if not isinstance(carrier, CellMeshingResult):
+        raise TypeError("Periodic entity pairs require certified cell mesh parts.")
+    return carrier.mesh
+
+
+def _lifted_rows(mesh: CellMesh, scope: MeshingScope, /) -> np.ndarray:
+    identifiers = np.asarray(mesh.entity_set(scope.entity_dimension).entity_ids)
+    order = np.argsort(identifiers, kind="stable")
+    return order[np.searchsorted(identifiers[order], np.asarray(scope.entity_ids))]
+
+
+def _oriented_corners(mesh: CellMesh, dimension: int, /) -> dict[int, np.ndarray]:
+    """Oriented corner loop of every lifted edge or face, by lifted row."""
+
+    return {
+        int(row): loop
+        for rows, loops in _lifted_loops(mesh, dimension)
+        for row, loop in zip(rows, loops, strict=True)
+    }
+
+
+def _loop_orientations(
+    mapped: np.ndarray, target: np.ndarray, tolerance: float, /
+) -> np.ndarray:
+    """Orientation witnesses of mapped source loops against target loops."""
+
+    arity = target.shape[1]
+    distances = np.linalg.norm(target[:, :, None, :] - mapped[:, None, :, :], axis=-1)
+    matched = np.argmin(distances, axis=2)
+    if np.any(np.min(distances, axis=2) > tolerance) or np.any(
+        np.sort(matched, axis=1) != np.arange(arity)
+    ):
+        raise ValueError("Periodic entity corners do not match the transform.")
+    if arity == 2:
+        return np.where(matched[:, 0] == 0, 1, -1).astype(np.int32)
+    step = (np.roll(matched, -1, axis=1) - matched) % arity
+    forward = np.all(step == 1, axis=1)
+    backward = np.all(step == arity - 1, axis=1)
+    if not np.all(forward | backward):
+        raise ValueError("Periodic entity corners are not an oriented loop image.")
+    return np.where(forward, 1, -1).astype(np.int32)
+
+
+def _require_distinct_quotient_orbits(
+    source: MeshPart,
+    target: MeshPart,
+    dimension: int,
+    source_scope: MeshingScope,
+    target_scope: MeshingScope,
+    rows: np.ndarray,
+    /,
+) -> None:
+    """Keep boundary pairing distinct from identifications a quotient already owns."""
+
+    if source.part_id != target.part_id:
+        return
+    mesh = _cell_mesh(source)
+    periodic = mesh.periodic_topology
+    if periodic is None:
+        return
+    orbit = np.asarray(periodic.orbits(dimension)[0])
+    source_rows = _lifted_rows(mesh, source_scope)[rows]
+    target_rows = _lifted_rows(mesh, target_scope)
+    if np.any(orbit[source_rows] == orbit[target_rows]):
+        raise ValueError(
+            "Periodic coupling pairs entities that the quotient topology already "
+            "identifies; boundary-paired coupling cannot re-identify quotient orbits."
+        )
+
+
+def _entity_pairs(
+    source: MeshPart,
+    target: MeshPart,
+    source_scope: MeshingScope,
+    target_scope: MeshingScope,
+    source_ids: ArrayLike | None,
+    matrix: np.ndarray,
+    offset: np.ndarray,
+    tolerance: float,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pair oriented entities through the isometry and return their witnesses."""
+
+    dimension = source_scope.entity_dimension
+    if dimension == 0:
+        rows, left, right = _point_pairs(
+            source, target, source_scope, target_scope, source_ids
+        )
+        if (
+            not np.all(np.isfinite(left))
+            or not np.all(np.isfinite(right))
+            or np.any(
+                np.linalg.norm(left @ matrix.T + offset - right, axis=-1) > tolerance
+            )
+        ):
+            raise ValueError("Periodic point pairs do not match the transform.")
+        if isinstance(source.carrier, CellMeshingResult):
+            _require_distinct_quotient_orbits(
+                source, target, 0, source_scope, target_scope, rows
+            )
+        return rows, np.ones(rows.shape, dtype=np.int32)
+    _endpoints(source, target, source_scope, target_scope)
+    rows = _paired_rows(source_scope, target_scope, source_ids)
+    source_mesh, target_mesh = _cell_mesh(source), _cell_mesh(target)
+    if dimension >= min(
+        source_mesh.topological_dimension, target_mesh.topological_dimension
+    ):
+        raise ValueError(
+            "Periodic coupling pairs vertices, edges or faces below the cell dimension."
+        )
+    source_loops = _oriented_corners(source_mesh, dimension)
+    target_loops = _oriented_corners(target_mesh, dimension)
+    source_corners = [
+        source_loops[int(row)] for row in _lifted_rows(source_mesh, source_scope)[rows]
+    ]
+    target_corners = [
+        target_loops[int(row)] for row in _lifted_rows(target_mesh, target_scope)
+    ]
+    arities = np.asarray([loop.size for loop in target_corners])
+    if np.any(arities != [loop.size for loop in source_corners]):
+        raise ValueError("Periodic entity pairs must have equal corner counts.")
+    source_points = np.asarray(source_mesh.coordinates, dtype=np.float64)
+    target_points = np.asarray(target_mesh.coordinates, dtype=np.float64)
+    orientations = np.empty(rows.shape, dtype=np.int32)
+    for arity in np.unique(arities):
+        selected = np.flatnonzero(arities == arity)
+        mapped = (
+            source_points[np.stack([source_corners[i] for i in selected])] @ matrix.T
+            + offset
+        )
+        orientations[selected] = _loop_orientations(
+            mapped,
+            target_points[np.stack([target_corners[i] for i in selected])],
+            tolerance,
+        )
+    _require_distinct_quotient_orbits(
+        source, target, dimension, source_scope, target_scope, rows
+    )
+    return rows, orientations
+
+
 class PeriodicCoupling(_PointPairCoupling):
-    """Point bijection under an explicitly checked Euclidean isometry."""
+    """Boundary-paired entity bijection under an explicitly checked isometry.
+
+    Pairs are explicit entity orbits between two boundary-paired carriers:
+    ``source_rows`` names the source-scope entity of each target entity and
+    ``orientations`` the ``±1`` witness of its oriented corner loop under the
+    isometry (always ``+1`` for points). A quotient mesh already identifies its
+    seam entities, so pairs inside one quotient orbit are refused.
+    """
 
     rotation: Array
     translation: Array
+    orientations: Array
     tolerance: float = eqx.field(static=True)
 
     def __init__(
@@ -332,9 +604,6 @@ class PeriodicCoupling(_PointPairCoupling):
         tolerance: float = 1e-10,
     ) -> None:
         tol = _tolerance(tolerance)
-        rows, left, right = _point_pairs(
-            source, target, source_scope, target_scope, source_ids
-        )
         matrix, offset = (
             np.asarray(rotation, dtype=np.float64),
             np.asarray(translation, dtype=np.float64),
@@ -349,28 +618,44 @@ class PeriodicCoupling(_PointPairCoupling):
             raise ValueError("Periodic transform shape or finite values are invalid.")
         if not np.allclose(matrix.T @ matrix, np.eye(dimension), rtol=0, atol=tol):
             raise ValueError("Periodic transform must be an isometry.")
-        if (
-            not np.all(np.isfinite(left))
-            or not np.all(np.isfinite(right))
-            or np.any(np.linalg.norm(left @ matrix.T + offset - right, axis=-1) > tol)
-        ):
-            raise ValueError("Periodic point pairs do not match the transform.")
+        rows, orientations = _entity_pairs(
+            source, target, source_scope, target_scope, source_ids, matrix, offset, tol
+        )
         self.source_scope, self.target_scope = source_scope, target_scope
         self.source_rows = jnp.asarray(rows)
         self.rotation, self.translation = jnp.asarray(matrix), jnp.asarray(offset)
+        self.orientations = jnp.asarray(orientations)
         self.kind = MeshCouplingKind.PERIODIC
         self.tolerance = tol
-        self.coupling_id = canonical_fingerprint(
-            {
-                "kind": self.kind.value,
-                "source": source_scope.scope_id,
-                "target": target_scope.scope_id,
-                "rows": array_tree_fingerprint(rows),
-                "rotation": array_tree_fingerprint(matrix),
-                "translation": array_tree_fingerprint(offset),
-                "tolerance": tol,
-            }
-        )
+        identity = {
+            "kind": self.kind.value,
+            "source": source_scope.scope_id,
+            "target": target_scope.scope_id,
+            "rows": array_tree_fingerprint(rows),
+            "rotation": array_tree_fingerprint(matrix),
+            "translation": array_tree_fingerprint(offset),
+            "tolerance": tol,
+        }
+        if source_scope.entity_dimension > 0:
+            identity["orientations"] = array_tree_fingerprint(orientations)
+        self.coupling_id = canonical_fingerprint(identity)
+
+    def transfer_oriented(self, source_values: ArrayLike, /) -> Array:
+        """Transfer oriented entity values (circulations, fluxes) with witnesses."""
+
+        values = self.transfer(source_values)
+        signs = self.orientations.astype(values.dtype)
+        return values * signs.reshape(signs.shape + (1,) * (values.ndim - 1))
+
+    def transfer_tensors(self, source_values: ArrayLike, /) -> Array:
+        """Transfer rank-two tensor values as ``R A R^T``."""
+
+        values = self.transfer(source_values)
+        dimension = self.rotation.shape[0]
+        if values.shape[-2:] != (dimension, dimension):
+            raise ValueError("Periodic tensors must be square in the ambient dimension.")
+        rotation = self.rotation.astype(values.dtype)
+        return contract("ij,...jk,lk->...il", rotation, values, rotation, backend="jax")
 
     def transfer_vectors(self, source_values: ArrayLike, /) -> Array:
         values = self.transfer(source_values)
@@ -430,6 +715,7 @@ class ContactCoupling(_PointPairCoupling):
     reference_gap: Array
     search_evidence: CouplingSearchEvidence | None
     clearance: float = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -474,6 +760,7 @@ class ContactCoupling(_PointPairCoupling):
         self.normals, self.reference_gap = jnp.asarray(normal), jnp.asarray(gap)
         self.search_evidence = search_evidence
         self.clearance = distance
+        self.tolerance = tol
         self.kind = MeshCouplingKind.CONTACT
         self.coupling_id = canonical_fingerprint(
             {
@@ -484,6 +771,7 @@ class ContactCoupling(_PointPairCoupling):
                 "normals": array_tree_fingerprint(normal),
                 "gap": array_tree_fingerprint(gap),
                 "clearance": distance,
+                "tolerance": tol,
                 "search": None
                 if search_evidence is None
                 else search_evidence.evidence_id,
@@ -551,21 +839,30 @@ class ContactCoupling(_PointPairCoupling):
 
 
 class OversetCoupling(MeshCoupling):
-    """Positive partition-of-unity donor stencil, with explicit receptor/hole roles.
+    """Explicit vertex stencils or an owning canonical field-query route.
 
-    This is interpolation, not a conservative overlap remap (``conservative``
-    is always false). Donor rows contain global IDs from source_scope; -1
-    padding has exactly zero weight. Stencils are explicit or found by
-    :meth:`search`. Multiple donor-part overlays must have disjoint receptors.
+    Query mode scopes source support *cells*, not coefficients: coefficients
+    retain the query's full true field layout, including signed/Piola weights.
+    An explicit query-mode map binds donor query points to target points.
+    ``value_action`` declares invariant values, polar vectors under exact encoded
+    source isometries, or contravariant components under authored affine maps.
+    Vector transposes reverse the declared linear action before query transpose.
+    Neither mode is a conservative overlap remap.
     """
 
     donor_ids: Array
-    donor_weights: Array
-    donor_rows: Array
+    donor_weights: Array | None
+    donor_rows: Array | None
+    field_query: PreparedFieldQuery | None
+    rotation: Array | None
+    translation: Array | None
+    source_image_rotation: Array | None
+    target_image_rotation: Array | None
     hole_scope: MeshingScope | None
     search_evidence: CouplingSearchEvidence | None
     tolerance: float = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
+    value_action: OversetValueAction = eqx.field(static=True)
 
     def __init__(
         self,
@@ -573,14 +870,54 @@ class OversetCoupling(MeshCoupling):
         target: MeshPart,
         source_scope: MeshingScope,
         target_scope: MeshingScope,
-        donor_ids: ArrayLike,
-        donor_weights: ArrayLike,
+        donor_ids: ArrayLike | None = None,
+        donor_weights: ArrayLike | None = None,
         /,
         *,
         hole_scope: MeshingScope | None = None,
         tolerance: float = 1e-10,
         search_evidence: CouplingSearchEvidence | None = None,
+        field_query: PreparedFieldQuery | None = None,
+        rotation: ArrayLike | None = None,
+        translation: ArrayLike | None = None,
+        value_action: OversetValueAction = "polar-vector",
+        source_image_rotation: ArrayLike | None = None,
+        target_image_rotation: ArrayLike | None = None,
     ) -> None:
+        if field_query is not None:
+            if (
+                donor_ids is not None
+                or donor_weights is not None
+                or search_evidence is not None
+            ):
+                raise ValueError(
+                    "Field queries and explicit vertex donor stencils are distinct modes."
+                )
+            self._bind_field_query(
+                source,
+                target,
+                source_scope,
+                target_scope,
+                field_query,
+                hole_scope,
+                rotation,
+                translation,
+                tolerance,
+                value_action,
+                source_image_rotation,
+                target_image_rotation,
+            )
+            return
+        if any(
+            image is not None
+            for image in (
+                rotation,
+                translation,
+                source_image_rotation,
+                target_image_rotation,
+            )
+        ):
+            raise ValueError("Overset isometries require an actual field-query route.")
         _endpoints(source, target, source_scope, target_scope)
         tol = _tolerance(tolerance)
         if tol >= 1:
@@ -659,6 +996,10 @@ class OversetCoupling(MeshCoupling):
             jnp.asarray(rows),
         )
         self.hole_scope = hole_scope
+        self.field_query = None
+        self.rotation, self.translation = None, None
+        self.source_image_rotation, self.target_image_rotation = None, None
+        self.value_action = parse(value_action, OversetValueAction, "value_action")
         self.search_evidence = search_evidence
         self.tolerance = tol
         self.conservative = False
@@ -677,6 +1018,208 @@ class OversetCoupling(MeshCoupling):
                 else search_evidence.evidence_id,
             }
         )
+
+    @classmethod
+    def from_field_query(
+        cls,
+        source: MeshPart,
+        target: MeshPart,
+        source_scope: MeshingScope,
+        target_scope: MeshingScope,
+        query: PreparedFieldQuery,
+        /,
+        *,
+        hole_scope: MeshingScope | None = None,
+        rotation: ArrayLike | None = None,
+        translation: ArrayLike | None = None,
+        tolerance: float = 1e-10,
+        value_action: OversetValueAction = "polar-vector",
+        source_image_rotation: ArrayLike | None = None,
+        target_image_rotation: ArrayLike | None = None,
+    ) -> OversetCoupling:
+        """Bind actual field evidence and an optional ambient-vector isometry."""
+        return cls(
+            source,
+            target,
+            source_scope,
+            target_scope,
+            field_query=query,
+            hole_scope=hole_scope,
+            rotation=rotation,
+            translation=translation,
+            tolerance=tolerance,
+            value_action=value_action,
+            source_image_rotation=source_image_rotation,
+            target_image_rotation=target_image_rotation,
+        )
+
+    def _bind_field_query(
+        self,
+        source: MeshPart,
+        target: MeshPart,
+        source_scope: MeshingScope,
+        target_scope: MeshingScope,
+        query: PreparedFieldQuery,
+        hole_scope: MeshingScope | None,
+        /,
+        rotation: ArrayLike | None,
+        translation: ArrayLike | None,
+        tolerance: float,
+        value_action: OversetValueAction,
+        source_image_rotation: ArrayLike | None,
+        target_image_rotation: ArrayLike | None,
+    ) -> None:
+        from ..discretization.fem import FiniteElementDiscretization
+
+        if not isinstance(query, PreparedFieldQuery) or not query.complete:
+            raise TypeError("Query-mode overset requires a complete PreparedFieldQuery.")
+        if not isinstance(source, MeshPart) or not isinstance(target, MeshPart):
+            raise TypeError("Coupling endpoints must be MeshPart values.")
+        source.require_scope(source_scope)
+        target.require_scope(target_scope)
+        if (
+            source.coordinate_contract.spatial_id != target.coordinate_contract.spatial_id
+            or source.ambient_dimension != target.ambient_dimension
+            or source_scope.entity_dimension != source.intrinsic_dimension
+            or target_scope.entity_dimension != 0
+            or (source.name == target.name and source.part_id != target.part_id)
+        ):
+            raise ValueError(
+                "Field-query endpoints require source cells and target vertices."
+            )
+        tol = _tolerance(tolerance)
+        action = parse(value_action, OversetValueAction, "value_action")
+        matrix, offset, source_image, target_image = _query_image_action(
+            query,
+            target.point_coordinates(target_scope),
+            source.ambient_dimension,
+            rotation,
+            translation,
+            source_image_rotation,
+            target_image_rotation,
+            action,
+            tol,
+        )
+        kernel = query.reconstruction.kernel
+        owner = getattr(kernel, "discretization", None)
+        locator = getattr(kernel, "locator", None)
+        if (
+            owner is None
+            or locator is None
+            or not isinstance(source.carrier, CellMeshingResult)
+        ):
+            raise ValueError(
+                "Field-query donor must retain its actual mesh and coordinate owner."
+            )
+        mesh = source.carrier.mesh
+        if owner.mesh.mesh_id != mesh.mesh_id:
+            raise ValueError(
+                "Field-query donor is bound to another source mesh revision."
+            )
+        if isinstance(owner, FiniteElementDiscretization):
+            coordinates = source.carrier.geometry.coordinates
+        else:
+            geometry_binding = getattr(kernel, "require_source_geometry", None)
+            if geometry_binding is None:
+                raise TypeError(
+                    "Field-query owner must retain its actual FV coordinate binding."
+                )
+            geometry_binding(source.carrier.geometry)
+            owning_geometry = getattr(owner, "cell_geometry", None)
+            coordinates = (
+                mesh.coordinates
+                if owning_geometry is None
+                else owning_geometry.coordinates
+            )
+        if not np.array_equal(np.asarray(locator.coordinates), np.asarray(coordinates)):
+            raise ValueError(
+                "Field-query donor is bound to another source coordinate revision."
+            )
+        if isinstance(owner, FiniteElementDiscretization):
+            if (
+                owner.mesh.mesh_id != mesh.mesh_id
+                or owner.default_runtime.geometry_layout_id
+                != source.carrier.geometry.geometry_layout_id
+            ):
+                raise ValueError("Field-query donor has a stale FE mesh/geometry layout.")
+            selected = getattr(locator, "selected_cells", None)
+            if selected is None:
+                location = locator.locate(query.points)
+                selected = np.asarray(location.candidate_cells)
+                selected = selected[selected >= 0]
+            support_ids = np.asarray(mesh.block(locator.cell_map.block_name).global_ids)[
+                np.unique(selected)
+            ]
+        else:
+            support_factory = getattr(kernel, "query_support_rows", None)
+            if support_factory is None:
+                raise TypeError(
+                    "Field-query owner must publish its actual reconstruction support cells."
+                )
+            identifiers = np.concatenate(
+                [np.asarray(block.global_ids) for block in mesh.blocks]
+            )
+            support_ids = identifiers[support_factory(query)]
+        if not np.array_equal(
+            np.sort(np.unique(support_ids)), np.asarray(source_scope.entity_ids)
+        ):
+            raise ValueError("Source scope must retain the query's actual support cells.")
+        if hole_scope is not None:
+            target.require_scope(hole_scope)
+            if (
+                hole_scope.entity_dimension != 0
+                or hole_scope.entity_set_id != target_scope.entity_set_id
+                or np.intersect1d(hole_scope.entity_ids, target_scope.entity_ids).size
+            ):
+                raise ValueError("Field-query holes must be disjoint target vertices.")
+        self.source_scope, self.target_scope = source_scope, target_scope
+        self.donor_ids = source_scope.entity_ids[None, :]
+        self.donor_weights, self.donor_rows = None, None
+        self.field_query = query
+        self.rotation = None if matrix is None else jnp.asarray(matrix)
+        self.translation = None if offset is None else jnp.asarray(offset)
+        self.source_image_rotation = (
+            None if source_image is None else jnp.asarray(source_image)
+        )
+        self.target_image_rotation = (
+            None if target_image is None else jnp.asarray(target_image)
+        )
+        self.hole_scope, self.search_evidence = hole_scope, None
+        self.tolerance, self.conservative = tol, False
+        self.value_action = action
+        self.kind = MeshCouplingKind.OVERSET
+        self.coupling_id = canonical_fingerprint(
+            {
+                "kind": "overset-field-query",
+                "source": source_scope.scope_id,
+                "target": target_scope.scope_id,
+                "query": query.query_id,
+                "holes": None if hole_scope is None else hole_scope.scope_id,
+                "rotation": None if matrix is None else array_tree_fingerprint(matrix),
+                "translation": None if offset is None else array_tree_fingerprint(offset),
+                "tolerance": tol,
+                "value_action": action,
+                "source_images": array_tree_fingerprint((source_image, target_image)),
+            }
+        )
+
+    @property
+    def support_cell_scope(self) -> MeshingScope | None:
+        """Actual query-read geometric cell identities, never coefficient DOF IDs.
+
+        The field owner validates this scope against its complete selected-cell
+        and reconstruction-stencil support before query-mode publication.
+        Coefficients retain the independent PreparedFieldQuery field layout.
+        Vertex-stencil mode has no field-query support-cell scope.
+        """
+        return self.source_scope if self.field_query is not None else None
+
+    def require_current(self, source: MeshPart, target: MeshPart, /) -> None:
+        if self.field_query is None:
+            super().require_current(source, target)
+        else:
+            source.require_scope(self.source_scope)
+            target.require_scope(self.target_scope)
 
     @classmethod
     def search(
@@ -718,9 +1261,18 @@ class OversetCoupling(MeshCoupling):
         )
 
     def transfer(self, source_values: ArrayLike, /) -> Array:
+        if self.field_query is not None:
+            values = self.field_query.apply(source_values)
+            if self.rotation is not None and self.value_action != "invariant":
+                values = values @ self.rotation.astype(values.dtype).T
+            return values
         values = jnp.asarray(source_values)
         if values.ndim == 0 or values.shape[0] != self.source_scope.entity_ids.size:
             raise ValueError("Source field must follow source scope entity order.")
+        if self.donor_weights is None or self.donor_rows is None:
+            raise RuntimeError(
+                "An overset stencil route requires prepared donor weights and rows."
+            )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
         )
@@ -728,9 +1280,20 @@ class OversetCoupling(MeshCoupling):
         return jnp.sum(gathered * weights, axis=1)
 
     def transpose(self, target_values: ArrayLike, /) -> Array:
+        if self.field_query is not None:
+            values = jnp.asarray(target_values)
+            if values.shape != self.field_query.output_shape:
+                raise ValueError("Target field must follow the field query output shape.")
+            if self.rotation is not None and self.value_action != "invariant":
+                values = values @ self.rotation.astype(values.dtype)
+            return self.field_query.transpose(values)
         values = jnp.asarray(target_values)
         if values.ndim == 0 or values.shape[0] != self.target_scope.entity_ids.size:
             raise ValueError("Target field must follow target scope entity order.")
+        if self.donor_weights is None or self.donor_rows is None:
+            raise RuntimeError(
+                "An overset stencil route requires prepared donor weights and rows."
+            )
         weights = self.donor_weights.reshape(
             self.donor_weights.shape + (1,) * (values.ndim - 1)
         )
@@ -880,12 +1443,14 @@ def _overset_donor_search(
             inside,
             location == int(CellLocationStatus.OUTSIDE),
             location == int(CellLocationStatus.NONFINITE),
+            location == int(CellLocationStatus.RESOURCE_EXCEEDED),
         ),
         (
             int(CouplingSearchStatus.FOUND),
             int(CouplingSearchStatus.EXCLUDED_DONOR),
             int(CouplingSearchStatus.OUTSIDE),
             int(CouplingSearchStatus.NONFINITE),
+            int(CouplingSearchStatus.RESOURCE_EXCEEDED),
         ),
         int(CouplingSearchStatus.UNRESOLVED),
     )

@@ -124,7 +124,6 @@ def _case(case: str) -> Any:
     action = prepared.strong_operator.mv(vector)
     jax.block_until_ready(action)
     action_seconds = time.perf_counter() - started
-    # ty: ignore[unresolved-attribute]
     dense_error = float(jnp.max(jnp.abs(action - prepared.dense_oracle.matrix @ vector)))
 
     started = time.perf_counter()

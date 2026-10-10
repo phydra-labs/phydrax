@@ -217,6 +217,16 @@ from ._padding import (
     with_zero_out_padding_outputs,
     zero_out_padding,
 )
+from ._partition import (
+    GraphEmptyPartPolicy,
+    GraphPartitionEvidence,
+    GraphPartitionPlan,
+    GraphPartitionResult,
+    GraphPartitionStatus,
+    GraphPartitionWork,
+    partition_graph,
+    WeightedCSRGraph,
+)
 from ._process import (
     AutoregressiveGraphRollout,
     euler_step,
@@ -494,4 +504,12 @@ __all__ = [
     "abelian_maxwell_action",
     "abelian_maxwell_residual",
     "validate_abelian_gauge_system",
+    "GraphEmptyPartPolicy",
+    "GraphPartitionEvidence",
+    "GraphPartitionPlan",
+    "GraphPartitionResult",
+    "GraphPartitionStatus",
+    "GraphPartitionWork",
+    "WeightedCSRGraph",
+    "partition_graph",
 ]

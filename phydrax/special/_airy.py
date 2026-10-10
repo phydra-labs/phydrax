@@ -244,13 +244,17 @@ def _chebyshev(coordinate: Array, coefficients: tuple[float, ...]) -> Array:
 
 
 def _central(x: Array) -> tuple[Array, Array, Array, Array]:
-    x3 = x * x * x
+    # The Maclaurin terms cancel by up to exp(2|x|^1.5 / 3) near x = -5, which
+    # exceeds the float32 budget; float32 inputs accumulate in float64 like the
+    # negative asymptotic route.
+    evaluation_x = x.astype(jnp.float64) if x.dtype == jnp.float32 else x
+    x3 = evaluation_x * evaluation_x * evaluation_x
 
     def body(
         k: int, state: tuple[Array, Array, Array, Array, Array, Array, Array, Array]
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
         f, f_term, g, g_term, df, df_term, dg, dg_term = state
-        three_k = 3.0 * jnp.asarray(k, dtype=x.dtype)
+        three_k = 3.0 * jnp.asarray(k, dtype=evaluation_x.dtype)
         f_term = f_term * x3 / (three_k * (three_k - 1.0))
         g_term = g_term * x3 / (three_k * (three_k + 1.0))
         df_term = df_term * x3 / (three_k * (three_k + 2.0))
@@ -267,21 +271,26 @@ def _central(x: Array) -> tuple[Array, Array, Array, Array]:
         )
 
     initial = (
-        jnp.ones_like(x),
-        jnp.ones_like(x),
-        x,
-        x,
-        0.5 * x * x,
-        0.5 * x * x,
-        jnp.ones_like(x),
-        jnp.ones_like(x),
+        jnp.ones_like(evaluation_x),
+        jnp.ones_like(evaluation_x),
+        evaluation_x,
+        evaluation_x,
+        0.5 * evaluation_x * evaluation_x,
+        0.5 * evaluation_x * evaluation_x,
+        jnp.ones_like(evaluation_x),
+        jnp.ones_like(evaluation_x),
     )
     f, _, g, _, df, _, dg, _ = jax.lax.fori_loop(1, 41, body, initial)
     ai = _AI_ZERO * f + _AIP_ZERO * g
     bi = _SQRT_THREE * (_AI_ZERO * f - _AIP_ZERO * g)
     aip = _AI_ZERO * df + _AIP_ZERO * dg
     bip = _SQRT_THREE * (_AI_ZERO * df - _AIP_ZERO * dg)
-    return ai, aip, bi, bip
+    return (
+        ai.astype(x.dtype),
+        aip.astype(x.dtype),
+        bi.astype(x.dtype),
+        bip.astype(x.dtype),
+    )
 
 
 def _positive_scaled(x: Array) -> tuple[Array, Array, Array, Array]:

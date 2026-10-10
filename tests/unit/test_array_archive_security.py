@@ -9,7 +9,9 @@ import io
 import json
 import os
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import numpy as np
 import pytest
@@ -231,3 +233,50 @@ def test_reader_returns_defensive_c_contiguous_read_only_arrays(tmp_path: Path) 
     assert not restored.flags.writeable
     source[:] = -1.0
     np.testing.assert_array_equal(restored, np.arange(12).reshape((3, 4)))
+
+
+def test_exclusive_archive_publication_has_one_atomic_winner(tmp_path: Path) -> None:
+    destination = tmp_path / "exclusive.phx"
+    barrier = Barrier(2)
+
+    def publish(value: int) -> tuple[int, bool]:
+        barrier.wait(timeout=10.0)
+        try:
+            write_array_archive(
+                destination,
+                manifest={"winner": value},
+                arrays={"value": np.asarray(value, dtype=np.int64)},
+                mode="exclusive",
+            )
+        except FileExistsError:
+            return value, False
+        return value, True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(publish, (11, 29)))
+    winners = [value for value, published in results if published]
+    assert len(winners) == 1
+    manifest, arrays = read_array_archive(destination)
+    assert manifest["winner"] == winners[0]
+    assert int(arrays["value"]) == winners[0]
+    original = destination.read_bytes()
+    with pytest.raises(FileExistsError):
+        write_array_archive(
+            destination,
+            manifest={"winner": 99},
+            arrays={"value": np.asarray(99)},
+            mode="exclusive",
+        )
+    assert destination.read_bytes() == original
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["exclusive.phx"]
+
+
+def test_default_archive_publication_still_replaces_checkpoint(tmp_path: Path) -> None:
+    destination = tmp_path / "checkpoint.phx"
+    for value in (11, 29):
+        write_array_archive(
+            destination, manifest={"state": value}, arrays={"value": np.asarray(value)}
+        )
+    manifest, arrays = read_array_archive(destination)
+    assert manifest["state"] == 29
+    assert int(arrays["value"]) == 29

@@ -75,6 +75,8 @@ def _coincident_representatives(
 
     count, dimension = points.shape
     identity = np.arange(count)
+    if count == 0:
+        return identity, 0, False
     lower = np.min(points, axis=0)
     extent = float(np.max(np.max(points, axis=0) - lower))
     bits = _MORTON_BITS[dimension]
@@ -158,6 +160,23 @@ def _welded_complex(mesh: CellMesh, welded: np.ndarray, /) -> _Complex:
 
     connectivity = mesh.connectivity
     dimension = mesh.topological_dimension
+    if not mesh.blocks:
+        if mesh.storage is None or (
+            mesh.storage.global_entity_counts[dimension] <= 0
+            or welded.shape != (0,)
+            or any(entities.count != 0 for entities in mesh.topology.entity_sets)
+        ):
+            raise ValueError(
+                "An empty welded complex requires an exact zero-resident distributed mesh."
+            )
+        return _Complex(
+            np.empty((0, 0), dtype=np.int64),
+            np.empty((0, dimension), dtype=np.int64),
+            np.empty((0,), dtype=np.int64),
+            np.empty((0,), dtype=np.int8),
+            np.empty((0, 2), dtype=np.int64),
+            np.empty((0,), dtype=np.int64),
+        )
     cell_rows = []
     facet_rows = []
     facet_cells = []
@@ -302,12 +321,18 @@ def _star_components(
     entity_rows: np.ndarray,
     entity_cells: np.ndarray,
     links: tuple[np.ndarray, np.ndarray, np.ndarray],
+    complete: np.ndarray | None = None,
     /,
 ) -> int:
     """Count entities whose incident cells split into several link components.
 
     ``links`` holds ``(entity keys, first cell, second cell)``: the two cells
-    share a facet containing that entity.
+    share a facet containing that entity. ``complete`` marks owner-local cells
+    whose every facet is matched or physical boundary. An entity is judged only
+    when all its resident incident cells are complete: then walking across
+    facets through it cannot leave the resident set, so its resident star is
+    its whole star. A star truncated at an artificial halo boundary carries no
+    manifold evidence either way.
     """
 
     if entity_rows.shape[0] == 0:
@@ -326,7 +351,12 @@ def _star_components(
     entities, entity_index = np.unique(nodes[:, :-1], axis=0, return_inverse=True)
     pairs = np.unique(np.stack((entity_index.reshape(-1), labels), axis=1), axis=0)
     components = np.bincount(pairs[:, 0], minlength=entities.shape[0])
-    return int(np.count_nonzero(components > 1))
+    split = components > 1
+    if complete is not None:
+        truncated = np.zeros(entities.shape[0], dtype=np.bool_)
+        np.logical_or.at(truncated, entity_index.reshape(-1), ~complete[nodes[:, -1]])
+        split &= ~truncated
+    return int(np.count_nonzero(split))
 
 
 def _lookup(table: np.ndarray, rows: np.ndarray, /) -> np.ndarray:
@@ -769,8 +799,13 @@ def _ear_clip(
 
 def _polygon_loop_triangles(
     points: np.ndarray, loops: np.ndarray, candidate_capacity: int, /
-) -> tuple[np.ndarray, int, int, int, bool]:
-    """Exact triangles and bounded simplicity evidence of polygon loops."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, bool]:
+    """Exact triangles and bounded simplicity evidence of polygon loops.
+
+    Returns the triangles in global vertex rows, the loop row owning each
+    triangle, masks of self-intersecting and undecided loops, the polygon edge
+    candidates spent and whether that capacity was exhausted.
+    """
 
     corner_count = loops.shape[1]
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
@@ -786,25 +821,24 @@ def _polygon_loop_triangles(
     orientation = np.asarray(simplicity.orientation)
     ready = orientation != PredicateSign.UNCERTAIN
     triangles = []
-    undecided = int(np.count_nonzero(status == PolygonSimplicityStatus.UNCERTAIN))
-    undecided += int(
-        np.count_nonzero((status == PolygonSimplicityStatus.SIMPLE) & ~ready)
+    owners = []
+    undecided = (status == PolygonSimplicityStatus.UNCERTAIN) | (
+        (status == PolygonSimplicityStatus.SIMPLE) & ~ready
     )
     selected = np.flatnonzero(ready)
     chunk = max(1, _EAR_WORKING_ENTRIES // (corner_count * corner_count))
     for start in range(0, selected.size, chunk):
         rows = selected[start : start + chunk]
         local, certified = _ear_clip(planar[rows], orientation[rows], mode)
-        undecided += int(np.count_nonzero(~certified))
+        undecided[rows[~certified]] = True
         global_rows = loops[rows[certified]]
         cells = np.arange(global_rows.shape[0])[:, None, None]
         triangles.append(global_rows[cells, local[certified]].reshape((-1, 3)))
-    intersecting = int(
-        np.count_nonzero(status == PolygonSimplicityStatus.SELF_INTERSECTING)
-    )
+        owners.append(np.repeat(rows[certified], corner_count - 2))
     return (
         np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
-        intersecting,
+        np.concatenate(owners) if owners else np.empty((0,), dtype=np.int64),
+        status == PolygonSimplicityStatus.SELF_INTERSECTING,
         undecided,
         simplicity.candidate_pair_count,
         simplicity.candidate_capacity_exceeded,
@@ -834,12 +868,12 @@ def _surface_triangles(
             polygon_rows = rows[~collapsed]
             remaining = candidate_capacity - candidate_count
             if polygon_rows.size and remaining > 0:
-                clipped, crossing, unknown, used, exhausted = _polygon_loop_triangles(
+                clipped, _, crossing, unknown, used, exhausted = _polygon_loop_triangles(
                     points, polygon_rows, remaining
                 )
                 triangles.append(clipped)
-                intersecting += crossing
-                undecided += unknown
+                intersecting += int(np.count_nonzero(crossing))
+                undecided += int(np.count_nonzero(unknown))
                 candidate_count += used
                 exceeded |= exhausted
             elif polygon_rows.size:
@@ -930,11 +964,24 @@ def audit_welded_topology(
     """
     if candidate_capacity <= 0 or intersection_candidate_capacity <= 0:
         raise ValueError("Topology-audit candidate capacities must be positive.")
+    if points.shape[0] == 0 and (
+        mesh.storage is None
+        or mesh.storage.global_entity_counts[mesh.topological_dimension] <= 0
+        or points.shape != mesh.coordinates.shape
+        or any(entities.count != 0 for entities in mesh.topology.entity_sets)
+    ):
+        raise ValueError(
+            "Empty topology audits require an actual zero-resident distributed mesh."
+        )
 
     if coincident_tolerance is None:
         welded, coincident, exceeded = np.arange(points.shape[0]), 0, False
     else:
-        diagonal = float(np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0)))
+        diagonal = (
+            0.0
+            if points.shape[0] == 0
+            else float(np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0)))
+        )
         welded, coincident, exceeded = _coincident_representatives(
             points, coincident_tolerance * diagonal, candidate_capacity
         )
@@ -961,18 +1008,31 @@ def audit_welded_topology(
     nonmanifold_edges = 0
     if check_manifold and mesh.topological_dimension >= 2:
         cell_vertices = complex_.cells
+        complete = (
+            None
+            if mesh.storage is None or mesh.storage.local_neighborhood_complete is None
+            else np.asarray(mesh.storage.local_neighborhood_complete, dtype=np.bool_)
+        )
+        if complete is not None and complete.shape != (cell_vertices.shape[0],):
+            raise ValueError(
+                "Owner-local neighborhood completeness must label every resident cell."
+            )
         slots = cell_vertices >= 0
         owners = np.broadcast_to(
             np.arange(cell_vertices.shape[0])[:, None], cell_vertices.shape
         )[slots]
         nonmanifold_vertices = _star_components(
-            cell_vertices[slots][:, None], owners, _vertex_links(complex_, first, second)
+            cell_vertices[slots][:, None],
+            owners,
+            _vertex_links(complex_, first, second),
+            complete,
         )
         if mesh.topological_dimension == 3:
             nonmanifold_edges = _star_components(
                 np.sort(complex_.edges, axis=1),
                 complex_.edge_cells,
                 _edge_links(complex_, first, second),
+                complete,
             )
     embedded = mesh.ambient_dimension > mesh.topological_dimension
     open_facets = (

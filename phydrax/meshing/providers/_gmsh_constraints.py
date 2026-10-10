@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from ...discretization import CellMesh
+from ...discretization._periodic_topology import PeriodicIsometryGroup
 from ...geometry.brep import BRepModel
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._controls import ProtectedFeature
@@ -31,10 +32,10 @@ def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
     slaves_used = set()
     for constraint in plan.specification.periodic_constraints:
         dimension = constraint.source_scope.entity_dimension
-        masters = _resolve_entities(gmsh, plan.source, shape, constraint.source_scope)
-        candidates = _resolve_entities(gmsh, plan.source, shape, constraint.target_scope)
+        masters = _resolve_entities(gmsh, plan.source, constraint.source_scope)
+        candidates = _resolve_entities(gmsh, plan.source, constraint.target_scope)
         transform = np.asarray(constraint.transform)
-        samples = _scope_samples(plan.source, shape, constraint.source_scope)
+        samples = _scope_samples(plan.source, constraint.source_scope)
         transformed = tuple(
             points @ transform[:3, :3].T + transform[:3, 3] for points in samples
         )
@@ -56,11 +57,77 @@ def _set_periodic(gmsh: Any, plan: Any, shape: Any, /) -> Any:
     return tuple(records)
 
 
+def _verify_bound_orbit_cycles(
+    pairs: list[tuple[int, int, np.ndarray]],
+    coordinates: dict[int, np.ndarray],
+    tolerance: float,
+    /,
+) -> int:
+    """Validate node-bound isometry cycles, including finite fixed-point stabilizers."""
+
+    adjacency: dict[int, list[tuple[int, np.ndarray]]] = {}
+    for master, slave, transform in pairs:
+        adjacency.setdefault(master, []).append((slave, transform))
+        adjacency.setdefault(slave, []).append((master, np.linalg.inv(transform)))
+    frames: dict[int, np.ndarray] = {}
+    stabilizers = 0
+    for root in adjacency:
+        if root in frames:
+            continue
+        frames[root] = np.eye(4)
+        queue = [root]
+        for current in queue:
+            for target, transform in adjacency[current]:
+                candidate = transform @ frames[current]
+                if target not in frames:
+                    frames[target] = candidate
+                    queue.append(target)
+                    continue
+                cycle = np.linalg.inv(frames[target]) @ candidate
+                if np.max(np.abs(cycle - np.eye(4))) <= tolerance:
+                    continue
+                # A rotation axis may end on the paired boundaries: its node
+                # orbit has a finite stabilizer, not a contradictory translation.
+                homogeneous = np.append(coordinates[root], 1.0)
+                if np.linalg.norm((cycle @ homogeneous - homogeneous)[:3]) > tolerance:
+                    raise ValueError(
+                        "A bound periodic node orbit has a conflicting transformation cycle."
+                    )
+                group = PeriodicIsometryGroup(cycle[None], tolerance=tolerance)
+                if group.orders[0] == 0:
+                    raise ValueError(
+                        "A periodic cycle has nonzero translational holonomy."
+                    )
+                stabilizers += 1
+    return stabilizers
+
+
 def _audit_periodic(
     gmsh: Any, records: Any, node_tags: Any, points: Any, /
 ) -> _EvidenceSection:
     requested = []
     achieved = []
+    bound_pairs: list[tuple[int, int, np.ndarray]] = []
+    threshold = min(
+        (constraint.tolerance for constraint, _, _ in records), default=1.0e-10
+    )
+    transforms = [np.asarray(constraint.transform) for constraint, _, _ in records]
+    if transforms:
+        try:
+            for first, transform in enumerate(transforms):
+                if np.max(np.abs(transform - np.eye(4))) > threshold:
+                    PeriodicIsometryGroup(transform[None], tolerance=threshold)
+                for other in transforms[first + 1 :]:
+                    if np.max(np.abs(transform @ other - other @ transform)) > threshold:
+                        raise ValueError(
+                            "Periodic boundary transformations have a conflicting composed cycle."
+                        )
+        except ValueError as error:
+            raise MeshingFailure(
+                MeshingFailureCategory.COMPLIANCE_FAILED,
+                str(error),
+                stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
+            ) from error
     for constraint, masters, slaves in records:
         dimension = constraint.source_scope.entity_dimension
         transform = np.asarray(constraint.transform)
@@ -104,6 +171,10 @@ def _audit_periodic(
                 float(np.max(np.linalg.norm(slave_points - mapped, axis=1), initial=0.0)),
             )
             pair_count += slave_nodes.size
+            bound_pairs.extend(
+                (int(first), int(second), transform)
+                for first, second in zip(master_nodes, slave_nodes, strict=True)
+            )
         if residual > constraint.tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -118,6 +189,22 @@ def _audit_periodic(
                 (f"{key}:node_pairs", float(pair_count)),
             )
         )
+    try:
+        stabilizers = _verify_bound_orbit_cycles(
+            bound_pairs,
+            {
+                int(tag): np.asarray(point)
+                for tag, point in zip(node_tags, points, strict=True)
+            },
+            threshold,
+        )
+    except ValueError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.COMPLIANCE_FAILED,
+            str(error),
+            stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
+        ) from error
+    achieved.append(("periodic:fixed_point_cycle_count", float(stabilizers)))
     return _EvidenceSection(tuple(requested), tuple(achieved))
 
 
@@ -209,7 +296,7 @@ def _apply_protected_features(
     embeddings: dict[tuple[int, int, int], list[int]] = {}
     for feature in specification.protected_features:
         dimension = feature.scope.entity_dimension
-        tags = _resolve_entities(gmsh, source, shape, feature.scope)
+        tags = _resolve_entities(gmsh, source, feature.scope)
         embedded = 0
         for tag in tags:
             if (dimension, tag) not in free:

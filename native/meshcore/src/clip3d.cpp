@@ -17,31 +17,32 @@
 //                        input point on F when F is point-defined.
 // Exact sides with respect to a plane Q:
 //   EDGE_PLANE: sQ(X) (sP(u) - sP(v)) = sP(u) sQ(v) - sP(v) sQ(u);
-//   PLANES3 (Q explicit): rows (n_i, g_i) with g_i = s_i(o) (and (n_F, 0) for
+//   PLANES3 (Q affine): rows (n_i, g_i) with g_i = s_i(o) (and (n_F, 0) for
 //     point-defined F, n_F = (b - a) x (c - a)); the block determinant gives
 //       det[[n1, g1], [n2, g2], [n3, g3], [nQ, gQ]] = det[n1; n2; n3] sQ(X),
 //     expanded along the last row with cofactors (C0, C1, C2, C3 = det N):
 //       C3 sQ(X) = C0 nQ0 + C1 nQ1 + C2 nQ2 + C3 sQ(o), and y_k = -C_k / C3.
+// Point-defined Q uses the same identity with its exact orientation normal.
 // Degrees stay <= 6 in coordinates (see clip_common.hpp).
 //
 // A vertex created on an edge whose faces lie on planes f, g, cut by P:
 //   f, g base planes          -> EDGE_PLANE(base edge endpoints, P);
-//   base F, clip C:  tet-tet  -> EDGE_PLANE(B edge shared by C and P, F),
-//                    explicit -> PLANES3(F, C, P);
-//   clips C1, C2:    tet-tet  -> POINT(B vertex common to C1, C2, P),
-//                    explicit -> PLANES3(C1, C2, P).
-// Hence tet-tet only classifies POINT and EDGE_PLANE vertices and PLANES3
-// vertices are only classified against explicit planes.
+//   base F, clip C:  tet-tet   -> EDGE_PLANE(B edge shared by C and P, F),
+//                    halfspace -> PLANES3(F, C, P);
+//   clips C1, C2:    tet-tet   -> POINT(B vertex common to C1, C2, P),
+//                    halfspace -> PLANES3(C1, C2, P).
+// Tet-tet only creates POINT and EDGE_PLANE vertices. Explicit and power
+// clipping creates PLANES3 vertices, classified exactly against every plane kind.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <new>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
+#include "clip3d.hpp"
 #include "capi_guard.hpp"
+#include "bounded_memory.hpp"
 #include "clip_common.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -60,13 +61,50 @@ enum class Family { kTetTet, kTetHalfspaces, kBoxHalfspaces };
 
 // tag: tetrahedron face -> opposite vertex (0..3) of its tetrahedron;
 // box face -> 2 axis + side.  label: output face label.
+enum class PlaneKind : std::uint8_t { kFacet, kExplicit, kPower };
+struct ExplicitPlaneSource {
+  double n[3] = {0.0, 0.0, 0.0};
+  double h = 0.0;
+};
+struct PowerPlaneSource {
+  const double* site;
+  const double* neighbor;
+  double weight;
+  double neighbor_weight;
+  const ExactPowerCoordinates* exact_site = nullptr;
+  const ExactPowerCoordinates* exact_neighbor = nullptr;
+};
+
+template <class T>
+T power_coordinate(const double* raw, const ExactPowerCoordinates* source, int axis) {
+  if (source == nullptr) return lift<T>(raw[axis]);
+  if constexpr (std::is_same_v<T, Approx>) return source->approximate[axis];
+  else return source->exact[axis];
+}
+
+template <class T>
+T power_plane_value(const PowerPlaneSource& source, const double* point) {
+  T value = diff<T>(source.weight, source.neighbor_weight);
+  for (int axis = 0; axis < 3; ++axis) {
+    const T first = source.exact_site == nullptr
+        ? diff<T>(source.site[axis], point[axis])
+        : power_coordinate<T>(source.site, source.exact_site, axis) - lift<T>(point[axis]);
+    const T second = source.exact_neighbor == nullptr
+        ? diff<T>(source.neighbor[axis], point[axis])
+        : power_coordinate<T>(source.neighbor, source.exact_neighbor, axis) - lift<T>(point[axis]);
+    value = value + second * second - first * first;
+  }
+  return value;
+}
 struct Plane {
-  bool is_explicit = false;
+  PlaneKind kind = PlaneKind::kFacet;
   int a = -1;
   int b = -1;
   int c = -1;
-  double n[3] = {0.0, 0.0, 0.0};
-  double h = 0.0;
+  union {
+    ExplicitPlaneSource explicit_source{};
+    PowerPlaneSource power_source;
+  };
   int tag = 0;
   int label = 0;
 };
@@ -153,17 +191,17 @@ class PolytopeClipper {
  public:
   Family family = Family::kTetTet;
   double points[kMaxPoints][3] = {};
-  std::vector<Plane> planes;
+  NativeVector<Plane> planes;
   int base_planes = 0;
   int64_t capacity = std::numeric_limits<int64_t>::max();
   bool clamp_to_box = false;
   double lower[3] = {0.0, 0.0, 0.0};
   double upper[3] = {0.0, 0.0, 0.0};
 
-  std::vector<Vertex> vertices;
-  std::vector<int> live;
-  std::vector<Face> faces;
-  std::vector<int> loops;
+  NativeVector<Vertex> vertices;
+  NativeVector<int> live;
+  NativeVector<Face> faces;
+  NativeVector<int> loops;
 
   void reset(Family kind) {
     family = kind;
@@ -218,9 +256,9 @@ class PolytopeClipper {
       const int axis = id / 2;
       const int side = id % 2;
       Plane plane;
-      plane.is_explicit = true;
-      plane.n[axis] = side != 0 ? 1.0 : -1.0;
-      plane.h = side != 0 ? box_upper[axis] : -box_lower[axis];
+      plane.kind = PlaneKind::kExplicit;
+      plane.explicit_source.n[axis] = side != 0 ? 1.0 : -1.0;
+      plane.explicit_source.h = side != 0 ? box_upper[axis] : -box_lower[axis];
       plane.tag = id;
       plane.label = -(1 + id);
       planes.push_back(plane);
@@ -247,11 +285,22 @@ class PolytopeClipper {
 
   void add_explicit_plane(const double* normal, double offset, int label) {
     Plane plane;
-    plane.is_explicit = true;
+    plane.kind = PlaneKind::kExplicit;
     for (int k = 0; k < 3; ++k) {
-      plane.n[k] = normal[k];
+      plane.explicit_source.n[k] = normal[k];
     }
-    plane.h = offset;
+    plane.explicit_source.h = offset;
+    plane.label = label;
+    planes.push_back(plane);
+  }
+
+  void add_power_plane(const double* site, double weight, const double* neighbor,
+                       double neighbor_weight, int label,
+                       const ExactPowerCoordinates* exact_site = nullptr,
+                       const ExactPowerCoordinates* exact_neighbor = nullptr) {
+    Plane plane;
+    plane.kind = PlaneKind::kPower;
+    plane.power_source = {site, neighbor, weight, neighbor_weight, exact_site, exact_neighbor};
     plane.label = label;
     planes.push_back(plane);
   }
@@ -549,6 +598,28 @@ class PolytopeClipper {
     return PHX_MC_OK;
   }
 
+  int symbolic_side(int vertex, int plane) { return classify(vertex, plane); }
+
+
+  int symbolic_power_side(int vertex, const double* site, double weight,
+                          const double* neighbor, double neighbor_weight,
+                          const ExactPowerCoordinates* exact_site,
+                          const ExactPowerCoordinates* exact_neighbor) {
+    const int plane = static_cast<int>(planes.size());
+    add_power_plane(site, weight, neighbor, neighbor_weight, -1, exact_site, exact_neighbor);
+    const std::size_t first = static_cast<std::size_t>(plane) * kMaxPoints;
+    const std::size_t size = first + kMaxPoints;
+    approx_values_.resize(size);
+    approx_ready_.resize(size);
+    exact_values_.resize(size);
+    exact_ready_.resize(size);
+    std::fill(approx_ready_.begin() + first, approx_ready_.end(), 0);
+    std::fill(exact_ready_.begin() + first, exact_ready_.end(), 0);
+    const int sign = classify(vertex, plane);
+    planes.pop_back();
+    return sign;
+  }
+
  private:
   void add_point_vertex(int point) {
     Vertex vertex;
@@ -564,14 +635,28 @@ class PolytopeClipper {
   T plane_value(int plane_id, int point) const {
     const Plane& plane = planes[plane_id];
     const double* x = points[point];
-    if (plane.is_explicit) {
-      return lift<T>(plane.h) -
-             (mul<T>(plane.n[0], x[0]) + mul<T>(plane.n[1], x[1]) + mul<T>(plane.n[2], x[2]));
+    if (plane.kind == PlaneKind::kPower) {
+      return power_plane_value<T>(plane.power_source, x);
+    }
+    if (plane.kind == PlaneKind::kExplicit) {
+      return lift<T>(plane.explicit_source.h) -
+             (mul<T>(plane.explicit_source.n[0], x[0]) + mul<T>(plane.explicit_source.n[1], x[1]) +
+              mul<T>(plane.explicit_source.n[2], x[2]));
     }
     if (point == plane.a || point == plane.b || point == plane.c) {
       return T();
     }
     return orient_value<T>(points[plane.a], points[plane.b], points[plane.c], x);
+  }
+
+  template <class T>
+  T power_normal(const Plane& plane, int axis) const {
+    const auto& source = plane.power_source;
+    const T difference = source.exact_site == nullptr && source.exact_neighbor == nullptr
+        ? diff<T>(source.neighbor[axis], source.site[axis])
+        : power_coordinate<T>(source.neighbor, source.exact_neighbor, axis)
+            - power_coordinate<T>(source.site, source.exact_site, axis);
+    return difference * lift<T>(2.0);
   }
 
   const Approx& approx_value(int plane_id, int point) {
@@ -597,9 +682,9 @@ class PolytopeClipper {
     T r[3][4];
     for (int i = 0; i < 3; ++i) {
       const Plane& plane = planes[vertex.plane[i]];
-      if (plane.is_explicit) {
+      if (plane.kind != PlaneKind::kFacet) {
         for (int k = 0; k < 3; ++k) {
-          r[i][k] = lift<T>(plane.n[k]);
+          r[i][k] = plane.kind == PlaneKind::kPower ? power_normal<T>(plane, k) : lift<T>(plane.explicit_source.n[k]);
         }
         r[i][3] = plane_value<T>(vertex.plane[i], vertex.a);
       } else {
@@ -632,6 +717,7 @@ class PolytopeClipper {
   }
 
   int classify(int vertex_id, int plane_id) {
+    native_execution_primitive_query();
     Vertex& vertex = vertices[vertex_id];
     switch (vertex.kind) {
       case Kind::kPoint:
@@ -650,21 +736,54 @@ class PolytopeClipper {
       }
       case Kind::kPlanes3: {
         const Plane& plane = planes[plane_id];
-        if (!plane.is_explicit) {
-          return kInvalidSide;
+        if (plane.kind == PlaneKind::kFacet) {
+          const auto value = [&]<class T>(const T* c) {
+            const double* a = points[plane.a];
+            const double* b = points[plane.b];
+            const double* d = points[plane.c];
+            const T u[3] = {diff<T>(b[0], a[0]), diff<T>(b[1], a[1]), diff<T>(b[2], a[2])};
+            const T w[3] = {diff<T>(d[0], a[0]), diff<T>(d[1], a[1]), diff<T>(d[2], a[2])};
+            const T n[3] = {u[1] * w[2] - u[2] * w[1],
+                            u[2] * w[0] - u[0] * w[2],
+                            u[0] * w[1] - u[1] * w[0]};
+            return c[3] * plane_value<T>(plane_id, vertex.a) -
+                   (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]);
+          };
+          const Approx filtered = value(cofactors_.data() + vertex.cofactors);
+          return vertex.denominator * clip::exact_sign(filtered, [&] {
+            if (vertex.exact_cofactors < 0) {
+              vertex.exact_cofactors = store_exact_cofactors(vertex);
+            }
+            return value(exact_cofactors_.data() + vertex.exact_cofactors);
+          });
+        }
+        if (plane.kind == PlaneKind::kPower) {
+          const auto value = [&]<class T>(const T* c) {
+            return c[0] * power_normal<T>(plane, 0) +
+                   c[1] * power_normal<T>(plane, 1) +
+                   c[2] * power_normal<T>(plane, 2) +
+                   c[3] * plane_value<T>(plane_id, vertex.a);
+          };
+          const Approx filtered = value(cofactors_.data() + vertex.cofactors);
+          return vertex.denominator * clip::exact_sign(filtered, [&] {
+            if (vertex.exact_cofactors < 0) {
+              vertex.exact_cofactors = store_exact_cofactors(vertex);
+            }
+            return value(exact_cofactors_.data() + vertex.exact_cofactors);
+          });
         }
         const Approx* c = cofactors_.data() + vertex.cofactors;
-        const Approx filtered = c[0] * Approx::exact(plane.n[0]) +
-                                c[1] * Approx::exact(plane.n[1]) +
-                                c[2] * Approx::exact(plane.n[2]) +
+        const Approx filtered = c[0] * Approx::exact(plane.explicit_source.n[0]) +
+                                c[1] * Approx::exact(plane.explicit_source.n[1]) +
+                                c[2] * Approx::exact(plane.explicit_source.n[2]) +
                                 c[3] * approx_value(plane_id, vertex.a);
         return vertex.denominator * clip::exact_sign(filtered, [&] {
                  if (vertex.exact_cofactors < 0) {
                    vertex.exact_cofactors = store_exact_cofactors(vertex);
                  }
                  const Expansion* e = exact_cofactors_.data() + vertex.exact_cofactors;
-                 return e[0].scaled(plane.n[0]) + e[1].scaled(plane.n[1]) +
-                        e[2].scaled(plane.n[2]) + e[3] * exact_value(plane_id, vertex.a);
+                 return e[0].scaled(plane.explicit_source.n[0]) + e[1].scaled(plane.explicit_source.n[1]) +
+                        e[2].scaled(plane.explicit_source.n[2]) + e[3] * exact_value(plane_id, vertex.a);
                });
       }
     }
@@ -740,7 +859,7 @@ class PolytopeClipper {
       vertex.plane[0] = f;
       vertex.plane[1] = g;
       vertex.plane[2] = p;
-      vertex.a = planes[f].is_explicit ? 0 : planes[f].a;
+      vertex.a = planes[f].kind != PlaneKind::kFacet ? 0 : planes[f].a;
     }
 
     switch (vertex.kind) {
@@ -816,19 +935,19 @@ class PolytopeClipper {
     return PHX_MC_OK;
   }
 
-  std::vector<Approx> approx_values_;
-  std::vector<unsigned char> approx_ready_;
-  std::vector<Expansion> exact_values_;
-  std::vector<unsigned char> exact_ready_;
-  std::vector<Approx> cofactors_;
-  std::vector<Expansion> exact_cofactors_;
-  std::vector<signed char> side_;
-  std::vector<Cut> cuts_;
-  std::vector<Segment> segments_;
-  std::vector<Face> next_faces_;
-  std::vector<int> next_loops_;
-  std::vector<int> next_live_;
-  std::vector<unsigned char> stamp_;
+  NativeVector<Approx> approx_values_;
+  NativeVector<unsigned char> approx_ready_;
+  NativeVector<Expansion> exact_values_;
+  NativeVector<unsigned char> exact_ready_;
+  NativeVector<Approx> cofactors_;
+  NativeVector<Expansion> exact_cofactors_;
+  NativeVector<signed char> side_;
+  NativeVector<Cut> cuts_;
+  NativeVector<Segment> segments_;
+  NativeVector<Face> next_faces_;
+  NativeVector<int> next_loops_;
+  NativeVector<int> next_live_;
+  NativeVector<unsigned char> stamp_;
 };
 
 // Loads a tetrahedron (4, 3) into points[offset..offset + 3], positively
@@ -952,9 +1071,9 @@ struct BoxOutput {
 
 struct BoxWorkspace {
   PolytopeClipper clipper;
-  std::vector<int> sorted_live;
-  std::vector<int> index;
-  std::vector<int> order;
+  NativeVector<int> sorted_live;
+  NativeVector<int> index;
+  NativeVector<int> order;
 };
 
 // Compacts the live vertices (ascending ids), sorts faces by label and
@@ -967,7 +1086,7 @@ int32_t write_box_output(BoxWorkspace& work, BoxOutput& out) {
     return PHX_MC_CAPACITY_EXCEEDED;
   }
   work.index.assign(clipper.vertices.size(), -1);
-  std::vector<int>& sorted_live = work.sorted_live;
+  NativeVector<int> & sorted_live = work.sorted_live;
   sorted_live.assign(clipper.live.begin(), clipper.live.end());
   std::sort(sorted_live.begin(), sorted_live.end());
   for (std::size_t k = 0; k < sorted_live.size(); ++k) {
@@ -1083,6 +1202,134 @@ int32_t tetrahedron_batch(int64_t count, const double* first, const double* seco
 }
 
 }  // namespace
+
+struct TetrahedronClipper::Impl {
+  BoxWorkspace work;
+};
+
+TetrahedronClipper::TetrahedronClipper() : impl_(make_native_unique<Impl>()) {}
+
+TetrahedronClipper::~TetrahedronClipper() = default;
+
+int TetrahedronClipper::vertex_base_side(int32_t vertex, int32_t face) {
+  return impl_->work.clipper.symbolic_side(impl_->work.sorted_live[vertex], face);
+}
+
+
+int TetrahedronClipper::vertex_power_side(int32_t vertex, const double* site, double weight,
+                                         const double* neighbor, double neighbor_weight,
+                                         const ExactPowerCoordinates* exact_site,
+                                         const ExactPowerCoordinates* exact_neighbor) {
+  return impl_->work.clipper.symbolic_power_side(
+      impl_->work.sorted_live[vertex], site, weight, neighbor, neighbor_weight, exact_site, exact_neighbor);
+}
+
+int TetrahedronClipper::point_power_side(
+    const double* point, const double* site, double weight,
+    const double* neighbor, double neighbor_weight,
+    const ExactPowerCoordinates* exact_site, const ExactPowerCoordinates* exact_neighbor) {
+  native_execution_primitive_query();
+  const PowerPlaneSource source{site, neighbor, weight, neighbor_weight, exact_site, exact_neighbor};
+  return clip::exact_sign(power_plane_value<Approx>(source, point),
+                         [&] { return power_plane_value<Expansion>(source, point); });
+}
+
+int32_t TetrahedronClipper::clip(const double* tetrahedron, const double* normals,
+                                 const double* offsets, int32_t plane_count,
+                                 int32_t vertex_capacity, ClippedPolytope& out) {
+  out.vertices.clear();
+  out.face_offsets.assign(1, 0);
+  out.face_labels.clear();
+  out.face_vertices.clear();
+  out.volume = 0.0;
+  out.moment[0] = out.moment[1] = out.moment[2] = 0.0;
+  int32_t status = clip::check_finite(tetrahedron, 12);
+  if (status == PHX_MC_OK) {
+    status = clip::check_coordinates(tetrahedron, 12);
+  }
+  if (status == PHX_MC_OK) {
+    status = clip::check_halfspaces(normals, offsets, plane_count, 3);
+  }
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  if (orient3d(tetrahedron, tetrahedron + 3, tetrahedron + 6, tetrahedron + 9) <= 0) {
+    return PHX_MC_DEGENERATE_INPUT;
+  }
+  PolytopeClipper& clipper = impl_->work.clipper;
+  clipper.reset(Family::kTetHalfspaces);
+  load_tetrahedron(tetrahedron, 0, clipper);
+  clipper.begin_tetrahedron();
+  for (int32_t plane = 0; plane < plane_count; ++plane) {
+    clipper.add_explicit_plane(normals + 3 * static_cast<int64_t>(plane), offsets[plane], plane);
+  }
+  return finish_clip(vertex_capacity, out);
+}
+
+int32_t TetrahedronClipper::clip_power(
+    const double* tetrahedron, const double* sites, const double* weights,
+    int32_t source, const int32_t* neighbors,
+    int32_t plane_count, int32_t vertex_capacity, ClippedPolytope& out,
+    const ExactPowerCoordinates* exact_coordinates) {
+  int32_t status = clip::check_coordinates(tetrahedron, 12);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  if (orient3d(tetrahedron, tetrahedron + 3, tetrahedron + 6, tetrahedron + 9) <= 0) {
+    return PHX_MC_DEGENERATE_INPUT;
+  }
+  out.vertices.clear();
+  out.face_offsets.assign(1, 0);
+  out.face_labels.clear();
+  out.face_vertices.clear();
+  out.volume = 0.0;
+  out.moment[0] = out.moment[1] = out.moment[2] = 0.0;
+  PolytopeClipper& clipper = impl_->work.clipper;
+  clipper.reset(Family::kTetHalfspaces);
+  load_tetrahedron(tetrahedron, 0, clipper);
+  clipper.begin_tetrahedron();
+  for (int32_t plane = 0; plane < plane_count; ++plane) {
+    native_execution_charge(0);
+    clipper.add_power_plane(sites == nullptr ? nullptr : sites + 3 * source, weights[source],
+                            sites == nullptr ? nullptr : sites + 3 * neighbors[plane],
+                            weights[neighbors[plane]], plane,
+                            exact_coordinates == nullptr ? nullptr : exact_coordinates + source,
+                            exact_coordinates == nullptr ? nullptr : exact_coordinates + neighbors[plane]);
+  }
+  return finish_clip(vertex_capacity, out);
+}
+
+int32_t TetrahedronClipper::finish_clip(int32_t vertex_capacity, ClippedPolytope& out) {
+  PolytopeClipper& clipper = impl_->work.clipper;
+  int32_t status = clipper.finish_setup(vertex_capacity);
+  bool empty = false;
+  if (status == PHX_MC_OK) {
+    status = run_clips(clipper, empty);
+  }
+  if (status != PHX_MC_OK || empty) {
+    return status;
+  }
+  out.vertices.resize(3 * clipper.live.size());
+  out.face_offsets.resize(clipper.faces.size() + 1);
+  out.face_labels.resize(clipper.faces.size());
+  out.face_vertices.resize(clipper.loops.size());
+  BoxOutput box{static_cast<int32_t>(clipper.live.size()),
+                static_cast<int32_t>(clipper.faces.size()),
+                static_cast<int32_t>(clipper.loops.size()),
+                out.vertices.data(),
+                out.face_offsets.data(),
+                out.face_labels.data(),
+                out.face_vertices.data(),
+                0,
+                0};
+  status = write_box_output(impl_->work, box);
+  if (status != PHX_MC_OK) {
+    return status;
+  }
+  clipper.moments(out.volume, out.moment);
+  return PHX_MC_OK;
+}
+
 }  // namespace phx::mc
 
 extern "C" {

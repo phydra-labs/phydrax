@@ -2,6 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._adaptive_discovery import (
+    AdaptiveImplicitSurface,
+    AdaptiveImplicitSurfaceEvidence,
+    discover_adaptive_implicit_surface,
+    ImplicitVolumeClass,
+    ImplicitVolumeClassification,
+    ImplicitVolumeQuery,
+)
+from ._analytic_profile import (
+    AnalyticBoundaryCoverCapacityError,
+    AnalyticImplicitFamily,
+    AnalyticImplicitProfile,
+)
 from ._curve_discovery import (
     discover_implicit_curve,
     ImplicitCurveEvidence,
@@ -15,6 +28,11 @@ from ._neural import (
     NeuralImplicitRegion,
 )
 from ._policy import (
+    AdaptiveImplicitBoxIssue,
+    AdaptiveImplicitSurfacePolicy,
+    AdaptiveImplicitSurfaceStatus,
+    ImplicitDiscoveryAccuracy,
+    ImplicitDiscoveryEnclosure,
     ImplicitProjectionPolicy,
     ImplicitProjectionStatus,
     ImplicitSurfacePolicy,
@@ -33,9 +51,19 @@ from ._realization import (
 
 
 __all__ = [
+    "AnalyticBoundaryCoverCapacityError",
+    "AnalyticImplicitFamily",
+    "AnalyticImplicitProfile",
+    "AdaptiveImplicitBoxIssue",
+    "AdaptiveImplicitSurface",
+    "AdaptiveImplicitSurfaceEvidence",
+    "AdaptiveImplicitSurfacePolicy",
+    "AdaptiveImplicitSurfaceStatus",
     "ImplicitCurveEvidence",
     "ImplicitCurvePlan",
     "ImplicitCurveRealization",
+    "ImplicitDiscoveryAccuracy",
+    "ImplicitDiscoveryEnclosure",
     "ImplicitPointProjectionEvidence",
     "ImplicitPointProjectionPlan",
     "ImplicitPointProjectionResult",
@@ -47,8 +75,12 @@ __all__ = [
     "ImplicitSurfacePolicy",
     "ImplicitSurfaceRealization",
     "ImplicitSurfaceStatus",
+    "ImplicitVolumeClass",
+    "ImplicitVolumeClassification",
+    "ImplicitVolumeQuery",
     "NeuralImplicitCertificate",
     "NeuralImplicitRegion",
+    "discover_adaptive_implicit_surface",
     "discover_implicit_curve",
     "discover_implicit_surface",
 ]

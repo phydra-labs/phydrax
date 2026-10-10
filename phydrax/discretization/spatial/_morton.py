@@ -328,6 +328,46 @@ def morton_decode_integer(codes: jax.Array, dimension: int, depth: int) -> jax.A
     return jnp.stack(coordinates, axis=-1)
 
 
+def morton_encode_integer_host(integer_coordinates: np.ndarray, depth: int) -> np.ndarray:
+    """Host NumPy form of `morton_encode_integer` for immutable preparation."""
+    coordinates = np.asarray(integer_coordinates).astype(np.uint64)
+    if coordinates.ndim < 1 or coordinates.shape[-1] not in (1, 2, 3):
+        raise ValueError("integer_coordinates must have trailing dimension 1, 2, or 3.")
+    dimension = coordinates.shape[-1]
+    depth_value = operator.index(depth)
+    if depth_value < 1 or dimension * depth_value > _MAX_CODE_BITS:
+        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
+    code = np.zeros(coordinates.shape[:-1], dtype=np.uint64)
+    one = np.uint64(1)
+    for bit in range(depth_value):
+        for axis in range(dimension):
+            value = (coordinates[..., axis] >> np.uint64(bit)) & one
+            code |= value << np.uint64(dimension * bit + axis)
+    return code
+
+
+def morton_decode_integer_host(
+    codes: np.ndarray, dimension: int, depth: int
+) -> np.ndarray:
+    """Host NumPy form of `morton_decode_integer` for immutable preparation."""
+    dimension_value = operator.index(dimension)
+    depth_value = operator.index(depth)
+    if dimension_value not in (1, 2, 3):
+        raise ValueError("Morton decoding supports dimensions 1, 2, and 3.")
+    if depth_value < 1 or dimension_value * depth_value > _MAX_CODE_BITS:
+        raise ValueError("The requested Morton depth exceeds the uint64 code budget.")
+    code_values = np.asarray(codes).astype(np.uint64)
+    one = np.uint64(1)
+    coordinates = []
+    for axis in range(dimension_value):
+        coordinate = np.zeros(code_values.shape, dtype=np.uint64)
+        for bit in range(depth_value):
+            value = (code_values >> np.uint64(dimension_value * bit + axis)) & one
+            coordinate |= value << np.uint64(bit)
+        coordinates.append(coordinate.astype(np.int64))
+    return np.stack(coordinates, axis=-1)
+
+
 def hilbert_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Array:
     """Encode integer coordinates as canonical Hilbert-curve indices.
 
@@ -581,5 +621,7 @@ __all__ = [
     "canonical_morton_order",
     "hilbert_encode_integer",
     "morton_decode_integer",
+    "morton_decode_integer_host",
     "morton_encode_integer",
+    "morton_encode_integer_host",
 ]

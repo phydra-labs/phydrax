@@ -600,7 +600,9 @@ def test_functional_parameters_validate_shapes_and_broadcast_components() -> Non
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
     parameters = (
         phx.equations.PDEParameter("a", functional=True),
-        phx.equations.PDEParameter("b", components=2, functional=True),
+        phx.equations.PDEParameter(
+            "b", representation="vector", components=2, functional=True
+        ),
     )
     u = phx.equations.PDEExpression.field("u")
     a = phx.equations.PDEExpression.parameter("a")
@@ -1325,7 +1327,10 @@ def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated() -
             ),
         ),
     )
-    with pytest.raises(ValueError, match="require an explicit axis"):
+    with pytest.raises(
+        ValueError,
+        match="multivariate partial derivative requires an explicit coordinate axis",
+    ):
         phx.equations.compile_semidiscrete_pde(problem, spatial)
 
 
@@ -1565,7 +1570,10 @@ def test_variable_flux_parity_and_scalar_divergence_fail_explicitly() -> None:
             parameter_values={"a": jnp.ones(spatial.state_shape)},
         )
 
-    with pytest.raises(ValueError, match="requires a vector-like operand"):
+    with pytest.raises(
+        ValueError,
+        match="divergence requires an explicitly vector-valued field",
+    ):
         phx.equations.compile_semidiscrete_pde(
             problem(u.divergence("x")),
             spatial,

@@ -29,7 +29,11 @@ from ._operators import (
     SumLinearOperator,
     TransposeLinearOperator,
 )
-from ._properties import LinearCapabilityError, OperatorProperties
+from ._properties import (
+    LinearCapabilityError,
+    LinearResourceLimitError,
+    OperatorProperties,
+)
 from ._spaces import (
     _coordinate_dtype,
     _coordinate_pairing_weights,
@@ -444,9 +448,13 @@ def plan_sparse_assembly(
         node.numeric_workspace_bytes for node in _walk_recipes(recipe)
     )
     if recipe_bytes > policy_.max_workspace_bytes:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Sparse assembly recipe requires {recipe_bytes} bytes, exceeding "
-            f"the workspace limit {policy_.max_workspace_bytes}."
+            f"the workspace limit {policy_.max_workspace_bytes}.",
+            resource="sparse_assembly:recipe_bytes",
+            requested=recipe_bytes,
+            limit=policy_.max_workspace_bytes,
+            storage_bytes_upper=recipe_bytes,
         )
     output_bytes = _sparse_output_bytes(
         recipe.shape,
@@ -656,14 +664,22 @@ def _materialized_sparse_recipe(
     entries = rows_count * columns_count
     required_bytes = entries * _coordinate_dtype(operator.target).itemsize
     if entries > materialization.max_entries:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Dense sparse-assembly fallback requires {entries} entries, exceeding "
-            f"the materialization limit {materialization.max_entries}."
+            f"the materialization limit {materialization.max_entries}.",
+            resource="sparse_assembly:materialization_entries",
+            requested=entries,
+            limit=materialization.max_entries,
+            storage_bytes_upper=required_bytes,
         )
     if required_bytes > materialization.max_bytes:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Dense sparse-assembly fallback requires {required_bytes} bytes, "
-            f"exceeding the materialization limit {materialization.max_bytes}."
+            f"exceeding the materialization limit {materialization.max_bytes}.",
+            resource="sparse_assembly:materialization_bytes",
+            requested=required_bytes,
+            limit=materialization.max_bytes,
+            storage_bytes_upper=required_bytes,
         )
     _check_contribution_budget(policy, entries, arrays=3)
     rows = np.repeat(np.arange(rows_count, dtype=np.int64), columns_count)
@@ -713,13 +729,19 @@ def _make_sparse_recipe(
     nnz = rows_.size
     contributions = int(contribution_count)
     if nnz > policy.max_nnz:
-        raise LinearCapabilityError(
-            f"Sparse assembly requires {nnz} nonzeros, exceeding the limit {policy.max_nnz}."
+        raise LinearResourceLimitError(
+            f"Sparse assembly requires {nnz} nonzeros, exceeding the limit {policy.max_nnz}.",
+            resource="sparse_assembly:nonzeros",
+            requested=nnz,
+            limit=policy.max_nnz,
         )
     if contributions > policy.max_contributions:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Sparse assembly requires {contributions} symbolic contributions, "
-            f"exceeding the limit {policy.max_contributions}."
+            f"exceeding the limit {policy.max_contributions}.",
+            resource="sparse_assembly:contributions",
+            requested=contributions,
+            limit=policy.max_contributions,
         )
     output_bytes = _sparse_output_bytes(
         shape,
@@ -727,8 +749,12 @@ def _make_sparse_recipe(
         _coordinate_dtype(operator.target).itemsize,
     )
     if output_bytes > policy.max_bytes:
-        raise LinearCapabilityError(
-            f"Sparse assembly output requires {output_bytes} bytes, exceeding the limit {policy.max_bytes}."
+        raise LinearResourceLimitError(
+            f"Sparse assembly output requires {output_bytes} bytes, exceeding the limit {policy.max_bytes}.",
+            resource="sparse_assembly:output_bytes",
+            requested=output_bytes,
+            limit=policy.max_bytes,
+            storage_bytes_upper=output_bytes,
         )
     mapping_entries = sum(
         np.asarray(indices).size for indices in (*input_indices, *output_indices)
@@ -739,9 +765,13 @@ def _make_sparse_recipe(
         + 4 * (2 * nnz + mapping_entries)
     )
     if recipe_bytes > policy.max_workspace_bytes:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Sparse assembly recipe requires {recipe_bytes} bytes, exceeding "
-            f"the workspace limit {policy.max_workspace_bytes}."
+            f"the workspace limit {policy.max_workspace_bytes}.",
+            resource="sparse_assembly:recipe_bytes",
+            requested=recipe_bytes,
+            limit=policy.max_workspace_bytes,
+            storage_bytes_upper=recipe_bytes,
         )
     symbolic_workspace_bytes = 8 * (6 * contributions + 2 * nnz) + 4 * mapping_entries
     numeric_workspace_bytes = (contributions + nnz) * _coordinate_dtype(
@@ -752,9 +782,13 @@ def _make_sparse_recipe(
         numeric_workspace_bytes,
     )
     if required_workspace > policy.max_workspace_bytes:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Sparse assembly requires {required_workspace} workspace bytes, "
-            f"exceeding the limit {policy.max_workspace_bytes}."
+            f"exceeding the limit {policy.max_workspace_bytes}.",
+            resource="sparse_assembly:workspace_bytes",
+            requested=required_workspace,
+            limit=policy.max_workspace_bytes,
+            storage_bytes_upper=required_workspace,
         )
     return _SparseAssemblyRecipe(
         kind=kind,
@@ -835,14 +869,21 @@ def _check_contribution_budget(
 ) -> None:
     count = int(contributions)
     if count > policy.max_contributions:
-        raise LinearCapabilityError(
-            f"Sparse assembly requires {count} symbolic contributions, exceeding the limit {policy.max_contributions}."
+        raise LinearResourceLimitError(
+            f"Sparse assembly requires {count} symbolic contributions, exceeding the limit {policy.max_contributions}.",
+            resource="sparse_assembly:contributions",
+            requested=count,
+            limit=policy.max_contributions,
         )
     required = count * int(arrays) * np.dtype(np.int64).itemsize
     if required > policy.max_workspace_bytes:
-        raise LinearCapabilityError(
+        raise LinearResourceLimitError(
             f"Sparse symbolic construction requires {required} workspace bytes, "
-            f"exceeding the limit {policy.max_workspace_bytes}."
+            f"exceeding the limit {policy.max_workspace_bytes}.",
+            resource="sparse_assembly:workspace_bytes",
+            requested=required,
+            limit=policy.max_workspace_bytes,
+            storage_bytes_upper=required,
         )
 
 
@@ -966,7 +1007,12 @@ def _plan_sparse_block(
     contributions = sum(child.rows.size for child in children)
     _check_contribution_budget(policy, contributions, arrays=4)
     if contributions > policy.max_nnz:
-        raise LinearCapabilityError("Named block sparse pattern exceeds max_nnz.")
+        raise LinearResourceLimitError(
+            "Named block sparse pattern exceeds max_nnz.",
+            resource="sparse_assembly:nonzeros",
+            requested=contributions,
+            limit=policy.max_nnz,
+        )
     for (row, column), child in zip(addresses, children, strict=True):
         row_parts.append(np.asarray(child.rows, dtype=np.int64) + row_offsets[row])
         column_parts.append(

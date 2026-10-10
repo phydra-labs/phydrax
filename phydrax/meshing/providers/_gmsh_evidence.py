@@ -19,7 +19,7 @@ from ...discretization._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from ...geometry.brep import BRepModel
+from ...geometry.brep import brep_entity_id, BRepModel
 from ...geometry.simplicial import TriangleMesh
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from .._association import GeometryAssociation, GeometryAssociationKind
@@ -134,6 +134,8 @@ def _boundary_association(
 
 @dataclass(frozen=True, slots=True)
 class _PlanarSurfaceEvidence:
+    """Semantic evidence whose source arrays index physical occurrence inventory rows."""
+
     zones: tuple[MeshZone, ...]
     patches: tuple[MeshPatch, ...]
     associations: tuple[GeometryAssociation, ...]
@@ -190,6 +192,8 @@ def _planar_surface_evidence(
     geometry_order: int,
     /,
 ) -> _PlanarSurfaceEvidence:
+    cad_entities.require_source(source)
+    inventory = cad_entities.inventory
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
         raise MeshingFailure(
@@ -247,7 +251,10 @@ def _planar_surface_evidence(
         first, second = np.take(edge_rows, index, axis=0)
         first, second = sorted((int(first), int(second)))
         edge_lookup[(first, second)] = index
-    curve_to_edge = {curve: edge for edge, curve in enumerate(cad_entities.edge_to_curve)}
+    # A collapsed pole edge has no external curve or positive-dimensional mesh edge.
+    curve_to_edge = {
+        curve: edge for edge, curve in enumerate(cad_entities.edge_to_curve) if curve != 0
+    }
     mesh_edge_source = np.full((edge_rows.shape[0],), -1, dtype=np.int32)
     for row_index in range(corners.shape[0]):
         first, second = np.take(corners, row_index, axis=0)
@@ -262,7 +269,7 @@ def _planar_surface_evidence(
             )
         mesh_edge_source[mesh_edge] = source_edge
     if {int(value) for value in mesh_edge_source if value >= 0} != set(
-        range(source.report.num_edges)
+        curve_to_edge.values()
     ):
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
@@ -273,7 +280,7 @@ def _planar_surface_evidence(
     mapped = np.flatnonzero(mesh_edge_source >= 0)
     for mesh_edge in mapped:
         source_edge = int(mesh_edge_source[mesh_edge])
-        expected = set(source.topology.edge_faces[source_edge])
+        expected = set(inventory.topology.edge_faces[source_edge])
         actual = {int(cell_face_ids[cell]) for cell in incidents[int(mesh_edge)]}
         if actual != expected:
             raise MeshingFailure(
@@ -284,7 +291,7 @@ def _planar_surface_evidence(
     expected_boundary = np.zeros((edge_rows.shape[0],), dtype=np.bool_)
     expected_boundary[mapped] = np.asarray(
         [
-            len(source.topology.edge_faces[int(mesh_edge_source[index])]) == 1
+            len(inventory.topology.edge_faces[int(mesh_edge_source[index])]) == 1
             for index in mapped
         ]
     )
@@ -297,6 +304,7 @@ def _planar_surface_evidence(
             stage=MeshingStageKind.CANONICALIZATION.value,
         )
 
+    cell_sources = tuple(inventory.entities[2][int(face)] for face in cell_face_ids)
     face_association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
@@ -304,15 +312,27 @@ def _planar_surface_evidence(
         cell_entity_set.entity_set_id,
         cell_ids,
         tuple(
-            f"{source.report.source_revision}:face:{int(face)}" for face in cell_face_ids
+            brep_entity_id(
+                entity.source_revision,
+                2,
+                entity.index,
+                occurrence_path=entity.occurrence_path,
+            )
+            for entity in cell_sources
         ),
         np.zeros(cell_ids.shape, dtype=np.float64),
         exact=True,
         source_dimensions=np.full(cell_ids.shape, 2, dtype=np.int8),
-        source_indices=np.asarray(cell_face_ids, dtype=np.int64),
+        source_indices=np.asarray(
+            tuple(entity.index for entity in cell_sources), dtype=np.int64
+        ),
+        source_occurrence_paths=tuple(entity.occurrence_path for entity in cell_sources),
     )
     edge_entity_set = mesh.entity_set(1)
     edge_ids = np.asarray(edge_entity_set.entity_ids, dtype=np.int64)
+    edge_sources = tuple(
+        inventory.entities[1][int(mesh_edge_source[index])] for index in mapped
+    )
     edge_association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
@@ -320,16 +340,24 @@ def _planar_surface_evidence(
         edge_entity_set.entity_set_id,
         edge_ids[mapped],
         tuple(
-            f"{source.report.source_revision}:edge:{int(mesh_edge_source[index])}"
-            for index in mapped
+            brep_entity_id(
+                entity.source_revision,
+                1,
+                entity.index,
+                occurrence_path=entity.occurrence_path,
+            )
+            for entity in edge_sources
         ),
         np.zeros(mapped.shape, dtype=np.float64),
         exact=True,
         source_dimensions=np.full(mapped.shape, 1, dtype=np.int8),
-        source_indices=np.asarray(mesh_edge_source[mapped], dtype=np.int64),
+        source_indices=np.asarray(
+            tuple(entity.index for entity in edge_sources), dtype=np.int64
+        ),
+        source_occurrence_paths=tuple(entity.occurrence_path for entity in edge_sources),
     )
 
-    face_regions = np.empty((source.report.num_faces,), dtype=object)
+    face_regions = np.empty((len(inventory.entities[2]),), dtype=object)
     face_regions[:] = None
     zones = []
     for control in specification.region_controls:
@@ -373,7 +401,9 @@ def _planar_surface_evidence(
         source_edges = np.asarray(control.scope.entity_ids, dtype=np.int32)
         selected = np.flatnonzero(np.isin(mesh_edge_source, source_edges))
         if {int(value) for value in mesh_edge_source[selected]} != {
-            int(value) for value in source_edges
+            int(value)
+            for value in source_edges
+            if cad_entities.edge_to_curve[int(value)] != 0
         }:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -518,6 +548,8 @@ def _canonical_cell_solid_ids(
 
 @dataclass(frozen=True, slots=True)
 class _SemanticSurfaceEvidence:
+    """Semantic evidence whose source arrays index physical occurrence inventory rows."""
+
     boundary: SurfaceModel
     association: GeometryAssociation
     zones: tuple[MeshZone, ...]
@@ -576,6 +608,8 @@ def _semantic_surface_evidence(
     plan_id: str,
     /,
 ) -> _SemanticSurfaceEvidence:
+    cad_entities.require_source(source)
+    inventory = cad_entities.inventory
     connectivity = mesh.connectivity
     if not isinstance(connectivity, (TetrahedralConnectivity, PolyhedralConnectivity)):
         raise MeshingFailure(
@@ -626,7 +660,7 @@ def _semantic_surface_evidence(
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     for face_index in mapped:
         source_face = int(face_source[face_index])
-        expected = set(source.topology.face_solids[source_face])
+        expected = set(inventory.topology.face_solids[source_face])
         actual = {int(cell_solid_ids[cell]) for cell in incidents[face_index]}
         if actual != expected:
             raise MeshingFailure(
@@ -638,7 +672,7 @@ def _semantic_surface_evidence(
     expected_exterior = face_source >= 0
     expected_exterior[mapped] = np.asarray(
         [
-            len(source.topology.face_solids[int(face_source[index])]) == 1
+            len(inventory.topology.face_solids[int(face_source[index])]) == 1
             for index in mapped
         ]
     )
@@ -679,7 +713,15 @@ def _semantic_surface_evidence(
         source_revision=source.report.source_revision,
         coordinate_contract=source.coordinate_contract,
         provenance=("gmsh-occ", plan_id),
-        cell_tags=tuple(f"brep-face:{int(value)}" for value in ordered_sources),
+        cell_tags=tuple(
+            brep_entity_id(
+                inventory.entities[2][int(value)].source_revision,
+                2,
+                inventory.entities[2][int(value)].index,
+                occurrence_path=inventory.entities[2][int(value)].occurrence_path,
+            )
+            for value in ordered_sources
+        ),
     )
     boundary = SurfaceModel.from_triangles(
         mesh.coordinates,
@@ -691,6 +733,9 @@ def _semantic_surface_evidence(
         repair_orientation=True,
         orient_closed_outward=True,
     )
+    face_sources = tuple(
+        inventory.entities[2][int(face_source[index])] for index in mapped
+    )
     association = GeometryAssociation(
         GeometryAssociationKind.BREP,
         source.report.source_id,
@@ -698,13 +743,21 @@ def _semantic_surface_evidence(
         face_entity_set.entity_set_id,
         face_ids[mapped],
         tuple(
-            f"{source.report.source_revision}:face:{int(face_source[index])}"
-            for index in mapped
+            brep_entity_id(
+                entity.source_revision,
+                2,
+                entity.index,
+                occurrence_path=entity.occurrence_path,
+            )
+            for entity in face_sources
         ),
         np.zeros((mapped.size,), dtype=np.float64),
         exact=True,
         source_dimensions=np.full((mapped.size,), 2, dtype=np.int8),
-        source_indices=np.asarray(face_source[mapped], dtype=np.int64),
+        source_indices=np.asarray(
+            tuple(entity.index for entity in face_sources), dtype=np.int64
+        ),
+        source_occurrence_paths=tuple(entity.occurrence_path for entity in face_sources),
     )
     zones = []
     for source_face in np.unique(face_source[exterior]):
@@ -773,11 +826,14 @@ def _region_evidence(
     specification: VolumeMeshingSpec,
     cell_solid_ids: np.ndarray,
     mesh_face_source: np.ndarray,
+    cad_entities: _CadEntityMap,
     /,
 ) -> tuple[tuple[MeshZone, ...], tuple[MeshPatch, ...]]:
+    cad_entities.require_source(source)
+    inventory = cad_entities.inventory
     cell_entity_set = mesh.entity_set(3)
     cell_ids = np.asarray(cell_entity_set.entity_ids, dtype=np.int64)
-    solid_regions = np.empty((source.topology.num_solids,), dtype=object)
+    solid_regions = np.empty((len(inventory.entities[3]),), dtype=object)
     solid_regions[:] = None
     zones = []
     for control in specification.region_controls:

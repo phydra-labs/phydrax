@@ -1,0 +1,110 @@
+{
+  "coordinate_unit": "meter",
+  "kind": "curved-periodic-layer-sources",
+  "period": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "registration_id": "b4e7eee0121bb7213efe9d9ffc1767f37f3e5c97a7bdab9dd8bf590242b08c47",
+  "sources": [
+    {
+      "orbit_ids": [],
+      "periodic_trace": {
+        "evidence": ".tmp/layer_first_periodic_trace_attempt1.json",
+        "exact_x_residuals": [
+          "-101121/2361183241434822606848",
+          "-6620711477/77371252455336267181195264"
+        ],
+        "required_period_x": 1,
+        "status": "refused"
+      },
+      "profile": "original-curved-periodic-refusal",
+      "profile_control_points": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.5,
+          0.2
+        ],
+        [
+          1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.05
+        ],
+        [
+          0.5,
+          0.25
+        ],
+        [
+          0.0,
+          0.05
+        ]
+      ],
+      "role": "negative-refusal",
+      "source_artifact": {
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_hybrid_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
+        "media_type": "application/vnd.phydrax.source-identity+json"
+      },
+      "source_digest": "ebeaa8557815eada07f50d04b77fe40d4ed2809392af56d147c6876bace97a35",
+      "source_id": "curved-periodic-narrow-gap",
+      "source_revision": "fadef789744332ba906c2bf1b82231d331e7cc7f4128997191b2d97cb9301e4f",
+      "upper_construction": "Original upper curve independently authored; immutable negative source."
+    },
+    {
+      "orbit_ids": [
+        "corrected-profile-coefficient:4",
+        "corrected-profile-coefficient:6",
+        "corrected-profile-coefficient:7",
+        "corrected-profile-x-orbit:0x0.0p+0",
+        "corrected-profile-x-orbit:0x1.0000000000000p+0",
+        "corrected-profile-x-orbit:0x1.0000000000000p-1",
+        "corrected-wall-x-orbit:0",
+        "corrected-wall-x-orbit:1"
+      ],
+      "periodic_trace": {
+        "construction": "representative-coefficient-plus-unit-translation",
+        "exact_x_residuals": [
+          "0",
+          "0"
+        ],
+        "required_period_x": 1,
+        "status": "required-certified"
+      },
+      "profile": "curved-periodic-layer-core",
+      "profile_control_points": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.5,
+          0.1875
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "role": "positive",
+      "source_artifact": {
+        "fiber_graph": true,
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_hybrid_layer_source.py::corrected_periodic_layer_source",
+        "mapped_domain_id": "78c304f2b99052d26ca7f234cdd423da5ee59050d942dc38218ee29921a97c6d",
+        "media_type": "text/x-python",
+        "source_binding_id": "b5f3d366ae32ddcb7144334d9b381e1bb829403253dd13cd7f363784d23c2078"
+      },
+      "source_digest": "059b334cd5a016c500d608e1fce185b727874f055aefddbf618b6d69a7e5c3cf",
+      "source_id": "curved-periodic-narrow-gap-exact-x-orbits",
+      "source_revision": "2afa0d240a29259b557d12f944cb39d3475327f89a75bd020459f1b0b863073c",
+      "upper_construction": "Upper coefficients and every x=1 mate are translated from shared fundamental-domain representatives."
+    }
+  ]
+}

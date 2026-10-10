@@ -54,7 +54,11 @@ from ..._trainable import NonTrainableState
 from ..._validation import canonical_identifier, positive_integer
 from ...discretization._spaces import DiscreteFieldSpace, EntityDofLayout
 from ...discretization._topology_epoch import TopologyEpoch, TopologyEpochTransition
-from ...discretization._transfer import FieldTransfer, TransferProperties
+from ...discretization._transfer import (
+    FieldTransfer,
+    TransferGeometryBinding,
+    TransferProperties,
+)
 from ...linalg import adjoint, ArraySpace, DiagonalPairing, transpose
 from ...sparse import (
     EdgeRelation,
@@ -330,15 +334,27 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
         )
 
     def epoch_transition(
-        self, source: TopologyEpoch, target: TopologyEpoch, /, *, field_name: str
+        self,
+        source: TopologyEpoch,
+        target: TopologyEpoch,
+        /,
+        *,
+        field_name: str,
+        geometry: TransferGeometryBinding,
     ) -> TopologyEpochTransition:
         """This content transfer as a nondifferentiable topology-epoch transition.
 
         Source and target are ``cell_integral`` content spaces with unit
         measures (inactive padding slots carry zero content), so the epoch
         transition's conservation check is the total-content identity.
+
+        ``geometry`` must bind the owning source and target surface records.
+        The extensive route map alone has no coordinate witness; the epochs
+        are checked independently against this binding.
         """
         name = canonical_identifier(field_name, "field_name")
+        if not isinstance(geometry, TransferGeometryBinding):
+            raise TypeError("geometry must be TransferGeometryBinding.")
         source_space = _content_space(name, source, self.source_size)
         target_space = _content_space(name, target, self.target_size)
         primal = SparseCoordinateOperator(
@@ -362,6 +378,7 @@ class ConservativeFieldTransfer(StrictModule, NonTrainableState):
             primal,
             dual_pullback_operator=transpose(primal),
             hilbert_adjoint_operator=adjoint(primal),
+            geometry=geometry,
             properties=TransferProperties(
                 conservative=True,
                 positivity_preserving=True,

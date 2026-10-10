@@ -544,10 +544,13 @@ def _instance_attributes(value: Any, /) -> Iterator[tuple[str, Any]]:
 class _HiddenStateWalk:
     """Mutable accumulator of arrays hidden from PyTree flattening."""
 
-    def __init__(self, selected: Callable[[Any], bool], /) -> None:
+    def __init__(self, selected: Callable[[Any], bool], tree: PyTree[Any], /) -> None:
         self.selected = selected
         self.found: list[tuple[str, tuple[str, ...]]] = []
         self._seen: set[tuple[int, bool]] = set()
+        self._visible = frozenset(
+            id(leaf) for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)
+        )
 
     def visit(
         self, node: Any, path: str, trail: tuple[str, ...], hidden: bool, /
@@ -571,6 +574,9 @@ class _HiddenStateWalk:
         if marker in self._seen:
             return
         self._seen.add(marker)
+        if isinstance(node, jax_core.Jaxpr):
+            self._visit_jaxpr(node, path, trail)
+            return
         if hidden and isinstance(node, dict):
             # Hidden mappings (module registries, caches) may key by values that
             # PyTree flattening cannot sort; their entries are searched directly.
@@ -599,12 +605,27 @@ class _HiddenStateWalk:
             else:
                 self.visit(child, path + key, trail, False)
 
+    def _visit_jaxpr(
+        self, jaxpr: jax_core.Jaxpr, path: str, trail: tuple[str, ...], /
+    ) -> None:
+        # A jaxpr carries the values of its closed-over constants. Equinox
+        # closure conversion evaluates it with its own `consts` field instead,
+        # so a constant that is a visible PyTree leaf is that leaf, not hidden
+        # state. Any other constant, and the equations' parameters and
+        # literals, remain searched.
+        for index, constant in enumerate(jaxpr.consts):
+            if id(constant) not in self._visible:
+                self.visit(constant, path, (*trail, f"jaxpr constant {index}"), True)
+        for index, equation in enumerate(jaxpr.eqns):
+            self.visit(equation, path, (*trail, f"jaxpr equation {index}"), True)
+        self.visit(jaxpr.outvars, path, (*trail, "jaxpr outputs"), True)
+
 
 def _hidden_arrays(
     tree: PyTree[Any], selected: Callable[[Any], bool], /
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Return `(path, capture trail)` of every `selected` array hidden in `tree`."""
-    walk = _HiddenStateWalk(selected)
+    walk = _HiddenStateWalk(selected, tree)
     walk.visit(tree, "", (), False)
     return tuple(walk.found)
 

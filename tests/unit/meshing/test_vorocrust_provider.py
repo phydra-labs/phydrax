@@ -4,12 +4,14 @@ import shutil
 import sys
 from typing import Any
 
-import manifold3d
 import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax.meshing.providers._vorocrust import _polyhedra
+
+
+manifold3d = pytest.importorskip("manifold3d")
 
 
 _DIGEST = "a" * 64

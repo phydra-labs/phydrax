@@ -300,6 +300,8 @@ def _prop_dispatch(
             _prop_select_if_vmap(eqn, state_indices, state_consts)
         case "iota":
             _prop_iota(eqn, state_indices, state_consts)
+        case "empty":
+            _prop_empty(eqn, state_indices)
         case (
             "random_seed"
             | "random_unwrap"
@@ -377,6 +379,20 @@ def _prop_iota(
         ),
         shape,
     )
+
+
+def _prop_empty(eqn: JaxprEqn, state_indices: StateIndices) -> None:
+    """An uninitialized buffer depends on no input.
+
+    Its element values are unspecified, so no concrete constants are recorded:
+    downstream index handlers must not treat the buffer as known data.
+
+    Jaxpr:
+        invars: [] (no inputs)
+        shape: output shape
+        dtype: output dtype
+    """
+    state_indices[eqn.outvars[0]] = _empty_index_sets(int(np.prod(eqn.params["shape"])))
 
 
 def _prop_conservative_fallback(eqn: JaxprEqn, state_indices: StateIndices) -> None:

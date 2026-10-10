@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
-import importlib
 import inspect
-import pkgutil
 import re
 import types
 from typing import Any
@@ -22,6 +20,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._strict import StrictModule
+from tests._support.package_modules import import_phydrax_modules
 
 
 _STRINGIFIED_ABSTRACT = re.compile(r"\s*(?:eqx\.|equinox\.)?Abstract(?:Class)?Var\[")
@@ -41,12 +40,7 @@ def _subclasses(root: type, /) -> set[type]:
 
 @functools.cache
 def _modules() -> tuple[type, ...]:
-    for info in pkgutil.walk_packages(phx.__path__, "phydrax."):
-        try:
-            importlib.import_module(info.name)
-        except ImportError:
-            # Optional-dependency modules cannot define built-in classes here.
-            continue
+    import_phydrax_modules()
     return tuple(
         sorted(
             (

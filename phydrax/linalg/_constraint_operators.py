@@ -31,6 +31,7 @@ from ._factorizations import (
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import _materialize_by_basis, AbstractLinearOperator, DenseLinearOperator
 from ._policies import RankPolicy, SolveResourcePolicy
+from ._results import LinearSolveStatus
 from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace, RHSLayout
 from ._subspaces import LinearSubspace
 
@@ -628,7 +629,15 @@ def _bind_prepared_constraint(
     identity = jnp.eye(rows, dtype=_coordinate_dtype(operator.target))
     target_block = _unflatten_coordinate_block(operator.target, identity)
     solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((rows,)))
-    if not bool(jnp.all(solve_result.successful)):
+    accepted = solve_result.successful
+    if not full_row_rank:
+        # Without full row rank, coordinate targets outside the range are certified
+        # incompatible; the generalized right inverse maps them to their
+        # minimum-norm least-squares lifts, and A G A = A is verified below.
+        accepted = accepted | (
+            solve_result.status == int(LinearSolveStatus.INCOMPATIBLE_RHS)
+        )
+    if not bool(jnp.all(accepted)):
         raise RuntimeError(
             "Constraint right-inverse block solve failed: "
             f"status={np.asarray(solve_result.status)!r}, "

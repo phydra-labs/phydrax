@@ -70,7 +70,6 @@ def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencie
     candidate = CapabilityProfile(
         "chemistry.periodic.pencil.generalized",
         "test-fixture",
-        "candidate",
         (periodic_support,),
         released=False,
     )
@@ -90,7 +89,6 @@ def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencie
         CapabilityProfile(
             "chemistry.periodic.pencil.generalized",
             "test-fixture",
-            "missing-evidence",
             (periodic_support,),
             required_gates=("scientific", "runtime"),
             released=True,
@@ -106,7 +104,6 @@ def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencie
     dependency = CapabilityProfile(
         "operators.periodic.translation-family",
         "test-fixture",
-        "qualified",
         (dependency_support,),
         required_gates=("scientific", "runtime"),
         release_evidence=(_gate("scientific"), _gate("runtime")),
@@ -115,7 +112,6 @@ def test_periodic_support_requires_signed_profile_evidence_and_exact_dependencie
     released = CapabilityProfile(
         "chemistry.periodic.pencil.generalized",
         "test-fixture",
-        "qualified",
         (periodic_support,),
         dependencies=(
             SupportDependency(
@@ -188,14 +184,12 @@ def test_profile_maturity_does_not_change_periodic_support_tuple_bytes() -> None
     candidate = CapabilityProfile(
         support.capability,
         "test-fixture",
-        "candidate",
         (support,),
         released=False,
     )
     released = CapabilityProfile(
         support.capability,
         "test-fixture",
-        "qualified",
         (support,),
         required_gates=("scientific",),
         release_evidence=(_gate("scientific"),),

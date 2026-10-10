@@ -21,6 +21,7 @@ from .._array_archive import (
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ..equations import MaterialSiteId, MaterialState, MaterialTransaction
 from ..lifecycle import (
     CheckpointManifest,
@@ -31,7 +32,13 @@ from ..lifecycle import (
 
 
 class FiniteElementCheckpoint(StrictModule, NonTrainableState):
-    """Portable accepted FE field/material state bound to compiled identities."""
+    """Portable accepted FE field/material state bound to compiled identities.
+
+    ``transition_id`` is the published geometry/field transition that produced
+    the checkpointed topology epoch (``None`` on the initial epoch); it enters the
+    checkpoint identity, so a restart cannot rebind the state to another
+    transition.
+    """
 
     prepared_id: str = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
@@ -40,6 +47,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
     field_state: tuple[Array, ...]
     materials: MaterialTransaction | None
     material_payload_id: str | None = eqx.field(static=True)
+    transition_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -52,6 +60,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         /,
         *,
         materials: MaterialTransaction | None = None,
+        transition_id: str | None = None,
     ) -> None:
         prepared = str(prepared_id)
         compiled = str(compilation_id)
@@ -59,6 +68,11 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         step_ = int(step)
         fields = tuple(jnp.asarray(value) for value in field_state)
         material_state = materials
+        transition = (
+            None
+            if transition_id is None
+            else canonical_identifier(transition_id, "transition_id")
+        )
         if not prepared or not compiled or time_.shape != () or step_ < 0:
             raise ValueError("FE checkpoint identity, time, or step is invalid.")
         if not fields or not all(
@@ -81,6 +95,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         self.material_payload_id = (
             None if material_payload is None else material_payload.payload_id
         )
+        self.transition_id = transition
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-element-checkpoint",
@@ -90,6 +105,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
                 "step": step_,
                 "fields": [array_tree_fingerprint(np.asarray(value)) for value in fields],
                 "materials": self.material_payload_id,
+                "transition": transition,
             }
         )
 
@@ -118,6 +134,7 @@ def write_finite_element_checkpoint(
             for state in material_states
         ],
         "step": checkpoint.step,
+        "transition_id": checkpoint.transition_id,
     }
     arrays: dict[str, object] = {
         "time": np.asarray(checkpoint.time),
@@ -206,6 +223,7 @@ def read_finite_element_checkpoint(
         int(metadata["step"]),
         fields,
         materials=materials,
+        transition_id=metadata["transition_id"],
     )
     if checkpoint.checkpoint_id != manifest.checkpoint_id:
         raise ValueError("FE checkpoint content identity mismatch.")

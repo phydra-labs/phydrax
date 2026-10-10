@@ -1142,7 +1142,6 @@ def color_gradient_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             "lattice-boltzmann.n-color-emulsion.profile",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     "lattice-boltzmann.n-color-emulsion",

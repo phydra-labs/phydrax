@@ -10,8 +10,8 @@ import jax.numpy as jnp
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from ..dynamics import StateLayout
-from ..dynamics.identification import AbstractFeatureLibrary, FeatureEvaluation
+from ..dynamics._layout import StateLayout
+from ..dynamics.identification._features import AbstractFeatureLibrary, FeatureEvaluation
 from ..typing import checked
 from ._dynamics import PreparedAtomisticDynamics
 from .sampling._collective_variable import AbstractCollectiveVariableProgram

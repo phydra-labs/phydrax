@@ -38,6 +38,7 @@ from .._sizing import (
     SizeControlStrength,
     UniformSizeControl,
 )
+from ._gmsh_inventory import _cad_occurrence_inventory, _cad_scope_set
 from ._gmsh_options import (
     GmshHighOrderOptimization,
     GmshSurfaceAlgorithm,
@@ -48,20 +49,17 @@ from ._gmsh_options import (
 def _scope_indices(
     source: BRepModel, scope: MeshingScope, dimension: int, /
 ) -> np.ndarray | None:
-    counts = {
-        0: source.report.num_vertices,
-        1: source.report.num_edges,
-        2: source.report.num_faces,
-        3: source.topology.num_solids,
-    }
-    count = counts[dimension]
+    if dimension not in (0, 1, 2, 3):
+        return None
+    count = len(_cad_occurrence_inventory(source).entities[dimension])
     identifiers = np.asarray(scope.entity_ids, dtype=np.int64)
     if (
         scope.source_id != source.report.source_id
         or scope.source_revision != source.report.source_revision
         or scope.entity_kind is not MeshingEntityKind.GEOMETRY
         or scope.entity_dimension != dimension
-        or scope.entity_set_id != f"{source.report.source_revision}:brep:{dimension}"
+        or scope.entity_set_id != _cad_scope_set(source, dimension)
+        or np.any(identifiers < 0)
         or np.any(identifiers >= count)
     ):
         return None
@@ -80,6 +78,7 @@ def _sweep_preflight_issues(
         issues.append("Gmsh swept layers support affine order-one geometry only")
     controlled: dict[int, tuple[int, BoundaryLayerControl]] = {}
     face_roles: dict[tuple[int, int], str] = {}
+    topology = _cad_occurrence_inventory(source).topology
     for control_index, control in enumerate(controls):
         # ty: ignore[invalid-argument-type]
         volume_ids = _scope_indices(source, control.volume_scope, 3)
@@ -101,7 +100,7 @@ def _sweep_preflight_issues(
             assigned = set()
             for face_value in faces:
                 face = int(face_value)
-                owners = set(source.topology.face_solids[face])
+                owners = set(topology.face_solids[face])
                 selected = owners & volumes
                 if len(selected) != 1:
                     issues.append(
@@ -119,7 +118,7 @@ def _sweep_preflight_issues(
                 issues.append(
                     "Swept cap scopes must cover every controlled solid exactly once"
                 )
-    all_solids = set(range(source.topology.num_solids))
+    all_solids = set(range(topology.num_solids))
     selected_solids = set(controlled)
     expected_kinds = (
         {"prism"} if selected_solids == all_solids else {"prism", "tetrahedron"}
@@ -135,13 +134,13 @@ def _sweep_preflight_issues(
         )
     swept_tet_caps = set()
     for solid, (_, control) in controlled.items():
-        for face in source.topology.solid_faces[solid]:
+        for face in topology.solid_faces[solid]:
             role = face_roles.get((solid, face), "lateral")
             other_controlled = {
-                owner for owner in source.topology.face_solids[face] if owner != solid
+                owner for owner in topology.face_solids[face] if owner != solid
             } & selected_solids
             other_unswept = {
-                owner for owner in source.topology.face_solids[face] if owner != solid
+                owner for owner in topology.face_solids[face] if owner != solid
             } - selected_solids
             if role != "lateral" and other_unswept:
                 swept_tet_caps.add(face)
@@ -172,10 +171,11 @@ def _sweep_preflight_issues(
 def _closed_wall(source: BRepModel, faces: np.ndarray, /) -> bool:
     """Every edge of the wall faces is shared only by wall faces."""
     wall = {int(face) for face in faces}
+    topology = _cad_occurrence_inventory(source).topology
     return all(
-        set(source.topology.edge_faces[edge]) <= wall
+        set(topology.edge_faces[edge]) <= wall
         for face in wall
-        for edge in source.topology.face_edges[face]
+        for edge in topology.face_edges[face]
     )
 
 
@@ -196,7 +196,7 @@ def _layered_volume_issues(
         issues.append("Gmsh grows one advancing or provider boundary-layer control")
     if specification.fill_strategy is not VolumeFillStrategy.SIMPLEX:
         issues.append("Advancing and provider layers fill their core with SIMPLEX cells")
-    if source.topology.num_solids != 1:
+    if len(_cad_occurrence_inventory(source).entities[3]) != 1:
         issues.append("Advancing and provider layers require one source solid")
     if (
         specification.region_controls
@@ -387,7 +387,9 @@ def _semantic_surface_issues(
     if not specification.region_controls:
         return ["Every planar source face requires an explicit RegionControl"]
     occupied: set[int] = set()
-    face_regions = np.empty((source.report.num_faces,), dtype=object)
+    inventory = _cad_occurrence_inventory(source)
+    topology = inventory.topology
+    face_regions = np.empty((len(inventory.entities[2]),), dtype=object)
     face_regions[:] = None
     for control in specification.region_controls:
         face_ids = _scope_indices(source, control.scope, 2)
@@ -403,7 +405,7 @@ def _semantic_surface_issues(
         face_regions[face_ids] = control.region_name
         if not control.meshing_enabled or control.role is RegionRole.VOID:
             issues.append("Disabled and void RegionControl values are unsupported")
-    expected_faces = set(range(source.report.num_faces))
+    expected_faces = set(range(len(inventory.entities[2])))
     if occupied != expected_faces:
         issues.append("RegionControl scopes must exhaustively cover all source faces")
         return issues
@@ -419,7 +421,7 @@ def _semantic_surface_issues(
         matched = False
         for edge_value in edge_ids:
             edge = int(edge_value)
-            owners = source.topology.edge_faces[edge]
+            owners = topology.edge_faces[edge]
             actual = tuple(sorted(str(face_regions[owner]) for owner in owners))
             if (
                 len(owners) not in (1, 2)
@@ -438,7 +440,7 @@ def _semantic_surface_issues(
             )
     expected_patches = {
         edge
-        for edge, owners in enumerate(source.topology.edge_faces)
+        for edge, owners in enumerate(topology.edge_faces)
         if len(owners) == 1
         or (len(owners) == 2 and face_regions[owners[0]] != face_regions[owners[1]])
     }
@@ -458,6 +460,7 @@ def _semantic_region_issues(
     occupied: set[int] = set()
     region_names: set[str] = set()
     solid_region: dict[int, str] = {}
+    topology = _cad_occurrence_inventory(model).topology
     for control in specification.region_controls:
         identifiers = _scope_indices(model, control.scope, 3)
         if identifiers is None:
@@ -474,14 +477,14 @@ def _semantic_region_issues(
         region_names.add(control.region_name)
         if not control.meshing_enabled or control.role is RegionRole.VOID:
             unsupported.append("Disabled and void RegionControl values are unsupported")
-    if occupied != set(range(model.topology.num_solids)):
+    if occupied != set(range(topology.num_solids)):
         unsupported.append(
             "RegionControl scopes must exhaustively cover all source solids"
         )
-    if occupied == set(range(model.topology.num_solids)):
+    if occupied == set(range(topology.num_solids)):
         observed_internal_faces = {
             face
-            for face, owners in enumerate(model.topology.face_solids)
+            for face, owners in enumerate(topology.face_solids)
             if len(owners) == 2 and solid_region[owners[0]] != solid_region[owners[1]]
         }
         declared_internal_faces: set[int] = set()
@@ -494,7 +497,7 @@ def _semantic_region_issues(
                 continue
             matched = False
             for face in face_ids:
-                owners = model.topology.face_solids[int(face)]
+                owners = topology.face_solids[int(face)]
                 actual = tuple(sorted(solid_region[owner] for owner in owners))
                 if (
                     len(owners) not in (1, 2)
@@ -540,9 +543,10 @@ def _validate_gmsh_semantics(
     /,
 ) -> bool:
     semantic_volume = False
+    topology = _cad_occurrence_inventory(model).topology
     if isinstance(specification, VolumeMeshingSpec):
         semantic_volume = bool(
-            model.topology.num_solids > 1
+            topology.num_solids > 1
             or specification.region_controls
             or specification.patch_controls
         )
@@ -586,6 +590,8 @@ def _validate_gmsh_semantics(
         if semantic_volume:
             _semantic_region_issues(specification, model, unsupported)
     else:
+        if specification.quality_target is not None:
+            unsupported.append("Gmsh does not enforce a MeshQualityTarget")
         semantic_surface = bool(
             target.ambient_dimension == 2
             or specification.region_controls
@@ -594,7 +600,7 @@ def _validate_gmsh_semantics(
         )
         if semantic_surface:
             unsupported.extend(_semantic_surface_issues(model, specification))
-        elif model.topology.num_solids > 1:
+        elif topology.num_solids > 1:
             unsupported.append(
                 "Multi-solid BRep surface meshing is outside the strict semantic volume path"
             )
@@ -778,7 +784,9 @@ def _validate_gmsh_size_controls(
         unsupported.append(
             "Gmsh does not lower explicit priority across curvature and other controls"
         )
-    if semantic_volume and covered_solids != set(range(model.topology.num_solids)):
+    if semantic_volume and covered_solids != set(
+        range(len(_cad_occurrence_inventory(model).entities[3]))
+    ):
         unsupported.append(
             "Solid-scoped UniformSizeControl values must cover every source solid"
         )
@@ -804,6 +812,7 @@ def _protected_feature_issues(
     constrained = bool(
         (volume and specification.layer_controls) or specification.periodic_constraints
     )
+    topology = _cad_occurrence_inventory(model).topology
     for feature in specification.protected_features:
         dimension = _FEATURE_DIMENSIONS.get(feature.feature_kind)
         if dimension is None:
@@ -825,7 +834,7 @@ def _protected_feature_issues(
             )
             continue
         if dimension == 2:
-            owners = tuple(model.topology.face_solids[int(face)] for face in identifiers)
+            owners = tuple(topology.face_solids[int(face)] for face in identifiers)
             if any(not values for values in owners):
                 issues.append("Gmsh embeds free protected curves and points only")
             if feature.feature_kind is FeatureKind.MATERIAL_INTERFACE and any(
@@ -836,7 +845,7 @@ def _protected_feature_issues(
                 )
             continue
         if dimension == 1 and any(
-            not model.topology.edge_faces[int(edge)] for edge in identifiers
+            not topology.edge_faces[int(edge)] for edge in identifiers
         ):
             if semantic:
                 issues.append(
@@ -956,9 +965,10 @@ def _brep_support_issues(
         else specification.boundary_scope
     )
     dimension = target.topological_dimension
+    inventory = _cad_occurrence_inventory(model)
     scope_ids = _scope_indices(model, scope, dimension)
     expected_ids = np.arange(
-        model.topology.num_solids if dimension == 3 else model.report.num_faces,
+        len(inventory.entities[dimension]),
         dtype=np.int64,
     )
     if scope_ids is None:
@@ -970,7 +980,7 @@ def _brep_support_issues(
             "Gmsh meshes the complete source; partial top-level scopes are unsupported"
         )
     if isinstance(specification, SurfaceMeshingSpec):
-        if target.ambient_dimension == 2 and model.topology.num_solids:
+        if target.ambient_dimension == 2 and inventory.entities[3]:
             unsupported.append(
                 "Ambient-dimension-two output requires a zero-solid planar BRep"
             )

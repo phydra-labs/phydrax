@@ -59,9 +59,7 @@ def qualification() -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        # ty: ignore[invalid-argument-type]
         [_EXPONENTS, _EXPONENTS],
-        # ty: ignore[invalid-argument-type]
         [_COEFFICIENTS, _COEFFICIENTS],
         source_id="sto-3g-hydrogen-qualification",
     ).prepare(h2_system)
@@ -211,7 +209,6 @@ def qualification() -> Any:
     )
     periodic_family = (
         phx.operators.periodic.periodic_translation_family_from_dense_blocks(
-            # ty: ignore[invalid-argument-type]
             [[0, 0, 0]],
             np.asarray([-1.0]).reshape((1, 1, 1, 1, 1)),
         )

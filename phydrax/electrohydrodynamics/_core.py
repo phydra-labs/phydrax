@@ -119,7 +119,6 @@ def electrohydrodynamics_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"formulation": formulation}),),
             required_gates=("charge-conservation", "traction-jump", "energy-ledger"),
         )

@@ -26,6 +26,43 @@ def _root_termination() -> Any:
     )
 
 
+@pytest.mark.parametrize(
+    ("quadratic", "linear", "constant", "expected"),
+    (
+        (1.0, -0.25, 0.0, 0.25),
+        (0.0, 1.0, -0.5, 0.5),
+        (0.0, 0.0, 0.0, 1.0),
+        (1.0, -0.5, 0.0625, 1.0),
+        (1.0, 0.0, 1.0, 1.0),
+    ),
+)
+def test_quadratic_event_bound_handles_outgoing_ties_and_nonordering_contacts(
+    quadratic: float,
+    linear: float,
+    constant: float,
+    expected: float,
+) -> None:
+    bound, valid = nl.quadratic_event_bound(
+        jnp.asarray((quadratic, jnp.nan)),
+        jnp.asarray((linear, jnp.nan)),
+        jnp.asarray((constant, jnp.nan)),
+        jnp.asarray((True, False)),
+    )
+    assert bool(valid)
+    assert float(bound) == expected
+
+
+def test_quadratic_event_bound_refuses_nonfinite_active_coefficients() -> None:
+    bound, valid = nl.quadratic_event_bound(
+        jnp.asarray((jnp.inf,)),
+        jnp.asarray((1.0,)),
+        jnp.asarray((-1.0,)),
+        jnp.asarray((True,)),
+    )
+    assert not bool(valid)
+    assert float(bound) == 0.0
+
+
 def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable() -> None:
     problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
     failing = nl.FunctionNonlinearUpdate(
@@ -1210,3 +1247,69 @@ def test_mixed_precision_reserves_physical_certification_evaluations() -> None:
             args=jnp.asarray([2.0]),
         )
     assert calls == 0
+
+
+@pytest.mark.parametrize("dimension", [3, 4])
+def test_vector_local_root_reverse_mode_is_the_adjoint_of_its_implicit_tangent(
+    dimension: int,
+) -> None:
+    # Non-symmetric Jacobian: a transpose bug cannot hide behind symmetry.
+    coupling = jnp.triu(jnp.ones((dimension, dimension)), 1) * 0.7
+    matrix = 3.0 * jnp.eye(dimension) + coupling - 0.2 * coupling.T
+    plan = nl.VectorLocalRootPlan(
+        dimension, maximum_steps=40, tolerance=1e-13, plan_id="adjoint-root"
+    )
+
+    def residual(state: Any, parameter: Any) -> Any:
+        return (
+            matrix @ state
+            + 0.1 * state**3
+            - parameter * jnp.arange(1.0, dimension + 1.0)
+            - parameter**2
+        )
+
+    def root(parameter: Any) -> Any:
+        return plan.solve(lambda state: residual(state, parameter), jnp.zeros(dimension))
+
+    parameter = jnp.linspace(0.3, 0.9, dimension)
+    state = root(parameter)
+    state_jacobian = jax.jacfwd(residual, argnums=0)(state, parameter)
+    parameter_jacobian = jax.jacfwd(residual, argnums=1)(state, parameter)
+    implicit = -jnp.linalg.solve(state_jacobian, parameter_jacobian)
+    assert not jnp.allclose(state_jacobian, state_jacobian.T)
+
+    direction = jnp.linspace(-1.0, 1.0, dimension)
+    weights = jnp.linspace(2.0, -0.5, dimension)
+    _, tangent = jax.jvp(root, (parameter,), (direction,))
+    _, pullback = jax.vjp(root, parameter)
+    (cotangent,) = pullback(weights)
+    assert jnp.allclose(tangent, implicit @ direction, rtol=0.0, atol=1e-12)
+    assert jnp.allclose(cotangent, implicit.T @ weights, rtol=0.0, atol=1e-12)
+    assert jnp.allclose(weights @ tangent, cotangent @ direction, rtol=0.0, atol=1e-12)
+    gradient = jax.jit(jax.grad(lambda value: weights @ root(value)))(parameter)
+    assert jnp.array_equal(
+        gradient, jax.grad(lambda value: weights @ root(value))(parameter)
+    )
+    assert jnp.allclose(gradient, implicit.T @ weights, rtol=0.0, atol=1e-12)
+
+
+def test_vector_local_root_singular_tangent_keeps_refusal_in_both_modes() -> None:
+    plan = nl.VectorLocalRootPlan(2, plan_id="singular-adjoint-root")
+
+    def residual(state: Any, parameter: Any) -> Any:
+        return jnp.stack((state[0] ** 2 - parameter, state[1] - parameter))
+
+    def root(parameter: Any) -> Any:
+        return plan.solve(lambda state: residual(state, parameter), jnp.zeros(2))
+
+    _, diagnostics = plan.solve_with_diagnostics(
+        lambda state: residual(state, jnp.asarray(0.0)), jnp.zeros(2)
+    )
+    assert not bool(diagnostics.converged)
+    _, tangent = jax.jvp(root, (jnp.asarray(0.0),), (jnp.asarray(1.0),))
+    _, pullback = jax.vjp(root, jnp.asarray(0.0))
+    (cotangent,) = pullback(jnp.asarray([1.0, 1.0]))
+    # The refused singular solve contributes no fabricated sensitivity, and
+    # reverse mode reports exactly the transpose of the forward refusal.
+    assert jnp.array_equal(tangent, jnp.zeros(2))
+    assert jnp.array_equal(cotangent, jnp.asarray(0.0))

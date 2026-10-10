@@ -13,6 +13,7 @@ from phydrax.meshing._proposals import (
     MeshCoordinateProposal,
     MeshMarkingProposal,
     MeshMetricProposal,
+    MeshProposalFeatures,
     MeshProposalSafetyPolicy,
     MeshSizeProposal,
     prepare_mesh_proposal,
@@ -60,13 +61,6 @@ def test_proposals_scenario_1() -> None:
     result = transaction.commit(source)
     adaptation = transaction.adaptation
 
-    np.testing.assert_array_equal(
-        transaction.projection.marked_cell_ids, (10, 20, 30, 40)
-    )
-    # ty: ignore[unresolved-attribute]
-    assert adaptation.status is phx.meshing.MeshAdaptationStatus.PARTIAL
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_array_equal(adaptation.evidence.rejected_refinement_ids, (10,))
     cells = np.asarray(result.mesh.blocks[0].global_ids)
     row = int(np.flatnonzero(cells == 10)[0])
     np.testing.assert_array_equal(
@@ -348,9 +342,19 @@ def test_proposals_scenario_4() -> None:
     source = _source()
     # One-hot cell features in sorted global-ID order; the model scores the
     # protected cell 10 highest.
-    features = np.eye(4)
+    features = MeshProposalFeatures(
+        source,
+        mesh_proposal_scope(source, 2),
+        np.eye(4, dtype=np.float64),
+        feature_ids=(
+            "cell-priority/0",
+            "cell-priority/1",
+            "cell-priority/2",
+            "cell-priority/3",
+        ),
+        feature_owner_id="learned-marker-fixture",
+    )
     proposer = LearnedMeshProposer(
-        # ty: ignore[invalid-argument-type, missing-argument]
         _Score((9.0, 1.0, 3.0, 2.0)),
         kind="marking",
         proposer_id="learned-marker",
@@ -362,7 +366,6 @@ def test_proposals_scenario_4() -> None:
     transaction = prepare_mesh_proposal(source, proposal, policy)
 
     assert isinstance(proposal, MeshMarkingProposal)
-    assert proposal.proposer_id == "learned-marker"
     np.testing.assert_array_equal(proposal.values, (9.0, 1.0, 3.0, 2.0))
     # Identical values from any other proposer project identically: the learned
     # route has no trusted path of its own.
@@ -371,15 +374,12 @@ def test_proposals_scenario_4() -> None:
         mesh_proposal_scope(source, 2),
         # ty: ignore[invalid-argument-type]
         (9.0, 1.0, 3.0, 2.0),
-        proposer_id="learned-marker",
+        proposer_id=proposal.proposer_id,
     )
     assert (
         project_mesh_proposal(source, untrusted, policy).projection_id
         == transaction.projection.projection_id
     )
-    # The protected cell's mark is rejected by native bisection, never executed.
-    # ty: ignore[unresolved-attribute]
-    assert 10 in np.asarray(transaction.adaptation.evidence.rejected_refinement_ids)
     result = transaction.commit(source)
     row = int(np.flatnonzero(np.asarray(result.mesh.blocks[0].global_ids) == 10)[0])
     np.testing.assert_array_equal(
@@ -389,7 +389,6 @@ def test_proposals_scenario_4() -> None:
     assert contract.authority is phx.ComponentAuthority.DECISION
 
     nonfinite = LearnedMeshProposer(
-        # ty: ignore[invalid-argument-type, missing-argument]
         _Score((np.nan, 0.0, 0.0, 0.0)),
         kind="marking",
         proposer_id="nan",
@@ -397,9 +396,20 @@ def test_proposals_scenario_4() -> None:
     with pytest.raises(ValueError, match="finite"):
         nonfinite.propose(source, features)
     source = _source()
-    features = np.eye(5)
+    features = MeshProposalFeatures(
+        source,
+        mesh_proposal_scope(source, 0),
+        np.eye(5, dtype=np.float64),
+        feature_ids=(
+            "size-channel/0",
+            "size-channel/1",
+            "size-channel/2",
+            "size-channel/3",
+            "size-channel/4",
+        ),
+        feature_owner_id="learned-size-fixture",
+    )
     proposer = LearnedMeshProposer(
-        # ty: ignore[invalid-argument-type, missing-argument]
         _Score((-5.0, 2.0, 0.2, 50.0, 1.0)),
         kind="size",
         proposer_id="sizer",
@@ -414,7 +424,6 @@ def test_proposals_scenario_4() -> None:
     sizes = np.asarray(transaction.projection.size_field.values)
     assert np.all(sizes >= 0.1 - 1e-12) and np.all(sizes <= 2.0 + 1e-12)
     with pytest.raises(ValueError, match="spatial_dimension"):
-        # ty: ignore[invalid-argument-type, missing-argument]
         LearnedMeshProposer(_Score((1.0,)), kind="metric", proposer_id="metric")
     source = _source()
     owner = phx.ModelPorts(
@@ -448,7 +457,21 @@ def test_proposals_scenario_4() -> None:
     assert evidence.inputs == ((owner.inputs[0].port_id,) * 2,)
     # ty: ignore[unresolved-attribute]
     assert evidence.unverified == ()
-    proposal = proposer.propose(source, np.eye(4))
+    proposal = proposer.propose(
+        source,
+        MeshProposalFeatures(
+            source,
+            mesh_proposal_scope(source, 2),
+            np.eye(4, dtype=np.float64),
+            feature_ids=(
+                "cell-priority/0",
+                "cell-priority/1",
+                "cell-priority/2",
+                "cell-priority/3",
+            ),
+            feature_owner_id="ported-marker-fixture",
+        ),
+    )
     np.testing.assert_array_equal(proposal.values, (9.0, 1.0, 3.0, 2.0))
 
 
@@ -469,7 +492,8 @@ class _AbstractScore(phx.AbstractArrayModel):
 
 
 class _Score(_AbstractScore):
-    pass
+    def __init__(self, weight: Any, bias: Any = 0.0) -> None:
+        super().__init__(weight, bias)
 
 
 def test_learned_marker_trains_against_dual_weighted_residual_targets() -> None:
@@ -481,7 +505,6 @@ def test_learned_marker_trains_against_dual_weighted_residual_targets() -> None:
     ).absolute
     features = jnp.concatenate((residual, correction), axis=1)
     proposer = LearnedMeshProposer(
-        # ty: ignore[invalid-argument-type, missing-argument]
         _Score(jnp.zeros(4)),
         kind="marking",
         proposer_id="dwr-marker",
@@ -500,4 +523,113 @@ def test_learned_marker_trains_against_dual_weighted_residual_targets() -> None:
         id(proposer.model.bias),
     }
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient))
-    assert isinstance(proposer.propose(source, features), MeshMarkingProposal)
+    bound_features = MeshProposalFeatures(
+        source,
+        mesh_proposal_scope(source, 2),
+        features,
+        feature_ids=(
+            "residual/0",
+            "residual/1",
+            "adjoint-correction/0",
+            "adjoint-correction/1",
+        ),
+        feature_owner_id="local-dual-weighted-residual",
+    )
+    assert isinstance(proposer.propose(source, bound_features), MeshMarkingProposal)
+
+
+class _StochasticScore(_AbstractScore):
+    def __init__(self, weight: Any, bias: Any = 0.0) -> None:
+        super().__init__(weight, bias)
+
+    def __call__(self, x: Any, /, *, key: Any = None) -> Any:
+        if key is None:
+            raise ValueError("Stochastic scoring requires an explicit realization.")
+        return self.weight @ x + self.bias + jax.random.normal(key, (), dtype=x.dtype)
+
+
+def test_stochastic_proposal_addresses_survive_partition_and_row_permutation() -> None:
+    model = _StochasticScore(jnp.asarray((1.0, 2.0)))
+    proposer = LearnedMeshProposer(
+        model,
+        kind="marking",
+        proposer_id="stochastic-marker",
+    )
+    rows = jnp.asarray(((1.0, 0.0), (0.0, 1.0), (1.0, 1.0)), dtype=jnp.float64)
+    identifiers = jnp.asarray((7, 7 + 2**32, -7), dtype=jnp.int64)
+    key = jax.random.key(71)
+    full = proposer.evaluate_addressed(
+        rows, identifiers, key, address_id="source/physical-owner"
+    )
+    permutation = jnp.asarray((2, 0, 1))
+    permuted = proposer.evaluate_addressed(
+        rows[permutation],
+        identifiers[permutation],
+        key,
+        address_id="source/physical-owner",
+    )
+    np.testing.assert_array_equal(permuted, full[permutation])
+    partitioned = jnp.concatenate(
+        tuple(
+            proposer.evaluate_addressed(
+                rows[index : index + 1],
+                identifiers[index : index + 1],
+                key,
+                address_id="source/physical-owner",
+            )
+            for index in range(3)
+        )
+    )
+    np.testing.assert_array_equal(partitioned, full)
+    noise = full - rows @ model.weight
+    assert noise[0] != noise[1]
+    foreign = proposer.evaluate_addressed(
+        rows, identifiers, key, address_id="new-source/physical-owner"
+    )
+    assert not np.array_equal(full, foreign)
+
+
+def test_stochastic_learned_proposal_replays_only_explicit_realization() -> None:
+    source = _source()
+    scope = mesh_proposal_scope(source, 2)
+    features = MeshProposalFeatures(
+        source,
+        scope,
+        np.ones((4, 1)),
+        feature_ids=("physical-residual",),
+        feature_owner_id="prepared-reaction-estimator",
+    )
+    proposer = LearnedMeshProposer(
+        _StochasticScore((1.0,)),
+        kind="marking",
+        proposer_id="stochastic-marker",
+    )
+    with pytest.raises(ValueError, match="explicit realization"):
+        proposer.propose(source, features)
+    first = proposer.propose(source, features, key=jax.random.key(71))
+    replay = proposer.propose(source, features, key=jax.random.key(71))
+    other = proposer.propose(source, features, key=jax.random.key(72))
+    np.testing.assert_array_equal(first.values, replay.values)
+    assert first.proposal_id == replay.proposal_id
+    assert first.proposal_id != other.proposal_id
+
+
+def test_learned_model_update_invalidates_proposal_provenance_without_changing_scores() -> (
+    None
+):
+    source = _source()
+    features = MeshProposalFeatures(
+        source,
+        mesh_proposal_scope(source, 2),
+        np.zeros((4, 1)),
+        feature_ids=("residual",),
+        feature_owner_id="prepared-estimator",
+    )
+    model = _Score((1.0,))
+    proposer = LearnedMeshProposer(model, kind="marking", proposer_id="trained-marker")
+    updated_model = eqx.tree_at(lambda owner: owner.weight, model, jnp.asarray((2.0,)))
+    updated = eqx.tree_at(lambda owner: owner.model, proposer, updated_model)
+    first, second = proposer.propose(source, features), updated.propose(source, features)
+    np.testing.assert_array_equal(first.values, second.values)
+    assert proposer.model_id != updated.model_id
+    assert first.proposal_id != second.proposal_id

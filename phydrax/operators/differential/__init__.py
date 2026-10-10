@@ -2,7 +2,14 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from ._time_fractional_ops import (
+        caputo_time_fractional,
+        caputo_time_fractional_dw,
+    )
 
 from ._clifford import clifford_dirac
 from ._dimension_estimators import (
@@ -174,10 +181,6 @@ from ._taylor_contracts import (
 )
 from ._taylor_execution import evaluate_taylor_contractions, TaylorContractionResult
 from ._taylor_planning import plan_taylor_contractions, TaylorContractionPlan
-from ._time_fractional_ops import (
-    caputo_time_fractional,
-    caputo_time_fractional_dw,
-)
 
 
 _STOCHASTIC_OPERATOR_EXPORTS = frozenset(
@@ -190,6 +193,9 @@ _STOCHASTIC_OPERATOR_EXPORTS = frozenset(
         "StochasticInterpretation",
         "stratonovich_to_ito_drift",
     }
+)
+_TIME_FRACTIONAL_EXPORTS = frozenset(
+    {"caputo_time_fractional", "caputo_time_fractional_dw"}
 )
 
 
@@ -207,6 +213,10 @@ def __getattr__(name: str) -> Any:
             "stratonovich_to_ito_drift": module.stratonovich_to_ito_drift,
         }
         return exports[name]
+    if name in _TIME_FRACTIONAL_EXPORTS:
+        from . import _time_fractional_ops as module
+
+        return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

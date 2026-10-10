@@ -3,13 +3,16 @@
 #
 
 
-from typing import Any
+from collections.abc import Callable, Sequence
+from pathlib import Path
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
+from numpy.typing import NDArray
 
 from phydrax._meshcore import meshcore_available, MeshcoreUnavailableError
 from phydrax.discretization import (
@@ -18,7 +21,21 @@ from phydrax.discretization import (
     UnstructuredRemapLimiter,
     UnstructuredSecondOrderRemapPlan,
 )
-from phydrax.geometry import CommonRefinementPolicy, CommonRefinementStatus
+from phydrax.discretization.finite_volume._remap_evidence import (
+    PreparedUnstructuredConservativeRemap,
+)
+from phydrax.discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
+from phydrax.discretization.finite_volume._unstructured_remap import (
+    UnstructuredConservativeRemapPlan,
+)
+from phydrax.geometry import (
+    CommonRefinementEvidence,
+    CommonRefinementPolicy,
+    CommonRefinementStatus,
+)
+from phydrax.geometry._supermesh import PreparedCommonRefinement
 
 
 requires_meshcore = pytest.mark.skipif(
@@ -26,7 +43,37 @@ requires_meshcore = pytest.mark.skipif(
 )
 
 
-def _quad(vertices: Any, cells: Any, *, ids: Any = None) -> Any:
+def _require_plan(
+    remap: PreparedUnstructuredConservativeRemap,
+) -> UnstructuredConservativeRemapPlan:
+    if remap.plan is None:
+        raise ValueError(f"Expected successful remap, got {remap.status}: {remap.reason}")
+    return remap.plan
+
+
+def _require_refinement(
+    remap: PreparedUnstructuredConservativeRemap,
+) -> PreparedCommonRefinement:
+    if remap.refinement is None:
+        raise ValueError("Expected actual common refinement.")
+    return remap.refinement
+
+
+def _require_common_evidence(
+    remap: PreparedUnstructuredConservativeRemap,
+) -> CommonRefinementEvidence:
+    evidence = remap.evidence
+    if not isinstance(evidence, CommonRefinementEvidence):
+        raise TypeError("Expected common-refinement evidence.")
+    return evidence
+
+
+def _quad(
+    vertices: Sequence[Sequence[float]] | NDArray[np.float64],
+    cells: Sequence[Sequence[int]] | NDArray[np.int32] | NDArray[np.int64],
+    *,
+    ids: Sequence[int] | NDArray[np.int64] | None = None,
+) -> UnstructuredFiniteVolumeDiscretization:
     return UnstructuredFiniteVolumePlan(
         np.asarray(vertices, dtype=np.float64),
         quadrilaterals=np.asarray(cells, dtype=np.int32),
@@ -34,24 +81,28 @@ def _quad(vertices: Any, cells: Any, *, ids: Any = None) -> Any:
     ).prepare()
 
 
-def _unit_quad() -> Any:
+def _unit_quad() -> UnstructuredFiniteVolumeDiscretization:
     return _quad(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), ((0, 1, 2, 3),))
 
 
-def _grid_points(n: Any) -> Any:
+def _grid_points(n: int) -> tuple[NDArray[np.float64], NDArray[np.int64]]:
     x = np.linspace(0.0, 1.0, n + 1)
     points = np.stack(np.meshgrid(x, x, indexing="ij"), axis=-1).reshape(-1, 2)
-    i, j = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    i, j = np.meshgrid(
+        np.arange(n, dtype=np.int64), np.arange(n, dtype=np.int64), indexing="ij"
+    )
     corner = (i * (n + 1) + j).reshape(-1)
     return points, corner
 
 
-def _quad_grid(n: Any) -> Any:
+def _quad_grid(n: int) -> UnstructuredFiniteVolumeDiscretization:
     points, a = _grid_points(n)
     return _quad(points, np.stack((a, a + n + 1, a + n + 2, a + 1), axis=-1))
 
 
-def _perturbed_triangles(n: Any, *, seed: Any = 0) -> Any:
+def _perturbed_triangles(
+    n: int, *, seed: int = 0
+) -> UnstructuredFiniteVolumeDiscretization:
     points, a = _grid_points(n)
     interior = np.all((points > 0.0) & (points < 1.0), axis=1)
     rng = np.random.default_rng(seed)
@@ -63,7 +114,9 @@ def _perturbed_triangles(n: Any, *, seed: Any = 0) -> Any:
     ).prepare()
 
 
-def _cell_averages(geometry: Any, function: Any) -> Any:
+def _cell_averages(
+    geometry: UnstructuredFiniteVolumeDiscretization, function: Callable[[Array], Array]
+) -> Array:
     integrals = jnp.sum(
         geometry.cell_quadrature_weights * function(geometry.cell_quadrature_points),
         axis=1,
@@ -72,10 +125,12 @@ def _cell_averages(geometry: Any, function: Any) -> Any:
 
 
 def _second_order(
-    remap: Any, source: Any, limiter: Any = UnstructuredRemapLimiter.BARTH_JESPERSEN
-) -> Any:
+    remap: PreparedUnstructuredConservativeRemap,
+    source: UnstructuredFiniteVolumeDiscretization,
+    limiter: UnstructuredRemapLimiter = UnstructuredRemapLimiter.BARTH_JESPERSEN,
+) -> UnstructuredSecondOrderRemapPlan:
     return UnstructuredSecondOrderRemapPlan(
-        remap.plan, remap.refinement, source, limiter=limiter
+        _require_plan(remap), _require_refinement(remap), source, limiter=limiter
     )
 
 
@@ -87,27 +142,26 @@ def test_identical_meshes_remap_as_exact_jittable_identity() -> None:
     assert remap.status is CommonRefinementStatus.SUCCESS
     assert remap.succeeded
     np.testing.assert_array_equal(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.target_offsets,
+        _require_plan(remap).target_offsets,
         np.arange(source.cell_count + 1),
     )
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_array_equal(remap.plan.source_indices, np.arange(source.cell_count))
+    np.testing.assert_array_equal(
+        _require_plan(remap).source_indices, np.arange(source.cell_count)
+    )
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.intersection_measures,
+        _require_plan(remap).intersection_measures,
         source.cell_volumes,
         rtol=1e-14,
     )
     values = _cell_averages(source, lambda x: jnp.sin(3.0 * x[..., 0]) + x[..., 1] ** 2)
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        eqx.filter_jit(remap.plan.apply)(values),
+        eqx.filter_jit(_require_plan(remap).apply)(values),
         values,
         rtol=1e-13,
     )
-    # ty: ignore[unresolved-attribute]
-    gradient = jax.grad(lambda value: jnp.sum(remap.plan.apply(value) ** 2))(values)
+    gradient = jax.grad(lambda value: jnp.sum(_require_plan(remap).apply(value) ** 2))(
+        values
+    )
     np.testing.assert_allclose(gradient, 2.0 * values, rtol=1e-13)
     second = eqx.filter_jit(_second_order(remap, source).apply)(values)
     np.testing.assert_allclose(second.values, values, rtol=1e-13, atol=1e-14)
@@ -129,17 +183,18 @@ def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
         source, target, provenance="containment"
     )
     assert remap.succeeded
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(remap.plan.intersection_measures, (1.0, 1.0))
-    np.testing.assert_allclose(remap.evidence.source_coverage_defects, 0.0, atol=1e-14)
-    np.testing.assert_allclose(remap.evidence.target_coverage_defects, 0.0, atol=1e-14)
+    np.testing.assert_allclose(_require_plan(remap).intersection_measures, (1.0, 1.0))
+    np.testing.assert_allclose(
+        _require_common_evidence(remap).source_coverage_defects, 0.0, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        _require_common_evidence(remap).target_coverage_defects, 0.0, atol=1e-14
+    )
     values = jnp.asarray([[1.0], [3.0]])
-    # ty: ignore[unresolved-attribute]
-    mapped = remap.plan.apply(values)
+    mapped = _require_plan(remap).apply(values)
     np.testing.assert_allclose(mapped, [[2.0]])
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.conservation_defect(values, mapped),
+        _require_plan(remap).conservation_defect(values, mapped),
         0.0,
         atol=1e-14,
     )
@@ -154,8 +209,7 @@ def test_containment_and_mixed_cells_cover_both_ledgers() -> None:
         mixed_source, target, provenance="mixed"
     )
     assert mixed.succeeded
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(np.sum(mixed.plan.intersection_measures), 2.0)
+    np.testing.assert_allclose(np.sum(_require_plan(mixed).intersection_measures), 2.0)
 
 
 @pytest.mark.meshcore
@@ -170,14 +224,15 @@ def test_tetrahedron_identity_and_conservation() -> None:
         geometry, geometry, provenance="tetra"
     )
     assert remap.succeeded
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(remap.plan.intersection_measures, geometry.cell_volumes)
-    values = jnp.asarray([[4.0]])
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_allclose(remap.plan.apply(values), values)
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.conservation_defect(values, remap.plan.apply(values)),
+        _require_plan(remap).intersection_measures, geometry.cell_volumes
+    )
+    values = jnp.asarray([[4.0]])
+    np.testing.assert_allclose(_require_plan(remap).apply(values), values)
+    np.testing.assert_allclose(
+        _require_plan(remap).conservation_defect(
+            values, _require_plan(remap).apply(values)
+        ),
         0.0,
     )
 
@@ -195,22 +250,18 @@ def test_coincident_faces_give_exact_complete_coverage() -> None:
         source, target, provenance="coincident"
     )
     assert remap.succeeded
-    evidence = remap.evidence
+    evidence = _require_common_evidence(remap)
     assert evidence.source_gap_count == evidence.target_gap_count == 0
     assert evidence.source_double_count == evidence.target_double_count == 0
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_array_equal(remap.plan.target_offsets, (0, 1, 2, 3, 4))
-    # ty: ignore[unresolved-attribute]
-    np.testing.assert_array_equal(remap.plan.source_indices, (0, 0, 1, 1))
+    np.testing.assert_array_equal(_require_plan(remap).target_offsets, (0, 1, 2, 3, 4))
+    np.testing.assert_array_equal(_require_plan(remap).source_indices, (0, 0, 1, 1))
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.intersection_measures,
+        _require_plan(remap).intersection_measures,
         target.cell_volumes,
         rtol=1e-15,
     )
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.apply(jnp.asarray((-2.0, 5.0))),
+        _require_plan(remap).apply(jnp.asarray((-2.0, 5.0))),
         (-2.0, -2.0, 5.0, 5.0),
         rtol=1e-15,
     )
@@ -225,8 +276,7 @@ def test_constants_are_conserved_by_first_and_second_order_remap() -> None:
     assert remap.succeeded
     constant = jnp.full((source.cell_count, 2), jnp.asarray((3.7, -1.25)))
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.apply(constant),
+        _require_plan(remap).apply(constant),
         jnp.broadcast_to(constant[:1], (target.cell_count, 2)),
         rtol=1e-12,
     )
@@ -245,15 +295,14 @@ def test_second_order_remap_reproduces_linear_fields_on_nonmatching_meshes() -> 
     target = _perturbed_triangles(5, seed=3)
     remap = prepare_unstructured_conservative_remap(source, target, provenance="linear")
 
-    def linear(x: Any) -> Any:
+    def linear(x: Array) -> Array:
         return 0.5 + 2.0 * x[..., 0] - 3.0 * x[..., 1]
 
     values = _cell_averages(source, linear)
     exact = _cell_averages(target, linear)
     second = _second_order(remap, source, UnstructuredRemapLimiter.NONE).apply(values)
     np.testing.assert_allclose(second.values, exact, rtol=1e-12, atol=1e-12)
-    # ty: ignore[unresolved-attribute]
-    assert np.max(np.abs(remap.plan.apply(values) - exact)) > 1e-3
+    assert np.max(np.abs(_require_plan(remap).apply(values) - exact)) > 1e-3
 
 
 @pytest.mark.meshcore
@@ -276,8 +325,7 @@ def test_limiter_keeps_discontinuous_fields_in_bounds_and_conserves() -> None:
     total = float(jnp.sum(source.cell_volumes * jnp.abs(step)))
     assert abs(float(limited.conservation_residual_after)) <= 1e-14 * total
     np.testing.assert_allclose(
-        # ty: ignore[unresolved-attribute]
-        remap.plan.conservation_defect(step, limited.values),
+        _require_plan(remap).conservation_defect(step, limited.values),
         0.0,
         atol=1e-14 * total,
     )
@@ -296,7 +344,7 @@ def test_uncovered_and_overcovered_targets_fail_closed_without_plan() -> None:
     assert under.status is CommonRefinementStatus.COVERAGE_GAP
     assert under.plan is None
     assert not under.succeeded
-    assert under.evidence.target_gap_count == 1
+    assert _require_common_evidence(under).target_gap_count == 1
 
     overlapping_source = _quad(
         (
@@ -332,10 +380,8 @@ def test_first_order_remap_is_dual_to_the_reverse_remap() -> None:
     rng = np.random.default_rng(11)
     u = jnp.asarray(rng.normal(size=quads.cell_count))
     w = jnp.asarray(rng.normal(size=triangles.cell_count))
-    # ty: ignore[unresolved-attribute]
-    target_pairing = jnp.sum(triangles.cell_volumes * forward.plan.apply(u) * w)
-    # ty: ignore[unresolved-attribute]
-    source_pairing = jnp.sum(quads.cell_volumes * u * reverse.plan.apply(w))
+    target_pairing = jnp.sum(triangles.cell_volumes * _require_plan(forward).apply(u) * w)
+    source_pairing = jnp.sum(quads.cell_volumes * u * _require_plan(reverse).apply(w))
     np.testing.assert_allclose(target_pairing, source_pairing, rtol=1e-13)
 
 
@@ -390,11 +436,11 @@ def test_second_order_remap_requires_full_rank_gradient_stencils() -> None:
 
 
 def test_remap_requires_finite_volume_geometry_and_meshcore(
-    monkeypatch: Any, tmp_path: Any
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     with pytest.raises(TypeError, match="unstructured FV"):
-        # ty: ignore[invalid-argument-type]
-        prepare_unstructured_conservative_remap(object(), object(), provenance="kind")
+        # Deliberately bypass the static FV contract to exercise runtime rejection.
+        prepare_unstructured_conservative_remap(object(), object(), provenance="kind")  # ty: ignore[invalid-argument-type]
     geometry = _unit_quad()
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", str(tmp_path / "missing-meshcore"))
     with pytest.raises(MeshcoreUnavailableError):

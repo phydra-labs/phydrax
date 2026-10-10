@@ -4,7 +4,7 @@
 
 
 from dataclasses import FrozenInstanceError
-from typing import Any
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -820,3 +820,205 @@ def test_scheduler_builds_certified_remap_before_committing_event() -> None:
     )
     assert failed.journal.current_epoch_id == initial.epoch_id
     assert result.journal.current_epoch_id == successor.epoch_id
+
+
+class _RemeshScenario(NamedTuple):
+    source: Any
+    target: Any
+    initial: TopologyEpoch
+    initial_artifacts: FiniteVolumeTopologyArtifacts
+    successor: TopologyEpoch
+    successor_artifacts: FiniteVolumeTopologyArtifacts
+    source_content: FiniteVolumeConservativeContentState
+    target_metrics: Any
+
+    def target_content(self, averages: Any) -> FiniteVolumeConservativeContentState:
+        """Candidate content on the target epoch holding `averages`."""
+        return FiniteVolumeConservativeContentState(
+            jnp.asarray(averages) * self.target.cell_volumes[:, None],
+            self.target.cell_volumes,
+            jnp.ones((self.target.cell_count,), dtype=jnp.bool_),
+            0.1,
+            topology_epoch_id=self.successor.epoch_id,
+            geometry_family_id=self.target_metrics.geometry_family_id,
+            geometry_layout_id=self.target_metrics.geometry_layout_id,
+            geometry_version=self.target_metrics.geometry_version,
+            evidence_policy_id=self.target_metrics.evidence.policy_id,
+            evidence_version=self.target_metrics.evidence.evidence_version,
+            precision=self.source_content.precision,
+        )
+
+    def transact(
+        self,
+        journal: FiniteVolumeTopologyEventJournal,
+        transfer: Any,
+        **kwargs: Any,
+    ) -> Any:
+        scheduler = FiniteVolumeTopologyEventScheduler(journal)
+        scheduler.submit(_request(self.initial, kind=TopologyEventKind.REMESH), 1, 0.1)
+        return scheduler.transact(
+            accepted=True,
+            source_geometry=self.source,
+            target_geometry=self.target,
+            candidate_epoch=self.successor,
+            candidate_artifacts=self.successor_artifacts,
+            remap_policy=phx.geometry.CommonRefinementPolicy(coverage_tolerance=1e-10),
+            coverage_tolerance=1e-12,
+            source_content=self.source_content,
+            transfer=transfer,
+            **kwargs,
+        )
+
+
+def _remesh_scenario() -> _RemeshScenario:
+    """One unit quadrilateral (content 3) remeshed into two triangles."""
+    source = phx.discretization.UnstructuredFiniteVolumePlan(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        quadrilaterals=np.asarray(((0, 1, 2, 3),), dtype=np.int32),
+        cell_global_ids=np.asarray((10,), dtype=np.int64),
+    ).prepare()
+    target = phx.discretization.UnstructuredFiniteVolumePlan(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        triangles=np.asarray(((0, 1, 2), (0, 2, 3)), dtype=np.int32),
+        cell_global_ids=np.asarray((20, 21), dtype=np.int64),
+    ).prepare()
+    initial = TopologyEpoch(0, source.geometry_id, source.topology_id, "serial")
+    successor = TopologyEpoch(1, target.geometry_id, target.topology_id, "serial")
+    source_metrics = phx.discretization.lower_static_unstructured_stage_metrics(
+        source, topology_epoch_id=initial.epoch_id
+    )
+    source_content = FiniteVolumeConservativeContentState(
+        jnp.full((1, 1), 3.0),
+        source.cell_volumes,
+        jnp.ones((1,), dtype=jnp.bool_),
+        0.0,
+        topology_epoch_id=initial.epoch_id,
+        geometry_family_id=source_metrics.geometry_family_id,
+        geometry_layout_id=source_metrics.geometry_layout_id,
+        geometry_version=source_metrics.geometry_version,
+        evidence_policy_id=source_metrics.evidence.policy_id,
+        evidence_version=source_metrics.evidence.evidence_version,
+        precision=FiniteVolumePrecisionPolicy("float64"),
+    )
+    return _RemeshScenario(
+        source,
+        target,
+        initial,
+        _artifacts(initial, source.prepared_id),
+        successor,
+        _artifacts(successor, target.prepared_id),
+        source_content,
+        phx.discretization.lower_static_unstructured_stage_metrics(
+            target, topology_epoch_id=successor.epoch_id
+        ),
+    )
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
+def test_committed_remesh_publishes_physical_remap_through_rebind() -> None:
+    case = _remesh_scenario()
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        case.initial, case.initial_artifacts, capacity=2, time=0.0
+    )
+
+    def remap_image(content: Any, remap: Any) -> Any:
+        return case.target_content(remap.apply(content.cell_average()))
+
+    result = case.transact(journal, remap_image)
+
+    assert result.committed
+    receipt = result.receipt
+    assert receipt is not None and receipt.published
+    assert receipt.remapped == ("finite-volume/content",)
+    assert receipt.reprepared == (
+        "finite-volume/prepared-artifacts",
+        "finite-volume/topology",
+    )
+    (transport,) = receipt.transports
+    assert transport.kind == "physical-remap"
+    assert receipt.transport_accepted == (True,)
+    assert transport.source_structure_ids == (case.initial.epoch_id,)
+    assert transport.targets[0].structure_id == case.successor.epoch_id
+    # The transition's content ledger is the physical extensive content.
+    np.testing.assert_allclose(transport.source_content, (3.0,), rtol=0.0, atol=0.0)
+    assert np.all(
+        np.abs(transport.target_content - transport.source_content)
+        <= transport.content_tolerance
+    )
+    assert np.all(
+        np.abs(
+            result.content_state.volume_integral() - case.source_content.volume_integral()
+        )
+        <= transport.content_tolerance
+    )
+    np.testing.assert_allclose(
+        result.content_state.conservative_content, ((1.5,), (1.5,)), rtol=1e-15
+    )
+    assert receipt.composition.value("finite-volume/topology") == case.successor
+    assert (
+        receipt.composition.value("finite-volume/prepared-artifacts")
+        == case.successor_artifacts
+    )
+    assert result.result_epoch == case.successor
+    assert result.journal.current_epoch_id == case.successor.epoch_id
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
+@pytest.mark.parametrize(
+    ("averages", "admissibility", "failure", "staged"),
+    [
+        pytest.param(
+            ((4.5,), (1.5,)),
+            None,
+            TopologyEventStatus.FAILED_COVERAGE,
+            True,
+            id="conserving-but-not-the-remap-image",
+        ),
+        pytest.param(
+            ((7.0,), (-1.0,)),
+            lambda content: jnp.all(content.conservative_content >= 0.0),
+            TopologyEventStatus.FAILED_POSITIVITY,
+            False,
+            id="inadmissible-negative-content",
+        ),
+    ],
+)
+def test_rejected_remesh_keeps_accepted_epoch_artifacts_and_content(
+    averages: Any, admissibility: Any, failure: TopologyEventStatus, staged: bool
+) -> None:
+    case = _remesh_scenario()
+    journal = FiniteVolumeTopologyEventJournal.allocate(
+        case.initial, case.initial_artifacts, capacity=2, time=0.0
+    )
+
+    result = case.transact(
+        journal,
+        lambda content: case.target_content(averages),
+        admissibility=admissibility,
+    )
+
+    assert not result.committed
+    assert result.failure is failure
+    assert result.content_state is case.source_content
+    assert result.result_epoch is None
+    assert result.result_artifacts is None
+    assert result.journal.current_epoch_id == case.initial.epoch_id
+    assert result.journal.epoch_table == journal.epoch_table
+    assert result.journal.epoch_table[-1] is case.initial
+    assert result.journal.artifact_table[-1] is case.initial_artifacts
+    assert result.events[-1].state is TopologyEventState.FAILED
+    assert result.events[-1].status is failure
+    if not staged:
+        assert result.receipt is None
+        return
+    receipt = result.receipt
+    assert receipt is not None
+    assert not receipt.published
+    assert receipt.transport_accepted == (False,)
+    assert receipt.composition.composition_id == receipt.source_composition_id
+    assert receipt.composition.value("finite-volume/topology") is case.initial
+    np.testing.assert_array_equal(
+        receipt.composition.value("finite-volume/content"), ((3.0,),)
+    )

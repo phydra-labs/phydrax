@@ -19,7 +19,6 @@ FERMIONIC_SECOND_BORN_SUPPORT = SupportTuple(
 FERMIONIC_SECOND_BORN_CANDIDATE = CapabilityProfile(
     "nonequilibrium-field.fermionic-second-born.candidate",
     "phydrax",
-    "candidate",
     (FERMIONIC_SECOND_BORN_SUPPORT,),
     required_gates=(
         "car",

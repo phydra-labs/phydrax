@@ -6,10 +6,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._physical import SpatialCoordinateContract
+from ..typing import parse
+
+
+if TYPE_CHECKING:
+    from ..imaging import CompartmentSurfaceResult, LabelVolume
+    from .surface import SurfaceModel
+
+
+CompartmentImageInterpretation: TypeAlias = Literal["occupied-voxel-cells"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -248,9 +259,159 @@ class CompartmentComplex:
             )
 
 
+def _complete_interface_definitions(
+    complex_: CompartmentComplex, /
+) -> tuple[tuple[str, str, str, bool], ...]:
+    """Bind every authoritative observed pair, retaining declared interface IDs."""
+    definitions = {
+        value.ordered_pair: (
+            value.interface_id,
+            value.first_compartment_id,
+            value.second_compartment_id,
+            value.required,
+        )
+        for value in complex_.interfaces
+    }
+    if len(definitions) != len(complex_.interfaces):
+        raise ValueError("A compartment pair has contradictory interface identities.")
+    for first, second in complex_.observed_adjacencies:
+        pair = (first, second)
+        if pair not in definitions:
+            identifier = canonical_fingerprint(
+                {
+                    "kind": "compartment-material-adjacency",
+                    "regions": pair,
+                }
+            )
+            definitions[pair] = (f"adjacency:{identifier}", first, second, True)
+    return tuple(sorted(definitions.values()))
+
+
+@dataclass(frozen=True, slots=True)
+class CompartmentMeshingSource:
+    """One exact voxel-cell material domain, not a meshing request.
+
+    A sample at index ``i`` owns the affine image of ``i + [-.5, .5]^3``.
+    Invalid samples and ontology labels absent from the complex are exterior.
+    The supplied outer surface must bound exactly that domain; generation
+    independently certifies this obligation. Interfaces retain their source
+    identity and orientation rather than supplying independent overlapping
+    region shells.
+    """
+
+    labels: LabelVolume
+    compartments: CompartmentComplex
+    outer_surface: SurfaceModel
+    interfaces: CompartmentSurfaceResult
+    interpretation: CompartmentImageInterpretation = "occupied-voxel-cells"
+    source_id: str = field(init=False)
+    source_revision: str = field(init=False)
+    coordinate_contract: SpatialCoordinateContract = field(init=False)
+    interface_definitions: tuple[tuple[str, str, str, bool], ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        from ..imaging import (
+            build_compartment_complex,
+            CompartmentSurfaceResult,
+            extract_compartment_surfaces,
+            LabelVolume,
+        )
+        from .surface import SurfaceModel
+
+        if not isinstance(self.labels, LabelVolume):
+            raise TypeError("labels must be LabelVolume.")
+        if not isinstance(self.compartments, CompartmentComplex):
+            raise TypeError("compartments must be CompartmentComplex.")
+        if not isinstance(self.outer_surface, SurfaceModel):
+            raise TypeError("outer_surface must be SurfaceModel.")
+        if not isinstance(self.interfaces, CompartmentSurfaceResult):
+            raise TypeError("interfaces must be CompartmentSurfaceResult.")
+        interpretation = parse(
+            self.interpretation, CompartmentImageInterpretation, "interpretation"
+        )
+        revision = self.labels.label_volume_id
+        if self.compartments.source_revision != revision:
+            raise ValueError("Compartment and segmentation revisions differ.")
+        self.compartments.require_valid_adjacency()
+        if self.interfaces.complex.complex_id != self.compartments.complex_id:
+            raise ValueError("Extracted interfaces and compartment complex differ.")
+        contract = self.labels.asset.spatial_affine.coordinate_contract
+        surfaces = (self.outer_surface,) + tuple(
+            value.surface for value in self.interfaces.surfaces
+        )
+        if any(
+            value.metadata.coordinate_contract.spatial_id != contract.spatial_id
+            for value in surfaces
+        ):
+            raise ValueError("Compartment geometry requires one spatial contract.")
+        if self.labels.asset.values.ndim != 3:
+            raise ValueError("Compartment sources require a three-dimensional image.")
+        for value in self.interfaces.surfaces:
+            if value.surface.metadata.source_revision != revision:
+                raise ValueError("An extracted interface carries a stale revision.")
+        expected_complex = build_compartment_complex(
+            self.labels, self.compartments.compartments, self.compartments.interfaces
+        )
+        if expected_complex.complex_id != self.compartments.complex_id:
+            raise ValueError("Compartment measures or adjacency contradict the image.")
+        expected_interfaces = extract_compartment_surfaces(self.labels, self.compartments)
+        if expected_interfaces.extraction_id != self.interfaces.extraction_id:
+            raise ValueError(
+                "The interface source does not represent the occupied cells."
+            )
+        if tuple(
+            (value.definition.interface_id, value.surface.mesh.mesh_id)
+            for value in self.interfaces.surfaces
+        ) != tuple(
+            (value.definition.interface_id, value.surface.mesh.mesh_id)
+            for value in expected_interfaces.surfaces
+        ):
+            raise ValueError("The interface geometry contradicts its extraction binding.")
+        definitions = _complete_interface_definitions(self.compartments)
+        object.__setattr__(self, "interface_definitions", definitions)
+        object.__setattr__(self, "interpretation", interpretation)
+        object.__setattr__(self, "source_revision", revision)
+        object.__setattr__(self, "coordinate_contract", contract)
+        object.__setattr__(
+            self,
+            "source_id",
+            canonical_fingerprint(
+                {
+                    "kind": "compartment-meshing-source",
+                    "labels": revision,
+                    "complex": self.compartments.complex_id,
+                    "outer": self.outer_surface.model_id,
+                    "interfaces": self.interfaces.extraction_id,
+                    "interpretation": interpretation,
+                    "coordinates": contract.spatial_id,
+                }
+            ),
+        )
+
+    def validate_source_integrity(self) -> None:
+        """Re-admit the retained segmentation, complex and extracted interface source."""
+        expected = CompartmentMeshingSource(
+            self.labels,
+            self.compartments,
+            self.outer_surface,
+            self.interfaces,
+            self.interpretation,
+        )
+        if (
+            expected.source_id != self.source_id
+            or expected.source_revision != self.source_revision
+            or expected.coordinate_contract.spatial_id
+            != self.coordinate_contract.spatial_id
+            or expected.interface_definitions != self.interface_definitions
+        ):
+            raise ValueError("Compartment source identity is stale.")
+
+
 __all__ = [
     "CompartmentAdjacencyReport",
     "CompartmentComplex",
     "CompartmentDefinition",
     "CompartmentInterfaceDefinition",
+    "CompartmentImageInterpretation",
+    "CompartmentMeshingSource",
 ]

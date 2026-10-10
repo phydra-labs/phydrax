@@ -134,7 +134,6 @@ def statistical_candidate_profile(
     return CapabilityProfile(
         "statistical-dynamics.candidate",
         "phydrax",
-        "candidate",
         (support,),
         dependencies=tuple(dependencies),
         required_gates=("operational", "performance", "scientific", "security"),

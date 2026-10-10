@@ -140,7 +140,6 @@ def coupled_phase_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
             CapabilityProfile(
                 name,
                 "phydrax-native",
-                "candidate",
                 (support,),
                 dependencies=dependencies,
                 required_gates=(
@@ -205,7 +204,6 @@ def coupled_phase_field_released_profiles(
             CapabilityProfile(
                 candidate.name,
                 candidate.provider,
-                "released",
                 candidate.support_tuples,
                 dependencies=dependencies,
                 required_gates=candidate.required_gates,

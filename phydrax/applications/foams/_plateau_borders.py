@@ -43,7 +43,11 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import parameter_field, ParameterOwner
 from ..._validation import canonical_identifier, nonnegative_integer, positive_integer
-from ...discretization import TopologyEpoch, TopologyEpochTransition
+from ...discretization import (
+    TopologyEpoch,
+    TopologyEpochTransition,
+    TransferGeometryBinding,
+)
 from ...geometry.multiregion_surface import (
     ConservativeFieldTransfer,
     multiregion_topology_epoch,
@@ -1039,8 +1043,24 @@ class PreparedPlateauBorder(StrictModule):
             source_active=np.asarray(self.border_active),
             target_active=np.asarray(target.border_active),
         )
+        source_geometry = multiregion_topology_epoch(
+            self.surface.topology, self.positions_m
+        )
+        target_geometry = multiregion_topology_epoch(
+            target.surface.topology, target.positions_m
+        )
         transition = transfer.epoch_transition(
-            event.source_epoch, target_epoch, field_name="plateau-border-content"
+            event.source_epoch,
+            target_epoch,
+            field_name="plateau-border-content",
+            geometry=TransferGeometryBinding(
+                source_geometry.geometry_id,
+                target_geometry.geometry_id,
+                "topology-correspondence",
+                source_topology_id=self.surface.topology.topology_id,
+                target_topology_id=target.surface.topology.topology_id,
+                coverage_defect=None,
+            ),
         )
         fan_out = np.bincount(sources, minlength=self.border_count)
         return PlateauBorderAdaptation(

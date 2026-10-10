@@ -272,9 +272,8 @@ def infer_expression_type(
                     f"Unknown or malformed parameter reference {node.symbol!r}."
                 )
             parameter = parameters[node.symbol]
-            representation = "scalar" if parameter.components == 1 else "vector"
             return PDEValueType(
-                representation,
+                parameter.representation,
                 parameter.components,
                 parameter.dimension,
             )

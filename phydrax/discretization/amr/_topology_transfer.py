@@ -28,7 +28,7 @@ from ...linalg import (
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._topology_epoch import TopologyEpochTransition
-from .._transfer import FieldTransfer, TransferProperties
+from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
 from ._core import BlockHierarchyState, BlockHierarchyTopology, BlockLevelState
 
 
@@ -527,6 +527,13 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
                 adjoint_paired=True,
                 differentiable_geometry=False,
                 exact_on=("nested-cell-average",),
+            ),
+            geometry=TransferGeometryBinding(
+                source.plan.geometry_id,
+                target.plan.geometry_id,
+                "identity",
+                source_topology_id=source.topology_id,
+                target_topology_id=target.topology_id,
             ),
         )
         transition = TopologyEpochTransition(

@@ -2,6 +2,7 @@
 // Copyright © 2026 PHYDRA, Inc. All rights reserved.
 //
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "bounded_memory.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -36,6 +38,9 @@ struct Input {
   double max_area = kInf;
   int64_t max_steiner = 1 << 20;
   int64_t max_triangles = 1 << 30;
+  int64_t max_cavity_cells = std::numeric_limits<int64_t>::max();
+  int64_t max_work = std::numeric_limits<int64_t>::max();
+  int64_t max_scratch_bytes = std::numeric_limits<int64_t>::max();
 };
 
 struct Result {
@@ -44,6 +49,8 @@ struct Result {
   std::vector<int32_t> cells;
   std::vector<int32_t> segments;  // per cell edge
   std::vector<int32_t> vertex_map;
+  std::array<uint64_t, 9> work{};
+  std::array<uint64_t, 6> memory{};
 };
 
 Result run(const Input& in) {
@@ -53,7 +60,8 @@ Result run(const Input& in) {
       static_cast<int64_t>(in.points.size() / 2), in.points.data(),
       static_cast<int64_t>(in.segments.size() / 2), in.segments.data(),
       static_cast<int64_t>(in.holes.size() / 2), in.holes.data(), in.keep_hull, in.min_angle,
-      in.max_area, in.max_steiner, in.max_triangles, &mesh);
+      in.max_area, in.max_steiner, in.max_triangles, in.max_cavity_cells, in.max_work,
+      in.max_scratch_bytes, r.work.data(), r.memory.data(), &mesh);
   const bool has_mesh = r.status == PHX_MC_OK || r.status == PHX_MC_REFINEMENT_LIMIT;
   PHX_CHECK(has_mesh == (mesh != nullptr));
   if (mesh == nullptr) {
@@ -65,7 +73,7 @@ Result run(const Input& in) {
   r.vertex_map.resize(static_cast<std::size_t>(phx_mc_mesh_input_point_count(mesh)));
   phx_mc_mesh_copy_points(mesh, r.points.data());
   phx_mc_mesh_copy_cells(mesh, r.cells.data());
-  phx_mc_mesh_copy_cell_segments(mesh, r.segments.data());
+  phx_mc_mesh_copy_cell_constraints(mesh, r.segments.data());
   phx_mc_mesh_copy_vertex_map(mesh, r.vertex_map.data());
   phx_mc_mesh_free(mesh);
   return r;
@@ -411,6 +419,14 @@ void test_arguments() {
   bad = in;
   bad.max_steiner = -1;
   PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
+  for (int64_t Input::* limit : {&Input::max_cavity_cells, &Input::max_work,
+                                &Input::max_scratch_bytes}) {
+    bad = in;
+    bad.*limit = -1;
+    PHX_CHECK(run(bad).status == PHX_MC_INVALID_ARGUMENT);
+    bad.*limit = 0;
+    PHX_CHECK(run(bad).status == PHX_MC_CAPACITY_EXCEEDED);
+  }
   bad = in;
   bad.segments.push_back(0);
   bad.segments.push_back(10);
@@ -430,9 +446,11 @@ void test_arguments() {
   PHX_CHECK(run(bad).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = nullptr;
   PHX_CHECK(phx_mc_constrained_delaunay_2d(4, in.points.data(), 1, nullptr, 0, nullptr, 0, 0.0,
-                                           kInf, 0, 100, &mesh) == PHX_MC_INVALID_ARGUMENT);
+                                           kInf, 0, 100, INT64_MAX, INT64_MAX, INT64_MAX,
+                                           nullptr, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(phx_mc_constrained_delaunay_2d(4, in.points.data(), 0, nullptr, 0, nullptr, 0, 0.0,
-                                           kInf, 0, 100, nullptr) == PHX_MC_INVALID_ARGUMENT);
+                                           kInf, 0, 100, INT64_MAX, INT64_MAX, INT64_MAX,
+                                           nullptr, nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
   // Duplicated points are merged; segments reference either copy.
   Input dup = in;
   dup.points.insert(dup.points.end(), {4, 0});
@@ -442,6 +460,106 @@ void test_arguments() {
   PHX_CHECK(r.vertex_map[10] == 1);
   check_segments(r, dup);
   PHX_CHECK_NEAR(total_area(r), 12.0, 1e-12);
+}
+
+void test_native_limits_and_source_rollback() {
+  Input in = square_with_hole();
+  in.max_area = 0.75;
+  const auto source_points = in.points;
+  const auto source_segments = in.segments;
+  const auto source_holes = in.holes;
+  const Result baseline = run(in);
+  PHX_CHECK(baseline.status == PHX_MC_OK);
+  check_mesh(baseline);
+  check_segments(baseline, in);
+  check_constrained_delaunay(baseline);
+  check_quality(baseline, 0.0, in.max_area);
+  // Every possible work refusal, including pseudo-polygon planning, carving,
+  // constrained cavity discovery and Lawson flips, publishes no partial mesh.
+  for (uint64_t limit = 0; limit < baseline.work[0]; ++limit) {
+    Input bounded = in;
+    bounded.max_work = static_cast<int64_t>(limit);
+    const Result refused = run(bounded);
+    PHX_CHECK(refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(refused.work[0] <= limit);
+    PHX_CHECK(refused.work[7] == 1);
+    PHX_CHECK(refused.memory[1] == 0);
+    PHX_CHECK(bounded.points == source_points);
+    PHX_CHECK(bounded.segments == source_segments);
+    PHX_CHECK(bounded.holes == source_holes);
+  }
+  Input bounded = in;
+  bounded.max_work = static_cast<int64_t>(baseline.work[0]);
+  bounded.max_cavity_cells = static_cast<int64_t>(baseline.work[6]);
+  bounded.max_scratch_bytes = static_cast<int64_t>(baseline.memory[2]);
+  const Result exact = run(bounded);
+  PHX_CHECK(exact.status == PHX_MC_OK);
+  PHX_CHECK(exact.points == baseline.points);
+  PHX_CHECK(exact.cells == baseline.cells);
+  PHX_CHECK(exact.segments == baseline.segments);
+  PHX_CHECK(exact.vertex_map == baseline.vertex_map);
+  // Nested callers keep the parent's single ledger and its hard envelope.
+  // Per-call evidence must not repeat an unrelated historical pool peak.
+  const auto owner = std::make_shared<BoundedMemoryResource>(
+      static_cast<std::size_t>(4 * baseline.memory[2] + 1024));
+  {
+    MemoryScope scope(owner);
+    {
+      NativeVector<uint8_t> warm(static_cast<std::size_t>(3 * baseline.memory[2]), 1);
+    }
+    NativeVector<uint8_t> held(128, 7);
+    const auto live_baseline = owner->live_bytes();
+    const auto pool_peak = owner->peak_bytes();
+    PHX_CHECK(owner->set_limit(live_baseline + baseline.memory[2]));
+    const Result nested = run(in);
+    PHX_CHECK(nested.status == PHX_MC_OK);
+    PHX_CHECK(nested.cells == baseline.cells && nested.segments == baseline.segments);
+    PHX_CHECK(nested.memory[0] == baseline.memory[2]);
+    PHX_CHECK(nested.memory[2] == baseline.memory[2]);
+    PHX_CHECK(nested.memory[2] < pool_peak);
+    PHX_CHECK(owner->live_bytes() == live_baseline);
+    PHX_CHECK(owner->limit_bytes() == live_baseline + baseline.memory[2]);
+    PHX_CHECK(owner->set_limit(live_baseline + baseline.memory[2] - 1));
+    const Result nested_refused = run(in);
+    PHX_CHECK(nested_refused.status == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(nested_refused.memory[5] == 1);
+    PHX_CHECK(nested_refused.memory[1] == 0);
+    PHX_CHECK(owner->live_bytes() == live_baseline);
+    PHX_CHECK(owner->limit_bytes() == live_baseline + baseline.memory[2] - 1);
+    PHX_CHECK(std::all_of(held.begin(), held.end(), [](uint8_t value) { return value == 7; }));
+  }
+  bounded = in;
+  bounded.max_scratch_bytes = static_cast<int64_t>(baseline.memory[2]) - 1;
+  const Result memory_refused = run(bounded);
+  PHX_CHECK(memory_refused.status == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(memory_refused.memory[5] == 1);
+  PHX_CHECK(memory_refused.memory[2] <= uint64_t(bounded.max_scratch_bytes));
+  PHX_CHECK(memory_refused.memory[1] == 0);
+  bounded = in;
+  bounded.max_cavity_cells = static_cast<int64_t>(baseline.work[6]) - 1;
+  const Result cavity_refused = run(bounded);
+  PHX_CHECK(cavity_refused.status == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(cavity_refused.work[8] == 1);
+  PHX_CHECK(cavity_refused.memory[1] == 0);
+  // A constraint-intersection refusal must not repair or mutate the PSLG.
+  Input crossing;
+  crossing.points = {0, 0, 2, 0, 2, 2, 0, 2};
+  crossing.segments = {0, 2, 1, 3};
+  crossing.keep_hull = 1;
+  const auto crossing_points = crossing.points;
+  const auto crossing_segments = crossing.segments;
+  PHX_CHECK(run(crossing).status == PHX_MC_CONSTRAINT_INTERSECTION);
+  PHX_CHECK(crossing.points == crossing_points);
+  PHX_CHECK(crossing.segments == crossing_segments);
+  crossing.segments.resize(2);
+  const Result recovered = run(crossing);
+  PHX_CHECK(recovered.status == PHX_MC_OK);
+  check_mesh(recovered);
+  check_segments(recovered, crossing);
+  check_constrained_delaunay(recovered);
+  const Result again = run(in);
+  PHX_CHECK(again.points == baseline.points && again.cells == baseline.cells &&
+            again.segments == baseline.segments && again.vertex_map == baseline.vertex_map);
 }
 
 }  // namespace
@@ -456,5 +574,6 @@ int main() {
   test_ruppert_slanted_polygon();
   test_refinement_limit();
   test_arguments();
+  test_native_limits_and_source_rollback();
   return phx::mc::test::finish("test_cdt2d");
 }

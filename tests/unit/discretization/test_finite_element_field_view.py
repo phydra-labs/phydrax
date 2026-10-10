@@ -21,6 +21,7 @@ from phydrax.discretization.fem import (
     FiniteElementFieldReconstructionKernel,
     prepare_finite_element_field_reconstruction,
     prepare_finite_element_point_interpolation,
+    PreparedFiniteElementCellMap,
 )
 
 
@@ -226,14 +227,22 @@ def test_finite_element_field_view_scenario_3() -> None:
         )
     quadrilateral = _discretization(1, cell_kind="quadrilateral", cells=((0, 1, 2, 3),))
 
-    with pytest.raises(ValueError, match="explicit AbstractCellLocator"):
-        prepare_finite_element_field_reconstruction(quadrilateral, "u")
     # Own-point evaluation from native tabulation remains available.
     native = prepare_finite_element_point_interpolation(
         quadrilateral, "u", "cells", jnp.asarray((0,)), jnp.asarray(((0.25, 0.5),))
     )
     coefficients = _nodal(quadrilateral, lambda x, y: x + 2.0 * y)
     np.testing.assert_allclose(native.interpolate(coefficients), (1.25,), atol=1e-12)
+    mapped = prepare_finite_element_field_reconstruction(quadrilateral, "u")
+    np.testing.assert_allclose(
+        mapped.evaluate(coefficients, native.reference_positions).values,
+        (1.25,),
+        atol=1e-12,
+    )
+    dual = jnp.asarray((2.5,))
+    assert bool(
+        mapped.duality_evidence(coefficients, native.reference_positions, dual).valid
+    )
     discretization = _discretization(
         0, element=phx.discretization.discontinuous_element("triangle", 0)
     )
@@ -288,9 +297,11 @@ def test_default_location_finds_generic_interior_points_of_small_meshes() -> Non
     kernel = reconstruction.kernel
     assert isinstance(kernel, FiniteElementFieldReconstructionKernel)
     located = kernel.locator.locate(points)
+    cell_map = kernel.locator.cell_map
+    assert isinstance(cell_map, PreparedFiniteElementCellMap)
     # Barycentric weights of the located cell's vertices must rebuild each point.
     corners = np.asarray(kernel.locator.coordinates)[
-        np.asarray(kernel.locator.cell_map.coordinate_dofs)[np.asarray(located.cell_ids)]
+        np.asarray(cell_map.coordinate_dofs)[np.asarray(located.cell_ids)]
     ]
     barycentric = np.asarray(located.barycentric)
     assert np.all(barycentric >= -1e-12)
@@ -301,6 +312,68 @@ def test_default_location_finds_generic_interior_points_of_small_meshes() -> Non
     np.testing.assert_allclose(
         reconstruction.evaluate(coefficients, points).values,
         1.0 + 2.0 * points[:, 0] - 3.0 * points[:, 1],
+        atol=1e-12,
+    )
+
+
+def test_embedded_triangle_field_preserves_physical_chart_and_transpose() -> None:
+    # Parallel disconnected sheets have overlapping AABBs but disjoint images.
+    vertices = jnp.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 2.0),
+            (0.0, 0.0, 0.4),
+            (1.0, 0.0, 1.4),
+            (0.0, 1.0, 2.4),
+        )
+    )
+    mesh = phx.discretization.CellMesh(
+        vertices,
+        (
+            phx.discretization.CellBlock(
+                "sheet", "triangle", jnp.asarray(((0, 1, 2), (3, 4, 5)))
+            ),
+        ),
+    )
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u",
+            phx.discretization.lagrange_element("triangle", 1),
+        ),
+    ).prepare()
+    reconstruction = prepare_finite_element_field_reconstruction(discretization, "u")
+    points = jnp.asarray(((0.2, 0.3, 0.8), (0.5, 0.1, 0.7)))
+    coefficients = 2.0 + discretization.dof_maps[0].dof_coordinates @ jnp.asarray(
+        (1.0, 2.0, 3.0)
+    )
+    evaluated = reconstruction.evaluate(coefficients, points)
+    np.testing.assert_allclose(
+        evaluated.values,
+        2.0 + points @ jnp.asarray((1.0, 2.0, 3.0)),
+        atol=1e-12,
+    )
+    assert bool(jnp.all(evaluated.valid))
+    normal = jnp.asarray((-1.0, -2.0, 1.0))
+    off_sheet = reconstruction.evaluate(coefficients, points + 0.01 * normal)
+    assert not bool(jnp.any(off_sheet.valid))
+    assert bool(
+        jnp.all(off_sheet.evidence.status == int(FieldQueryStatus.OUTSIDE_SUPPORT))
+    )
+    cotangent = jnp.asarray((1.3, -0.7))
+    np.testing.assert_allclose(
+        jnp.vdot(evaluated.values, cotangent),
+        jnp.vdot(coefficients, reconstruction.transpose(points, cotangent)),
+        atol=1e-12,
+    )
+    function = _view(reconstruction, coefficients).as_domain_function()
+    np.testing.assert_allclose(
+        jax.vmap(function.func)(points), evaluated.values, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        jax.vmap(phx.operators.grad(function, var="x").func)(points),
+        jnp.broadcast_to(jnp.asarray((2.0 / 3.0, 4.0 / 3.0, 10.0 / 3.0)), (2, 3)),
         atol=1e-12,
     )
 

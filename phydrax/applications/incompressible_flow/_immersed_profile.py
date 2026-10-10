@@ -90,7 +90,6 @@ class ImmersedDNSQualificationProfile(StrictModule, NonTrainableState):
         capability = CapabilityProfile(
             "immersed-dns.candidate",
             "phydrax",
-            "candidate",
             supports,
             released=False,
         )

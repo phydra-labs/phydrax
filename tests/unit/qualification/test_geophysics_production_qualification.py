@@ -384,6 +384,14 @@ def test_distributed_operator_topology_transfer_and_physics_preconditioners_are_
         forward,
         dual_pullback_operator=adjoint,
         hilbert_adjoint_operator=adjoint,
+        geometry=phx.discretization.TransferGeometryBinding(
+            "geometry-0",
+            "geometry-1",
+            "topology-correspondence",
+            source_topology_id="topology-0",
+            target_topology_id="topology-1",
+            coverage_defect=None,
+        ),
         properties=phx.discretization.TransferProperties(
             constant_preserving=True,
             conservative=True,

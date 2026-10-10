@@ -1,0 +1,16 @@
+Licensed by PHYDRA, Inc. under the Phydra Non-Production License (PNPL).
+
+Copyright (c) 2026 PHYDRA, Inc. All rights reserved.
+
+phydrax-meshcore is an independently authored C++20 implementation informed by
+published robust-geometry algorithms: Shewchuk adaptive floating-point
+expansions and predicates; Simulation of Simplicity and lifted-coordinate
+perturbations for Delaunay and regular triangulations; half-space polytope
+clipping informed by r3d; triangle-contact classification informed by Guigue and
+Devillers; and Delaunay refinement after Ruppert, Chew, and Shewchuk.
+
+No upstream source code, including the public-domain predicates.c, is copied,
+translated, or redistributed in this package. Gmsh, Mmg, fTetWild/wildmeshing,
+Manifold, Open3D, OpenVDB, VoroCrust, Omega_h, TIOGA, METIS, SciPy/Qhull, and
+OCCT/OCP are independent optional provider, comparison, or interchange
+boundaries and are not bundled in phydrax-meshcore.

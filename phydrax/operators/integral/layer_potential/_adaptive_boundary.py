@@ -100,17 +100,29 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         )
 
 
+def _face_vertices(mesh: CellMesh, /) -> np.ndarray:
+    return np.concatenate(
+        [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks], axis=0
+    )
+
+
+def _face_global_ids(mesh: CellMesh, /) -> np.ndarray:
+    return np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
+
+
 def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
     if not isinstance(mesh, CellMesh):
         raise TypeError("Boundary adaptation requires a CellMesh.")
     if (
         mesh.topological_dimension != 2
         or mesh.ambient_dimension != 3
-        or len(mesh.blocks) != 1
-        or mesh.blocks[0].cell_kind != "triangle"
+        or not mesh.blocks
+        or any(block.cell_kind != "triangle" for block in mesh.blocks)
     ):
         raise ValueError(
-            "Boundary adaptation requires one triangular 2-manifold embedded in 3D."
+            "Boundary adaptation requires a triangular 2-manifold embedded in 3D."
         )
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
@@ -129,7 +141,7 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
     )
     if np.any(orientation_balance != 0.0):
         raise ValueError("Boundary surface faces must have a consistent orientation.")
-    faces = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
+    faces = _face_vertices(mesh)
     triangles = np.asarray(mesh.coordinates, dtype=np.float64)[faces]
     edges = np.stack(
         (
@@ -147,7 +159,7 @@ def _validated_closed_surface_mesh(mesh: CellMesh, /) -> None:
 
 
 def _face_areas(mesh: CellMesh, /) -> np.ndarray:
-    faces = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
+    faces = _face_vertices(mesh)
     triangles = np.asarray(mesh.coordinates, dtype=np.float64)[faces]
     return 0.5 * np.linalg.norm(
         np.cross(
@@ -230,7 +242,7 @@ class BoundaryMeshEpoch(StrictModule, NonTrainableState):
             raise ValueError("An initial boundary epoch cannot declare a parent.")
         if generation_ > 0 and parent is None:
             raise ValueError("A successor boundary epoch must declare its parent.")
-        face_count = mesh.blocks[0].cell_count
+        face_count = _face_global_ids(mesh).size
         envelope = _boundary_envelope(
             mesh,
             formulation="dp0-galerkin-boundary-epoch",
@@ -343,8 +355,8 @@ class DP0BoundaryTransfer(StrictModule, NonTrainableState):
                 "Target boundary epoch is not a child of the source."
             )
         route = np.asarray(parent_local_indices, dtype=np.int32)
-        source_count = source.mesh.blocks[0].cell_count
-        target_count = target.mesh.blocks[0].cell_count
+        source_count = _face_global_ids(source.mesh).size
+        target_count = _face_global_ids(target.mesh).size
         if (
             route.shape != (target_count,)
             or np.any(route < 0)
@@ -465,7 +477,7 @@ def mark_boundary_faces(
     if not isinstance(policy, BoundaryRefinementPolicy):
         raise TypeError("policy must be BoundaryRefinementPolicy.")
     values = np.asarray(indicators, dtype=np.float64)
-    cell_ids = np.asarray(epoch.mesh.blocks[0].global_ids, dtype=np.int64)
+    cell_ids = _face_global_ids(epoch.mesh)
     if (
         values.shape != cell_ids.shape
         or np.any(~np.isfinite(values))
@@ -533,8 +545,8 @@ def _dp0_parent_routes(
     /,
 ) -> np.ndarray:
     """Source-face row of every target face from the exact cell lineage."""
-    source_ids = np.asarray(source.mesh.blocks[0].global_ids, dtype=np.int64)
-    target_ids = np.asarray(adaptation.target.mesh.blocks[0].global_ids, dtype=np.int64)
+    source_ids = _face_global_ids(source.mesh)
+    target_ids = _face_global_ids(adaptation.target.mesh)
     # ty: ignore[unresolved-attribute]
     cells = adaptation.lineage.entity_lineage(2)
     parents = np.asarray(cells.source_global_ids, dtype=np.int64)
@@ -544,7 +556,12 @@ def _dp0_parent_routes(
     ):
         raise ValueError("Local refinement did not provide complete DP0 parent lineage.")
     source_order = np.argsort(source_ids, kind="stable")
-    parent_rows = source_order[np.searchsorted(source_ids[source_order], parents)]
+    parent_positions = np.searchsorted(source_ids[source_order], parents)
+    if np.any(parent_positions >= source_ids.size) or not np.array_equal(
+        source_ids[source_order][parent_positions], parents
+    ):
+        raise ValueError("Local refinement lineage references a foreign DP0 parent.")
+    parent_rows = source_order[parent_positions]
     child_order = np.argsort(children, kind="stable")
     routes = parent_rows[child_order][np.searchsorted(children[child_order], target_ids)]
     return routes.astype(np.int32)
@@ -602,7 +619,7 @@ def refine_boundary_h(
     if adaptation.transition is None:
         raise ValueError("Boundary bisection left the marked faces unchanged.")
     target_mesh = adaptation.target.mesh
-    target_count = target_mesh.blocks[0].cell_count
+    target_count = _face_global_ids(target_mesh).size
     if target_count > policy.max_target_faces:
         raise ValueError(
             f"Refined boundary has {target_count} faces, exceeding the declared limit {policy.max_target_faces}."
@@ -613,8 +630,8 @@ def refine_boundary_h(
     else:
         source_model = epoch.surface_model
         source_metadata = source_model.metadata
-        target_cell_ids = np.asarray(target_mesh.blocks[0].global_ids, dtype=np.int64)
-        source_cell_ids = np.asarray(epoch.mesh.blocks[0].global_ids, dtype=np.int64)
+        target_cell_ids = _face_global_ids(target_mesh)
+        source_cell_ids = _face_global_ids(epoch.mesh)
         target_cell_set = target_mesh.entity_set(2)
         target_tags = (
             ()
@@ -686,7 +703,7 @@ def refine_boundary_h(
         formulation="dp0-galerkin-local-h-refinement",
         provider="native-newest-vertex-bisection",
         resource_evidence=(
-            f"source-face-count={epoch.mesh.blocks[0].cell_count}",
+            f"source-face-count={_face_global_ids(epoch.mesh).size}",
             f"target-face-count={target_count}",
             f"marked-face-count={marked.size}",
         ),

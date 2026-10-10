@@ -216,7 +216,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
 
     name: str = eqx.field(static=True)
     provider: str = eqx.field(static=True)
-    version: str = eqx.field(static=True)
     support_tuples: tuple[SupportTuple, ...]
     dependencies: tuple[str | SupportDependency, ...] = eqx.field(static=True)
     required_gates: tuple[str, ...] = eqx.field(static=True)
@@ -228,7 +227,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         self,
         name: str,
         provider: str,
-        version: str,
         support_tuples: Sequence[SupportTuple],
         /,
         *,
@@ -239,7 +237,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
     ) -> None:
         name_ = _capability_name(name, "profile name")
         provider_ = _identifier(provider, "provider")
-        version_ = _identifier(version, "profile version")
         tuples_ = tuple(support_tuples)
         if not tuples_ or any(not isinstance(item, SupportTuple) for item in tuples_):
             raise TypeError("support_tuples must contain typed, non-empty support.")
@@ -294,7 +291,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
             )
         self.name = name_
         self.provider = provider_
-        self.version = version_
         self.support_tuples = tuple(
             sorted(tuples_, key=lambda item: item.support_tuple_id)
         )
@@ -322,7 +318,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
             "kind": "capability-profile",
             "name": self.name,
             "provider": self.provider,
-            "version": self.version,
             "support_tuples": [item.to_record() for item in self.support_tuples],
             "dependencies": [
                 item if isinstance(item, str) else item.to_record()
@@ -361,7 +356,6 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         value = cls(
             str(record["name"]),
             str(record["provider"]),
-            str(record["version"]),
             tuple(SupportTuple.from_record(item) for item in tuple_records),
             dependencies=tuple(
                 SupportDependency.from_record(item)
@@ -527,9 +521,7 @@ class ReleaseIndex(StrictModule, NonTrainableState):
         ):
             raise TypeError("Release index requires typed, non-empty profiles.")
         ids = tuple(item.profile_id for item in profiles_)
-        coordinates = tuple(
-            (item.provider, item.name, item.version) for item in profiles_
-        )
+        coordinates = tuple((item.provider, item.name) for item in profiles_)
         if len(set(ids)) != len(ids) or len(set(coordinates)) != len(coordinates):
             raise ValueError("Release index contains duplicate profiles.")
         self.profiles = tuple(sorted(profiles_, key=lambda item: item.profile_id))
@@ -706,7 +698,7 @@ def discover_profiles(
     return tuple(
         sorted(
             discovered,
-            key=lambda item: (item.provider, item.name, item.version, item.profile_id),
+            key=lambda item: (item.provider, item.name, item.profile_id),
         )
     )
 

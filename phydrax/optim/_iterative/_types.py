@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import isfinite
@@ -20,6 +21,7 @@ from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import validate_real_inexact_tree as _validate_real_inexact_tree
+from ...linalg import JacobianLinearOperator
 from ...typing import checked, parse
 
 
@@ -44,6 +46,7 @@ class OptimizationStatus(IntEnum):
     RESTORATION_FAILED = 15
     CERTIFICATION_FAILED = 16
     USER_STOPPED = 17
+    RESOURCE_LIMIT = 18
 
 
 _STATUS_MESSAGES = {
@@ -73,6 +76,7 @@ _STATUS_MESSAGES = {
         "independent final certificate did not pass"
     ),
     OptimizationStatus.USER_STOPPED: "stopped by the iteration control rule",
+    OptimizationStatus.RESOURCE_LIMIT: "numerical model resource allowance exhausted",
 }
 
 
@@ -332,11 +336,101 @@ class _PreparedMinimizationValue(StrictModule):
         return self.problem.value(parameters, self.args)[0]
 
 
+class LeastSquaresTrialResult(StrictModule):
+    """Dynamic trial proposal and actual executed numerical-work receipts."""
+
+    direction: PyTree[Any]
+    scale: Array
+    model_image: PyTree[Any]
+    valid: Array
+    jvp_actions: Array
+    vjp_actions: Array
+    model_work_units: Array
+    model_visits: Array
+    resource_refused: Array
+
+    def __init__(
+        self,
+        *,
+        direction: PyTree[Any],
+        scale: Any,
+        model_image: PyTree[Any],
+        valid: Any,
+        jvp_actions: Any,
+        vjp_actions: Any,
+        model_work_units: Any,
+        model_visits: Any,
+        resource_refused: Any,
+    ) -> None:
+        self.direction = direction
+        self.scale = jnp.asarray(scale)
+        self.model_image = model_image
+        self.valid = jnp.asarray(valid)
+        self.jvp_actions = jnp.asarray(jvp_actions)
+        self.vjp_actions = jnp.asarray(vjp_actions)
+        self.model_work_units = jnp.asarray(model_work_units)
+        self.model_visits = jnp.asarray(model_visits)
+        self.resource_refused = jnp.asarray(resource_refused)
+        if self.resource_refused.ndim != 0 or self.resource_refused.dtype.kind != "b":
+            raise TypeError("Resource refusal evidence must be a Boolean scalar.")
+        if self.scale.ndim != 0 or self.valid.ndim != 0 or self.valid.dtype.kind != "b":
+            raise TypeError("Trial scale and Boolean validity must be scalars.")
+        for receipt in (
+            self.jvp_actions,
+            self.vjp_actions,
+            self.model_work_units,
+            self.model_visits,
+        ):
+            if receipt.ndim != 0 or receipt.dtype.kind != "i":
+                raise TypeError("Trial work receipts must be signed integer scalars.")
+
+    def receipts_valid(self) -> Array:
+        """Validate numeric receipt ranges without host synchronization."""
+        action_limit = jnp.iinfo(jnp.int32).max
+        return (
+            (self.jvp_actions >= 0)
+            & (self.jvp_actions <= action_limit)
+            & (self.vjp_actions >= 0)
+            & (self.vjp_actions <= action_limit)
+            & (self.model_work_units >= 0)
+            & (self.model_visits >= 0)
+        )
+
+
+class AbstractLeastSquaresTrialPolicy(StrictModule):
+    """Identified nonsmooth trial and termination capability.
+
+    Numerical state and the prepared Jacobian are dynamic. The returned
+    direction is the actual trial direction. The returned image is an
+    unscaled residual-model image, not an actual residual evaluation or
+    replacement Krylov operator; it need not be a derivative.
+    """
+
+    @abc.abstractmethod
+    def __call__(
+        self,
+        parameters: PyTree[Any],
+        direction: PyTree[Any],
+        residual: PyTree[Any],
+        jacobian: JacobianLinearOperator,
+        remaining_model_work: Array,
+        args: Any,
+    ) -> LeastSquaresTrialResult:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def termination_valid(self, residual: PyTree[Any], args: Any) -> Array:
+        raise NotImplementedError
+
+
 class NonlinearLeastSquaresProblem(StrictModule):
     """Residual-valued nonlinear least-squares problem."""
 
     residual: Callable[[PyTree[Any], Any], Any]
     bounds: Bounds | None
+    trial_policy: AbstractLeastSquaresTrialPolicy | None
+    trial_model_work_limit: Array | None
+    trial_policy_id: str | None = eqx.field(static=True)
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
@@ -348,6 +442,9 @@ class NonlinearLeastSquaresProblem(StrictModule):
         has_aux: bool = False,
         bounds: Bounds | None = None,
         problem_id: str = "nonlinear-least-squares",
+        trial_policy: AbstractLeastSquaresTrialPolicy | None = None,
+        trial_policy_id: str | None = None,
+        trial_model_work_limit: Any = None,
     ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
@@ -356,6 +453,36 @@ class NonlinearLeastSquaresProblem(StrictModule):
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
+        if (trial_policy is None) != (trial_policy_id is None):
+            raise ValueError(
+                "trial_policy and trial_policy_id must be supplied together."
+            )
+        if trial_policy is not None and not isinstance(
+            trial_policy, AbstractLeastSquaresTrialPolicy
+        ):
+            raise TypeError(
+                "trial_policy must be an AbstractLeastSquaresTrialPolicy or None."
+            )
+        if (trial_policy is None) != (trial_model_work_limit is None):
+            raise ValueError(
+                "An identified trial policy requires its dynamic model-work limit."
+            )
+        model_limit = (
+            None
+            if trial_model_work_limit is None
+            else jnp.asarray(trial_model_work_limit)
+        )
+        if model_limit is not None and (
+            model_limit.ndim != 0 or model_limit.dtype.kind != "i"
+        ):
+            raise TypeError("trial_model_work_limit must be a signed integer scalar.")
+        self.trial_model_work_limit = model_limit
+        if trial_policy_id is not None and not str(trial_policy_id):
+            raise ValueError("trial_policy_id must be non-empty.")
+        self.trial_policy = trial_policy
+        self.trial_policy_id = None if trial_policy_id is None else str(trial_policy_id)
+        if self.trial_policy_id is not None:
+            identifier += f"/trial-policy:{self.trial_policy_id}"
         self.residual = residual
         self.bounds = bounds
         self.has_aux = bool(has_aux)
@@ -1017,6 +1144,8 @@ __all__ = [
     "MinimizationResult",
     "NonlinearConstraint",
     "NonlinearLeastSquaresProblem",
+    "AbstractLeastSquaresTrialPolicy",
+    "LeastSquaresTrialResult",
     "OptimizationCapabilities",
     "OptimizationDiagnostics",
     "OptimizationProvenance",

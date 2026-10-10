@@ -17,12 +17,14 @@ from ._globalization import (
     StrongWolfeResult,
 )
 from ._types import (
+    AbstractLeastSquaresTrialPolicy,
     Bounds,
     ConstrainedOptimalityCertificate,
     DerivativeExecutionKind,
     HessianActionKind,
     IterativeStepMetrics,
     LeastSquaresResult,
+    LeastSquaresTrialResult,
     MinimizationProblem,
     MinimizationResult,
     NonlinearConstraint,
@@ -58,6 +60,8 @@ __all__ = [
     "MinimizationResult",
     "NonlinearConstraint",
     "NonlinearLeastSquaresProblem",
+    "AbstractLeastSquaresTrialPolicy",
+    "LeastSquaresTrialResult",
     "OptimizationCertificate",
     "OptimizationCertificateKind",
     "OptimizationCapabilities",

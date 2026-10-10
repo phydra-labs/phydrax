@@ -48,6 +48,7 @@ from phydrax.meshing import (
     prepare_mesh_adaptation,
     prepare_mesh_distribution,
 )
+from phydrax.meshing._bisection import BisectionHierarchy
 
 
 def _triangle_grid(columns: int, rows: int) -> CellMesh:
@@ -107,7 +108,7 @@ def test_device_adaptation_scenario_1() -> None:
         mesh,
         mesh.cells.astype(jnp.float64),
     )
-    with pytest.raises(TypeError, match="cells"):
+    with pytest.raises(ValueError, match="cells"):
         phx.typing.validate(wrong_dtype)
     for mesh in [_triangle_grid(3, 3), _kuhn_grid(1)]:
         source = _certified(mesh)
@@ -215,6 +216,158 @@ def test_device_adaptation_scenario_1() -> None:
     with pytest.raises(MeshingFailure) as rejection:
         commit_partitioned_adaptive_simplex(partitioned, update.state)
     assert rejection.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native execution ledger unavailable"
+)
+@pytest.mark.parametrize("dimension", (2, 3))
+def test_device_uniform_inverse_keeps_compiled_counters_and_source_authority(
+    dimension: int,
+    tmp_path: Path,
+) -> None:
+    from phydrax.lifecycle._meshing_sources import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+
+    if dimension == 2:
+        points = np.asarray(
+            ((0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)), dtype=np.float64
+        )
+        mesh = CellMesh.from_triangles(
+            points, np.asarray(((0, 1, 2), (0, 3, 1)), dtype=np.int32)
+        )
+    else:
+        points = np.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+                (1.0, 0.5, 0.0),
+                (1.0, 0.2, 1.0),
+                (1.0, -3.0, -1.0),
+            ),
+            dtype=np.float64,
+        )
+        mesh = CellMesh.from_tetrahedra(
+            points, np.asarray(((0, 1, 2, 3), (0, 2, 1, 4)), dtype=np.int32)
+        )
+    source = _certified(mesh)
+    policy = _policy(
+        MeshAdaptationRoute.DEVICE_BISECTION,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+        device_policy=AdaptiveSimplexPolicy(vertex_capacity=256, cell_capacity=1024),
+    )
+    fine = execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, MarkedMeshAdaptation(), policy=policy)
+    )
+    assert isinstance(fine.hierarchy, BisectionHierarchy)
+    lineage = fine.hierarchy.uniform_refinement
+    assert lineage is not None
+    assert lineage.child_ids.shape[1] == (6 if dimension == 2 else 24)
+    receipt = write_meshing_source_closure(
+        tmp_path / "device-uniform",
+        (fine.target, fine.hierarchy, policy),
+    )
+    target, hierarchy, reopened_policy = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    assert reopened_policy.policy_id == policy.policy_id
+    prepared = prepare_adaptive_simplex(
+        target, policy=reopened_policy, hierarchy=hierarchy
+    )
+    assert prepared.execution_evidence is not None
+    assert prepared.execution_evidence.owner_id == prepared.adaptation.prepared_id
+    marks = prepared.cell_marks(np.sort(_cell_ids(target.mesh)))
+    refined = refine_adaptive_simplex(prepared.layout, prepared.state, marks).state
+    state = coarsen_adaptive_simplex(
+        prepared.layout, refined, refined.mesh.cell_active
+    ).state
+    counters = np.array(state.counters, copy=True)
+    flags = np.array(state.status_flags, copy=True)
+    raw_cells = np.array(state.mesh.cells, copy=True)
+    raw_ids = np.array(state.mesh.cell_ids, copy=True)
+    raw_active = np.array(state.mesh.cell_active, copy=True)
+    raw_cursors = np.array(state.cursors, copy=True)
+    restored = commit_adaptive_simplex(prepared, state)
+    assert restored.status is MeshAdaptationStatus.COMPLETE
+    np.testing.assert_array_equal(state.counters, counters)
+    np.testing.assert_array_equal(state.status_flags, flags)
+    np.testing.assert_array_equal(state.mesh.cells, raw_cells)
+    np.testing.assert_array_equal(state.mesh.cell_ids, raw_ids)
+    np.testing.assert_array_equal(state.mesh.cell_active, raw_active)
+    np.testing.assert_array_equal(state.cursors, raw_cursors)
+    np.testing.assert_array_equal(
+        restored.target.mesh.coordinates, source.mesh.coordinates
+    )
+    np.testing.assert_array_equal(
+        restored.target.mesh.vertex_global_ids, source.mesh.vertex_global_ids
+    )
+    np.testing.assert_array_equal(_cells(restored.target.mesh), _cells(source.mesh))
+    np.testing.assert_array_equal(_cell_ids(restored.target.mesh), _cell_ids(source.mesh))
+    for degree in range(dimension + 1):
+        np.testing.assert_array_equal(
+            restored.target.mesh.entity_set(degree).entity_ids,
+            source.mesh.entity_set(degree).entity_ids,
+        )
+    assert isinstance(restored.hierarchy, BisectionHierarchy)
+    np.testing.assert_array_equal(restored.hierarchy.tags, lineage.parent_tags)
+    np.testing.assert_array_equal(restored.hierarchy.generations, lineage.parent_levels)
+    assert restored.hierarchy.uniform_refinement is None
+    assert restored.target.execution_evidence is not None
+    assert int(restored.target.execution_evidence.total_work_units) > 0
+    np.testing.assert_array_equal(
+        restored.target.execution_evidence.source_preparation_work_units,
+        prepared.execution_evidence.total_work_units,
+    )
+    assert int(restored.target.execution_evidence.host_storage_peak_bytes_upper) > 0
+    continued = execute_mesh_adaptation(
+        prepare_mesh_adaptation(
+            restored.target,
+            MarkedMeshAdaptation(
+                np.sort(_cell_ids(source.mesh))[:1], hierarchy=restored.hierarchy
+            ),
+            policy=policy,
+        )
+    )
+    assert continued.status is MeshAdaptationStatus.COMPLETE
+    invalid = eqx.tree_at(
+        lambda value: value.state.counters,
+        prepared,
+        -jnp.ones_like(prepared.state.counters),
+    )
+    with pytest.raises(ValueError, match="baseline"):
+        commit_adaptive_simplex(invalid, state)
+
+
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native execution ledger unavailable"
+)
+def test_device_commit_refuses_foreign_and_changed_preparation_receipts() -> None:
+    source = _certified(_triangle_grid(1, 1))
+    policy = _policy(MeshAdaptationRoute.DEVICE_BISECTION)
+    prepared = prepare_adaptive_simplex(source, policy=policy)
+    foreign_source = _certified(
+        CellMesh.from_triangles(
+            np.asarray(source.mesh.coordinates) + 2.0,
+            _cells(source.mesh).astype(np.int32),
+        )
+    )
+    foreign = prepare_adaptive_simplex(foreign_source, policy=policy)
+    substituted = eqx.tree_at(
+        lambda value: value.execution_evidence, prepared, foreign.execution_evidence
+    )
+    with pytest.raises(ValueError, match="scientific operation"):
+        commit_adaptive_simplex(substituted, prepared.state)
+    changed = eqx.tree_at(
+        lambda value: value.execution_evidence.source_preparation_work_units,
+        prepared,
+        jnp.asarray(1, dtype=jnp.uint64),
+    )
+    # A root receipt has no predecessor. Inventing scalar source work must not
+    # silently recharge a different phase, even when its operation tag matches.
+    with pytest.raises(ValueError, match="preparation"):
+        commit_adaptive_simplex(changed, prepared.state)
 
 
 def _policy(route: Any, **options: Any) -> Any:
@@ -339,6 +492,82 @@ def _assert_same_arrays(first: Any, second: Any) -> None:
     )
 
 
+def test_device_commit_owns_uniform_inverse_without_mutating_compiled_summary(
+    tmp_path: Path,
+) -> None:
+    from phydrax.lifecycle._meshing_sources import (
+        read_meshing_source_closure,
+        write_meshing_source_closure,
+    )
+
+    points = np.asarray(
+        ((0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)), dtype=np.float64
+    )
+    source = _certified(
+        CellMesh.from_triangles(
+            points, np.asarray(((0, 1, 2), (0, 3, 1)), dtype=np.int32)
+        )
+    )
+    refined = _adapt(
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        source,
+        (0,),
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+    )
+    assert refined.status is MeshAdaptationStatus.COMPLETE
+    prepared = prepare_adaptive_simplex(
+        refined.target,
+        policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION),
+        hierarchy=refined.hierarchy,
+    )
+    update = coarsen_adaptive_simplex(
+        prepared.layout, prepared.state, prepared.state.mesh.cell_active
+    )
+    before = [
+        np.array(leaf, copy=True) for leaf in jax.tree_util.tree_leaves(update.state)
+    ]
+    counters = np.array(update.state.counters, dtype=np.int64, copy=True)
+    result = commit_adaptive_simplex(prepared, update.state)
+    assert result.status is MeshAdaptationStatus.COMPLETE
+    for original, leaf in zip(
+        before, jax.tree_util.tree_leaves(update.state), strict=True
+    ):
+        np.testing.assert_array_equal(leaf, original)
+    np.testing.assert_array_equal(update.state.counters, counters)
+    np.testing.assert_array_equal(_cells(result.target.mesh), _cells(source.mesh))
+    np.testing.assert_array_equal(_cell_ids(result.target.mesh), _cell_ids(source.mesh))
+    np.testing.assert_array_equal(
+        result.target.mesh.vertex_global_ids, source.mesh.vertex_global_ids
+    )
+    np.testing.assert_array_equal(result.target.mesh.coordinates, source.mesh.coordinates)
+    assert isinstance(result.hierarchy, BisectionHierarchy)
+    assert result.hierarchy.uniform_refinement is None
+    assert result.target.execution_evidence is not None
+    assert int(result.target.execution_evidence.externally_charged_work) > 0
+    receipt = write_meshing_source_closure(
+        tmp_path / "device-uniform", (result.target, result.hierarchy)
+    )
+    target, hierarchy = read_meshing_source_closure(
+        receipt.path, expected_content_id=receipt.content_id
+    )
+    continued = _adapt(
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        target,
+        _cell_ids(target.mesh)[:1],
+        hierarchy=hierarchy,
+        compatibility=BisectionCompatibility.UNIFORM_REFINEMENT,
+    )
+    assert continued.status is MeshAdaptationStatus.COMPLETE
+    _assert_conforming(continued.target.mesh, 3.5)
+    negative = eqx.tree_at(
+        lambda state: state.counters,
+        update.state,
+        update.state.counters.at[0].set(-1),
+    )
+    with pytest.raises(ValueError, match="baseline"):
+        commit_adaptive_simplex(prepared, negative)
+
+
 def test_device_adaptation_scenario_2() -> None:
     points = np.asarray([(0.0, 0.0), (2.0, 0.0), (1.0, 0.5), (1.0, -3.0)])
     source = _certified(
@@ -376,12 +605,50 @@ def test_device_adaptation_scenario_2() -> None:
     )
     assert back.target.mesh.topology_id == source.mesh.topology_id
     assert device.target.mesh.topology_id == host.target.mesh.topology_id
+    # Pin the numerical content as diagnostics for canonical identity equality.
+    source_order = np.argsort(_cell_ids(source.mesh), kind="stable")
+    back_order = np.argsort(_cell_ids(back.target.mesh), kind="stable")
+    np.testing.assert_array_equal(
+        _cell_ids(back.target.mesh)[back_order], _cell_ids(source.mesh)[source_order]
+    )
+    np.testing.assert_array_equal(
+        _cells(back.target.mesh)[back_order], _cells(source.mesh)[source_order]
+    )
+    device_order = np.argsort(_cell_ids(device.target.mesh), kind="stable")
+    host_order = np.argsort(_cell_ids(host.target.mesh), kind="stable")
+    np.testing.assert_array_equal(
+        _cell_ids(device.target.mesh)[device_order],
+        _cell_ids(host.target.mesh)[host_order],
+    )
+    np.testing.assert_array_equal(
+        _cells(device.target.mesh)[device_order], _cells(host.target.mesh)[host_order]
+    )
     np.testing.assert_array_equal(
         np.asarray(device.target.mesh.coordinates),
         np.asarray(host.target.mesh.coordinates),
     )
-    # ty: ignore[unresolved-attribute]
+    assert isinstance(device.hierarchy, BisectionHierarchy)
+    assert isinstance(host.hierarchy, BisectionHierarchy)
     assert device.hierarchy.hierarchy_id == host.hierarchy.hierarchy_id
+    np.testing.assert_array_equal(
+        device.hierarchy.cell_global_ids, host.hierarchy.cell_global_ids
+    )
+    np.testing.assert_array_equal(
+        device.hierarchy.ordered_vertices, host.hierarchy.ordered_vertices
+    )
+    np.testing.assert_array_equal(device.hierarchy.tags, host.hierarchy.tags)
+    np.testing.assert_array_equal(
+        device.hierarchy.generations, host.hierarchy.generations
+    )
+    np.testing.assert_array_equal(
+        device.hierarchy.record_parent_ids, host.hierarchy.record_parent_ids
+    )
+    np.testing.assert_array_equal(
+        device.hierarchy.record_child_ids, host.hierarchy.record_child_ids
+    )
+    np.testing.assert_array_equal(
+        device.hierarchy.record_vertex_ids, host.hierarchy.record_vertex_ids
+    )
     slope = np.asarray((0.75, -1.25))
     before = np.asarray(source.mesh.coordinates) @ slope + 0.5
     after = np.asarray(device.target.mesh.coordinates) @ slope + 0.5
@@ -518,28 +785,6 @@ def test_device_adaptation_scenario_3() -> None:
     # ty: ignore[unresolved-attribute]
     assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
     _assert_conforming(result.target.mesh, 1.0)
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
-    environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
-    completed = subprocess.run(
-        [sys.executable, "-c", _PARTS_SCRIPT],
-        capture_output=True,
-        text=True,
-        env=environment,
-        check=True,
-    )
-    lines = dict(line.split(" ", 1) for line in completed.stdout.strip().splitlines())
-    assert lines["status"] == "0 0"
-    grown = np.asarray(lines["grown"].split(), dtype=np.int64)
-    assert grown[0] > 0 and np.count_nonzero(grown[1:]) > 0
-    for key in ("single", "lineage", "hierarchy", "host", "coordinates", "distribution"):
-        assert lines[key] == "True", key
-    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
-    for key in ("failure", "flags"):
-        values = np.asarray(lines[key].split(), dtype=np.int64)
-        assert values.size == 4 and np.all(values & capacity), key
-    assert lines["rolled"] == lines["refused"] == "True"
-    assert lines["rejected"] == MeshingFailureCategory.RESOURCE_EXHAUSTED.value
 
 
 @pytest.mark.parametrize(
@@ -652,158 +897,145 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None
     assert np.all(np.asarray(masked.value)[~active] == 0.0)
 
 
-_PARTS_SCRIPT = textwrap.dedent(
-    """
-    import itertools
+@pytest.mark.parametrize("scenario", ("chain", "owners", "protected", "capacity"))
+def test_part_sharded_neighbor_closure_semantics(scenario: str) -> None:
+    environment = dict(os.environ)
+    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+    environment["JAX_PLATFORMS"] = "cpu"
+    environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
+    subprocess.run(
+        [sys.executable, "-c", _NEIGHBOR_PARTS_SCRIPT, scenario],
+        capture_output=True,
+        text=True,
+        env=environment,
+        check=True,
+    )
 
+
+_NEIGHBOR_PARTS_SCRIPT = textwrap.dedent(
+    """
+    import sys
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
     import numpy as np
 
-    import phydrax as phx
-    from phydrax.discretization import (
-        AdaptiveSimplexPolicy,
-        CellMesh,
+    from phydrax.discretization._adaptive_simplex import (
+        AdaptiveSimplexLayout,
+        AdaptiveSimplexParts,
+        AdaptiveSimplexState,
+        AdaptiveSimplexStatus,
+        adaptive_simplex_state,
         refine_adaptive_simplex,
         refine_adaptive_simplex_parts,
     )
-    from phydrax.meshing import (
-        commit_adaptive_simplex,
-        commit_partitioned_adaptive_simplex,
-        execute_mesh_adaptation,
-        MarkedMeshAdaptation,
-        MeshAdaptationPolicy,
-        MeshAdaptationRoute,
-        MeshingFailure,
-        MeshPart,
-        MeshPartitionKind,
-        MeshPartitionPolicy,
-        partition_adaptive_simplex,
-        prepare_adaptive_simplex,
-        prepare_mesh_adaptation,
-        prepare_mesh_distribution,
+
+    scenario = sys.argv[1]
+    angles = np.linspace(0.0, np.pi, 5)
+    points = np.vstack((np.zeros((1, 2)), np.stack((np.cos(angles), np.sin(angles)), axis=1)))
+    rows = np.asarray([(0, index, index + 1) for index in range(1, 5)], dtype=np.int32)
+    owners = np.asarray([3, 0, 2, 1] if scenario == "owners" else [0, 1, 2, 3], dtype=np.int32)
+    layout = AdaptiveSimplexLayout(
+        2, 2, vertex_capacity=64,
+        cell_capacity=3 if scenario == "capacity" else 64,
+        protected_edge_capacity=4, maximum_closure_iterations=64,
+        maximum_coarsening_passes=1,
     )
 
-    xs = np.linspace(0.0, 1.0, 9)
-    points = np.stack(np.meshgrid(xs, xs), axis=-1).reshape((-1, 2))
-    cells = []
-    for j, i in itertools.product(range(8), range(8)):
-        a = j * 9 + i
-        cells.extend(((a, a + 1, a + 10), (a, a + 10, a + 9)))
-    mesh = CellMesh.from_triangles(points, np.asarray(cells, dtype=np.int32))
-    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-    partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 4)
-    distribution = prepare_mesh_distribution(MeshPart("domain", source), policy=partition)
-    owners = np.asarray(distribution.partition.cell_owner)
-    marks = np.asarray(distribution.cell_global_ids)[owners == 0]
-    policy = MeshAdaptationPolicy(
-        MeshAdaptationRoute.DEVICE_BISECTION,
-        device_policy=AdaptiveSimplexPolicy(vertex_capacity=1024, cell_capacity=1024),
-        distribution=distribution,
-        partition_policy=partition,
-    )
-    prepared = prepare_adaptive_simplex(source, policy=policy)
-    partitioned = partition_adaptive_simplex(prepared)
-    layout, parts = partitioned.layout, partitioned.parts
-    first = refine_adaptive_simplex_parts(
-        layout, parts, partitioned.states, partitioned.cell_marks(marks)
-    )
-    # Refine every cell part 0 holds again: children split the shared sides.
-    again = np.asarray(first.state.mesh.cell_active).copy()
-    again[1:] = False
-    second = refine_adaptive_simplex_parts(layout, parts, first.state, again)
-    grown = np.asarray(second.state.cursors[:, 1] - first.state.cursors[:, 1])
-    result = commit_partitioned_adaptive_simplex(partitioned, second.state)
-
-    held = np.asarray(first.state.mesh.cell_ids[0])[again[0]]
-    single = refine_adaptive_simplex(
-        prepared.layout, prepared.state, prepared.cell_marks(marks)
-    )
-    active = np.asarray(single.state.mesh.cell_active)
-    single = refine_adaptive_simplex(
-        prepared.layout,
-        single.state,
-        active & np.isin(np.asarray(single.state.mesh.cell_ids), held),
-    )
-    reference = commit_adaptive_simplex(prepared, single.state)
-
-    host_policy = MeshAdaptationPolicy(MeshAdaptationRoute.NATIVE_BISECTION)
-    host = execute_mesh_adaptation(
-        prepare_mesh_adaptation(source, MarkedMeshAdaptation(np.sort(marks)), policy=host_policy)
-    )
-    host = execute_mesh_adaptation(
-        prepare_mesh_adaptation(
-            host.target,
-            MarkedMeshAdaptation(np.sort(held), hierarchy=host.hierarchy),
-            policy=host_policy,
+    def state_for(indices: np.ndarray, bucket: AdaptiveSimplexLayout) -> AdaptiveSimplexState:
+        global_rows = rows[indices]
+        vertex_ids = np.unique(global_rows).astype(np.int64)
+        local_rows = np.searchsorted(vertex_ids, global_rows).astype(np.int32)
+        count = indices.size
+        protected = np.empty((0, 2), dtype=np.int32)
+        if scenario == "protected" and 3 in indices:
+            protected = np.searchsorted(vertex_ids, np.asarray([[0, 5]])).astype(np.int32)
+        return adaptive_simplex_state(
+            bucket,
+            coordinates=points[vertex_ids],
+            vertex_ids=vertex_ids,
+            vertex_active=np.ones(vertex_ids.size, dtype=np.bool_),
+            vertex_parents=np.full((vertex_ids.size, 2), -1, dtype=np.int32),
+            vertex_protected=np.zeros(vertex_ids.size, dtype=np.bool_),
+            cells=local_rows, tuples=local_rows,
+            tags=np.full(count, 2, dtype=np.int32),
+            blocks=np.zeros(count, dtype=np.int32),
+            generations=np.zeros(count, dtype=np.int32),
+            parents=np.full(count, -1, dtype=np.int32),
+            children=np.full((count, 2), -1, dtype=np.int32),
+            bisection_vertices=np.full(count, -1, dtype=np.int32),
+            cell_ids=indices.astype(np.int64) + 10,
+            cell_active=np.ones(count, dtype=np.bool_),
+            cell_classes=np.zeros(count, dtype=np.int32),
+            facet_classes=np.zeros((count, 3), dtype=np.int32),
+            protected_edges=protected, next_vertex_id=6, next_cell_id=14,
         )
-    )
-    target = result.target.mesh
 
-    def cells_by_id(mesh):
-        rows = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
-        ids = np.concatenate([np.asarray(block.global_ids) for block in mesh.blocks])
-        return ids, np.asarray(mesh.vertex_global_ids)[rows]
-
-    # Two host commits number intermediate edges per cycle; vertices and cells
-    # are issued identically.
-    device_cells, host_cells = cells_by_id(target), cells_by_id(host.target.mesh)
-    print("status", int(first.report.status[0]), int(second.report.status[0]))
-    print("grown", " ".join(str(int(value)) for value in grown))
-    print("single", target.topology_id == reference.target.mesh.topology_id)
-    print("lineage", result.lineage.lineage_id == reference.lineage.lineage_id)
-    print("hierarchy", result.hierarchy.hierarchy_id == reference.hierarchy.hierarchy_id)
-    print(
-        "host",
-        np.array_equal(device_cells[0], host_cells[0])
-        and np.array_equal(device_cells[1], host_cells[1])
-        and np.array_equal(
-            np.asarray(target.vertex_global_ids),
-            np.asarray(host.target.mesh.vertex_global_ids),
-        ),
+    pieces = [state_for(np.flatnonzero(owners == part), layout) for part in range(4)]
+    stacked = jax.tree_util.tree_map(lambda *values: jnp.stack(values), *pieces)
+    # Every shared edge is routed, but center-only vertex overlap is not a
+    # topology route. A forced cavity must advance through the whole chain.
+    neighbors = tuple(
+        pair for index in range(3)
+        for pair in ((int(owners[index]), int(owners[index + 1])),
+                     (int(owners[index + 1]), int(owners[index])))
     )
-    print(
-        "coordinates",
-        np.array_equal(np.asarray(target.coordinates), np.asarray(host.target.mesh.coordinates)),
-    )
-    print("distribution", result.distribution is not None)
+    parts = AdaptiveSimplexParts(jax.devices("cpu"), neighbor_pairs=neighbors)
+    marks = np.zeros((4, layout.cell_capacity), dtype=np.bool_)
+    marks[owners[0], 0] = True
+    update = refine_adaptive_simplex_parts(layout, parts, stacked, marks)
 
-    # Tight buckets: refining part 0's cells overflows part 0 alone, and the
-    # collective status fails, records, and refuses on every part.
-    tight = partition_adaptive_simplex(
-        prepare_adaptive_simplex(
-            source,
-            policy=MeshAdaptationPolicy(
-                MeshAdaptationRoute.DEVICE_BISECTION,
-                device_policy=AdaptiveSimplexPolicy(growth_factor=1.0),
-                distribution=distribution,
-                partition_policy=partition,
-            ),
+    def same_tree(first: AdaptiveSimplexState, second: AdaptiveSimplexState) -> None:
+        for left, right in zip(jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True):
+            np.testing.assert_array_equal(np.asarray(left), np.asarray(right))
+
+    if scenario in ("protected", "capacity"):
+        expected = AdaptiveSimplexStatus.PROTECTED_CONFLICT if scenario == "protected" else AdaptiveSimplexStatus.CAPACITY_EXCEEDED
+        assert np.all(np.asarray(update.report.status) & int(expected))
+        assert np.all(np.asarray(update.report.accepted) == 0)
+        assert np.all(np.asarray(update.report.operations) == 0)
+        cleared = eqx.tree_at(
+            lambda state: state.clocks, update.state,
+            update.state.clocks.at[:, 2].set(0),
         )
-    )
-    overflow = refine_adaptive_simplex_parts(
-        tight.layout, tight.parts, tight.states, tight.cell_marks(marks)
-    )
-    refused = refine_adaptive_simplex_parts(
-        tight.layout, tight.parts, overflow.state, tight.cell_marks(marks)
-    )
-    print("failure", " ".join(str(int(value)) for value in overflow.report.status))
-    print("flags", " ".join(str(int(value)) for value in overflow.state.status_flags))
-    print(
-        "rolled",
-        np.array_equal(np.asarray(overflow.state.cursors), np.asarray(tight.states.cursors)),
-    )
-    print(
-        "refused",
-        bool(np.all(np.asarray(refused.report.failed)))
-        and int(np.sum(refused.report.operations)) == 0
-        and np.array_equal(
-            np.asarray(refused.state.cursors), np.asarray(overflow.state.cursors)
-        ),
-    )
-    try:
-        commit_partitioned_adaptive_simplex(tight, overflow.state)
-    except MeshingFailure as error:
-        print("rejected", error.category.value)
+        same_tree(cleared, stacked)
+        refused = refine_adaptive_simplex_parts(layout, parts, update.state, marks)
+        same_tree(refused.state, update.state)
+        assert np.all(np.asarray(refused.report.failed))
     else:
-        print("rejected none")
+        assert np.all(np.asarray(update.report.status) == 0)
+        grown = np.asarray(update.state.cursors[:, 1] - stacked.cursors[:, 1])
+        assert np.all(grown > 0), grown
+        assert np.all(np.asarray(update.report.iterations) >= 3)
+        serial_state = state_for(np.arange(4, dtype=np.int32), layout)
+        serial_marks = np.zeros(layout.cell_capacity, dtype=np.bool_)
+        serial_marks[0] = True
+        serial = refine_adaptive_simplex(layout, serial_state, serial_marks)
+        assert int(serial.report.status) == 0
+        mesh = update.state.mesh
+        active = np.asarray(mesh.cell_active)
+        cell_ids = np.asarray(mesh.cell_ids)[active]
+        connectivity = np.asarray(mesh.vertex_ids)[np.arange(4)[:, None, None], np.asarray(mesh.cells)][active]
+        order = np.argsort(cell_ids)
+        reference = serial.state.mesh
+        reference_active = np.asarray(reference.cell_active)
+        reference_order = np.argsort(np.asarray(reference.cell_ids)[reference_active])
+        np.testing.assert_array_equal(
+            cell_ids[order], np.asarray(reference.cell_ids)[reference_active][reference_order],
+        )
+        np.testing.assert_array_equal(
+            connectivity[order],
+            np.asarray(reference.vertex_ids)[np.asarray(reference.cells)[reference_active]][reference_order],
+        )
+        held = np.asarray(mesh.vertex_active)
+        ids = np.asarray(mesh.vertex_ids)[held]
+        coordinates = np.asarray(mesh.coordinates)[held]
+        unique, first = np.unique(ids, return_index=True)
+        for identifier, coordinate in zip(ids, coordinates, strict=True):
+            np.testing.assert_array_equal(coordinate, coordinates[first[np.searchsorted(unique, identifier)]])
+        reference_held = np.asarray(reference.vertex_active)
+        np.testing.assert_array_equal(unique, np.asarray(reference.vertex_ids)[reference_held])
+        np.testing.assert_array_equal(coordinates[first], np.asarray(reference.coordinates)[reference_held])
     """
 )

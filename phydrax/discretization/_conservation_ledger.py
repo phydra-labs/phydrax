@@ -4,18 +4,21 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._compensated import compensated_sum, compensated_sum_chunks
 from .._strict import StrictModule
+from .._trainable import fixed_field
+from ..ein import contract
 
 
 _STAGE_RATE_UNITS = "content/time"
@@ -89,12 +92,13 @@ def _validate_route_values(
     neighbor_cells: np.ndarray,
     active_mask: np.ndarray,
     /,
+    allow_self: bool = False,
 ) -> None:
     if np.any(owner_cells < 0):
         raise ValueError("owner_cells cannot contain negative cell indices.")
     if np.any(neighbor_cells < -1):
         raise ValueError("neighbor_cells can use only -1 as a boundary sentinel.")
-    if np.any(active_mask & (neighbor_cells == owner_cells)):
+    if not allow_self and np.any(active_mask & (neighbor_cells == owner_cells)):
         raise ValueError("An active flux route cannot connect a cell to itself.")
 
 
@@ -161,6 +165,7 @@ def _capacity_route_arrays(
     neighbor_cells: ArrayLike,
     active_mask: ArrayLike,
     /,
+    allow_self: bool = False,
 ) -> tuple[Array, Array, Array]:
     owner = jnp.asarray(owner_cells)
     neighbor = jnp.asarray(neighbor_cells)
@@ -187,7 +192,7 @@ def _capacity_route_arrays(
     )
     active = eqx.error_if(
         active,
-        jnp.any(active & (neighbor == owner)),
+        jnp.any(active & (neighbor == owner)) & (not allow_self),
         "An active flux route cannot connect a cell to itself.",
     )
     return owner, neighbor, active
@@ -218,6 +223,7 @@ def _validate_route_bounds(
     cell_count: int,
     block_id: str,
     /,
+    allow_self: bool = False,
 ) -> Array:
     validation_token = eqx.error_if(
         validation_token,
@@ -231,7 +237,7 @@ def _validate_route_bounds(
     )
     validation_token = eqx.error_if(
         validation_token,
-        jnp.any(active_mask & (neighbor_cells == owner_cells)),
+        jnp.any(active_mask & (neighbor_cells == owner_cells)) & (not allow_self),
         f"Flux block {block_id!r} has an active self-neighbor route.",
     )
     safe_neighbor = jnp.maximum(neighbor_cells, 0)
@@ -282,8 +288,64 @@ def _validate_blocks(
             active_cell_mask,
             cell_count,
             block.block_id,
+            block.neighbor_state_action is not None,
         )
     return normalized, validation_token
+
+
+def _state_action(values: Array, action: Array | None) -> Array:
+    if action is None:
+        return values
+    return contract("fij,fj->fi", action, values.reshape((values.shape[0], -1))).reshape(
+        values.shape
+    )
+
+
+def _prepare_state_action(values: Array, action: ArrayLike | None) -> Array | None:
+    if action is None:
+        return None
+    matrix = _finite_values(
+        jnp.asarray(action, dtype=jnp.result_type(values, 1.0)), "neighbor_state_action"
+    )
+    count = math.prod(values.shape[1:])
+    if matrix.shape != (values.shape[0], count, count):
+        raise ValueError(
+            "Neighbor state action must match the explicit routed component space."
+        )
+    tolerance = 256 * jnp.finfo(matrix.dtype).eps
+    return eqx.error_if(
+        matrix,
+        jnp.any(
+            jnp.abs(jnp.swapaxes(matrix, -1, -2) @ matrix - jnp.eye(count)) > tolerance
+        ),
+        "Neighbor state action must be orthogonal.",
+    )
+
+
+def _frame_exchange(
+    blocks: (
+        tuple[ConservationStageFluxRateBlock, ...]
+        | tuple[AcceptedConservationFluxIntegralBlock, ...]
+    ),
+    values: tuple[Array, ...],
+    component_shape: tuple[int, ...],
+    dtype: DTypeLike,
+) -> Array:
+    chunks = tuple(
+        jnp.where(
+            (block.neighbor_cells >= 0).reshape(
+                (block.neighbor_cells.size,) + (1,) * len(component_shape)
+            ),
+            _state_action(value, block.neighbor_state_action) - value,
+            0,
+        )
+        for block, value in zip(blocks, values, strict=True)
+    )
+    return (
+        compensated_sum_chunks(chunks, output_ndim=len(component_shape))
+        if chunks
+        else jnp.zeros(component_shape, dtype=dtype)
+    )
 
 
 def _scatter_block(
@@ -291,6 +353,7 @@ def _scatter_block(
     values: Array,
     owner_cells: Array,
     neighbor_cells: Array,
+    neighbor_state_action: Array | None,
     /,
 ) -> Array:
     safe_neighbor = jnp.maximum(neighbor_cells, 0)
@@ -299,7 +362,11 @@ def _scatter_block(
         neighbor_cells.shape + (1,) * (values.ndim - 1)
     )
     return scattered.at[safe_neighbor].add(
-        jnp.where(neighbor_mask, values, jnp.zeros((), dtype=values.dtype))
+        jnp.where(
+            neighbor_mask,
+            _state_action(values, neighbor_state_action),
+            jnp.zeros((), dtype=values.dtype),
+        )
     )
 
 
@@ -313,8 +380,8 @@ def _conservation_sums(
     """Compensated source, boundary-outward, and net-cell sums of one ledger.
 
     ``routed_values`` pairs each block's owner-outward values with its neighbor
-    cells; boundary routes are the ``-1`` neighbors. For exact scatter algebra
-    ``net_cell == source - boundary_outward`` up to compensated round-off.
+    cells; boundary routes are the ``-1`` neighbors. The physical-frame balance
+    is ``net_cell == source - boundary_outward + frame_exchange_sum``.
     """
     source_sum = compensated_sum(source, axis=0)
     boundary_chunks = tuple(
@@ -341,6 +408,7 @@ class ConservationStageFluxRateBlock(StrictModule):
     owner_cells: Array
     neighbor_cells: Array
     active_mask: Array
+    neighbor_state_action: Array | None = fixed_field()
     block_id: str = eqx.field(static=True)
     block_kind: str = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
@@ -359,6 +427,8 @@ class ConservationStageFluxRateBlock(StrictModule):
         /,
         *,
         route_signature_id: str | None = None,
+        neighbor_state_action: ArrayLike | None = None,
+        state_action_id: str = "identity",
     ) -> None:
         """Validate one owner-oriented route block.
 
@@ -380,11 +450,16 @@ class ConservationStageFluxRateBlock(StrictModule):
                     "owner_cells and neighbor_cells must have identical shapes."
                 )
             active, active_host = _active_array(active_mask, owner.shape[0])
-            _validate_route_values(owner_host, neighbor_host, active_host)
+            _validate_route_values(
+                owner_host, neighbor_host, active_host, neighbor_state_action is not None
+            )
         else:
             signature = _flux_identity(route_signature_id, "route_signature_id")
             owner, neighbor, active = _capacity_route_arrays(
-                owner_cells, neighbor_cells, active_mask
+                owner_cells,
+                neighbor_cells,
+                active_mask,
+                neighbor_state_action is not None,
             )
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.ndim == 0 or rate.shape[0] != owner.shape[0]:
@@ -402,10 +477,23 @@ class ConservationStageFluxRateBlock(StrictModule):
             if route_signature_id is None
             else _capacity_route_fingerprint(signature, component_shape, block_kind_)
         )
+        action = _prepare_state_action(rate, neighbor_state_action)
+        if action is not None:
+            if state_action_id == "identity":
+                raise ValueError(
+                    "Explicit state actions require their owning scientific representation identity."
+                )
+            route_id = canonical_fingerprint(
+                {
+                    "route": route_id,
+                    "state_action": _flux_identity(state_action_id, "state_action_id"),
+                }
+            )
         self.flux_rate = rate
         self.owner_cells = owner
         self.neighbor_cells = neighbor
         self.active_mask = active
+        self.neighbor_state_action = action
         self.block_id = block_id_
         self.block_kind = block_kind_
         self.component_shape = component_shape
@@ -661,8 +749,18 @@ class ConservationStageLedger(StrictModule):
                 block.flux_rate,
                 block.owner_cells,
                 block.neighbor_cells,
+                block.neighbor_state_action,
             )
         return scattered
+
+    def frame_exchange_sum(self) -> Array:
+        """Internal reciprocal rates expressed in different physical cell frames."""
+        return _frame_exchange(
+            self.blocks,
+            tuple(block.flux_rate for block in self.blocks),
+            self.component_shape,
+            self.source_rate.dtype,
+        )
 
     def conservation_sums(self) -> tuple[Array, Array, Array]:
         """Return source, boundary-outward, and net-cell content-rate sums."""
@@ -681,6 +779,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
     owner_cells: Array
     neighbor_cells: Array
     active_mask: Array
+    neighbor_state_action: Array | None = fixed_field()
     block_id: str = eqx.field(static=True)
     block_kind: str = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
@@ -699,6 +798,8 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
         /,
         *,
         _validated_route_id: str | None = None,
+        neighbor_state_action: ArrayLike | None = None,
+        state_action_id: str = "identity",
     ) -> None:
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
@@ -716,7 +817,9 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
                     "owner_cells and neighbor_cells must have identical shapes."
                 )
             active, active_host = _active_array(active_mask, owner.shape[0])
-            _validate_route_values(owner_host, neighbor_host, active_host)
+            _validate_route_values(
+                owner_host, neighbor_host, active_host, neighbor_state_action is not None
+            )
         elif (
             owner.ndim != 1
             or neighbor.shape != owner.shape
@@ -740,10 +843,23 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
             if _validated_route_id is None
             else _validated_route_id
         )
+        action = _prepare_state_action(integral, neighbor_state_action)
+        if _validated_route_id is None and action is not None:
+            if state_action_id == "identity":
+                raise ValueError(
+                    "Explicit state actions require their owning scientific representation identity."
+                )
+            route_id = canonical_fingerprint(
+                {
+                    "route": route_id,
+                    "state_action": _flux_identity(state_action_id, "state_action_id"),
+                }
+            )
         self.flux_integral = integral
         self.owner_cells = owner
         self.neighbor_cells = neighbor
         self.active_mask = active
+        self.neighbor_state_action = action
         self.block_id = block_id_
         self.block_kind = block_kind_
         self.component_shape = component_shape
@@ -774,6 +890,7 @@ class AcceptedConservationFluxIntegralBlock(StrictModule):
             stage_block.block_id,
             stage_block.block_kind,
             _validated_route_id=stage_block.route_id,
+            neighbor_state_action=stage_block.neighbor_state_action,
         )
 
 
@@ -1104,8 +1221,18 @@ class AcceptedConservationIntegralLedger(StrictModule):
                 block.flux_integral,
                 block.owner_cells,
                 block.neighbor_cells,
+                block.neighbor_state_action,
             )
         return scattered
+
+    def frame_exchange_sum(self) -> Array:
+        """Accepted reciprocal frame exchange, not a physical source or boundary."""
+        return _frame_exchange(
+            self.blocks,
+            tuple(block.flux_integral for block in self.blocks),
+            self.component_shape,
+            self.source_integral.dtype,
+        )
 
     def conservation_sums(self) -> tuple[Array, Array, Array]:
         """Return source, boundary-outward, and net-cell accepted content sums."""

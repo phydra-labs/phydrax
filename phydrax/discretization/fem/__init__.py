@@ -1,317 +1,987 @@
-#
-# Copyright © 2026 PHYDRA, Inc. All rights reserved.
-#
+"""Lazy finite-element facade."""
 
-"""Conforming finite element discretizations."""
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
 
-from .._integration_domain import IntegrationDomain
-from . import smoothing
-from ._adaptivity import (
-    dorfler_mark,
-    dual_weighted_residual_estimate,
-    FiniteElementDWRIndicators,
-    FiniteElementErrorEstimate,
-    local_dual_weighted_residual,
-    maximum_mark,
-    residual_jump_estimate,
-)
-from ._boundary import (
-    FiniteElementBoundaryPatch,
-    FiniteElementBoundarySet,
-    FiniteElementPeriodicFacetPair,
-    FiniteElementPeriodicTransform,
-)
-from ._cell_map import (
-    FiniteElementCellMapEvaluation,
-    prepare_finite_element_cell_map,
-    PreparedFiniteElementCellMap,
-)
-from ._constraints import (
-    affine_dof_constraint,
-    compose_finite_element_constraints,
-    dirichlet_constraint,
-    finite_element_hp_constraint,
-    FiniteElementDirichletConstraint,
-    FiniteElementLinearConstraint,
-    periodic_constraint,
-)
-from ._de_rham import FiniteElementDeRhamComplex
-from ._distributed import (
-    CostAwareFiniteElementPartition,
-    distributed_finite_element_mortar_plan,
-    DistributedFiniteElementConstraint,
-    DistributedFiniteElementMortarPlan,
-    DistributedFiniteElementOperator,
-    finite_element_partition_workset_plan,
-    FiniteElementDistributedPhasePlan,
-    FiniteElementFacetOwnershipPlan,
-    FiniteElementHaloPlan,
-    FiniteElementHPPartitionPlan,
-    FiniteElementPartitionCostEvidence,
-    FiniteElementPartitionWorksetPlan,
-    inherit_finite_element_hp_ownership,
-    JaxCollectiveBackend,
-    lower_distributed_finite_element_phases,
-    partition_cells_cost_aware,
-    PartitionedFiniteElementDofMap,
-)
-from ._embedded import (
-    EmbeddedQuadrature,
-    FiniteElementEnrichment,
-    MultiscaleFiniteElementBasis,
-)
-from ._fast_diagonalization import (
-    FastDiagonalizationEligibility,
-    TensorFastDiagonalizationBuilder,
-    TensorFastDiagonalizationPreconditioner,
-)
-from ._form_elements import DofLabel, form_element, FormBasis, FormElementFamily
-from ._form_reconstruction import FormFieldReconstructionKernel
-from ._generic import (
-    assemble_masked_finite_element,
-    constrain_masked_dofs,
-    FiniteElementDiscretization,
-    FiniteElementDofMap,
-    FiniteElementFieldSpec,
-    FiniteElementPlan,
-    FiniteElementRuntimeData,
-    MaskedFiniteElementPlan,
-    MaskedFiniteElementSystem,
-)
-from ._geometry_motion import (
-    FiniteElementBoundaryProvider,
-    FiniteElementBoundaryRealization,
-    FiniteElementMeshMotionEvidence,
-    FiniteElementMeshMotionPlan,
-    FiniteElementMeshMotionPolicy,
-    FiniteElementMeshMotionRoute,
-    FiniteElementMeshMotionStatus,
-    FiniteElementMeshRealization,
-    FiniteElementMotionExtension,
-    FiniteElementMotionExtensionResult,
-)
-from ._geometry_quality import (
-    finite_element_geometry_quality,
-    FiniteElementGeometryQualityEvidence,
-)
-from ._hdg import HDGCondensationPlan, HDGTraceSpace
-from ._high_order import (
-    lagrange_1d_tabulation,
-    local_diagonal,
-    NodeSet,
-    QuadratureChunkPolicy,
-    ReferenceNodalFamily,
-    SimplexNodalFamily,
-    SumFactorizationPlan,
-    TensorOrder,
-    TensorProductTabulation,
-)
-from ._hp import (
-    finite_element_hp_workset_plan,
-    FiniteElementHPCellKind,
-    FiniteElementHPLineage,
-    FiniteElementHPLineageKind,
-    FiniteElementHPProjectionEvidence,
-    FiniteElementHPTopology,
-    FiniteElementHPTransferKind,
-    FiniteElementHPTransferPlan,
-    FiniteElementHPWorksetPlan,
-)
-from ._hp_general import (
-    GeneralHPForest,
-    NonconformingFacetOverlay,
-    prism_axial_refinement_template,
-    pyramid_transition_refinement_template,
-    ReferenceRefinementTemplate,
-    tensor_bisection_template,
-    triangle_red_refinement_template,
-)
-from ._hp_runtime import (
-    balanced_hp_refinement_ids,
-    certify_finite_element_hp_geometry,
-    close_finite_element_hp_decision,
-    coarsen_tensor_hp_cells,
-    finite_element_hp_balance_error,
-    finite_element_hp_decision,
-    finite_element_hp_domains,
-    finite_element_hp_interface_plan,
-    finite_element_hp_trace_constraint_plan,
-    finite_element_hp_transfer_plan,
-    FiniteElementHPDecision,
-    FiniteElementHPEpoch,
-    FiniteElementHPErrorEstimate,
-    FiniteElementHPGeometry,
-    FiniteElementHPGeometryEvidence,
-    FiniteElementHPInterfacePlan,
-    FiniteElementHPRefinementResult,
-    FiniteElementHPResidualJumpLedger,
-    FiniteElementHPStateTransferPolicy,
-    FiniteElementHPTraceConstraintPlan,
-    FiniteElementHPTransaction,
-    hp_active_cell_mesh,
-    initial_finite_element_hp_topology,
-    prepare_finite_element_hp_epoch,
-    prepare_multi_field_finite_element_hp_epoch,
-    refine_tensor_hp_cells,
-    tensor_modal_decay_estimate,
-    tensor_trace_interpolation,
-)
-from ._hp_solver import (
-    finite_element_hp_condensation_plan,
-    FiniteElementHPCondensationPlan,
-    FiniteElementHPMultigridPlan,
-    FiniteElementHPMultigridPreconditionerBuilder,
-    FiniteElementHPSkeletonPlan,
-    FiniteElementHPSolverRefreshPlan,
-)
-from ._immersed_marker import (
-    FiniteElementImmersedMarkerMapPlan,
-    PreparedFiniteElementImmersedMarkerMap,
-)
-from ._interface_mortar3d import (
-    MortarInterfaceEvidence3D,
-    prepare_maxwell_mortar_interface_trace_3d,
-    prepare_scalar_mortar_interface_trace_3d,
-    PreparedMaxwellMortarInterfaceTrace3D,
-    PreparedScalarMortarInterfaceTrace3D,
-)
-from ._io import evaluate_finite_element_field, write_finite_element_field
-from ._low_order_auxiliary import (
-    low_order_auxiliary_preconditioner_builder,
-    LowOrderAuxiliaryOperatorPlan,
-    LowOrderAuxiliaryPreconditioner,
-)
-from ._mixed_constraint import (
-    mixed_inf_sup_diagnostic,
-    MixedConstraintFormulation,
-    MixedFiniteElementConstraintEvaluation,
-    MixedFiniteElementConstraintPlan,
-    MixedFiniteElementSpaceEvidence,
-    MixedInfSupEvidence,
-    MixedPressureStabilization,
-    MixedPressureStabilizationKind,
-    PreparedMixedFiniteElementConstraint,
-    PressureGaugeEvidence,
-    PressureGaugeMode,
-    PressureGaugePolicy,
-)
-from ._mortar import (
-    FiniteElementMortarEvidence,
-    FiniteElementMortarMetricData,
-    FiniteElementMortarPlan,
-    serial_finite_element_mortar_plan,
-)
-from ._multigrid import (
-    finite_element_p_transfer,
-    FiniteElementPTransfer,
-    PTransferRole,
-    quadrilateral_p_transfer,
-)
-from ._p_multigrid import (
-    finite_element_p_multigrid_plan,
-    FiniteElementPMultigridPlan,
-    FiniteElementPMultigridPolicy,
-    PCoarseOperatorSource,
-    PDegreeCoarsening,
-    PLevelOrder,
-)
-from ._patch_preconditioning import (
-    FiniteElementPatchPlan,
-    FiniteElementPatchPreconditioner,
-    FiniteElementPatchPreconditionerBuilder,
-    one_ring_patch_plan,
-)
-from ._point_interpolation import (
-    FiniteElementFieldReconstructionKernel,
-    prepare_finite_element_field_reconstruction,
-    prepare_finite_element_point_interpolation,
-    prepare_finite_element_side_trace,
-    PreparedFiniteElementPointInterpolation,
-)
-from ._precision import FiniteElementPrecisionPolicy
-from ._recovery import (
-    dual_weighted_residual_indicators,
-    FiniteElementRecoveryEvidence,
-    prepare_gradient_recovery,
-    PreparedGradientRecovery,
-    recover_gradient,
-    recover_hessian,
-    recovery_error_estimate,
-)
-from ._reference import (
-    discontinuous_element,
-    ElementConformity,
-    ElementContinuity,
-    ElementMapping,
-    FiniteElementSpec,
-    lagrange_element,
-)
-from ._reference_operator import (
-    FiniteElementFacetReference,
-    FiniteElementReferenceReport,
-    PreparedFiniteElementReference,
-    reference_facet_embedding,
-    ReferenceAction,
-)
-from ._rigid_coupling import (
-    AttachmentActionReactionCertificate,
-    AttachmentRankEvidence,
-    RigidDeformableAttachmentEvaluation,
-    RigidDeformableAttachmentPlan,
-    RigidDeformableKKTLinearization,
-    RigidDeformableKKTPayload,
-)
-from ._sbp import (
-    ElementLocalSBPData,
-    ElementLocalSBPReport,
-    MappedTensorMetricPlan,
-    MappedTensorMetricReport,
-    MappedTensorMetrics,
-    MetricFacePair,
-    TensorGLLSBPPlan,
-)
-from ._simplicial_whitney_chains import SimplicialWhitneyKernel
-from ._spectral_hp_completion import (
-    AnisotropicHPattern,
-    compact_hp_forest,
-    ConservativeMovingInterfaceTransfer,
-    GeometryOrderAdaptation,
-    HybridMortarPlan,
-    HybridReferenceFamily,
-    HybridRefinementPlan,
-    LevelSetCutQuadrature,
-    NIrregularMortarPlan,
-    physical_mass_projection,
-    refine_anisotropic_hp_cells,
-    resize_hp_forest,
-    UnfittedAggregationPlan,
-)
-from ._spectral_hp_io import (
-    FiniteElementMeshImport,
-    FiniteElementMeshImportReport,
-    FusedMortarAction,
-    FusedTensorTransfer,
-    HPMixedPrecisionPolicy,
-    HPWorksetMemoryPlan,
-    PersistentSemanticCache,
-    read_exodus_high_order_arrays,
-    read_finite_element_mesh,
-    write_adaptive_vtk,
-    write_adaptive_xdmf,
-    write_hp_forest,
-)
-from ._topology_transfer import (
-    FiniteElementL2Projection,
-    FiniteElementTopologyTransfer,
-    prepare_l2_projection_target,
-    prepare_l2_projection_transfer,
-    PreparedL2ProjectionTarget,
-    refresh_l2_projection_target,
-    vertex_interpolation_transfer,
-)
+
+_SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
+    "AnisotropicHPattern": ("._spectral_hp_completion", "AnisotropicHPattern"),
+    "AttachmentActionReactionCertificate": (
+        "._rigid_coupling",
+        "AttachmentActionReactionCertificate",
+    ),
+    "AttachmentRankEvidence": ("._rigid_coupling", "AttachmentRankEvidence"),
+    "ConservativeMovingInterfaceTransfer": (
+        "._spectral_hp_completion",
+        "ConservativeMovingInterfaceTransfer",
+    ),
+    "CostAwareFiniteElementPartition": (
+        "._distributed",
+        "CostAwareFiniteElementPartition",
+    ),
+    "DistributedFiniteElementConstraint": (
+        "._distributed",
+        "DistributedFiniteElementConstraint",
+    ),
+    "DistributedFiniteElementMortarPlan": (
+        "._distributed",
+        "DistributedFiniteElementMortarPlan",
+    ),
+    "DistributedFiniteElementOperator": (
+        "._distributed",
+        "DistributedFiniteElementOperator",
+    ),
+    "DofLabel": ("._form_elements", "DofLabel"),
+    "ElementConformity": ("._reference", "ElementConformity"),
+    "ElementContinuity": ("._reference", "ElementContinuity"),
+    "ElementLocalSBPData": ("._sbp", "ElementLocalSBPData"),
+    "ElementLocalSBPReport": ("._sbp", "ElementLocalSBPReport"),
+    "ElementMapping": ("._reference", "ElementMapping"),
+    "EmbeddedQuadrature": ("._embedded", "EmbeddedQuadrature"),
+    "FastDiagonalizationEligibility": (
+        "._fast_diagonalization",
+        "FastDiagonalizationEligibility",
+    ),
+    "FiniteElementBoundaryPatch": ("._boundary", "FiniteElementBoundaryPatch"),
+    "FiniteElementBoundaryProvider": (
+        "._geometry_motion",
+        "FiniteElementBoundaryProvider",
+    ),
+    "FiniteElementBoundaryRealization": (
+        "._geometry_motion",
+        "FiniteElementBoundaryRealization",
+    ),
+    "FiniteElementBoundarySet": ("._boundary", "FiniteElementBoundarySet"),
+    "FiniteElementCellMapEvaluation": ("._cell_map", "FiniteElementCellMapEvaluation"),
+    "FiniteElementClosurePreparation": (
+        "._distributed",
+        "FiniteElementClosurePreparation",
+    ),
+    "FiniteElementDWRIndicators": ("._adaptivity", "FiniteElementDWRIndicators"),
+    "FiniteElementDeRhamComplex": ("._de_rham", "FiniteElementDeRhamComplex"),
+    "FiniteElementDirichletConstraint": (
+        "._constraints",
+        "FiniteElementDirichletConstraint",
+    ),
+    "FiniteElementDiscretization": ("._generic", "FiniteElementDiscretization"),
+    "FiniteElementDistributedPhasePlan": (
+        "._distributed",
+        "FiniteElementDistributedPhasePlan",
+    ),
+    "FiniteElementDofMap": ("._generic", "FiniteElementDofMap"),
+    "FiniteElementDofOwnershipPlan": ("._distributed", "FiniteElementDofOwnershipPlan"),
+    "FiniteElementDofSourceProjection": ("._generic", "FiniteElementDofSourceProjection"),
+    "FiniteElementEnrichment": ("._embedded", "FiniteElementEnrichment"),
+    "FiniteElementErrorEstimate": ("._adaptivity", "FiniteElementErrorEstimate"),
+    "FiniteElementExecutionLimits": ("._distributed", "FiniteElementExecutionLimits"),
+    "FiniteElementFacetOwnershipPlan": (
+        "._distributed",
+        "FiniteElementFacetOwnershipPlan",
+    ),
+    "FiniteElementFacetReference": (
+        "._reference_operator",
+        "FiniteElementFacetReference",
+    ),
+    "FiniteElementFieldReconstructionKernel": (
+        "._point_interpolation",
+        "FiniteElementFieldReconstructionKernel",
+    ),
+    "FiniteElementFieldSpec": ("._generic", "FiniteElementFieldSpec"),
+    "FiniteElementFieldTransfer": ("._topology_transfer", "FiniteElementFieldTransfer"),
+    "FiniteElementGeometryQualityEvidence": (
+        "._geometry_quality",
+        "FiniteElementGeometryQualityEvidence",
+    ),
+    "FiniteElementGlobalDofOwnership": (
+        "._distributed",
+        "FiniteElementGlobalDofOwnership",
+    ),
+    "FiniteElementHPCellKind": ("._hp", "FiniteElementHPCellKind"),
+    "FiniteElementHPCondensationPlan": ("._hp_solver", "FiniteElementHPCondensationPlan"),
+    "FiniteElementHPDecision": ("._hp_runtime", "FiniteElementHPDecision"),
+    "FiniteElementHPEpoch": ("._hp_runtime", "FiniteElementHPEpoch"),
+    "FiniteElementHPErrorEstimate": ("._hp_runtime", "FiniteElementHPErrorEstimate"),
+    "FiniteElementHPGeometry": ("._hp_runtime", "FiniteElementHPGeometry"),
+    "FiniteElementHPGeometryEvidence": (
+        "._hp_runtime",
+        "FiniteElementHPGeometryEvidence",
+    ),
+    "FiniteElementHPInterfacePlan": ("._hp_runtime", "FiniteElementHPInterfacePlan"),
+    "FiniteElementHPLineage": ("._hp", "FiniteElementHPLineage"),
+    "FiniteElementHPLineageKind": ("._hp", "FiniteElementHPLineageKind"),
+    "FiniteElementHPMultigridPlan": ("._hp_solver", "FiniteElementHPMultigridPlan"),
+    "FiniteElementHPMultigridPreconditionerBuilder": (
+        "._hp_solver",
+        "FiniteElementHPMultigridPreconditionerBuilder",
+    ),
+    "FiniteElementHPPartitionPlan": ("._distributed", "FiniteElementHPPartitionPlan"),
+    "FiniteElementHPProjectionEvidence": ("._hp", "FiniteElementHPProjectionEvidence"),
+    "FiniteElementHPRefinementResult": (
+        "._hp_runtime",
+        "FiniteElementHPRefinementResult",
+    ),
+    "FiniteElementHPResidualJumpLedger": (
+        "._hp_runtime",
+        "FiniteElementHPResidualJumpLedger",
+    ),
+    "FiniteElementHPSkeletonPlan": ("._hp_solver", "FiniteElementHPSkeletonPlan"),
+    "FiniteElementHPSolverRefreshPlan": (
+        "._hp_solver",
+        "FiniteElementHPSolverRefreshPlan",
+    ),
+    "FiniteElementHPStateTransferPolicy": (
+        "._hp_runtime",
+        "FiniteElementHPStateTransferPolicy",
+    ),
+    "FiniteElementHPTopology": ("._hp", "FiniteElementHPTopology"),
+    "FiniteElementHPTraceConstraintPlan": (
+        "._hp_runtime",
+        "FiniteElementHPTraceConstraintPlan",
+    ),
+    "FiniteElementHPTransaction": ("._hp_runtime", "FiniteElementHPTransaction"),
+    "FiniteElementHPTransferKind": ("._hp", "FiniteElementHPTransferKind"),
+    "FiniteElementHPTransferPlan": ("._hp", "FiniteElementHPTransferPlan"),
+    "FiniteElementHPWorksetPlan": ("._hp", "FiniteElementHPWorksetPlan"),
+    "FiniteElementHaloPlan": ("._distributed", "FiniteElementHaloPlan"),
+    "FiniteElementImmersedMarkerMapPlan": (
+        "._immersed_marker",
+        "FiniteElementImmersedMarkerMapPlan",
+    ),
+    "FiniteElementL2Projection": ("._topology_transfer", "FiniteElementL2Projection"),
+    "FiniteElementLinearConstraint": ("._constraints", "FiniteElementLinearConstraint"),
+    "FiniteElementMeshImport": ("._spectral_hp_io", "FiniteElementMeshImport"),
+    "FiniteElementMeshImportReport": (
+        "._spectral_hp_io",
+        "FiniteElementMeshImportReport",
+    ),
+    "FiniteElementMeshMotionEvidence": (
+        "._geometry_motion",
+        "FiniteElementMeshMotionEvidence",
+    ),
+    "FiniteElementMeshMotionPlan": ("._geometry_motion", "FiniteElementMeshMotionPlan"),
+    "FiniteElementMeshMotionPolicy": (
+        "._geometry_motion",
+        "FiniteElementMeshMotionPolicy",
+    ),
+    "FiniteElementMeshMotionRoute": ("._geometry_motion", "FiniteElementMeshMotionRoute"),
+    "FiniteElementMeshMotionStatus": (
+        "._geometry_motion",
+        "FiniteElementMeshMotionStatus",
+    ),
+    "FiniteElementMeshRealization": ("._geometry_motion", "FiniteElementMeshRealization"),
+    "FiniteElementMortarEvidence": ("._mortar", "FiniteElementMortarEvidence"),
+    "FiniteElementMortarMetricData": ("._mortar", "FiniteElementMortarMetricData"),
+    "FiniteElementMortarPlan": ("._mortar", "FiniteElementMortarPlan"),
+    "FiniteElementMotionExtension": ("._geometry_motion", "FiniteElementMotionExtension"),
+    "FiniteElementMotionExtensionResult": (
+        "._geometry_motion",
+        "FiniteElementMotionExtensionResult",
+    ),
+    "FiniteElementPMultigridPlan": ("._p_multigrid", "FiniteElementPMultigridPlan"),
+    "FiniteElementPMultigridPolicy": ("._p_multigrid", "FiniteElementPMultigridPolicy"),
+    "FiniteElementPTransfer": ("._multigrid", "FiniteElementPTransfer"),
+    "FiniteElementPartitionCostEvidence": (
+        "._distributed",
+        "FiniteElementPartitionCostEvidence",
+    ),
+    "FiniteElementPartitionWorksetPlan": (
+        "._distributed",
+        "FiniteElementPartitionWorksetPlan",
+    ),
+    "FiniteElementPatchPlan": ("._patch_preconditioning", "FiniteElementPatchPlan"),
+    "FiniteElementPatchPreconditioner": (
+        "._patch_preconditioning",
+        "FiniteElementPatchPreconditioner",
+    ),
+    "FiniteElementPatchPreconditionerBuilder": (
+        "._patch_preconditioning",
+        "FiniteElementPatchPreconditionerBuilder",
+    ),
+    "FiniteElementPeriodicFacetPair": ("._boundary", "FiniteElementPeriodicFacetPair"),
+    "FiniteElementPeriodicTransform": ("._boundary", "FiniteElementPeriodicTransform"),
+    "FiniteElementPlan": ("._generic", "FiniteElementPlan"),
+    "FiniteElementPrecisionPolicy": ("._precision", "FiniteElementPrecisionPolicy"),
+    "FiniteElementRecoveryEvidence": ("._recovery", "FiniteElementRecoveryEvidence"),
+    "FiniteElementReferenceReport": (
+        "._reference_operator",
+        "FiniteElementReferenceReport",
+    ),
+    "FiniteElementRuntimeData": ("._generic", "FiniteElementRuntimeData"),
+    "FiniteElementSpec": ("._reference", "FiniteElementSpec"),
+    "FiniteElementTopologyTransfer": (
+        "._topology_transfer",
+        "FiniteElementTopologyTransfer",
+    ),
+    "FiniteElementTransferEvidence": (
+        "._topology_transfer",
+        "FiniteElementTransferEvidence",
+    ),
+    "FormBasis": ("._form_elements", "FormBasis"),
+    "FormElementFamily": ("._form_elements", "FormElementFamily"),
+    "FormFieldReconstructionKernel": (
+        "._form_reconstruction",
+        "FormFieldReconstructionKernel",
+    ),
+    "FusedMortarAction": ("._spectral_hp_io", "FusedMortarAction"),
+    "FusedTensorTransfer": ("._spectral_hp_io", "FusedTensorTransfer"),
+    "GeneralHPForest": ("._hp_general", "GeneralHPForest"),
+    "GeometryOrderAdaptation": ("._spectral_hp_completion", "GeometryOrderAdaptation"),
+    "HDGCondensationPlan": ("._hdg", "HDGCondensationPlan"),
+    "HDGTraceSpace": ("._hdg", "HDGTraceSpace"),
+    "HPMixedPrecisionPolicy": ("._spectral_hp_io", "HPMixedPrecisionPolicy"),
+    "HPWorksetMemoryPlan": ("._spectral_hp_io", "HPWorksetMemoryPlan"),
+    "HybridMortarPlan": ("._spectral_hp_completion", "HybridMortarPlan"),
+    "HybridReferenceFamily": ("._spectral_hp_completion", "HybridReferenceFamily"),
+    "HybridRefinementPlan": ("._spectral_hp_completion", "HybridRefinementPlan"),
+    "IntegrationDomain": (".._integration_domain", "IntegrationDomain"),
+    "JaxCollectiveBackend": ("._distributed", "JaxCollectiveBackend"),
+    "LevelSetCutQuadrature": ("._spectral_hp_completion", "LevelSetCutQuadrature"),
+    "LowOrderAuxiliaryOperatorPlan": (
+        "._low_order_auxiliary",
+        "LowOrderAuxiliaryOperatorPlan",
+    ),
+    "LowOrderAuxiliaryPreconditioner": (
+        "._low_order_auxiliary",
+        "LowOrderAuxiliaryPreconditioner",
+    ),
+    "MappedTensorMetricPlan": ("._sbp", "MappedTensorMetricPlan"),
+    "MappedTensorMetricReport": ("._sbp", "MappedTensorMetricReport"),
+    "MappedTensorMetrics": ("._sbp", "MappedTensorMetrics"),
+    "MaskedFiniteElementPlan": ("._generic", "MaskedFiniteElementPlan"),
+    "MaskedFiniteElementSystem": ("._generic", "MaskedFiniteElementSystem"),
+    "MetricFacePair": ("._sbp", "MetricFacePair"),
+    "MixedConstraintFormulation": ("._mixed_constraint", "MixedConstraintFormulation"),
+    "MixedFiniteElementConstraintEvaluation": (
+        "._mixed_constraint",
+        "MixedFiniteElementConstraintEvaluation",
+    ),
+    "MixedFiniteElementConstraintPlan": (
+        "._mixed_constraint",
+        "MixedFiniteElementConstraintPlan",
+    ),
+    "MixedFiniteElementSpaceEvidence": (
+        "._mixed_constraint",
+        "MixedFiniteElementSpaceEvidence",
+    ),
+    "MixedInfSupEvidence": ("._mixed_constraint", "MixedInfSupEvidence"),
+    "MixedPressureStabilization": ("._mixed_constraint", "MixedPressureStabilization"),
+    "MixedPressureStabilizationKind": (
+        "._mixed_constraint",
+        "MixedPressureStabilizationKind",
+    ),
+    "MortarInterfaceEvidence3D": ("._interface_mortar3d", "MortarInterfaceEvidence3D"),
+    "MultiscaleFiniteElementBasis": ("._embedded", "MultiscaleFiniteElementBasis"),
+    "NIrregularMortarPlan": ("._spectral_hp_completion", "NIrregularMortarPlan"),
+    "NodeSet": ("._high_order", "NodeSet"),
+    "NonconformingFacetOverlay": ("._hp_general", "NonconformingFacetOverlay"),
+    "OwnerLocalFiniteElementTransfer": (
+        "._distributed",
+        "OwnerLocalFiniteElementTransfer",
+    ),
+    "PCoarseOperatorSource": ("._p_multigrid", "PCoarseOperatorSource"),
+    "PDegreeCoarsening": ("._p_multigrid", "PDegreeCoarsening"),
+    "PLevelOrder": ("._p_multigrid", "PLevelOrder"),
+    "PTransferRole": ("._multigrid", "PTransferRole"),
+    "PartitionedFiniteElementDofMap": ("._distributed", "PartitionedFiniteElementDofMap"),
+    "PersistentSemanticCache": ("._spectral_hp_io", "PersistentSemanticCache"),
+    "PreparedFiniteElementCellMap": ("._cell_map", "PreparedFiniteElementCellMap"),
+    "PreparedFiniteElementImmersedMarkerMap": (
+        "._immersed_marker",
+        "PreparedFiniteElementImmersedMarkerMap",
+    ),
+    "PreparedFiniteElementPointInterpolation": (
+        "._point_interpolation",
+        "PreparedFiniteElementPointInterpolation",
+    ),
+    "PreparedFiniteElementReference": (
+        "._reference_operator",
+        "PreparedFiniteElementReference",
+    ),
+    "PreparedGradientRecovery": ("._recovery", "PreparedGradientRecovery"),
+    "PreparedL2ProjectionTarget": ("._topology_transfer", "PreparedL2ProjectionTarget"),
+    "PreparedMaxwellMortarInterfaceTrace3D": (
+        "._interface_mortar3d",
+        "PreparedMaxwellMortarInterfaceTrace3D",
+    ),
+    "PreparedMixedFiniteElementConstraint": (
+        "._mixed_constraint",
+        "PreparedMixedFiniteElementConstraint",
+    ),
+    "PreparedScalarMortarInterfaceTrace3D": (
+        "._interface_mortar3d",
+        "PreparedScalarMortarInterfaceTrace3D",
+    ),
+    "PreparedSurfaceChartCompatibleTransfer": (
+        "._surface_chart_compatible",
+        "PreparedSurfaceChartCompatibleTransfer",
+    ),
+    "PreparedSurfaceChartFiniteVolumeContents": (
+        "._surface_chart_transfer",
+        "PreparedSurfaceChartFiniteVolumeContents",
+    ),
+    "PressureGaugeEvidence": ("._mixed_constraint", "PressureGaugeEvidence"),
+    "PressureGaugeMode": ("._mixed_constraint", "PressureGaugeMode"),
+    "PressureGaugePolicy": ("._mixed_constraint", "PressureGaugePolicy"),
+    "QuadratureChunkPolicy": ("._high_order", "QuadratureChunkPolicy"),
+    "ReferenceAction": ("._reference_operator", "ReferenceAction"),
+    "ReferenceNodalFamily": ("._high_order", "ReferenceNodalFamily"),
+    "ReferenceRefinementTemplate": ("._hp_general", "ReferenceRefinementTemplate"),
+    "RigidDeformableAttachmentEvaluation": (
+        "._rigid_coupling",
+        "RigidDeformableAttachmentEvaluation",
+    ),
+    "RigidDeformableAttachmentPlan": (
+        "._rigid_coupling",
+        "RigidDeformableAttachmentPlan",
+    ),
+    "RigidDeformableKKTLinearization": (
+        "._rigid_coupling",
+        "RigidDeformableKKTLinearization",
+    ),
+    "RigidDeformableKKTPayload": ("._rigid_coupling", "RigidDeformableKKTPayload"),
+    "SimplexNodalFamily": ("._high_order", "SimplexNodalFamily"),
+    "SimplicialWhitneyKernel": ("._simplicial_whitney_chains", "SimplicialWhitneyKernel"),
+    "SourceRealizationFieldSemantics": (
+        "._topology_transfer",
+        "SourceRealizationFieldSemantics",
+    ),
+    "SumFactorizationPlan": ("._high_order", "SumFactorizationPlan"),
+    "TensorFastDiagonalizationBuilder": (
+        "._fast_diagonalization",
+        "TensorFastDiagonalizationBuilder",
+    ),
+    "TensorFastDiagonalizationPreconditioner": (
+        "._fast_diagonalization",
+        "TensorFastDiagonalizationPreconditioner",
+    ),
+    "TensorGLLSBPPlan": ("._sbp", "TensorGLLSBPPlan"),
+    "TensorOrder": ("._high_order", "TensorOrder"),
+    "TensorProductTabulation": ("._high_order", "TensorProductTabulation"),
+    "UnfittedAggregationPlan": ("._spectral_hp_completion", "UnfittedAggregationPlan"),
+    "affine_dof_constraint": ("._constraints", "affine_dof_constraint"),
+    "assemble_masked_finite_element": ("._generic", "assemble_masked_finite_element"),
+    "balanced_hp_refinement_ids": ("._hp_runtime", "balanced_hp_refinement_ids"),
+    "certify_finite_element_hp_geometry": (
+        "._hp_runtime",
+        "certify_finite_element_hp_geometry",
+    ),
+    "close_finite_element_hp_decision": (
+        "._hp_runtime",
+        "close_finite_element_hp_decision",
+    ),
+    "coarsen_tensor_hp_cells": ("._hp_runtime", "coarsen_tensor_hp_cells"),
+    "compact_hp_forest": ("._spectral_hp_completion", "compact_hp_forest"),
+    "compose_finite_element_constraints": (
+        "._constraints",
+        "compose_finite_element_constraints",
+    ),
+    "constrain_masked_dofs": ("._generic", "constrain_masked_dofs"),
+    "dirichlet_constraint": ("._constraints", "dirichlet_constraint"),
+    "discontinuous_element": ("._reference", "discontinuous_element"),
+    "distributed_finite_element_mortar_plan": (
+        "._distributed",
+        "distributed_finite_element_mortar_plan",
+    ),
+    "dorfler_mark": ("._adaptivity", "dorfler_mark"),
+    "dual_weighted_residual_estimate": (
+        "._adaptivity",
+        "dual_weighted_residual_estimate",
+    ),
+    "dual_weighted_residual_indicators": (
+        "._recovery",
+        "dual_weighted_residual_indicators",
+    ),
+    "evaluate_finite_element_field": ("._io", "evaluate_finite_element_field"),
+    "execute_owner_local_finite_element_transfer": (
+        "._distributed",
+        "execute_owner_local_finite_element_transfer",
+    ),
+    "finite_element_dof_identity_keys": (
+        "._distributed",
+        "finite_element_dof_identity_keys",
+    ),
+    "finite_element_geometry_quality": (
+        "._geometry_quality",
+        "finite_element_geometry_quality",
+    ),
+    "finite_element_hp_balance_error": (
+        "._hp_runtime",
+        "finite_element_hp_balance_error",
+    ),
+    "finite_element_hp_condensation_plan": (
+        "._hp_solver",
+        "finite_element_hp_condensation_plan",
+    ),
+    "finite_element_hp_constraint": ("._constraints", "finite_element_hp_constraint"),
+    "finite_element_hp_decision": ("._hp_runtime", "finite_element_hp_decision"),
+    "finite_element_hp_domains": ("._hp_runtime", "finite_element_hp_domains"),
+    "finite_element_hp_interface_plan": (
+        "._hp_runtime",
+        "finite_element_hp_interface_plan",
+    ),
+    "finite_element_hp_trace_constraint_plan": (
+        "._hp_runtime",
+        "finite_element_hp_trace_constraint_plan",
+    ),
+    "finite_element_hp_transfer_plan": (
+        "._hp_runtime",
+        "finite_element_hp_transfer_plan",
+    ),
+    "finite_element_hp_workset_plan": ("._hp", "finite_element_hp_workset_plan"),
+    "finite_element_p_multigrid_plan": (
+        "._p_multigrid",
+        "finite_element_p_multigrid_plan",
+    ),
+    "finite_element_p_transfer": ("._multigrid", "finite_element_p_transfer"),
+    "finite_element_partition_workset_plan": (
+        "._distributed",
+        "finite_element_partition_workset_plan",
+    ),
+    "form_element": ("._form_elements", "form_element"),
+    "hp_active_cell_mesh": ("._hp_runtime", "hp_active_cell_mesh"),
+    "inherit_finite_element_hp_ownership": (
+        "._distributed",
+        "inherit_finite_element_hp_ownership",
+    ),
+    "initial_finite_element_hp_topology": (
+        "._hp_runtime",
+        "initial_finite_element_hp_topology",
+    ),
+    "lagrange_1d_tabulation": ("._high_order", "lagrange_1d_tabulation"),
+    "lagrange_element": ("._reference", "lagrange_element"),
+    "local_diagonal": ("._high_order", "local_diagonal"),
+    "local_dual_weighted_residual": ("._adaptivity", "local_dual_weighted_residual"),
+    "low_order_auxiliary_preconditioner_builder": (
+        "._low_order_auxiliary",
+        "low_order_auxiliary_preconditioner_builder",
+    ),
+    "lower_distributed_finite_element_phases": (
+        "._distributed",
+        "lower_distributed_finite_element_phases",
+    ),
+    "maximum_mark": ("._adaptivity", "maximum_mark"),
+    "mixed_inf_sup_diagnostic": ("._mixed_constraint", "mixed_inf_sup_diagnostic"),
+    "one_ring_patch_plan": ("._patch_preconditioning", "one_ring_patch_plan"),
+    "owner_local_finite_element_transfer_support": (
+        "._distributed",
+        "owner_local_finite_element_transfer_support",
+    ),
+    "partition_cells_cost_aware": ("._distributed", "partition_cells_cost_aware"),
+    "periodic_constraint": ("._constraints", "periodic_constraint"),
+    "physical_mass_projection": ("._spectral_hp_completion", "physical_mass_projection"),
+    "prepare_finite_element_cell_map": ("._cell_map", "prepare_finite_element_cell_map"),
+    "prepare_finite_element_field_reconstruction": (
+        "._point_interpolation",
+        "prepare_finite_element_field_reconstruction",
+    ),
+    "prepare_finite_element_hp_epoch": (
+        "._hp_runtime",
+        "prepare_finite_element_hp_epoch",
+    ),
+    "prepare_finite_element_point_interpolation": (
+        "._point_interpolation",
+        "prepare_finite_element_point_interpolation",
+    ),
+    "prepare_finite_element_side_trace": (
+        "._point_interpolation",
+        "prepare_finite_element_side_trace",
+    ),
+    "prepare_gradient_recovery": ("._recovery", "prepare_gradient_recovery"),
+    "prepare_l2_projection_target": (
+        "._topology_transfer",
+        "prepare_l2_projection_target",
+    ),
+    "prepare_l2_projection_transfer": (
+        "._topology_transfer",
+        "prepare_l2_projection_transfer",
+    ),
+    "prepare_maxwell_mortar_interface_trace_3d": (
+        "._interface_mortar3d",
+        "prepare_maxwell_mortar_interface_trace_3d",
+    ),
+    "prepare_multi_field_finite_element_hp_epoch": (
+        "._hp_runtime",
+        "prepare_multi_field_finite_element_hp_epoch",
+    ),
+    "prepare_nested_field_transfer": (
+        "._topology_transfer",
+        "prepare_nested_field_transfer",
+    ),
+    "prepare_owner_local_finite_element_transfer": (
+        "._distributed",
+        "prepare_owner_local_finite_element_transfer",
+    ),
+    "prepare_projection_field_transfer": (
+        "._topology_transfer",
+        "prepare_projection_field_transfer",
+    ),
+    "prepare_scalar_mortar_interface_trace_3d": (
+        "._interface_mortar3d",
+        "prepare_scalar_mortar_interface_trace_3d",
+    ),
+    "prepare_source_realization_field_transfer": (
+        "._topology_transfer",
+        "prepare_source_realization_field_transfer",
+    ),
+    "prepare_sphere_chart_compatible_transfer": (
+        "._sphere_chart_transfer",
+        "prepare_sphere_chart_compatible_transfer",
+    ),
+    "prepare_sphere_chart_field_transfer": (
+        "._sphere_chart_transfer",
+        "prepare_sphere_chart_field_transfer",
+    ),
+    "prepare_sphere_chart_finite_volume_contents": (
+        "._sphere_chart_transfer",
+        "prepare_sphere_chart_finite_volume_contents",
+    ),
+    "prepare_surface_chart_compatible_transfer": (
+        "._surface_chart_compatible",
+        "prepare_surface_chart_compatible_transfer",
+    ),
+    "prepare_surface_chart_field_transfer": (
+        "._surface_chart_transfer",
+        "prepare_surface_chart_field_transfer",
+    ),
+    "prepare_surface_chart_finite_volume_contents": (
+        "._surface_chart_transfer",
+        "prepare_surface_chart_finite_volume_contents",
+    ),
+    "prism_axial_refinement_template": (
+        "._hp_general",
+        "prism_axial_refinement_template",
+    ),
+    "pyramid_transition_refinement_template": (
+        "._hp_general",
+        "pyramid_transition_refinement_template",
+    ),
+    "quadrilateral_p_transfer": ("._multigrid", "quadrilateral_p_transfer"),
+    "read_exodus_high_order_arrays": (
+        "._spectral_hp_io",
+        "read_exodus_high_order_arrays",
+    ),
+    "read_finite_element_mesh": ("._spectral_hp_io", "read_finite_element_mesh"),
+    "recover_gradient": ("._recovery", "recover_gradient"),
+    "recover_hessian": ("._recovery", "recover_hessian"),
+    "recovery_error_estimate": ("._recovery", "recovery_error_estimate"),
+    "reference_facet_embedding": ("._reference_operator", "reference_facet_embedding"),
+    "refine_anisotropic_hp_cells": (
+        "._spectral_hp_completion",
+        "refine_anisotropic_hp_cells",
+    ),
+    "refine_tensor_hp_cells": ("._hp_runtime", "refine_tensor_hp_cells"),
+    "refresh_l2_projection_target": (
+        "._topology_transfer",
+        "refresh_l2_projection_target",
+    ),
+    "residual_jump_estimate": ("._adaptivity", "residual_jump_estimate"),
+    "resize_hp_forest": ("._spectral_hp_completion", "resize_hp_forest"),
+    "serial_finite_element_mortar_plan": (
+        "._mortar",
+        "serial_finite_element_mortar_plan",
+    ),
+    "smoothing": (".smoothing", None),
+    "tensor_bisection_template": ("._hp_general", "tensor_bisection_template"),
+    "tensor_modal_decay_estimate": ("._hp_runtime", "tensor_modal_decay_estimate"),
+    "tensor_trace_interpolation": ("._hp_runtime", "tensor_trace_interpolation"),
+    "triangle_red_refinement_template": (
+        "._hp_general",
+        "triangle_red_refinement_template",
+    ),
+    "vertex_interpolation_transfer": (
+        "._topology_transfer",
+        "vertex_interpolation_transfer",
+    ),
+    "write_adaptive_vtk": ("._spectral_hp_io", "write_adaptive_vtk"),
+    "write_adaptive_xdmf": ("._spectral_hp_io", "write_adaptive_xdmf"),
+    "write_finite_element_field": ("._io", "write_finite_element_field"),
+    "write_hp_forest": ("._spectral_hp_io", "write_hp_forest"),
+}
+
+
+if TYPE_CHECKING:
+    from .._integration_domain import (
+        IntegrationDomain,
+    )
+    from . import smoothing
+    from ._adaptivity import (
+        dorfler_mark,
+        dual_weighted_residual_estimate,
+        FiniteElementDWRIndicators,
+        FiniteElementErrorEstimate,
+        local_dual_weighted_residual,
+        maximum_mark,
+        residual_jump_estimate,
+    )
+    from ._boundary import (
+        FiniteElementBoundaryPatch,
+        FiniteElementBoundarySet,
+        FiniteElementPeriodicFacetPair,
+        FiniteElementPeriodicTransform,
+    )
+    from ._cell_map import (
+        FiniteElementCellMapEvaluation,
+        prepare_finite_element_cell_map,
+        PreparedFiniteElementCellMap,
+    )
+    from ._constraints import (
+        affine_dof_constraint,
+        compose_finite_element_constraints,
+        dirichlet_constraint,
+        finite_element_hp_constraint,
+        FiniteElementDirichletConstraint,
+        FiniteElementLinearConstraint,
+        periodic_constraint,
+    )
+    from ._de_rham import (
+        FiniteElementDeRhamComplex,
+    )
+    from ._distributed import (
+        CostAwareFiniteElementPartition,
+        distributed_finite_element_mortar_plan,
+        DistributedFiniteElementConstraint,
+        DistributedFiniteElementMortarPlan,
+        DistributedFiniteElementOperator,
+        execute_owner_local_finite_element_transfer,
+        finite_element_dof_identity_keys,
+        finite_element_partition_workset_plan,
+        FiniteElementClosurePreparation,
+        FiniteElementDistributedPhasePlan,
+        FiniteElementDofOwnershipPlan,
+        FiniteElementExecutionLimits,
+        FiniteElementFacetOwnershipPlan,
+        FiniteElementGlobalDofOwnership,
+        FiniteElementHaloPlan,
+        FiniteElementHPPartitionPlan,
+        FiniteElementPartitionCostEvidence,
+        FiniteElementPartitionWorksetPlan,
+        inherit_finite_element_hp_ownership,
+        JaxCollectiveBackend,
+        lower_distributed_finite_element_phases,
+        owner_local_finite_element_transfer_support,
+        OwnerLocalFiniteElementTransfer,
+        partition_cells_cost_aware,
+        PartitionedFiniteElementDofMap,
+        prepare_owner_local_finite_element_transfer,
+    )
+    from ._embedded import (
+        EmbeddedQuadrature,
+        FiniteElementEnrichment,
+        MultiscaleFiniteElementBasis,
+    )
+    from ._fast_diagonalization import (
+        FastDiagonalizationEligibility,
+        TensorFastDiagonalizationBuilder,
+        TensorFastDiagonalizationPreconditioner,
+    )
+    from ._form_elements import (
+        DofLabel,
+        form_element,
+        FormBasis,
+        FormElementFamily,
+    )
+    from ._form_reconstruction import (
+        FormFieldReconstructionKernel,
+    )
+    from ._generic import (
+        assemble_masked_finite_element,
+        constrain_masked_dofs,
+        FiniteElementDiscretization,
+        FiniteElementDofMap,
+        FiniteElementDofSourceProjection,
+        FiniteElementFieldSpec,
+        FiniteElementPlan,
+        FiniteElementRuntimeData,
+        MaskedFiniteElementPlan,
+        MaskedFiniteElementSystem,
+    )
+    from ._geometry_motion import (
+        FiniteElementBoundaryProvider,
+        FiniteElementBoundaryRealization,
+        FiniteElementMeshMotionEvidence,
+        FiniteElementMeshMotionPlan,
+        FiniteElementMeshMotionPolicy,
+        FiniteElementMeshMotionRoute,
+        FiniteElementMeshMotionStatus,
+        FiniteElementMeshRealization,
+        FiniteElementMotionExtension,
+        FiniteElementMotionExtensionResult,
+    )
+    from ._geometry_quality import (
+        finite_element_geometry_quality,
+        FiniteElementGeometryQualityEvidence,
+    )
+    from ._hdg import (
+        HDGCondensationPlan,
+        HDGTraceSpace,
+    )
+    from ._high_order import (
+        lagrange_1d_tabulation,
+        local_diagonal,
+        NodeSet,
+        QuadratureChunkPolicy,
+        ReferenceNodalFamily,
+        SimplexNodalFamily,
+        SumFactorizationPlan,
+        TensorOrder,
+        TensorProductTabulation,
+    )
+    from ._hp import (
+        finite_element_hp_workset_plan,
+        FiniteElementHPCellKind,
+        FiniteElementHPLineage,
+        FiniteElementHPLineageKind,
+        FiniteElementHPProjectionEvidence,
+        FiniteElementHPTopology,
+        FiniteElementHPTransferKind,
+        FiniteElementHPTransferPlan,
+        FiniteElementHPWorksetPlan,
+    )
+    from ._hp_general import (
+        GeneralHPForest,
+        NonconformingFacetOverlay,
+        prism_axial_refinement_template,
+        pyramid_transition_refinement_template,
+        ReferenceRefinementTemplate,
+        tensor_bisection_template,
+        triangle_red_refinement_template,
+    )
+    from ._hp_runtime import (
+        balanced_hp_refinement_ids,
+        certify_finite_element_hp_geometry,
+        close_finite_element_hp_decision,
+        coarsen_tensor_hp_cells,
+        finite_element_hp_balance_error,
+        finite_element_hp_decision,
+        finite_element_hp_domains,
+        finite_element_hp_interface_plan,
+        finite_element_hp_trace_constraint_plan,
+        finite_element_hp_transfer_plan,
+        FiniteElementHPDecision,
+        FiniteElementHPEpoch,
+        FiniteElementHPErrorEstimate,
+        FiniteElementHPGeometry,
+        FiniteElementHPGeometryEvidence,
+        FiniteElementHPInterfacePlan,
+        FiniteElementHPRefinementResult,
+        FiniteElementHPResidualJumpLedger,
+        FiniteElementHPStateTransferPolicy,
+        FiniteElementHPTraceConstraintPlan,
+        FiniteElementHPTransaction,
+        hp_active_cell_mesh,
+        initial_finite_element_hp_topology,
+        prepare_finite_element_hp_epoch,
+        prepare_multi_field_finite_element_hp_epoch,
+        refine_tensor_hp_cells,
+        tensor_modal_decay_estimate,
+        tensor_trace_interpolation,
+    )
+    from ._hp_solver import (
+        finite_element_hp_condensation_plan,
+        FiniteElementHPCondensationPlan,
+        FiniteElementHPMultigridPlan,
+        FiniteElementHPMultigridPreconditionerBuilder,
+        FiniteElementHPSkeletonPlan,
+        FiniteElementHPSolverRefreshPlan,
+    )
+    from ._immersed_marker import (
+        FiniteElementImmersedMarkerMapPlan,
+        PreparedFiniteElementImmersedMarkerMap,
+    )
+    from ._interface_mortar3d import (
+        MortarInterfaceEvidence3D,
+        prepare_maxwell_mortar_interface_trace_3d,
+        prepare_scalar_mortar_interface_trace_3d,
+        PreparedMaxwellMortarInterfaceTrace3D,
+        PreparedScalarMortarInterfaceTrace3D,
+    )
+    from ._io import (
+        evaluate_finite_element_field,
+        write_finite_element_field,
+    )
+    from ._low_order_auxiliary import (
+        low_order_auxiliary_preconditioner_builder,
+        LowOrderAuxiliaryOperatorPlan,
+        LowOrderAuxiliaryPreconditioner,
+    )
+    from ._mixed_constraint import (
+        mixed_inf_sup_diagnostic,
+        MixedConstraintFormulation,
+        MixedFiniteElementConstraintEvaluation,
+        MixedFiniteElementConstraintPlan,
+        MixedFiniteElementSpaceEvidence,
+        MixedInfSupEvidence,
+        MixedPressureStabilization,
+        MixedPressureStabilizationKind,
+        PreparedMixedFiniteElementConstraint,
+        PressureGaugeEvidence,
+        PressureGaugeMode,
+        PressureGaugePolicy,
+    )
+    from ._mortar import (
+        FiniteElementMortarEvidence,
+        FiniteElementMortarMetricData,
+        FiniteElementMortarPlan,
+        serial_finite_element_mortar_plan,
+    )
+    from ._multigrid import (
+        finite_element_p_transfer,
+        FiniteElementPTransfer,
+        PTransferRole,
+        quadrilateral_p_transfer,
+    )
+    from ._p_multigrid import (
+        finite_element_p_multigrid_plan,
+        FiniteElementPMultigridPlan,
+        FiniteElementPMultigridPolicy,
+        PCoarseOperatorSource,
+        PDegreeCoarsening,
+        PLevelOrder,
+    )
+    from ._patch_preconditioning import (
+        FiniteElementPatchPlan,
+        FiniteElementPatchPreconditioner,
+        FiniteElementPatchPreconditionerBuilder,
+        one_ring_patch_plan,
+    )
+    from ._point_interpolation import (
+        FiniteElementFieldReconstructionKernel,
+        prepare_finite_element_field_reconstruction,
+        prepare_finite_element_point_interpolation,
+        prepare_finite_element_side_trace,
+        PreparedFiniteElementPointInterpolation,
+    )
+    from ._precision import (
+        FiniteElementPrecisionPolicy,
+    )
+    from ._recovery import (
+        dual_weighted_residual_indicators,
+        FiniteElementRecoveryEvidence,
+        prepare_gradient_recovery,
+        PreparedGradientRecovery,
+        recover_gradient,
+        recover_hessian,
+        recovery_error_estimate,
+    )
+    from ._reference import (
+        discontinuous_element,
+        ElementConformity,
+        ElementContinuity,
+        ElementMapping,
+        FiniteElementSpec,
+        lagrange_element,
+    )
+    from ._reference_operator import (
+        FiniteElementFacetReference,
+        FiniteElementReferenceReport,
+        PreparedFiniteElementReference,
+        reference_facet_embedding,
+        ReferenceAction,
+    )
+    from ._rigid_coupling import (
+        AttachmentActionReactionCertificate,
+        AttachmentRankEvidence,
+        RigidDeformableAttachmentEvaluation,
+        RigidDeformableAttachmentPlan,
+        RigidDeformableKKTLinearization,
+        RigidDeformableKKTPayload,
+    )
+    from ._sbp import (
+        ElementLocalSBPData,
+        ElementLocalSBPReport,
+        MappedTensorMetricPlan,
+        MappedTensorMetricReport,
+        MappedTensorMetrics,
+        MetricFacePair,
+        TensorGLLSBPPlan,
+    )
+    from ._simplicial_whitney_chains import (
+        SimplicialWhitneyKernel,
+    )
+    from ._spectral_hp_completion import (
+        AnisotropicHPattern,
+        compact_hp_forest,
+        ConservativeMovingInterfaceTransfer,
+        GeometryOrderAdaptation,
+        HybridMortarPlan,
+        HybridReferenceFamily,
+        HybridRefinementPlan,
+        LevelSetCutQuadrature,
+        NIrregularMortarPlan,
+        physical_mass_projection,
+        refine_anisotropic_hp_cells,
+        resize_hp_forest,
+        UnfittedAggregationPlan,
+    )
+    from ._spectral_hp_io import (
+        FiniteElementMeshImport,
+        FiniteElementMeshImportReport,
+        FusedMortarAction,
+        FusedTensorTransfer,
+        HPMixedPrecisionPolicy,
+        HPWorksetMemoryPlan,
+        PersistentSemanticCache,
+        read_exodus_high_order_arrays,
+        read_finite_element_mesh,
+        write_adaptive_vtk,
+        write_adaptive_xdmf,
+        write_hp_forest,
+    )
+    from ._sphere_chart_transfer import (
+        prepare_sphere_chart_compatible_transfer,
+        prepare_sphere_chart_field_transfer,
+        prepare_sphere_chart_finite_volume_contents,
+    )
+    from ._surface_chart_compatible import (
+        prepare_surface_chart_compatible_transfer,
+        PreparedSurfaceChartCompatibleTransfer,
+    )
+    from ._surface_chart_transfer import (
+        prepare_surface_chart_field_transfer,
+        prepare_surface_chart_finite_volume_contents,
+        PreparedSurfaceChartFiniteVolumeContents,
+    )
+    from ._topology_transfer import (
+        FiniteElementFieldTransfer,
+        FiniteElementL2Projection,
+        FiniteElementTopologyTransfer,
+        FiniteElementTransferEvidence,
+        prepare_l2_projection_target,
+        prepare_l2_projection_transfer,
+        prepare_nested_field_transfer,
+        prepare_projection_field_transfer,
+        prepare_source_realization_field_transfer,
+        PreparedL2ProjectionTarget,
+        refresh_l2_projection_target,
+        SourceRealizationFieldSemantics,
+        vertex_interpolation_transfer,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    owner = _SYMBOL_MODULES.get(name)
+    if owner is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, symbol = owner
+    module = import_module(module_name, __package__)
+    value = module if symbol is None else getattr(module, symbol)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
+    "PreparedSurfaceChartCompatibleTransfer",
+    "prepare_surface_chart_compatible_transfer",
+    "PreparedSurfaceChartFiniteVolumeContents",
+    "prepare_surface_chart_field_transfer",
+    "prepare_surface_chart_finite_volume_contents",
+    "prepare_sphere_chart_compatible_transfer",
+    "prepare_sphere_chart_field_transfer",
+    "prepare_sphere_chart_finite_volume_contents",
     "DofLabel",
     "ElementConformity",
     "ElementContinuity",
@@ -344,6 +1014,15 @@ __all__ = [
     "FiniteElementDiscretization",
     "FiniteElementDistributedPhasePlan",
     "FiniteElementDofMap",
+    "FiniteElementDofOwnershipPlan",
+    "FiniteElementDofSourceProjection",
+    "FiniteElementGlobalDofOwnership",
+    "FiniteElementClosurePreparation",
+    "FiniteElementExecutionLimits",
+    "OwnerLocalFiniteElementTransfer",
+    "owner_local_finite_element_transfer_support",
+    "prepare_owner_local_finite_element_transfer",
+    "execute_owner_local_finite_element_transfer",
     "FiniteElementEnrichment",
     "FiniteElementErrorEstimate",
     "FiniteElementFacetOwnershipPlan",
@@ -410,6 +1089,8 @@ __all__ = [
     "FiniteElementRuntimeData",
     "FiniteElementSpec",
     "FiniteElementTopologyTransfer",
+    "FiniteElementFieldTransfer",
+    "FiniteElementTransferEvidence",
     "FusedMortarAction",
     "FusedTensorTransfer",
     "GeneralHPForest",
@@ -507,6 +1188,7 @@ __all__ = [
     "finite_element_p_multigrid_plan",
     "finite_element_p_transfer",
     "finite_element_partition_workset_plan",
+    "finite_element_dof_identity_keys",
     "hp_active_cell_mesh",
     "inherit_finite_element_hp_ownership",
     "initial_finite_element_hp_topology",
@@ -530,6 +1212,10 @@ __all__ = [
     "prepare_gradient_recovery",
     "prepare_l2_projection_target",
     "prepare_l2_projection_transfer",
+    "prepare_nested_field_transfer",
+    "prepare_source_realization_field_transfer",
+    "SourceRealizationFieldSemantics",
+    "prepare_projection_field_transfer",
     "prepare_maxwell_mortar_interface_trace_3d",
     "prepare_multi_field_finite_element_hp_epoch",
     "prepare_scalar_mortar_interface_trace_3d",

@@ -19,19 +19,26 @@ every vertex classification in the clipper is exact, so cells cover the domain
 without overlap up to the rounding of constructed vertex coordinates.  Cells are
 stored as polygon/polyhedron CSR (:class:`DiagramCells`) with measures and
 centroids.
+
+:class:`PeriodicDelaunayTriangulation` triangulates the lattice orbit of a
+point set on a flat torus from certified bounded image neighborhoods and keeps
+one simplex per orbit with the lattice shift of every corner.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from time import perf_counter
 from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
 import scipy
+from jax.typing import ArrayLike
+from numpy.typing import NDArray
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from scipy.spatial import Delaunay, QhullError
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import orient2d, orient3d, PredicateMode
@@ -44,11 +51,16 @@ from .._meshcore import (
     meshcore_identity,
     MeshcoreError,
     MeshcoreStatus,
+    periodic_delaunay,
+    PERIODIC_DELAUNAY_EVIDENCE,
+    PlanarExecutionEvidence,
     regular_2d,
     regular_3d,
+    RestrictedPowerCells,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._periodic_cell import PeriodicCell
 from ..typing import parse
 
 
@@ -254,6 +266,8 @@ def _qhull_delaunay(
     orientation, and rows are ordered lexicographically. Points Qhull leaves
     out map to their nearest vertex (``Qc``); identical ones are duplicates.
     """
+    from scipy.spatial import Delaunay, QhullError
+
     count, dimension = points.shape
     if count <= dimension:
         raise ValueError("Delaunay triangulation needs more points than dimensions.")
@@ -373,6 +387,12 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
     segment carrying the edge opposite vertex ``k`` of triangle ``t`` (or -1).
     ``evidence.status`` is ``ok`` or ``refinement_limit`` (valid conforming mesh
     whose quality targets were not met within ``max_steiner`` insertions).
+
+    ``max_cavity_cells``, ``maximum_work`` and ``max_scratch_bytes`` are hard
+    nonnegative bounds (None selects signed-int64 maximum). Readonly uint64
+    ``work_evidence`` and ``memory_evidence`` retain actual native execution
+    measurements; resource refusals expose the same fields on
+    ``NativeResourceFailure`` instead of publishing a successful partial mesh.
     """
 
     points: np.ndarray
@@ -380,6 +400,8 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
     segment_ids: np.ndarray
     input_point_count: int = eqx.field(static=True)
     evidence: TriangulationEvidence
+    work_evidence: NDArray[np.uint64]
+    memory_evidence: NDArray[np.uint64]
 
     def __init__(
         self,
@@ -393,9 +415,13 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         max_area: float = math.inf,
         max_steiner: int = 0,
         max_triangles: int | None = None,
+        max_cavity_cells: int | None = None,
+        maximum_work: int | None = None,
+        max_scratch_bytes: int | None = None,
     ) -> None:
         point_array = _point_array(points, "points", (2,))
-        mesh_points, triangles, segment_ids, status = constrained_delaunay_2d(
+        measurements: list[PlanarExecutionEvidence] = []
+        mesh_points, triangles, _, segment_ids, status = constrained_delaunay_2d(
             point_array,
             segments,
             holes=holes,
@@ -404,6 +430,10 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
             max_area=max_area,
             max_steiner=max_steiner,
             max_triangles=max_triangles,
+            max_cavity_cells=max_cavity_cells,
+            max_work=maximum_work,
+            max_scratch_bytes=max_scratch_bytes,
+            record_native_resources=measurements.append,
         )
         count = point_array.shape[0]
         used = np.unique(triangles)
@@ -411,6 +441,8 @@ class ConstrainedDelaunayTriangulation(StrictModule, NonTrainableState):
         self.triangles = _frozen(triangles)
         self.segment_ids = _frozen(segment_ids)
         self.input_point_count = count
+        self.work_evidence = measurements[0].work_evidence
+        self.memory_evidence = measurements[0].memory_evidence
         self.evidence = TriangulationEvidence(
             route="constrained_delaunay_2d",
             status=status,
@@ -1144,13 +1176,1136 @@ class PowerDiagram(StrictModule, NonTrainableState):
         )
 
 
+# ------------------------------------------------------------------ periodic
+
+
+PeriodicImageLimit: TypeAlias = Literal["none", "images", "cells"]
+
+
+class PeriodicTriangulationEvidence(StrictModule, NonTrainableState):
+    """Certified image neighborhood and native work of a periodic triangulation.
+
+    Every image with lattice coordinates in ``[-margin, 1 + margin]`` of the
+    final round was triangulated. ``required_margin`` is the largest margin an
+    extracted cell's circumball needs, including the construction slack, so a
+    successful result has ``required_margin <= margin``: every extracted
+    circumball is empty of all periodic points. ``uncertified_cell_count``
+    counts extracted cells of the final round that were uncertified or not
+    closed under adjacency. ``exhausted_limit`` names the budget that refused
+    the next round (``"none"`` on success).
+    """
+
+    status: str = eqx.field(static=True)
+    meshcore_identity: str = eqx.field(static=True)
+    dimension: int = eqx.field(static=True)
+    input_point_count: int = eqx.field(static=True)
+    rounds: int = eqx.field(static=True)
+    margin: float = eqx.field(static=True)
+    image_count: int = eqx.field(static=True)
+    maximum_images: int = eqx.field(static=True)
+    uncertified_cell_count: int = eqx.field(static=True)
+    required_margin: float = eqx.field(static=True)
+    finite_cell_slots: int = eqx.field(static=True)
+    maximum_cells: int = eqx.field(static=True)
+    exact_evaluations: int = eqx.field(static=True)
+    perturbed_decisions: int = eqx.field(static=True)
+    exhausted_limit: PeriodicImageLimit = eqx.field(static=True)
+    simplex_count: int = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        status: MeshcoreStatus,
+        native: np.ndarray,
+        /,
+        *,
+        dimension: int,
+        input_point_count: int,
+        maximum_images: int,
+        maximum_cells: int,
+        simplex_count: int,
+        content: dict,
+    ) -> None:
+        if not isinstance(status, MeshcoreStatus):
+            raise TypeError("status must be a MeshcoreStatus.")
+        values = dict(zip(PERIODIC_DELAUNAY_EVIDENCE, native.tolist(), strict=True))
+        limit: PeriodicImageLimit
+        match int(values["exhausted_limit"]):
+            case 0:
+                limit = "none"
+            case 1:
+                limit = "images"
+            case 2:
+                limit = "cells"
+            case code:
+                raise ValueError(f"Unknown periodic image limit code {code}.")
+        identity = meshcore_identity()
+        self.status = status.name.lower()
+        self.meshcore_identity = identity
+        self.dimension = dimension
+        self.input_point_count = input_point_count
+        self.rounds = int(values["rounds"])
+        self.margin = float(values["margin"])
+        self.image_count = int(values["image_count"])
+        self.maximum_images = maximum_images
+        self.uncertified_cell_count = int(values["uncertified_cells"])
+        self.required_margin = float(values["required_margin"])
+        self.finite_cell_slots = int(values["finite_cell_slots"])
+        self.maximum_cells = maximum_cells
+        self.exact_evaluations = int(values["exact_evaluations"])
+        self.perturbed_decisions = int(values["perturbed_decisions"])
+        self.exhausted_limit = limit
+        self.simplex_count = simplex_count
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "periodic-triangulation-evidence",
+                "status": self.status,
+                "meshcore": identity,
+                "native": array_tree_fingerprint(native),
+                "budgets": [maximum_images, maximum_cells],
+                "content": content,
+            }
+        )
+
+
+class PeriodicImageBudgetError(MeshcoreError):
+    """A periodic triangulation needed more images or cells than its budget.
+
+    ``evidence`` records the refused round: its margin, the images it would
+    need, the uncertified cells of the previous round and the exhausted limit.
+    """
+
+    def __init__(self, evidence: PeriodicTriangulationEvidence, /) -> None:
+        super().__init__(
+            MeshcoreStatus.CAPACITY_EXCEEDED,
+            f"periodic Delaunay round {evidence.rounds} at fractional margin "
+            f"{evidence.margin:.6g} exceeds its {evidence.exhausted_limit} budget "
+            f"(images {evidence.image_count} of {evidence.maximum_images}, cell "
+            f"slots {evidence.finite_cell_slots} of {evidence.maximum_cells}; "
+            f"{evidence.uncertified_cell_count} cells uncertified at margin "
+            f"{evidence.required_margin:.6g})",
+        )
+        self.evidence = evidence
+
+
+def _periodic_budget(value: int | None, default: int, name: str, /) -> int:
+    if value is None:
+        return default
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer.")
+    if value < 1:
+        raise ValueError(f"{name} must be positive.")
+    return int(value)
+
+
+class PeriodicDelaunayTriangulation(StrictModule, NonTrainableState):
+    """Exact Delaunay triangulation of a translationally periodic point set.
+
+    The point set is the lattice orbit of ``points`` under a fully periodic
+    full-rank :class:`~phydrax.discretization.PeriodicCell`; representatives
+    keep their input coordinates. ``simplices`` holds one positively oriented
+    simplex per orbit of the periodic triangulation (representative indices)
+    and ``simplex_shifts`` the lattice image of each corner, so corner ``k`` of
+    simplex ``t`` lies at ``points[simplices[t, k]] + simplex_shifts[t, k] @
+    cell.vectors``; the published member of each orbit is the one whose anchor
+    corner (smallest representative, then smallest shift) is the anchor's
+    image in the fundamental cell. Predicates are exact on translated positions
+    and cospherical ties use a translation-invariant symbolic perturbation, so
+    the triangulation is unique and lattice-invariant.
+
+    Construction triangulates bounded image neighborhoods, starting at
+    fractional margin ``initial_margin`` and doubling until every extracted
+    circumball is certified inside the triangulated images and the extracted
+    cells close up (:class:`PeriodicTriangulationEvidence`). A round needing
+    more than ``maximum_images`` images or ``maximum_simplices`` finite cell
+    slots raises :class:`PeriodicImageBudgetError`; two points in one lattice
+    orbit raise ``ValueError``.
+    """
+
+    cell: PeriodicCell
+    points: np.ndarray
+    simplices: np.ndarray
+    simplex_shifts: np.ndarray
+    evidence: PeriodicTriangulationEvidence
+
+    def __init__(
+        self,
+        points: object,
+        cell: PeriodicCell,
+        /,
+        *,
+        initial_margin: float | None = None,
+        maximum_images: int | None = None,
+        maximum_simplices: int | None = None,
+    ) -> None:
+        if not isinstance(cell, PeriodicCell):
+            raise TypeError("cell must be a PeriodicCell.")
+        point_array = _point_array(points, "points", (2, 3))
+        count, dimension = point_array.shape
+        if count == 0:
+            raise ValueError("A periodic triangulation requires at least one point.")
+        if (
+            cell.ambient_dimension != dimension
+            or cell.rank != dimension
+            or not cell.fully_periodic
+        ):
+            raise ValueError(
+                "Periodic Delaunay triangulation requires a fully periodic "
+                "full-rank lattice in the point dimension."
+            )
+        # Delaunay circumradii scale like the mean spacing n^(-1/d) in lattice units.
+        margin = (
+            min(1.0, 2.0 * count ** (-1.0 / dimension))
+            if initial_margin is None
+            else float(initial_margin)
+        )
+        if not math.isfinite(margin) or margin <= 0.0:
+            raise ValueError("initial_margin must be positive and finite.")
+        images = _periodic_budget(maximum_images, 27 * count + 4096, "maximum_images")
+        cells = _periodic_budget(maximum_simplices, 64 * images, "maximum_simplices")
+        vectors = np.asarray(cell.vectors, dtype=np.float64)
+        inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
+        fractional = (point_array - np.asarray(cell.origin, dtype=np.float64)) @ inverse
+        status, simplices, shifts, native = periodic_delaunay(
+            point_array,
+            fractional,
+            vectors,
+            inverse,
+            initial_margin=margin,
+            max_images=images,
+            max_cells=cells,
+        )
+        evidence = PeriodicTriangulationEvidence(
+            status,
+            native,
+            dimension=dimension,
+            input_point_count=count,
+            maximum_images=images,
+            maximum_cells=cells,
+            simplex_count=simplices.shape[0],
+            content={
+                "cell": cell.cell_id,
+                "points": array_tree_fingerprint(point_array),
+                "simplices": array_tree_fingerprint(simplices),
+                "simplex_shifts": array_tree_fingerprint(shifts),
+            },
+        )
+        match status:
+            case MeshcoreStatus.OK:
+                pass
+            case MeshcoreStatus.CAPACITY_EXCEEDED:
+                raise PeriodicImageBudgetError(evidence)
+            case MeshcoreStatus.INVALID_INPUT:
+                duplicate = int(
+                    native[PERIODIC_DELAUNAY_EVIDENCE.index("duplicate_representative")]
+                )
+                raise ValueError(
+                    f"points[{duplicate}] lies in the lattice orbit of another point."
+                )
+            case _:
+                raise MeshcoreError(status, "periodic_delaunay: unexpected status")
+        self.cell = cell
+        self.points = point_array
+        self.simplices = _frozen(simplices)
+        self.simplex_shifts = _frozen(shifts)
+        self.evidence = evidence
+
+    @property
+    def dimension(self) -> int:
+        return self.points.shape[1]
+
+
 __all__ = [
     "ConstrainedDelaunayTriangulation",
     "DelaunayTriangulation",
     "DiagramCells",
+    "PeriodicDelaunayTriangulation",
+    "PeriodicImageBudgetError",
+    "PeriodicImageLimit",
+    "PeriodicTriangulationEvidence",
     "PowerDiagram",
+    "RestrictedPowerDiagram",
     "SimplexQualityEvidence",
     "SimplexQualitySubcomplex",
     "TriangulationEvidence",
     "VoronoiDiagram",
 ]
+
+
+def _exact_power_translation_dual(vectors: np.ndarray, /) -> np.ndarray:
+    """Rational dual of independent translation rows, including partial rank."""
+    from fractions import Fraction
+
+    from ..meshing._periodic import _periodic_exact_product, _reserve_periodic_exact_terms
+
+    rank = len(vectors)
+    gram = _periodic_exact_product(vectors, vectors.T)
+    _reserve_periodic_exact_terms(2 * rank * rank)
+    augmented = [
+        list(row) + [Fraction(int(i == j)) for j in range(rank)]
+        for i, row in enumerate(gram)
+    ]
+    for column in range(rank):
+        pivot = None
+        for candidate in range(column, rank):
+            _reserve_periodic_exact_terms(1)
+            if augmented[candidate][column]:
+                pivot = candidate
+                break
+        if pivot is None:
+            raise ValueError(
+                "Periodic power translation generators are exactly dependent."
+            )
+        augmented[column], augmented[pivot] = augmented[pivot], augmented[column]
+        divisor = augmented[column][column]
+        _reserve_periodic_exact_terms(len(augmented[column]))
+        augmented[column] = [x / divisor for x in augmented[column]]
+        for row in range(rank):
+            if row != column:
+                factor = augmented[row][column]
+                _reserve_periodic_exact_terms(1)
+                if not factor:
+                    continue
+                _reserve_periodic_exact_terms(2 * len(augmented[row]))
+                augmented[row] = [
+                    x - factor * y
+                    for x, y in zip(augmented[row], augmented[column], strict=True)
+                ]
+    inverse = np.asarray([row[rank:] for row in augmented], dtype=object)
+    return _periodic_exact_product(vectors.T, inverse)
+
+
+class PeriodicPowerImageCapacityRefusal(MeshcoreError):
+    """Pre-materialization refusal retaining source and exact stage counts."""
+
+    def __init__(
+        self,
+        points: np.ndarray,
+        weights: np.ndarray,
+        domain: np.ndarray,
+        periodic_group: object,
+        requested: int,
+        maximum: int,
+        stage: str,
+        /,
+    ) -> None:
+        super().__init__(
+            MeshcoreStatus.CAPACITY_EXCEEDED,
+            f"Periodic power {stage} requires {requested} site images, exceeding {maximum}.",
+        )
+        self.points = _frozen(points.copy())
+        self.weights = _frozen(weights.copy())
+        self.domain_points = _frozen(domain.copy())
+        self.periodic_group = periodic_group
+        self.requested_images = requested
+        self.completed_images = 0
+        self.maximum_images = maximum
+        self.stage = stage
+
+
+class PeriodicPowerPreparation(StrictModule, NonTrainableState):
+    """Complete power-relevant image bank, retaining the original source axes.
+
+    ``image_sites`` indexes authored sites, never materialized coordinates.
+    ``image_exponents`` is the exact group action on that source. Numerical
+    image coordinates are deliberately not a substitute for this source law.
+    The bank includes every image capable of winning anywhere in the carrier
+    bounding box, including weighted sites outside that box.
+    """
+
+    points: np.ndarray
+    weights: np.ndarray
+    domain_points: np.ndarray
+    periodic_group: object
+    generators: np.ndarray
+    image_sites: np.ndarray
+    image_exponents: np.ndarray
+    image_coordinate_offsets: np.ndarray
+    image_coordinate_components: np.ndarray
+    orders: tuple[int, ...] = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    carrier_id: str = eqx.field(static=True)
+    identification_id: str = eqx.field(static=True)
+    preparation_id: str = eqx.field(static=True)
+    spent_work: int = eqx.field(static=True)
+    native_charged_work: int = eqx.field(static=True)
+    maximum_images: int = eqx.field(static=True)
+    maximum_work_units: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        points: object,
+        weights: object,
+        domain_points: object,
+        periodic_group: object,
+        /,
+        *,
+        maximum_images: int,
+        maximum_work_units: int = 1 << 26,
+    ) -> None:
+        from .._meshcore import current_native_execution_budget
+        from ..discretization._coordinate_enclosure import coordinate_enclosure_budget
+
+        work_limit = _periodic_budget(maximum_work_units, 1, "maximum_work_units")
+        self.maximum_images = _periodic_budget(maximum_images, 1, "maximum_images")
+        self.maximum_work_units = work_limit
+        native = current_native_execution_budget()
+        memory_limit = (
+            int(np.iinfo(np.intp).max)
+            if native is None
+            else native.remaining().remaining_scratch_bytes
+        )
+        ledger = coordinate_enclosure_budget(work_limit, memory_limit)
+        starting_work = ledger.work_units
+        starting_native = ledger.native_charged_work_units
+        with (
+            ledger.activate(),
+            ledger.bound_stage(
+                work_limit,
+                memory_limit,
+                starting_work_units=starting_work,
+            ),
+            ledger.temporary_scope(),
+        ):
+            try:
+                self._prepare(
+                    points,
+                    weights,
+                    domain_points,
+                    periodic_group,
+                    maximum_images=self.maximum_images,
+                )
+            finally:
+                ledger.charge_native_work(ledger.work_units - starting_work)
+        self.spent_work = ledger.work_units - starting_work
+        self.native_charged_work = ledger.native_charged_work_units - starting_native
+
+    def validate_restored(self) -> None:
+        """Authenticate source/control/bank law without replaying past receipts.
+
+        Revalidation performs real current work under the current original
+        ledger. Its receipt is distinct from the archived preparation receipt.
+        """
+        from ..discretization._periodic_topology import PeriodicIsometryGroup
+
+        if isinstance(self.periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
+            self.periodic_group.validate_restored()
+        else:
+            raise TypeError(
+                "Restored periodic power requires its original periodic identification."
+            )
+        for value in (self.spent_work, self.native_charged_work):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, np.integer))
+                or value < 0
+            ):
+                raise ValueError(
+                    "Periodic power preparation receipts must be nonnegative integers."
+                )
+        if (
+            self.native_charged_work > self.spent_work
+            or self.spent_work > self.maximum_work_units
+        ):
+            raise ValueError(
+                "Periodic power preparation receipt exceeds its authored allowance."
+            )
+        replay = PeriodicPowerPreparation(
+            self.points,
+            self.weights,
+            self.domain_points,
+            self.periodic_group,
+            maximum_images=self.maximum_images,
+            maximum_work_units=self.maximum_work_units,
+        )
+        for name in (
+            "points",
+            "weights",
+            "domain_points",
+            "generators",
+            "image_sites",
+            "image_exponents",
+            "image_coordinate_offsets",
+            "image_coordinate_components",
+        ):
+            if array_tree_fingerprint(getattr(self, name)) != array_tree_fingerprint(
+                getattr(replay, name)
+            ):
+                raise ValueError(
+                    f"Restored periodic power {name} violates its original source law."
+                )
+        for name in (
+            "orders",
+            "source_id",
+            "carrier_id",
+            "identification_id",
+            "preparation_id",
+            "maximum_images",
+            "maximum_work_units",
+        ):
+            if getattr(self, name) != getattr(replay, name):
+                raise ValueError(f"Restored periodic power {name} is not authenticated.")
+        for name in (
+            "points",
+            "weights",
+            "domain_points",
+            "generators",
+            "image_sites",
+            "image_exponents",
+            "image_coordinate_offsets",
+            "image_coordinate_components",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, np.ndarray):
+                value.setflags(write=False)
+
+    def _prepare(
+        self,
+        points: object,
+        weights: object,
+        domain_points: object,
+        periodic_group: object,
+        /,
+        *,
+        maximum_images: int,
+    ) -> None:
+        from fractions import Fraction
+        from itertools import product
+
+        from ..discretization._periodic_topology import (
+            _exact_periodic_generators,
+            PeriodicIsometryGroup,
+        )
+        from ..meshing._periodic import (
+            _exact_periodic_group_element,
+            _periodic_exact_product,
+            _prepare_periodic_image_frame,
+            _reserve_periodic_exact_terms,
+        )
+
+        sites = _point_array(points, "points", (3,))
+        domain = _point_array(domain_points, "domain_points", (3,))
+        values = np.asarray(weights, dtype=np.float64)
+        _reserve_periodic_exact_terms(sites.size + domain.size + values.size)
+        if not len(sites) or not len(domain):
+            raise ValueError("Periodic power preparation requires sites and a carrier.")
+        if values.shape != (len(sites),) or not np.all(np.isfinite(values)):
+            raise ValueError("weights must be finite with one value per authored site.")
+        limit = _periodic_budget(maximum_images, 1, "maximum_images")
+        if not isinstance(periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
+            raise TypeError(
+                "periodic_group must be a PeriodicCell or PeriodicIsometryGroup."
+            )
+        if periodic_group.ambient_dimension != 3:
+            raise ValueError(
+                "Periodic restricted power requires ambient dimension three."
+            )
+        if len(sites) > limit:
+            raise PeriodicPowerImageCapacityRefusal(
+                sites,
+                values,
+                domain,
+                periodic_group,
+                len(sites),
+                limit,
+                "original-sites",
+            )
+        if isinstance(periodic_group, PeriodicCell):
+            if not periodic_group.fully_periodic:
+                raise ValueError(
+                    "Periodic power requires every declared lattice axis periodic."
+                )
+            vectors = np.asarray(periodic_group.vectors, dtype=np.float64)
+            generators = np.repeat(np.eye(4)[None], periodic_group.rank, axis=0)
+            generators[:, :3, 3] = vectors
+            orders = (0,) * periodic_group.rank
+            linear_orders = (1,) * periodic_group.rank
+            _reserve_periodic_exact_terms(sites.size)
+            finite_sites = np.asarray(
+                [[Fraction(float(x)) for x in site] for site in sites],
+                dtype=object,
+            )
+        else:
+            generators = np.asarray(periodic_group.generators, dtype=np.float64)
+            orders = periodic_group.orders
+            linear_orders = periodic_group.linear_orders
+            finite_count = math.prod(linear_orders)
+            if finite_count * len(sites) > limit:
+                raise PeriodicPowerImageCapacityRefusal(
+                    sites,
+                    values,
+                    domain,
+                    periodic_group,
+                    finite_count * len(sites),
+                    limit,
+                    "finite-orbits",
+                )
+            finite_sites_parts = []
+            _reserve_periodic_exact_terms(sites.size)
+            original = np.asarray(
+                [[Fraction(float(x)) for x in site] for site in sites],
+                dtype=object,
+            )
+            prepared_generators = _exact_periodic_generators(periodic_group)
+            for finite_action in product(*(range(order) for order in linear_orders)):
+                matrix = _exact_periodic_group_element(
+                    periodic_group,
+                    np.asarray(finite_action, dtype=np.int64),
+                    prepared_generators=prepared_generators,
+                )
+                _reserve_periodic_exact_terms(len(sites) * 3)
+                finite_sites_parts.append(
+                    _periodic_exact_product(original, matrix[:3, :3].T) + matrix[:3, 3]
+                )
+            finite_sites = np.concatenate(finite_sites_parts)
+        translations = [axis for axis, order in enumerate(orders) if order == 0]
+        ranges = [range(order) for order in linear_orders]
+        if translations:
+            _reserve_periodic_exact_terms(len(translations) * 3)
+            if isinstance(periodic_group, PeriodicCell):
+                vectors = np.asarray(
+                    [
+                        [Fraction(float(x)) for x in generators[axis, :3, 3]]
+                        for axis in translations
+                    ],
+                    dtype=object,
+                )
+            else:
+                vectors = np.asarray(
+                    [
+                        _exact_periodic_group_element(
+                            periodic_group,
+                            np.asarray(
+                                [
+                                    linear_orders[index] if index == axis else 0
+                                    for index in range(periodic_group.rank)
+                                ],
+                                dtype=np.int64,
+                            ),
+                            prepared_generators=prepared_generators,
+                        )[:3, 3]
+                        for axis in translations
+                    ],
+                    dtype=object,
+                )
+            dual = _exact_power_translation_dual(vectors)
+            lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
+            corners = tuple(product(*zip(lower, upper, strict=True)))
+            reference = [Fraction(float(x)) for x in sites[0]]
+            _reserve_periodic_exact_terms(len(corners) * 2 * 3 + len(values) + 2)
+            ceiling = (
+                max(
+                    sum(
+                        (Fraction(float(x)) - y) ** 2
+                        for x, y in zip(corner, reference, strict=True)
+                    )
+                    for corner in corners
+                )
+                - Fraction(float(values[0]))
+                + max(Fraction(float(w)) for w in values)
+            )
+            radius = math.isqrt(max(0, ceiling.numerator // ceiling.denominator))
+            if Fraction(radius * radius) < ceiling:
+                radius += 1
+            for column, axis in enumerate(translations):
+                coefficients = dual[:, column]
+                _reserve_periodic_exact_terms(3 * 3)
+                carrier_low = sum(
+                    a * Fraction(float(lower[i] if a >= 0 else upper[i]))
+                    for i, a in enumerate(coefficients)
+                )
+                carrier_high = sum(
+                    a * Fraction(float(upper[i] if a >= 0 else lower[i]))
+                    for i, a in enumerate(coefficients)
+                )
+                site_axis = _periodic_exact_product(finite_sites, coefficients)
+                _reserve_periodic_exact_terms(2 * len(site_axis) + 5)
+                reach = radius * sum(abs(a) for a in coefficients)
+                low = carrier_low - max(site_axis) - reach
+                high = carrier_high - min(site_axis) + reach
+                period = linear_orders[axis]
+                ranges[axis] = range(
+                    period * math.ceil(low),
+                    period * (math.floor(high) + 1),
+                )
+        actions = product(*ranges)
+        action_count = math.prod(len(value) for value in ranges)
+        required = action_count * len(sites)
+        if required > limit:
+            raise PeriodicPowerImageCapacityRefusal(
+                sites,
+                values,
+                domain,
+                periodic_group,
+                required,
+                limit,
+                "power-images",
+            )
+        # Authenticate the same exact authored group frame as source/embedding.
+        # Its overlap bank is not used as the power completeness bound above.
+        action_rows = np.asarray(tuple(actions), dtype=np.int64).reshape(
+            (action_count, periodic_group.rank)
+        )
+        frame = _prepare_periodic_image_frame(
+            sites,
+            np.arange(len(sites), dtype=np.int64),
+            np.zeros((len(sites), periodic_group.rank), dtype=np.int64),
+            periodic_group,
+            limit,
+            image_exponents=action_rows,
+        )
+        components: list[float] = []
+        coordinate_offsets = [0]
+        scale = Fraction(2) ** (
+            frame.exponent if frame.lattice is not None else 3 * frame.exponent
+        )
+        for index, action in enumerate(action_rows):
+            image = tuple(int(x) for x in action) if frame.lattice is not None else index
+            exact_coordinates = frame.image_points(image)
+            for integer in exact_coordinates.reshape(-1):
+                _reserve_periodic_exact_terms(1)
+                remaining = Fraction(int(integer)) * scale
+                coordinate: list[float] = []
+                while remaining:
+                    _reserve_periodic_exact_terms(2)
+                    component = float(remaining)
+                    if not math.isfinite(component) or component == 0.0:
+                        raise ValueError(
+                            "Exact periodic image exceeds binary64 expansion range."
+                        )
+                    coordinate.append(component)
+                    remaining -= Fraction(component)
+                components.extend(reversed(coordinate))
+                coordinate_offsets.append(len(components))
+        self.points = _frozen(sites.copy())
+        self.weights = _frozen(values.copy())
+        self.domain_points = _frozen(domain.copy())
+        self.periodic_group = periodic_group
+        self.generators = _frozen(generators.copy())
+        self.image_sites = _frozen(
+            np.tile(np.arange(len(sites), dtype=np.int32), action_count)
+        )
+        self.image_exponents = _frozen(np.repeat(action_rows, len(sites), axis=0))
+        self.image_coordinate_offsets = _frozen(
+            np.asarray(coordinate_offsets, dtype=np.int64)
+        )
+        self.image_coordinate_components = _frozen(
+            np.asarray(components, dtype=np.float64)
+        )
+        self.orders = orders
+        self.carrier_id = canonical_fingerprint(array_tree_fingerprint(domain))
+        self.identification_id = (
+            periodic_group.cell_id
+            if isinstance(periodic_group, PeriodicCell)
+            else periodic_group.group_id
+        )
+        self.source_id = canonical_fingerprint(
+            {
+                "kind": "periodic-power-source",
+                "points": array_tree_fingerprint(self.points),
+                "weights": array_tree_fingerprint(self.weights),
+                "generators": array_tree_fingerprint(self.generators),
+                "orders": orders,
+                "identification": self.identification_id,
+            }
+        )
+        self.preparation_id = canonical_fingerprint(
+            {
+                "kind": "periodic-power-preparation",
+                "source": self.source_id,
+                "carrier": array_tree_fingerprint(domain),
+                "site_axis": array_tree_fingerprint(self.image_sites),
+                "action_axis": array_tree_fingerprint(self.image_exponents),
+                "coordinate_offsets": array_tree_fingerprint(
+                    self.image_coordinate_offsets
+                ),
+                "coordinate_components": array_tree_fingerprint(
+                    self.image_coordinate_components
+                ),
+            }
+        )
+
+
+class PeriodicPowerSourceRefusal(MeshcoreError):
+    """Native/domain refusal retaining the actual immutable scientific source."""
+
+    def __init__(
+        self,
+        preparation: PeriodicPowerPreparation,
+        refusal: MeshcoreError,
+        maximum_work: int,
+        /,
+        *,
+        requested_work: int | None = None,
+        completed_work: int | None = None,
+    ) -> None:
+        super().__init__(
+            refusal.status,
+            "Exact periodic power source refused construction",
+            work_evidence=refusal.work_evidence,
+            memory_evidence=refusal.memory_evidence,
+        )
+        self.preparation = preparation
+        self.native_refusal = refusal
+        self.maximum_work = maximum_work
+        self.requested_work = requested_work
+        self.completed_work = completed_work
+
+
+def _restricted_periodic_power_construction(
+    preparation: PeriodicPowerPreparation,
+    split: np.ndarray,
+    domain: np.ndarray,
+    tetrahedra: ArrayLike,
+    regions: ArrayLike,
+    facets: ArrayLike,
+    /,
+    *,
+    max_pieces: int,
+    max_vertices: int,
+    work_limit: int,
+    record_native_phase: Callable[[str, float, int | None, int], None] | None,
+) -> tuple[np.ndarray, np.ndarray, RestrictedPowerCells, int]:
+    from .._meshcore import current_native_execution_budget, restricted_power_cells_exact
+
+    count = len(preparation.image_sites)
+    adjacency_count = count * (count - 1)
+    if adjacency_count >= work_limit:
+        raise PeriodicPowerSourceRefusal(
+            preparation,
+            MeshcoreError(
+                MeshcoreStatus.CAPACITY_EXCEEDED,
+                "Exact periodic power adjacency exceeds the original work limit.",
+            ),
+            work_limit,
+            requested_work=adjacency_count + 1,
+            completed_work=0,
+        )
+    # A complete adjacency is an exact source candidate bank, not a rounded
+    # regular-triangulation proxy. Its actual materialization is bounded before
+    # allocation and charged as host work, never as native geometric predicates.
+    budget = current_native_execution_budget()
+    if budget is not None:
+        budget.admit_work_bound(adjacency_count)
+    offsets = np.arange(count + 1, dtype=np.int64) * (count - 1)
+    neighbors = np.empty(adjacency_count, dtype=np.int32)
+    row = np.arange(count, dtype=np.int32)
+    materialized_work = 0
+    for image in range(count):
+        left, right = row[:image], row[image + 1 :]
+        row_work = len(left) + len(right)
+        if budget is not None:
+            budget.charge(work=row_work)
+        start = int(offsets[image])
+        neighbors[start : start + len(left)] = left
+        neighbors[start + len(left) : int(offsets[image + 1])] = right
+        materialized_work += row_work
+    construction = restricted_power_cells_exact(
+        preparation.points,
+        preparation.weights,
+        preparation.image_sites,
+        preparation.image_coordinate_offsets,
+        preparation.image_coordinate_components,
+        offsets,
+        neighbors,
+        split[preparation.image_sites],
+        domain,
+        tetrahedra,
+        regions,
+        facets,
+        max_pieces=max_pieces,
+        max_vertices=max_vertices,
+        work_limit=work_limit - materialized_work,
+        record_native_phase=record_native_phase,
+    )
+    return offsets, neighbors, construction, materialized_work
+
+
+class RestrictedPowerDiagram(StrictModule, NonTrainableState):
+    """Native connected power cells restricted to a constrained tet complex.
+
+    Unlike the convex diagram contracts above this preserves disconnected site
+    components and constrained material/sheet faces. ``construction`` carries
+    reciprocal faces and the site/tet/cell piece witness. This is construction
+    evidence, not an independent coverage certificate.
+    """
+
+    points: np.ndarray
+    weights: np.ndarray
+    construction: RestrictedPowerCells
+    neighbor_offsets: np.ndarray
+    neighbors: np.ndarray
+    periodic_preparation: PeriodicPowerPreparation | None
+    preparation_work_units: int = eqx.field(static=True)
+    preparation_native_charged_work_units: int = eqx.field(static=True)
+    adjacency_work_units: int = eqx.field(static=True)
+    cell_original_sites: np.ndarray
+    piece_original_sites: np.ndarray
+    cell_image_exponents: np.ndarray
+    piece_image_exponents: np.ndarray
+    guard_count: int = eqx.field(static=True)
+    meshcore_identity: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        points: object,
+        weights: object,
+        domain_points: object,
+        tetrahedra: object,
+        tetrahedron_regions: object,
+        tet_face_facets: object,
+        /,
+        *,
+        split_sites: object | None = None,
+        periodic_group: object | None = None,
+        periodic_preparation: PeriodicPowerPreparation | None = None,
+        maximum_images: int | None = None,
+        max_pieces: int = 1 << 20,
+        max_vertices: int = 1 << 22,
+        work_limit: int = 1 << 26,
+        record_native_phase: Callable[[str, float, int | None, int], None] | None = None,
+    ) -> None:
+        from fractions import Fraction
+        from itertools import product
+
+        from .._meshcore import restricted_power_cells
+
+        sites = _point_array(points, "points", (3,))
+        if sites.shape[0] == 0:
+            raise ValueError("At least one site is required.")
+        values = np.asarray(weights, dtype=np.float64)
+        if values.shape != (sites.shape[0],) or not np.all(np.isfinite(values)):
+            raise ValueError("weights must be a finite (site_count,) array.")
+        domain = _point_array(domain_points, "domain_points", (3,))
+        split = (
+            np.zeros(sites.shape[0], dtype=np.int8)
+            if split_sites is None
+            else np.asarray(split_sites, dtype=np.int8)
+        )
+        tetrahedra_ = np.asarray(tetrahedra)
+        tetrahedron_regions_ = np.asarray(tetrahedron_regions)
+        tet_face_facets_ = np.asarray(tet_face_facets)
+        if split.shape != (sites.shape[0],) or np.any((split != 0) & (split != 1)):
+            raise ValueError("split_sites must be a binary (site_count,) array.")
+        if periodic_group is not None or periodic_preparation is not None:
+            preparation = periodic_preparation
+            preparation_work_units = 0
+            preparation_native_charged_work_units = 0
+            if preparation is None:
+                preparation = PeriodicPowerPreparation(
+                    sites,
+                    values,
+                    domain,
+                    periodic_group,
+                    maximum_images=_periodic_budget(
+                        maximum_images,
+                        27 * len(sites) + 4096,
+                        "maximum_images",
+                    ),
+                    maximum_work_units=work_limit,
+                )
+                preparation_work_units = preparation.spent_work
+                preparation_native_charged_work_units = preparation.native_charged_work
+            if (
+                array_tree_fingerprint(sites)
+                != array_tree_fingerprint(preparation.points)
+                or array_tree_fingerprint(values)
+                != array_tree_fingerprint(preparation.weights)
+                or canonical_fingerprint(array_tree_fingerprint(domain))
+                != preparation.carrier_id
+            ):
+                raise ValueError(
+                    "Periodic power preparation requires its original source and carrier bytes."
+                )
+            if maximum_images is not None and len(
+                preparation.image_sites
+            ) > _periodic_budget(
+                maximum_images,
+                1,
+                "maximum_images",
+            ):
+                raise PeriodicPowerSourceRefusal(
+                    preparation,
+                    PeriodicPowerImageCapacityRefusal(
+                        sites,
+                        values,
+                        domain,
+                        periodic_group,
+                        len(preparation.image_sites),
+                        maximum_images,
+                        "retained-images",
+                    ),
+                    work_limit,
+                )
+            if periodic_group is not None:
+                from ..discretization._periodic_topology import PeriodicIsometryGroup
+
+                if not isinstance(periodic_group, (PeriodicCell, PeriodicIsometryGroup)):
+                    raise TypeError(
+                        "periodic_group must be a PeriodicCell or PeriodicIsometryGroup."
+                    )
+                identity = (
+                    periodic_group.cell_id
+                    if isinstance(periodic_group, PeriodicCell)
+                    else periodic_group.group_id
+                )
+                if identity != preparation.identification_id:
+                    raise ValueError(
+                        "Periodic power preparation requires its original group identity."
+                    )
+            try:
+                construction_work_limit = work_limit - preparation_work_units
+                if construction_work_limit < 1:
+                    raise PeriodicPowerSourceRefusal(
+                        preparation,
+                        MeshcoreError(
+                            MeshcoreStatus.CAPACITY_EXCEEDED,
+                            "Periodic power preparation exhausts the original construction allowance.",
+                        ),
+                        work_limit,
+                        requested_work=preparation_work_units + 1,
+                        completed_work=preparation_work_units,
+                    )
+                offsets, neighbors, construction, adjacency_work_units = (
+                    _restricted_periodic_power_construction(
+                        preparation,
+                        split,
+                        domain,
+                        tetrahedra_,
+                        tetrahedron_regions_,
+                        tet_face_facets_,
+                        max_pieces=max_pieces,
+                        max_vertices=max_vertices,
+                        work_limit=construction_work_limit,
+                        record_native_phase=record_native_phase,
+                    )
+                )
+            except PeriodicPowerSourceRefusal:
+                raise
+            except MeshcoreError as refusal:
+                raise PeriodicPowerSourceRefusal(
+                    preparation, refusal, work_limit
+                ) from refusal
+            self.points = preparation.points
+            self.weights = preparation.weights
+            self.construction = construction
+            self.neighbor_offsets = _frozen(offsets)
+            self.neighbors = _frozen(neighbors)
+            self.periodic_preparation = preparation
+            self.preparation_work_units = preparation_work_units
+            self.preparation_native_charged_work_units = (
+                preparation_native_charged_work_units
+            )
+            self.adjacency_work_units = adjacency_work_units
+            self.cell_original_sites = _frozen(
+                preparation.image_sites[construction.cell_sites]
+            )
+            self.piece_original_sites = _frozen(
+                preparation.image_sites[construction.piece_sites]
+            )
+            self.cell_image_exponents = _frozen(
+                preparation.image_exponents[construction.cell_sites]
+            )
+            self.piece_image_exponents = _frozen(
+                preparation.image_exponents[construction.piece_sites]
+            )
+            self.guard_count = 0
+            self.meshcore_identity = meshcore_identity()
+            return
+        guard_count = 0
+        if sites.shape[0] == 1:
+            prepared_sites, prepared_weights = sites, values
+            edges = np.zeros((0, 2), dtype=np.int32)
+        else:
+            prepared_sites, prepared_weights = sites, values
+            if not _spans_space(sites):
+                # Four remote weighted guards make a full-dimensional regular
+                # triangulation without a dense all-pairs degeneracy fallback.
+                # Their power distance exceeds site zero everywhere in the
+                # domain bounding box: the difference is affine, and its
+                # minimum is evaluated exactly at all eight box corners.
+                lower, upper = np.min(domain, axis=0), np.max(domain, axis=0)
+                scale = max(1.0, float(np.max(upper - lower)))
+                base = lower - 4.0 * scale
+                guards = base + 8.0 * scale * np.asarray(
+                    ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),
+                    dtype=np.float64,
+                )
+                if not np.all(np.isfinite(guards)) or not _spans_space(guards):
+                    raise ValueError("Domain scale cannot represent spanning guards.")
+                reference = [Fraction(float(x)) for x in sites[0]]
+                reference_weight = Fraction(float(values[0]))
+                corners = tuple(product(*zip(lower, upper, strict=True)))
+                guard_weights = []
+                for guard in guards:
+                    g = [Fraction(float(x)) for x in guard]
+                    minimum = min(
+                        sum(
+                            (a - Fraction(float(x))) ** 2 - (b - Fraction(float(x))) ** 2
+                            for a, b, x in zip(g, reference, corner, strict=True)
+                        )
+                        + reference_weight
+                        for corner in corners
+                    )
+                    # Keep a strict normal-scale margin: for positive minimum
+                    # the old subtraction cancelled to zero, whose nextafter
+                    # value lies outside meshcore's exact weight domain.
+                    weight = float(minimum - max(Fraction(1), abs(minimum)) - 1)
+                    weight = float(np.nextafter(weight, -np.inf))
+                    if not math.isfinite(weight) or Fraction(weight) >= minimum:
+                        raise ValueError("Unable to establish empty-guard power bound.")
+                    guard_weights.append(weight)
+                guard_count = 4
+                prepared_sites = np.concatenate((sites, guards))
+                prepared_weights = np.concatenate((values, guard_weights))
+            started = 0.0 if record_native_phase is None else perf_counter()
+            simplices, _ = regular_3d(
+                prepared_sites, prepared_weights, max_tetrahedra=max_pieces
+            )
+            edges = _simplex_edges(simplices)
+            if record_native_phase is not None:
+                record_native_phase(
+                    "regular_triangulation", perf_counter() - started, None, 1
+                )
+        directed = np.concatenate((edges, edges[:, ::-1]), axis=0)
+        if directed.size:
+            directed = directed[np.lexsort((directed[:, 1], directed[:, 0]))]
+        counts = np.bincount(directed[:, 0], minlength=prepared_sites.shape[0])
+        offsets = _offsets(counts)
+        neighbors = directed[:, 1].astype(np.int32)
+        construction = restricted_power_cells(
+            prepared_sites,
+            prepared_weights,
+            offsets,
+            neighbors,
+            np.concatenate((split, np.zeros(guard_count, dtype=np.int8))),
+            domain,
+            tetrahedra_,
+            tetrahedron_regions_,
+            tet_face_facets_,
+            max_pieces=max_pieces,
+            max_vertices=max_vertices,
+            work_limit=work_limit,
+            record_native_phase=record_native_phase,
+        )
+        if np.any(construction.cell_sites >= sites.shape[0]):
+            raise RuntimeError("A certified empty guard produced a restricted cell.")
+        self.points = sites
+        self.weights = _frozen(values.copy())
+        self.construction = construction
+        self.neighbor_offsets = _frozen(offsets)
+        self.neighbors = _frozen(neighbors)
+        self.guard_count = guard_count
+        self.meshcore_identity = meshcore_identity()
+        self.periodic_preparation = None
+        self.preparation_work_units = 0
+        self.preparation_native_charged_work_units = 0
+        self.adjacency_work_units = 0
+        self.cell_original_sites = construction.cell_sites
+        self.piece_original_sites = construction.piece_sites
+        self.cell_image_exponents = _frozen(
+            np.empty((len(construction.cell_sites), 0), dtype=np.int64)
+        )
+        self.piece_image_exponents = _frozen(
+            np.empty((len(construction.piece_sites), 0), dtype=np.int64)
+        )

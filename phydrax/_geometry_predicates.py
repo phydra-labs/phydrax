@@ -29,12 +29,21 @@ exact dyadic-rational evaluation of the input floating-point coordinates.
 ``segment_intersections_2d`` and ``polygon_simplicity_2d`` are host algorithms
 built on ``orient2d`` and exact coordinate comparisons; their classifications
 are exact wherever every contributing sign is certified.
+
+Host ``orient2d``, ``orient3d`` and ``segment_intersections_2d`` also accept
+exact integer banks: object arrays of Python integers, for example an exact
+rational source scaled to one positive common denominator. Their kernel
+determinant is evaluated without rounding and every sign is certain. Before
+evaluation the active coordinate ledger is charged the counted kernel visits
+and a storage bound of every bigint temporary from the measured input bits.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from enum import IntEnum, StrEnum
+from fractions import Fraction
 from types import ModuleType
 from typing import Any
 
@@ -55,6 +64,7 @@ from ._meshcore import (
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import ConvertibleToArray
 
 
 class PredicateMode(StrEnum):
@@ -78,8 +88,7 @@ class PredicateResult(StrictModule, NonTrainableState):
     """Batched predicate signs with certification.
 
     ``signs`` is int8 with :class:`PredicateSign` values and ``certain`` marks the
-    entries whose sign is exact.  Host modes carry NumPy arrays; the device mode
-    carries JAX arrays.
+    entries whose sign is exact. All routes publish canonical JAX arrays.
     """
 
     signs: Array
@@ -331,9 +340,22 @@ def _host_points(
     values: tuple, width: int, /
 ) -> tuple[tuple[np.ndarray, ...], tuple[int, ...]]:
     arrays = []
-    for value in values:
-        array = np.asarray(value)
-        if np.issubdtype(array.dtype, np.integer):
+    hosts = tuple(np.asarray(value) for value in values)
+    integer_bank = any(array.dtype == object for array in hosts)
+    for array in hosts:
+        if integer_bank:
+            # One exact bank owner: Python integers only. Fixed-width, boolean,
+            # floating or rational entries would mix two arithmetics.
+            if array.dtype != object:
+                raise TypeError(
+                    "Exact integer predicate banks hold only Python integer object arrays."
+                )
+            with exact_charge(array.size):
+                if any(type(item) is not int for item in array.flat):
+                    raise TypeError(
+                        "Exact integer predicate banks hold only Python integer object arrays."
+                    )
+        elif np.issubdtype(array.dtype, np.integer):
             if np.any((array > 2**53) | (array < -(2**53))):
                 raise ValueError("Integer coordinates must be exactly representable.")
         elif not np.issubdtype(array.dtype, np.floating):
@@ -342,7 +364,7 @@ def _host_points(
             )
         if array.ndim < 1 or array.shape[-1] != width:
             raise ValueError(f"Predicate coordinates must have shape (..., {width}).")
-        arrays.append(array.astype(np.float64, copy=False))
+        arrays.append(array if integer_bank else array.astype(np.float64, copy=False))
     leading = np.broadcast_shapes(*(array.shape[:-1] for array in arrays))
     flat = tuple(
         np.ascontiguousarray(
@@ -442,13 +464,8 @@ def _exact_dyadic_row(
         )
         return _dyadic_sign(_dyadic_add(_dyadic_subtract(first, second), third))
 
-    width = spec.width
-    translated = tuple(
-        tuple(difference(row_, spec.arity - 1, axis) for axis in range(width))
-        for row_ in range(spec.arity - 1)
-    )
-    x = tuple(row_[0] for row_ in translated)
-    y = tuple(row_[1] for row_ in translated)
+    x = tuple(difference(row_, spec.arity - 1, 0) for row_ in range(spec.arity - 1))
+    y = tuple(difference(row_, spec.arity - 1, 1) for row_ in range(spec.arity - 1))
     products = {
         (first, second): _dyadic_multiply(x[first], y[second])
         for first in range(spec.arity - 1)
@@ -476,7 +493,7 @@ def _exact_dyadic_row(
         return _dyadic_sign(determinant)
     if spec.name != "insphere":
         raise ValueError(f"Unknown exact predicate {spec.name!r}.")
-    z = tuple(row_[2] for row_ in translated)
+    z = tuple(difference(row_, spec.arity - 1, 2) for row_ in range(spec.arity - 1))
     ab, bc, cd = cross(0, 1), cross(1, 2), cross(2, 3)
     da, ac, bd = cross(3, 0), cross(0, 2), cross(1, 3)
     abc = _dyadic_add(
@@ -523,11 +540,200 @@ def _exact_dyadic(
     return signs, certain
 
 
+def bigint_bytes(bits: int, /) -> int:
+    """Conservative CPython storage of one integer of ``bits`` bits and its slot.
+
+    A PyLong stores 30-bit digits after a header below 32 bytes; an object
+    array or tuple slot adds one 8-byte reference.
+    """
+    return 40 + 4 * ((max(bits, 1) + 29) // 30)
+
+
+def exact_bits(values: np.ndarray, /) -> int:
+    """Largest numerator or denominator bit length of an exact bank.
+
+    Python integers and Fractions share ``numerator``/``denominator``; the
+    one-visit-per-entry scan is charged before it runs.
+    """
+    with exact_charge(values.size):
+        return max(
+            (
+                max(value.numerator.bit_length(), value.denominator.bit_length())
+                for value in values.flat
+            ),
+            default=0,
+        )
+
+
+def exact_reserve(work: int, storage: int = 0, /) -> None:
+    """Charge exact host visits and storage the caller retains past this step.
+
+    Exact host arithmetic is preparation owned by the active coordinate
+    ledger, resolved lazily because discretization imports this module.
+    """
+    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
+
+    ledger = _COORDINATE_BUDGET.get()
+    if ledger is not None:
+        ledger.reserve(work, storage)
+
+
+@contextmanager
+def exact_charge(work: int, storage: int = 0, /) -> Iterator[None]:
+    """Charge exact host visits and transient bytes before the guarded step.
+
+    The transient bound is released when the step completes; the ledger keeps
+    its peak.
+    """
+    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
+
+    ledger = _COORDINATE_BUDGET.get()
+    if ledger is None:
+        yield
+        return
+    with ledger.temporary_scope():
+        ledger.reserve(work, storage)
+        yield
+
+
+def _prepared_exact_orientation_signs(
+    spec: _Filter, points: tuple[np.ndarray, ...], ledger: Any
+) -> np.ndarray:
+    """Reuse immutable exact line/plane preparation on the original live ledger."""
+    dimension = spec.width
+    count = points[0].shape[0]
+    with exact_charge(0, count):
+        signs = np.empty(count, dtype=np.int8)
+    cache = ledger.exact_orientation_preparation_cache
+    for row in range(count):
+        with exact_charge((len(points) - 1) * dimension + 1, 128 + 64 * len(points)):
+            key = (spec.name, *(tuple(point[row]) for point in points[:-1]))
+            prepared = cache.get(key)
+            if prepared is None:
+                coordinates = key[1:]
+                values = tuple(value for point in coordinates for value in point)
+                with exact_charge(len(values)):
+                    bits = max(
+                        (
+                            max(
+                                value.numerator.bit_length(),
+                                value.denominator.bit_length(),
+                            )
+                            for value in values
+                        ),
+                        default=0,
+                    )
+                # Rational differences/products may multiply independent source
+                # denominators; integer inputs are the smaller special case.
+                temporary_bits = (48 if dimension == 3 else 16) * max(bits, 1) + 64
+                normal: tuple[Fraction, ...]
+                with exact_charge(
+                    20 if dimension == 3 else 5,
+                    512 + 24 * (128 + 2 * bigint_bytes(temporary_bits)),
+                ):
+                    if spec.name == "orient3d":
+                        a, b, c = coordinates
+                        first = tuple(q - p for p, q in zip(a, b, strict=True))
+                        second = tuple(q - p for p, q in zip(a, c, strict=True))
+                        normal = (
+                            first[1] * second[2] - first[2] * second[1],
+                            first[2] * second[0] - first[0] * second[2],
+                            first[0] * second[1] - first[1] * second[0],
+                        )
+                        offset = normal[0] * a[0] + normal[1] * a[1] + normal[2] * a[2]
+                    else:
+                        a, b = coordinates
+                        normal = (a[1] - b[1], b[0] - a[0])
+                        offset = normal[0] * a[0] + normal[1] * a[1]
+                    with exact_charge(dimension + 1):
+                        normal_bits = max(
+                            (
+                                max(
+                                    value.numerator.bit_length(),
+                                    value.denominator.bit_length(),
+                                )
+                                for value in (*normal, offset)
+                            ),
+                            default=0,
+                        )
+                    prepared = (normal, offset, normal_bits)
+                    ledger.retain_basis((key, prepared))
+                    cache[key] = prepared
+        normal, offset, normal_bits = prepared
+        with exact_charge(dimension):
+            point = tuple(points[-1][row])
+            point_bits = max(
+                (
+                    max(value.numerator.bit_length(), value.denominator.bit_length())
+                    for value in point
+                ),
+                default=0,
+            )
+        bits = (
+            (dimension + 1) * (normal_bits + point_bits + 1) + dimension.bit_length() + 4
+        )
+        with exact_charge(
+            2 * dimension, (dimension + 2) * (128 + 2 * bigint_bytes(bits))
+        ):
+            if len(normal) != dimension or len(point) != dimension:
+                raise RuntimeError("Prepared exact orientation dimension changed.")
+            value = (
+                sum(
+                    (
+                        coefficient * coordinate
+                        for coefficient, coordinate in zip(normal, point, strict=True)
+                    ),
+                    Fraction(),
+                )
+                - offset
+            )
+            with exact_charge(2):
+                signs[row] = int(value > 0) - int(value < 0)
+    return signs
+
+
+def _exact_integer(spec: _Filter, points: tuple[np.ndarray, ...], /) -> np.ndarray:
+    """Exact kernel signs of an integer bank, charged before evaluation.
+
+    Per evaluation, counted from the kernels above: ``work`` object visits,
+    ``temporaries`` bigint results and ``slots`` further object-array entries.
+    With inputs below ``2**bits`` every difference has at most ``bits + 1``
+    bits and every kernel value is a sum of at most six degree-``degree``
+    products, hence at most ``degree * (bits + 1) + 3`` bits.
+    """
+
+    match spec.name:
+        case "orient2d":
+            work, temporaries, slots, degree = 22, 14, 30, 2
+        case "orient3d":
+            work, temporaries, slots, degree = 68, 50, 92, 3
+        case _:
+            raise TypeError(
+                "Exact integer predicate banks support orient2d and orient3d."
+            )
+    count = points[0].shape[0]
+    from .discretization._coordinate_enclosure import _COORDINATE_BUDGET
+
+    ledger = _COORDINATE_BUDGET.get()
+    if ledger is not None:
+        return _prepared_exact_orientation_signs(spec, points, ledger)
+    bits = max(exact_bits(point) for point in points)
+    storage = count * (temporaries * bigint_bytes(degree * (bits + 1) + 3) + 8 * slots)
+    with exact_charge(count * work, storage):
+        return np.sign(spec.kernel(np, *points)[0]).astype(np.int8)
+
+
 def _host(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResult:
     native_exact = mode is PredicateMode.EXACT and meshcore_available()
     if native_exact:
         load_meshcore()
     flat, leading = _host_points(values, spec.width)
+    if flat[0].dtype == object:
+        return PredicateResult(
+            jnp.asarray(_exact_integer(spec, flat).reshape(leading)),
+            jnp.ones(leading, dtype=jnp.bool_),
+            mode,
+        )
     with np.errstate(over="ignore", invalid="ignore", under="ignore"):
         signs, certain = _filter(np, spec, flat, np.float64, 1.0)
     if mode is PredicateMode.EXACT:
@@ -541,7 +747,9 @@ def _host(spec: _Filter, values: tuple, mode: PredicateMode, /) -> PredicateResu
             exact_signs, exact_certain = _exact_dyadic(spec, flat, unresolved)
             signs[unresolved] = exact_signs
             certain[unresolved] = exact_certain
-    return PredicateResult(signs.reshape(leading), certain.reshape(leading), mode)
+    return PredicateResult(
+        jnp.asarray(signs.reshape(leading)), jnp.asarray(certain.reshape(leading)), mode
+    )
 
 
 # ------------------------------------------------------------------ device route
@@ -607,16 +815,38 @@ def _evaluate(spec: _Filter, values: tuple, mode: PredicateMode, /) -> Predicate
             raise TypeError("mode must be a PredicateMode.")
 
 
-def orient2d(a: Any, b: Any, c: Any, /, *, mode: PredicateMode) -> PredicateResult:
-    """Sign of ``det[b - a, c - a]`` for ``(..., 2)`` coordinates (leading axes broadcast)."""
+def orient2d(
+    a: ConvertibleToArray,
+    b: ConvertibleToArray,
+    c: ConvertibleToArray,
+    /,
+    *,
+    mode: PredicateMode,
+) -> PredicateResult:
+    """Sign of ``det[b - a, c - a]`` for ``(..., 2)`` coordinates (leading axes broadcast).
+
+    Host coordinates are real floating, fixed-width integer (at most ``2**53``
+    in magnitude) or, together, object arrays of Python integers, which are
+    evaluated exactly with certain signs. Any other entry kind raises
+    ``TypeError``.
+    """
 
     return _evaluate(_ORIENT2D, (a, b, c), mode)
 
 
 def orient3d(
-    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
+    a: ConvertibleToArray,
+    b: ConvertibleToArray,
+    c: ConvertibleToArray,
+    d: ConvertibleToArray,
+    /,
+    *,
+    mode: PredicateMode,
 ) -> PredicateResult:
-    """Sign of ``det[b - a, c - a, d - a]`` for ``(..., 3)`` coordinates."""
+    """Sign of ``det[b - a, c - a, d - a]`` for ``(..., 3)`` coordinates.
+
+    Accepts the same coordinate kinds as :func:`orient2d`.
+    """
 
     return _evaluate(_ORIENT3D, (a, b, c, d), mode)
 
@@ -801,18 +1031,31 @@ def _classify_segments(
 
 
 def segment_intersections_2d(
-    a: Any, b: Any, c: Any, d: Any, /, *, mode: PredicateMode
+    a: ConvertibleToArray,
+    b: ConvertibleToArray,
+    c: ConvertibleToArray,
+    d: ConvertibleToArray,
+    /,
+    *,
+    mode: PredicateMode,
 ) -> SegmentIntersectionResult:
     """Classify the contact of closed segments ``ab`` and ``cd`` (``(..., 2)``, broadcast).
 
     Host-only (``FILTERED`` or ``EXACT``); unresolved filtered signs yield
     ``UNCERTAIN`` unless an exact coordinate or certified sign test separates
-    the segments.
+    the segments. Object arrays of Python integers are classified exactly.
     """
 
     _require_host_mode(mode)
     flat, leading = _host_points((a, b, c, d), 2)
-    status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
+    if flat[0].dtype == object:
+        # Exact integer banks: per row sixteen coordinate comparisons and
+        # thirty-six object slots of stacked/extremal references (no new
+        # bigints); the four orient2d signs charge themselves.
+        with exact_charge(16 * flat[0].shape[0], 8 * 36 * flat[0].shape[0]):
+            status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
+    else:
+        status = _classify_segments(flat[0], flat[1], flat[2], flat[3], mode)
     return SegmentIntersectionResult(status.reshape(leading), mode)
 
 

@@ -2,6 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
+
 from ...operators.mechanics import (
     finite_strain_kinematics,
     FiniteStrainKinematics,
@@ -263,19 +266,6 @@ from ._rod_advanced_actuation import (
     VariableStiffnessCommand,
     VariableStiffnessEvaluation,
     VariableStiffnessState,
-)
-from ._rod_contact_plant import (
-    FRICTIONLESS_ROD_CONTACT_CAPABILITY,
-    ISOTROPIC_COULOMB_ROD_CONTACT_CAPABILITY,
-    prepare_reduced_rod_contact_plant,
-    PreparedReducedRodContactPlant,
-    ReducedRodContactConservationEvidence,
-    ReducedRodContactEnergyEvidence,
-    ReducedRodContactPlantResetEvidence,
-    ReducedRodContactPlantState,
-    ReducedRodContactPlantStatus,
-    ReducedRodContactPlantStepEvidence,
-    RodContactCapabilityId,
 )
 from ._rod_dynamics import (
     evaluate_endpoint_attachment,
@@ -551,6 +541,53 @@ from ._topology_state import (
     NeuralVariationalStateSolver,
     StateAdjointEvidence,
 )
+
+
+if TYPE_CHECKING:
+    from ._rod_contact_plant import (
+        FRICTIONLESS_ROD_CONTACT_CAPABILITY,
+        ISOTROPIC_COULOMB_ROD_CONTACT_CAPABILITY,
+        prepare_reduced_rod_contact_plant,
+        PreparedReducedRodContactPlant,
+        ReducedRodContactConservationEvidence,
+        ReducedRodContactEnergyEvidence,
+        ReducedRodContactPlantResetEvidence,
+        ReducedRodContactPlantState,
+        ReducedRodContactPlantStatus,
+        ReducedRodContactPlantStepEvidence,
+        RodContactCapabilityId,
+    )
+
+# The rod contact plant composes ``applications.contact``, whose rod participant
+# imports this package's rod kernels. Resolving the plant on first access keeps
+# either package importable first without a partially initialized cycle.
+_LAZY_ROD_CONTACT_PLANT = frozenset(
+    {
+        "FRICTIONLESS_ROD_CONTACT_CAPABILITY",
+        "ISOTROPIC_COULOMB_ROD_CONTACT_CAPABILITY",
+        "prepare_reduced_rod_contact_plant",
+        "PreparedReducedRodContactPlant",
+        "ReducedRodContactConservationEvidence",
+        "ReducedRodContactEnergyEvidence",
+        "ReducedRodContactPlantResetEvidence",
+        "ReducedRodContactPlantState",
+        "ReducedRodContactPlantStatus",
+        "ReducedRodContactPlantStepEvidence",
+        "RodContactCapabilityId",
+    }
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _LAZY_ROD_CONTACT_PLANT:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("._rod_contact_plant", __package__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

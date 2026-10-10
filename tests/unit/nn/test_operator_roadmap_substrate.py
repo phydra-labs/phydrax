@@ -55,6 +55,7 @@ from phydrax.terms import ResidualPenalty
 def test_operator_training_substrate_has_explicit_namespace_ownership() -> None:
     training_exports = set(phx.nn.operator.training.__all__)
     assert set(phx.nn.__all__) == {
+        "PeriodicInputCertificate",
         "activations",
         "atomistic",
         "flows",
@@ -761,6 +762,53 @@ def test_pde_restore_refuses_missing_form_identity() -> None:
         phx.equations.pde_ir_from_dict(payload)
 
 
+def test_pde_parameter_representation_is_declared_identity() -> None:
+    x = PDECoordinate("x", "space")
+    velocity = PDEExpression.parameter("velocity") * PDEExpression.field("u")
+
+    def problem(representation: PDERepresentation) -> PDEProblemIR:
+        return PDEProblemIR(
+            coordinates=(x,),
+            fields=(PDEField("u", coordinates=("x",)),),
+            parameters=(
+                phx.equations.PDEParameter(
+                    "velocity", representation=representation, functional=True
+                ),
+            ),
+            equations=(
+                PDEEquation(
+                    "transport",
+                    PDEExpression.field("u"),
+                    PDEExpression.constant(0.0),
+                ),
+            ),
+        )
+
+    # A one-component vector is a declaration, never a component-count inference.
+    vector, scalar = problem("vector"), problem("scalar")
+    assert phx.equations.infer_expression_type(velocity.divergence("x"), vector).is_scalar
+    with pytest.raises(ValueError, match="vector-valued"):
+        phx.equations.infer_expression_type(velocity.divergence("x"), scalar)
+    payload = json.loads(pde_ir_to_json(vector))
+    assert payload["parameters"][0]["representation"] == "vector"
+    assert pde_ir_from_json(pde_ir_to_json(vector)) == vector
+    assert pde_ir_hash(vector) != pde_ir_hash(scalar)
+    assert not bool(
+        eqx.tree_equal(
+            tokenize_pde_ir(vector, dimension_basis=()),
+            tokenize_pde_ir(scalar, dimension_basis=()),
+        )
+    )
+    del payload["parameters"][0]["representation"]
+    with pytest.raises(ValueError, match="representation"):
+        phx.equations.pde_ir_from_dict(payload)
+    with pytest.raises(ValueError, match="exactly one component"):
+        phx.equations.PDEParameter("b", components=2)
+    with pytest.raises(ValueError, match="representation"):
+        # ty: ignore[invalid-argument-type]
+        phx.equations.PDEParameter("c", representation="spinor")
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -850,6 +898,7 @@ def test_pde_numeric_metadata_rejects_nonfinite_during_construction() -> None:
                 lambda value: phx.equations.PDEParameter(
                     "a",
                     value=(0.0, value),
+                    representation="vector",
                     components=2,
                 ),
             ),

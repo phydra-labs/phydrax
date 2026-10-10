@@ -6,6 +6,7 @@
 from typing import Any
 
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -160,3 +161,79 @@ def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted(
     np.testing.assert_array_equal(
         admitted.result.mesh.coordinates, admitted.relocation.coordinates
     )
+
+
+def test_motion_retains_original_domain_certificate_and_refuses_boundary_escape() -> None:
+    from phydrax.discretization._cell_geometry import CellGeometrySpec
+    from phydrax.geometry import PiecewiseLinearDomain
+    from phydrax.meshing._certification import MeshCertificationSchedule
+    from phydrax.meshing._certification_inputs import MeshCertificationInputs
+    from phydrax.meshing._lineage import identity_lineage
+
+    original = _certified(_POINTS, _CELLS)
+    mesh = original.mesh
+    geometry = CellGeometrySpec.affine(mesh)
+    domain = PiecewiseLinearDomain(
+        _POINTS[:4],
+        np.asarray([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64),
+        np.tile(np.asarray([0, -1], dtype=np.int64), (4, 1)),
+        ("original-fluid",),
+        source_id="original-square-authority",
+    )
+    request = MeshCertificationInputs(
+        mesh,
+        geometry,
+        MeshCertificationSchedule("volume_plc"),
+        domain=domain,
+        cell_regions=np.zeros(4, dtype=np.int64),
+    )
+    source = meshing.certify_cell_mesh(
+        mesh,
+        phx.SpatialCoordinateContract.si(),
+        geometry=geometry,
+        audit_policy=meshing.CellMeshAuditPolicy(
+            watertight_boundary=meshing.CellMeshAuditDisposition.REJECT
+        ),
+        certification_inputs=request,
+        lineage=identity_lineage(mesh, mesh),
+    )
+    monitor = meshing.MeshMotionMonitor(source.mesh)
+    moved, _ = _shifted_center(source, 0.1)
+    accepted = meshing.advance_mesh_motion(monitor, source, moved, boundary_residual=0.0)
+    assert accepted.accepted
+    result = accepted.result
+    if (
+        result is None
+        or result.certification is None
+        or result.certification.coverage is None
+    ):
+        raise AssertionError(
+            "Accepted motion omitted its current original-domain certificate."
+        )
+    certificate = result.certification
+    certificate.require_passed()
+    np.testing.assert_allclose(
+        np.asarray(
+            result.certification.coverage.achieved_region_measures, dtype=np.float64
+        ),
+        [1.0],
+        rtol=0.0,
+        atol=2e-14,
+    )
+    corners = np.asarray(result.mesh.coordinates)[
+        np.asarray(result.mesh.blocks[0].vertices)
+    ]
+    first, second = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    np.testing.assert_allclose(
+        np.sum(0.5 * (first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])),
+        1.0,
+        rtol=0.0,
+        atol=2e-14,
+    )
+    with pytest.raises(meshing.MeshingFailure):
+        meshing.advance_mesh_motion(
+            monitor,
+            source,
+            np.asarray(source.mesh.coordinates) + [0.1, 0.0],
+            boundary_residual=0.0,
+        )

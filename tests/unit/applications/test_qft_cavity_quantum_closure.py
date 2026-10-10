@@ -27,9 +27,11 @@ from phydrax.applications.cavity_quantum import (
     MaxwellLindbladPlan,
     MaxwellLindbladState,
     MaxwellLindbladVectorField,
+    PreparedAdaptiveHcurlCapability,
     PurcellLoweringPlan,
 )
 from phydrax.discretization._cell_mesh import CellMesh
+from phydrax.discretization._topology_epoch import TopologyEpoch
 
 
 def _tetrahedral_mesh() -> Any:
@@ -163,7 +165,7 @@ def test_qft_contracts() -> None:
     )
     mesh = _tetrahedral_mesh()
     high_order = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=2)
-    missing_adaptation = AdaptiveHcurlCapabilityPlan(
+    adaptive = AdaptiveHcurlCapabilityPlan(
         mesh, requested_polynomial_order=1, require_adaptation=True
     )
     native = AdaptiveHcurlCapabilityPlan(mesh, requested_polynomial_order=1)
@@ -173,11 +175,8 @@ def test_qft_contracts() -> None:
     assert high_order.evidence.assembly_supported
     high_complex = high_order.prepare().space
     assert high_complex.hilbert_complex().space(1).size == 20
-    assert missing_adaptation.evidence.status == int(
-        HcurlCapabilityStatus.ADAPTATION_TRANSACTION_REQUIRED
-    )
-    with pytest.raises(NotImplementedError, match="transaction"):
-        missing_adaptation.prepare()
+    assert adaptive.evidence.status == int(HcurlCapabilityStatus.SUPPORTED)
+    assert adaptive.prepare().evidence.adaptation_supported
     assert resource_refused.evidence.status == int(
         HcurlCapabilityStatus.RESOURCE_LIMIT_EXCEEDED
     )
@@ -187,3 +186,126 @@ def test_qft_contracts() -> None:
     assert prepared.space.hilbert_complex().space(1).size == 6
     assert prepared.evidence.assembly_supported
     assert not prepared.evidence.adaptation_supported
+
+
+def _hcurl_moments(space: Any, constant: np.ndarray, rotation: np.ndarray) -> Any:
+    """Canonical one-form moments, including non-edge higher-order functionals."""
+    return space.interpolant(
+        1,
+        lambda points: (
+            jnp.asarray(constant)[None, :]
+            + jnp.cross(jnp.asarray(rotation)[None, :], points)
+            + (0.25 * points if space.order > 1 else 0.0)
+        ),
+    ).values
+
+
+def _refined_cavity(mesh: Any) -> Any:
+    import phydrax as phx
+
+    certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    return phx.meshing.execute_mesh_adaptation(
+        phx.meshing.prepare_mesh_adaptation(
+            certified,
+            phx.meshing.MarkedMeshAdaptation(np.asarray((0,), dtype=np.int64)),
+            policy=phx.meshing.MeshAdaptationPolicy(
+                phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize("order", (1, 2))
+def test_adaptive_hcurl_transfer_preserves_circulation_and_curl(order: int) -> None:
+    mesh = _tetrahedral_mesh()
+    prepared = AdaptiveHcurlCapabilityPlan(
+        mesh, requested_polynomial_order=order, require_adaptation=True
+    ).prepare()
+    adaptation = _refined_cavity(mesh)
+    constant, rotation = np.asarray((0.3, -1.2, 0.5)), np.asarray((0.7, 0.2, -0.4))
+    field = _hcurl_moments(prepared.space, constant, rotation)
+
+    result = prepared.adapt(adaptation, field, accepted_boundary=True)
+
+    assert result.committed and result.receipt is not None and result.receipt.published
+    successor = result.capability.space
+    np.testing.assert_allclose(
+        result.edge_integrals,
+        _hcurl_moments(successor, constant, rotation),
+        atol=1e-13,
+    )
+    # A canonical zero-form differential stays curl-free at every order.
+    potential = prepared.space.interpolant(
+        0, lambda points: (points @ jnp.asarray((1.0, -2.0, 0.5)))[:, None]
+    ).values
+    gradient = prepared.adapt(
+        adaptation,
+        prepared.space.exterior_derivative(0, potential),
+        accepted_boundary=True,
+    )
+    np.testing.assert_allclose(
+        successor.exterior_derivative(1, gradient.edge_integrals), 0.0, atol=1e-13
+    )
+    assert result.transfer is not None and result.transfer.evidence.passed
+    assert result.transfer.evidence.defect("commuting") <= (
+        result.transfer.evidence.tolerance
+    )
+    assert result.capability.epoch.index == prepared.epoch.index + 1
+
+
+def test_adaptive_hcurl_rejection_retains_the_accepted_epoch() -> None:
+    mesh = _tetrahedral_mesh()
+    prepared = AdaptiveHcurlCapabilityPlan(mesh, require_adaptation=True).prepare()
+    field = _hcurl_moments(
+        prepared.space, np.asarray((1.0, 0.0, 0.0)), np.asarray((0.0, 0.0, 1.0))
+    )
+
+    result = prepared.adapt(_refined_cavity(mesh), field, accepted_boundary=False)
+
+    assert not result.committed
+    assert result.capability is prepared
+    np.testing.assert_array_equal(result.edge_integrals, field)
+    assert result.receipt is not None and not result.receipt.published
+    assert result.receipt.composition.composition_id == (
+        result.receipt.source_composition_id
+    )
+
+
+def test_adaptive_hcurl_rejects_stale_geometry_before_publication() -> None:
+    mesh = _tetrahedral_mesh()
+    prepared = AdaptiveHcurlCapabilityPlan(mesh, require_adaptation=True).prepare()
+    field = _hcurl_moments(
+        prepared.space, np.asarray((1.0, 0.0, 0.0)), np.asarray((0.0, 0.0, 1.0))
+    )
+    before = np.asarray(field).copy()
+    stale_epoch = TopologyEpoch(
+        prepared.epoch.index,
+        "WRONGGEOMETRY",
+        prepared.epoch.topology_id,
+        prepared.epoch.partition_id,
+    )
+    stale = PreparedAdaptiveHcurlCapability(
+        prepared.space, prepared.evidence, stale_epoch, prepared.prepared_id
+    )
+
+    with pytest.raises(ValueError, match="geometry"):
+        stale.adapt(_refined_cavity(mesh), field, accepted_boundary=True)
+
+    np.testing.assert_array_equal(field, before)
+
+
+def test_high_order_hcurl_resource_refusal_retains_all_form_moments() -> None:
+    mesh = _tetrahedral_mesh()
+    prepared = AdaptiveHcurlCapabilityPlan(
+        mesh, requested_polynomial_order=2, require_adaptation=True, maximum_edges=20
+    ).prepare()
+    field = _hcurl_moments(
+        prepared.space, np.asarray((0.3, -0.2, 0.7)), np.asarray((0.0, 0.0, 1.0))
+    )
+
+    result = prepared.adapt(_refined_cavity(mesh), field, accepted_boundary=True)
+
+    assert not result.committed
+    assert result.diagnostics == "hcurl-resource-limit-exceeded"
+    assert result.capability is prepared
+    np.testing.assert_array_equal(result.edge_integrals, field)

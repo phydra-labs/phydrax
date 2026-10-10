@@ -217,7 +217,10 @@ def test_path_sampling_scenario_1() -> None:
     assert int(jnp.sum(work.sample_active)) == 1
     assert work.inverse_temperature == 2.0
     np.testing.assert_allclose(work.values[work.sample_active], jnp.asarray([0.0]))
-    with pytest.raises(ValueError, match="normalized stochastic"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'action': expected NormalizedStochasticPathAction",
+    ):
         ReducedPathPotential(
             ensemble,
             # ty: ignore[invalid-argument-type]

@@ -446,15 +446,29 @@ def test_sparse_triangular_substitution_supports_multiple_complex_right_sides(
 ) -> None:
     lower = jnp.asarray(
         (
-            (2.0 + 1.0j, 0.0, 0.0),
-            (1.0 - 2.0j, 3.0 + 0.5j, 0.0),
-            (-0.5j, 2.0, 4.0 - 1.0j),
+            (2.0 + 1.0j, 0.0, 0.0, 0.0, 0.0, 0.0),
+            (0.0, 3.0 + 0.5j, 0.0, 0.0, 0.0, 0.0),
+            (1.0 - 2.0j, 0.0, 4.0 - 1.0j, 0.0, 0.0, 0.0),
+            (0.0, 2.0, 0.0, 5.0 + 0.3j, 0.0, 0.0),
+            (0.5j, 0.0, 0.2, 0.0, 6.0, 0.0),
+            (-0.5j, 2.0, 0.1j, 0.4, 0.2j, 7.0 - 1.0j),
         )
     )
     matrix = lower if triangle == "lower" else lower.T
     storage = _sparse_map(matrix).sparse_storage()
     analysis = la.analyze_sparse_triangular(storage, triangle=triangle)
-    right_hand_side = jnp.asarray(((1.0 + 0.5j, 2.0), (-1.0j, 3.0 - 0.5j), (4.0, -2.0j)))
+    # Ragged same-level rows exercise distinct prepared gather prefixes in
+    # both orientations, with multiple complex RHSs and an unchanged residual.
+    right_hand_side = jnp.asarray(
+        (
+            (1.0 + 0.5j, 2.0),
+            (-1.0j, 3.0 - 0.5j),
+            (4.0, -2.0j),
+            (2.0j, 1.0),
+            (-1.0, 0.5j),
+            (3.0 - 0.2j, -2.0),
+        )
+    )
 
     for options, operator in (
         ({}, matrix),

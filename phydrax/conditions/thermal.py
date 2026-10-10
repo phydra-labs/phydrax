@@ -8,7 +8,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import directional_derivative
+from ..operators.differential._domain_ops import directional_derivative
 from ._base import Residual
 from .boundary import _condition_value, ConditionValue
 

@@ -197,14 +197,27 @@ Drives must be JAX-differentiable within a run; split discontinuities into
 separate runs. Dynamic local-equilibrium ionization is rejected because its bound
 population has no conserved state.
 
-Meshing owns topology transitions. `semiconductor_reprepare` uses native positive
-lineage weights to preserve material-routed carrier/dopant counts, differential
-material energy, and explicit bulk/surface trap populations. It reconstructs
+Meshing owns topology transitions. `semiconductor_reprepare` identifies the
+transferred inventories explicitly: electron, hole, donor, and acceptor counts per
+control volume, each bound trap population, and each differential stored material
+energy. Counts and energies cross only same-material routes (material identity is
+the canonical identity of the complete material model) through a shared positive
+conservative transfer; trap populations keep their occupied count. It reconstructs
 temperatures, Fermi energies, and logits from transferred inventories, then
-atomically reinitializes algebraic constraints. Electrostatic field energy is
-reclosed by Poisson rather than falsely conserved across changed geometry.
-Unsupported material routes or inadequate target trap capacity reject the whole
-candidate and retain the prior accepted state.
+recloses the algebraic constraints by native DAE initialization. Electrostatic
+field energy is reclosed by Poisson rather than falsely conserved across changed
+geometry.
+
+The mesh, prepared device, and operating point are staged as one
+`phydrax.lifecycle.CompositionRebind` and published only by
+`commit_composition_rebind`. The operating point crosses by one `physical-remap`
+transport that reports every source inventory against its reclosed value with the
+conservation tolerance. Reclosure success decides the accepted boundary. A failed
+redistribution, positivity, conservation, or reclosure check leaves
+`result.receipt` unpublished and the result on the exact source device and
+coordinates. Stale lineage, mismatched material identity, or inadequate target
+trap capacity raise before any candidate is staged. `epoch_index` names the
+accepted source topology epoch; the adapted device is the next epoch.
 
 ## Terminal and derivative evidence
 

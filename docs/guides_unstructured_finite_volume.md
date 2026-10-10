@@ -494,10 +494,25 @@ tangential Marangoni gradient without duck-typed field extraction.
 accepted-step boundaries. Transactions require typed candidate epoch, remap coverage,
 metrics/evidence status, and conservation evidence; absent evidence never defaults to
 success. Given `source_geometry` and `target_geometry` without a remap, a transaction
-prepares the automatic remap under `remap_policy`; the result's `automatic_remap`
-exposes its status and evidence, and a failed refinement fails the event with
-`FAILED_RESOURCE_LIMIT` or `FAILED_COVERAGE`. A committed event advances the epoch
-journal atomically.
+prepares the automatic remap under `remap_policy` (a supplied
+`PreparedUnstructuredConservativeRemap` is admitted the same way); the result's
+`automatic_remap` exposes its status and evidence, and a failed refinement fails the
+event with `FAILED_RESOURCE_LIMIT` or `FAILED_COVERAGE`.
+
+Only after coverage, conservation, positivity/admissibility, and resource checks pass
+does a transaction stage the candidate `TopologyEpoch` (role `topology`), its
+`FiniteVolumeTopologyArtifacts` (role `prepared-graph`), and the transferred content
+(role `physical-state`, structure identity the epoch ID) as one
+`phydrax.lifecycle.CompositionRebind`. A complete conservative cell remap between
+distinct epochs transports content through its own `TopologyEpochTransition`, which
+accepts only the remap image of the accepted cell averages; any other transfer
+carries the remap-reported content change against the transaction tolerance. The
+journal commit is published only with a published `CompositionRebindReceipt`,
+exposed as the result's `receipt`. A refused receipt fails the event with
+`FAILED_COVERAGE` and returns the accepted epoch, artifacts, and content objects;
+`receipt` is `None` when the event fails before staging. The sliding-map refresh of
+`PreparedFiniteVolumeRuntime` refreshes its prepared runtime and accepted state only
+from a published receipt.
 
 ## Scope
 

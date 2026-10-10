@@ -127,7 +127,6 @@ def run_smoke() -> Any:
     likelihood = domain.Function("x", "t", "observation")(
         lambda x, t, observation: -0.5 * jnp.sum((x - observation) ** 2)
     )
-    # ty: ignore[possibly-missing-submodule]
     base = phx._score_field.StateTimeScoreField(
         base_field,
         state_label="x",

@@ -21,16 +21,34 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._cell_geometry import CellGeometrySpec
+from ..discretization._cell_geometry_validity import cell_geometry_id
 from ..discretization._cell_mesh import CellMesh
+from ..discretization._topology_epoch import TopologyEpoch
 from ..discretization.fem._de_rham import FiniteElementDeRhamComplex
+from ..discretization.fem._topology_transfer import (
+    FiniteElementFieldTransfer,
+    prepare_l2_projection_target,
+    prepare_nested_field_transfer,
+    prepare_projection_field_transfer,
+)
+from ..geometry import CommonRefinementPolicy, prepare_common_refinement
+from ..lifecycle import (
+    commit_composition_rebind,
+    Composition,
+    CompositionEntry,
+    CompositionRebind,
+    CompositionRebindReceipt,
+)
 from ..linalg import (
     ArraySpace,
     ComplexCartesianCoordinates,
     prepare_real_coordinate_tree,
     PreparedRealCoordinateTree,
 )
+from ..meshing import MeshAdaptationResult
 from ..solver._differential import DifferentialProblem
-from ..solver._finite_element_adaptivity import FiniteElementTopologyTransaction
+from ..solver._finite_element_adaptivity import refinement_parent_cells
 from ..typing import checked
 
 
@@ -1084,8 +1102,6 @@ class HcurlCapabilityStatus(IntEnum):
     """Truthful disposition of an adaptive H(curl) request."""
 
     SUPPORTED = 0
-    ADAPTATION_TRANSACTION_REQUIRED = 2
-    HCURL_TRANSFER_REQUIRED = 3
     RESOURCE_LIMIT_EXCEEDED = 4
     UNSUPPORTED_MESH = 5
 
@@ -1105,27 +1121,248 @@ class HcurlCapabilityEvidence(StrictModule, NonTrainableState):
     capability_id: str = eqx.field(static=True)
 
 
+class AdaptiveHcurlTransition(StrictModule, NonTrainableState):
+    """Published or refused adaptive H(curl) epoch change.
+
+    ``capability`` and ``edge_integrals`` are the successor complex and transferred
+    one-form moments when ``committed``, else the accepted ones unchanged. At order
+    one these are edge circulations; higher orders include face and cell moments.
+    ``transfer`` carries the explicit covariant-Piola form transfer and evidence;
+    ``receipt`` is absent only when refused before staging.
+    """
+
+    capability: PreparedAdaptiveHcurlCapability
+    edge_integrals: Array
+    transfer: FiniteElementFieldTransfer | None
+    receipt: CompositionRebindReceipt | None
+    committed: bool = eqx.field(static=True)
+    diagnostics: str = eqx.field(static=True)
+
+
+_HCURL_OWNER = "adaptive-hcurl-capability"
+_HCURL_FIELD = "form_1"
+
+
+def _hcurl_transfer(
+    source: FiniteElementDeRhamComplex,
+    target: FiniteElementDeRhamComplex,
+    adaptation: MeshAdaptationResult,
+    /,
+) -> FiniteElementFieldTransfer | None:
+    """Explicit canonical form-moment transfer, never P1 vertex interpolation."""
+
+    source_space, target_space = source.discretization, target.discretization
+    parents = refinement_parent_cells(adaptation)
+    if parents is not None or adaptation.coarsening_witnesses is not None:
+        return prepare_nested_field_transfer(
+            source_space,
+            target_space,
+            parents,
+            field_name=_HCURL_FIELD,
+            parent_reference_vertices=(
+                adaptation.parent_reference_vertices if parents is not None else None
+            ),
+            source_geometry=adaptation.source.geometry,
+            target_geometry=adaptation.target.geometry,
+            geometry_transition=adaptation.geometry_transition,
+            coarsening_witnesses=adaptation.coarsening_witnesses,
+        )
+    refinement = prepare_common_refinement(
+        source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
+    )
+    if not refinement.succeeded:
+        return None
+    return prepare_projection_field_transfer(
+        source_space,
+        prepare_l2_projection_target(target_space, field_name=_HCURL_FIELD),
+        refinement,
+        field_name=_HCURL_FIELD,
+    )
+
+
+def _hcurl_entries(
+    capability: PreparedAdaptiveHcurlCapability, edge_integrals: Array, /
+) -> tuple[CompositionEntry, CompositionEntry, CompositionEntry]:
+    space = capability.space
+    mesh = CompositionEntry(
+        space.mesh,
+        entry_id="mesh",
+        role="topology",
+        owner_id=_HCURL_OWNER,
+        structure_id=space.mesh.topology_id,
+        revision_id=space.mesh.mesh_id,
+        semantics_id="cavity-tetrahedral-mesh",
+    )
+    discretization = CompositionEntry(
+        space,
+        entry_id="hcurl-space",
+        role="discretization",
+        owner_id=_HCURL_OWNER,
+        structure_id=space.realization_id,
+        revision_id=space.realization_id,
+        semantics_id=f"trimmed-tetrahedral-one-form-order-{space.order}",
+        dependencies=(mesh.binding("structure"),),
+    )
+    field = CompositionEntry(
+        edge_integrals,
+        entry_id="field/edge-circulation",
+        role="physical-state",
+        owner_id=_HCURL_OWNER,
+        structure_id=capability.epoch.epoch_id,
+        revision_id=canonical_fingerprint(
+            {
+                "kind": "adaptive-hcurl-field",
+                "epoch": capability.epoch.epoch_id,
+                "value": np.asarray(edge_integrals),
+            }
+        ),
+        semantics_id="cavity-electric-edge-circulation",
+        dependencies=(discretization.binding("structure"),),
+    )
+    return mesh, discretization, field
+
+
 @final
 class PreparedAdaptiveHcurlCapability(StrictModule, NonTrainableState):
-    """Native conforming form complex and explicit AMR transaction binding."""
+    """General-order tetrahedral forms on one accepted topology/geometry epoch.
+
+    :meth:`adapt` explicitly transfers the degree-one form moments and atomically
+    publishes the successor complex and field through ``CompositionRebind``.
+    """
 
     space: FiniteElementDeRhamComplex
-    transaction: FiniteElementTopologyTransaction | None
     evidence: HcurlCapabilityEvidence
+    epoch: TopologyEpoch
     prepared_id: str = eqx.field(static=True)
+
+    def adapt(
+        self,
+        adaptation: MeshAdaptationResult,
+        edge_integrals: ArrayLike,
+        /,
+        *,
+        accepted_boundary: bool,
+    ) -> AdaptiveHcurlTransition:
+        """Transfer all degree-one form moments through a certified adaptation.
+
+        Nested refinement reproduces source forms in the child moment basis.
+        Non-nested adaptations use the covariant-Piola constrained L2 projection
+        on a certified common refinement. The explicit transfer's evidence
+        certifies reproduction, trace continuity and the commuting differential.
+        A refused common refinement, exceeded resources, failed certificate or
+        ``accepted_boundary=False`` retains the accepted complex and field exactly.
+        """
+
+        if not isinstance(adaptation, MeshAdaptationResult):
+            raise TypeError("adaptation must be MeshAdaptationResult.")
+        if not isinstance(accepted_boundary, bool):
+            raise TypeError("accepted_boundary must be an explicit host bool.")
+        values = jnp.asarray(edge_integrals)
+        if values.shape != (self.space.hilbert_complex().space(1).size,):
+            raise ValueError("H(curl) state must hold every degree-one form moment.")
+        if adaptation.source.mesh.mesh_id != self.space.mesh.mesh_id:
+            raise ValueError("The adaptation does not start from this H(curl) mesh.")
+        if cell_geometry_id(adaptation.source.geometry) != self.epoch.geometry_id:
+            raise ValueError("The adaptation does not start from this H(curl) geometry.")
+
+        def retained(
+            reason: str,
+            transfer: FiniteElementFieldTransfer | None = None,
+            receipt: CompositionRebindReceipt | None = None,
+        ) -> AdaptiveHcurlTransition:
+            return AdaptiveHcurlTransition(self, values, transfer, receipt, False, reason)
+
+        if adaptation.transition is None:
+            return retained("adaptation-unchanged")
+        target_mesh = adaptation.target.mesh
+        target_plan = AdaptiveHcurlCapabilityPlan(
+            target_mesh,
+            requested_polynomial_order=self.space.order,
+            require_adaptation=self.evidence.adaptation_supported,
+            maximum_edges=self.evidence.maximum_edges,
+            maximum_cells=self.evidence.maximum_cells,
+            coordinate_spec=adaptation.target.geometry,
+        )
+        if target_plan.evidence.status != int(HcurlCapabilityStatus.SUPPORTED):
+            return retained(
+                "hcurl-resource-limit-exceeded"
+                if target_plan.evidence.status
+                == int(HcurlCapabilityStatus.RESOURCE_LIMIT_EXCEEDED)
+                else target_plan.evidence.reason
+            )
+        target_space = FiniteElementDeRhamComplex(
+            target_mesh,
+            family=self.space.family,
+            order=self.space.order,
+            coordinate_spec=adaptation.target.geometry,
+        )
+        try:
+            transfer = _hcurl_transfer(self.space, target_space, adaptation)
+        except ValueError as error:
+            # Transfer owners refuse unrealizable commuting constraints and
+            # unsupported mapped routes before producing a certificate.
+            return retained(f"hcurl-transfer-rejected: {error}")
+        if transfer is None:
+            return retained("hcurl-projection-coverage-rejected")
+        target_epoch = TopologyEpoch(
+            self.epoch.index + 1,
+            cell_geometry_id(adaptation.target.geometry),
+            target_mesh.topology_id,
+            self.epoch.partition_id,
+        )
+        successor = PreparedAdaptiveHcurlCapability(
+            target_space,
+            target_plan.evidence,
+            target_epoch,
+            canonical_fingerprint(
+                {
+                    "kind": "prepared-adaptive-hcurl-capability",
+                    "predecessor": self.prepared_id,
+                    "space": target_space.realization_id,
+                    "epoch": target_epoch.epoch_id,
+                }
+            ),
+        )
+        transition = transfer.epoch_transition(self.epoch, target_epoch)
+        transferred = transition.apply(values).values
+        source_entries = _hcurl_entries(self, values)
+        target_entries = _hcurl_entries(successor, transferred)
+        receipt = commit_composition_rebind(
+            CompositionRebind(
+                Composition(source_entries, boundary_id=self.prepared_id),
+                reprepare=target_entries[:2],
+                transports=(
+                    transition.composition_transport(
+                        source_entries[2], target_entries[2]
+                    ),
+                ),
+            ),
+            accepted_boundary=accepted_boundary,
+        )
+        if not receipt.published:
+            return retained(
+                "hcurl-transfer-rejected"
+                if not all(receipt.transport_accepted)
+                else "boundary-not-accepted",
+                transfer,
+                receipt,
+            )
+        return AdaptiveHcurlTransition(
+            successor, transferred, transfer, receipt, True, "committed"
+        )
 
 
 @final
 class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
-    """Capability gate over the existing tetrahedral FEM/AMR substrate.
+    """Capability gate over the native tetrahedral H(curl) and adaptation substrate.
 
     The trimmed tetrahedral form family supports every positive polynomial order.
-    Adaptive transfer is admitted only when a finite-element topology transaction
-    supplies an explicit form-field transfer, not an automatic P1 vertex transfer.
+    Adaptation constructs an explicit certified form-field transfer and publishes
+    one atomic topology/discretization/state transaction, never a P1 vertex transfer.
     """
 
     mesh: CellMesh
-    transaction: FiniteElementTopologyTransaction | None
+    coordinate_spec: CellGeometrySpec
     evidence: HcurlCapabilityEvidence
     require_adaptation: bool = eqx.field(static=True)
     maximum_edges: int = eqx.field(static=True)
@@ -1140,21 +1377,23 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
         *,
         requested_polynomial_order: int = 1,
         require_adaptation: bool = False,
-        transaction: FiniteElementTopologyTransaction | None = None,
         maximum_edges: int = 2**18,
         maximum_cells: int = 2**17,
+        coordinate_spec: CellGeometrySpec | None = None,
     ) -> None:
+        coordinates = coordinate_spec
+        if coordinates is None:
+            coordinates = (
+                CellGeometrySpec.affine(mesh)
+                if mesh.storage is None
+                else mesh.storage.restore_geometry()
+            )
+        coordinates.resolve(mesh)
         order = int(requested_polynomial_order)
         if order < 1:
             raise ValueError("requested_polynomial_order must be positive.")
         if not isinstance(require_adaptation, bool):
             raise TypeError("require_adaptation must be bool.")
-        if transaction is not None and not isinstance(
-            transaction, FiniteElementTopologyTransaction
-        ):
-            raise TypeError(
-                "transaction must be FiniteElementTopologyTransaction or None."
-            )
         edge_limit = int(maximum_edges)
         cell_limit = int(maximum_cells)
         if edge_limit < 1 or cell_limit < 1:
@@ -1183,35 +1422,24 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly = False
             adaptation = False
             reason = "tetrahedral H(curl) mesh exceeds the declared fixed resources"
-        elif require_adaptation and transaction is None:
-            status = HcurlCapabilityStatus.ADAPTATION_TRANSACTION_REQUIRED
-            assembly = True
-            adaptation = False
-            reason = "adaptive H(curl) requires an explicit finite-element topology transaction"
-        elif (
-            require_adaptation
-            and transaction is not None
-            and transaction.field_transfer is None
-        ):
-            status = HcurlCapabilityStatus.HCURL_TRANSFER_REQUIRED
-            assembly = True
-            adaptation = False
-            reason = "automatic P1 vertex transfer is not an H(curl) edge transfer"
         else:
             status = HcurlCapabilityStatus.SUPPORTED
             assembly = True
             adaptation = require_adaptation
-            reason = "native trimmed tetrahedral H(curl) assembly admitted"
+            reason = (
+                "native trimmed tetrahedral H(curl) assembly and explicit "
+                "certified form transfer admitted"
+                if require_adaptation
+                else "native trimmed tetrahedral H(curl) assembly admitted"
+            )
         capability_id = canonical_fingerprint(
             {
                 "kind": "adaptive-hcurl-capability",
                 "mesh": mesh.mesh_id,
+                "geometry": cell_geometry_id(coordinates),
                 "requested_polynomial_order": order,
                 "native_polynomial_order": order,
                 "require_adaptation": require_adaptation,
-                "transaction": None
-                if transaction is None
-                else transaction.transaction_id,
                 "edge_count": edge_count,
                 "cell_count": cell_count,
                 "maximum_edges": edge_limit,
@@ -1233,7 +1461,7 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             capability_id,
         )
         self.mesh = mesh
-        self.transaction = transaction
+        self.coordinate_spec = coordinates
         self.evidence = evidence
         self.require_adaptation = require_adaptation
         self.maximum_edges = edge_limit
@@ -1242,29 +1470,35 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             {"kind": "adaptive-hcurl-capability-plan", "capability": capability_id}
         )
 
-    def prepare(self, /) -> PreparedAdaptiveHcurlCapability:
+    def prepare(self, /, *, epoch_index: int = 0) -> PreparedAdaptiveHcurlCapability:
         if self.evidence.status != int(HcurlCapabilityStatus.SUPPORTED):
             raise NotImplementedError(self.evidence.reason)
         space = FiniteElementDeRhamComplex(
-            self.mesh, family="trimmed", order=self.evidence.requested_polynomial_order
+            self.mesh,
+            family="trimmed",
+            order=self.evidence.requested_polynomial_order,
+            coordinate_spec=self.coordinate_spec,
+        )
+        epoch = TopologyEpoch(
+            int(epoch_index),
+            cell_geometry_id(self.coordinate_spec),
+            self.mesh.topology_id,
+            "serial",
         )
         prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-adaptive-hcurl-capability",
                 "plan": self.plan_id,
                 "space": space.realization_id,
-                "transaction": None
-                if self.transaction is None
-                else self.transaction.transaction_id,
+                "epoch": epoch.epoch_id,
             }
         )
-        return PreparedAdaptiveHcurlCapability(
-            space, self.transaction, self.evidence, prepared_id
-        )
+        return PreparedAdaptiveHcurlCapability(space, self.evidence, epoch, prepared_id)
 
 
 __all__ = [
     "AdaptiveHcurlCapabilityPlan",
+    "AdaptiveHcurlTransition",
     "CavityDipoleCouplingPlan",
     "CavityDipoleCouplingResult",
     "CavityModeStatus",

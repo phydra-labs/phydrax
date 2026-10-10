@@ -4,10 +4,10 @@
 
 """Differentiable sampled cell quality and finite-volume face quality.
 
-Quality is sampled at cell corners (and star simplices for polygons and
-polyhedra); ``sampled_valid`` is therefore evidence, not a validity proof. The
-Bernstein certificate in ``phydrax.discretization._cell_geometry_validity`` is
-the validity owner.
+Owning coordinate maps supply signed measures and sampled Jacobian metric
+quality; explicit corner-coordinate evaluations retain straight-corner/star
+quality. Neither sampling route proves validity: the Bernstein certificate in
+``phydrax.discretization._cell_geometry_validity`` is the validity owner.
 """
 
 from __future__ import annotations
@@ -26,10 +26,19 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import charge_native_geometry_queries
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellMesh, PolyhedralConnectivity
+from ..discretization import CellGeometrySpec, CellMesh, PolyhedralConnectivity
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry import (
+    _require_scalar_coordinate_element,
+    CellGeometryElement,
+    CellVertexGeometryElement,
+    LayerColumnCellGeometryElement,
+    RestrictedCellGeometryElement,
+    SplineCellGeometryElement,
+)
 from ..discretization._cell_geometry_validity import (
     polyhedral_star_tables,
     PolyhedralStarTables,
@@ -37,21 +46,26 @@ from ..discretization._cell_geometry_validity import (
 from ..discretization._hexahedral import HexahedralConnectivity
 from ..discretization._motion_validity import reference_corner_frames
 from ..discretization._reference_cell import reference_cell_topology
+from ..discretization.fem._generic import _degree_aware_reference_rule
+from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ..typing import checked
 from ._metric import interpolate_mesh_metric, MeshMetricField
+from ._scope import MeshingEntityKind
 
 
 class CellQualityEvaluation(StrictModule):
     """Per-cell sampled quality in mesh block order.
 
-    Angles are radians: interior corner angles for 2-cells and interior
-    dihedral angles for 3-cells (above pi at reflex corners/edges). Mean ratio,
-    scaled Jacobian, condition number, and metric quality are corner samples of
-    the Jacobian relative to the ideal cell (equilateral simplex, unit square or
-    cube, regular prism, pyramid, or polygon). ``radius_ratios`` (simplices) and
-    ``sliver_measures`` (tetrahedra) are NaN for other kinds; ``metric_quality``
-    is NaN without a metric. ``warpage`` is the largest angle between a face's
-    centroid-fan triangle normals and its vector-area normal.
+    Angles are radians. Without ``geometry_layout_id``, every shape statistic
+    uses straight corner frames (or vertex-star simplices). With an owning
+    scalar coordinate map, measures integrate its signed Jacobian; shape,
+    radius/sliver, condition, and metric statistics sample its Jacobian images
+    of the canonical reference shape. Boundary angles use actual source-map
+    corner tangents or edge dihedrals; warpage samples mapped face normals.
+    Vertex-defined polygon/polyhedron maps retain their
+    owning star convention. Rational/embedded measures are sampled quadrature,
+    not exact integration or a whole-map validity claim. ``metric_quality`` is
+    NaN without a metric; radius/sliver values are NaN for nonsimplicial kinds.
     """
 
     cell_global_ids: Array
@@ -70,7 +84,9 @@ class CellQualityEvaluation(StrictModule):
     block_names: tuple[str, ...] = eqx.field(static=True)
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
+    geometry_layout_id: str | None = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
+    metric: MeshMetricField | None
 
 
 def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
@@ -79,7 +95,20 @@ def _nan_extreme(values: np.ndarray, reducer: Any, /) -> float:
 
 
 class CellQualityReport(StrictModule, NonTrainableState):
+    """Summary of source-map or explicitly straight-corner sampled quality.
+
+    The evaluation's geometry layout distinguishes its actual source-map
+    measurements from corner-only measurements. This is quality evidence only:
+    mapped-cell validity is owned by the Bernstein validity certificate and
+    global embedding by geometry mesh certificates.
+    ``sampled_invalid_cell_global_ids`` lists failed sampled Jacobian frames.
+    Empty sampled arrays are admitted only with an actual zero-resident
+    distributed mesh. Their extrema are the neutral reductions over an empty
+    local set, not measurements or a global quality certificate.
+    """
+
     evaluation: CellQualityEvaluation
+    topology_id: str = eqx.field(static=True)
     minimum_measure: float = eqx.field(static=True)
     maximum_measure: float = eqx.field(static=True)
     minimum_mean_ratio: float = eqx.field(static=True)
@@ -91,11 +120,14 @@ class CellQualityReport(StrictModule, NonTrainableState):
     maximum_warpage: float = eqx.field(static=True)
     minimum_metric_quality: float = eqx.field(static=True)
     sampled_invalid_count: int = eqx.field(static=True)
+    sampled_invalid_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
     worst_cell_global_ids: tuple[int, ...] = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, evaluation: CellQualityEvaluation, /) -> None:
+    def __init__(
+        self, evaluation: CellQualityEvaluation, /, *, mesh: CellMesh | None = None
+    ) -> None:
         measures = np.asarray(evaluation.measures, dtype=np.float64)
         ratios = np.asarray(evaluation.mean_ratios, dtype=np.float64)
         aspects = np.asarray(evaluation.aspect_ratios, dtype=np.float64)
@@ -107,19 +139,56 @@ class CellQualityReport(StrictModule, NonTrainableState):
         metric = np.asarray(evaluation.metric_quality, dtype=np.float64)
         valid = np.asarray(evaluation.sampled_valid, dtype=np.bool_)
         identifiers = np.asarray(evaluation.cell_global_ids, dtype=np.int64)
+        if identifiers.size == 0:
+            if (
+                mesh is None
+                or mesh.storage is None
+                or (
+                    mesh.storage.global_entity_counts[mesh.topological_dimension] <= 0
+                    or mesh.coordinates.shape[0] != 0
+                    or any(block.global_ids.shape[0] != 0 for block in mesh.blocks)
+                    or evaluation.topology_id != mesh.topology_id
+                    or evaluation.block_names
+                    != tuple(block.name for block in mesh.blocks)
+                    or evaluation.block_offsets
+                    != tuple(0 for _ in range(len(mesh.blocks) + 1))
+                    or any(
+                        values.shape != (0,)
+                        for values in (
+                            measures,
+                            ratios,
+                            aspects,
+                            scaled,
+                            condition,
+                            minimum_angle,
+                            maximum_angle,
+                            warpage,
+                            metric,
+                            valid,
+                        )
+                    )
+                )
+            ):
+                raise ValueError(
+                    "Empty sampled quality requires an exact zero-resident globally nonempty mesh."
+                )
         order = np.argsort(np.where(valid, ratios, -np.inf), kind="stable")
         self.evaluation = evaluation
-        self.minimum_measure = float(np.min(measures))
-        self.maximum_measure = float(np.max(measures))
-        self.minimum_mean_ratio = float(np.min(ratios))
-        self.maximum_aspect_ratio = float(np.max(aspects))
-        self.minimum_scaled_jacobian = float(np.min(scaled))
-        self.maximum_condition_number = float(np.max(condition))
+        self.topology_id = evaluation.topology_id
+        self.minimum_measure = float(np.min(measures, initial=np.inf))
+        self.maximum_measure = float(np.max(measures, initial=-np.inf))
+        self.minimum_mean_ratio = float(np.min(ratios, initial=np.inf))
+        self.maximum_aspect_ratio = float(np.max(aspects, initial=-np.inf))
+        self.minimum_scaled_jacobian = float(np.min(scaled, initial=np.inf))
+        self.maximum_condition_number = float(np.max(condition, initial=-np.inf))
         self.minimum_angle = _nan_extreme(minimum_angle, np.min)
         self.maximum_angle = _nan_extreme(maximum_angle, np.max)
-        self.maximum_warpage = float(np.max(warpage))
+        self.maximum_warpage = float(np.max(warpage, initial=-np.inf))
         self.minimum_metric_quality = _nan_extreme(metric, np.min)
         self.sampled_invalid_count = int(np.count_nonzero(~valid))
+        self.sampled_invalid_cell_global_ids = tuple(
+            int(value) for value in identifiers[~valid]
+        )
         self.worst_cell_global_ids = tuple(
             int(identifiers[index]) for index in order[: min(10, order.size)]
         )
@@ -608,9 +677,11 @@ def _dihedral_angles(points: Array, samples: np.ndarray, /) -> Array:
     edge = points[:, samples[:, 1]] - origin
     first = points[:, samples[:, 2]] - origin
     second = points[:, samples[:, 3]] - origin
-    unit = edge / jnp.maximum(
-        jnp.linalg.norm(edge, axis=-1, keepdims=True), _tiny(points)
-    )
+    return _dihedral_vectors(edge, first, second)
+
+
+def _dihedral_vectors(edge: Array, first: Array, second: Array, /) -> Array:
+    unit = edge / jnp.maximum(jnp.linalg.norm(edge, axis=-1, keepdims=True), _tiny(edge))
     sine = jnp.sum(jnp.cross(first, second) * unit, axis=-1)
     cosine = jnp.sum(first * second, axis=-1) - jnp.sum(first * unit, axis=-1) * jnp.sum(
         second * unit, axis=-1
@@ -710,6 +781,244 @@ def _standard_block_quality(
             return _solid_quality(kind, points, metric)
         case _:
             raise ValueError(f"No native quality implementation for {kind!r}.")
+
+
+def _mapped_face_warpage(
+    kind: str,
+    element: CellGeometryElement,
+    coordinates: Array,
+    /,
+) -> Array:
+    """Sample the actual mapped face normals, including curved interior faces."""
+    source = _require_scalar_coordinate_element(element, "Mapped quality")
+    dimension, ambient = source.topological_dimension, coordinates.shape[-1]
+    if dimension < 2 or ambient < 3:
+        return jnp.zeros((coordinates.shape[0],), dtype=coordinates.dtype)
+    vertices = np.asarray(reference_cell_topology(kind).vertices, dtype=np.float64)
+    faces = (
+        _faces(kind, vertices.shape[0])
+        if dimension == 3
+        else (tuple(range(vertices.shape[0])),)
+    )
+    angles = []
+    for face in faces:
+        points = vertices[np.asarray(face, dtype=np.int64)]
+        # Edge midpoints stay in the owning face chart without asking a
+        # collapsed pyramid apex for a nonexistent unique tangent plane.
+        probes = np.concatenate(
+            (
+                np.mean(points, axis=0, keepdims=True),
+                0.5 * (points + np.roll(points, -1, axis=0)),
+            )
+        )
+        charge_native_geometry_queries(
+            coordinates.shape[0] * probes.shape[0],
+            work_units=coordinates.shape[0] * probes.shape[0],
+        )
+        _, gradients = source.tabulate(jnp.asarray(probes, dtype=coordinates.dtype))
+        jacobian = ein.contract("qir,cia->cqar", gradients, coordinates, backend="jax")
+        directions = np.stack((points[1] - points[0], points[-1] - points[0]), axis=1)
+        tangents = ein.contract("cqar,rs->cqas", jacobian, directions, backend="jax")
+        normals = jnp.cross(tangents[..., 0], tangents[..., 1])
+        reference = normals[:, :1]
+        sine = jnp.linalg.norm(jnp.cross(reference, normals[:, 1:]), axis=-1)
+        cosine = jnp.sum(reference * normals[:, 1:], axis=-1)
+        angles.append(jnp.max(jnp.arctan2(sine, cosine), axis=1))
+    return jnp.max(jnp.stack(angles, axis=1), axis=1)
+
+
+def _coordinate_total_order(element: CellGeometryElement, /) -> int:
+    """Static source-space bound, including affine mixing of tensor roots."""
+    source = _require_scalar_coordinate_element(element, "Mapped quality order")
+    if isinstance(source, RestrictedCellGeometryElement):
+        return _coordinate_total_order(source.source_element)
+    if isinstance(source, LayerColumnCellGeometryElement):
+        return max(2, _coordinate_total_order(source.wall_element) + 1)
+    if isinstance(source, SplineCellGeometryElement):
+        return source.u_degree + source.v_degree
+    if source.cell_kind in (
+        "interval",
+        "triangle",
+        "tetrahedron",
+    ) or source.cell_kind.startswith("simplex:"):
+        return source.degree
+    return (
+        2 if source.cell_kind == "prism" else source.topological_dimension
+    ) * source.degree
+
+
+def _mapped_boundary_angles(
+    kind: str,
+    element: CellGeometryElement,
+    coordinates: Array,
+    /,
+) -> tuple[Array, Array]:
+    """Actual corner tangents in 2D and sampled boundary-edge dihedrals in 3D."""
+    source = _require_scalar_coordinate_element(element, "Mapped boundary quality")
+    dimension = source.topological_dimension
+    if dimension == 1:
+        empty = jnp.full((coordinates.shape[0],), jnp.nan, dtype=coordinates.dtype)
+        return empty, empty
+    vertices = jnp.asarray(
+        reference_cell_topology(kind).vertices, dtype=coordinates.dtype
+    )
+    if dimension == 2:
+        charge_native_geometry_queries(
+            coordinates.shape[0] * vertices.shape[0],
+            work_units=coordinates.shape[0] * vertices.shape[0],
+        )
+        _, gradients = source.tabulate(vertices)
+        jacobian = ein.contract("qir,cia->cqar", gradients, coordinates, backend="jax")
+        directions = jnp.stack(
+            (
+                jnp.roll(vertices, -1, axis=0) - vertices,
+                jnp.roll(vertices, 1, axis=0) - vertices,
+            ),
+            axis=-1,
+        )
+        tangents = ein.contract("cqar,qrs->cqas", jacobian, directions, backend="jax")
+        cosine = jnp.sum(tangents[..., 0] * tangents[..., 1], axis=-1)
+        if coordinates.shape[-1] == 2:
+            sine = determinant_small_linear(SmallLinearSolvePlan(2), tangents)
+        else:
+            normal = jnp.cross(jacobian[..., 0], jacobian[..., 1])
+            normal = normal / jnp.maximum(
+                jnp.linalg.norm(normal, axis=-1, keepdims=True), _tiny(coordinates)
+            )
+            sine = jnp.sum(
+                jnp.cross(tangents[..., 0], tangents[..., 1]) * normal, axis=-1
+            )
+        angles = _angle(sine, cosine)
+        return jnp.min(angles, axis=1), jnp.max(angles, axis=1)
+    samples = _dihedral_table(kind).samples
+    first, last = vertices[samples[:, 0]], vertices[samples[:, 1]]
+    axis, _ = _degree_aware_reference_rule("interval", 2)
+    probes = (first[:, None] * (1.0 - axis[None]) + last[:, None] * axis[None]).reshape(
+        -1, dimension
+    )
+    directions = jnp.stack(
+        (last - first, vertices[samples[:, 2]] - first, vertices[samples[:, 3]] - first),
+        axis=-1,
+    )
+    directions = jnp.repeat(directions, axis.shape[0], axis=0)
+    charge_native_geometry_queries(
+        coordinates.shape[0] * probes.shape[0],
+        work_units=coordinates.shape[0] * probes.shape[0],
+    )
+    _, gradients = source.tabulate(probes)
+    low = jnp.full((coordinates.shape[0],), jnp.inf, dtype=coordinates.dtype)
+    high = jnp.full((coordinates.shape[0],), -jnp.inf, dtype=coordinates.dtype)
+
+    def sample(
+        bounds: tuple[Array, Array],
+        probe: tuple[Array, Array],
+    ) -> tuple[tuple[Array, Array], None]:
+        gradient, reference = probe
+        jacobian = ein.contract("ir,cia->car", gradient, coordinates, backend="jax")
+        vectors = jacobian @ reference
+        angle = _dihedral_vectors(vectors[..., 0], vectors[..., 1], vectors[..., 2])
+        return (jnp.minimum(bounds[0], angle), jnp.maximum(bounds[1], angle)), None
+
+    result, _ = jax.lax.scan(sample, (low, high), (gradients, directions))
+    return result
+
+
+def _mapped_block_quality(
+    kind: str,
+    element: CellGeometryElement,
+    coordinates: Array,
+    metric: Array | None,
+    /,
+) -> _BlockQuality:
+    """Measure the actual coordinate map and its sampled Jacobian metrics.
+
+    Jacobian images of the canonical reference shape define local metric
+    quality; they are never a replacement coordinate source or a fitted cell.
+    Positive-weight source quadrature is exact for polynomial signed volume
+    under its declared degree bound. Rational maps retain sampled integration
+    semantics, independently of their owning whole-map validity certificate.
+    """
+    source = _require_scalar_coordinate_element(element, "Mapped quality")
+    dimension = source.topological_dimension
+    order = (
+        _coordinate_total_order(source)
+        if isinstance(source, RestrictedCellGeometryElement)
+        else source.degree
+    )
+    count = max(2, (dimension * order + 1) // 2)
+    rule_degree = max(0, count - (2 if kind == "tetrahedron" else 1))
+    probes, weights = _degree_aware_reference_rule(kind, rule_degree)
+    charge_native_geometry_queries(
+        coordinates.shape[0] * probes.shape[0],
+        work_units=coordinates.shape[0] * probes.shape[0],
+    )
+    _, gradients = source.tabulate(probes)
+    plan = SmallLinearSolvePlan(dimension)
+    reference = jnp.asarray(
+        reference_cell_topology(kind).vertices, dtype=coordinates.dtype
+    )
+    count = coordinates.shape[0]
+    low = jnp.full((count,), jnp.inf, dtype=coordinates.dtype)
+    high = jnp.full((count,), -jnp.inf, dtype=coordinates.dtype)
+    zero = jnp.zeros((count,), dtype=coordinates.dtype)
+    initial = _BlockQuality(
+        zero,
+        low,
+        high,
+        low,
+        low,
+        zero,
+        zero,
+        high,
+        low,
+        zero,
+        low,
+        jnp.ones((count,), dtype=jnp.bool_),
+    )
+
+    def sample(
+        total: _BlockQuality,
+        probe: tuple[Array, Array],
+    ) -> tuple[_BlockQuality, None]:
+        gradient, weight = probe
+        jacobian = ein.contract("ir,cia->car", gradient, coordinates, backend="jax")
+        if coordinates.shape[-1] == dimension:
+            density = determinant_small_linear(plan, jacobian)
+        else:
+            gram = ein.contract("car,cas->crs", jacobian, jacobian, backend="jax")
+            density = jnp.sqrt(determinant_small_linear(plan, gram))
+        metric_vertices = ein.contract("car,vr->cva", jacobian, reference, backend="jax")
+        quality = _standard_block_quality(kind, metric_vertices, metric)
+        return _BlockQuality(
+            total.measure + weight * density,
+            jnp.minimum(total.mean_ratio, quality.mean_ratio),
+            jnp.maximum(total.aspect, quality.aspect),
+            jnp.minimum(total.radius_ratio, quality.radius_ratio),
+            jnp.minimum(total.scaled_jacobian, quality.scaled_jacobian),
+            total.minimum_angle,
+            total.maximum_angle,
+            jnp.maximum(total.condition, quality.condition),
+            jnp.minimum(total.sliver, quality.sliver),
+            total.warpage,
+            jnp.minimum(total.metric_quality, quality.metric_quality),
+            total.sampled_valid
+            & quality.sampled_valid
+            & (density > 0.0)
+            & jnp.isfinite(density),
+        ), None
+
+    # Sample lanes reduce directly to per-cell outputs: no cell×sample×corner
+    # metric bank or sample-by-cell Jacobian bank is materialized.
+    measured, _ = jax.lax.scan(sample, initial, (gradients, weights))
+    minimum_angle, maximum_angle = _mapped_boundary_angles(kind, source, coordinates)
+    return measured._replace(
+        minimum_angle=minimum_angle,
+        maximum_angle=maximum_angle,
+        warpage=_mapped_face_warpage(kind, source, coordinates),
+        sampled_valid=measured.sampled_valid
+        & (measured.measure > 0.0)
+        & jnp.isfinite(measured.measure),
+    )
 
 
 def _polyhedral_quality(
@@ -814,20 +1123,65 @@ def _vertex_metric(mesh: CellMesh, metric: MeshMetricField | None, /) -> Array |
     if not isinstance(metric, MeshMetricField):
         raise TypeError("metric must be MeshMetricField or None.")
     dimension = mesh.ambient_dimension
-    if metric.values.shape != (mesh.coordinates.shape[0], dimension, dimension) or not (
-        np.array_equal(
-            np.asarray(metric.scope.entity_ids), np.asarray(mesh.vertex_global_ids)
-        )
-    ):
+    if metric.values.shape != (mesh.coordinates.shape[0], dimension, dimension):
         raise ValueError("Quality metric must be one ambient tensor per mesh vertex.")
-    return metric.values
+    scope = metric.scope
+    if (
+        scope.source_id != mesh.mesh_id
+        or scope.source_revision != mesh.numeric_version
+        or scope.entity_kind is not MeshingEntityKind.MESH
+        or scope.entity_dimension != 0
+        or scope.entity_set_id != mesh.entity_set(0).entity_set_id
+    ):
+        raise ValueError("Quality metric must bind the exact owning mesh vertex scope.")
+    return eqx.error_if(
+        metric.values,
+        ~jnp.all(metric.scope.entity_ids == mesh.vertex_global_ids),
+        "Quality metric must bind the actual source mesh vertex identities.",
+    )
 
 
-def _cell_metric(values: Array | None, rows: np.ndarray, /) -> Array | None:
+def _cell_metric(values: Array | None, rows: Array, /) -> Array | None:
     if values is None:
         return None
     weights = jnp.full(rows.shape, 1.0 / rows.shape[1], dtype=values.dtype)
     return interpolate_mesh_metric(values[rows], weights)
+
+
+def _vertex_geometry_coordinates(
+    mesh: CellMesh,
+    elements: tuple[CellGeometryElement, ...],
+    routes: tuple[Array, ...],
+    bank: Array,
+    /,
+) -> Array:
+    """Join vertex-source banks through declared cell incidences, not proximity."""
+    if mesh.coordinates.shape[0] == 0:
+        return mesh.coordinates
+    vertices, source_rows, masks = [], [], []
+    for block, element, route in zip(mesh.blocks, elements, routes, strict=True):
+        if isinstance(element, CellVertexGeometryElement):
+            vertices.append(block.vertices.reshape(-1))
+            source_rows.append(route.reshape(-1))
+            masks.append(block.vertex_valid.reshape(-1))
+    if not vertices:
+        return mesh.coordinates
+    vertex = jnp.concatenate(vertices)
+    rows = jnp.concatenate(source_rows)
+    valid = jnp.concatenate(masks)
+    safe_vertex, safe_row = jnp.maximum(vertex, 0), jnp.maximum(rows, 0)
+    sentinel = jnp.asarray(bank.shape[0], dtype=rows.dtype)
+    first = jax.ops.segment_min(
+        jnp.where(valid, rows, sentinel),
+        safe_vertex,
+        mesh.coordinates.shape[0],
+    )
+    selected = bank[jnp.minimum(first, bank.shape[0] - 1)]
+    points = jnp.where((first < sentinel)[:, None], selected, mesh.coordinates)
+    shared = jnp.all(~valid | jnp.all(bank[safe_row] == points[safe_vertex], axis=-1))
+    return eqx.error_if(
+        points, ~shared, "Shared vertex coordinate sources disagree exactly."
+    )
 
 
 def evaluate_cell_quality(
@@ -836,14 +1190,40 @@ def evaluate_cell_quality(
     /,
     *,
     metric: MeshMetricField | None = None,
+    geometry: CellGeometrySpec | None = None,
 ) -> CellQualityEvaluation:
-    """Evaluate differentiable fixed-topology sampled quality for every cell block."""
+    """Evaluate actual source-map quality or explicitly straight-corner quality.
+
+    ``geometry`` retains its owning coordinate coefficients and tabulation,
+    including high-order, restricted, composed and rational maps. The separate
+    ``coordinates`` override deliberately evaluates a straight-corner mesh;
+    supplying both authorities is ambiguous and refused.
+    """
 
     if not isinstance(mesh, CellMesh):
         raise TypeError("mesh must be CellMesh.")
+    if geometry is not None and not isinstance(geometry, CellGeometrySpec):
+        raise TypeError("geometry must be CellGeometrySpec or None.")
+    if geometry is not None and coordinates is not None:
+        raise ValueError(
+            "Quality requires one owning geometry or one explicit corner-coordinate override, not both."
+        )
     points = mesh.coordinates if coordinates is None else jnp.asarray(coordinates)
     if points.shape != mesh.coordinates.shape:
         raise ValueError("Quality coordinates must preserve the mesh coordinate shape.")
+    if not mesh.blocks and (
+        mesh.storage is None
+        or mesh.storage.global_entity_counts[mesh.topological_dimension] <= 0
+        or points.shape[0] != 0
+        or any(entities.count != 0 for entities in mesh.topology.entity_sets)
+    ):
+        raise ValueError(
+            "An empty sampled cell set requires an actual zero-resident distributed mesh."
+        )
+    resolved = None if geometry is None else geometry.resolve(mesh)
+    if resolved is not None:
+        elements, routes, bank = resolved
+        points = _vertex_geometry_coordinates(mesh, elements, routes, bank)
     vertex_metric = _vertex_metric(mesh, metric)
     tables = (
         # ty: ignore[invalid-argument-type]
@@ -853,7 +1233,7 @@ def evaluate_cell_quality(
     )
     blocks = []
     offsets = [0]
-    for block in mesh.blocks:
+    for block_index, block in enumerate(mesh.blocks):
         start = offsets[-1]
         stop = start + block.cell_count
         if block.cell_kind == "polyhedron":
@@ -867,26 +1247,61 @@ def evaluate_cell_quality(
             # ty: ignore[invalid-argument-type]
             blocks.append(_polyhedral_quality(tables, cells, points, cell_metric))
         else:
-            rows = np.asarray(block.vertices, dtype=np.int32)
-            blocks.append(
-                _standard_block_quality(
-                    block.cell_kind, points[rows], _cell_metric(vertex_metric, rows)
+            rows = block.vertices
+            cell_metric = _cell_metric(vertex_metric, rows)
+            if resolved is None:
+                blocks.append(
+                    _standard_block_quality(block.cell_kind, points[rows], cell_metric)
                 )
-            )
+            else:
+                element = resolved[0][block_index]
+                values = resolved[2][resolved[1][block_index]]
+                if isinstance(element, CellVertexGeometryElement):
+                    blocks.append(
+                        _standard_block_quality(block.cell_kind, values, cell_metric)
+                    )
+                else:
+                    blocks.append(
+                        _mapped_block_quality(
+                            block.cell_kind, element, values, cell_metric
+                        )
+                    )
         offsets.append(stop)
-    fields = _BlockQuality(
-        *(jnp.concatenate(values) for values in zip(*blocks, strict=True))
-    )
+    if blocks:
+        fields = _BlockQuality(
+            *(jnp.concatenate(values) for values in zip(*blocks, strict=True))
+        )
+    else:
+        empty = jnp.empty((0,), dtype=points.dtype)
+        fields = _BlockQuality(
+            measure=empty,
+            mean_ratio=empty,
+            aspect=empty,
+            radius_ratio=empty,
+            scaled_jacobian=empty,
+            minimum_angle=empty,
+            maximum_angle=empty,
+            condition=empty,
+            sliver=empty,
+            warpage=empty,
+            metric_quality=empty,
+            sampled_valid=jnp.empty((0,), dtype=jnp.bool_),
+        )
     evaluation_id = canonical_fingerprint(
         {
             "kind": "cell-quality-evaluation",
             "topology": mesh.topology_id,
             "block_ids": [block.block_id for block in mesh.blocks],
             "metric": None if metric is None else metric.metric_id,
+            "geometry_layout": None if geometry is None else geometry.geometry_layout_id,
         }
     )
     return CellQualityEvaluation(
-        cell_global_ids=jnp.concatenate(tuple(block.global_ids for block in mesh.blocks)),
+        cell_global_ids=(
+            jnp.concatenate(tuple(block.global_ids for block in mesh.blocks))
+            if mesh.blocks
+            else jnp.empty((0,), dtype=jnp.int64)
+        ),
         measures=fields.measure,
         mean_ratios=fields.mean_ratio,
         aspect_ratios=fields.aspect,
@@ -902,7 +1317,9 @@ def evaluate_cell_quality(
         block_names=tuple(block.name for block in mesh.blocks),
         block_offsets=tuple(offsets),
         topology_id=mesh.topology_id,
+        geometry_layout_id=None if geometry is None else geometry.geometry_layout_id,
         evaluation_id=evaluation_id,
+        metric=metric,
     )
 
 
@@ -921,8 +1338,13 @@ def _polyhedral_cell_metric(
     return interpolate_mesh_metric(values[rows], jnp.asarray(weights, dtype=values.dtype))
 
 
-def summarize_cell_quality(evaluation: CellQualityEvaluation, /) -> CellQualityReport:
-    return CellQualityReport(evaluation)
+def summarize_cell_quality(
+    evaluation: CellQualityEvaluation,
+    /,
+    *,
+    mesh: CellMesh | None = None,
+) -> CellQualityReport:
+    return CellQualityReport(evaluation, mesh=mesh)
 
 
 # Straight sweep layers -------------------------------------------------------------

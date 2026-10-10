@@ -344,9 +344,15 @@ def test_tspme_brosa_planella_scenario_1() -> None:
         thermal.particle_transport.negative.amount_rate_mol_s,
         isothermal.particle_transport.negative.amount_rate_mol_s,
     )
+    # Separator rates vanish in exact arithmetic; the thermal per-cell property
+    # evaluation leaves them at cancellation roundoff of the electrode rates.
+    electrolyte_scale = float(
+        jnp.max(jnp.abs(isothermal.electrolyte_transport.amount_rate_mol_s))
+    )
     np.testing.assert_allclose(
         thermal.electrolyte_transport.amount_rate_mol_s,
         isothermal.electrolyte_transport.amount_rate_mol_s,
+        atol=64 * np.finfo(np.float64).eps * electrolyte_scale,
     )
     np.testing.assert_allclose(thermal.voltage_v, isothermal.voltage_v, rtol=2.0e-6)
     assert (

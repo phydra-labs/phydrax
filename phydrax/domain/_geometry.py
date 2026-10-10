@@ -35,15 +35,15 @@ from ._base import _make_compact_boundary_factor, AbstractGeometry
 
 
 class GeometryDomain(AbstractGeometry):
-    """Domain adapter around one JAX-safe compiled geometry."""
+    """Domain adapter around one JAX-safe region or manifold geometry."""
 
     geometry: CompiledGeometry
     _label: str
 
     @checked
     def __init__(self, geometry: CompiledGeometry, *, label: str = "x") -> None:
-        if geometry.kind is not GeometryKind.REGION:
-            raise ValueError("GeometryDomain currently adapts region kernels only.")
+        if geometry.kind not in (GeometryKind.REGION, GeometryKind.MANIFOLD):
+            raise ValueError("GeometryDomain requires a region or manifold kernel.")
         if not isinstance(label, str) or not label:
             raise ValueError("GeometryDomain label must be a non-empty string.")
         self.geometry = geometry

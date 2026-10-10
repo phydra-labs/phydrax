@@ -174,7 +174,6 @@ def test_closure_platform_scenario_2() -> None:
     profile = phx.qualification.CapabilityProfile(
         "iga.tensor",
         "phydrax",
-        "canonical",
         (support,),
         required_gates=("core",),
         release_evidence=(evidence,),

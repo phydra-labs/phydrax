@@ -183,10 +183,15 @@ class PDEField:
 
 @dataclass(frozen=True, slots=True)
 class PDEParameter:
-    """Named scalar, vector, or field-valued coefficient in a PDE problem."""
+    """Named scalar, vector, or field-valued coefficient in a PDE problem.
+
+    ``representation`` declares the physical identity explicitly; it is never
+    inferred from ``components`` (a one-dimensional vector has one component).
+    """
 
     name: str
     value: float | tuple[float, ...] | None = None
+    representation: PDERepresentation = "scalar"
     components: int = 1
     dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
@@ -197,7 +202,16 @@ class PDEParameter:
             raise ValueError(
                 "PDE parameters require a name and positive component count."
             )
+        object.__setattr__(
+            self,
+            "representation",
+            parse(self.representation, PDERepresentation, "representation"),
+        )
         object.__setattr__(self, "components", int(self.components))
+        if self.representation in ("scalar", "pseudoscalar") and self.components != 1:
+            raise ValueError(
+                "PDE parameter scalar representations require exactly one component."
+            )
         if not isinstance(self.dimension, DimensionSignature):
             raise TypeError("PDE parameter dimension must be a DimensionSignature.")
         scales = _finite_values(list(self.scale), "PDE parameter scale")

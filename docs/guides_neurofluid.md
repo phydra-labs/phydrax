@@ -10,19 +10,32 @@ application package.
 `NeurofluidCase` binds one pseudonymous case revision to:
 
 - a `LabelVolume` and valid `CompartmentComplex`;
-- a certified tetrahedral bulk mesh;
+- a certified tetrahedral `CellMeshingResult` with source-region evidence;
 - a prepared PVS metric network;
 - optional concentration and diffusion-tensor images.
 
 Every carrier must use one `SpatialCoordinateContract`. The case revision changes
 when segmentation, mesh, network, concentration, or tensor evidence changes.
 
-`CompartmentMeshingSpec` combines the label volume, exact compartment semantics,
-an outer surface, and one oriented surface per internal interface.
-`FTetWildCompartmentProvider` inserts all surfaces in one fTetWild run, classifies
-output tetrahedra against the source segmentation, emits exclusive material
-zones, derives mesh interfaces from neighboring zone cells, and rejects missing
-or forbidden adjacency. It does not infer persistent source-node identity.
+`CompartmentMeshingSource` binds the label volume, exact `CompartmentComplex`,
+outer surface, and extracted oriented interfaces to one source revision and
+coordinate contract. Its `occupied-voxel-cells` interpretation treats each image
+sample as a cell centered at its voxel index, with faces at index offsets of
+±0.5; the image affine maps those cells into physical coordinates.
+
+Use an ordinary `VolumeMeshingSpec` for physical target sizes and controls, then
+prepare and execute `NativeMeshingProvider` with
+`NativeMeshingOptions("image_material_tetrahedral")`. The canonical
+`CellMeshingResult.region_evidence` binds cell global IDs to authoritative source
+region IDs, canonical mesh zones, oriented interface facets and patches,
+adjacency, and current domain coverage. Cell assignments follow the conforming
+material complex, not centroid samples or zone display names.
+
+`NeurofluidCase` requires this evidence to match the exact segmentation revision
+and `CompartmentComplex`, and validates its bindings against the current mesh,
+geometry, zones, and patches. Transport consumes `bulk_mesh.mesh` and
+`bulk_mesh.coordinate_contract` directly. Adapted or moved results must renew
+their region evidence before case admission.
 
 ## Tracer concentration
 
@@ -52,6 +65,14 @@ bulk/network transfer and generic mixed-dimensional runtime.
 
 `neurofluid_diagnostics` aggregates bulk mass by semantic compartment and reports
 total mass, external loss, exchange defect, and minimum concentration.
+
+Derive diagnostic assignment indices from the validated
+`bulk_mesh.region_evidence.cell_region_ids`, not zone names; authoritative
+material adjacency is `region_evidence.adjacency_pairs`. The
+`examples/neurofluid_transport.py` example generates
+a native two-compartment mesh and advances a closed bulk/network/reservoir
+system, reporting compartment inventory, interface adjacency, total-inventory
+error, and exchange defect in an explicit millimeter/second/millimolar system.
 
 ## Flow
 

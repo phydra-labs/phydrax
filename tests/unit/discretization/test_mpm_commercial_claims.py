@@ -46,6 +46,45 @@ def _intended_use() -> Any:
     )
 
 
+def test_mpm_profile_identity_binds_qualification_category() -> None:
+    claim = _claim()
+    matrix = phx.discretization.MPMSupportMatrix(
+        (
+            phx.discretization.MPMSupportDecision(
+                claim,
+                phx.discretization.MPMClaimOutcome.SUPPORTED,
+                reason="candidate tuple",
+                required_profile="commercial-runtime",
+            ),
+        )
+    )
+    standards = phx.discretization.MPMStandardsTraceabilityMatrix(
+        (
+            phx.discretization.MPMStandardsTrace(
+                standard="ASME V&V 10",
+                edition="2019 (R2025)",
+                applicability="computational solid mechanics",
+                requirement="code and solution verification",
+                evidence_ids=("candidate-verification-gap",),
+                satisfied=False,
+            ),
+        )
+    )
+    runtime = phx.discretization.MPMCommercialProfile(
+        "mpm-candidate",
+        phx.discretization.MPMCommercialProfileKind.COMMERCIAL_RUNTIME,
+        matrix,
+        standards,
+    )
+    advanced = phx.discretization.MPMCommercialProfile(
+        "mpm-candidate",
+        phx.discretization.MPMCommercialProfileKind.ADVANCED_MECHANICS,
+        matrix,
+        standards,
+    )
+    assert runtime.profile_id != advanced.profile_id
+
+
 def test_mpm_commercial_claims_scenario_1() -> None:
     claim = _claim()
     supported = phx.discretization.MPMSupportDecision(

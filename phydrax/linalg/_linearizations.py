@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree
 
@@ -103,6 +104,19 @@ def prepare_linearization(
     )
     if has_aux:
         primal, pushforward, auxiliary = jax.linearize(executed, point_, has_aux=True)
+        # Closure conversion returns constant jaxpr outputs as Python scalars;
+        # restore the array leaves the function actually returned.
+        auxiliary_structure = eqx.filter_eval_shape(function, point_)[1]
+        auxiliary = jax.tree.map(
+            lambda value, shape: (
+                jnp.asarray(value, dtype=shape.dtype)
+                if isinstance(shape, jax.ShapeDtypeStruct)
+                else value
+            ),
+            auxiliary,
+            auxiliary_structure,
+            is_leaf=lambda leaf: leaf is None,
+        )
     else:
         primal, pushforward = jax.linearize(executed, point_)
         auxiliary = None

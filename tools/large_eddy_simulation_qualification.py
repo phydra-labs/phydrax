@@ -3111,9 +3111,12 @@ def _run_favre_dg_energy(case: Mapping[str, object], _reference: Any) -> Any:
     point_state = system.primitive_to_conserved(
         jnp.asarray((0.36, 0.84, 0.0, 0.0, 0.0, 400.0, 0.25))
     )
+    state_space = discretization.field_spaces[0].vector_space
+    if not isinstance(state_space, phx.linalg.ArraySpace):
+        raise TypeError("Favre qualification requires an array vector space.")
     state = jnp.broadcast_to(
         point_state,
-        discretization.field_spaces[0].vector_space.shape,
+        state_space.shape,
     )
     # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state)
@@ -3793,7 +3796,6 @@ def _base_profiles(campaign: Mapping[str, object], /) -> Any:
         profile = phx.qualification.CapabilityProfile(
             str(record["name"]),
             str(record["provider"]),
-            "candidate",
             (support,),
             required_gates=("independent-review", "release-signature"),
             release_evidence=(),
@@ -4004,7 +4006,6 @@ def execute_campaign(
             phx.qualification.CapabilityProfile(
                 f"large-eddy-simulation.{case['name']}",
                 str(validated["provider"]),
-                "candidate",
                 (support,),
                 dependencies=dependencies,
                 # ty: ignore[not-iterable]

@@ -2,24 +2,80 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from importlib import import_module
+from typing import Any
+
+from ._boolean import (
+    boolean_brep,
+    BRepBooleanFailure,
+    BRepBooleanOperation,
+    BRepBooleanPolicy,
+    BRepBooleanResult,
+)
+from ._constructors import (
+    assemble_brep_model,
+    brep_box,
+    brep_cone,
+    brep_cylinder,
+    brep_extrusion,
+    brep_offset,
+    brep_planar_face,
+    brep_revolution,
+    brep_sphere,
+    brep_torus,
+    BRepTessellationPolicy,
+    PlanarProfile,
+    ProfileArc,
+    ProfileLine,
+    ProfileLoop,
+    ProfilePlane,
+)
 from ._differentiable import (
     BRepParameterLink,
     evaluate_fixed_topology_mesh,
     FixedTopologyBRepRealization,
     FixedTopologyBRepSource,
 )
+from ._intersection import (
+    CoincidentParameterRegion,
+    CurveIntersectionResult,
+    CurveSurfaceIntersectionRoot,
+    intersect_curve_ranges,
+    intersect_curve_region,
+    intersect_surface_regions,
+    NativePeriodEndpoint,
+    ParametricIntersectionCertificate,
+    ParametricIntersectionKind,
+    ParametricIntersectionPoint,
+    ParametricIntersectionPolicy,
+    ParametricIntersectionWork,
+    SurfaceIntersectionResult,
+    TrimRootEndpoint,
+    UnresolvedIntersectionReason,
+    UnresolvedParameterRegion,
+)
+from ._intersection_curve import (
+    AffinePCurve,
+    CurveRange,
+    CurveTrimSegment,
+    IntersectionCurve,
+    IntersectionCurvePoint,
+    IntersectionCurveSide,
+    IntersectionEndpointKind,
+    IntersectionPCurve,
+    PeriodicPCurve,
+    SurfaceRegion,
+)
 from ._model import (
+    BRepAssemblyContainer,
     BRepBoundaryMap,
     BRepEntityId,
+    BRepGeometry,
     BRepImportReport,
     BRepModel,
+    BRepOccurrence,
+    BRepQualifiedIncidence,
     BRepTopology,
-)
-from ._occt import (
-    import_brep,
-    model_from_occt_shape,
-    persist_occt_shape,
-    read_occt_shape,
 )
 from ._partition import (
     all_brep_faces,
@@ -37,12 +93,25 @@ from ._partition import (
     partition_brep,
 )
 from ._patches import (
+    AbstractCurve,
     AbstractSurfacePatch,
     BSplineCurve,
     BSplineSurfacePatch,
+    CircleCurve,
     ConePatch,
+    Curve,
     CylinderPatch,
+    EllipseCurve,
+    ExtrusionSurface,
+    HyperbolaCurve,
+    LineCurve,
+    OffsetCurve,
+    OffsetSurface,
+    ParabolaCurve,
     PlanePatch,
+    RationalBezierPiece,
+    RevolutionSurface,
+    RuledSurface,
     SpherePatch,
     surface_differential,
     surface_jacobian,
@@ -50,25 +119,100 @@ from ._patches import (
     SurfacePatch,
     TorusPatch,
 )
-from ._planar import (
-    partition_planar,
-    PlanarEmbedding,
-    PlanarPartitionOperand,
-    PlanarPartitionPlan,
-)
-from ._projection import (
+from ._projection import prepare_brep_projection
+from ._projection_contracts import (
+    AbstractBRepProjection,
     brep_entity_id,
     BRepEntityDimension,
     BRepProjectionPolicy,
     BRepProjectionResult,
     BRepProjectionStatus,
-    prepare_brep_projection,
-    PreparedBRepProjection,
+)
+from ._query import (
+    BRepContainmentResult,
+    BRepMeasureResult,
+    BRepQueryBudget,
+    BRepQueryPolicy,
+    BRepQueryResourceError,
+    BRepSurfaceQueryResult,
+    NativeBRepProjection,
+    prepare_brep_query,
+    PreparedBRepQuery,
+)
+from ._sewing import (
+    BRepSewingContact,
+    BRepSewingContactRelation,
+    BRepSewingEdgeImage,
+    BRepSewingFailure,
+    BRepSewingLineage,
+    BRepSewingPolicy,
+    BRepSewingResult,
+    sew_brep,
 )
 from ._source import BRep, BRepSource
 
 
+_PLANAR_EXPORTS = frozenset(
+    ("PlanarPartitionOperand", "PlanarPartitionPlan", "partition_planar")
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _PLANAR_EXPORTS:
+        module = import_module("._planar", __package__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
 __all__ = [
+    "BRepAssemblyContainer",
+    "BRepQualifiedIncidence",
+    "boolean_brep",
+    "BRepBooleanFailure",
+    "BRepBooleanOperation",
+    "BRepBooleanPolicy",
+    "BRepBooleanResult",
+    "BRepSewingContact",
+    "BRepSewingContactRelation",
+    "BRepSewingEdgeImage",
+    "BRepSewingFailure",
+    "BRepSewingLineage",
+    "BRepSewingPolicy",
+    "BRepSewingResult",
+    "sew_brep",
+    "AffinePCurve",
+    "CoincidentParameterRegion",
+    "CurveIntersectionResult",
+    "CurveSurfaceIntersectionRoot",
+    "CurveRange",
+    "CurveTrimSegment",
+    "IntersectionCurve",
+    "IntersectionCurvePoint",
+    "IntersectionCurveSide",
+    "IntersectionEndpointKind",
+    "IntersectionPCurve",
+    "ParametricIntersectionCertificate",
+    "ParametricIntersectionKind",
+    "ParametricIntersectionPoint",
+    "ParametricIntersectionPolicy",
+    "ParametricIntersectionWork",
+    "PeriodicPCurve",
+    "SurfaceIntersectionResult",
+    "SurfaceRegion",
+    "UnresolvedIntersectionReason",
+    "UnresolvedParameterRegion",
+    "NativePeriodEndpoint",
+    "TrimRootEndpoint",
+    "intersect_curve_ranges",
+    "intersect_curve_region",
+    "intersect_surface_regions",
+    "AbstractBRepProjection",
     "AbstractSurfacePatch",
     "BRep",
     "BRepBoundaryMap",
@@ -97,11 +241,10 @@ __all__ = [
     "CylinderPatch",
     "FixedTopologyBRepRealization",
     "FixedTopologyBRepSource",
-    "PlanarEmbedding",
+    "OffsetSurface",
     "PlanarPartitionOperand",
     "PlanarPartitionPlan",
     "PlanePatch",
-    "PreparedBRepProjection",
     "SpherePatch",
     "SurfacePatch",
     "TorusPatch",
@@ -110,14 +253,49 @@ __all__ = [
     "brep_entity_id",
     "cad_revision_from_brep_model",
     "evaluate_fixed_topology_mesh",
-    "import_brep",
-    "model_from_occt_shape",
     "partition_brep",
     "partition_planar",
-    "persist_occt_shape",
     "prepare_brep_projection",
-    "read_occt_shape",
     "surface_differential",
     "surface_jacobian",
     "surface_normal",
+    "AbstractCurve",
+    "BRepContainmentResult",
+    "BRepGeometry",
+    "BRepMeasureResult",
+    "BRepOccurrence",
+    "BRepQueryBudget",
+    "BRepQueryPolicy",
+    "BRepQueryResourceError",
+    "BRepSurfaceQueryResult",
+    "BRepTessellationPolicy",
+    "CircleCurve",
+    "Curve",
+    "EllipseCurve",
+    "ExtrusionSurface",
+    "HyperbolaCurve",
+    "LineCurve",
+    "OffsetCurve",
+    "ParabolaCurve",
+    "NativeBRepProjection",
+    "PreparedBRepQuery",
+    "RationalBezierPiece",
+    "RevolutionSurface",
+    "RuledSurface",
+    "PlanarProfile",
+    "ProfileArc",
+    "ProfileLine",
+    "ProfileLoop",
+    "ProfilePlane",
+    "assemble_brep_model",
+    "brep_box",
+    "brep_cone",
+    "brep_cylinder",
+    "brep_extrusion",
+    "brep_offset",
+    "brep_planar_face",
+    "brep_revolution",
+    "brep_sphere",
+    "brep_torus",
+    "prepare_brep_query",
 ]

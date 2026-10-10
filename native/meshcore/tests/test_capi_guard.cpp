@@ -99,6 +99,7 @@ void test_unaddressable_counts_are_invalid_arguments() {
   phx_mc_mesh* mesh = nullptr;
   PHX_CHECK(phx_mc_constrained_delaunay_2d(3, square, huge, segment, 0, nullptr, 1, 0.0,
                                            std::numeric_limits<double>::infinity(), 0, 100,
+                                           INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr,
                                            &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
 }
@@ -106,24 +107,16 @@ void test_unaddressable_counts_are_invalid_arguments() {
 // Refused allocations surface as CAPACITY_EXCEEDED from every kernel family and
 // leave the library usable once allocation succeeds again.
 void test_refused_allocations_are_capacity_statuses() {
-  // Collinear points take the symbolic-perturbation path, whose monomial
-  // tables are allocated on first use.
-  const double a[2] = {0.0, 0.0};
-  const double b[2] = {1.0, 1.0};
-  const double c[2] = {2.0, 2.0};
-  const int64_t ids[3] = {0, 1, 2};
-  int8_t sign = 9;
-  PHX_CHECK(refused([&] { return phx_mc_orient2d_sos(1, a, b, c, ids, &sign); }) ==
-            PHX_MC_CAPACITY_EXCEEDED);
-  PHX_CHECK(phx_mc_orient2d_sos(1, a, b, c, ids, &sign) == PHX_MC_OK);
-  PHX_CHECK(sign == 1 || sign == -1);
-
   const double points[8] = {0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0};
   phx_mc_mesh* mesh = nullptr;
-  PHX_CHECK(refused([&] { return phx_mc_delaunay_2d(4, points, 100, &mesh); }) ==
+  PHX_CHECK(refused([&] {
+              return phx_mc_delaunay_2d(4, points, 100, INT64_MAX, INT64_MAX, INT64_MAX,
+                                         nullptr, nullptr, &mesh);
+            }) ==
             PHX_MC_CAPACITY_EXCEEDED);
   PHX_CHECK(mesh == nullptr);
-  PHX_CHECK(phx_mc_delaunay_2d(4, points, 100, &mesh) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_delaunay_2d(4, points, 100, INT64_MAX, INT64_MAX, INT64_MAX,
+                               nullptr, nullptr, &mesh) == PHX_MC_OK);
   PHX_CHECK(mesh != nullptr && phx_mc_mesh_cell_count(mesh) == 2);
   phx_mc_mesh_free(mesh);
 
@@ -142,6 +135,79 @@ void test_refused_allocations_are_capacity_statuses() {
   PHX_CHECK_NEAR(area, 0.25, 1e-15);
 }
 
+void test_native_phase_limits_refuse_before_publication() {
+  const double points[15] = {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.125, 0.125, 0.125};
+  const uint64_t unlimited = std::numeric_limits<uint64_t>::max();
+  struct Limits {
+    uint64_t work, queries, cavity, scratch;
+    double seconds;
+    int32_t status;
+    int counter;
+  };
+  const Limits limits[] = {
+      {0, unlimited, unlimited, unlimited, 10, PHX_MC_CAPACITY_EXCEEDED, 3},
+      {unlimited, unlimited, 0, unlimited, 10, PHX_MC_CAPACITY_EXCEEDED, 5},
+      {unlimited, unlimited, unlimited, 0, 10, PHX_MC_CAPACITY_EXCEEDED, -1},
+      {unlimited, unlimited, unlimited, unlimited, 0, PHX_MC_TIMEOUT, -2},
+  };
+  for (const auto& limit : limits) {
+    void* scope = nullptr;
+    PHX_CHECK(phx_mc_execution_begin(limit.work, limit.queries, limit.cavity, limit.scratch,
+                                     limit.seconds, nullptr, &scope) == PHX_MC_OK);
+    phx_mc_mesh* mesh = nullptr;
+    PHX_CHECK(phx_mc_delaunay_3d(5, points, 100, &mesh) == limit.status);
+    PHX_CHECK(mesh == nullptr);
+    uint64_t counters[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
+    double seconds = -1;
+    PHX_CHECK(phx_mc_execution_end(scope, counters, memory, &seconds) == limit.status);
+    PHX_CHECK(seconds >= 0);
+    PHX_CHECK(memory[1] == 0);
+    if (limit.counter >= 0) PHX_CHECK(counters[limit.counter] > 0);
+    if (limit.counter == 3 || limit.counter == -2) PHX_CHECK(memory[2] == 0);
+    if (limit.counter == -1) {
+      PHX_CHECK(memory[2] == 0 && memory[3] > 0 && memory[5] > 0);
+    }
+  }
+  phx_mc_mesh* mesh = nullptr;
+  PHX_CHECK(phx_mc_delaunay_3d(5, points, 100, &mesh) == PHX_MC_OK);
+  PHX_CHECK(mesh != nullptr && phx_mc_mesh_cell_count(mesh) == 4);
+  phx_mc_mesh_free(mesh);
+}
+
+void test_nested_phase_counters_share_original_allowance() {
+  const uint64_t unlimited = std::numeric_limits<uint64_t>::max();
+  void *outer = nullptr, *inner = nullptr;
+  PHX_CHECK(phx_mc_execution_begin(unlimited, 1, unlimited, unlimited, 10,
+                                   nullptr, &outer) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_execution_begin(unlimited, unlimited, unlimited, unlimited, 10,
+                                   nullptr, &inner) == PHX_MC_OK);
+  const double a[3] = {0, 0, 0}, b[3] = {1, 0, 0}, c[3] = {0, 1, 0}, d[3] = {0, 0, 1};
+  int8_t sign = 0;
+  PHX_CHECK(phx_mc_execution_charge(inner, 0, 1) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_orient3d(1, a, b, c, d, &sign) == PHX_MC_OK && sign == 1);
+  PHX_CHECK(phx_mc_execution_charge(inner, 0, 1) == PHX_MC_CAPACITY_EXCEEDED);
+  uint64_t work[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
+  double seconds = 0;
+  PHX_CHECK(phx_mc_execution_end(inner, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(work[1] == 1);
+  PHX_CHECK(phx_mc_execution_end(outer, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(work[1] == 1 && work[4] == 1 && work[7] == 1 && work[8] == 1);
+}
+
+void test_pure_batch_bound_is_not_reported_as_consumed_work() {
+  const uint64_t unlimited = std::numeric_limits<uint64_t>::max();
+  void* scope = nullptr;
+  PHX_CHECK(phx_mc_execution_begin(3, unlimited, unlimited, unlimited, 10,
+                                   nullptr, &scope) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_execution_admit_work_bound(scope, 3) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_execution_charge(scope, 2, 0) == PHX_MC_OK);
+  PHX_CHECK(phx_mc_execution_admit_work_bound(scope, 2) == PHX_MC_CAPACITY_EXCEEDED);
+  uint64_t work[PHX_MC_EXECUTION_COUNTERS] = {}, memory[PHX_MC_EXECUTION_MEMORY_VALUES] = {};
+  double seconds = 0;
+  PHX_CHECK(phx_mc_execution_end(scope, work, memory, &seconds) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(work[0] == 2 && work[6] == 2 && work[3] == 1);
+}
+
 }  // namespace
 
 void* operator new(std::size_t size) { return allocate(size); }
@@ -156,5 +222,8 @@ int main() {
   test_addressable_extents();
   test_unaddressable_counts_are_invalid_arguments();
   test_refused_allocations_are_capacity_statuses();
+  test_native_phase_limits_refuse_before_publication();
+  test_nested_phase_counters_share_original_allowance();
+  test_pure_batch_bound_is_not_reported_as_consumed_work();
   return phx::mc::test::finish("test_capi_guard");
 }

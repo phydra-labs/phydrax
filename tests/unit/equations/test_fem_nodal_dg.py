@@ -21,6 +21,7 @@ from phydrax.discretization.fem._boundary import (
     FiniteElementPeriodicTransform,
 )
 from phydrax.discretization.fem._generic import (
+    FiniteElementDiscretization,
     FiniteElementFieldSpec,
     FiniteElementPlan,
 )
@@ -43,6 +44,16 @@ from phydrax.equations.fem._nodal_conservation import (
     NodalDGConservationMethodPlan,
 )
 from phydrax.equations.fem._viscous_conservation import ViscousDGPlan
+from phydrax.linalg import ArraySpace
+
+
+def _field_shape(
+    discretization: FiniteElementDiscretization,
+) -> tuple[int, ...]:
+    space = discretization.field_spaces[0].vector_space
+    if not isinstance(space, ArraySpace):
+        raise TypeError("Nodal DG fixtures require array vector spaces.")
+    return space.shape
 
 
 def _triangle_problem(order: Any = 2) -> Any:
@@ -78,7 +89,7 @@ def test_triangle_nodal_dg_preserves_free_stream_and_conservation() -> None:
     compiled, system, discretization = _triangle_problem()
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.2, -0.1, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     np.testing.assert_allclose(rate, 0.0, atol=2.0e-10)
@@ -91,7 +102,7 @@ def test_triangle_nodal_dg_interface_is_conservative_and_linearizable() -> None:
     compiled, system, discretization = _triangle_problem(order=1)
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     routes = discretization.dof_maps[0].cell_dofs[0]
     perturbed = state.at[routes[1], 0].multiply(1.01)
@@ -139,7 +150,7 @@ def test_discontinuous_mass_strategies_share_affine_semantics() -> None:
         -0.2,
         0.3,
         discretization.field_spaces[0].vector_space.size,
-    ).reshape(discretization.field_spaces[0].vector_space.shape)
+    ).reshape(_field_shape(discretization))
     expected = exact.apply(residual)
     np.testing.assert_allclose(auto.apply(residual), expected, rtol=3e-10, atol=3e-10)
     np.testing.assert_allclose(
@@ -188,7 +199,7 @@ def test_tetrahedron_nodal_dg_preserves_free_stream() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
@@ -245,7 +256,7 @@ def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar() -> Non
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
@@ -316,7 +327,7 @@ def test_prism_and_pyramid_nodal_dg_preserve_free_stream() -> None:
         )
         state = jnp.broadcast_to(
             system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-            discretization.field_spaces[0].vector_space.shape,
+            _field_shape(discretization),
         )
         # ty: ignore[invalid-argument-type]
         np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=2.0e-9)
@@ -399,7 +410,7 @@ def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 0.0, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-9)
@@ -457,7 +468,7 @@ def test_polyhedral_three_dimensional_interface_is_conservative() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
@@ -503,7 +514,7 @@ def test_interval_p_zero_nodal_dg_preserves_constant_state() -> None:
         discretization,
         NodalDGConservationMethodPlan(RusanovFluxPlan()),
     )
-    state = jnp.ones(discretization.field_spaces[0].vector_space.shape)
+    state = jnp.ones(_field_shape(discretization))
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=2.0e-12)
 
@@ -552,7 +563,7 @@ def test_hexahedron_general_nodal_dg_preserves_free_stream() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 0.02, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)
@@ -620,7 +631,7 @@ def test_nodal_dg_transformed_periodicity_is_conservative() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type, unresolved-attribute]
     faces = compiled.dynamics.face_fluxes(0.0, state)
@@ -669,7 +680,7 @@ def test_nodal_entropy_plan_prepares_formal_simplex_sbp_operator() -> None:
     assert len(compiled.dynamics.entropy_operators) == 1
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)
@@ -765,7 +776,7 @@ def test_mixed_triangle_viscous_dg_preserves_stationary_rest_state() -> None:
     )
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        _field_shape(discretization),
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)

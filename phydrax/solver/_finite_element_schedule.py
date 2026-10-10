@@ -22,6 +22,7 @@ from .._array_archive import (
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ..equations import (
     MaterialSiteId,
     MaterialState,
@@ -39,7 +40,13 @@ from ._schedule import TimeLaw
 
 
 class FiniteElementAcceptedState(StrictModule, NonTrainableState):
-    """Immutable fields and committed material data at one accepted step."""
+    """Immutable fields and committed material data at one accepted step.
+
+    ``transition_id`` names the published geometry/field transition (the
+    ``CompositionRebindReceipt`` of the topology rebind) that produced this
+    topology epoch, or ``None`` on the initial epoch. Fixed-topology steps carry
+    it forward, so checkpoints and restart records bind the same transition.
+    """
 
     fields: tuple[Array, ...]
     materials: MaterialTransaction | None
@@ -50,6 +57,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
+    transition_id: str | None = eqx.field(static=True)
     accepted_id: str = eqx.field(static=True)
 
     def __init__(
@@ -65,6 +73,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         materials: MaterialTransaction | None = None,
         schedule_cursor: int = 0,
         state_version: int = 0,
+        transition_id: str | None = None,
     ) -> None:
         fields_ = tuple(jnp.asarray(value) for value in fields)
         time_ = jnp.asarray(time)
@@ -74,6 +83,11 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         topology = str(topology_id)
         prepared = str(prepared_id)
         compilation = str(compilation_id)
+        transition = (
+            None
+            if transition_id is None
+            else canonical_identifier(transition_id, "transition_id")
+        )
         if not fields_ or any(
             not jnp.issubdtype(value.dtype, jnp.inexact) for value in fields_
         ):
@@ -95,6 +109,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         self.topology_id = topology
         self.prepared_id = prepared
         self.compilation_id = compilation
+        self.transition_id = transition
         self.accepted_id = canonical_fingerprint(
             {
                 "kind": "finite-element-accepted-state",
@@ -104,6 +119,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
                 "step": step_,
                 "cursor": cursor,
                 "version": version,
+                "transition": transition,
                 "field_shapes": [list(value.shape) for value in fields_],
                 "materials": (None if materials is None else materials.transaction_id),
             }
@@ -117,6 +133,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
             self.step,
             self.fields,
             materials=self.materials,
+            transition_id=self.transition_id,
         )
 
 
@@ -278,6 +295,7 @@ class FiniteElementAcceptedStepSchedule(StrictModule, NonTrainableState):
                     materials=materials,
                     schedule_cursor=accepted.schedule_cursor + 1,
                     state_version=accepted.state_version + 1,
+                    transition_id=accepted.transition_id,
                 )
                 return promoted, FiniteElementStepDiagnostics(
                     accepted=jnp.asarray(True),
@@ -372,6 +390,7 @@ def write_finite_element_restart(
         "step": manifest.state.step,
         "schedule_cursor": manifest.state.schedule_cursor,
         "state_version": manifest.state.state_version,
+        "transition_id": manifest.state.transition_id,
         "field_count": len(manifest.state.fields),
         "materials": [
             [value.site_id.key, value.model_id, value.state_version]
@@ -476,6 +495,7 @@ def read_finite_element_restart(
         materials=materials,
         schedule_cursor=int(metadata["schedule_cursor"]),
         state_version=int(metadata["state_version"]),
+        transition_id=metadata["transition_id"],
     )
     auxiliary = tuple(
         (name, archive.arrays[f"auxiliary_{index}"])

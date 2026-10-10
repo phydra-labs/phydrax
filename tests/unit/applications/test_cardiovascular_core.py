@@ -240,6 +240,15 @@ def test_case_manifest_refuses_phi_linkable_or_non_allowlisted_metadata(
         _manifest(**overrides)
 
 
+def test_case_manifest_accepts_content_digest_with_long_decimal_run() -> None:
+    # Hash output can contain eight-plus decimal digits in a row; that is not a
+    # phone or SSN number. The same digit run outside a digest is still refused.
+    digest = "0123456789" + "a" * 54
+    assert _manifest(support_profile_id=digest).support_profile_id == digest
+    with pytest.raises(ValueError, match="linkable person identifier"):
+        _manifest(support_profile_id="profile-5551234567")
+
+
 def test_case_manifest_is_host_only_and_has_no_solver_or_schema_surface() -> None:
     manifest = _manifest(observation_ids=(), license_ids=(), data_rights_ids=())
     surface = set(dir(manifest))

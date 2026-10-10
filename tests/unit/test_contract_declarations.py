@@ -5,9 +5,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import functools
-import importlib
 import inspect
-import pkgutil
 import sys
 from types import FunctionType
 
@@ -17,6 +15,7 @@ import pytest
 import phydrax as phx
 from phydrax import _typing_plan, _typing_signature, StrictModule
 from phydrax._strict import Strict
+from tests._support.package_modules import import_phydrax_modules
 
 
 _VOCABULARY_NAMES = frozenset(
@@ -28,8 +27,7 @@ _VOCABULARY_NAMES = frozenset(
 
 @functools.cache
 def _strict_dataclasses() -> tuple[type, ...]:
-    for info in pkgutil.walk_packages(phx.__path__, "phydrax."):
-        importlib.import_module(info.name)
+    import_phydrax_modules()
     classes: list[type] = []
     stack: list[type] = [StrictModule]
     seen: set[type] = set()

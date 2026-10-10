@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <vector>
+#include <span>
 
 namespace phx::mc {
 namespace {
@@ -342,17 +342,27 @@ struct SosMonomial {
 // Perturbation monomials of the (d + 1) x (d + 1) orientation matrix with rows
 // [p_r, 1] in rank order, sorted by decreasing significance, ending with the
 // first full matching (whose coefficient is +-1 and therefore nonzero).
-std::vector<SosMonomial> build_sos_monomials(int dimension) {
+template <int Dimension>
+struct SosTable {
+  static constexpr std::size_t kMaximum = Dimension == 2 ? 12 : 72;
+  std::array<SosMonomial, kMaximum> values{};
+  std::size_t count = 0;
+};
+
+template <int Dimension>
+constexpr SosTable<Dimension> build_sos_monomials() {
+  constexpr int dimension = Dimension;
   struct Keyed {
     std::uint64_t key;
     SosMonomial monomial;
   };
-  std::vector<Keyed> all;
+  std::array<Keyed, SosTable<Dimension>::kMaximum> all{};
+  std::size_t all_count = 0;
   const int points = dimension + 1;
   // Enumerate injective partial maps rank -> column with 1..dimension pairs.
   const int total_masks = 1 << points;
   for (int mask = 1; mask < total_masks; ++mask) {
-    int ranks[4];
+    int ranks[4] = {};
     int count = 0;
     for (int r = 0; r < points; ++r) {
       if (mask & (1 << r)) {
@@ -364,7 +374,7 @@ std::vector<SosMonomial> build_sos_monomials(int dimension) {
     }
     std::array<int, 3> columns = {0, 1, 2};
     // Iterate over all ordered selections of `count` distinct columns.
-    std::vector<int> selection(static_cast<std::size_t>(count), 0);
+    std::array<int, 3> selection{};
     const int combinations = [&] {
       int value = 1;
       for (int k = 0; k < count; ++k) {
@@ -397,13 +407,15 @@ std::vector<SosMonomial> build_sos_monomials(int dimension) {
         keyed.monomial.column[k] = j;
         keyed.key |= std::uint64_t{1} << (dimension * (r + 1) - (j + 1));
       }
-      all.push_back(keyed);
+      all[all_count++] = keyed;
     }
   }
-  std::sort(all.begin(), all.end(), [](const Keyed& left, const Keyed& right) { return left.key < right.key; });
-  std::vector<SosMonomial> result;
-  for (const Keyed& keyed : all) {
-    result.push_back(keyed.monomial);
+  std::sort(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(all_count),
+            [](const Keyed& left, const Keyed& right) { return left.key < right.key; });
+  SosTable<Dimension> result;
+  for (std::size_t i = 0; i < all_count; ++i) {
+    const Keyed& keyed = all[i];
+    result.values[result.count++] = keyed.monomial;
     if (keyed.monomial.count == dimension) {
       break;
     }
@@ -411,10 +423,13 @@ std::vector<SosMonomial> build_sos_monomials(int dimension) {
   return result;
 }
 
-const std::vector<SosMonomial>& sos_monomials(int dimension) {
-  static const std::vector<SosMonomial> two = build_sos_monomials(2);
-  static const std::vector<SosMonomial> three = build_sos_monomials(3);
-  return dimension == 2 ? two : three;
+std::span<const SosMonomial> sos_monomials(int dimension) {
+  // Fixed integer tables cannot capture a caller's bounded allocation pool.
+  static constexpr auto two = build_sos_monomials<2>();
+  static constexpr auto three = build_sos_monomials<3>();
+  return dimension == 2
+             ? std::span<const SosMonomial>(two.values.data(), two.count)
+             : std::span<const SosMonomial>(three.values.data(), three.count);
 }
 
 // Sorts point slots by index; returns the permutation parity (+1/-1).
@@ -514,6 +529,7 @@ int lifted_sos_3d(const double* const* p, const std::int64_t* ids) {
 // ---------------------------------------------------------------- public predicates
 
 int orient2d(const double* a, const double* b, const double* c) {
+  native_execution_primitive_query();
   const double detleft = (a[0] - c[0]) * (b[1] - c[1]);
   const double detright = (a[1] - c[1]) * (b[0] - c[0]);
   const double det = detleft - detright;
@@ -539,10 +555,12 @@ int orient2d(const double* a, const double* b, const double* c) {
 }
 
 int orient3d(const double* a, const double* b, const double* c, const double* d) {
+  native_execution_primitive_query();
   return -orient3d_shewchuk(a, b, c, d);
 }
 
 int incircle(const double* a, const double* b, const double* c, const double* d) {
+  native_execution_primitive_query();
   const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
   const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
   const double bdxcdy = bdx * cdy, cdxbdy = cdx * bdy;
@@ -564,12 +582,28 @@ int incircle(const double* a, const double* b, const double* c, const double* d)
 }
 
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e) {
+  native_execution_primitive_query();
   const double* p[5] = {a, b, c, d, e};
   return -insphere_shewchuk(p);
 }
 
+int insphere_expansion(const Expansion* a, const Expansion* b, const Expansion* c,
+                       const Expansion* d, const Expansion* e) {
+  native_execution_primitive_query();
+  const Expansion* points[4] = {a, b, c, d};
+  Expansion x[4], y[4], z[4], lift[4];
+  for (int k = 0; k < 4; ++k) {
+    x[k] = points[k][0] - e[0];
+    y[k] = points[k][1] - e[1];
+    z[k] = points[k][2] - e[2];
+    lift[k] = x[k] * x[k] + y[k] * y[k] + z[k] * z[k];
+  }
+  return -lifted3_rows(x, y, z, lift).sign();
+}
+
 int power2d(const double* a, const double* b, const double* c, const double* d, double wa,
             double wb, double wc, double wd) {
+  native_execution_primitive_query();
   const double* p[4] = {a, b, c, d};
   const double w[4] = {wa, wb, wc, wd};
   return power2d_impl(p, w);
@@ -577,6 +611,7 @@ int power2d(const double* a, const double* b, const double* c, const double* d, 
 
 int power3d(const double* a, const double* b, const double* c, const double* d, const double* e,
             double wa, double wb, double wc, double wd, double we) {
+  native_execution_primitive_query();
   const double* p[5] = {a, b, c, d, e};
   const double w[5] = {wa, wb, wc, wd, we};
   return power3d_impl(p, w);
@@ -658,6 +693,7 @@ int power3d_sos(const double* a, const double* b, const double* c, const double*
 }
 
 Expansion orient2d_exact(const double* a, const double* b, const double* c) {
+  native_execution_primitive_query();
   const Expansion bx = Expansion::difference(b[0], a[0]);
   const Expansion by = Expansion::difference(b[1], a[1]);
   const Expansion cx = Expansion::difference(c[0], a[0]);
@@ -666,6 +702,7 @@ Expansion orient2d_exact(const double* a, const double* b, const double* c) {
 }
 
 Expansion orient3d_exact(const double* a, const double* b, const double* c, const double* d) {
+  native_execution_primitive_query();
   const Expansion x[3] = {Expansion::difference(a[0], d[0]), Expansion::difference(b[0], d[0]),
                           Expansion::difference(c[0], d[0])};
   const Expansion y[3] = {Expansion::difference(a[1], d[1]), Expansion::difference(b[1], d[1]),

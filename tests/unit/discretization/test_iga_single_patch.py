@@ -47,7 +47,8 @@ def test_iga_single_patch_scenario_1() -> None:
     )
     assert prepared.cell_gathers.shape == (1, 9)
     assert prepared.default_runtime.numeric_version == "unit-square"
-    np.testing.assert_allclose(prepared.default_runtime.weights, 1.0)
+    # Runtime geometry retains the authored projective weight scale.
+    np.testing.assert_allclose(prepared.default_runtime.weights, plan.geometry.weights)
     assert float(prepared.default_geometry_evidence.minimum_rank_ratio) > 0.0
     assert float(prepared.default_geometry_evidence.minimum_orientation_ratio) > 0.0
 

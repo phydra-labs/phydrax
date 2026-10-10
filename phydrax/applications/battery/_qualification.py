@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 
 _PROVIDER = "phydrax"
-_CANDIDATE_VERSION = "candidate"
 
 THERMAL_ECM_SUPPORT = SupportTuple(
     "battery.simulation",
@@ -51,7 +50,6 @@ THERMAL_ECM_SUPPORT = SupportTuple(
 THERMAL_ECM_CANDIDATE = CapabilityProfile(
     "battery.thermal-ecm.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (THERMAL_ECM_SUPPORT,),
     released=False,
 )
@@ -88,7 +86,6 @@ ISOTHERMAL_SPM_SUPPORT = SupportTuple(
 ISOTHERMAL_SPM_CANDIDATE = CapabilityProfile(
     "battery.isothermal-spm.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (ISOTHERMAL_SPM_SUPPORT,),
     released=False,
 )
@@ -108,7 +105,6 @@ MARQUIS_2019_SPME_SUPPORT = SupportTuple(
 MARQUIS_2019_SPME_CANDIDATE = CapabilityProfile(
     "battery.marquis-2019-spme.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (MARQUIS_2019_SPME_SUPPORT,),
     released=False,
 )
@@ -124,7 +120,6 @@ BROSA_PLANELLA_TSPME_SUPPORT = SupportTuple(
 BROSA_PLANELLA_TSPME_CANDIDATE = CapabilityProfile(
     "battery.brosa-planella-tspme.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (BROSA_PLANELLA_TSPME_SUPPORT,),
     released=False,
 )
@@ -141,7 +136,6 @@ EMPIRICAL_AGING_SUPPORT = SupportTuple(
 EMPIRICAL_AGING_CANDIDATE = CapabilityProfile(
     "battery.empirical-aging.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (EMPIRICAL_AGING_SUPPORT,),
     released=False,
 )
@@ -158,7 +152,6 @@ BROSA_PLANELLA_SPME_SEI_SUPPORT = SupportTuple(
 BROSA_PLANELLA_SPME_SEI_CANDIDATE = CapabilityProfile(
     "battery.brosa-planella-spme-sei.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (BROSA_PLANELLA_SPME_SEI_SUPPORT,),
     released=False,
 )
@@ -174,7 +167,6 @@ AFFINE_ECM_ESTIMATION_SUPPORT = SupportTuple(
 AFFINE_ECM_ESTIMATION_CANDIDATE = CapabilityProfile(
     "battery.affine-ecm-estimation.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (AFFINE_ECM_ESTIMATION_SUPPORT,),
     released=False,
 )
@@ -190,7 +182,6 @@ BATTERY_OED_SUPPORT = SupportTuple(
 BATTERY_OED_CANDIDATE = CapabilityProfile(
     "battery.oed.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (BATTERY_OED_SUPPORT,),
     released=False,
 )
@@ -208,7 +199,6 @@ FIXED_HORIZON_CURRENT_CONTROL_SUPPORT = SupportTuple(
 FIXED_HORIZON_CURRENT_CONTROL_CANDIDATE = CapabilityProfile(
     "battery.fixed-horizon-current-control.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (FIXED_HORIZON_CURRENT_CONTROL_SUPPORT,),
     released=False,
 )
@@ -239,7 +229,6 @@ NEWMAN_DFN_SUPPORT = SupportTuple(
 NEWMAN_DFN_CANDIDATE = CapabilityProfile(
     "battery.newman-dfn.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (NEWMAN_DFN_SUPPORT,),
 )
 CIRCUIT_ECM_SUPPORT = SupportTuple(
@@ -256,7 +245,6 @@ CIRCUIT_ECM_SUPPORT = SupportTuple(
 CIRCUIT_ECM_CANDIDATE = CapabilityProfile(
     "battery.circuit-ecm.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (CIRCUIT_ECM_SUPPORT,),
 )
 SERIES_PACK_SUPPORT = SupportTuple(
@@ -280,7 +268,6 @@ SERIES_PACK_SUPPORT = SupportTuple(
 SERIES_PACK_CANDIDATE = CapabilityProfile(
     "battery.homogeneous-series-pack.candidate",
     _PROVIDER,
-    _CANDIDATE_VERSION,
     (SERIES_PACK_SUPPORT,),
 )
 SERIES_PACK_ENTRY_SUPPORT = SupportTuple(
@@ -302,21 +289,12 @@ BATTERY_CANDIDATE_PROFILES = (
     CIRCUIT_ECM_CANDIDATE,
     SERIES_PACK_CANDIDATE,
 )
-BATTERY_RELEASE_COORDINATES = {
-    THERMAL_ECM_SUPPORT.support_tuple_id: (
-        "battery.thermal-ecm",
-        "ecm-analytic-qualified",
-    ),
-    MARQUIS_2019_SPME_SUPPORT.support_tuple_id: (
-        "battery.marquis-2019-spme",
-        "numerical-qualified",
-    ),
-    NEWMAN_DFN_SUPPORT.support_tuple_id: ("battery.newman-dfn", "numerical-qualified"),
-    CIRCUIT_ECM_SUPPORT.support_tuple_id: ("battery.circuit-ecm", "numerical-qualified"),
-    SERIES_PACK_SUPPORT.support_tuple_id: (
-        "battery.homogeneous-series-pack",
-        "numerical-qualified",
-    ),
+BATTERY_RELEASE_NAMES = {
+    THERMAL_ECM_SUPPORT.support_tuple_id: "battery.thermal-ecm",
+    MARQUIS_2019_SPME_SUPPORT.support_tuple_id: "battery.marquis-2019-spme",
+    NEWMAN_DFN_SUPPORT.support_tuple_id: "battery.newman-dfn",
+    CIRCUIT_ECM_SUPPORT.support_tuple_id: "battery.circuit-ecm",
+    SERIES_PACK_SUPPORT.support_tuple_id: "battery.homogeneous-series-pack",
 }
 
 
@@ -397,12 +375,19 @@ def validate_battery_candidate_profile(
         }:
             raise ValueError("Unknown battery candidate profile.")
         return
-    coordinates = BATTERY_RELEASE_COORDINATES.get(support_tuple.support_tuple_id)
-    if (
-        coordinates is None
-        or (profile.name, profile.version) != coordinates
-        or profile.provider != _PROVIDER
-    ):
+    name = BATTERY_RELEASE_NAMES.get(support_tuple.support_tuple_id)
+    if name is None:
+        raise ValueError("Unknown released battery profile coordinates.")
+    expected = CapabilityProfile(
+        name,
+        _PROVIDER,
+        (support_tuple,),
+        dependencies=profile.dependencies,
+        required_gates=profile.required_gates,
+        release_evidence=profile.release_evidence,
+        released=True,
+    )
+    if profile.profile_id != expected.profile_id:
         raise ValueError("Unknown released battery profile coordinates.")
     if not profile.required_gates or not profile.release_evidence:
         raise ValueError(
@@ -487,7 +472,7 @@ __all__ = [
     "require_released_battery_profile",
     "validate_battery_candidate_profile",
     "BATTERY_CANDIDATE_PROFILES",
-    "BATTERY_RELEASE_COORDINATES",
+    "BATTERY_RELEASE_NAMES",
     "CIRCUIT_ECM_CANDIDATE",
     "CIRCUIT_ECM_SUPPORT",
     "NEWMAN_DFN_CANDIDATE",

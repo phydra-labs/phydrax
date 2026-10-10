@@ -81,8 +81,8 @@ def test_remap_transition_accepts_content_within_the_certified_coverage_bound() 
         tolerance=1e-10,
     )
     epoch = phx.discretization.TopologyEpoch
-    source = epoch(0, "g0", plan.source_topology_id, "p0")
-    target = epoch(1, "g1", plan.target_topology_id, "p0")
+    source = epoch(0, plan.source_geometry_id, plan.source_topology_id, "p0")
+    target = epoch(1, plan.target_geometry_id, plan.target_topology_id, "p0")
     transition = plan.epoch_transition(fine.cell_space, coarse.cell_space, source, target)
     values = jnp.full(fine.cell_space.vector_space.shape, 1000.0, dtype=jnp.float64)
     result = transition.apply(values)

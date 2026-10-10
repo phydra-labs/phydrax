@@ -69,10 +69,16 @@ rotating one into the other. Covariant/contravariant/density maps belong to
 
 `SimplexNodalFamily` supplies native Warburton warp-and-blend
 triangle/tetrahedron nodes and orthonormal modal tabulation.
-`HybridReferenceFamily` supplies
-triangle-times-interval prism bases and a rational degree-one pyramid basis.
-Mixed three-dimensional faces use canonical polyhedral connectivity and
-two-sided conservative interface routes.
+`HybridReferenceFamily` supplies triangle-times-interval prism bases and rational
+pyramid bases with common simplex/tensor traces. Its `nodal_reference_labels()`
+returns exact logical dual labels in the existing basis order, including prism
+basis permutations and the pyramid's conforming triangular-interior node order.
+Periodic H1 numbering consumes those labels and the actual edge/triangular-face/
+quadrilateral-face conventions; it never rounds Lobatto/warp-and-blend coordinates
+or pairs physical nodes by distance. Numerical nodes and basis coefficients
+remain dynamic leaves, and this metadata interface does not change their PyTree
+partition or scientific family identity. Mixed three-dimensional faces retain
+canonical polyhedral connectivity and two-sided conservative interface routes.
 
 These references remain ordinary `CellMesh` and finite-element compiler values.
 

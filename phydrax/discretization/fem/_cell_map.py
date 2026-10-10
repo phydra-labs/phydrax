@@ -13,6 +13,17 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
+from .._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometrySpec,
+    LayerColumnCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
+    SplineCellGeometryElement,
+)
+from .._cell_mesh import CellMesh
+from .._coordinate_enclosure import CoordinateSourceBank
 from ._generic import _evaluate_coordinate_map, FiniteElementDiscretization
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import FiniteElementSpec
@@ -32,13 +43,32 @@ class FiniteElementCellMapEvaluation(StrictModule):
 
 
 def _whole_support_routes(
-    discretization: FiniteElementDiscretization, coordinate_element: FiniteElementSpec, /
+    discretization: FiniteElementDiscretization,
+    coordinate_element: FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+    | SplineCellGeometryElement
+    | LayerColumnCellGeometryElement,
+    /,
 ) -> tuple[Array, int, tuple[str, ...]]:
     for element, mesh_block in zip(
         discretization.coordinate_elements, discretization.mesh.blocks, strict=True
     ):
-        if not isinstance(element, FiniteElementSpec):
-            raise TypeError("FE cell maps require finite-element coordinate charts.")
+        if not isinstance(
+            element,
+            (
+                FiniteElementSpec,
+                BarycentricCellGeometryElement,
+                RestrictedCellGeometryElement,
+                PolynomialComposedCellGeometryElement,
+                RationalComposedCellGeometryElement,
+                SplineCellGeometryElement,
+                LayerColumnCellGeometryElement,
+            ),
+        ):
+            raise TypeError("Cell maps require canonical tabulated coordinate elements.")
         if element.cell_kind != mesh_block.cell_kind:
             raise ValueError("Coordinate element and cell block kinds differ.")
         if element.element_id != coordinate_element.element_id:
@@ -54,7 +84,16 @@ def _whole_support_routes(
 class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
     """Fixed-topology coordinate map for one block or one homogeneous support."""
 
-    coordinate_element: FiniteElementSpec
+    mesh: CellMesh
+    coordinate_element: (
+        FiniteElementSpec
+        | BarycentricCellGeometryElement
+        | RestrictedCellGeometryElement
+        | PolynomialComposedCellGeometryElement
+        | RationalComposedCellGeometryElement
+        | SplineCellGeometryElement
+        | LayerColumnCellGeometryElement
+    )
     coordinate_dofs: Array
     precision_policy: FiniteElementPrecisionPolicy
     block_name: str = eqx.field(static=True)
@@ -66,6 +105,7 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
     cell_map_id: str = eqx.field(static=True)
+    coordinate_spec: CellGeometrySpec
 
     @checked
     def __init__(
@@ -78,8 +118,21 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
             index = None
             block = discretization.mesh.blocks[0]
             coordinate_element = discretization.coordinate_elements[0]
-            if not isinstance(coordinate_element, FiniteElementSpec):
-                raise TypeError("FE cell maps require finite-element coordinate charts.")
+            if not isinstance(
+                coordinate_element,
+                (
+                    FiniteElementSpec,
+                    BarycentricCellGeometryElement,
+                    RestrictedCellGeometryElement,
+                    PolynomialComposedCellGeometryElement,
+                    RationalComposedCellGeometryElement,
+                    SplineCellGeometryElement,
+                    LayerColumnCellGeometryElement,
+                ),
+            ):
+                raise TypeError(
+                    "Cell maps require canonical tabulated coordinate elements."
+                )
             coordinate_dofs, cell_count, block_ids = _whole_support_routes(
                 discretization, coordinate_element
             )
@@ -91,15 +144,30 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
                 raise IndexError("block_index is outside the finite-element mesh.")
             block = discretization.mesh.blocks[index]
             coordinate_element = discretization.coordinate_elements[index]
-            if not isinstance(coordinate_element, FiniteElementSpec):
-                raise TypeError("FE cell maps require finite-element coordinate charts.")
+            if not isinstance(
+                coordinate_element,
+                (
+                    FiniteElementSpec,
+                    BarycentricCellGeometryElement,
+                    RestrictedCellGeometryElement,
+                    PolynomialComposedCellGeometryElement,
+                    RationalComposedCellGeometryElement,
+                    SplineCellGeometryElement,
+                    LayerColumnCellGeometryElement,
+                ),
+            ):
+                raise TypeError(
+                    "Cell maps require canonical tabulated coordinate elements."
+                )
             coordinate_dofs = discretization.coordinate_dofs[index]
             if coordinate_element.cell_kind != block.cell_kind:
                 raise ValueError("Coordinate element and cell block kinds differ.")
             block_name = block.name
             cell_count = block.cell_count
             block_identity = {"block": block.block_id}
+        self.mesh = discretization.mesh
         self.coordinate_element = coordinate_element
+        self.coordinate_spec = discretization.coordinate_spec
         self.coordinate_dofs = jnp.asarray(coordinate_dofs)
         self.precision_policy = discretization.precision_policy
         self.block_name = block_name
@@ -120,6 +188,16 @@ class PreparedFiniteElementCellMap(StrictModule, NonTrainableState):
                 "coordinate_dofs": array_tree_fingerprint(coordinate_dofs),
             }
         )
+
+    def source_coordinates(self, coordinates: ArrayLike, /) -> CoordinateSourceBank:
+        """Prepare the actual supplied source bank exactly, outside compiled execution."""
+        values = jnp.asarray(coordinates)
+        if values.shape != (self.coordinate_count, self.ambient_dimension):
+            raise ValueError(
+                "coordinates must preserve the prepared geometry coordinate shape."
+            )
+        source = self.coordinate_spec.with_coordinates(values)
+        return source.source_coordinates()
 
     def evaluate(
         self,

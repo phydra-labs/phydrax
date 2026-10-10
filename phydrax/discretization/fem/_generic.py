@@ -6,13 +6,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 from math import prod
-from typing import Any, final
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
@@ -21,8 +23,9 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...ein import contract
 from ...exterior._algebra import map_reference_values, pullback, vector_to_form
-from ...exterior._form_type import FormType
+from ...exterior._form_type import FormType, FormValueSpec
 from ...linalg import (
     ArraySpace,
     BlockSpace,
@@ -32,6 +35,7 @@ from ...linalg import (
     inverse_small_linear,
     OperatorProperties,
     SmallLinearSolvePlan,
+    solve_small_linear,
 )
 from ...sparse import (
     EdgeRelation,
@@ -48,7 +52,17 @@ from .._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from .._cell_geometry import CellGeometryElement, CellGeometrySpec
+from .._cell_geometry import (
+    BarycentricCellGeometryElement,
+    CellGeometryElement,
+    CellGeometrySpec,
+    coordinate_lagrange_element,
+    LayerColumnCellGeometryElement,
+    PolynomialComposedCellGeometryElement,
+    RationalComposedCellGeometryElement,
+    RestrictedCellGeometryElement,
+    SplineCellGeometryElement,
+)
 from .._cell_mesh import CellBlock, CellMesh, PolyhedralBlock, SimplicialConnectivity
 from .._core import (
     DiscretizationCapability,
@@ -74,6 +88,7 @@ from .._local_variational import (
     PreparedLocalRegion,
 )
 from .._measure import DiscreteMeasure
+from .._periodic_topology import _lifted_loops
 from .._reference_cell import reference_cell_topology
 from .._side_actions import (
     FacetTraceRule,
@@ -85,7 +100,14 @@ from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from .._views import FieldTraceSide
 from ._precision import FiniteElementPrecisionPolicy
-from ._reference import FiniteElementSpec, lagrange_element
+from ._reference import discontinuous_element, FiniteElementSpec, lagrange_element
+from ._restoration import authenticate_restored_node
+
+
+if TYPE_CHECKING:
+    from ._cell_map import PreparedFiniteElementCellMap
+    from ._distributed import FiniteElementGlobalDofOwnership
+    from ._form_elements import FormBasis
 
 
 def _linear_reference_element(cell_kind: str, /) -> FiniteElementSpec:
@@ -148,9 +170,21 @@ def _validate_resolved_elements(
             )
     if len({element.conformity for element in elements}) != 1:
         raise ValueError("One field must use one conformity across mesh blocks.")
-    if len({element.representation for element in elements}) != 1:
+    representations = {element.representation for element in elements}
+    canonical_moments = all(
+        element.form_basis is not None
+        and element.representation in ("polynomial_moment", "rational_moment")
+        for element in elements
+    )
+    if len(representations) != 1 and not canonical_moments:
         raise ValueError(
             "One field must use one coefficient representation across mesh blocks."
+        )
+    if canonical_moments and any(
+        element.value_spec != elements[0].value_spec for element in elements
+    ):
+        raise ValueError(
+            "Canonical moment fields require one declared form degree, twist, proxy, and component identity."
         )
     if len({element.mapping for element in elements}) != 1:
         raise ValueError("One field must use one mapping across mesh blocks.")
@@ -213,16 +247,38 @@ _TETRAHEDRAL_EDGES = _TETRAHEDRAL_TOPOLOGY.entities[1]
 _TETRAHEDRAL_FACES = _TETRAHEDRAL_TOPOLOGY.entities[2]
 
 
+def _tetrahedral_face_vertices(
+    connectivity: TetrahedralConnectivity | PolyhedralConnectivity,
+) -> npt.NDArray[np.int32]:
+    if isinstance(connectivity, TetrahedralConnectivity):
+        return np.asarray(connectivity.faces, dtype=np.int32)
+    if isinstance(connectivity, PolyhedralConnectivity):
+        offsets = np.asarray(connectivity.face_vertex_offsets)
+        if np.any(np.diff(offsets) != 3):
+            raise ValueError(
+                "Tetrahedral compatible moments require actual triangular facets."
+            )
+        return np.asarray(connectivity.face_vertex_values, dtype=np.int32).reshape(
+            (-1, 3)
+        )
+    raise TypeError(
+        "Compatible tetrahedral entities need canonical oriented connectivity."
+    )
+
+
 def _tetrahedral_entity_routes(
-    connectivity: TetrahedralConnectivity,
+    connectivity: TetrahedralConnectivity | PolyhedralConnectivity,
     cells: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     edge_by_vertices = {
-        tuple(edge): index for index, edge in enumerate(np.asarray(connectivity.edges))
+        tuple(sorted(edge)): index
+        for index, edge in enumerate(np.asarray(connectivity.edges))
     }
+    faces = _tetrahedral_face_vertices(connectivity)
     face_by_vertices = {
-        tuple(face): index for index, face in enumerate(np.asarray(connectivity.faces))
+        tuple(sorted(int(faces[row, local]) for local in range(3))): row
+        for row in range(faces.shape[0])
     }
     edge_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_EDGES)), dtype=np.int32)
     edge_signs = np.empty_like(edge_routes, dtype=np.float64)
@@ -232,7 +288,12 @@ def _tetrahedral_entity_routes(
             oriented = (int(vertices[start]), int(vertices[stop]))
             canonical = tuple(sorted(oriented))
             edge_routes[cell, local_edge] = edge_by_vertices[canonical]
-            edge_signs[cell, local_edge] = 1.0 if oriented == canonical else -1.0
+            edge_signs[cell, local_edge] = (
+                1.0
+                if oriented
+                == tuple(np.asarray(connectivity.edges)[edge_routes[cell, local_edge]])
+                else -1.0
+            )
         for local_face, local_vertices in enumerate(_TETRAHEDRAL_FACES):
             canonical = tuple(sorted(int(vertices[index]) for index in local_vertices))
             face_routes[cell, local_face] = face_by_vertices[canonical]
@@ -415,6 +476,26 @@ class _FiniteElementDofLayout:
     canonical_routes: tuple[np.ndarray, ...] | None = None
     canonical_transforms: tuple[np.ndarray, ...] | None = None
     canonical_boundary: np.ndarray | None = None
+    cell_widths: np.ndarray | None = None
+    quotient: _QuotientDofMap | None = None
+    canonical_widths: tuple[np.ndarray, ...] | None = None
+    canonical_bases: tuple[tuple[FormBasis | None, ...], ...] | None = None
+    nodal_orbit_keys: dict[tuple[int, int], tuple[tuple[Fraction, ...], ...]] | None = (
+        None
+    )
+    nodal_orbit_families: dict[tuple[int, int], str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _QuotientDofMap:
+    """Lifted entity moments mapped into periodic quotient coordinates."""
+
+    lifted: _FiniteElementDofLayout
+    dofs: np.ndarray
+    signs: np.ndarray
+    representatives: np.ndarray
+    boundary: np.ndarray
+    entity_transforms: tuple[tuple[np.ndarray, np.ndarray], ...]
 
 
 def _topology_vertex_sets(mesh: CellMesh, /) -> tuple[tuple[tuple[int, ...], ...], ...]:
@@ -452,46 +533,34 @@ def _record_form_entity_widths(
                 widths[dimension][entity] = len(dofs)
 
 
-def _orient_form_cell_matrix(
-    matrix: np.ndarray,
-    mesh: CellMesh,
+def _canonical_form_cell_orientation(
     block: CellBlock | PolyhedralBlock,
-    element: FiniteElementSpec,
+    basis: FormBasis,
     cell: np.ndarray,
     /,
-) -> None:
-    basis = element.form_basis
-    if basis is None:
-        raise ValueError("Canonical form routing requires form-basis metadata.")
-    matrix[:] = np.asarray(basis.entity_permutation_matrix(tuple(cell.tolist())))
-    if basis.form_degree == mesh.topological_dimension:
-        permutation = basis.canonical_permutation(tuple(cell.tolist()))
-        sign = (-1) ** sum(
+) -> float:
+    """Orient a local reference cell relative to its canonical global vertex chart."""
+    permutation = basis.canonical_permutation(tuple(cell.tolist()))
+    sign = float(
+        (-1)
+        ** sum(
             permutation[i] > permutation[j]
             for i in range(len(permutation))
             for j in range(i + 1, len(permutation))
         )
-        if basis.family == "tensor-trimmed":
-            chart = _linear_reference_element(block.cell_kind)
-            reference_vertices = np.asarray(chart.reference_nodes)
-            affine = np.linalg.lstsq(
-                np.c_[reference_vertices, np.ones((len(cell),), dtype=np.float64)],
-                reference_vertices[list(permutation)],
-                rcond=None,
-            )[0]
-            sign = np.sign(np.linalg.det(affine[:-1].T))
-        matrix *= sign
-    if element.value_spec.form_type.twist == "twisted":
+    )
+    if basis.family in ("tensor-trimmed", "prism-trimmed", "pyramid-trimmed"):
         chart = _linear_reference_element(block.cell_kind)
-        gradients = np.asarray(
-            chart.tabulate(np.mean(np.asarray(chart.reference_nodes), axis=0)[None])[1][0]
-        )
-        jacobian = np.asarray(mesh.coordinates)[cell].T @ gradients
-        if jacobian.shape[0] != jacobian.shape[1]:
-            raise ValueError(
-                "Twisted embedded FE moments require explicit ambient coorientation."
-            )
-        matrix *= np.sign(np.linalg.det(jacobian))
+        reference_vertices = np.asarray(chart.reference_nodes)
+        affine = np.linalg.lstsq(
+            np.c_[reference_vertices, np.ones((len(cell),), dtype=np.float64)],
+            reference_vertices[list(permutation)],
+            rcond=None,
+        )[0]
+        sign = float(np.sign(np.linalg.det(affine[:-1].T)))
+    if abs(sign) != 1.0:
+        raise ValueError("Canonical form cell orientation must be plus or minus one.")
+    return sign
 
 
 def _canonical_form_dof_layout(
@@ -517,7 +586,10 @@ def _canonical_form_dof_layout(
         for entity in np.flatnonzero(mask):
             start = starts[degree][entity]
             boundary[start : start + level[entity]] = True
-    routes, transforms = _canonical_form_block_routes(mesh, elements, lookups, starts)
+    bases = _canonical_form_entity_bases(mesh, elements, lookups)
+    routes, transforms = _canonical_form_block_routes(
+        mesh, elements, lookups, starts, bases
+    )
     return _FiniteElementDofLayout(
         conformity=elements[0].conformity,
         association="form_entity",
@@ -527,6 +599,8 @@ def _canonical_form_dof_layout(
         canonical_routes=routes,
         canonical_transforms=transforms,
         canonical_boundary=boundary,
+        canonical_widths=tuple(widths),
+        canonical_bases=bases,
     )
 
 
@@ -535,6 +609,7 @@ def _canonical_form_block_routes(
     elements: tuple[FiniteElementSpec, ...],
     lookups: tuple[dict[tuple[int, ...], int], ...],
     starts: tuple[np.ndarray, ...],
+    entity_bases: tuple[tuple[FormBasis | None, ...], ...],
     /,
 ) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
     routes, transforms = [], []
@@ -547,8 +622,51 @@ def _canonical_form_block_routes(
             (block.cell_count, element.local_dof_count, element.local_dof_count),
             dtype=np.float64,
         )
+        # Canonical moment charts depend on relative vertex ordering, not IDs.
+        # Keep the cache inside this block's actual basis and preparation.
+        permutations: dict[
+            tuple[tuple[int, ...], tuple[str | None, ...]], np.ndarray
+        ] = {}
+        orientations: dict[tuple[int, ...], float] = {}
         for row, cell in enumerate(np.asarray(block.vertices)):
-            _orient_form_cell_matrix(matrices[row], mesh, block, element, cell)
+            local_bases = tuple(
+                tuple(
+                    entity_bases[dimension][
+                        lookups[dimension][tuple(sorted(cell[list(face)]))]
+                    ]
+                    for face in faces
+                )
+                for dimension, faces in enumerate(basis.entity_vertices)
+            )
+            relative_order = tuple(np.argsort(np.argsort(cell)).tolist())
+            key = (
+                relative_order,
+                tuple(
+                    None if value is None else value.basis_id
+                    for level in local_bases
+                    for value in level
+                ),
+            )
+            canonical = permutations.get(key)
+            if canonical is None:
+                canonical = np.asarray(
+                    basis.entity_permutation_matrix(
+                        tuple(cell.tolist()), entity_bases=local_bases
+                    )
+                )
+                permutations[key] = canonical
+            matrices[row] = canonical
+            needs_cell_orientation = basis.form_degree == mesh.topological_dimension
+            cell_orientation = 1.0
+            if needs_cell_orientation:
+                cell_orientation = orientations.get(relative_order, 0.0)
+                if cell_orientation == 0.0:
+                    cell_orientation = _canonical_form_cell_orientation(
+                        block, basis, cell
+                    )
+                    orientations[relative_order] = cell_orientation
+            if basis.form_degree == mesh.topological_dimension:
+                matrices[row] *= cell_orientation
             for dimension, faces in enumerate(basis.entity_vertices):
                 for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
                     # Vertex-set matching, never positional reference-face matching.
@@ -561,14 +679,54 @@ def _canonical_form_block_routes(
     return tuple(routes), tuple(transforms)
 
 
+def _canonical_form_entity_bases(
+    mesh: CellMesh,
+    elements: tuple[FiniteElementSpec, ...],
+    lookups: tuple[dict[tuple[int, ...], int], ...],
+    /,
+) -> tuple[tuple[FormBasis | None, ...], ...]:
+    """Reuse each immutable local-face trace; match its owner per actual entity."""
+
+    result: list[list[FormBasis | None]] = [[None] * len(level) for level in lookups]
+    trace_cache: dict[tuple[str, int, int], FormBasis] = {}
+    for block, element in zip(mesh.blocks, elements, strict=True):
+        basis = element.form_basis
+        if basis is None:
+            raise ValueError("Canonical form traces require form-basis metadata.")
+        for dimension, faces in enumerate(basis.entity_vertices):
+            if dimension == 0 or dimension == mesh.topological_dimension:
+                continue
+            if not any(element.entity_dofs[dimension]):
+                continue
+            traces: list[tuple[tuple[int, ...], FormBasis]] = []
+            if block.cell_count:
+                for face, dofs in zip(faces, element.entity_dofs[dimension], strict=True):
+                    if not dofs:
+                        continue
+                    key = (basis.entity_kind(face), basis.form_degree, basis.order)
+                    trace = trace_cache.get(key)
+                    if trace is None:
+                        trace = basis.entity_basis(face)
+                        trace_cache[key] = trace
+                    traces.append((face, trace))
+            for cell in np.asarray(block.vertices):
+                for face, trace in traces:
+                    entity = lookups[dimension][tuple(sorted(cell[list(face)]))]
+                    previous = result[dimension][entity]
+                    if previous is None or trace.basis_id < previous.basis_id:
+                        result[dimension][entity] = trace
+    return tuple(tuple(level) for level in result)
+
+
 _HIGH_ORDER_H1_CONNECTIVITIES = (
     PolygonalConnectivity,
     TetrahedralConnectivity,
     HexahedralConnectivity,
+    PolyhedralConnectivity,
 )
 
 
-def _prepare_finite_element_dof_layout(
+def _lifted_finite_element_dof_layout(
     mesh: CellMesh,
     resolved: tuple[FiniteElementSpec, ...],
     components: tuple[int, ...],
@@ -605,6 +763,326 @@ def _prepare_finite_element_dof_layout(
             return _high_order_h1_dof_layout(mesh, resolved)
         case _:
             raise ValueError(f"Unsupported finite-element conformity {conformity!r}.")
+
+
+def _entity_dof_ranges(
+    starts: np.ndarray, widths: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Global index, owning entity and position of every entity-interior DOF."""
+
+    entity = np.repeat(np.arange(widths.shape[0], dtype=np.int64), widths)
+    first = np.cumsum(widths, dtype=np.int64) - widths
+    position = np.arange(entity.shape[0], dtype=np.int64) - first[entity]
+    return starts.astype(np.int64)[entity] + position, entity, position
+
+
+def _lifted_dof_entities(
+    mesh: CellMesh, layout: _FiniteElementDofLayout, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, ...]]:
+    """Entity degree, entity index and position of every lifted DOF.
+
+    Also returns, per degree, the DOF width of every lifted entity.
+    """
+
+    dimension = mesh.topological_dimension
+    count = layout.global_count
+    degree = np.full((count,), -1, dtype=np.int64)
+    entity = np.zeros((count,), dtype=np.int64)
+    position = np.zeros((count,), dtype=np.int64)
+    widths = [
+        np.zeros((entities.count,), dtype=np.int64)
+        for entities in mesh.topology.entity_sets
+    ]
+    ranges: list[tuple[int, np.ndarray, np.ndarray]] = []
+    match layout.association:
+        case "vertex":
+            ranges.append((0, np.arange(count), np.ones((count,), dtype=np.int64)))
+        case "edge":
+            ranges.append((1, np.arange(count), np.ones((count,), dtype=np.int64)))
+        case "form_entity":
+            if layout.canonical_widths is None:
+                raise RuntimeError("Canonical entity widths were not prepared.")
+            offset = 0
+            for entity_degree, values in enumerate(layout.canonical_widths):
+                starts = offset + np.cumsum(np.r_[0, values[:-1]], dtype=np.int64)
+                ranges.append((entity_degree, starts, values))
+                offset += int(np.sum(values))
+        case "entity":
+            if layout.edge_starts is None or layout.edge_widths is None:
+                raise RuntimeError("High-order H1 edge offsets are unavailable.")
+            if layout.cell_starts is None or layout.cell_widths is None:
+                raise RuntimeError("High-order H1 cell offsets are unavailable.")
+            vertices = mesh.coordinates.shape[0]
+            ranges.append((0, np.arange(vertices), np.ones((vertices,), dtype=np.int64)))
+            ranges.append((1, layout.edge_starts, layout.edge_widths))
+            if dimension == 3:
+                if layout.face_starts is None or layout.face_widths is None:
+                    raise RuntimeError("High-order H1 face offsets are unavailable.")
+                ranges.append((2, layout.face_starts, layout.face_widths))
+            ranges.append((dimension, layout.cell_starts, layout.cell_widths))
+        case _:
+            raise ValueError(
+                f"Periodic quotient numbering does not support {layout.association!r} "
+                "DOFs; it numbers vertex, edge, face and cell entity DOFs."
+            )
+    for entity_degree, starts, entity_widths in ranges:
+        values = np.asarray(entity_widths, dtype=np.int64)
+        index, owner, local = _entity_dof_ranges(np.asarray(starts), values)
+        degree[index] = entity_degree
+        entity[index] = owner
+        position[index] = local
+        widths[entity_degree] = values
+    if np.any(degree < 0):
+        raise RuntimeError("Periodic quotient numbering left lifted DOFs unassigned.")
+    return degree, entity, position, tuple(widths)
+
+
+def _periodic_form_trace_transform(
+    trace: FormBasis,
+    corners: np.ndarray,
+    base_corners: np.ndarray,
+    permutation: np.ndarray,
+    width: int,
+    /,
+) -> np.ndarray:
+    """Pull moments between canonical charts, not oriented incidence loops."""
+    copy_chart = np.asarray(trace.canonical_permutation(tuple(corners.tolist())))
+    base_chart = np.asarray(trace.canonical_permutation(tuple(base_corners.tolist())))
+    canonical = base_chart[permutation[np.argsort(copy_chart)]]
+    interior = [
+        i for i, label in enumerate(trace.dof_labels) if len(label[0]) == permutation.size
+    ]
+    transform = np.asarray(trace.permutation_matrix(tuple(canonical.tolist())))[
+        np.ix_(interior, interior)
+    ]
+    if transform.shape != (width, width):
+        raise ValueError("Periodic form trace moment dimensions disagree.")
+    return transform
+
+
+def _quotient_dof_layout(
+    mesh: CellMesh, lifted: _FiniteElementDofLayout, coordinates: np.ndarray, /
+) -> _FiniteElementDofLayout:
+    """Number lifted entity DOFs on the quotient through the orbit witnesses.
+
+    Entity orientations are relative to the selected lifted representative.
+    Nodal traces match under its explicit isometry; compatible moments use
+    corner permutations and, for tangential face moments, a dense dual map.
+    """
+
+    periodic = mesh.periodic_topology
+    if periodic is None:
+        raise RuntimeError("Quotient numbering requires a periodic mesh.")
+    dimension = mesh.topological_dimension
+    degree, entity, position, widths = _lifted_dof_entities(mesh, lifted)
+    oriented = lifted.conformity in ("Hdiv", "Hcurl")
+    quotient_index = np.zeros_like(entity)
+    witness = np.ones_like(entity)
+    starts: list[np.ndarray] = []
+    quotient_widths: list[np.ndarray] = []
+    entity_transforms: list[tuple[np.ndarray, np.ndarray]] = []
+    cursor = 0
+    for entity_degree in range(dimension + 1):
+        orbit, orientation, _ = (
+            np.asarray(value, dtype=np.int64) for value in periodic.orbits(entity_degree)
+        )
+        representatives = np.asarray(
+            periodic.orbit_representatives(entity_degree), dtype=np.int64
+        )
+        lifted_widths = widths[entity_degree]
+        entity_widths = lifted_widths[representatives]
+        if np.any(lifted_widths != entity_widths[orbit]):
+            raise ValueError(
+                "Seam copies of one quotient entity carry different DOF widths; "
+                "a periodic mortar is required."
+            )
+        permutations = (
+            periodic.entity_vertex_permutations(mesh, entity_degree)
+            if 0 < entity_degree < dimension and np.any(entity_widths)
+            else ()
+        )
+        loops = (
+            {
+                int(row): corners
+                for rows, group in _lifted_loops(mesh, entity_degree)
+                for row, corners in zip(rows, group, strict=True)
+            }
+            if permutations and lifted.association == "form_entity"
+            else {}
+        )
+        entity_starts = cursor + np.cumsum(entity_widths) - entity_widths
+        cursor += int(np.sum(entity_widths))
+        starts.append(entity_starts)
+        quotient_widths.append(entity_widths)
+        members = degree == entity_degree
+        member_orbit = orbit[entity[members]]
+        member_witness = (
+            orientation[entity[members]] * orientation[representatives[member_orbit]]
+        )
+        local = position[members].copy()
+        quotient_index[members] = entity_starts[member_orbit] + local
+        if oriented and entity_degree < dimension:
+            witness[members] = member_witness
+        if 0 < entity_degree < dimension and np.any(entity_widths):
+            for copy in np.flatnonzero(lifted_widths):
+                indices = np.flatnonzero(members & (entity == copy))
+                base = int(representatives[orbit[copy]])
+                width = indices.size
+                permutation = permutations[copy]
+                if lifted.association == "form_entity":
+                    if lifted.canonical_bases is None:
+                        raise RuntimeError(
+                            "Canonical entity moment owners were not prepared."
+                        )
+                    trace = lifted.canonical_bases[entity_degree][copy]
+                    if trace is None:
+                        raise RuntimeError(
+                            "Periodic moment trace is missing its basis owner."
+                        )
+                    transform = _periodic_form_trace_transform(
+                        trace, loops[int(copy)], loops[base], permutation, width
+                    )
+                    entity_transforms.append((indices, transform))
+                    witness[indices] = 1
+                elif lifted.conformity == "H1":
+                    if lifted.nodal_orbit_keys is None:
+                        raise RuntimeError(
+                            "Periodic nodal reference labels were not prepared."
+                        )
+                    if (
+                        lifted.nodal_orbit_families is None
+                        or lifted.nodal_orbit_families[entity_degree, base]
+                        != lifted.nodal_orbit_families[entity_degree, int(copy)]
+                    ):
+                        raise ValueError(
+                            "Periodic nodal traces have different scientific reference-source conventions."
+                        )
+                    source_keys = lifted.nodal_orbit_keys[entity_degree, base]
+                    target_keys = lifted.nodal_orbit_keys[entity_degree, int(copy)]
+                    source_positions = {
+                        key: index for index, key in enumerate(source_keys)
+                    }
+                    inverse = np.argsort(permutation)
+                    mapped_keys = tuple(
+                        tuple(key[int(index)] for index in inverse) for key in target_keys
+                    )
+                    if len(source_positions) != width or any(
+                        key not in source_positions for key in mapped_keys
+                    ):
+                        raise ValueError(
+                            "Periodic nodal reference traces are incompatible under their authored permutation."
+                        )
+                    ordering = np.asarray(
+                        [source_positions[key] for key in mapped_keys], dtype=np.int64
+                    )
+                    if np.unique(ordering).size != width:
+                        raise ValueError(
+                            "Periodic nodal reference orbit is not a bijection."
+                        )
+                    quotient_index[indices] = entity_starts[orbit[copy]] + ordering
+    representative_dofs = np.full((cursor,), -1, dtype=np.int64)
+    on_representative = np.zeros_like(degree, dtype=np.bool_)
+    boundary = np.zeros((cursor,), dtype=np.bool_)
+    for entity_degree in range(dimension + 1):
+        members = degree == entity_degree
+        entity_representatives = np.asarray(
+            periodic.orbit_representatives(entity_degree), dtype=np.int64
+        )
+        orbit = np.asarray(periodic.orbits(entity_degree)[0], dtype=np.int64)
+        on_representative[members] = (
+            entity_representatives[orbit[entity[members]]] == entity[members]
+        )
+        if entity_degree < dimension:
+            quotient_boundary = np.asarray(
+                periodic.quotient.entities(entity_degree).subset("boundary").mask,
+                dtype=np.bool_,
+            )
+            boundary[quotient_index[members]] = quotient_boundary[orbit[entity[members]]]
+    representative_dofs[quotient_index[on_representative]] = np.flatnonzero(
+        on_representative
+    )
+    if np.any(representative_dofs < 0):
+        raise RuntimeError("A quotient DOF has no lifted representative DOF.")
+    counts = tuple(int(np.sum(value)) for value in quotient_widths)
+    per_entity = tuple(_uniform_entity_width(value) for value in quotient_widths)
+    single = lifted.association in ("vertex", "edge")
+    return _FiniteElementDofLayout(
+        conformity=lifted.conformity,
+        association=f"quotient_{lifted.association}",
+        global_count=cursor,
+        entity_dof_counts=(0,) * (dimension + 1) if single else counts,
+        entity_dofs_per_entity=(1,) * (dimension + 1) if single else per_entity,
+        quotient=_QuotientDofMap(
+            lifted,
+            quotient_index.astype(np.int32),
+            witness.astype(np.float64),
+            representative_dofs.astype(np.int32),
+            boundary,
+            tuple(entity_transforms),
+        ),
+    )
+
+
+def _quotient_dof_routes(
+    quotient: _QuotientDofMap,
+    global_count: int,
+    block_dofs: tuple[Array, ...],
+    orientations: tuple[Array, ...],
+    /,
+) -> tuple[tuple[Array, ...], tuple[Array, ...], tuple[RowRelation, ...], np.ndarray]:
+    """Compose lifted routes with the quotient map.
+
+    Also returns, per quotient DOF, the flat (block, cell, local DOF) route
+    position of its representative lifted DOF, which locates its coordinate.
+    """
+
+    routes = []
+    signs = []
+    relations = []
+    gather = np.full((global_count,), -1, dtype=np.int64)
+    offset = 0
+    for lifted_routes, orientation in zip(block_dofs, orientations, strict=True):
+        lifted_local = np.asarray(lifted_routes, dtype=np.int64)
+        local = quotient.dofs[lifted_local]
+        flat = lifted_local.reshape(-1)
+        hits = np.flatnonzero(quotient.representatives[quotient.dofs[flat]] == flat)
+        targets = quotient.dofs[flat[hits]]
+        unset = gather[targets] < 0
+        gather[targets[unset]] = offset + hits[unset]
+        offset += flat.shape[0]
+        routes.append(jnp.asarray(local))
+        signs.append(jnp.asarray(np.asarray(orientation) * quotient.signs[lifted_local]))
+        relations.append(RowRelation(local, source_size=global_count))
+    if np.any(gather < 0):
+        raise RuntimeError("A quotient DOF representative is routed by no cell.")
+    return tuple(routes), tuple(signs), tuple(relations), gather
+
+
+def _quotient_cell_transforms(
+    quotient: _QuotientDofMap,
+    lifted_routes: tuple[Array, ...],
+    transformations: tuple[Array, ...],
+    /,
+) -> tuple[Array, ...]:
+    """Compose local-from-canonical moments with lifted-from-quotient traces."""
+
+    if not quotient.entity_transforms:
+        return transformations
+    result = []
+    for block, routes in enumerate(lifted_routes):
+        local = np.asarray(routes)
+        count, width = local.shape
+        seam = np.broadcast_to(np.eye(width), (count, width, width)).copy()
+        for indices, transform in quotient.entity_transforms:
+            matching = np.isin(local, indices)
+            for cell in np.flatnonzero(np.any(matching, axis=1)):
+                positions = np.asarray(
+                    [np.flatnonzero(local[cell] == index)[0] for index in indices]
+                )
+                seam[cell][np.ix_(positions, positions)] = transform
+        seam = np.asarray(transformations[block]) @ seam
+        result.append(jnp.asarray(seam))
+    return tuple(result)
 
 
 def _single_association_dof_layout(
@@ -668,6 +1146,12 @@ def _high_order_h1_dof_layout(
         per_entity.append(_uniform_entity_width(face_widths))
     counts.append(cell_dof_count)
     per_entity.append(_uniform_entity_width(cell_widths))
+    nodal_keys = None
+    nodal_families = None
+    if mesh.periodic_topology is not None:
+        from ._nodal_orbits import nodal_orbit_keys
+
+        nodal_keys, nodal_families = nodal_orbit_keys(mesh, resolved)
     return _FiniteElementDofLayout(
         conformity="H1",
         association="entity",
@@ -679,7 +1163,103 @@ def _high_order_h1_dof_layout(
         face_widths=face_widths,
         face_starts=face_starts,
         cell_starts=cell_starts,
+        cell_widths=cell_widths,
+        nodal_orbit_keys=nodal_keys,
+        nodal_orbit_families=nodal_families,
     )
+
+
+def _polyhedral_h1_entity_routes(
+    connectivity: PolyhedralConnectivity, kind: str, vertices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reference entities lowered through authoritative packed vertex incidence."""
+    topology = reference_cell_topology(kind)
+    edge_lookup = {
+        tuple(sorted(row.tolist())): index
+        for index, row in enumerate(np.asarray(connectivity.edges))
+    }
+    offsets = np.asarray(connectivity.face_vertex_offsets)
+    values = np.asarray(connectivity.face_vertex_values)
+    face_lookup = {
+        tuple(sorted(values[start:stop].tolist())): face
+        for face, (start, stop) in enumerate(zip(offsets[:-1], offsets[1:], strict=True))
+    }
+    edges = np.asarray(
+        [
+            [
+                edge_lookup[tuple(sorted(cell[list(entity)].tolist()))]
+                for entity in topology.entities[1]
+            ]
+            for cell in vertices
+        ],
+        dtype=np.int32,
+    )
+    faces = np.asarray(
+        [
+            [
+                face_lookup[tuple(sorted(cell[list(entity)].tolist()))]
+                for entity in topology.entities[2]
+            ]
+            for cell in vertices
+        ],
+        dtype=np.int32,
+    )
+    return edges, faces
+
+
+def _h1_trace_positions(
+    mesh: CellMesh,
+    element: FiniteElementSpec,
+    vertices: np.ndarray,
+    dimension: int,
+    entities: np.ndarray,
+    signatures: dict[int, np.ndarray] | None = None,
+    /,
+) -> tuple[np.ndarray, ...]:
+    """Canonical nodal permutations and compatibility of shared edge/face traces."""
+    if (
+        element.representation != "point_value"
+        or element.mapping != "identity"
+        or element.value_shape
+    ):
+        raise ValueError("Hybrid H1 routing requires scalar point-value reference nodes.")
+    topology = reference_cell_topology(element.cell_kind)
+    weights = np.asarray(
+        coordinate_lagrange_element(element.cell_kind, 1).tabulate(
+            element.reference_nodes
+        )[0],
+        dtype=np.float64,
+    )
+    identifiers = np.asarray(mesh.vertex_global_ids)
+    tables = []
+    for local, dofs in enumerate(element.entity_dofs[dimension]):
+        corners = list(topology.entities[dimension][local])
+        positions = np.empty((vertices.shape[0], len(dofs)), dtype=np.int32)
+        for cell, row in enumerate(vertices):
+            order = np.argsort(identifiers[row[corners]], kind="stable")
+            trace = weights[np.asarray(dofs, dtype=np.int32)][:, corners][:, order]
+            quantized = np.rint(trace * (1 << 40)).astype(np.int64)
+            permutation = np.lexsort(
+                tuple(quantized[:, axis] for axis in range(len(corners) - 1, -1, -1))
+            )
+            # On an edge, increasing weight of the high-ID endpoint is the
+            # canonical direction, irrespective of reference node storage order.
+            if dimension == 1:
+                permutation = np.argsort(quantized[:, 1], kind="stable")
+            positions[cell, permutation] = np.arange(len(dofs), dtype=np.int32)
+            canonical = quantized[permutation]
+            if np.unique(canonical, axis=0).shape[0] != len(dofs):
+                raise ValueError("An H1 entity trace contains duplicate nodal positions.")
+            if signatures is not None:
+                entity = int(entities[cell, local])
+                previous = signatures.get(entity)
+                if previous is not None and not np.array_equal(previous, canonical):
+                    raise ValueError(
+                        "Shared hybrid H1 nodal traces are incompatible; a mortar is required."
+                    )
+                signatures[entity] = canonical
+        tables.append(positions)
+    return tuple(tables)
 
 
 def _high_order_h1_entity_widths(
@@ -691,32 +1271,59 @@ def _high_order_h1_entity_widths(
     connectivity = mesh.connectivity
     if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
         raise ValueError(
-            "High-order H1 entity routing requires polygonal, tetrahedral, or hexahedral connectivity."
+            "High-order H1 entity routing requires canonical edge/face connectivity."
         )
     edge_widths = np.full((connectivity.edges.shape[0],), -1, dtype=np.int32)
     total_cell_count = sum(block.cell_count for block in mesh.blocks)
     cell_widths = np.empty((total_cell_count,), dtype=np.int32)
     face_widths = None
     face_shapes = None
-    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
-        face_count = connectivity.faces.shape[0]
+    if isinstance(
+        connectivity,
+        (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
+    ):
+        face_count = connectivity.boundary_faces.shape[0]
         face_widths = np.full((face_count,), -1, dtype=np.int32)
     if isinstance(connectivity, HexahedralConnectivity):
         face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
 
+    edge_signatures: dict[int, np.ndarray] = {}
+    face_signatures: dict[int, np.ndarray] = {}
     cell_offset = 0
     for block, element in zip(mesh.blocks, resolved, strict=True):
         if len(element.entity_dofs[0]) != block.arity:
             raise ValueError("H1 nodal vertex entities must match the cell vertices.")
-        _record_high_order_h1_trace_widths(
-            connectivity,
-            block,
-            element,
-            cell_offset,
-            edge_widths,
-            face_widths,
-            face_shapes,
-        )
+        if isinstance(connectivity, PolyhedralConnectivity):
+            vertices = np.asarray(block.vertices, dtype=np.int32)
+            edges, faces = _polyhedral_h1_entity_routes(
+                connectivity, block.cell_kind, vertices
+            )
+            _record_shared_entity_widths(
+                edge_widths,
+                edges,
+                element.entity_dofs[1],
+                "Shared H1 edge widths are incompatible.",
+            )
+            if face_widths is None:
+                raise RuntimeError("Hybrid H1 routing requires face widths.")
+            _record_shared_entity_widths(
+                face_widths,
+                faces,
+                element.entity_dofs[2],
+                "Shared H1 face widths are incompatible.",
+            )
+            _h1_trace_positions(mesh, element, vertices, 1, edges, edge_signatures)
+            _h1_trace_positions(mesh, element, vertices, 2, faces, face_signatures)
+        else:
+            _record_high_order_h1_trace_widths(
+                connectivity,
+                block,
+                element,
+                cell_offset,
+                edge_widths,
+                face_widths,
+                face_shapes,
+            )
         top_entities = element.entity_dofs[mesh.topological_dimension]
         if len(top_entities) != 1:
             raise ValueError("H1 cell interiors require one top-dimensional entity.")
@@ -850,7 +1457,6 @@ def _build_finite_element_dof_routes(
     layout: _FiniteElementDofLayout,
     /,
 ) -> tuple[tuple[Array, ...], tuple[Array, ...], tuple[RowRelation, ...]]:
-    connectivity = mesh.connectivity
     block_dofs = []
     orientations = []
     relations = []
@@ -868,19 +1474,6 @@ def _build_finite_element_dof_routes(
                 ).reshape((block.cell_count, width))
                 dof_offset += block.cell_count * width
                 orientation = np.ones_like(local, dtype=np.float64)
-            case "edge":
-                if not isinstance(connectivity, PolygonalConnectivity):
-                    raise TypeError(
-                        "Compatible edge map requires polygonal connectivity."
-                    )
-                rows = slice(cell_offset, cell_offset + block.cell_count)
-                local = np.asarray(connectivity.cell_edges, dtype=np.int32)[
-                    rows, : element.local_dof_count
-                ]
-                orientation = np.asarray(
-                    connectivity.cell_edge_signs,
-                    dtype=np.float64,
-                )[rows, : element.local_dof_count]
             case "form_entity":
                 if layout.canonical_routes is None:
                     raise RuntimeError("Canonical form DOF routes were not prepared.")
@@ -934,10 +1527,14 @@ def _high_order_h1_block_routes(
         local[:, entity_dofs[0]] = vertices[:, local_vertex]
 
     local_edge_count = len(element.entity_dofs[1])
-    if isinstance(connectivity, TetrahedralConnectivity):
+    if isinstance(connectivity, PolyhedralConnectivity):
+        block_cell_edges, block_cell_faces = _polyhedral_h1_entity_routes(
+            connectivity, block.cell_kind, vertices
+        )
+    elif isinstance(connectivity, TetrahedralConnectivity):
         (
             block_cell_edges,
-            block_cell_signs,
+            _,
             block_cell_faces,
         ) = _tetrahedral_entity_routes(connectivity, vertices)
     else:
@@ -945,26 +1542,28 @@ def _high_order_h1_block_routes(
         block_cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
             rows, :local_edge_count
         ]
-        block_cell_signs = np.asarray(
-            connectivity.cell_edge_signs,
-            dtype=np.float64,
-        )[rows, :local_edge_count]
+    edge_positions = _h1_trace_positions(mesh, element, vertices, 1, block_cell_edges)
     # Edge-interior DOFs are stored along the canonical edge direction.
     for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
         width = len(entity_dofs)
         if width == 0:
             continue
-        positions = np.arange(width, dtype=np.int32)
-        canonical_positions = np.where(
-            block_cell_signs[:, local_edge, None] > 0.0,
-            positions,
-            positions[::-1],
-        )
+        canonical_positions = edge_positions[local_edge]
         local[:, np.asarray(entity_dofs, dtype=np.int32)] = (
             edge_starts[block_cell_edges[:, local_edge], None] + canonical_positions
         )
 
-    if isinstance(connectivity, HexahedralConnectivity):
+    if isinstance(connectivity, PolyhedralConnectivity):
+        if layout.face_starts is None:
+            raise RuntimeError("Hybrid H1 face offsets are unavailable.")
+        face_positions = _h1_trace_positions(mesh, element, vertices, 2, block_cell_faces)
+        for face, dofs in enumerate(element.entity_dofs[2]):
+            if dofs:
+                local[:, np.asarray(dofs, dtype=np.int32)] = (
+                    layout.face_starts[block_cell_faces[:, face], None]
+                    + face_positions[face]
+                )
+    elif isinstance(connectivity, HexahedralConnectivity):
         _assign_hexahedral_face_dofs(
             local, connectivity, element, layout.face_starts, cell_offset
         )
@@ -1064,109 +1663,107 @@ def _build_finite_element_dof_coordinates(
     resolved: tuple[FiniteElementSpec, ...],
     layout: _FiniteElementDofLayout,
     block_dofs: tuple[Array, ...],
+    coordinate_spec: CellGeometrySpec,
     /,
-) -> tuple[tuple[Array, ...], Array, Array]:
-    global_count = layout.global_count
-    coordinate_weights = tuple(
-        _linear_reference_element(block.cell_kind).tabulate(element.reference_nodes)[0]
-        for block, element in zip(mesh.blocks, resolved, strict=True)
-    )
+) -> tuple[tuple[Array, ...], tuple[Array, ...], Array, np.ndarray]:
+    elements, routes, coordinates = coordinate_spec.resolve(mesh)
+    weights = []
+    for element, field in zip(elements, resolved, strict=True):
+        if not isinstance(
+            element,
+            (
+                FiniteElementSpec,
+                BarycentricCellGeometryElement,
+                RestrictedCellGeometryElement,
+                PolynomialComposedCellGeometryElement,
+                RationalComposedCellGeometryElement,
+                SplineCellGeometryElement,
+                LayerColumnCellGeometryElement,
+            ),
+        ):
+            raise TypeError(
+                "Field coordinates require canonical tabulated coordinate maps."
+            )
+        weights.append(element.tabulate(field.reference_nodes)[0])
+    coordinate_weights = tuple(weights)
     match layout.association:
         case "cell":
-            boundary = np.zeros((global_count,), dtype=np.bool_)
-            dof_coordinates = _cell_dof_coordinates(mesh, coordinate_weights)
+            boundary = np.zeros((layout.global_count,), dtype=np.bool_)
         case "edge":
             connectivity = mesh.connectivity
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise TypeError("Compatible edge map requires polygonal connectivity.")
+            if not isinstance(connectivity, _HIGH_ORDER_H1_CONNECTIVITIES):
+                raise TypeError(
+                    "Compatible edge coordinates require canonical edge incidence."
+                )
             boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
-            edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-            dof_coordinates = np.mean(
-                np.asarray(mesh.coordinates)[edge_vertices],
-                axis=1,
-            )
         case "form_entity":
             if layout.canonical_boundary is None:
                 raise RuntimeError("Canonical form boundary was not prepared.")
             boundary = layout.canonical_boundary
-            dof_coordinates = _averaged_dof_coordinates(
-                mesh,
-                coordinate_weights,
-                block_dofs,
-                global_count,
-                "Canonical form coordinates contain unassigned DOFs.",
-            )
         case "entity":
             boundary = _high_order_h1_boundary_mask(mesh, layout)
-            dof_coordinates = _averaged_dof_coordinates(
-                mesh,
-                coordinate_weights,
-                block_dofs,
-                global_count,
-                "High-order H1 coordinates contain unassigned DOFs.",
-            )
         case "vertex":
-            boundary = _vertex_boundary_mask(mesh, global_count)
-            dof_coordinates = np.asarray(mesh.coordinates)
+            boundary = _vertex_boundary_mask(mesh, layout.global_count)
         case _:
             raise ValueError("Unsupported finite-element DOF map.")
-    # ty: ignore[invalid-return-type]
-    return coordinate_weights, boundary, dof_coordinates
-
-
-def _cell_dof_coordinates(
-    mesh: CellMesh,
-    coordinate_weights: tuple[Array, ...],
-    /,
-) -> np.ndarray:
-    coordinate_blocks = []
-    mesh_coordinates = np.asarray(mesh.coordinates)
-    for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
-        cell_coordinates = mesh_coordinates[np.asarray(block.vertices, dtype=np.int32)]
-        mapped = ein.contract(
-            "ia,cad->cid",
-            np.asarray(weights_),
-            cell_coordinates,
-        )
-        coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
-    return np.concatenate(tuple(coordinate_blocks), axis=0)
+    dof_coordinates = _averaged_dof_coordinates(
+        mesh,
+        coordinate_weights,
+        routes,
+        coordinates,
+        block_dofs,
+        layout.global_count,
+        all(
+            field.conformity == "H1" and field.representation == "point_value"
+            for field in resolved
+        ),
+    )
+    return coordinate_weights, routes, jnp.asarray(boundary), dof_coordinates
 
 
 def _averaged_dof_coordinates(
     mesh: CellMesh,
     coordinate_weights: tuple[Array, ...],
+    coordinate_dofs: tuple[Array, ...],
+    coordinates: Array,
     block_dofs: tuple[Array, ...],
     global_count: int,
-    unassigned_message: str,
+    require_consistent: bool,
     /,
 ) -> np.ndarray:
-    """Average each shared DOF's mapped node over every cell that routes to it."""
-    accumulated = np.zeros(
-        (global_count, mesh.ambient_dimension),
-        dtype=np.asarray(mesh.coordinates).dtype,
-    )
+    """Map reference dual points with the complete coordinate element and routes."""
+    values = np.asarray(coordinates)
+    accumulated = np.zeros((global_count, mesh.ambient_dimension), dtype=np.float64)
     counts = np.zeros((global_count,), dtype=np.int32)
-    for block, weights_, routes in zip(
-        mesh.blocks,
-        coordinate_weights,
-        block_dofs,
-        strict=True,
+    lower = np.full_like(accumulated, np.inf) if require_consistent else None
+    upper = np.full_like(accumulated, -np.inf) if require_consistent else None
+    for weights, geometry_route, field_route in zip(
+        coordinate_weights, coordinate_dofs, block_dofs, strict=True
     ):
-        mapped = ein.contract(
-            "ia,cad->cid",
-            np.asarray(weights_),
-            np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
-        )
-        routes_ = np.asarray(routes)
-        np.add.at(
-            accumulated,
-            routes_.reshape((-1,)),
-            mapped.reshape((-1, mesh.ambient_dimension)),
-        )
-        np.add.at(counts, routes_.reshape((-1,)), 1)
+        mapped = np.asarray(weights) @ values[np.asarray(geometry_route)]
+        rows = np.asarray(field_route).reshape(-1)
+        np.add.at(accumulated, rows, mapped.reshape((-1, mesh.ambient_dimension)))
+        np.add.at(counts, rows, 1)
+        if lower is not None and upper is not None:
+            np.minimum.at(lower, rows, mapped.reshape((-1, mesh.ambient_dimension)))
+            np.maximum.at(upper, rows, mapped.reshape((-1, mesh.ambient_dimension)))
     if np.any(counts == 0):
-        raise ValueError(unassigned_message)
-    return accumulated / counts[:, None]
+        raise ValueError("Mapped field coordinates contain unassigned DOFs.")
+    averaged = accumulated / counts[:, None]
+    if lower is not None and upper is not None:
+        tolerance = (
+            1024
+            * np.finfo(np.float64).eps
+            * max(1.0, float(np.max(np.abs(values), initial=0.0)))
+        )
+        if np.max(upper - lower, initial=0.0) > tolerance:
+            raise ValueError(
+                "Shared H1 nodes have inconsistent mapped physical coordinates."
+            )
+        # Summing k identical contributions and dividing by k is not exact in
+        # binary64; a node every cell maps to the same coordinate keeps it.
+        return np.where(lower == upper, lower, averaged)
+    return averaged
 
 
 def _vertex_boundary_mask(mesh: CellMesh, global_count: int, /) -> np.ndarray:
@@ -1194,7 +1791,10 @@ def _high_order_h1_boundary_mask(
     for edge in np.flatnonzero(np.asarray(connectivity.boundary_edges, dtype=np.bool_)):
         start = int(edge_starts[edge])
         boundary[start : start + int(edge_widths[edge])] = True
-    if isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity)):
+    if isinstance(
+        connectivity,
+        (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
+    ):
         face_starts = layout.face_starts
         face_widths = layout.face_widths
         if face_starts is None or face_widths is None:
@@ -1227,16 +1827,181 @@ def _canonical_finite_element_routes(
     return tuple(canonical_routes), tuple(canonical_orientations)
 
 
+def _validate_restored_fem_state(
+    restored: StrictModule, rebuilt: StrictModule, /
+) -> None:
+    """Compare complete canonical replay, including scientific source bytes."""
+    if (
+        type(restored) is not type(rebuilt)
+        or array_tree_fingerprint(restored) != array_tree_fingerprint(rebuilt)
+        or not eqx.tree_equal(
+            eqx.filter(restored, lambda value: not eqx.is_array(value)),
+            eqx.filter(rebuilt, lambda value: not eqx.is_array(value)),
+            typematch=True,
+        )
+    ):
+        raise ValueError(
+            "Restored finite-element state differs from its actual canonical source replay."
+        )
+
+
+@final
+class FiniteElementDofSourceProjection(StrictModule, NonTrainableState):
+    """Complete canonical source-frame input to resident DOF construction."""
+
+    source: FiniteElementDofMap
+    cell_rows: tuple[Array, ...]
+    block_indices: Array
+    cell_frames: tuple[Array, ...]
+    source_keys: tuple[str, ...] = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_authority: FiniteElementGlobalDofOwnership
+
+    def __init__(
+        self,
+        source: FiniteElementDofMap,
+        cell_rows: Sequence[ArrayLike],
+        block_indices: ArrayLike,
+        cell_frames: Sequence[ArrayLike],
+        source_keys: Sequence[str],
+        source_id: str,
+        source_authority: FiniteElementGlobalDofOwnership,
+        /,
+    ) -> None:
+        if type(source) is not FiniteElementDofMap:
+            raise TypeError(
+                "Source projection requires the registered canonical FE DOF map."
+            )
+        from ._distributed import (
+            finite_element_dof_identity_keys,
+            FiniteElementGlobalDofOwnership,
+        )
+
+        if type(source_authority) is not FiniteElementGlobalDofOwnership:
+            raise TypeError(
+                "Source projection requires its actual whole-source ownership authority."
+            )
+        if source_id != source_authority.plan_id:
+            raise ValueError(
+                "Source projection changed its actual whole-source operation identity."
+            )
+        _validate_restored_fem_state(source, source_authority.source_dof_map)
+        actual_keys = finite_element_dof_identity_keys(
+            source_authority.source_plan, source
+        )
+        if tuple(source_keys) != actual_keys:
+            raise ValueError(
+                "Source projection changed actual authored node/moment scientific keys."
+            )
+        indices = np.asarray(block_indices)
+        rows = tuple(np.asarray(value) for value in cell_rows)
+        if not np.issubdtype(indices.dtype, np.integer) or any(
+            not np.issubdtype(value.dtype, np.integer) for value in rows
+        ):
+            raise TypeError(
+                "Canonical source cell and block IDs require exact integer arrays."
+            )
+        frames = tuple(np.asarray(value) for value in cell_frames)
+        keys = tuple(source_keys)
+        if (
+            indices.shape != (len(rows),)
+            or len(frames) != len(rows)
+            or np.any(indices < 0)
+            or np.any(indices >= len(source.cell_dofs))
+            or len(keys) != source.global_dof_count
+            or len(set(keys)) != len(keys)
+            or any(not isinstance(key, str) or not key for key in keys)
+            or not isinstance(source_id, str)
+            or not source_id
+        ):
+            raise ValueError(
+                "Canonical source projection requires its complete identity/frame fieldset."
+            )
+        for index, cells, maps in zip(indices, rows, frames, strict=True):
+            routes = source.cell_dofs[int(index)]
+            if (
+                cells.ndim != 1
+                or np.any(cells < 0)
+                or np.any(cells >= routes.shape[0])
+                or maps.ndim != 4
+                or maps.shape[:2] != (cells.size, routes.shape[1])
+                or maps.shape[2] != maps.shape[3]
+                or maps.shape[2] < 2
+                or np.any(~np.isfinite(maps))
+            ):
+                raise ValueError(
+                    "Source projection cell routes or homogeneous frames are invalid."
+                )
+            if not np.array_equal(
+                maps[..., -1, :],
+                np.broadcast_to(
+                    np.eye(maps.shape[-1])[-1], maps.shape[:-2] + (maps.shape[-1],)
+                ),
+            ):
+                raise ValueError(
+                    "Source coefficient coordinate frames must be homogeneous affine maps."
+                )
+            lifted_rows = source_authority.source_lifted_routes[int(index)][
+                jnp.asarray(cells)
+            ]
+            actual_frames = source_authority.source_lifted_frames[lifted_rows]
+            if array_tree_fingerprint(maps) != array_tree_fingerprint(actual_frames):
+                raise ValueError(
+                    "Source projection changed an actual authored orbit coordinate frame."
+                )
+        self.source = source
+        self.cell_rows = tuple(jnp.asarray(value) for value in rows)
+        self.block_indices = jnp.asarray(indices)
+        self.cell_frames = tuple(jnp.asarray(value) for value in frames)
+        self.source_keys = keys
+        self.source_id = str(source_id)
+        self.source_authority = source_authority
+
+    @authenticate_restored_node
+    def validate_restored(self, /) -> None:
+        self.source_authority.validate_restored()
+        self.source.validate_restored()
+        rebuilt = FiniteElementDofSourceProjection(
+            self.source,
+            self.cell_rows,
+            self.block_indices,
+            self.cell_frames,
+            self.source_keys,
+            self.source_id,
+            self.source_authority,
+        )
+        _validate_restored_fem_state(self, rebuilt)
+
+
 @final
 class FiniteElementDofMap(StrictModule, NonTrainableState):
-    """Per-block FE local gathers into one global field coordinate array."""
+    """Per-block FE local gathers into one global field coordinate array.
+
+    ``cell_transforms`` map canonical entity coefficients to local moments for
+    every polynomial order. Geometry retains the untransformed reference basis;
+    assembly, projection and point evaluation each apply this map exactly once.
+
+    On a periodic mesh, entity DOFs are numbered on the quotient complex
+    (``quotient_*`` associations): seam copies of one quotient entity gather
+    the same DOFs, with the orientation witnesses of the periodic topology as
+    signs. ``coordinate_gather`` then locates each quotient DOF's coordinate
+    among the flattened (block, cell, local DOF) mapped nodes of its
+    representative lifted DOF; it is ``None`` on meshes without quotient DOFs.
+    """
 
     block_names: tuple[str, ...] = eqx.field(static=True)
+    element_ids: tuple[str, ...] = eqx.field(static=True)
     cell_dofs: tuple[Array, ...]
     relations: tuple[RowRelation, ...]
+    assembly_relation: EdgeRelation
     orientations: tuple[Array, ...]
     cell_transforms: tuple[Array, ...]
+    coordinate_gather: Array | None
+    coordinate_frames: Array | None
     cell_coordinate_weights: tuple[Array, ...]
+    coordinate_dofs: tuple[Array, ...]
+    coordinate_count: int = eqx.field(static=True)
+    require_consistent_coordinates: bool = eqx.field(static=True)
     global_dof_count: int = eqx.field(static=True)
     entity_dof_counts: tuple[int, ...] = eqx.field(static=True)
     entity_dofs_per_entity: tuple[int, ...] = eqx.field(static=True)
@@ -1245,6 +2010,12 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     boundary_dof_mask: Array
     dof_coordinates: Array
     dof_map_id: str = eqx.field(static=True)
+    scientific_keys: tuple[str, ...] = eqx.field(static=True)
+    source_projection_id: str | None = eqx.field(static=True)
+    construction_mesh: CellMesh
+    construction_elements: tuple[FiniteElementSpec, ...]
+    construction_geometry: CellGeometrySpec
+    construction_projection: FiniteElementDofSourceProjection | None
 
     def __init__(
         self,
@@ -1253,6 +2024,8 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
+        coordinate_spec: CellGeometrySpec | None = None,
+        source_projection: FiniteElementDofSourceProjection | None = None,
     ) -> None:
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
@@ -1260,42 +2033,207 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("DOF component dimensions must be positive.")
-        layout = _prepare_finite_element_dof_layout(mesh, resolved, components)
+        geometry = coordinate_spec
+        if geometry is None:
+            geometry = (
+                CellGeometrySpec.affine(mesh)
+                if mesh.storage is None
+                else mesh.storage.restore_geometry()
+            )
+        if not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
+        routing = _lifted_finite_element_dof_layout(mesh, resolved, components)
+        block_dofs, orientations, relations = _build_finite_element_dof_routes(
+            mesh, resolved, routing
+        )
+
+        coordinate_weights, coordinate_dofs, boundary, dof_coordinates = (
+            _build_finite_element_dof_coordinates(
+                mesh, resolved, routing, block_dofs, geometry
+            )
+        )
+        layout = (
+            routing
+            if mesh.periodic_topology is None or routing.association == "cell"
+            else _quotient_dof_layout(mesh, routing, np.asarray(dof_coordinates))
+        )
         association = layout.association
         global_count = layout.global_count
         entity_dof_counts = layout.entity_dof_counts
         entity_dofs_per_entity = layout.entity_dofs_per_entity
-
-        block_dofs, orientations, relations = _build_finite_element_dof_routes(
-            mesh, resolved, layout
-        )
-
-        coordinate_weights, boundary, dof_coordinates = (
-            _build_finite_element_dof_coordinates(mesh, resolved, layout, block_dofs)
-        )
-
-        canonical_routes, canonical_orientations = _canonical_finite_element_routes(
-            mesh, block_dofs, orientations
-        )
-        self.block_names = tuple(block.name for block in mesh.blocks)
-        self.cell_dofs = tuple(block_dofs)
-        self.orientations = tuple(orientations)
-        self.cell_transforms = (
-            tuple(jnp.asarray(value) for value in layout.canonical_transforms)
-            if layout.canonical_transforms is not None
+        transforms = (
+            tuple(jnp.asarray(value) for value in routing.canonical_transforms)
+            if routing.canonical_transforms is not None
             else tuple(
                 jnp.asarray(np.eye(routes.shape[1])[None] * np.asarray(signs)[:, None, :])
                 for routes, signs in zip(block_dofs, orientations, strict=True)
             )
         )
+        if layout.quotient is not None:
+            transforms = _quotient_cell_transforms(
+                layout.quotient, block_dofs, transforms
+            )
+            transforms = tuple(
+                value * jnp.asarray(layout.quotient.signs[np.asarray(routes)])[:, None, :]
+                for value, routes in zip(transforms, block_dofs, strict=True)
+            )
+        coordinate_gather = None
+        if layout.quotient is not None:
+            block_dofs, orientations, relations, gather = _quotient_dof_routes(
+                layout.quotient, global_count, block_dofs, orientations
+            )
+            boundary = layout.quotient.boundary
+            # A quotient DOF sits at its representative lifted DOF.
+            dof_coordinates = np.asarray(dof_coordinates)[layout.quotient.representatives]
+            coordinate_gather = jnp.asarray(gather, dtype=jnp.int32)
+        coordinate_frames = None
+        scientific_keys: tuple[str, ...] = ()
+        projection_identity = None
+        if source_projection is not None:
+            if type(source_projection) is not FiniteElementDofSourceProjection:
+                raise TypeError(
+                    "source_projection must be the registered canonical source-frame record."
+                )
+            source = source_projection.source
+            if source.construction_projection is not None:
+                raise ValueError(
+                    "Canonical source projection must retain its actual prepartition DOF owner."
+                )
+            if (
+                mesh.storage is None
+                or mesh.storage.logical_topology_id
+                != source.construction_mesh.topology_id
+            ):
+                raise ValueError(
+                    "Projected field must retain its actual source topology storage binding."
+                )
+            indices = np.asarray(source_projection.block_indices)
+            if len(indices) != len(mesh.blocks) or source.component_shape != components:
+                raise ValueError(
+                    "Source projection must cover every resident field block."
+                )
+            source_routes, source_transforms, source_signs = [], [], []
+            for block, element, index, rows, frames in zip(
+                mesh.blocks,
+                resolved,
+                indices,
+                source_projection.cell_rows,
+                source_projection.cell_frames,
+                strict=True,
+            ):
+                if (
+                    source.block_names[int(index)] != block.name
+                    or source.element_ids[int(index)] != element.element_id
+                    or rows.shape != (block.cell_count,)
+                    or source.cell_dofs[int(index)].shape[1] != element.local_dof_count
+                    or frames.shape[2:]
+                    != (mesh.ambient_dimension + 1, mesh.ambient_dimension + 1)
+                ):
+                    raise ValueError(
+                        "Source projection changed actual resident cell reference metadata."
+                    )
+                source_block = source.construction_mesh.blocks[int(index)]
+                cell_rows = np.asarray(rows)
+                if not np.array_equal(
+                    np.asarray(block.global_ids),
+                    np.asarray(source_block.global_ids)[cell_rows],
+                ) or not np.array_equal(
+                    np.asarray(mesh.vertex_global_ids)[np.asarray(block.vertices)],
+                    np.asarray(source.construction_mesh.vertex_global_ids)[
+                        np.asarray(source_block.vertices)[cell_rows]
+                    ],
+                ):
+                    raise ValueError(
+                        "Source projection changed actual cell IDs or authored ordered reference corners."
+                    )
+                source_routes.append(
+                    np.asarray(source.cell_dofs[int(index)])[np.asarray(rows)]
+                )
+                source_transforms.append(source.cell_transforms[int(index)][rows])
+                source_signs.append(source.orientations[int(index)][rows])
+            resident = np.unique(
+                np.concatenate([rows.reshape(-1) for rows in source_routes])
+            )
+            if resident.size != global_count:
+                raise ValueError(
+                    "Resident quotient storage does not preserve the actual source DOF orbits."
+                )
+            block_dofs = tuple(
+                jnp.asarray(np.searchsorted(resident, rows), dtype=jnp.int32)
+                for rows in source_routes
+            )
+            relations = tuple(
+                RowRelation(rows, source_size=global_count) for rows in block_dofs
+            )
+            transforms, orientations = tuple(source_transforms), tuple(source_signs)
+            dof_coordinates = np.asarray(source.dof_coordinates)[resident]
+            boundary = np.asarray(source.boundary_dof_mask)[resident]
+            scientific_keys = tuple(
+                source_projection.source_keys[int(row)] for row in resident
+            )
+            if mesh.periodic_topology is not None:
+                gather = np.full((global_count,), -1, dtype=np.int32)
+                coordinate_frames_host = np.empty(
+                    (global_count, mesh.ambient_dimension + 1, mesh.ambient_dimension + 1)
+                )
+                offset = 0
+                for rows, frames in zip(
+                    block_dofs, source_projection.cell_frames, strict=True
+                ):
+                    flat_frames = np.asarray(frames).reshape(
+                        (-1, mesh.ambient_dimension + 1, mesh.ambient_dimension + 1)
+                    )
+                    for position, row in enumerate(np.asarray(rows).reshape(-1)):
+                        if gather[row] < 0:
+                            gather[row] = offset + position
+                            coordinate_frames_host[row] = flat_frames[position]
+                    offset += rows.size
+                coordinate_gather = jnp.asarray(gather)
+                coordinate_frames = jnp.asarray(coordinate_frames_host)
+            projection_identity = {
+                "source": source_projection.source_id,
+                "source_dof_map": source.dof_map_id,
+                "scientific_keys": scientific_keys,
+                "coordinate_frames": None
+                if coordinate_frames is None
+                else array_tree_fingerprint(coordinate_frames),
+            }
+
+        canonical_routes, canonical_orientations = _canonical_finite_element_routes(
+            mesh, block_dofs, orientations
+        )
+        self.block_names = tuple(block.name for block in mesh.blocks)
+        self.element_ids = tuple(element.element_id for element in resolved)
+        self.cell_dofs = tuple(block_dofs)
+        self.orientations = tuple(orientations)
+        self.cell_transforms = transforms
+        self.coordinate_gather = coordinate_gather
+        self.coordinate_frames = coordinate_frames
+        self.scientific_keys = scientific_keys
+        self.source_projection_id = (
+            None if source_projection is None else source_projection.source_id
+        )
+        self.construction_mesh = mesh
+        self.construction_elements = resolved
+        self.construction_geometry = geometry
+        self.construction_projection = source_projection
         self.cell_coordinate_weights = tuple(
             jnp.asarray(value) for value in coordinate_weights
+        )
+        self.coordinate_dofs = coordinate_dofs
+        self.coordinate_count = geometry.coordinates.shape[0]
+        self.require_consistent_coordinates = all(
+            element.conformity == "H1" and element.representation == "point_value"
+            for element in resolved
         )
         self.relations = tuple(relations)
         self.global_dof_count = global_count
         self.entity_dof_counts = entity_dof_counts
         self.entity_dofs_per_entity = entity_dofs_per_entity
         self.component_shape = components
+        self.assembly_relation = _prepare_local_assembly_relation(
+            block_dofs, global_count, components
+        )
         self.association = association
         self.boundary_dof_mask = jnp.asarray(boundary)
         self.dof_coordinates = jnp.asarray(dof_coordinates)
@@ -1315,12 +2253,36 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 "orientations": [
                     array_tree_fingerprint(value) for value in canonical_orientations
                 ],
+                "cell_transforms": [
+                    array_tree_fingerprint(
+                        np.asarray(value)[
+                            np.argsort(np.asarray(block.global_ids), kind="stable")
+                        ]
+                    )
+                    for block, value in zip(mesh.blocks, transforms, strict=True)
+                ],
                 "cell_coordinate_weights": [
                     array_tree_fingerprint(np.asarray(value))
                     for value in coordinate_weights
                 ],
+                "coordinate_layout": geometry.geometry_layout_id,
+                "source_projection": projection_identity,
             }
         )
+
+    @authenticate_restored_node
+    def validate_restored(self, /) -> None:
+        """Rebuild every route/frame/ID from retained independent source inputs."""
+        if self.construction_projection is not None:
+            self.construction_projection.validate_restored()
+        rebuilt = FiniteElementDofMap(
+            self.construction_mesh,
+            self.construction_elements,
+            component_shape=self.component_shape,
+            coordinate_spec=self.construction_geometry,
+            source_projection=self.construction_projection,
+        )
+        _validate_restored_fem_state(self, rebuilt)
 
     def evaluate_coordinates(
         self,
@@ -1328,52 +2290,65 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         coordinates: ArrayLike,
         /,
     ) -> Array:
+        """Evaluate reference dual points using the complete coordinate coefficient bank."""
         points = jnp.asarray(coordinates)
-        if points.shape != mesh.coordinates.shape:
-            raise ValueError("DOF coordinate evaluation must preserve mesh shape.")
-        if self.association == "vertex":
-            return points
-        connectivity = mesh.connectivity
-        if self.association == "edge":
-            if not isinstance(connectivity, PolygonalConnectivity):
-                raise TypeError("Edge DOF coordinates require polygonal connectivity.")
-            edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
-            return 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
-        if self.association in ("entity", "face", "form_entity"):
-            accumulated = jnp.zeros(
-                (self.global_dof_count, mesh.ambient_dimension),
-                dtype=points.dtype,
+        if points.shape != (self.coordinate_count, mesh.ambient_dimension):
+            raise ValueError(
+                "DOF coordinate evaluation must preserve coordinate-map shape."
             )
-            counts = jnp.zeros((self.global_dof_count,), dtype=jnp.int32)
-            for block, weights_, routes in zip(
-                mesh.blocks,
-                self.cell_coordinate_weights,
-                self.cell_dofs,
-                strict=True,
-            ):
-                mapped = ein.contract(
-                    "ia,cad->cid",
-                    weights_,
-                    points[block.vertices],
+        if self.coordinate_gather is not None:
+            mapped_blocks = [
+                (weights @ points[geometry_dofs]).reshape((-1, mesh.ambient_dimension))
+                for weights, geometry_dofs in zip(
+                    self.cell_coordinate_weights, self.coordinate_dofs, strict=True
                 )
-                accumulated = accumulated.at[routes].add(mapped)
-                counts = counts.at[routes].add(1)
-            return accumulated / counts[:, None]
-        if self.association == "cell":
-            coordinate_blocks = []
-            for block, weights_ in zip(
-                mesh.blocks,
-                self.cell_coordinate_weights,
-                strict=True,
-            ):
-                mapped = ein.contract(
-                    "ia,cad->cid",
-                    weights_,
-                    points[block.vertices],
+            ]
+            mapped = jnp.concatenate(mapped_blocks, axis=0)[self.coordinate_gather]
+            if self.coordinate_frames is not None:
+                mapped = (
+                    contract("nij,nj->ni", self.coordinate_frames[:, :-1, :-1], mapped)
+                    + self.coordinate_frames[:, :-1, -1]
                 )
-                coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
-            return jnp.concatenate(tuple(coordinate_blocks), axis=0)
-        raise ValueError("Unknown finite-element DOF association.")
+            return mapped
+        accumulated = jnp.zeros(
+            (self.global_dof_count, mesh.ambient_dimension), dtype=points.dtype
+        )
+        counts = jnp.zeros((self.global_dof_count,), dtype=jnp.int32)
+        lower = (
+            jnp.full_like(accumulated, jnp.inf)
+            if self.require_consistent_coordinates
+            else None
+        )
+        upper = (
+            jnp.full_like(accumulated, -jnp.inf)
+            if self.require_consistent_coordinates
+            else None
+        )
+        for weights, geometry_dofs, field_dofs in zip(
+            self.cell_coordinate_weights,
+            self.coordinate_dofs,
+            self.cell_dofs,
+            strict=True,
+        ):
+            mapped = weights @ points[geometry_dofs]
+            accumulated = accumulated.at[field_dofs].add(mapped)
+            counts = counts.at[field_dofs].add(1)
+            if lower is not None and upper is not None:
+                lower = lower.at[field_dofs].min(mapped)
+                upper = upper.at[field_dofs].max(mapped)
+        result = accumulated / counts[:, None]
+        if lower is not None and upper is not None:
+            tolerance = (
+                1024
+                * jnp.finfo(points.dtype).eps
+                * jnp.maximum(1.0, jnp.max(jnp.abs(points)))
+            )
+            result = eqx.error_if(
+                result,
+                jnp.max(upper - lower) > tolerance,
+                "Shared H1 nodes have inconsistent mapped physical coordinates.",
+            )
+        return result
 
 
 class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
@@ -1476,6 +2451,13 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
                 owner[facet] = cell
                 owner_local[facet] = local
             else:
+                # Owner/neighbor facet pairing is a manifold contract; curve
+                # network junctions (valence >= 3) have no single neighbor.
+                if neighbor[facet] >= 0:
+                    raise ValueError(
+                        "Finite-element facets must be shared by at most two cells; "
+                        "junction meshes are not a manifold chain."
+                    )
                 neighbor[facet] = cell
                 neighbor_local[facet] = local
     if np.any(owner < 0):
@@ -1483,13 +2465,20 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     return owner, neighbor, owner_local, neighbor_local
 
 
+def _host_metric_determinant(jacobian: np.ndarray, /) -> np.ndarray:
+    """Validate host geometry without squaring a square Jacobian's condition."""
+    if jacobian.shape[-2] == jacobian.shape[-1]:
+        return np.asarray(np.linalg.det(jacobian) ** 2)
+    return np.asarray(np.linalg.det(np.swapaxes(jacobian, -1, -2) @ jacobian))
+
+
 def _cell_metric_determinants(
     cell_kind: str, points: np.ndarray, /
 ) -> tuple[np.ndarray, str]:
-    """Evaluate the admitted cell family's existing metric determinant formula."""
+    """Evaluate the admitted cell family's metric determinant on host geometry."""
     if cell_kind.startswith("simplex:"):
         edge_matrix = np.swapaxes(points[:, 1:] - points[:, :1], -1, -2)
-        determinant = np.linalg.det(np.swapaxes(edge_matrix, -1, -2) @ edge_matrix)
+        determinant = _host_metric_determinant(edge_matrix)
         return np.asarray(
             determinant
         ), "Finite-element simplices require positive finite metric determinant."
@@ -1497,7 +2486,7 @@ def _cell_metric_determinants(
         chart = _linear_reference_element(cell_kind)
         gradients = np.asarray(chart.tabulate(chart.reference_nodes)[1])
         jacobian = np.asarray(ein.contract("qir,cid->cqdr", gradients, points))
-        determinant = np.linalg.det(np.swapaxes(jacobian, -1, -2) @ jacobian)
+        determinant = _host_metric_determinant(jacobian)
         return np.asarray(
             determinant
         ), "Finite-element tensor cells require positive finite metric determinant."
@@ -1507,17 +2496,11 @@ def _cell_metric_determinants(
     elif cell_kind == "triangle":
         first = points[:, 1] - points[:, 0]
         second = points[:, 2] - points[:, 0]
-        determinant = (
-            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-            - np.sum(first * second, axis=-1) ** 2
-        )
+        determinant = _host_metric_determinant(np.stack((first, second), axis=-1))
     elif cell_kind == "quadrilateral":
         first = points[:, 1] - points[:, 0]
         second = points[:, 3] - points[:, 0]
-        determinant = (
-            np.sum(first * first, axis=-1) * np.sum(second * second, axis=-1)
-            - np.sum(first * second, axis=-1) ** 2
-        )
+        determinant = _host_metric_determinant(np.stack((first, second), axis=-1))
     elif cell_kind == "tetrahedron":
         edge_matrix = np.stack(
             (
@@ -1527,8 +2510,7 @@ def _cell_metric_determinants(
             ),
             axis=-1,
         )
-        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-        determinant = np.linalg.det(gram)
+        determinant = _host_metric_determinant(edge_matrix)
     elif cell_kind == "hexahedron":
         edge_matrix = np.stack(
             (
@@ -1538,8 +2520,7 @@ def _cell_metric_determinants(
             ),
             axis=-1,
         )
-        gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-        determinant = np.linalg.det(gram)
+        determinant = _host_metric_determinant(edge_matrix)
     elif cell_kind in ("prism", "pyramid"):
         tetrahedra = (
             ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
@@ -1556,8 +2537,7 @@ def _cell_metric_determinants(
                 ),
                 axis=-1,
             )
-            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
-            determinants.append(np.linalg.det(gram))
+            determinants.append(_host_metric_determinant(edge_matrix))
         determinant = np.min(np.stack(tuple(determinants), axis=-1), axis=-1)
     else:
         raise ValueError("Unsupported finite-element cell kind.")
@@ -1579,7 +2559,6 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
 
 def _validate_mixed_prism_tetrahedron_admission(
     mesh: CellMesh,
-    fields: tuple[FiniteElementFieldSpec, ...],
     resolved_fields: tuple[tuple[FiniteElementSpec, ...], ...],
     coordinate_spec: CellGeometrySpec,
     /,
@@ -1590,45 +2569,68 @@ def _validate_mixed_prism_tetrahedron_admission(
         raise ValueError(
             "Mixed prism/tetrahedron finite elements require PolyhedralConnectivity."
         )
-    canonical_elements = tuple(
-        _linear_reference_element(block.cell_kind) for block in mesh.blocks
-    )
-    if any(
-        element.conformity == "H1" and element.degree > 1
-        for elements in resolved_fields
-        for element in elements
-    ):
-        raise ValueError(
-            "Mixed prism/tetrahedron conforming finite elements support degree 1 only."
-        )
-    for field, elements in zip(fields, resolved_fields, strict=True):
-        if field.component_shape or any(
-            element.element_id != canonical.element_id
-            for element, canonical in zip(elements, canonical_elements, strict=True)
-        ):
-            raise ValueError(
-                "Mixed prism/tetrahedron finite elements admit only scalar P1 H1 Lagrange fields."
+    from ._form_elements import _admit_form_cell, _ProxyTabulator, FormBasis
+
+    for elements in resolved_fields:
+        for block, element in zip(mesh.blocks, elements, strict=True):
+            nodal_h1 = (
+                element.conformity == "H1"
+                and element.mapping == "identity"
+                and not element.value_shape
+                and element.representation == "point_value"
             )
-    coordinate_elements, coordinate_dofs, coordinate_values = coordinate_spec.resolve(
-        mesh
-    )
-    if coordinate_values.shape != mesh.coordinates.shape or any(
-        not isinstance(element, FiniteElementSpec)
-        or element.element_id != canonical.element_id
-        or not np.array_equal(
-            np.asarray(routes, dtype=np.int32),
-            np.asarray(block.vertices, dtype=np.int32),
+            local_dg = (
+                element.mapping == "identity"
+                and not element.value_shape
+                and element.conformity == "L2"
+                and element.element_id
+                == discontinuous_element(block.cell_kind, element.degree).element_id
+            )
+            basis = element.form_basis
+            canonical_form = False
+            if type(basis) is FormBasis:
+                dimension, family = _admit_form_cell(block.cell_kind, basis.family)
+                tabulator = element.tabulator
+                canonical_form = (
+                    basis.dimension == dimension
+                    and element.family == family
+                    and basis.family == family
+                    and element.degree == basis.order
+                    and element.value_spec.form_type.degree == basis.form_degree
+                    and element.value_spec.form_type.twist == basis.twist
+                    and element.representation == "polynomial_moment"
+                    and element.tabulator_id == basis.basis_id
+                    and type(tabulator) is _ProxyTabulator
+                    and tabulator.value_spec == element.value_spec
+                    and (
+                        tabulator.basis is basis
+                        or array_tree_fingerprint(tabulator.basis)
+                        == array_tree_fingerprint(basis)
+                    )
+                )
+            if not (nodal_h1 or local_dg or canonical_form):
+                raise ValueError(
+                    "Mixed prism/tetrahedron fields require canonical form elements, "
+                    "nodal H1 or implemented discontinuous scalar reference elements."
+                )
+    coordinate_elements, _, _ = coordinate_spec.resolve(mesh)
+    if any(
+        not isinstance(
+            element,
+            (
+                FiniteElementSpec,
+                BarycentricCellGeometryElement,
+                RestrictedCellGeometryElement,
+                PolynomialComposedCellGeometryElement,
+                RationalComposedCellGeometryElement,
+                SplineCellGeometryElement,
+                LayerColumnCellGeometryElement,
+            ),
         )
-        for block, element, routes, canonical in zip(
-            mesh.blocks,
-            coordinate_elements,
-            coordinate_dofs,
-            canonical_elements,
-            strict=True,
-        )
+        for element in coordinate_elements
     ):
-        raise ValueError(
-            "Mixed prism/tetrahedron finite elements require affine P1 vertex geometry."
+        raise TypeError(
+            "Mixed coordinate maps require canonical tabulated geometry elements."
         )
 
 
@@ -1690,14 +2692,18 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         if len(set(names)) != len(names):
             raise ValueError("Finite-element field names must be unique.")
         resolved_fields = tuple(field.resolve(mesh) for field in field_specs)
-        coordinates = (
-            CellGeometrySpec.affine(mesh) if coordinate_spec is None else coordinate_spec
-        )
+        if coordinate_spec is None:
+            coordinates = (
+                CellGeometrySpec.affine(mesh)
+                if mesh.storage is None
+                else mesh.storage.restore_geometry()
+            )
+        else:
+            coordinates = coordinate_spec
         if not isinstance(coordinates, CellGeometrySpec):
             raise TypeError("coordinate_spec must be CellGeometrySpec or None.")
         _validate_mixed_prism_tetrahedron_admission(
             mesh,
-            field_specs,
             resolved_fields,
             coordinates,
         )
@@ -1737,22 +2743,57 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
             }
         )
 
-    def prepare(self, /, *, numeric_version: str = "0") -> Any:
-        return FiniteElementDiscretization(self, numeric_version=numeric_version)
+    def prepare(
+        self,
+        /,
+        *,
+        numeric_version: str = "0",
+        reuse_prepared: FiniteElementDiscretization | None = None,
+    ) -> FiniteElementDiscretization:
+        if reuse_prepared is None:
+            return FiniteElementDiscretization(self, numeric_version=numeric_version)
+        reuse_prepared.require_exact_plan(self, numeric_version=numeric_version)
+        return reuse_prepared
+
+    def prepare_transfer(
+        self,
+        /,
+        *,
+        numeric_version: str = "0",
+        reuse_prepared: FiniteElementTransferDiscretization | None = None,
+    ) -> FiniteElementTransferDiscretization:
+        """Prepare only immutable field layouts required by transfer operators."""
+        if reuse_prepared is None:
+            return FiniteElementTransferDiscretization(
+                self, numeric_version=numeric_version
+            )
+        reuse_prepared.require_exact_plan(self, numeric_version=numeric_version)
+        return reuse_prepared
 
 
 def _finite_element_field_layout(
     mesh: CellMesh, dof_map: FiniteElementDofMap, components: tuple[int, ...], /
 ) -> EntityDofLayout | BlockDofLayout:
-    vertex_count = mesh.coordinates.shape[0]
-    if dof_map.association == "vertex":
+    if dof_map.coordinate_gather is None:
+        entity_sets = mesh.topology.entity_sets
+    else:
+        periodic = mesh.periodic_topology
+        if periodic is None:
+            raise ValueError("Quotient DOF layout requires a periodic mesh topology.")
+        entity_sets = periodic.quotient.entity_sets
+    if dof_map.association in ("vertex", "quotient_vertex"):
         return EntityDofLayout(
-            mesh.topology.entity_sets[0].entity_set_id,
-            vertex_count,
-            vertex_count,
+            entity_sets[0].entity_set_id,
+            entity_sets[0].count,
+            dof_map.global_dof_count,
             component_shape=components,
         )
-    if dof_map.association in ("entity", "form_entity"):
+    if dof_map.association in (
+        "entity",
+        "form_entity",
+        "quotient_entity",
+        "quotient_form_entity",
+    ):
         entity_names = (
             ("vertices", "edges", "faces", "cells")
             if mesh.topological_dimension <= 3
@@ -1766,7 +2807,7 @@ def _finite_element_field_layout(
         ):
             if entity_dof_count == 0:
                 continue
-            entities = mesh.topology.entity_sets[dimension]
+            entities = entity_sets[dimension]
             block_names.append(entity_names[dimension])
             layouts.append(
                 EntityDofLayout(
@@ -1797,29 +2838,25 @@ def _finite_element_field_layout(
     raise ValueError("Unknown finite-element DOF association.")
 
 
-def _prepare_finite_element_field(
+def _finite_element_field_space(
     mesh: CellMesh,
     field: FiniteElementFieldSpec,
+    elements: tuple[FiniteElementSpec, ...],
+    dof_map: FiniteElementDofMap,
     coefficient_dtype: np.dtype,
-    coordinate_elements: tuple[CellGeometryElement, ...],
-    coordinate_dofs: tuple[Array, ...],
-    coordinate_values: Array,
-    precision_policy: FiniteElementPrecisionPolicy,
     /,
-) -> tuple[
-    tuple[FiniteElementSpec, ...],
-    FiniteElementDofMap,
-    DiscreteFieldSpace,
-    tuple[FiniteElementBlockGeometry, ...],
-]:
-    elements = field.resolve(mesh)
-    dof_map = FiniteElementDofMap(mesh, elements, component_shape=field.component_shape)
+) -> DiscreteFieldSpace:
+    """Bind actual reference owners without preparing another numerical operator."""
     vector_shape = (dof_map.global_dof_count,) + field.component_shape
     vector_space = ArraySpace(vector_shape, dtype=coefficient_dtype)
     layout = _finite_element_field_layout(mesh, dof_map, field.component_shape)
     conformity = elements[0].conformity
-    representation = elements[0].representation
-    space = DiscreteFieldSpace(
+    representation = (
+        "rational_moment"
+        if any(element.representation == "rational_moment" for element in elements)
+        else elements[0].representation
+    )
+    return DiscreteFieldSpace(
         field.name,
         mesh.support.support_id,
         layout,
@@ -1840,6 +2877,76 @@ def _prepare_finite_element_field(
         reconstruction_id=canonical_fingerprint(
             {"kind": "finite-element-reconstruction", "field": field.field_spec_id}
         ),
+    )
+
+
+def _prepare_finite_element_field_layout(
+    mesh: CellMesh,
+    field: FiniteElementFieldSpec,
+    coefficient_dtype: np.dtype,
+    coordinate_spec: CellGeometrySpec,
+    /,
+    *,
+    dof_map: FiniteElementDofMap | None = None,
+) -> tuple[
+    tuple[FiniteElementSpec, ...],
+    FiniteElementDofMap,
+    DiscreteFieldSpace,
+]:
+    elements = field.resolve(mesh)
+    if dof_map is None:
+        dof_map = FiniteElementDofMap(
+            mesh,
+            elements,
+            component_shape=field.component_shape,
+            coordinate_spec=coordinate_spec,
+        )
+    elif (
+        not isinstance(dof_map, FiniteElementDofMap)
+        or dof_map.block_names != tuple(block.name for block in mesh.blocks)
+        or dof_map.element_ids != tuple(element.element_id for element in elements)
+        or dof_map.component_shape != field.component_shape
+        or any(
+            rows.shape != (block.cell_count, element.local_dof_count)
+            for rows, block, element in zip(
+                dof_map.cell_dofs, mesh.blocks, elements, strict=True
+            )
+        )
+    ):
+        raise ValueError(
+            "Projected FE DOF map must match actual resident cells and field references."
+        )
+    return (
+        elements,
+        dof_map,
+        _finite_element_field_space(mesh, field, elements, dof_map, coefficient_dtype),
+    )
+
+
+def _prepare_finite_element_field(
+    mesh: CellMesh,
+    field: FiniteElementFieldSpec,
+    coefficient_dtype: np.dtype,
+    coordinate_elements: tuple[CellGeometryElement, ...],
+    coordinate_dofs: tuple[Array, ...],
+    coordinate_values: Array,
+    precision_policy: FiniteElementPrecisionPolicy,
+    coordinate_spec: CellGeometrySpec,
+    /,
+    *,
+    dof_map: FiniteElementDofMap | None = None,
+) -> tuple[
+    tuple[FiniteElementSpec, ...],
+    FiniteElementDofMap,
+    DiscreteFieldSpace,
+    tuple[FiniteElementBlockGeometry, ...],
+]:
+    elements, dof_map, space = _prepare_finite_element_field_layout(
+        mesh,
+        field,
+        coefficient_dtype,
+        coordinate_spec,
+        dof_map=dof_map,
     )
     geometries = tuple(
         _prepare_block_geometry(
@@ -1897,6 +3004,243 @@ def _finite_element_domains(
     return cell_domain, exterior_domain, interior_domain
 
 
+@eqx.filter_jit
+def _project_form_block(
+    cell_map: PreparedFiniteElementCellMap,
+    element: FiniteElementSpec,
+    coordinates: Array,
+    transforms: Array,
+    function: Callable[[Array, object], ArrayLike],
+    args: object,
+    /,
+) -> Array:
+    """Fuse independent moment evaluations while retaining each callback's axes."""
+    basis = element.form_basis
+    if basis is None:
+        raise ValueError("Canonical projection requires complete form-basis metadata.")
+    value_spec = element.value_spec
+    form = value_spec.form_type
+    embedded = cell_map.ambient_dimension != cell_map.reference_dimension
+    physical_spec = (
+        FormValueSpec(
+            FormType(
+                form.dimension,
+                form.degree,
+                twist=form.twist,
+                fiber_shape=form.fiber_shape,
+                ambient_dimension=cell_map.ambient_dimension,
+            ),
+            proxy=value_spec.proxy,
+        )
+        if embedded
+        else value_spec
+    )
+
+    def project_cell(cell: Array, transform: Array, /) -> Array:
+        cells = jnp.full((basis.functional_points.shape[0],), cell, dtype=jnp.int32)
+        geometry = cell_map.evaluate(coordinates, cells, basis.functional_points)
+        physical = jnp.asarray(function(geometry.physical_points, args))
+        if embedded and value_spec.proxy == "flux":
+            intrinsic = ein.contract("qrd,qd->qr", geometry.inverse_jacobian, physical)
+            reference = vector_to_form(intrinsic * geometry.measure[:, None], value_spec)
+        elif embedded and value_spec.proxy == "density":
+            reference = vector_to_form(physical * geometry.measure, value_spec)
+        else:
+            values = vector_to_form(physical, physical_spec)
+            reference = pullback(values, physical_spec.form_type, geometry.jacobian)
+        return jnp.linalg.solve(transform, basis.interpolate(reference))
+
+    return jax.vmap(project_cell)(
+        jnp.arange(cell_map.cell_count, dtype=jnp.int32), transforms
+    )
+
+
+@final
+class FiniteElementTransferDiscretization(StrictModule, NonTrainableState):
+    """Immutable FE basis/DOF preparation without variational geometry kernels.
+
+    Nested transfer preparation needs canonical basis, orientation, coordinate,
+    and field-space metadata, but never assembled physical quadrature tables.
+    This owner keeps that smaller contract explicit rather than compiling unused
+    block assembly kernels in a cold transfer-only consumer.
+    """
+
+    mesh: CellMesh
+    dof_maps: tuple[FiniteElementDofMap, ...]
+    default_runtime: FiniteElementRuntimeData
+    elements: tuple[tuple[FiniteElementSpec, ...], ...]
+    coordinate_elements: tuple[CellGeometryElement, ...]
+    coordinate_dofs: tuple[Array, ...]
+    key: DiscretizationKey
+    support: DiscreteSupport
+    field_spaces: tuple[DiscreteFieldSpace, ...]
+    precision_policy: FiniteElementPrecisionPolicy
+    coefficient_dtype: np.dtype = eqx.field(static=True)
+    capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+    numeric_version: str = eqx.field(static=True)
+    coordinate_spec: CellGeometrySpec
+    construction_plan: FiniteElementPlan
+    construction_projected_maps: tuple[FiniteElementDofMap, ...] | None
+
+    def __init__(
+        self,
+        plan: FiniteElementPlan,
+        /,
+        *,
+        numeric_version: str = "0",
+        dof_maps: Sequence[FiniteElementDofMap] | None = None,
+    ) -> None:
+        version = str(numeric_version)
+        if not version:
+            raise ValueError("numeric_version must be non-empty.")
+        mesh = plan.mesh
+        coordinate_elements, coordinate_dofs, coordinate_values = (
+            plan.coordinate_spec.resolve(mesh)
+        )
+        projected_maps = None if dof_maps is None else tuple(dof_maps)
+        if projected_maps is not None and len(projected_maps) != len(plan.fields):
+            raise ValueError("One canonical projected DOF map is required per field.")
+        prepared_layouts: dict[
+            tuple[tuple[str, ...], tuple[int, ...], str | None],
+            tuple[tuple[FiniteElementSpec, ...], FiniteElementDofMap],
+        ] = {}
+        all_elements: list[tuple[FiniteElementSpec, ...]] = []
+        all_dof_maps: list[FiniteElementDofMap] = []
+        field_spaces: list[DiscreteFieldSpace] = []
+        for field_index, field in enumerate(plan.fields):
+            resolved = field.resolve(mesh)
+            projected = None if projected_maps is None else projected_maps[field_index]
+            layout_key = (
+                tuple(element.element_id for element in resolved),
+                field.component_shape,
+                None if projected is None else projected.dof_map_id,
+            )
+            retained = prepared_layouts.get(layout_key)
+            if retained is None:
+                elements, dof_map, field_space = _prepare_finite_element_field_layout(
+                    mesh,
+                    field,
+                    plan.coefficient_dtype,
+                    plan.coordinate_spec,
+                    dof_map=projected,
+                )
+                prepared_layouts[layout_key] = elements, dof_map
+            else:
+                elements, dof_map = retained
+                if tuple(element.element_id for element in elements) != tuple(
+                    element.element_id for element in resolved
+                ) or (
+                    projected is not None and projected.dof_map_id != dof_map.dof_map_id
+                ):
+                    raise ValueError(
+                        "Shared transfer-space preparation changed its canonical "
+                        "basis or projected DOF orientation."
+                    )
+                field_space = _finite_element_field_space(
+                    mesh,
+                    field,
+                    elements,
+                    dof_map,
+                    plan.coefficient_dtype,
+                )
+            all_elements.append(elements)
+            all_dof_maps.append(dof_map)
+            field_spaces.append(field_space)
+        self.mesh = mesh
+        self.dof_maps = tuple(all_dof_maps)
+        self.default_runtime = FiniteElementRuntimeData(
+            mesh,
+            coordinate_values,
+            numeric_version=version,
+            geometry_layout_id=plan.coordinate_spec.geometry_layout_id,
+        )
+        self.elements = tuple(all_elements)
+        self.coordinate_elements = coordinate_elements
+        self.coordinate_dofs = coordinate_dofs
+        self.key = plan.key
+        self.support = mesh.support
+        self.field_spaces = tuple(field_spaces)
+        self.precision_policy = plan.precision_policy
+        self.coefficient_dtype = plan.coefficient_dtype
+        self.capabilities = plan.capabilities
+        self.plan_id = plan.plan_id
+        self.numeric_version = version
+        self.coordinate_spec = plan.coordinate_spec
+        self.construction_plan = plan
+        self.construction_projected_maps = projected_maps
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-finite-element-transfer-space",
+                "plan": plan.plan_id,
+                "mesh": mesh.mesh_id,
+                "numeric_version": version,
+                "dof_maps": [value.dof_map_id for value in all_dof_maps],
+            }
+        )
+
+    def _field_index(self, field_name: str, /) -> int:
+        requested = str(field_name)
+        for index, field_space in enumerate(self.field_spaces):
+            if field_space.name == requested:
+                return index
+        raise KeyError(f"Unknown finite-element field {requested!r}.")
+
+    def require_exact_plan(
+        self, plan: FiniteElementPlan, /, *, numeric_version: str = "0"
+    ) -> None:
+        """Require exact reusable mesh, map, basis, orientation, and role identity."""
+        if not isinstance(plan, FiniteElementPlan):
+            raise TypeError("plan must be a FiniteElementPlan.")
+        version = str(numeric_version)
+        if (
+            not version
+            or self.numeric_version != version
+            or self.mesh.topology_id != plan.mesh.topology_id
+            or tuple(field.field_spec_id for field in self.construction_plan.fields)
+            != tuple(field.field_spec_id for field in plan.fields)
+            or tuple(space.name for space in self.field_spaces)
+            != tuple(field.name for field in plan.fields)
+            or self.precision_policy.policy_id != plan.precision_policy.policy_id
+            or self.coefficient_dtype != plan.coefficient_dtype
+        ):
+            raise ValueError(
+                "Reusable transfer-space preparation belongs to another mesh "
+                "revision, ordered field declaration, precision, or coefficient space."
+            )
+        elements, routes, values = plan.coordinate_spec.resolve(plan.mesh)
+        if (
+            tuple(element.element_id for element in elements)
+            != tuple(element.element_id for element in self.coordinate_elements)
+            or any(
+                not np.array_equal(np.asarray(actual), np.asarray(retained))
+                for actual, retained in zip(routes, self.coordinate_dofs, strict=True)
+            )
+            or not np.array_equal(
+                np.asarray(values).view(np.uint64),
+                np.asarray(self.default_runtime.coordinates).view(np.uint64),
+            )
+        ):
+            raise ValueError("Reusable transfer-space preparation has another map.")
+        resolved = tuple(field.resolve(plan.mesh) for field in plan.fields)
+        for field, expected, retained_elements, dof_map in zip(
+            plan.fields, resolved, self.elements, self.dof_maps, strict=True
+        ):
+            element_ids = tuple(element.element_id for element in expected)
+            if (
+                element_ids != tuple(element.element_id for element in retained_elements)
+                or element_ids != dof_map.element_ids
+                or dof_map.block_names != tuple(block.name for block in plan.mesh.blocks)
+                or dof_map.component_shape != field.component_shape
+                or dof_map.construction_mesh.topology_id != plan.mesh.topology_id
+            ):
+                raise ValueError(
+                    "Reusable transfer-space basis, orientation, field role, or "
+                    "coordinate ownership differs from the requested plan."
+                )
+
+
 @final
 class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     mesh: CellMesh
@@ -1921,9 +3265,19 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
+    coordinate_spec: CellGeometrySpec
+    construction_plan: FiniteElementPlan
+    construction_projected_maps: tuple[FiniteElementDofMap, ...] | None
 
     @checked
-    def __init__(self, plan: FiniteElementPlan, /, *, numeric_version: str = "0") -> None:
+    def __init__(
+        self,
+        plan: FiniteElementPlan,
+        /,
+        *,
+        numeric_version: str = "0",
+        dof_maps: Sequence[FiniteElementDofMap] | None = None,
+    ) -> None:
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
@@ -1931,21 +3285,64 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         coordinate_elements, coordinate_dofs, coordinate_values = (
             plan.coordinate_spec.resolve(mesh)
         )
+        projected_maps = None if dof_maps is None else tuple(dof_maps)
+        if projected_maps is not None and len(projected_maps) != len(plan.fields):
+            raise ValueError("One canonical projected DOF map is required per field.")
         field_spaces = []
         dof_maps = []
         all_elements = []
         all_geometries = []
+        shared_fields: dict[
+            tuple[tuple[str, ...], tuple[int, ...], str | None],
+            tuple[
+                tuple[FiniteElementSpec, ...],
+                FiniteElementDofMap,
+                tuple[FiniteElementBlockGeometry, ...],
+            ],
+        ] = {}
         cell_measures = None
-        for field in plan.fields:
-            elements, dof_map, field_space, geometries = _prepare_finite_element_field(
-                mesh,
-                field,
-                plan.coefficient_dtype,
-                coordinate_elements,
-                coordinate_dofs,
-                coordinate_values,
-                plan.precision_policy,
+        for field_index, field in enumerate(plan.fields):
+            resolved = field.resolve(mesh)
+            projected = None if projected_maps is None else projected_maps[field_index]
+            key = (
+                tuple(element.element_id for element in resolved),
+                field.component_shape,
+                None if projected is None else projected.dof_map_id,
             )
+            shared = shared_fields.get(key)
+            if shared is None:
+                elements, dof_map, field_space, geometries = (
+                    _prepare_finite_element_field(
+                        mesh,
+                        field,
+                        plan.coefficient_dtype,
+                        coordinate_elements,
+                        coordinate_dofs,
+                        coordinate_values,
+                        plan.precision_policy,
+                        plan.coordinate_spec,
+                        dof_map=projected,
+                    )
+                )
+                shared_fields[key] = elements, dof_map, geometries
+            else:
+                elements, dof_map, geometries = shared
+                if tuple(element.element_id for element in elements) != tuple(
+                    element.element_id for element in resolved
+                ) or (
+                    projected is not None and projected.dof_map_id != dof_map.dof_map_id
+                ):
+                    raise ValueError(
+                        "Shared finite-element field preparation changed its "
+                        "canonical basis or projected DOF orientation."
+                    )
+                field_space = _finite_element_field_space(
+                    mesh,
+                    field,
+                    elements,
+                    dof_map,
+                    plan.coefficient_dtype,
+                )
             all_elements.append(elements)
             dof_maps.append(dof_map)
             field_spaces.append(field_space)
@@ -1990,6 +3387,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
         facet_routes = _facet_routes(mesh)
         self.mesh = mesh
+        self.coordinate_spec = plan.coordinate_spec
         self.default_runtime = FiniteElementRuntimeData(
             mesh,
             coordinate_values,
@@ -2018,6 +3416,8 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         self.plan_id = plan.plan_id
         self.numeric_version = version
         self.preparation = preparation
+        self.construction_plan = plan
+        self.construction_projected_maps = projected_maps
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-element",
@@ -2026,6 +3426,80 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 "numeric_version": version,
             }
         )
+
+    def require_exact_plan(
+        self, plan: FiniteElementPlan, /, *, numeric_version: str = "0"
+    ) -> None:
+        """Require that this immutable preparation exactly realizes ``plan``.
+
+        This admits reuse only for an unchanged mesh revision, coordinate map,
+        ordered field roles, reference bases, and canonical DOF orientations.
+        Geometry-transition provenance may differ outside the coordinate map;
+        every resolved element, route, and coefficient must still be bitwise
+        identical.
+        """
+        if not isinstance(plan, FiniteElementPlan):
+            raise TypeError("plan must be a FiniteElementPlan.")
+        version = str(numeric_version)
+        if (
+            not version
+            or self.numeric_version != version
+            or self.mesh.topology_id != plan.mesh.topology_id
+            or tuple(field.field_spec_id for field in self.construction_plan.fields)
+            != tuple(field.field_spec_id for field in plan.fields)
+            or tuple(space.name for space in self.field_spaces)
+            != tuple(field.name for field in plan.fields)
+            or self.precision_policy.policy_id != plan.precision_policy.policy_id
+            or self.coefficient_dtype != plan.coefficient_dtype
+        ):
+            raise ValueError(
+                "Reusable finite-element preparation belongs to another mesh "
+                "revision, ordered field declaration, precision, or coefficient space."
+            )
+        elements, routes, values = plan.coordinate_spec.resolve(plan.mesh)
+        if (
+            tuple(element.element_id for element in elements)
+            != tuple(element.element_id for element in self.coordinate_elements)
+            or any(
+                not np.array_equal(np.asarray(actual), np.asarray(retained))
+                for actual, retained in zip(routes, self.coordinate_dofs, strict=True)
+            )
+            or not np.array_equal(
+                np.asarray(values).view(np.uint64),
+                np.asarray(self.default_runtime.coordinates).view(np.uint64),
+            )
+        ):
+            raise ValueError(
+                "Reusable finite-element preparation has another coordinate map."
+            )
+        resolved = tuple(field.resolve(plan.mesh) for field in plan.fields)
+        for field, expected, retained_elements, dof_map in zip(
+            plan.fields, resolved, self.elements, self.dof_maps, strict=True
+        ):
+            element_ids = tuple(element.element_id for element in expected)
+            if (
+                element_ids != tuple(element.element_id for element in retained_elements)
+                or element_ids != dof_map.element_ids
+                or dof_map.block_names != tuple(block.name for block in plan.mesh.blocks)
+                or dof_map.component_shape != field.component_shape
+                or dof_map.construction_mesh.topology_id != plan.mesh.topology_id
+            ):
+                raise ValueError(
+                    "Reusable finite-element basis, orientation, field role, or "
+                    "coordinate ownership differs from the requested plan."
+                )
+
+    @authenticate_restored_node
+    def validate_restored(self, /) -> None:
+        """Replay the entire actual consumer, including geometry and field caches."""
+        for dof_map in self.dof_maps:
+            dof_map.validate_restored()
+        rebuilt = FiniteElementDiscretization(
+            self.construction_plan,
+            numeric_version=self.numeric_version,
+            dof_maps=self.construction_projected_maps,
+        )
+        _validate_restored_fem_state(self, rebuilt)
 
     @property
     def precision_evidence(self) -> Any:
@@ -2210,33 +3684,18 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             moments = jnp.zeros((dofs.global_dof_count,), dtype=self.coefficient_dtype)
             counts = jnp.zeros((dofs.global_dof_count,), dtype=jnp.int32)
             for block_index, element in enumerate(self.elements[field_index]):
-                basis = element.form_basis
-                if basis is None:
-                    raise ValueError(
-                        "Canonical projection requires complete form-basis metadata."
-                    )
                 cell_map = PreparedFiniteElementCellMap(self, block_index)
-                for cell in range(cell_map.cell_count):
-                    cells = jnp.full(
-                        (basis.functional_points.shape[0],), cell, dtype=jnp.int32
-                    )
-                    geometry = cell_map.evaluate(
-                        realized.coordinates, cells, basis.functional_points
-                    )
-                    values = vector_to_form(
-                        jnp.asarray(function(geometry.physical_points, args)),
-                        element.value_spec,
-                    )
-                    reference = pullback(
-                        values, element.value_spec.form_type, geometry.jacobian
-                    )
-                    local = jnp.linalg.solve(
-                        dofs.cell_transforms[block_index][cell],
-                        basis.interpolate(reference),
-                    )
-                    routes = dofs.cell_dofs[block_index][cell]
-                    moments = moments.at[routes].add(local)
-                    counts = counts.at[routes].add(1)
+                local = _project_form_block(
+                    cell_map,
+                    element,
+                    realized.coordinates,
+                    dofs.cell_transforms[block_index],
+                    function,
+                    args,
+                )
+                routes = dofs.cell_dofs[block_index]
+                moments = moments.at[routes].add(local)
+                counts = counts.at[routes].add(1)
             return moments / counts
         coordinates = self.dof_maps[field_index].evaluate_coordinates(
             self.mesh,
@@ -2424,12 +3883,16 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 geometry_dofs=geometry_dofs,
                 precision_policy=self.precision_policy,
             )
-            for block, element, coordinate_element, geometry_dofs in zip(
-                self.mesh.blocks,
-                self.elements[field_index],
-                self.coordinate_elements,
-                self.coordinate_dofs,
-                strict=True,
+            for block_index, (block, element, coordinate_element, geometry_dofs) in (
+                enumerate(
+                    zip(
+                        self.mesh.blocks,
+                        self.elements[field_index],
+                        self.coordinate_elements,
+                        self.coordinate_dofs,
+                        strict=True,
+                    )
+                )
             )
         )
 
@@ -2471,12 +3934,16 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         ):
             raise ValueError("Finite-element runtime does not match this discretization.")
         field_index = self._field_index(field_name)
-        geometries = self.evaluate_geometry(field_name, runtime.coordinates)
+        geometries = (
+            self.block_geometries[field_index]
+            if runtime.runtime_id == self.default_runtime.runtime_id
+            else self.evaluate_geometry(field_name, runtime.coordinates)
+        )
+        dof_map = self.dof_maps[field_index]
         mass_local = tuple(_local_mass_tensor(geometry) for geometry in geometries)
         stiffness_local = tuple(
             _local_stiffness_tensor(geometry) for geometry in geometries
         )
-        dof_map = self.dof_maps[field_index]
         return (
             _assemble_local_operator(
                 dof_map,
@@ -2531,7 +3998,6 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             values,
             identifier,
             positive_definite=False,
-            component_shape=dof_map.component_shape,
             properties=properties_,
             coefficient_dtype=self.coefficient_dtype,
         )
@@ -2675,7 +4141,13 @@ def _degree_aware_reference_rule(
 
 
 def _evaluate_coordinate_map(
-    coordinate_element: FiniteElementSpec,
+    coordinate_element: FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+    | SplineCellGeometryElement
+    | LayerColumnCellGeometryElement,
     coordinate_routes: ArrayLike,
     coordinates: ArrayLike,
     reference_points: ArrayLike,
@@ -2704,43 +4176,78 @@ def _evaluate_coordinate_map(
         physical_points = ein.contract("qi,cid->cqd", geometry_values, cell_coordinates)
         jacobian = ein.contract("qir,cid->cqdr", geometry_gradients, cell_coordinates)
     metric = ein.contract("...di,...dj->...ij", jacobian, jacobian)
-    if metric.shape[-1] <= 4:
-        inverse_result = inverse_small_linear(
-            SmallLinearSolvePlan(metric.shape[-1]), metric
-        )
-        inverse_metric = inverse_result.value
-        successful = inverse_result.successful
-        gram_determinant = jnp.where(successful, inverse_result.determinant, 0.0)
-    else:
-        tangent = ArraySpace(
-            (metric.shape[-1],),
-            dtype=metric.dtype,
-            space_id=f"finite-element-reference-tangent:{metric.shape[-1]}",
-        )
-        factors = factorize(
-            DenseLinearOperator(
-                metric,
-                source=tangent,
-                target=tangent,
-                operator_id=f"finite-element-geometry-gram:{metric.shape[-1]}",
-            ),
-            FactorizationPolicy("lu"),
-        )
-        inverse_result = factors.materialize_inverse()
-        inverse_metric = inverse_result.value
-        successful = inverse_result.successful
-        gram_determinant = jnp.where(
-            successful, jnp.exp(factors.log_abs_determinant()), 0
-        )
-    measure = jnp.sqrt(gram_determinant)
-    inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
     if jacobian.shape[-2] == jacobian.shape[-1]:
+        # Rank, condition and measure belong to J itself, not squared J^T J.
+        dimension = jacobian.shape[-1]
+        if dimension <= 4:
+            canonical_columns = jnp.broadcast_to(
+                jnp.eye(dimension, dtype=jacobian.dtype), jacobian.shape
+            )
+            solved = solve_small_linear(
+                SmallLinearSolvePlan(dimension), jacobian, canonical_columns
+            )
+            determinant = solved.determinant
+        else:
+            tangent = ArraySpace(
+                (dimension,),
+                dtype=jacobian.dtype,
+                space_id=f"finite-element-reference-tangent:{dimension}",
+            )
+            factors = factorize(
+                DenseLinearOperator(
+                    jacobian,
+                    source=tangent,
+                    target=tangent,
+                    operator_id=f"finite-element-geometry-jacobian:{dimension}",
+                ),
+                FactorizationPolicy("lu"),
+            )
+            solved = factors.materialize_inverse()
+            determinant = factors.determinant_sign() * jnp.exp(
+                factors.log_abs_determinant()
+            )
+        inverse_jacobian = solved.value
         determinant = jnp.where(
-            successful,
-            jnp.linalg.det(jacobian),
+            solved.successful,
+            determinant,
             0.0,
         )
+        measure = jnp.abs(determinant)
+        gram_determinant = measure * measure
+        inverse_metric = ein.contract(
+            "...id,...jd->...ij", inverse_jacobian, inverse_jacobian
+        )
     else:
+        # Embedded cells retain the tangent metric and its native rank evidence.
+        dimension = metric.shape[-1]
+        if dimension <= 4:
+            inverse_result = inverse_small_linear(SmallLinearSolvePlan(dimension), metric)
+            gram_determinant = inverse_result.determinant
+        else:
+            tangent = ArraySpace(
+                (dimension,),
+                dtype=metric.dtype,
+                space_id=f"finite-element-reference-tangent:{dimension}",
+            )
+            factors = factorize(
+                DenseLinearOperator(
+                    metric,
+                    source=tangent,
+                    target=tangent,
+                    operator_id=f"finite-element-geometry-gram:{dimension}",
+                ),
+                FactorizationPolicy("lu"),
+            )
+            inverse_result = factors.materialize_inverse()
+            gram_determinant = jnp.exp(factors.log_abs_determinant())
+        inverse_metric = inverse_result.value
+        gram_determinant = jnp.where(
+            inverse_result.successful,
+            gram_determinant,
+            0.0,
+        )
+        measure = jnp.sqrt(gram_determinant)
+        inverse_jacobian = ein.contract("...ij,...dj->...id", inverse_metric, jacobian)
         determinant = measure
     return (
         physical_points,
@@ -2754,6 +4261,162 @@ def _evaluate_coordinate_map(
     )
 
 
+def _evaluate_paired_field_basis(
+    discretization: FiniteElementDiscretization,
+    field_name: str,
+    block_index: int | None,
+    cells: ArrayLike,
+    reference: ArrayLike,
+    coordinates: ArrayLike,
+    /,
+    *,
+    derivative_axis: int | None = None,
+) -> tuple[Array, Array]:
+    """Mapped basis for P paired cell/point queries, with O(P n) storage.
+
+    Canonical cell transforms are included exactly once. A derivative
+    is with respect to the requested physical coordinate, differentiating the
+    full represented coordinate map and its Piola factors, including curved
+    Jacobian/inverse-Jacobian/measure derivatives. No C-by-P cross product or
+    P-by-P derivative Jacobian is constructed.
+    """
+    field_index = discretization._field_index(field_name)
+    dof_map = discretization.dof_maps[field_index]
+    index = 0 if block_index is None else block_index
+    element = discretization.elements[field_index][index]
+    coordinate_element = discretization.coordinate_elements[index]
+    if block_index is None:
+        if any(
+            value.element_id != element.element_id
+            for value in discretization.elements[field_index]
+        ):
+            raise ValueError(
+                "Whole-support paired queries require homogeneous field elements."
+            )
+        if any(
+            value.element_id != coordinate_element.element_id
+            for value in discretization.coordinate_elements
+        ):
+            raise ValueError(
+                "Whole-support paired queries require homogeneous coordinate elements."
+            )
+        coordinate_routes = jnp.concatenate(discretization.coordinate_dofs, axis=0)
+        transforms = jnp.concatenate(dof_map.cell_transforms, axis=0)
+    else:
+        coordinate_routes = discretization.coordinate_dofs[index]
+        transforms = dof_map.cell_transforms[index]
+    cell_count = coordinate_routes.shape[0]
+    if not isinstance(
+        coordinate_element,
+        (
+            FiniteElementSpec,
+            BarycentricCellGeometryElement,
+            RestrictedCellGeometryElement,
+            PolynomialComposedCellGeometryElement,
+            RationalComposedCellGeometryElement,
+            SplineCellGeometryElement,
+            LayerColumnCellGeometryElement,
+        ),
+    ):
+        raise TypeError(
+            "Paired field queries require actual scalar coordinate tabulation."
+        )
+    indices = jnp.asarray(cells)
+    policy = discretization.precision_policy
+    points = policy.geometry(reference)
+    coordinate_values = policy.geometry(coordinates)
+    if indices.ndim != 1 or not jnp.issubdtype(indices.dtype, jnp.integer):
+        raise ValueError("Paired field cells must be a one-dimensional integer array.")
+    if points.shape != (indices.shape[0], element.topological_dimension):
+        raise ValueError("Paired field queries require one reference point per cell.")
+    if derivative_axis is not None and not (
+        isinstance(derivative_axis, int)
+        and 0 <= derivative_axis < coordinate_values.shape[-1]
+    ):
+        raise ValueError("derivative_axis must identify a physical coordinate axis.")
+    if cell_count == 0 or indices.size == 0:
+        value_shape = (
+            (coordinate_values.shape[-1],)
+            if element.value_spec.proxy in ("circulation", "flux")
+            else element.value_shape
+        )
+        return (
+            jnp.zeros(
+                (indices.size, element.local_dof_count) + value_shape,
+                dtype=coordinate_values.dtype,
+            ),
+            jnp.zeros(indices.shape, dtype=jnp.bool_),
+        )
+    safe_cells = jnp.clip(indices, 0, cell_count - 1)
+    finite_reference = jnp.all(jnp.isfinite(points), axis=-1)
+    points = jnp.where(finite_reference[:, None], points, 0.0)
+    routes = coordinate_routes[safe_cells]
+
+    def mapped_values(
+        selected_routes: Array,
+        selected_points: Array,
+        selected_cells: Array,
+    ) -> tuple[Array, Array, Array]:
+        _, jacobian, _, _, inverse, _, measure, _ = _evaluate_coordinate_map(
+            coordinate_element,
+            selected_routes,
+            coordinate_values,
+            selected_points,
+            precision_policy=policy,
+            paired=True,
+        )
+        basis, _ = element.tabulate(selected_points)
+        basis = map_reference_values(
+            policy.evaluation(basis), element.value_spec, jacobian[:, None]
+        )
+        basis = ein.contract("pji,pj...->pi...", transforms[selected_cells], basis)
+        return basis, inverse, measure
+
+    if derivative_axis is None:
+        basis, inverse, measure = mapped_values(routes, points, safe_cells)
+        finite_basis = jnp.all(jnp.isfinite(basis).reshape((indices.size, -1)), axis=-1)
+    else:
+
+        def point_derivative(
+            route: Array,
+            point: Array,
+            cell: Array,
+        ) -> tuple[Array, tuple[Array, Array, Array]]:
+            def single_basis(
+                location: Array,
+            ) -> tuple[Array, tuple[Array, Array, Array]]:
+                values, inverse, measure = mapped_values(
+                    route[None], location[None], cell[None]
+                )
+                return values[0], (values[0], inverse[0], measure[0])
+
+            return jax.jacfwd(single_basis, has_aux=True)(point)
+
+        reference_gradient, (basis, inverse, measure) = jax.vmap(point_derivative)(
+            routes, points, safe_cells
+        )
+        finite_basis = jnp.all(jnp.isfinite(basis).reshape((indices.size, -1)), axis=-1)
+        basis = ein.contract(
+            "p...r,pr->p...", reference_gradient, inverse[..., derivative_axis]
+        )
+        finite_basis = finite_basis & jnp.all(
+            jnp.isfinite(basis).reshape((indices.size, -1)), axis=-1
+        )
+    valid = (
+        (indices >= 0)
+        & (indices < cell_count)
+        & finite_reference
+        & jnp.isfinite(measure)
+        & (measure > 0.0)
+        & finite_basis
+    )
+    return (
+        jnp.where(valid.reshape(valid.shape + (1,) * (basis.ndim - 1)), basis, 0.0),
+        valid,
+    )
+
+
+@eqx.filter_jit
 def _prepare_block_geometry(
     mesh: CellMesh,
     block: CellBlock | PolyhedralBlock,
@@ -2774,20 +4437,29 @@ def _prepare_block_geometry(
     if not isinstance(block, CellBlock):
         raise TypeError("Finite-element block geometry requires a fixed-cell block.")
     if coordinate_element is not None and not isinstance(
-        coordinate_element, FiniteElementSpec
+        coordinate_element,
+        (
+            FiniteElementSpec,
+            BarycentricCellGeometryElement,
+            RestrictedCellGeometryElement,
+            PolynomialComposedCellGeometryElement,
+            RationalComposedCellGeometryElement,
+            SplineCellGeometryElement,
+            LayerColumnCellGeometryElement,
+        ),
     ):
         raise TypeError(
-            "Finite-element coordinate geometry requires FiniteElementSpec elements."
+            "Finite-element coordinates require a canonical reference or restricted source element."
         )
     geometry_element = (
-        _linear_reference_element(block.cell_kind)
+        coordinate_lagrange_element(block.cell_kind, 1)
         if coordinate_element is None
         else coordinate_element
     )
     if reference_points is None:
         points_, weights_ = _degree_aware_reference_rule(
             block.cell_kind,
-            max(element.degree, geometry_element.degree),
+            max(_basis_cubature_degree(element), geometry_element.degree),
         )
     else:
         points_ = jnp.asarray(reference_points)
@@ -2825,10 +4497,9 @@ def _prepare_block_geometry(
     ):
         physical_basis = basis_values
         physical_gradients = ein.contract(
-            "cqdi,cqij,qkj->cqkd",
-            jacobian,
-            inverse_metric,
+            "qkr,cqrd->cqkd",
             reference_gradients,
+            inverse_jacobian,
         )
     else:
         physical_basis = map_reference_values(
@@ -2873,26 +4544,29 @@ def _prepare_block_geometry(
     )
 
 
-def _assemble_local_operator(
-    dof_map: FiniteElementDofMap,
-    local_values: Sequence[Array],
-    kind: str,
+def _basis_cubature_degree(element: FiniteElementSpec, /) -> int:
+    if element.cell_kind == "pyramid":
+        basis = element.form_basis
+        if basis is not None:
+            # Physical form components become polynomials on the collapsed
+            # cube; Piola minors and its squared-height measure own extra work.
+            return max(max(alpha) for alpha in basis.exponents) + 2
+        return element.degree + 1
+    return element.degree
+
+
+def _prepare_local_assembly_relation(
+    cell_dofs: Sequence[ArrayLike],
+    global_dof_count: int,
+    component_shape: tuple[int, ...],
     /,
-    *,
-    positive_definite: bool,
-    component_shape: Sequence[int] = (),
-    properties: OperatorProperties | None = None,
-    coefficient_dtype: DTypeLike = jnp.float64,
-) -> SparseLinearMap:
-    source_parts = []
-    target_parts = []
-    coefficient_parts = []
-    component_count = prod(tuple(component_shape)) if component_shape else 1
-    for cell_dofs, values in zip(dof_map.cell_dofs, local_values, strict=True):
-        block_index = len(source_parts)
-        transform = dof_map.cell_transforms[block_index]
-        values = ein.contract("cai,cab,cbj->cij", transform, values, transform)
-        indices = np.asarray(cell_dofs, dtype=np.int32)
+) -> EdgeRelation:
+    """Prepare the fixed COO incidence once, after quotient-aware DOF routing."""
+    source_parts: list[npt.NDArray[np.int32]] = []
+    target_parts: list[npt.NDArray[np.int32]] = []
+    component_count = prod(component_shape) if component_shape else 1
+    for cell_routes in cell_dofs:
+        indices = np.asarray(cell_routes, dtype=np.int32)
         width = indices.shape[1]
         components = np.arange(component_count, dtype=np.int32)
         flat = indices[..., None] * component_count + components
@@ -2908,18 +4582,35 @@ def _assemble_local_operator(
                 (indices.shape[0], width, width, component_count),
             ).reshape((-1,))
         )
+    return EdgeRelation(
+        np.concatenate(source_parts),
+        np.concatenate(target_parts),
+        source_size=global_dof_count * component_count,
+        target_size=global_dof_count * component_count,
+    )
+
+
+def _assemble_local_operator(
+    dof_map: FiniteElementDofMap,
+    local_values: Sequence[Array],
+    kind: str,
+    /,
+    *,
+    positive_definite: bool,
+    component_shape: Sequence[int] = (),
+    properties: OperatorProperties | None = None,
+    coefficient_dtype: DTypeLike = jnp.float64,
+) -> SparseLinearMap:
+    coefficient_parts = []
+    component_count = prod(dof_map.component_shape) if dof_map.component_shape else 1
+    for transform, values in zip(dof_map.cell_transforms, local_values, strict=True):
+        values = ein.contract("cai,cab,cbj->cij", transform, values, transform)
         coefficient_parts.append(
             jnp.broadcast_to(
                 jnp.asarray(values)[..., None],
                 values.shape + (component_count,),
             ).reshape((-1,))
         )
-    relation = EdgeRelation(
-        np.concatenate(source_parts),
-        np.concatenate(target_parts),
-        source_size=dof_map.global_dof_count * component_count,
-        target_size=dof_map.global_dof_count * component_count,
-    )
     properties_ = (
         OperatorProperties(
             self_adjoint=True,
@@ -2937,7 +4628,7 @@ def _assemble_local_operator(
     if not isinstance(properties_, OperatorProperties):
         raise TypeError("properties must be OperatorProperties or None.")
     return SparseLinearMap(
-        relation,
+        dof_map.assembly_relation,
         jnp.concatenate(tuple(coefficient_parts)).astype(coefficient_dtype),
         properties=properties_,
         operator_id=canonical_fingerprint(

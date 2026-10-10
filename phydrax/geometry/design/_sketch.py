@@ -20,7 +20,10 @@ from ..._strict import StrictModule
 
 
 if TYPE_CHECKING:
+    from ..._physical import SpatialCoordinateContract
     from ..analytic import Circle
+    from ..brep._constructors import BRepTessellationPolicy, PlanarProfile, ProfilePlane
+    from ..brep._model import BRepModel
     from ..simplicial import PlanarMeshRegion
 
 
@@ -491,22 +494,30 @@ class SketchSolution(StrictModule):
 
 
 class Sketch(StrictModule):
-    """A pure-JAX 2D line/circle sketch with declarative geometric constraints."""
+    """A pure-JAX 2D line/arc/circle sketch with declarative geometric constraints.
+
+    ``arcs`` rows ``(circle, start, end)`` are counterclockwise arcs of a sketch
+    circle from point ``start`` to point ``end``; incidence of both end points
+    on that circle is an intrinsic residual. Circles carrying an arc are its
+    construction circles; every other circle is a closed profile curve.
+    """
 
     points: Array
     lines: Array
     circle_centers: Array
     circle_radii: Array
+    arcs: Array
     constraints: tuple[AbstractSketchConstraint, ...]
     feature_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        points: Array,
+        points: ArrayLike,
         *,
-        lines: Array | None = None,
-        circle_centers: Array | None = None,
-        circle_radii: Array | None = None,
+        lines: ArrayLike | None = None,
+        circle_centers: ArrayLike | None = None,
+        circle_radii: ArrayLike | None = None,
+        arcs: ArrayLike | None = None,
         constraints: Sequence[AbstractSketchConstraint] = (),
         feature_id: str | None = None,
     ) -> None:
@@ -526,6 +537,11 @@ class Sketch(StrictModule):
             if circle_radii is None
             else np.asarray(circle_radii, dtype=np.float64).reshape((-1,))
         )
+        arcs_host = (
+            np.empty((0, 3), dtype=np.int32)
+            if arcs is None
+            else np.asarray(arcs, dtype=np.int32)
+        )
         if points_host.ndim != 2 or points_host.shape[1] != 2:
             raise ValueError("points must have shape (num_points, 2).")
         if lines_host.ndim != 2 or lines_host.shape[1] != 2:
@@ -540,6 +556,20 @@ class Sketch(StrictModule):
             raise ValueError("circle_centers reference an absent point.")
         if np.any(~np.isfinite(radii_host)) or np.any(radii_host <= 0.0):
             raise ValueError("circle_radii must be finite and positive.")
+        if arcs_host.ndim != 2 or arcs_host.shape[1] != 3:
+            raise ValueError("arcs must have shape (num_arcs, 3).")
+        if np.any(arcs_host[:, 0] < 0) or np.any(
+            arcs_host[:, 0] >= centers_host.shape[0]
+        ):
+            raise ValueError("arcs reference an absent circle.")
+        if np.any(arcs_host[:, 1:] < 0) or np.any(
+            arcs_host[:, 1:] >= points_host.shape[0]
+        ):
+            raise ValueError("arcs reference an absent point.")
+        if np.any(arcs_host[:, 1] == arcs_host[:, 2]) or np.any(
+            arcs_host[:, 1:] == centers_host[arcs_host[:, :1]]
+        ):
+            raise ValueError("Every arc needs distinct end points off its circle center.")
         constraints_ = tuple(constraints)
         if any(not isinstance(item, AbstractSketchConstraint) for item in constraints_):
             raise TypeError("constraints must contain sketch constraint objects.")
@@ -550,6 +580,7 @@ class Sketch(StrictModule):
         self.lines = jnp.asarray(lines_host, dtype=jnp.int32)
         self.circle_centers = jnp.asarray(centers_host, dtype=jnp.int32)
         self.circle_radii = jnp.asarray(radii_host, dtype=jnp.float64)
+        self.arcs = jnp.asarray(arcs_host, dtype=jnp.int32)
         self.constraints = constraints_
         self.feature_id = feature_id or f"sketch-{uuid4().hex}"
 
@@ -596,16 +627,24 @@ class Sketch(StrictModule):
             require(circle_indices, num_circles, "circle")
 
     def residual(self, points: Array, circle_radii: Array, /) -> Array:
+        """Constraint residuals followed by intrinsic arc end-point incidence."""
         points_ = jnp.asarray(points, dtype=self.points.dtype).reshape(self.points.shape)
         radii_ = jnp.asarray(circle_radii, dtype=self.circle_radii.dtype).reshape(
             self.circle_radii.shape
         )
-        values = tuple(
+        values = [
             constraint.residual(points_, self.lines, self.circle_centers, radii_).reshape(
                 (-1,)
             )
             for constraint in self.constraints
-        )
+        ]
+        if self.arcs.shape[0]:
+            centers = points_[self.circle_centers[self.arcs[:, 0]]]
+            radii = radii_[self.arcs[:, 0]]
+            values.extend(
+                _finite_norm(points_[self.arcs[:, column]] - centers) - radii
+                for column in (1, 2)
+            )
         if not values:
             return jnp.empty((0,), dtype=self.points.dtype)
         return jnp.concatenate(values)
@@ -694,8 +733,19 @@ class Sketch(StrictModule):
             center = points[int(np.asarray(self.circle_centers)[0])]
             return Circle(center, float(radii[0]), feature_id=self.feature_id)
         if self.circle_centers.shape[0] != 0:
-            raise ValueError("Mixed line/circle profile lowering is not yet defined.")
+            raise ValueError(
+                "to_source lowers one line loop or one circle; exact mixed line/arc/"
+                "circle profiles lower through to_profile or to_model."
+            )
         lines = np.asarray(self.lines, dtype=np.int32)
+        polygon = self._line_profile_vertices(points, lines)
+        loop = np.arange(polygon.shape[0], dtype=np.int32)
+        from ..simplicial import PlanarMeshRegion
+
+        return PlanarMeshRegion(polygon, (loop,), feature_id=self.feature_id)
+
+    @staticmethod
+    def _line_profile_vertices(points: np.ndarray, lines: np.ndarray, /) -> np.ndarray:
         if lines.shape[0] < 3:
             raise ValueError("A planar region sketch requires at least three lines.")
         adjacency: dict[int, list[int]] = {}
@@ -726,10 +776,155 @@ class Sketch(StrictModule):
         )
         if signed_area < 0.0:
             polygon = polygon[::-1]
-        loop = np.arange(polygon.shape[0], dtype=np.int32)
-        from ..simplicial import PlanarMeshRegion
+        return polygon
 
-        return PlanarMeshRegion(polygon, (loop,), feature_id=self.feature_id)
+    @staticmethod
+    def _profile_cycles(
+        endpoints: np.ndarray, /
+    ) -> tuple[tuple[tuple[int, bool], ...], ...]:
+        """Closed cycles of ``(curve, forward)`` uses; every end point has degree two."""
+        incidence: dict[int, list[int]] = {}
+        for curve, (start, end) in enumerate(endpoints.tolist()):
+            incidence.setdefault(start, []).append(curve)
+            incidence.setdefault(end, []).append(curve)
+        if any(len(curves) != 2 for curves in incidence.values()):
+            raise ValueError(
+                "Profile lines and arcs must form disjoint simple closed cycles."
+            )
+        used = [False] * endpoints.shape[0]
+        cycles = []
+        for first in range(endpoints.shape[0]):
+            if used[first]:
+                continue
+            cycle = []
+            curve, point = first, int(endpoints[first, 0])
+            while not used[curve]:
+                used[curve] = True
+                start, end = (int(value) for value in endpoints[curve])
+                forward = start == point
+                cycle.append((curve, forward))
+                point = end if forward else start
+                a, b = incidence[point]
+                curve = b if a == curve else a
+            cycles.append(tuple(cycle))
+        return tuple(cycles)
+
+    def to_profile(
+        self,
+        solution: SketchSolution | None = None,
+        *,
+        plane: ProfilePlane | None = None,
+    ) -> PlanarProfile:
+        """Lower solved lines, arcs and circles to an exact native planar profile.
+
+        Line/arc cycles become loops whose vertices are the snapshot points;
+        each arc is the exact rational quadratic conic spline of its sketch
+        circle through those vertices. Circles without arcs become exact
+        analytic circle loops. The loop enclosing the largest area is the outer
+        boundary; ``PlanarProfile`` certifies orientation, containment and the
+        absence of contacts or nesting and refuses otherwise.
+        """
+        from ..brep._constructors import (
+            PlanarProfile,
+            ProfileLine,
+            ProfileLoop,
+            ProfilePlane,
+            ProfileSegment,
+            rational_circular_arc,
+            reversed_bspline,
+        )
+
+        points = np.asarray(
+            self.points if solution is None else solution.points, dtype=np.float64
+        )
+        radii = np.asarray(
+            self.circle_radii if solution is None else solution.circle_radii,
+            dtype=np.float64,
+        )
+        lines = np.asarray(self.lines, dtype=np.int32)
+        arcs = np.asarray(self.arcs, dtype=np.int32)
+        centers = np.asarray(self.circle_centers, dtype=np.int32)
+
+        def vertex(index: int) -> tuple[float, float]:
+            return float(points[index, 0]), float(points[index, 1])
+
+        def arc_use(arc: int, forward: bool) -> tuple[ProfileSegment, float]:
+            """Traversal-ordered conic carrier and its signed area beyond the chord."""
+            circle, start, end = (int(value) for value in arcs[arc])
+            center, radius = vertex(int(centers[circle])), float(radii[circle])
+            spline = rational_circular_arc(vertex(start), vertex(end), center, radius)
+            sweep = (
+                np.arctan2(points[end, 1] - center[1], points[end, 0] - center[0])
+                - np.arctan2(points[start, 1] - center[1], points[start, 0] - center[0])
+            ) % (2.0 * np.pi)
+            area = 0.5 * radius**2 * float(sweep - np.sin(sweep))
+            return (spline, area) if forward else (reversed_bspline(spline), -area)
+
+        loops: list[ProfileLoop] = []
+        areas: list[float] = []
+        for cycle in self._profile_cycles(np.concatenate((lines, arcs[:, 1:]))):
+            vertices, segments, area = [], [], 0.0
+            for curve, forward in cycle:
+                ends = (
+                    lines[curve]
+                    if curve < lines.shape[0]
+                    else arcs[curve - lines.shape[0], 1:]
+                )
+                start, end = (
+                    (int(ends[0]), int(ends[1]))
+                    if forward
+                    else (int(ends[1]), int(ends[0]))
+                )
+                vertices.append(vertex(start))
+                area += 0.5 * float(
+                    points[start, 0] * points[end, 1] - points[end, 0] * points[start, 1]
+                )
+                segment: ProfileSegment = ProfileLine()
+                if curve >= lines.shape[0]:
+                    segment, bulge = arc_use(curve - lines.shape[0], forward)
+                    area += bulge
+                segments.append(segment)
+            loops.append(ProfileLoop(tuple(vertices), tuple(segments)))
+            areas.append(abs(area))
+        arc_circles = set(arcs[:, 0].tolist())
+        for circle in range(centers.shape[0]):
+            if circle not in arc_circles:
+                loops.append(
+                    ProfileLoop.circle(vertex(int(centers[circle])), float(radii[circle]))
+                )
+                areas.append(np.pi * float(radii[circle]) ** 2)
+        if not loops:
+            raise ValueError("A sketch profile requires at least one closed curve loop.")
+        outer = int(np.argmax(areas))
+        return PlanarProfile(
+            ProfilePlane() if plane is None else plane,
+            loops[outer],
+            tuple(loop for index, loop in enumerate(loops) if index != outer),
+        )
+
+    def to_model(
+        self,
+        solution: SketchSolution | None = None,
+        *,
+        coordinate_contract: SpatialCoordinateContract,
+        plane: ProfilePlane | None = None,
+        tessellation: BRepTessellationPolicy | None = None,
+    ) -> BRepModel:
+        """Lower solved equations to an exact native planar CAD face.
+
+        The sketch's feature identity becomes the CAD source identity of the
+        ``to_profile`` face. This host lowering snapshots the solution;
+        ``to_source`` retains the planar design parameter schema and
+        differentiable ``DesignState`` contract.
+        """
+        from ..brep._constructors import brep_planar_face
+
+        return brep_planar_face(
+            self.to_profile(solution, plane=plane),
+            coordinate_contract=coordinate_contract,
+            tessellation=tessellation,
+            source_id=self.feature_id,
+        )
 
 
 __all__ = [

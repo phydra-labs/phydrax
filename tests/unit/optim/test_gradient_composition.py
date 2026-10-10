@@ -11,6 +11,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.optim import (
+    compose_active_gradient_bank,
     conflict_free_gradient,
     ConflictFreeGradientPolicy,
     ConflictFreeGradientStatus,
@@ -82,6 +83,189 @@ def test_gradient_composition_scenario_2() -> None:
     nonfinite = conflict_free_gradient((jnp.asarray((jnp.nan,)),))
     assert not bool(nonfinite.successful)
     assert int(nonfinite.status) == int(ConflictFreeGradientStatus.NONFINITE)
+
+
+def test_active_bank_composes_every_signed_row_and_preserves_equality() -> None:
+    gradients = jnp.zeros((8, 6)).at[:5, :5].set(jnp.eye(5)).at[:5, 5].set(0.2)
+    gradients = gradients.at[5, 5].set(1.0).at[7].set(jnp.nan)
+    inequality = jnp.asarray((True, True, True, True, True, False, False, False))
+    equality = jnp.asarray((False, False, False, False, False, True, False, False))
+    result = eqx.filter_jit(
+        lambda bank, budget: compose_active_gradient_bank(
+            bank,
+            jnp.asarray((1.0, 1.0, 1.0, 1.0, 1.0, 0.0, jnp.nan, jnp.nan)),
+            inequality,
+            equality,
+            jnp.asarray(0.1),
+            budget,
+            rank_policy=phx.linalg.RankPolicy(),
+            minimum_norm=1e-14,
+            projection_tolerance=1e-10,
+        )
+    )(gradients, jnp.asarray(10_000_000))
+    assert bool(result.valid)
+    assert not bool(result.resource_refused)
+    assert bool(jnp.all(result.projections[:5] > 0.0))
+    assert abs(float(result.equality_projections[5])) <= 1e-10
+    np.testing.assert_allclose(
+        jnp.linalg.norm(result.direction), 0.1, rtol=1e-12, atol=0.0
+    )
+    assert int(result.bucket) == 8
+    assert int(result.equality_bucket) == 4
+    assert int(result.work_units) > 0
+
+
+@pytest.mark.parametrize("budget", (0, 9))
+def test_active_bank_resource_refusal_precedes_whole_bucket_operations(
+    budget: int,
+) -> None:
+    gradients = jnp.asarray(((1.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 0.0)))
+    result = compose_active_gradient_bank(
+        gradients,
+        jnp.asarray((1.0, 1.0, 0.0, 0.0)),
+        jnp.asarray((True, True, False, False)),
+        jnp.zeros((4,), dtype=jnp.bool_),
+        jnp.asarray(1.0),
+        jnp.asarray(budget),
+        rank_policy=phx.linalg.RankPolicy(),
+    )
+    assert bool(result.resource_refused)
+    assert not bool(result.valid)
+    assert int(result.work_units) <= budget
+    np.testing.assert_array_equal(result.direction, (0.0, 0.0))
+
+
+def test_active_bank_opposing_rows_refuse_without_stationarity_or_partial_bank() -> None:
+    gradients = jnp.asarray(((1.0, 0.0), (-1.0, 0.0), (0.0, 0.0), (0.0, 0.0)))
+    result = compose_active_gradient_bank(
+        gradients,
+        jnp.asarray((1.0, 1.0, 0.0, 0.0)),
+        jnp.asarray((True, True, False, False)),
+        jnp.zeros((4,), dtype=jnp.bool_),
+        jnp.asarray(1.0),
+        jnp.asarray(1_000_000),
+        rank_policy=phx.linalg.RankPolicy(),
+    )
+    assert not bool(result.valid)
+    assert not bool(result.resource_refused)
+    assert int(result.rank) == 1
+    assert not bool(jnp.all(result.projections[:2] > 0.0))
+    assert int(result.work_units) > 0
+
+
+def test_active_bank_exact_components_follow_equality_projection_coupling() -> None:
+    # Raw improvement rows are orthogonal. The equality projection couples
+    # them, so a raw-SCI/raw-support partition would be mathematically wrong.
+    gradients = jnp.asarray(((1.0, 0.0), (0.0, 1.0), (1.0, -1.0), (0.0, 0.0)))
+    result = compose_active_gradient_bank(
+        gradients,
+        jnp.asarray((1.0, 1.0, 0.0, 0.0)),
+        jnp.asarray((True, True, False, False)),
+        jnp.asarray((False, False, True, False)),
+        jnp.asarray(0.2),
+        jnp.asarray(1_000_000),
+        rank_policy=phx.linalg.RankPolicy(),
+    )
+    assert bool(result.valid)
+    assert int(result.rank) == 1
+    assert int(result.equality_rank) == 1
+    assert bool(jnp.all(result.projections[:2] > 0.0))
+    assert abs(float(result.equality_projections[2])) <= 1e-10
+    expected = np.asarray((1.0, 1.0)) * (0.2 / np.sqrt(2.0))
+    np.testing.assert_allclose(result.direction, expected, rtol=1e-12, atol=1e-14)
+
+
+def test_active_bank_raw_targets_preserve_unequal_requested_projection_ratios() -> None:
+    gradients = jnp.asarray(
+        ((2.0, 0.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 1.0), (jnp.nan, jnp.nan, jnp.nan))
+    )
+    targets = jnp.asarray((0.001, 1.0, 0.0, jnp.nan))
+    inequality = jnp.asarray((True, True, False, False))
+    equality = jnp.asarray((False, False, True, False))
+    evaluate = eqx.filter_jit(
+        lambda rows, desired: compose_active_gradient_bank(
+            rows,
+            desired,
+            inequality,
+            equality,
+            jnp.asarray(0.5),
+            jnp.asarray(10_000_000),
+            rank_policy=phx.linalg.RankPolicy(),
+            minimum_norm=1e-14,
+            projection_tolerance=1e-10,
+        )
+    )
+    result = evaluate(gradients, targets)
+    assert bool(result.valid)
+    assert not bool(result.resource_refused)
+    np.testing.assert_allclose(
+        result.projections[0] / result.projections[1],
+        targets[0] / targets[1],
+        rtol=1e-12,
+        atol=0.0,
+    )
+    assert abs(float(result.equality_projections[2])) <= 1e-10
+    np.testing.assert_allclose(
+        jnp.linalg.norm(result.direction), 0.5, rtol=1e-12, atol=0.0
+    )
+    # A primitive row-unit change must change its raw target with it. This
+    # is physical row-dot-direction equivalence, not a unit-margin proxy.
+    row_scale = jnp.asarray((4.0, 0.2, 1.0, 1.0))
+    rescaled = evaluate(gradients * row_scale[:, None], targets * row_scale)
+    assert bool(rescaled.valid)
+    np.testing.assert_allclose(
+        rescaled.direction, result.direction, rtol=1e-12, atol=1e-14
+    )
+
+
+@pytest.mark.parametrize("bad_target", (0.0, -1.0, jnp.nan, jnp.inf))
+def test_active_bank_rejects_invalid_active_target_without_partial_composition(
+    bad_target: float,
+) -> None:
+    gradients = jnp.asarray(((1.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 0.0)))
+    result = compose_active_gradient_bank(
+        gradients,
+        jnp.asarray((bad_target, 1.0, jnp.nan, jnp.nan)),
+        jnp.asarray((True, True, False, False)),
+        jnp.zeros((4,), dtype=jnp.bool_),
+        jnp.asarray(1.0),
+        jnp.asarray(1_000_000),
+        rank_policy=phx.linalg.RankPolicy(),
+    )
+    assert not bool(result.valid)
+    assert not bool(result.resource_refused)
+    assert int(result.rank) == 0
+    assert int(result.work_units) > 0
+    np.testing.assert_array_equal(result.direction, (0.0, 0.0))
+
+
+def test_active_bank_rejects_nonzero_equality_target_and_mismatched_target_shape() -> (
+    None
+):
+    gradients = jnp.asarray(((1.0, 0.0), (0.0, 1.0), (0.0, 0.0), (0.0, 0.0)))
+    inequality = jnp.asarray((True, False, False, False))
+    equality = jnp.asarray((False, True, False, False))
+    result = compose_active_gradient_bank(
+        gradients,
+        jnp.asarray((1.0, 0.1, jnp.nan, jnp.nan)),
+        inequality,
+        equality,
+        jnp.asarray(1.0),
+        jnp.asarray(1_000_000),
+        rank_policy=phx.linalg.RankPolicy(),
+    )
+    assert not bool(result.valid)
+    assert not bool(result.resource_refused)
+    with pytest.raises(ValueError, match="targets"):
+        compose_active_gradient_bank(
+            gradients,
+            jnp.ones((3,)),
+            inequality,
+            equality,
+            jnp.asarray(1.0),
+            jnp.asarray(1_000_000),
+            rank_policy=phx.linalg.RankPolicy(),
+        )
 
 
 class _ScaledOperator(phx.nn.operator.AbstractOperatorModel):

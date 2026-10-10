@@ -6,7 +6,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import cauchy_stress
+from ..operators.differential._domain_ops import cauchy_stress
 from ._base import Moment
 from ._field_ops import cross, dot, matvec
 

@@ -116,7 +116,6 @@ def test_resource_capacity_failures_precede_pair_state_allocation(
             near_ratio=1.0,
             absolute_tolerance=1.0e-3,
             relative_tolerance=1.0e-3,
-            # ty: ignore[invalid-argument-type]
             **{limit_name: 1},
         )
         with pytest.raises(ValueError, match=rf"^\[{failure_code}\]"):

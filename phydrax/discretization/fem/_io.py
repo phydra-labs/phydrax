@@ -8,7 +8,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import jax.numpy as jnp
-import meshio
 import numpy as np
 import numpy.typing as npt
 from jax import Array
@@ -36,6 +35,8 @@ def write_finite_element_field(
     runtime: FiniteElementRuntimeData | None = None,
     file_profile: str | None = None,
 ) -> None:
+    import meshio
+
     if not isinstance(discretization, FiniteElementDiscretization):
         raise TypeError("discretization must be FiniteElementDiscretization.")
     field_index = discretization._field_index(field_name)

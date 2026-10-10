@@ -97,23 +97,37 @@ class FiniteElementMetricData(StrictModule):
         ):
             raise ValueError("Coordinate basis, routes, and reference weights disagree.")
         dimension = gradients.shape[-1]
-        if coordinates.shape[-1] != dimension or dimension < 1:
-            raise ValueError("Cell metrics require nonempty square geometry.")
+        ambient_dimension = coordinates.shape[-1]
+        if dimension < 1 or ambient_dimension < dimension:
+            raise ValueError(
+                "Cell metrics require a nonempty immersion into an equal or higher-dimensional space."
+            )
         physical_points = ein.contract("qi,cid->cqd", basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", gradients, coordinates)
-        inverse_jacobian, determinant, successful = _cell_inverse_and_determinant(
-            jacobian
-        )
-        measure = jnp.abs(determinant)
+        if ambient_dimension == dimension:
+            inverse_jacobian, determinant, successful = _cell_inverse_and_determinant(
+                jacobian
+            )
+            measure = jnp.abs(determinant)
+            inverse_metric = ein.contract(
+                "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian
+            )
+        else:
+            # The left pseudoinverse maps reference covectors to the tangent
+            # space without materializing an ambient inverse. The Gram
+            # determinant is the induced manifold measure.
+            metric = ein.contract("cqdr,cqds->cqrs", jacobian, jacobian)
+            inverse_metric, determinant, successful = _cell_inverse_and_determinant(
+                metric
+            )
+            inverse_jacobian = ein.contract("cqrs,cqds->cqrd", inverse_metric, jacobian)
+            measure = jnp.sqrt(determinant)
         measure = eqx.error_if(
             measure,
             jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
-            "Finite-element metric determinant must be positive and finite.",
+            "Finite-element metric measure must be positive and finite.",
         )
         cofactor = measure[..., None, None] * inverse_jacobian
-        inverse_metric = ein.contract(
-            "cqrd,cqsd->cqrs", inverse_jacobian, inverse_jacobian
-        )
         self.physical_points = physical_points
         self.jacobian = jacobian
         self.inverse_jacobian = inverse_jacobian

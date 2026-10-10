@@ -4,15 +4,31 @@
 
 """Scientific conditions independent of soft or hard numerical treatment."""
 
-from . import (
-    cfd,
-    conservation,
-    electromagnetics,
-    free_boundary,
-    solids,
-    stochastic,
-    thermal,
-)
+from importlib import import_module
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from . import (
+        cfd,
+        conservation,
+        electromagnetics,
+        free_boundary,
+        solids,
+        stochastic,
+        thermal,
+    )
+    from ._functional import (
+        EventLinearMap,
+        linear_functional_condition,
+        LinearFunctional,
+        LinearReductionAction,
+        MatrixLinearFunctional,
+        PointJetAction,
+    )
+    from ._periodic import JetAction, Periodic, PeriodicTraceAction
+    from .stochastic import StochasticBoundaryResidual
+
 from ._base import (
     AbstractCondition,
     AbstractMomentCondition,
@@ -31,14 +47,6 @@ from ._evidence import (
     NonlinearRetractionCertificate,
     ProbabilisticConditioningEvidence,
 )
-from ._functional import (
-    EventLinearMap,
-    linear_functional_condition,
-    LinearFunctional,
-    LinearReductionAction,
-    MatrixLinearFunctional,
-    PointJetAction,
-)
 from ._ir import (
     AbstractConditionOperator,
     ArrayCodomain,
@@ -55,7 +63,6 @@ from ._ir import (
     ValueAxis,
 )
 from ._lowering import bind_condition, BoundCondition, lower_condition
-from ._periodic import JetAction, Periodic, PeriodicTraceAction
 from ._relations import (
     AbstractConditionRelation,
     Complementarity,
@@ -89,7 +96,42 @@ from ._trace import (
 )
 from .boundary import Absorbing, ConditionValue, Dirichlet, Neumann, Robin
 from .initial import Initial
-from .stochastic import StochasticBoundaryResidual
+
+
+_FUNCTIONAL_EXPORTS = frozenset(
+    {
+        "EventLinearMap",
+        "linear_functional_condition",
+        "LinearFunctional",
+        "LinearReductionAction",
+        "MatrixLinearFunctional",
+        "PointJetAction",
+    }
+)
+_PERIODIC_EXPORTS = frozenset({"JetAction", "Periodic", "PeriodicTraceAction"})
+
+
+def __getattr__(name: str) -> object:
+    if name in {
+        "cfd",
+        "conservation",
+        "electromagnetics",
+        "free_boundary",
+        "solids",
+        "stochastic",
+        "thermal",
+    }:
+        value = import_module(f".{name}", __name__)
+    elif name == "StochasticBoundaryResidual":
+        value = import_module(".stochastic", __name__).StochasticBoundaryResidual
+    elif name in _FUNCTIONAL_EXPORTS:
+        value = getattr(import_module("._functional", __name__), name)
+    elif name in _PERIODIC_EXPORTS:
+        value = getattr(import_module("._periodic", __name__), name)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
 
 
 __all__ = [

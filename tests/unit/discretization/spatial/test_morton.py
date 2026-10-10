@@ -11,6 +11,10 @@ from phydrax.discretization.spatial import (
     morton_encode_integer,
     MortonAddressPlan,
 )
+from phydrax.discretization.spatial._morton import (
+    morton_decode_integer_host,
+    morton_encode_integer_host,
+)
 from phydrax.domain import HyperRectangle, PeriodicIdentification, TimeInterval
 
 
@@ -146,3 +150,19 @@ def test_identification_derived_address_refuses_ambiguous_bindings(
         MortonAddressPlan.from_periodic_identifications(
             identifications, maximum_depth=8, coordinates=coordinates
         )
+
+
+@pytest.mark.parametrize(
+    ("dimension", "depth"), [(1, 20), (2, 16), (3, 16)], ids=["1d", "2d", "3d"]
+)
+def test_host_morton_codes_match_device_codes(dimension: int, depth: int) -> None:
+    rng = np.random.default_rng(dimension)
+    coordinates = rng.integers(0, 1 << depth, size=(64, dimension), dtype=np.int64)
+
+    host = morton_encode_integer_host(coordinates, depth)
+
+    device = np.asarray(morton_encode_integer(jnp.asarray(coordinates), depth))
+    np.testing.assert_array_equal(host, device)
+    np.testing.assert_array_equal(
+        morton_decode_integer_host(host, dimension, depth), coordinates
+    )

@@ -2,405 +2,406 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-
+import math
 from pathlib import Path
-from typing import Any
 
+import numpy as np
 import pytest
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-from OCP.BRepGProp import BRepGProp
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.gp import gp_Pnt
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_SOLID
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS
 
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._cad_revision import (
-    AssociationStatus,
-    CADOccurrence,
-    CADRevision,
-    CADSelectionSet,
-    CADSelector,
+from phydrax.geometry._cad_revision import CADOccurrence, CADRevision
+from phydrax.geometry.brep._boolean import BRepBooleanFailure
+from phydrax.geometry.brep._constructors import (
+    brep_box,
+    brep_cylinder,
+    brep_sphere,
+    BRepTessellationPolicy,
 )
-from phydrax.geometry.brep import _partition as partition_module
-from phydrax.geometry.brep._model import BRepEntityId
-from phydrax.geometry.brep._occt import persist_occt_shape, read_occt_shape
+from phydrax.geometry.brep._intersection_curve import IntersectionCurve
+from phydrax.geometry.brep._model import BRepModel
 from phydrax.geometry.brep._partition import (
-    BRepPartitionHistoryError,
     BRepPartitionOperand,
     BRepPartitionPlan,
     BRepPartitionPolicy,
+    BRepPartitionResult,
     BRepPartitionRole,
-    cad_revision_from_brep_model,
     partition_brep,
 )
-from phydrax.meshing.providers._gmsh import GmshProvider
+from phydrax.geometry.brep._query import prepare_brep_query
+from phydrax.interchange._cad import CadInterchangeError
+from phydrax.interchange._cad_archive import load_brep_archive, save_brep_archive
 from phydrax.units import MILLIMETER
 
 
 _COORDINATES = SpatialCoordinateContract(MILLIMETER)
+_EXACT_SOURCE = BRepTessellationPolicy(realize=False)
 
 
-def _box(x: float, length: float = 1.0) -> Any:
-    return BRepPrimAPI_MakeBox(gp_Pnt(x, 0.0, 0.0), length, 1.0, 1.0).Shape()
-
-
-def _persist(tmp_path: Path, name: str, shape: Any) -> Any:
-    return persist_occt_shape(
-        shape,
-        tmp_path / f"{name}.brep",
-        coordinate_contract=_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+def _box(x: float, length: float = 1.0) -> BRepModel:
+    return brep_box(
+        (x, 0.0, 0.0), (x + length, 1.0, 1.0), coordinate_contract=_COORDINATES
     )
 
 
-def _operand(
-    operand_id: str,
-    model: Any,
-    role: BRepPartitionRole = BRepPartitionRole.REGION,
-    *,
-    targets: tuple[str, ...] = (),
-) -> Any:
-    revision = cad_revision_from_brep_model(model)
-    selection = CADSelectionSet.from_revision(
-        revision,
-        tuple(
-            occurrence.occurrence_id
-            for occurrence in revision.occurrences
-            if occurrence.kind == "solid"
-        ),
-    )
-    return BRepPartitionOperand(
-        operand_id,
-        model,
-        role,
-        selection,
-        targets,
-    )
+def _operand(name: str, model: BRepModel) -> BRepPartitionOperand:
+    return BRepPartitionOperand(name, model, BRepPartitionRole.REGION)
 
 
 def _plan(
-    operands: Any,
+    operands: tuple[BRepPartitionOperand, ...],
     precedence: tuple[str, ...],
     *,
     overwrite: bool = False,
-) -> Any:
+) -> BRepPartitionPlan:
     return BRepPartitionPlan(
-        _COORDINATES,
-        tuple(operands),
-        BRepPartitionPolicy(precedence, overwrite=overwrite),
+        _COORDINATES, operands, BRepPartitionPolicy(precedence, overwrite=overwrite)
     )
 
 
-def _execute(plan: Any, destination: Path) -> Any:
-    return partition_brep(
-        plan,
-        destination=destination,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
-    )
+def _region_volume(
+    result: BRepPartitionResult, name: str, model: BRepModel | None = None
+) -> float:
+    """Region volume from the native exact query of ``model`` (default: the result)."""
+    measured = result.model if model is None else model
+    volumes = np.asarray(prepare_brep_query(measured).measures.solid_volumes)
+    return float(sum(volumes[entity.index] for entity in result.region(name).entity_ids))
 
 
-def _solid_volumes(result: Any) -> dict[BRepEntityId, float]:
-    shape, source_format, source_digest = read_occt_shape(result.model.source_id)
-    assert source_format == "brep"
-    assert source_digest == result.model.source_digest
-    explorer = TopExp_Explorer(shape, TopAbs_SOLID)
-    solids = []
-    while explorer.More():
-        candidate = TopoDS.Solid(explorer.Current())
-        if not any(value.IsSame(candidate) for value in solids):
-            solids.append(candidate)
-        explorer.Next()
-    volumes = {}
-    for entity_id, solid in zip(result.model.solid_ids, solids, strict=True):
-        properties = GProp_GProps()
-        BRepGProp.VolumeProperties_s(solid, properties)
-        volumes[entity_id] = float(properties.Mass())
-    return volumes
+def _assert_shared_interface(result: BRepPartitionResult, name: str) -> None:
+    """Every interface face bounds exactly its two regions with opposite orientation."""
+    topology = result.model.topology
+    faces = result.patch(name).entity_ids
+    assert faces
+    for entity in faces:
+        solids = topology.face_solids[entity.index]
+        assert len(solids) == 2
+        signs = tuple(
+            topology.solid_face_orientations[solid][
+                topology.solid_faces[solid].index(entity.index)
+            ]
+            for solid in solids
+        )
+        assert signs[0] == -signs[1]
 
 
-def test_touching_regions_publish_exact_interface_and_meshing_entity_sets(
-    tmp_path: Any,
-) -> None:
-    left = _persist(tmp_path, "left", _box(0.0))
-    right = _persist(tmp_path, "right", _box(1.0))
-    result = _execute(
+def test_touching_regions_publish_exact_shared_interface(tmp_path: Path) -> None:
+    result = partition_brep(
         _plan(
-            (
-                _operand("left", left),
-                _operand("right", right),
-            ),
-            ("left", "right"),
+            (_operand("left", _box(0.0)), _operand("right", _box(1.0))), ("left", "right")
         ),
-        tmp_path / "touching-result.brep",
+        destination=tmp_path / "touching.phx",
     )
-
-    interfaces = [
-        patch for patch in result.patches if len(patch.adjacent_region_ids) == 2
-    ]
-    assert result.model.topology.num_solids == 2
-    assert result.topological_dimension == 3
-    assert len(interfaces) == 1
-    assert interfaces[0].adjacent_region_ids == ("left", "right")
-    assert len(interfaces[0].entity_ids) == 1
-    assert set(
-        entity for _, values in result.named_solid_entity_ids for entity in values
-    ) == set(result.model.solid_ids)
-    assert set(
-        entity for _, values in result.named_face_entity_ids for entity in values
-    ) == set(result.model.face_ids)
-    assert result.named_region_entity_ids == result.named_solid_entity_ids
-    assert result.named_patch_entity_ids == result.named_face_entity_ids
-    assert result.named_edge_entity_ids == ()
-    assert (
-        result.report.source_region_occurrences == result.report.source_solid_occurrences
+    interface = result.patch("interface:left:right")
+    assert interface.adjacent_region_ids == ("left", "right")
+    assert len(interface.entity_ids) == 1
+    interface_face = interface.entity_ids[0].index
+    assert result.model.topology.face_solids[interface_face] == (0, 1)
+    signs = tuple(
+        result.model.topology.solid_face_orientations[solid][
+            result.model.topology.solid_faces[solid].index(interface_face)
+        ]
+        for solid in (0, 1)
     )
-    assert result.report.source_patch_occurrences == result.report.source_face_occurrences
-    assert result.report.target_regions == result.model.topology.num_solids
-    assert result.report.target_patches == result.model.topology.num_faces
-    assert {entity.kind for region in result.regions for entity in region.entity_ids} == {
-        "solid"
-    }
-    assert {entity.kind for patch in result.patches for entity in patch.entity_ids} == {
-        "face"
-    }
-    assert result.region_entity_kind == "solid"
-    assert result.patch_entity_kind == "face"
-    assert {region.entity_kind for region in result.regions} == {"solid"}
-    assert {patch.entity_kind for patch in result.patches} == {"face"}
-    assert result.report.topological_dimension == 3
-    assert {region.topological_dimension for region in result.regions} == {3}
-    assert {patch.topological_dimension for patch in result.patches} == {3}
-    provider = GmshProvider()
-    left_scope = provider.entity_scope(result.model, result.region("left").entity_ids)
-    interface_scope = provider.entity_scope(result.model, interfaces[0].entity_ids)
-    assert left_scope.entity_dimension == 3
-    assert interface_scope.entity_dimension == 2
+    assert signs[0] == -signs[1]
+    assert _region_volume(result, "left") == pytest.approx(1.0)
+    assert _region_volume(result, "right") == pytest.approx(1.0)
 
 
-def test_disjoint_regions_have_only_one_sided_boundary_patches(tmp_path: Any) -> None:
-    first = _persist(tmp_path, "first", _box(0.0))
-    second = _persist(tmp_path, "second", _box(2.0))
-    result = _execute(
+def test_disjoint_regions_have_only_one_sided_boundaries(tmp_path: Path) -> None:
+    result = partition_brep(
         _plan(
-            (_operand("first", first), _operand("second", second)),
+            (_operand("first", _box(0.0)), _operand("second", _box(2.0))),
             ("first", "second"),
         ),
-        tmp_path / "disjoint-result.brep",
+        destination=tmp_path / "disjoint.phx",
     )
-
+    assert all(len(patch.adjacent_region_ids) == 1 for patch in result.patches)
     assert result.model.topology.num_solids == 2
-    assert {patch.adjacent_region_ids for patch in result.patches} == {
-        ("first",),
-        ("second",),
-    }
-    assert all(len(indices) == 1 for indices in result.model.topology.face_solids)
+    assert _region_volume(result, "first") == pytest.approx(1.0)
+    assert _region_volume(result, "second") == pytest.approx(1.0)
 
 
-def test_explicit_precedence_is_independent_of_operand_order(tmp_path: Any) -> None:
-    high = _persist(tmp_path, "high", _box(0.0, 2.0))
-    low = _persist(tmp_path, "low", _box(1.0, 2.0))
-    forward = _execute(
-        _plan(
-            (_operand("low", low), _operand("high", high)),
-            ("high", "low"),
-        ),
-        tmp_path / "forward.brep",
+@pytest.mark.parametrize("reverse", [False, True])
+def test_precedence_is_independent_of_operand_order(
+    tmp_path: Path, reverse: bool
+) -> None:
+    high, low = _operand("high", _box(0.0, 2.0)), _operand("low", _box(1.0, 2.0))
+    operands = (low, high) if reverse else (high, low)
+    result = partition_brep(
+        _plan(operands, ("high", "low")), destination=tmp_path / "precedence.phx"
     )
-    reverse = _execute(
-        _plan(
-            (_operand("high", high), _operand("low", low)),
-            ("high", "low"),
-        ),
-        tmp_path / "reverse.brep",
+    assert _region_volume(result, "high") == pytest.approx(2.0)
+    assert _region_volume(result, "low") == pytest.approx(1.0)
+    assert result.patch("interface:high:low").adjacent_region_ids == ("high", "low")
+
+
+def test_void_empties_material_owned_by_its_target_without_refill(tmp_path: Path) -> None:
+    # left [0,2] wins [1,2] over right [1,3]; the void empties that owned cell
+    # and the lower-precedence right region does not reclaim it.
+    void = BRepPartitionOperand(
+        "void", _box(1.0), BRepPartitionRole.VOID, target_region_ids=("left",)
     )
-
-    assert forward.model.source_revision == reverse.model.source_revision
-    assert forward.association_graph.graph_id == reverse.association_graph.graph_id
-    volumes = _solid_volumes(forward)
-    assert sum(
-        volumes[value] for value in forward.region("high").entity_ids
-    ) == pytest.approx(2.0)
-    assert sum(
-        volumes[value] for value in forward.region("low").entity_ids
-    ) == pytest.approx(1.0)
-
-
-def test_void_subtracts_only_its_declared_target_region(tmp_path: Any) -> None:
-    left = _persist(tmp_path, "void-left", _box(0.0, 2.0))
-    right = _persist(tmp_path, "void-right", _box(3.0, 2.0))
-    cutting = _persist(tmp_path, "cutting", _box(1.0, 3.0))
-    result = _execute(
-        _plan(
-            (
-                _operand("right", right),
-                _operand(
-                    "cut",
-                    cutting,
-                    BRepPartitionRole.VOID,
-                    targets=("left",),
-                ),
-                _operand("left", left),
-            ),
-            ("left", "right"),
-        ),
-        tmp_path / "targeted-void.brep",
+    plan = _plan(
+        (_operand("left", _box(0.0, 2.0)), _operand("right", _box(1.0, 2.0)), void),
+        ("left", "right"),
     )
-
-    volumes = _solid_volumes(result)
-    assert sum(
-        volumes[value] for value in result.region("left").entity_ids
-    ) == pytest.approx(1.0)
-    assert sum(
-        volumes[value] for value in result.region("right").entity_ids
-    ) == pytest.approx(2.0)
+    result = partition_brep(plan, destination=tmp_path / "void.phx")
+    assert _region_volume(result, "left") == pytest.approx(1.0)
+    assert _region_volume(result, "right") == pytest.approx(1.0)
+    assert all(len(patch.adjacent_region_ids) == 1 for patch in result.patches)
 
 
-def test_split_and_deleted_histories_map_exact_selection_sets(tmp_path: Any) -> None:
-    region = _persist(tmp_path, "split-region", _box(0.0, 3.0))
-    cutting = _persist(tmp_path, "split-cut", _box(1.0, 1.0))
-    result = _execute(
-        _plan(
-            (
-                _operand("region", region),
-                _operand(
-                    "void",
-                    cutting,
-                    BRepPartitionRole.VOID,
-                    targets=("region",),
-                ),
-            ),
-            ("region",),
-        ),
-        tmp_path / "split-result.brep",
+def test_split_and_deleted_histories_are_exhaustive(tmp_path: Path) -> None:
+    region = _operand("body", _box(0.0, 3.0))
+    void = BRepPartitionOperand(
+        "void", _box(1.0), BRepPartitionRole.VOID, target_region_ids=("body",)
     )
-
+    result = partition_brep(
+        _plan((region, void), ("body",)), destination=tmp_path / "split.phx"
+    )
+    assert len(result.region("body").entity_ids) == 2
     graph = result.association_graph
-    region_selector = graph.source_revision.select("operand:region:solid:0")
-    split = graph.resolve_target(region_selector)
-    mapped = graph.resolve_target_selection(
-        CADSelectionSet(graph.source_revision.revision_id, (region_selector,))
-    )
-    void_selector = graph.source_revision.select("operand:void:solid:0")
-    deleted = graph.resolve_target(void_selector)
-
-    assert split.status is AssociationStatus.MULTIPLE
-    assert split.relation == "split"
-    assert len(mapped.selectors) == 2
-    assert {value.kind for value in mapped.selectors} == {"solid"}
-    assert deleted.status is AssociationStatus.NO_PREIMAGE
-    assert deleted.relation == "deleted"
-    assert (
-        graph.resolve_target_selection(
-            CADSelectionSet(graph.source_revision.revision_id, (void_selector,))
-        ).selectors
-        == ()
-    )
+    descendants = {
+        edge.target_occurrence_id
+        for edge in graph.transaction.correspondences
+        if edge.source_occurrence_id == "operand:0/solid:0"
+    }
+    assert descendants == {"solid:0", "solid:1"}
+    assert graph.transaction.coverage.source_exhaustive
+    assert graph.transaction.coverage.target_exhaustive
     assert result.report.deleted_source_occurrences > 0
 
 
-def test_missing_binding_history_is_unresolved_and_publishes_nothing(
-    tmp_path: Any,
-    monkeypatch: Any,
-) -> None:
-    class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self) -> bool:
-            return False
-
-    region = _persist(tmp_path, "unresolved-region", _box(0.0))
-    disjoint_void = _persist(tmp_path, "unresolved-void", _box(2.0))
-    destination = tmp_path / "unresolved-result.brep"
-    monkeypatch.setattr(
-        partition_module,
-        "BOPAlgo_CellsBuilder",
-        NoHistoryCellsBuilder,
+def test_native_archive_partition_roundtrip_preserves_revision(tmp_path: Path) -> None:
+    path = tmp_path / "partition.phx"
+    result = partition_brep(
+        _plan((_operand("body", _box(0.0)),), ("body",)), destination=path
     )
-
-    with pytest.raises(BRepPartitionHistoryError, match="live Boolean history"):
-        _execute(
-            _plan(
-                (
-                    _operand("region", region),
-                    _operand(
-                        "void",
-                        disjoint_void,
-                        BRepPartitionRole.VOID,
-                        targets=("region",),
-                    ),
-                ),
-                ("region",),
-            ),
-            destination,
-        )
-    assert not destination.exists()
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
+    restored = load_brep_archive(path)
+    assert restored.model_id == result.model.model_id
+    assert restored.source_revision == result.revision.revision_id
+    assert _region_volume(result, "body") == pytest.approx(1.0)
 
 
-def test_staging_failure_does_not_clobber_existing_destination(
-    tmp_path: Any, monkeypatch: Any
-) -> None:
-    region = _persist(tmp_path, "failure-region", _box(0.0))
-    disjoint_void = _persist(tmp_path, "failure-void", _box(2.0))
-    destination = tmp_path / "existing.brep"
-    destination.write_bytes(b"existing-artifact")
-
-    def fail_persistence(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("staged persistence failed")
-
-    monkeypatch.setattr(
-        partition_module,
-        "persist_occt_shape",
-        fail_persistence,
+def test_native_external_brep_partition_roundtrip(tmp_path: Path) -> None:
+    path = tmp_path / "partition.brep"
+    result = partition_brep(
+        _plan((_operand("body", _box(0.0)),), ("body",)), destination=path
     )
-    with pytest.raises(RuntimeError, match="staged persistence failed"):
-        _execute(
-            _plan(
-                (
-                    _operand("region", region),
-                    _operand(
-                        "void",
-                        disjoint_void,
-                        BRepPartitionRole.VOID,
-                        targets=("region",),
-                    ),
-                ),
-                ("region",),
-                overwrite=True,
-            ),
-            destination,
-        )
-    assert destination.read_bytes() == b"existing-artifact"
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
+    assert result.model.source_id == str(path)
+    assert _region_volume(result, "body") == pytest.approx(1.0)
+    assert result.association_graph.target_revision == result.revision
 
 
-def test_revision_children_rejects_a_forged_parent_selector() -> None:
-    parent = CADOccurrence(
-        "revision",
-        "root",
-        "assembly-entity",
-        "assembly",
-        ("root",),
+def test_failure_does_not_clobber_existing_destination(tmp_path: Path) -> None:
+    path = tmp_path / "unchanged.phx"
+    path.write_bytes(b"accepted artifact")
+    region = _operand("body", _box(0.0))
+    void = BRepPartitionOperand(
+        "erase", _box(0.0), BRepPartitionRole.VOID, target_region_ids=("body",)
     )
+    with pytest.raises(BRepBooleanFailure, match="no surviving"):
+        partition_brep(_plan((region, void), ("body",), overwrite=True), destination=path)
+    assert path.read_bytes() == b"accepted artifact"
+    assert not tuple(tmp_path.glob(".unchanged.phx.partition-*"))
+
+
+def test_existing_destination_requires_explicit_overwrite(tmp_path: Path) -> None:
+    path = tmp_path / "protected.phx"
+    path.write_bytes(b"accepted artifact")
+    with pytest.raises(FileExistsError):
+        partition_brep(_plan((_operand("body", _box(0.0)),), ("body",)), destination=path)
+    assert path.read_bytes() == b"accepted artifact"
+
+
+def test_revision_children_rejects_forged_parent_selector() -> None:
+    parent = CADOccurrence("revision", "solid", "entity", "solid", ("solid",))
     child = CADOccurrence(
-        "revision",
-        "face",
-        "face-entity",
-        "face",
-        ("root", "face"),
-        parent_occurrence_id="root",
+        "revision", "face", "face-entity", "face", ("solid", "face"), "solid"
     )
     revision = CADRevision("revision", "source", (parent, child), "provenance")
-    forged = CADSelector(
-        "revision",
-        "root",
-        "part",
-        ("root",),
-        "different-entity",
+    from dataclasses import replace
+
+    forged = replace(revision.select("solid"), entity_id="forged")
+    with pytest.raises(ValueError):
+        revision.children(forged)
+
+
+def test_partition_cell_budget_fails_before_publication(tmp_path: Path) -> None:
+    destination = tmp_path / "limited.phx"
+    operands = (_operand("first", _box(0.0, 2.0)), _operand("second", _box(1.0, 2.0)))
+    plan = BRepPartitionPlan(
+        _COORDINATES, operands, BRepPartitionPolicy(("first", "second"), maximum_cells=1)
+    )
+    with pytest.raises(BRepBooleanFailure, match="cell budget exhausted"):
+        partition_brep(plan, destination=destination)
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".limited.phx.partition-*"))
+
+
+def test_operand_reordering_preserves_scientific_partition_identity(
+    tmp_path: Path,
+) -> None:
+    high, low = _operand("high", _box(0.0, 2.0)), _operand("low", _box(1.0, 2.0))
+    first = partition_brep(
+        _plan((high, low), ("high", "low")), destination=tmp_path / "first.phx"
+    )
+    second = partition_brep(
+        _plan((low, high), ("high", "low")), destination=tmp_path / "second.phx"
+    )
+    assert first.model.model_id == second.model.model_id
+    assert first.association_graph.graph_id == second.association_graph.graph_id
+
+
+# Curved scenarios. Volumes are independent closed forms: unit spheres at
+# distance one share a lens of 5*pi/12; a radius-r sphere whose center lies d
+# below a plane keeps 4*pi*r^3/3 - pi*a^2*(3r - a)/3 below it, a = r - d.
+def _sphere(radius: float, center: tuple[float, float, float]) -> BRepModel:
+    return brep_sphere(
+        radius,
+        center=center,
+        coordinate_contract=_COORDINATES,
+        tessellation=_EXACT_SOURCE,
     )
 
-    with pytest.raises(ValueError, match="does not match the revision inventory"):
-        revision.children(forged)
+
+def test_overlapping_sphere_precedence_publishes_exact_curved_interface(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "spheres.phx"
+    result = partition_brep(
+        _plan(
+            (
+                _operand("low", _sphere(1.0, (0.0, 1.0, 0.0))),
+                _operand("high", _sphere(1.0, (0.0, 0.0, 0.0))),
+            ),
+            ("high", "low"),
+        ),
+        destination=path,
+    )
+    geometry = result.model.geometry
+    assert geometry is not None
+    assert any(isinstance(curve, IntersectionCurve) for curve in geometry.curves)
+    assert result.model.topology.num_solids == 2
+    assert result.patch("interface:high:low").adjacent_region_ids == ("high", "low")
+    _assert_shared_interface(result, "interface:high:low")
+    coverage = result.association_graph.transaction.coverage
+    assert coverage.source_exhaustive and coverage.target_exhaustive
+    restored = load_brep_archive(path)
+    assert restored.model_id == result.model.model_id
+    assert result.model.chart_restriction_ids
+    assert restored.chart_restriction_ids == result.model.chart_restriction_ids
+    np.testing.assert_array_equal(
+        restored.mesh_chart_restriction_vertices,
+        result.model.mesh_chart_restriction_vertices,
+    )
+    np.testing.assert_array_equal(
+        restored.mesh_chart_restriction_parameters,
+        result.model.mesh_chart_restriction_parameters,
+    )
+    assert restored.source_revision == result.revision.revision_id
+    assert _region_volume(result, "high", restored) == pytest.approx(
+        4.0 * math.pi / 3.0, rel=1e-6
+    )
+    assert _region_volume(result, "low", restored) == pytest.approx(
+        11.0 * math.pi / 12.0, rel=1e-6
+    )
+
+
+def test_curved_intersection_branch_refuses_inexact_brep_text(tmp_path: Path) -> None:
+    path = tmp_path / "spheres.brep"
+    path.write_bytes(b"accepted artifact")
+    plan = BRepPartitionPlan(
+        _COORDINATES,
+        (
+            _operand("low", _sphere(1.0, (0.0, 1.0, 0.0))),
+            _operand("high", _sphere(1.0, (0.0, 0.0, 0.0))),
+        ),
+        BRepPartitionPolicy(("high", "low"), overwrite=True),
+    )
+    with pytest.raises(CadInterchangeError, match="approximation"):
+        partition_brep(plan, destination=path)
+    assert path.read_bytes() == b"accepted artifact"
+    assert not tuple(tmp_path.glob(".spheres.brep.partition-*"))
+
+
+def test_contained_sphere_region_leaves_exact_cavity_in_cylinder(tmp_path: Path) -> None:
+    path = tmp_path / "contained.brep"
+    jacket = brep_cylinder(
+        2.0,
+        4.0,
+        base_center=(0.0, 0.0, -2.0),
+        coordinate_contract=_COORDINATES,
+        tessellation=_EXACT_SOURCE,
+    )
+    result = partition_brep(
+        _plan(
+            (_operand("jacket", jacket), _operand("core", _sphere(1.0, (0.0, 0.0, 0.0)))),
+            ("core", "jacket"),
+        ),
+        destination=path,
+    )
+    assert result.model.source_id == str(path)
+    assert result.model.topology.num_solids == 2
+    _assert_shared_interface(result, "interface:core:jacket")
+    (jacket_solid,) = result.region("jacket").entity_ids
+    geometry = result.model.geometry
+    assert geometry is not None
+    assert len(geometry.solid_shells[jacket_solid.index]) == 2
+    assert _region_volume(result, "core") == pytest.approx(4.0 * math.pi / 3.0, rel=1e-6)
+    assert _region_volume(result, "jacket") == pytest.approx(
+        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=1e-6
+    )
+    coverage = result.association_graph.transaction.coverage
+    assert coverage.source_exhaustive and coverage.target_exhaustive
+    archive = save_brep_archive(result.model, tmp_path / "contained.phx")
+    restored = load_brep_archive(archive.path)
+    assert restored.model_id == result.model.model_id
+    assert restored.geometry is not None
+    assert restored.geometry.geometry_id == geometry.geometry_id
+    assert _region_volume(result, "core", restored) == pytest.approx(
+        4.0 * math.pi / 3.0, rel=1e-6
+    )
+    assert _region_volume(result, "jacket", restored) == pytest.approx(
+        16.0 * math.pi - 4.0 * math.pi / 3.0, rel=1e-6
+    )
+
+
+def test_curved_void_removes_only_its_target_material(tmp_path: Path) -> None:
+    path = tmp_path / "void.phx"
+    body = brep_cylinder(
+        1.0,
+        2.0,
+        base_center=(0.0, 0.0, -1.0),
+        coordinate_contract=_COORDINATES,
+        tessellation=_EXACT_SOURCE,
+    )
+    void = BRepPartitionOperand(
+        "void",
+        _sphere(0.5, (0.0, 0.0, 0.75)),
+        BRepPartitionRole.VOID,
+        target_region_ids=("body",),
+    )
+    result = partition_brep(
+        _plan((_operand("body", body), void), ("body",)), destination=path
+    )
+    assert result.model.topology.num_solids == 1
+    assert all(len(patch.adjacent_region_ids) == 1 for patch in result.patches)
+    restored = load_brep_archive(path)
+    assert result.model.mesh_faces.shape[0] > 0
+    assert np.all(np.asarray(result.model.tessellation_deviation_bounds) <= 1.0e-3)
+    assert restored.model_id == result.model.model_id
+    assert restored.chart_restriction_ids == result.model.chart_restriction_ids
+    assert _region_volume(result, "body", restored) == pytest.approx(
+        119.0 * math.pi / 64.0, rel=1e-6
+    )
+    graph = result.association_graph
+    assert graph.transaction.coverage.source_exhaustive
+    assert graph.transaction.coverage.target_exhaustive
+    descendants = {
+        edge.target_occurrence_id
+        for edge in graph.transaction.correspondences
+        if edge.source_occurrence_id == "operand:1/solid:0"
+    }
+    assert not descendants
+    assert result.report.deleted_source_occurrences > 0

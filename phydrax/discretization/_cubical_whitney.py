@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from itertools import product
 from math import comb, factorial
-from typing import final, Literal
+from typing import assert_never, final, Literal
 
 import equinox as eqx
 import jax
@@ -35,6 +35,7 @@ from ..typing import (
     Size,
 )
 from ._structured_cochain import StructuredCochainBridge
+from ._tensor_entities import StructuredAxis
 from ._tensor_support import TensorEntityLayout
 from .splatting import (
     AbstractStructuredSplatAssignment,
@@ -90,6 +91,26 @@ class _CubicalPathSegmentDim(Dim, minimum=1):
 
 class _CubicalPolynomialDim(Dim, minimum=1):
     """Ascending local polynomial moments."""
+
+
+def _cell_facets(axis: StructuredAxis, /) -> np.ndarray:
+    """Cell facets of one structured axis, with the closing facet of periodic axes.
+
+    Interval-primary facets end exactly on the declared bounds: the vertex
+    coordinates accumulate width roundoff, and points on the closed domain box
+    must stay inside the facet span.
+    """
+    points = np.asarray(axis.point_coordinates, dtype=np.float64)
+    bounds = np.asarray(axis.bounds, dtype=np.float64)
+    match axis.primary_entity:
+        case "interval":
+            return np.concatenate((points[: axis.interval_centers.size], bounds[1:]))
+        case "point":
+            if axis.periodic:
+                return np.concatenate((points, points[:1] + (bounds[1] - bounds[0])))
+            return points
+        case _:
+            assert_never(axis.primary_entity)
 
 
 def phase_moments(theta: Array, count: int = 4, /) -> Array:
@@ -197,17 +218,8 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
         if order > 1 and not uniform:
             raise ValueError("Higher-order cardinal spline chains require uniform axes.")
         prepared_axes = tuple(
-            _CubicalWhitneyAxis(
-                np.concatenate(
-                    (
-                        np.asarray(axis.point_coordinates[:1], dtype=np.float64),
-                        np.asarray(axis.point_coordinates[:1], dtype=np.float64)
-                        + np.cumsum(width),
-                    )
-                ),
-                axis=index,
-            )
-            for index, (axis, width) in enumerate(zip(axes, widths, strict=True))
+            _CubicalWhitneyAxis(_cell_facets(axis), axis=index)
+            for index, axis in enumerate(axes)
         )
         self.bridge = bridge
         self.shape_order = order
@@ -330,8 +342,16 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
                 crossing = (boundary - start[:, axis]) / jnp.where(
                     speed != 0.0, speed, 1.0
                 )
+                # A crossing within epsilon of the path end belongs to the final
+                # segment; a masked sliver would still carry a nonzero moment.
                 crossings.append(
-                    jnp.where((speed != 0.0) & (crossing > time + epsilon), crossing, 1.0)
+                    jnp.where(
+                        (speed != 0.0)
+                        & (crossing > time + epsilon)
+                        & (crossing < 1.0 - epsilon),
+                        crossing,
+                        1.0,
+                    )
                 )
             stop = jnp.minimum(
                 jnp.min(jnp.stack(tuple(crossings), axis=-1), axis=-1), 1.0
@@ -598,14 +618,8 @@ class CubicalGridGeometry(StrictModule):
         self.widths = tuple(
             np.asarray(axis.interval_widths, dtype=np.float64) for axis in axes
         )
-        points = tuple(
-            np.asarray(axis.point_coordinates, dtype=np.float64) for axis in axes
-        )
         # Cell boundaries including the closing node of periodic axes.
-        self.boundaries = tuple(
-            np.concatenate((point[:1], point[0] + np.cumsum(width)))
-            for point, width in zip(points, self.widths, strict=True)
-        )
+        self.boundaries = tuple(_cell_facets(axis) for axis in axes)
         self.lower = np.asarray([edges[0] for edges in self.boundaries])
         self.upper = np.asarray([edges[-1] for edges in self.boundaries])
         self.length = self.upper - self.lower

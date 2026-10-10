@@ -21,7 +21,7 @@ from ._cell_complex import (
     PolyhedralConnectivity,
     TetrahedralConnectivity,
 )
-from ._cell_mesh import CellMesh
+from ._cell_mesh import CellMesh, CellMeshStorage
 from ._hexahedral import HexahedralConnectivity
 
 
@@ -31,8 +31,17 @@ class CellPartition(StrictModule, NonTrainableState):
     cell_owner: Array
     part_count: int = eqx.field(static=True)
     partition_id: str = eqx.field(static=True)
+    storage_id: str | None = eqx.field(static=True)
+    global_cell_count: int = eqx.field(static=True)
 
-    def __init__(self, cell_owner: ArrayLike, part_count: int, /) -> None:
+    def __init__(
+        self,
+        cell_owner: ArrayLike,
+        part_count: int,
+        /,
+        *,
+        storage: CellMeshStorage | None = None,
+    ) -> None:
         owner = np.asarray(cell_owner)
         count = operator.index(part_count)
         if owner.ndim != 1 or not np.issubdtype(owner.dtype, np.integer):
@@ -44,11 +53,24 @@ class CellPartition(StrictModule, NonTrainableState):
             or np.any(owner >= count)
         ):
             raise ValueError("Cell ownership or part_count is invalid.")
-        if np.unique(owner).size != count:
-            raise ValueError("Every partition must own at least one cell.")
+        if storage is None:
+            if np.unique(owner).size != count:
+                raise ValueError("Every serial partition must own at least one cell.")
+        elif (
+            not isinstance(storage, CellMeshStorage)
+            or storage.partition_count != count
+            or not np.array_equal(owner, np.asarray(storage.entity_owner[-1]))
+        ):
+            raise ValueError(
+                "Owner-local partition ownership must match its canonical storage route."
+            )
         owner = owner.astype(np.int32, copy=False)
         self.cell_owner = jnp.asarray(owner)
         self.part_count = count
+        self.storage_id = None if storage is None else storage.storage_id
+        self.global_cell_count = (
+            owner.size if storage is None else storage.global_entity_counts[-1]
+        )
         self.partition_id = canonical_fingerprint(
             {
                 "kind": "cell-partition",
@@ -56,6 +78,16 @@ class CellPartition(StrictModule, NonTrainableState):
                 "part_count": count,
             }
         )
+        if storage is not None:
+            self.partition_id = canonical_fingerprint(
+                {
+                    "kind": "owner-local-cell-partition",
+                    "cell_owner": array_tree_fingerprint(owner),
+                    "part_count": count,
+                    "storage": storage.storage_id,
+                    "global_cell_count": storage.global_entity_counts[-1],
+                }
+            )
 
 
 def partition_cells_contiguous(mesh: CellMesh, part_count: int, /) -> CellPartition:

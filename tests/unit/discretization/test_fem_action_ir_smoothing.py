@@ -153,7 +153,10 @@ def _bisect_all(source: Any, hierarchy: Any = None) -> Any:
         phx.meshing.prepare_mesh_adaptation(
             source,
             phx.meshing.MarkedMeshAdaptation(
-                source.mesh.blocks[0].global_ids, hierarchy=hierarchy
+                np.concatenate(
+                    [np.asarray(block.global_ids) for block in source.mesh.blocks]
+                ),
+                hierarchy=hierarchy,
             ),
             policy=phx.meshing.MeshAdaptationPolicy(
                 phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
@@ -186,8 +189,8 @@ def test_time_law_schedule_and_uniform_bisection_are_transactional() -> None:
     # ty: ignore[invalid-argument-type]
     assert jnp.allclose(final_state, 1.0)
     assert bool(results[0].accepted)
-    assert first.target.mesh.blocks[0].cell_count == 8
-    assert second.target.mesh.blocks[0].cell_count == 16
+    assert sum(block.cell_count for block in first.target.mesh.blocks) == 8
+    assert sum(block.cell_count for block in second.target.mesh.blocks) == 16
     assert jnp.all(
         cells.relation_kinds == int(phx.meshing.EntityLineageKind.REFINED_FROM)
     )
@@ -289,4 +292,4 @@ def test_fem_action_ir_smoothing_scenario_3() -> None:
     assert transfer.target_size == refined.coordinates.shape[0]
     # ty: ignore[unresolved-attribute]
     assert transfer.source_size == mesh.coordinates.shape[0]
-    assert refined.blocks[0].cell_count == 5
+    assert sum(block.cell_count for block in refined.blocks) == 5

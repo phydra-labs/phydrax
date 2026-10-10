@@ -15,7 +15,7 @@ from jax import Array
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
-from ...integration import GaussLegendreRule
+from ...integration._rules import GaussLegendreRule
 from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
 from ._domain_ops import _derivative_metadata, _unwrap_factor

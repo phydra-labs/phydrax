@@ -39,8 +39,10 @@ from phydrax.qualification import (
     QualificationCriterion,
     QualificationEvidence,
     QualificationMatrix,
+    ReleaseGateEvidence,
     ReleaseIndex,
     SupportDependency,
+    SupportTuple,
 )
 from phydrax.qualification._promotion import (
     advance_channel,
@@ -356,6 +358,58 @@ def test_retained_proof_roundtrip_and_equation_only_admission(
         )
 
 
+@pytest.mark.parametrize("mutation", ("name", "provider", "support"))
+def test_unknown_released_battery_coordinates_are_refused(
+    release_fixture: Any, mutation: str
+) -> None:
+    _, proof, _, _, _ = release_fixture
+    profile = proof.profile
+    support = THERMAL_ECM_SUPPORT
+    if mutation == "support":
+        support = SupportTuple(
+            support.capability,
+            {**dict(support.attributes), "control": "unsupported-control"},
+        )
+    substituted = CapabilityProfile(
+        "battery.unknown-release" if mutation == "name" else profile.name,
+        "other-provider" if mutation == "provider" else profile.provider,
+        (support,),
+        dependencies=profile.dependencies,
+        required_gates=profile.required_gates,
+        release_evidence=profile.release_evidence,
+        released=True,
+    )
+    with pytest.raises(ValueError):
+        validate_battery_candidate_profile(substituted, support)
+
+
+def test_same_named_release_cannot_substitute_scientific_citations(
+    release_fixture: Any,
+) -> None:
+    _, proof, policy, _, _ = release_fixture
+    profile = proof.profile
+    gate = profile.release_evidence[0]
+    substituted_gate = ReleaseGateEvidence(
+        gate.gate,
+        passed=True,
+        evidence_ids=("unrelated-scientific-evidence",),
+        reviewer_id=gate.reviewer_id,
+        issued_at=gate.issued_at,
+        expires_at=gate.expires_at,
+    )
+    substituted = CapabilityProfile(
+        profile.name,
+        profile.provider,
+        profile.support_tuples,
+        dependencies=profile.dependencies,
+        required_gates=profile.required_gates,
+        release_evidence=(substituted_gate,),
+        released=True,
+    )
+    with pytest.raises(ValueError):
+        replace(proof, profile=substituted).verify(policy, at_time=100)
+
+
 def test_distribution_mapping_cannot_relabel_scientific_evidence(
     release_fixture: Any,
 ) -> None:
@@ -470,7 +524,7 @@ def test_expiry_is_capped_by_typed_evidence_and_unknown_candidates_refused(
     )
     assert proof.expires_at == 240
     forged = CapabilityProfile(
-        "battery.thermal-ecm.other", "phydrax", "candidate", (THERMAL_ECM_SUPPORT,)
+        "battery.thermal-ecm.other", "phydrax", (THERMAL_ECM_SUPPORT,)
     )
     with pytest.raises(ValueError):
         validate_battery_candidate_profile(forged, THERMAL_ECM_SUPPORT)

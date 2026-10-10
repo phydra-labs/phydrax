@@ -5,19 +5,20 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
-from dataclasses import dataclass
-from types import ModuleType
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import assert_never, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from ..._mass import Mass
+from ..._strict import StrictModule
+from ..._validation import positive_finite_float, positive_integer
 from ...measurement.lidar import LidarPointProduct
-from ...typing import checked, PRNGKey
+from ...typing import checked, parse, PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -41,8 +42,46 @@ from ..simplicial._io import (
     _canonical_triangle_arrays,
     planar_region_from_triangles,
 )
-from ..simplicial._regions import MeshRegion, PlanarMeshRegion
+from ..simplicial._regions import MeshRegion, PlanarMeshRegion, TriangleSurface
 from ..simplicial._topology import TriangleTopology
+from ._normals import (
+    estimate_point_normals,
+    NormalEstimationEvidence,
+    NormalOrientation,
+)
+from ._poisson import (
+    extract_indicator_surface,
+    PoissonDiscretization,
+    PoissonIndicator,
+    PoissonSolveEvidence,
+    sample_areas,
+    sampled_surface_deviation,
+    SampledSurfaceDeviation,
+    solve_regular_poisson,
+)
+from ._poisson_octree import solve_octree_poisson
+from ._robustness import (
+    component_fit,
+    ComponentFitEvidence,
+    OutlierRemovalEvidence,
+    ReconstructionRobustness,
+    remove_statistical_outliers,
+    sampling_coverage,
+    SamplingCoverageEvidence,
+    thin_features,
+    ThinFeatureEvidence,
+)
+
+
+# The default Poisson grid spacing is twice the typical sample spacing: coarse
+# enough that every cell near the surface holds samples, fine enough to resolve
+# features at the sampling scale. Four padding cells keep the level set off the
+# natural boundary. Coverage and thin-feature distances default to two finest
+# cells, the width over which the smoothed indicator crosses its unit jump.
+_SPACING_PER_SAMPLE = 2.0
+_PADDING_CELLS = 4
+_RESOLUTION_CELLS = 2.0
+_DEFAULT_ROBUSTNESS = ReconstructionRobustness()
 
 
 if TYPE_CHECKING:
@@ -52,7 +91,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ReconstructionReport:
-    """Provenance, filtering, topology, and approximation facts for reconstruction."""
+    """Provenance, filtering, topology, and approximation facts for reconstruction.
+
+    Point-cloud surface routes also carry their normal estimation/orientation
+    evidence, native screened Poisson solve evidence, the output Euler
+    characteristic, the sampled two-sided deviation of the accepted mesh, and
+    the outlier-removal, thin-feature, component-fit, and sampling-coverage
+    evidence of their declared :class:`ReconstructionRobustness` policy.
+    """
 
     source_kind: str
     algorithm: str
@@ -68,6 +114,14 @@ class ReconstructionReport:
     parameters: tuple[tuple[str, str], ...]
     warnings: tuple[str, ...] = ()
     source_product_id: str | None = None
+    euler_characteristic: int | None = None
+    normal_evidence: NormalEstimationEvidence | None = None
+    poisson_evidence: PoissonSolveEvidence | None = None
+    deviation_evidence: SampledSurfaceDeviation | None = None
+    outlier_evidence: OutlierRemovalEvidence | None = None
+    thin_feature_evidence: ThinFeatureEvidence | None = None
+    component_evidence: ComponentFitEvidence | None = None
+    coverage_evidence: SamplingCoverageEvidence | None = None
 
 
 @runtime_checkable
@@ -239,17 +293,6 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     return points - offset, offset
 
 
-def _require_pyvista() -> ModuleType:
-    try:
-        import pyvista
-    except ImportError as error:
-        raise ImportError(
-            "Implicit point-cloud reconstruction requires the optional "
-            "'geometry-pyvista' dependency group."
-        ) from error
-    return pyvista
-
-
 def _planar_triangulation(
     points: np.ndarray,
     /,
@@ -267,17 +310,16 @@ def _planar_triangulation(
     vertices = points[retained]
     if vertices.shape[0] < 3:
         raise ValueError("Planar reconstruction retained fewer than three points.")
-    # Canonical owner, Qhull provider: positively oriented, canonically ordered.
-    triangulation = DelaunayTriangulation(vertices, provider="qhull")
-    faces = np.array(triangulation.simplices, dtype=np.int32)
-    triangles = vertices[faces]
-    doubled_area = np.abs(
-        (triangles[:, 1, 0] - triangles[:, 0, 0])
-        * (triangles[:, 2, 1] - triangles[:, 0, 1])
-        - (triangles[:, 1, 1] - triangles[:, 0, 1])
-        * (triangles[:, 2, 0] - triangles[:, 0, 0])
-    )
+    # Exact native Delaunay: counterclockwise triangles, cocircular ties resolved
+    # by index-ordered symbolic perturbation of the retained (distinct) points.
+    faces = np.array(DelaunayTriangulation(vertices).simplices, dtype=np.int32)
     if alpha > 0.0:
+        triangles = vertices[faces]
+        doubled_area = (triangles[:, 1, 0] - triangles[:, 0, 0]) * (
+            triangles[:, 2, 1] - triangles[:, 0, 1]
+        ) - (triangles[:, 1, 1] - triangles[:, 0, 1]) * (
+            triangles[:, 2, 0] - triangles[:, 0, 0]
+        )
         first = np.linalg.norm(triangles[:, 1] - triangles[:, 0], axis=1)
         second = np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1)
         third = np.linalg.norm(triangles[:, 0] - triangles[:, 2], axis=1)
@@ -286,18 +328,6 @@ def _planar_triangulation(
     if faces.shape[0] == 0:
         raise ValueError("Planar reconstruction produced no retained triangles.")
     return vertices, faces, retained
-
-
-def _polydata_triangles(polydata: Any) -> tuple[np.ndarray, np.ndarray]:
-    surface = polydata.triangulate()
-    vertices = np.asarray(surface.points, dtype=np.float64)
-    packed = np.asarray(surface.faces, dtype=np.int64)
-    if packed.size == 0 or packed.size % 4 != 0:
-        raise ValueError("Reconstruction produced no triangular cells.")
-    records = packed.reshape((-1, 4))
-    if np.any(records[:, 0] != 3):
-        raise ValueError("Triangulated PolyData contains a non-triangle cell.")
-    return vertices, records[:, 1:].astype(np.int32)
 
 
 def _clean_surface_mesh(
@@ -320,16 +350,19 @@ def reconstruct_planar_region(
     recenter: bool = True,
     alpha: float = 0.0,
     tolerance: float = 1e-5,
-    offset: float = 1.0,
-    bound: bool = False,
-    progress_bar: bool = False,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Reconstruct one planar region and report every host-side approximation."""
+    """Reconstruct one planar region and report every host-side approximation.
+
+    Points merged by ``tolerance`` (relative to the point extent) are
+    triangulated by the exact native Delaunay kernel; ``alpha > 0`` removes
+    triangles whose circumradius exceeds ``alpha`` before the oriented boundary
+    loops are recovered.
+    """
 
     points_ = _validated_points(points, 2)
-    if alpha < 0.0 or tolerance < 0.0 or offset <= 0.0:
-        raise ValueError("alpha/tolerance must be non-negative and offset positive.")
+    if alpha < 0.0 or tolerance < 0.0:
+        raise ValueError("alpha and tolerance must be non-negative.")
     vertices_2d, faces, _ = _planar_triangulation(
         points_,
         tolerance=float(tolerance),
@@ -349,16 +382,9 @@ def reconstruct_planar_region(
         for index in range(offsets.shape[0] - 1)
     )
     source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
-    algorithm = "scipy_delaunay_2d_native_boundary"
-    parameters = _parameter_records(
-        alpha=float(alpha),
-        tolerance=float(tolerance),
-        offset=float(offset),
-        bound=bool(bound),
-    )
     report = ReconstructionReport(
         source_kind="planar_point_cloud",
-        algorithm=algorithm,
+        algorithm="native_delaunay_2d_native_boundary",
         input_digest=_point_digest(points_),
         input_points=points_.shape[0],
         retained_points=points_.shape[0],
@@ -368,111 +394,584 @@ def reconstruct_planar_region(
         watertight=True,
         winding_consistent=True,
         recenter_offset=tuple(float(value) for value in center),
-        parameters=parameters,
+        parameters=_parameter_records(alpha=float(alpha), tolerance=float(tolerance)),
     )
     return ReconstructedGeometrySource(source, report)
 
 
-def _surface_source(
+@dataclass(frozen=True, slots=True)
+class _SurfaceRequest:
+    """Provenance and accumulated evidence shared by every surface report."""
+
+    source_kind: str
+    algorithm: str
+    input_digest: str
+    recenter: bool
+    parameters: tuple[tuple[str, str], ...]
+    input_points: int
+    warnings: tuple[str, ...] = ()
+    feature_id: str | None = None
+    source_product_id: str | None = None
+    normal_evidence: NormalEstimationEvidence | None = None
+    poisson_evidence: PoissonSolveEvidence | None = None
+    outlier_evidence: OutlierRemovalEvidence | None = None
+    thin_feature_evidence: ThinFeatureEvidence | None = None
+    component_evidence: ComponentFitEvidence | None = None
+    coverage_evidence: SamplingCoverageEvidence | None = None
+
+
+def _report(
     points: np.ndarray,
-    surface: Any,
+    request: _SurfaceRequest,
+    /,
     *,
-    source_kind: str,
-    algorithm: str,
-    recenter: bool,
-    parameters: tuple[tuple[str, str], ...],
-    input_points: int,
-    warnings: Sequence[str] = (),
-    feature_id: str | None = None,
-    source_product_id: str | None = None,
-) -> ReconstructedGeometrySource:
-    vertices, faces = (
-        surface if isinstance(surface, tuple) else _polydata_triangles(surface)
+    vertices: int,
+    cells: int,
+    topology: TriangleTopology | None,
+    recenter_offset: tuple[float, ...],
+    warnings: tuple[str, ...],
+    deviation: SampledSurfaceDeviation | None,
+) -> ReconstructionReport:
+    return ReconstructionReport(
+        source_kind=request.source_kind,
+        algorithm=request.algorithm,
+        input_digest=request.input_digest,
+        input_points=request.input_points,
+        retained_points=points.shape[0],
+        output_vertices=vertices,
+        output_cells=cells,
+        connected_components=0 if topology is None else topology.num_face_components,
+        watertight=False if topology is None else topology.watertight,
+        winding_consistent=topology is not None,
+        recenter_offset=recenter_offset,
+        parameters=request.parameters,
+        warnings=warnings,
+        source_product_id=request.source_product_id,
+        euler_characteristic=None if topology is None else topology.euler_characteristic,
+        normal_evidence=request.normal_evidence,
+        poisson_evidence=request.poisson_evidence,
+        deviation_evidence=deviation,
+        outlier_evidence=request.outlier_evidence,
+        thin_feature_evidence=request.thin_feature_evidence,
+        component_evidence=request.component_evidence,
+        coverage_evidence=request.coverage_evidence,
     )
+
+
+def _failure_report(
+    points: np.ndarray,
+    request: _SurfaceRequest,
+    vertices: int,
+    cells: int,
+    reason: str,
+    /,
+) -> ReconstructionReport:
+    return _report(
+        points,
+        request,
+        vertices=vertices,
+        cells=cells,
+        topology=None,
+        recenter_offset=(0.0, 0.0, 0.0),
+        warnings=(*request.warnings, reason),
+        deviation=None,
+    )
+
+
+def _clean_or_fail(
+    points: np.ndarray,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    request: _SurfaceRequest,
+    /,
+) -> tuple[np.ndarray, np.ndarray, TriangleTopology]:
     try:
-        vertices_clean, faces_clean, topology = _clean_surface_mesh(vertices, faces)
-        winding_consistent = True
+        return _clean_surface_mesh(vertices, faces)
     except ValueError as error:
-        report = ReconstructionReport(
-            source_kind=source_kind,
-            algorithm=algorithm,
-            input_digest=_point_digest(points),
-            input_points=input_points,
-            retained_points=points.shape[0],
-            output_vertices=vertices.shape[0],
-            output_cells=faces.shape[0],
-            connected_components=0,
-            watertight=False,
-            winding_consistent=False,
-            recenter_offset=(0.0, 0.0, 0.0),
-            parameters=parameters,
-            warnings=(*warnings, str(error)),
-            source_product_id=source_product_id,
+        report = _failure_report(
+            points, request, vertices.shape[0], faces.shape[0], str(error)
         )
         raise ReconstructionFailure(
             "Surface reconstruction produced invalid triangle topology.", report
         ) from error
-    vertices_clean, center = _recenter(vertices_clean, recenter)
-    report = ReconstructionReport(
-        source_kind=source_kind,
-        algorithm=algorithm,
-        input_digest=_point_digest(points),
-        input_points=input_points,
-        retained_points=points.shape[0],
-        output_vertices=vertices_clean.shape[0],
-        output_cells=faces_clean.shape[0],
-        connected_components=topology.num_face_components,
-        watertight=topology.watertight,
-        winding_consistent=winding_consistent,
-        recenter_offset=tuple(float(value) for value in center),
-        parameters=parameters,
-        warnings=tuple(warnings),
-        source_product_id=source_product_id,
+
+
+def _surface_source(
+    points: np.ndarray,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    request: _SurfaceRequest,
+    /,
+    *,
+    measure_deviation: bool,
+) -> ReconstructedGeometrySource:
+    vertices_clean, faces_clean, topology = _clean_or_fail(
+        points, vertices, faces, request
     )
-    if not report.watertight or not report.winding_consistent:
+    deviation = (
+        sampled_surface_deviation(points, vertices_clean, faces_clean)
+        if measure_deviation and topology.watertight
+        else None
+    )
+    vertices_clean, center = _recenter(vertices_clean, request.recenter)
+    report = _report(
+        points,
+        request,
+        vertices=vertices_clean.shape[0],
+        cells=faces_clean.shape[0],
+        topology=topology,
+        recenter_offset=tuple(float(value) for value in center),
+        warnings=request.warnings,
+        deviation=deviation,
+    )
+    if not report.watertight:
         raise ReconstructionFailure(
             "Surface reconstruction did not produce a watertight consistently wound solid.",
             report,
         )
     # ty: ignore[invalid-argument-type]
-    source = MeshRegion(vertices_clean, faces_clean, feature_id=feature_id)
+    source = MeshRegion(vertices_clean, faces_clean, feature_id=request.feature_id)
     return ReconstructedGeometrySource(source, report)
+
+
+def _normal_warnings(evidence: NormalEstimationEvidence, /) -> tuple[str, ...]:
+    warnings: list[str] = []
+    if evidence.ambiguous_direction_count:
+        warnings.append(
+            f"{evidence.ambiguous_direction_count} neighborhoods have no dominant "
+            "least-variance direction."
+        )
+    if evidence.ambiguous_orientation_edges:
+        warnings.append(
+            f"{evidence.ambiguous_orientation_edges} orientation-propagation edges join "
+            "nearly perpendicular normals."
+        )
+    if evidence.conflicting_neighbor_edges:
+        warnings.append(
+            f"{evidence.conflicting_neighbor_edges} neighbor pairs keep opposing "
+            "normals after orientation."
+        )
+    return tuple(warnings)
+
+
+@dataclass(frozen=True, slots=True)
+class _PoissonRequest:
+    """Validated numerical options of one point-cloud Poisson reconstruction."""
+
+    normals: ArrayLike | None
+    normal_orientation: NormalOrientation
+    neighborhood_size: int
+    sample_spacing: float | None
+    screening: float
+    maximum_grid_nodes: int
+    discretization: PoissonDiscretization
+    robustness: ReconstructionRobustness
+
+
+@dataclass(frozen=True, slots=True)
+class _PoissonSurface:
+    """Extracted level set with the evidence accumulated up to extraction."""
+
+    points: np.ndarray
+    vertices: np.ndarray
+    faces: np.ndarray
+    unsupported: np.ndarray
+    coverage: SamplingCoverageEvidence
+    request: _SurfaceRequest
+
+
+def _poisson_request(
+    *,
+    normals: ArrayLike | None,
+    normal_orientation: NormalOrientation,
+    neighborhood_size: int,
+    sample_spacing: float | None,
+    screening: float,
+    maximum_grid_nodes: int,
+    discretization: PoissonDiscretization,
+    robustness: ReconstructionRobustness,
+) -> _PoissonRequest:
+    if not isinstance(robustness, ReconstructionRobustness):
+        raise TypeError("robustness must be ReconstructionRobustness.")
+    return _PoissonRequest(
+        normals=normals,
+        normal_orientation=parse(
+            normal_orientation, NormalOrientation, "normal_orientation"
+        ),
+        neighborhood_size=positive_integer(neighborhood_size, "neighborhood_size"),
+        sample_spacing=None
+        if sample_spacing is None
+        else positive_finite_float(sample_spacing, "sample_spacing"),
+        screening=positive_finite_float(screening, "screening"),
+        maximum_grid_nodes=positive_integer(maximum_grid_nodes, "maximum_grid_nodes"),
+        discretization=parse(discretization, PoissonDiscretization, "discretization"),
+        robustness=robustness,
+    )
+
+
+def _poisson_parameters(options: _PoissonRequest, /) -> dict[str, object]:
+    policy = options.robustness
+    return {
+        "neighborhood_size": options.neighborhood_size,
+        "sample_spacing": options.sample_spacing,
+        "screening": options.screening,
+        "maximum_grid_nodes": options.maximum_grid_nodes,
+        "discretization": options.discretization,
+        "outlier_std_ratio": policy.outlier_std_ratio,
+        "coverage_distance": policy.coverage_distance,
+        "incomplete_sampling": policy.incomplete_sampling,
+        "thin_feature_distance": policy.thin_feature_distance,
+        "component_fit_tolerance": policy.component_fit_tolerance,
+    }
+
+
+def _without_outliers(
+    points: np.ndarray, options: _PoissonRequest, request: _SurfaceRequest, /
+) -> tuple[np.ndarray, ArrayLike | None, _SurfaceRequest]:
+    """Apply declared statistical outlier removal to samples and supplied normals."""
+
+    ratio = options.robustness.outlier_std_ratio
+    if ratio is None:
+        return points, options.normals, request
+    retained, evidence = remove_statistical_outliers(
+        points, options.neighborhood_size, ratio
+    )
+    normals = options.normals
+    if normals is not None:
+        supplied = np.asarray(normals, dtype=np.float64)
+        if supplied.shape != points.shape:
+            raise ValueError("normals must have shape (num_points, 3).")
+        normals = supplied[retained]
+    warnings = request.warnings
+    if evidence.removed_indices:
+        warnings = (
+            *warnings,
+            f"Statistical outlier removal dropped {len(evidence.removed_indices)} "
+            f"samples above mean kNN distance {evidence.threshold:.6g}.",
+        )
+    if np.count_nonzero(retained) <= options.neighborhood_size:
+        raise ReconstructionFailure(
+            "Statistical outlier removal retained too few samples.",
+            _failure_report(
+                points[retained],
+                replace(request, outlier_evidence=evidence),
+                0,
+                0,
+                "fewer samples than neighborhood_size + 1 remain",
+            ),
+        )
+    return (
+        points[retained],
+        normals,
+        replace(request, warnings=warnings, outlier_evidence=evidence),
+    )
+
+
+def _solve(
+    points: np.ndarray,
+    normals: np.ndarray,
+    areas: np.ndarray,
+    spacing: float,
+    options: _PoissonRequest,
+    /,
+) -> PoissonIndicator:
+    match options.discretization:
+        case "octree":
+            solver = solve_octree_poisson
+        case "regular":
+            solver = solve_regular_poisson
+        case _:
+            assert_never(options.discretization)
+    return solver(
+        points,
+        normals,
+        areas,
+        spacing=spacing,
+        screening=options.screening,
+        padding_cells=_PADDING_CELLS,
+        maximum_grid_nodes=options.maximum_grid_nodes,
+    )
+
+
+def _poisson_surface(
+    points: np.ndarray, request: _SurfaceRequest, options: _PoissonRequest, /
+) -> _PoissonSurface:
+    """Filter, orient, solve, check, extract, and measure the Poisson surface."""
+
+    points, supplied, request = _without_outliers(points, options, request)
+    oriented = estimate_point_normals(
+        points,
+        normals=supplied,
+        orientation=options.normal_orientation,
+        neighborhood_size=options.neighborhood_size,
+    )
+    areas = sample_areas(oriented.neighbor_distances)
+    spacing = (
+        _SPACING_PER_SAMPLE * float(np.sqrt(np.median(areas)))
+        if options.sample_spacing is None
+        else options.sample_spacing
+    )
+    policy = options.robustness
+    thin = thin_features(
+        points,
+        oriented.normals,
+        options.neighborhood_size,
+        _RESOLUTION_CELLS * spacing
+        if policy.thin_feature_distance is None
+        else policy.thin_feature_distance,
+    )
+    warnings = (*request.warnings, *_normal_warnings(oriented.evidence))
+    if thin.thin_samples:
+        warnings = (
+            *warnings,
+            f"{thin.thin_samples} samples have a stacked sheet closer than "
+            f"{thin.thin_feature_distance:.6g}; Poisson smoothing cannot separate "
+            "features that thin.",
+        )
+    indicator = _solve(points, oriented.normals, areas, spacing, options)
+    fit = component_fit(
+        indicator.sample_values,
+        areas,
+        oriented.components,
+        policy.component_fit_tolerance,
+    )
+    request = replace(
+        request,
+        warnings=warnings,
+        normal_evidence=oriented.evidence,
+        poisson_evidence=indicator.evidence,
+        thin_feature_evidence=thin,
+        component_evidence=fit,
+    )
+    if not indicator.evidence.solver_converged:
+        raise ReconstructionFailure(
+            "Screened Poisson solve did not converge.",
+            _failure_report(points, request, 0, 0, indicator.evidence.solver_message),
+        )
+    if fit.unresolved_components:
+        raise ReconstructionFailure(
+            "Sample components are not fit by the reconstructed level set.",
+            _failure_report(
+                points,
+                request,
+                0,
+                0,
+                f"components {fit.unresolved_components} exceed the sampled-indicator "
+                f"spread tolerance {fit.tolerance:.6g}",
+            ),
+        )
+    vertices, faces = extract_indicator_surface(indicator)
+    unsupported, coverage = sampling_coverage(
+        points,
+        vertices,
+        faces,
+        _RESOLUTION_CELLS * spacing
+        if policy.coverage_distance is None
+        else policy.coverage_distance,
+    )
+    if coverage.unsupported_triangles:
+        request = replace(
+            request,
+            warnings=(
+                *request.warnings,
+                f"{coverage.unsupported_patches} surface patches of area "
+                f"{coverage.unsupported_area:.6g} lie farther than "
+                f"{coverage.coverage_distance:.6g} from every sample.",
+            ),
+        )
+    request = replace(request, coverage_evidence=coverage)
+    return _PoissonSurface(points, vertices, faces, unsupported, coverage, request)
+
+
+def _poisson_source(
+    points: np.ndarray, request: _SurfaceRequest, options: _PoissonRequest, /
+) -> ReconstructedGeometrySource:
+    """Reconstruct the closed Poisson solid under the incomplete-sampling policy."""
+
+    surface = _poisson_surface(points, request, options)
+    match options.robustness.incomplete_sampling:
+        case "close":
+            pass
+        case "refuse":
+            if surface.coverage.unsupported_triangles:
+                raise ReconstructionFailure(
+                    "Incomplete sampling leaves surface unsupported by samples.",
+                    _failure_report(
+                        surface.points,
+                        surface.request,
+                        surface.vertices.shape[0],
+                        surface.faces.shape[0],
+                        "incomplete_sampling='refuse'",
+                    ),
+                )
+        case _:
+            assert_never(options.robustness.incomplete_sampling)
+    return _surface_source(
+        surface.points,
+        surface.vertices,
+        surface.faces,
+        surface.request,
+        measure_deviation=True,
+    )
 
 
 def reconstruct_surface_region(
     points: ArrayLike,
     *,
+    normals: ArrayLike | None = None,
+    normal_orientation: NormalOrientation = "propagate",
     recenter: bool = True,
-    neighborhood_size: int | None = None,
+    neighborhood_size: int = 16,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    maximum_grid_nodes: int = 1 << 19,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Reconstruct a watertight surface point cloud through a reported implicit fit."""
+    """Reconstruct a closed surface from samples by native screened Poisson.
+
+    Normals are estimated by bounded-neighborhood PCA when omitted and oriented
+    by minimum-spanning-forest propagation unless ``normal_orientation`` is
+    ``"supplied"`` (see :func:`estimate_point_normals`). The indicator is solved
+    with finest width ``sample_spacing`` (default: twice the typical sample
+    spacing) on an adaptive octree refined only around the samples
+    (``discretization="octree"``) or on the full regular grid
+    (``"regular"``), padded by four finest cells, with screening weight
+    ``screening``; more than ``maximum_grid_nodes`` unknowns are refused before
+    assembly. ``robustness`` declares outlier removal, the thin-feature and
+    coverage distances, the incomplete-sampling policy, and the component-fit
+    tolerance above which a sample component is refused. The report carries
+    normal, solve, robustness, Euler-characteristic, and sampled two-sided
+    deviation evidence. Screened Poisson smoothing approximates the sampled
+    surface at the finest resolution and does not preserve features below it.
+    """
 
     points_ = _validated_points(points, 3)
-    if neighborhood_size is not None and neighborhood_size <= 0:
-        raise ValueError("neighborhood_size must be positive when provided.")
-    if sample_spacing is not None and sample_spacing <= 0.0:
-        raise ValueError("sample_spacing must be positive when provided.")
-    pyvista = _require_pyvista()
-    surface = pyvista.PolyData(points_).reconstruct_surface(
-        nbr_sz=neighborhood_size,
+    options = _poisson_request(
+        normals=normals,
+        normal_orientation=normal_orientation,
+        neighborhood_size=neighborhood_size,
         sample_spacing=sample_spacing,
-        progress_bar=bool(progress_bar),
+        screening=screening,
+        maximum_grid_nodes=maximum_grid_nodes,
+        discretization=discretization,
+        robustness=robustness,
     )
-    return _surface_source(
-        points_,
-        surface,
+    request = _SurfaceRequest(
         source_kind="surface_point_cloud",
-        algorithm="pyvista_implicit_surface",
+        algorithm="native_screened_poisson",
+        input_digest=_point_digest(points_),
         recenter=recenter,
         parameters=_parameter_records(
-            neighborhood_size=neighborhood_size,
-            sample_spacing=sample_spacing,
+            normals="supplied" if normals is not None else "estimated",
+            normal_orientation=options.normal_orientation,
+            **_poisson_parameters(options),
         ),
         input_points=points_.shape[0],
         feature_id=feature_id,
+    )
+    return _poisson_source(points_, request, options)
+
+
+class TrimmedSurfaceReconstruction(StrictModule):
+    """Open Poisson surface trimmed to its sample support, with its report.
+
+    ``surface`` keeps the triangles within ``coverage_distance`` of a sample;
+    the report's topology fields describe the trimmed surface and its coverage
+    evidence the removed triangles.
+    """
+
+    surface: TriangleSurface
+    report: ReconstructionReport = eqx.field(static=True)
+
+    def __init__(self, surface: TriangleSurface, report: ReconstructionReport) -> None:
+        if not isinstance(surface, TriangleSurface):
+            raise TypeError("surface must be TriangleSurface.")
+        if not isinstance(report, ReconstructionReport):
+            raise TypeError("report must be ReconstructionReport.")
+        self.surface = surface
+        self.report = report
+
+
+def reconstruct_trimmed_surface(
+    points: ArrayLike,
+    *,
+    normals: ArrayLike | None = None,
+    normal_orientation: NormalOrientation = "propagate",
+    recenter: bool = True,
+    neighborhood_size: int = 16,
+    sample_spacing: float | None = None,
+    screening: float = 4.0,
+    maximum_grid_nodes: int = 1 << 19,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
+) -> TrimmedSurfaceReconstruction:
+    """Reconstruct an open sampled surface by Poisson extraction and density trimming.
+
+    The pipeline and options follow :func:`reconstruct_surface_region`; the
+    closed level set is then trimmed to the triangles whose centroid lies
+    within the robustness ``coverage_distance`` of a sample, so incompletely
+    sampled regions become open boundaries instead of interpolated closures.
+    ``incomplete_sampling`` does not apply. A surface with no supported
+    triangle is refused.
+    """
+
+    points_ = _validated_points(points, 3)
+    options = _poisson_request(
+        normals=normals,
+        normal_orientation=normal_orientation,
+        neighborhood_size=neighborhood_size,
+        sample_spacing=sample_spacing,
+        screening=screening,
+        maximum_grid_nodes=maximum_grid_nodes,
+        discretization=discretization,
+        robustness=robustness,
+    )
+    request = _SurfaceRequest(
+        source_kind="surface_point_cloud",
+        algorithm="native_screened_poisson_density_trimmed",
+        input_digest=_point_digest(points_),
+        recenter=recenter,
+        parameters=_parameter_records(
+            normals="supplied" if normals is not None else "estimated",
+            normal_orientation=options.normal_orientation,
+            **_poisson_parameters(options),
+        ),
+        input_points=points_.shape[0],
+    )
+    surface = _poisson_surface(points_, request, options)
+    kept = surface.faces[~surface.unsupported]
+    if kept.shape[0] == 0:
+        raise ReconstructionFailure(
+            "Density trimming removed every reconstructed triangle.",
+            _failure_report(
+                surface.points,
+                surface.request,
+                surface.vertices.shape[0],
+                surface.faces.shape[0],
+                "no triangle lies within coverage_distance of a sample",
+            ),
+        )
+    vertices, faces, topology = _clean_or_fail(
+        surface.points, surface.vertices, kept, surface.request
+    )
+    vertices, center = _recenter(vertices, recenter)
+    report = _report(
+        surface.points,
+        surface.request,
+        vertices=vertices.shape[0],
+        cells=faces.shape[0],
+        topology=topology,
+        recenter_offset=tuple(float(value) for value in center),
+        warnings=surface.request.warnings,
+        deviation=None,
+    )
+    return TrimmedSurfaceReconstruction(
+        TriangleSurface(
+            jnp.asarray(vertices, dtype=jnp.float64), jnp.asarray(faces, dtype=jnp.int32)
+        ),
+        report,
     )
 
 
@@ -514,12 +1013,15 @@ def reconstruct_dem_region(
     recenter: bool = True,
     alpha: float = 0.0,
     tolerance: float = 1e-5,
-    bound: bool = False,
     extrude_depth: float = 1.0,
-    progress_bar: bool = False,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Triangulate a terrain and cap a downward extrusion as a reported solid."""
+    """Triangulate a terrain by native Delaunay and cap a downward extrusion.
+
+    The retained plan-view samples are triangulated exactly as in
+    :func:`reconstruct_planar_region`; the terrain sheet, its copy lowered by
+    ``extrude_depth`` and the side walls along the boundary form the solid.
+    """
 
     points = _terrain_points(points_or_grid, x=x, y=y)
     if alpha < 0.0 or tolerance < 0.0 or extrude_depth <= 0.0:
@@ -553,20 +1055,21 @@ def reconstruct_dem_region(
         ),
         axis=0,
     )
-    return _surface_source(
-        points,
-        (solid_vertices, solid_faces),
+    request = _SurfaceRequest(
         source_kind="digital_elevation_model",
         algorithm="native_delaunay_2d_capped_extrusion",
+        input_digest=_point_digest(points),
         recenter=recenter,
         parameters=_parameter_records(
             alpha=float(alpha),
             tolerance=float(tolerance),
-            bound=bool(bound),
             extrude_depth=float(extrude_depth),
         ),
         input_points=points.shape[0],
         feature_id=feature_id,
+    )
+    return _surface_source(
+        points, solid_vertices, solid_faces, request, measure_deviation=False
     )
 
 
@@ -576,15 +1079,35 @@ def reconstruct_point_region(
     recenter: bool = True,
     roi: tuple[float, float, float, float, float, float] | None = None,
     voxel_size: float | None = None,
-    neighborhood_size: int | None = None,
+    neighborhood_size: int = 16,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    maximum_grid_nodes: int = 1 << 19,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
     source_product_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    """Crop/downsample Cartesian points, then run a reported implicit surface fit."""
+    """Crop and voxel-downsample Cartesian points, then reconstruct natively.
+
+    Filtering keeps points inside ``roi`` and the first point of every
+    ``voxel_size`` voxel in input order; the retained samples follow
+    :func:`reconstruct_surface_region` with PCA normals oriented by
+    minimum-spanning-forest propagation, the declared ``discretization``, and
+    the ``robustness`` policy.
+    """
 
     original = _validated_points(points, 3)
+    options = _poisson_request(
+        normals=None,
+        normal_orientation="propagate",
+        neighborhood_size=neighborhood_size,
+        sample_spacing=sample_spacing,
+        screening=screening,
+        maximum_grid_nodes=maximum_grid_nodes,
+        discretization=discretization,
+        robustness=robustness,
+    )
     retained = original
     warnings: list[str] = []
     if roi is not None:
@@ -610,33 +1133,20 @@ def reconstruct_point_region(
         raise ValueError("LiDAR filtering retained too few points for reconstruction.")
     if retained.shape[0] < original.shape[0] / 10:
         warnings.append("Filtering retained fewer than ten percent of input points.")
-    if neighborhood_size is not None and neighborhood_size <= 0:
-        raise ValueError("neighborhood_size must be positive when provided.")
-    if sample_spacing is not None and sample_spacing <= 0.0:
-        raise ValueError("sample_spacing must be positive when provided.")
-    pyvista = _require_pyvista()
-    surface = pyvista.PolyData(retained).reconstruct_surface(
-        nbr_sz=neighborhood_size,
-        sample_spacing=sample_spacing,
-        progress_bar=bool(progress_bar),
-    )
-    return _surface_source(
-        retained,
-        surface,
+    request = _SurfaceRequest(
         source_kind="point_cloud",
-        algorithm="voxel_filter_then_pyvista_implicit_surface",
+        algorithm="voxel_filter_then_native_screened_poisson",
+        input_digest=_point_digest(original),
         recenter=recenter,
         parameters=_parameter_records(
-            roi=roi,
-            voxel_size=voxel_size,
-            neighborhood_size=neighborhood_size,
-            sample_spacing=sample_spacing,
+            roi=roi, voxel_size=voxel_size, **_poisson_parameters(options)
         ),
         input_points=original.shape[0],
-        warnings=warnings,
+        warnings=tuple(warnings),
         feature_id=feature_id,
         source_product_id=source_product_id,
     )
+    return _poisson_source(retained, request, options)
 
 
 def reconstruct_lidar_region(
@@ -645,9 +1155,12 @@ def reconstruct_lidar_region(
     recenter: bool = True,
     roi: tuple[float, float, float, float, float, float] | None = None,
     voxel_size: float | None = None,
-    neighborhood_size: int | None = None,
+    neighborhood_size: int = 16,
     sample_spacing: float | None = None,
-    progress_bar: bool = False,
+    screening: float = 4.0,
+    maximum_grid_nodes: int = 1 << 19,
+    discretization: PoissonDiscretization = "octree",
+    robustness: ReconstructionRobustness = _DEFAULT_ROBUSTNESS,
     feature_id: str | None = None,
 ) -> ReconstructedGeometrySource:
     """Reconstruct valid derived LiDAR points while retaining acquisition lineage."""
@@ -661,7 +1174,10 @@ def reconstruct_lidar_region(
         voxel_size=voxel_size,
         neighborhood_size=neighborhood_size,
         sample_spacing=sample_spacing,
-        progress_bar=progress_bar,
+        screening=screening,
+        maximum_grid_nodes=maximum_grid_nodes,
+        discretization=discretization,
+        robustness=robustness,
         feature_id=feature_id,
         source_product_id=product.point_product_id,
     )
@@ -677,4 +1193,6 @@ __all__ = [
     "reconstruct_point_region",
     "reconstruct_planar_region",
     "reconstruct_surface_region",
+    "reconstruct_trimmed_surface",
+    "TrimmedSurfaceReconstruction",
 ]

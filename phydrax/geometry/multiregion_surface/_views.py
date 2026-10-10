@@ -33,7 +33,9 @@ class _SheetFaceDim(Dim, minimum=1):
     """Faces of one sheet view."""
 
 
-def multiregion_cell_complex(topology: MultiRegionSurfaceTopology, /) -> CellComplexTopology:
+def multiregion_cell_complex(
+    topology: MultiRegionSurfaceTopology, /
+) -> CellComplexTopology:
     """Signed ``vertex -> edge -> face -> finite region`` cell complex.
 
     ``d(edge) = v1 - v0``, ``d(face) = sum s_fe edge`` with the face traversal
@@ -58,7 +60,9 @@ def multiregion_cell_complex(topology: MultiRegionSurfaceTopology, /) -> CellCom
     )
     edge_set = EntitySet("multiregion-edges", 1, np.arange(topology.edge_count))
     faces = EntitySet(
-        "multiregion-faces", 2, np.asarray(topology.face_global_ids[: topology.face_count])
+        "multiregion-faces",
+        2,
+        np.asarray(topology.face_global_ids[: topology.face_count]),
     )
     vertex_edge = OrientedIncidence(
         1,
@@ -176,18 +180,16 @@ def _sheet_is_manifold(faces: np.ndarray, vertex_count: int, /) -> bool:
     interior = np.flatnonzero(counts[inverse] == 2)
     order = interior[np.argsort(inverse[interior], kind="stable")]
     first, second = order[0::2], order[1::2]
-    rows = np.concatenate(
-        (corner_origin[first], corner_destination[first])
-    )
-    cols = np.concatenate(
-        (corner_destination[second], corner_origin[second])
-    )
+    rows = np.concatenate((corner_origin[first], corner_destination[first]))
+    cols = np.concatenate((corner_destination[second], corner_origin[second]))
     graph = sp.coo_matrix(
         (np.ones(rows.size), (rows, cols)), shape=(origin.size, origin.size)
     )
     _, component = connected_components(graph, directed=False)
     fans = np.unique(np.stack((origin, component), axis=1), axis=0)
-    return bool(np.all(np.bincount(fans[:, 0], minlength=vertex_count)[np.unique(origin)] == 1))
+    return bool(
+        np.all(np.bincount(fans[:, 0], minlength=vertex_count)[np.unique(origin)] == 1)
+    )
 
 
 def multiregion_sheet_views(
@@ -203,7 +205,9 @@ def multiregion_sheet_views(
     pair_signs = np.asarray(
         topology.face_pair_signs[: topology.face_count], dtype=np.int64
     )
-    pairs = np.asarray(topology.region_pairs[: topology.region_pair_count], dtype=np.int64)
+    pairs = np.asarray(
+        topology.region_pairs[: topology.region_pair_count], dtype=np.int64
+    )
     slot_table = np.asarray(topology.vertex_pair_slots, dtype=np.int64)
     points = np.asarray(state.positions, dtype=np.float64)
     views = []

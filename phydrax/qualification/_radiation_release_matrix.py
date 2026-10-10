@@ -192,7 +192,6 @@ def radiation_release_matrix_candidate_profiles() -> tuple[CapabilityProfile, ..
         CapabilityProfile(
             "radiation.cross-route-release-matrix.profile",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     "radiation.cross-route-release-matrix",

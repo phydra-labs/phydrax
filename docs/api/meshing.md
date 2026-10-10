@@ -3,6 +3,29 @@
 See the [meshing guide](../guides_meshing.md) for identity, provider,
 certification, and topology-transition contracts.
 
+The symbols below are implementation/API documentation, not a release index.
+Exact source × route × family × order × control × placement × derivative ×
+transfer combinations are recorded by the generated capability catalog.
+Independent flags must not be combined into an unsupported request. The
+[current closure table](../guides_meshing.md#evidence-vocabulary-and-current-closure-state)
+keeps implemented, tested, qualified, released, optional-provider, refused, and
+open research states distinct.
+
+For an exact scalar zero set with sound value and derivative enclosures,
+`NativeMeshingOptions("implicit_adaptive_tetrahedral")` combines the canonical
+adaptive discovery policy with the native volume schedule. It publishes only
+after complete regular topology discovery, independently bracketed cycle-root
+witnesses, exact coverage of the extracted boundary, global embedding, and
+continuous two-sided source-fidelity certification. Source-distance bounds come
+from the exhaustive enclosure cover and actual root witnesses, not from treating
+an arbitrary scalar field as a signed distance. Unknown, hidden, tangential, or
+singular boxes remain explicit failures within the authored resource bounds.
+`"implicit_restricted_delaunay"` retains its distinct established-reach analytic
+specialization; the adaptive route never substitutes that specialization for a
+general field. Multiple material/junction sources use the shared image/interface
+complex, rather than assigning a tetrahedron from one scalar sample.
+
+
 ::: phydrax.meshing
     options:
       members:
@@ -13,6 +36,10 @@ certification, and topology-transition contracts.
         - SurfaceMeshingSpec
         - SurfaceRemeshingSpec
         - VolumeMeshingSpec
+        - CurveMeshingSpec
+        - CurveJunction
+        - CurveEnd
+        - MeshQualityTarget
         - MeshingLimits
         - MeshPatch
         - MeshZoneRole
@@ -85,6 +112,7 @@ certification, and topology-transition contracts.
         - MeshingComplianceReport
         - MeshingTrace
         - MeshingFailure
+        - MeshingFailureEvidence
         - certify_cell_mesh
         - evaluate_cell_quality
         - FiniteVolumeQualityEvaluation
@@ -154,9 +182,16 @@ certification, and topology-transition contracts.
         - GmshMeshingPlan
         - GmshRemeshingPlan
         - GmshSession
-        - NativeImplicitProvider
+        - NativeMeshingProvider
+        - NativeMeshingPlan
+        - NativeMeshingOptions
+        - NativeMeshingRoute
+        - NativeCurveSchedule
+        - NativeMeshingSource
+        - NativePlanarSource
+        - NativeImplicitSource
+        - NativeCurveSource
         - ManifoldProvider
-        - SurfaceBooleanOperation
         - MmgProvider
         - MmgOptions
         - MmgAdaptationPlan
@@ -221,6 +256,121 @@ certification, and topology-transition contracts.
         - LearnedMeshProposer
         - project_mesh_proposal
         - prepare_mesh_proposal
+        - AdaptationAction
+        - ComposedAssociationTransfer
+        - ImplicitAssociationTransfer
+        - MappedReferenceAssociationTransfer
+        - BisectionUniformRefinement
+        - BlockInterfaceControl
+        - DecisionBudget
+        - DeviceGenerationCandidates
+        - DeviceGenerationEvidence
+        - DeviceGenerationLayout
+        - DeviceGenerationStatus
+        - DeviceGenerationUpdate
+        - PreparedDeviceGeneration
+        - prepare_device_generation
+        - evaluate_device_generation_candidates
+        - execute_device_generation_round
+        - DeviceTetraMetricEvidence
+        - DeviceTetraMetricLayout
+        - DeviceTetraMetricReport
+        - DeviceTetraMetricState
+        - DeviceTetraMetricUpdate
+        - prepare_device_tetra_metric
+        - adapt_device_tetra_metric
+        - PreparedDistributedSurfaceGeneration
+        - prepare_distributed_surface_generation
+        - ErrorQuantity
+        - FixedEpochDerivativeEvidence
+        - MeasuredAdaptationCost
+        - PhysicalErrorEvidence
+        - RouteFeasibility
+        - SolverAwareCandidate
+        - SolverAwareDecision
+        - GeometrySourceEntityRole
+        - GeometryRealizationMeshAdaptation
+        - LevelSetEvidence
+        - LevelSetMeshAdaptation
+        - MeshCertificationCheck
+        - MeshCertificationInputs
+        - MeshCertificationOutcome
+        - MeshCertificationPreparedEvidence
+        - MeshCertificationReport
+        - MeshCertificationRoute
+        - MeshCertificationSchedule
+        - MeshingEvidenceBinding
+        - acceptance_stage_report
+        - certify_meshing_acceptance
+        - declared_plc_domain
+        - MeshProposalFeatures
+        - MixedAdaptationHierarchy
+        - MixedLayerColumns
+        - MultiblockConstruction
+        - StructuredConstruction
+        - TransfiniteBlock
+        - TransfiniteCurveControl
+        - TransfiniteSurfaceControl
+        - assemble_independent_blocks
+        - generate_structured_block
+        - glue_structured_blocks
+        - SweepConstruction
+        - SweepControl
+        - SweepMapKind
+        - generate_sweep
+        - PiecewiseLinearComplex
+        - NativeVolumeSchedule
+        - NativeLayerCoreSource
+        - NativeHexGridRoute
+        - NativeHexGridSchedule
+        - NativeMappedHexSource
+        - NativePeriodicSource
+        - NativePlcSource
+        - NativePolyhedralSchedule
+        - NativePolyhedralSource
+        - NativeStructuredSchedule
+        - NativeStructuredSource
+        - NativeSurfaceEnvelopeSource
+        - NativeSurfaceSchedule
+        - NativeSurfaceSource
+        - NativeSweepSource
+        - NativeMeshingPhase
+        - NativeMeshingPhaseMeasurement
+        - NativeMeshingPhaseRecorder
+        - PeriodicAssociationTransfer
+        - PeriodicMeshConstruction
+        - PeriodicPointOrbits
+        - PeriodicQuotientEvidence
+        - PeriodicRefinement
+        - periodic_cell_from_constraints
+        - periodic_delaunay_mesh
+        - publish_periodic_simplices
+        - refine_periodic_mesh
+        - PolyhedralAdaptationOperation
+        - PolyhedralMeshAdaptation
+        - OversetCellStatus
+        - OversetConnectivity
+        - OversetConnectivityError
+        - OversetDonorPacket
+        - OversetPartBlanking
+        - OversetPartSpec
+        - OversetPolicy
+        - OversetReceptorEvidence
+        - OversetRegistration
+        - OversetVertexStatus
+        - PreparedOversetFieldTransfer
+        - PreparedOversetMotion
+        - prepare_overset_connectivity
+        - prepare_overset_conservative_remap
+        - prepare_overset_conservative_state_transport
+        - prepare_overset_field_transfer
+        - prepare_overset_motion_rebind
+        - prepare_native_layer_association_transfer
+        - SourceProximityGapEvidence
+        - RegionBoundaryEvidence
+        - RegionMeshingEvidence
+        - metric_simplex_quality
+        - transition_interface_attachment
 
 ::: phydrax.discretization.CellGeometrySpec
 
@@ -239,3 +389,19 @@ certification, and topology-transition contracts.
 ::: phydrax.interchange.MeshArrayArtifact
 
 ::: phydrax.interchange.MeshArraySelection
+
+## Lifecycle and solver transition records
+
+`MeshingAcceptedEpoch` binds one accepted carrier to complete named field banks;
+it does not expose the qualification-only source-closure codec as a generic
+serializer. `refinement_parent_cells` returns a nesting witness only when every
+target cell is preserved or refined from exactly one source cell.
+`MaterialTopologyTransferResult` retains the actual material transaction and
+the prepared conservative remap owners used to produce it.
+
+
+::: phydrax.solver.MaterialTopologyTransferResult
+
+---
+
+::: phydrax.solver.refinement_parent_cells

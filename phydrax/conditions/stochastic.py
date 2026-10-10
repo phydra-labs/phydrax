@@ -20,17 +20,19 @@ from ..metrix import (
     RiemannianMetric,
     WeightedRiemannianMeasure,
 )
-from ..operators.differential import (
-    dt,
-    fokker_planck_operator,
-    kolmogorov_generator,
-    probability_current,
-    StochasticInterpretation,
+from ..operators.differential._domain_ops import dt
+from ..operators.differential._metric_measure_ops import (
     weighted_fokker_planck_operator,
     weighted_kolmogorov_generator,
     weighted_probability_current,
 )
-from ..typing import PRNGKey
+from ..operators.differential._stochastic_ops import (
+    fokker_planck_operator,
+    kolmogorov_generator,
+    probability_current,
+    StochasticInterpretation,
+)
+from ..typing import parse, PRNGKey
 from ._base import ConditionSupport, Residual
 from ._field_ops import dot
 from .boundary import _condition_value, ConditionValue
@@ -116,8 +118,7 @@ def _validate_coefficients(
 ) -> None:
     if diffusion is not None and covariance is not None:
         raise ValueError("Provide either diffusion or covariance, not both.")
-    if interpretation not in ("ito", "stratonovich"):
-        raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+    interpretation = parse(interpretation, StochasticInterpretation, "interpretation")
     if interpretation == "stratonovich" and diffusion is None:
         raise ValueError(
             "Stratonovich conditions require diffusion; covariance alone cannot determine the drift correction."

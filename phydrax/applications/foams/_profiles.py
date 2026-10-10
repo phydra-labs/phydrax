@@ -79,7 +79,6 @@ def foam_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, attributes),),
             required_gates=_GATES,
         )

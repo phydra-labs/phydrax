@@ -102,7 +102,6 @@ def singular_subspace_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"linalg.singular-subspaces.{name}",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     "linalg.singular-subspaces",

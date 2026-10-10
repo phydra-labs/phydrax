@@ -200,7 +200,6 @@ def test_quantum_electronic_scenario_2() -> None:
     with pytest.raises(ValueError, match="finite nonperiodic"):
         phx.operators.ElectronicCoulombHamiltonian(periodic, 1)
     with pytest.raises(ValueError, match="exact"):
-        # ty: ignore[invalid-argument-type]
         phx.operators.ElectronicKineticPolicy(trace_method="stochastic")
 
 

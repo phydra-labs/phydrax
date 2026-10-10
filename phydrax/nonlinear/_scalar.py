@@ -170,6 +170,53 @@ class _BracketRun(StrictModule):
     status: Array
 
 
+def quadratic_event_bound(
+    quadratic: Array, linear: Array, constant: Array, valid: Array, /
+) -> tuple[Array, Array]:
+    """Bound a trial by the first simple positive quadratic event in (0, 1].
+
+    This is finite floating algebra, not a certified source predicate or an
+    iterative scalar solve. Zero roots are already represented events;
+    persistent equal polynomials and double roots do not change ordering.
+    Invalid active arithmetic refuses the bound rather than inventing a root.
+    """
+    active = jnp.asarray(valid, dtype=jnp.bool_)
+    finite = jnp.isfinite(quadratic) & jnp.isfinite(linear) & jnp.isfinite(constant)
+    scale = jnp.maximum(
+        jnp.maximum(jnp.abs(quadratic), jnp.abs(linear)), jnp.abs(constant)
+    )
+    denominator = jnp.where(scale > 0.0, scale, 1.0)
+    a = jnp.where(active & finite, quadratic / denominator, 0.0)
+    b = jnp.where(active & finite, linear / denominator, 0.0)
+    c = jnp.where(active & finite, constant / denominator, 0.0)
+    discriminant = b * b - 4.0 * a * c
+    radical = jnp.sqrt(jnp.maximum(discriminant, 0.0))
+    q = -0.5 * (b + jnp.where(b >= 0.0, radical, -radical))
+    is_quadratic = a != 0.0
+    roots = jnp.stack(
+        (
+            q / jnp.where(is_quadratic, a, 1.0),
+            c / jnp.where(q != 0.0, q, 1.0),
+            -c / jnp.where(b != 0.0, b, 1.0),
+        )
+    )
+    simple = jnp.stack(
+        (
+            is_quadratic & (discriminant > 0.0),
+            is_quadratic & (discriminant > 0.0) & (q != 0.0),
+            (~is_quadratic) & (b != 0.0),
+        )
+    )
+    candidates = jnp.where(
+        active[None, ...] & simple & (roots > 0.0) & (roots <= 1.0),
+        roots,
+        jnp.inf,
+    )
+    first = jnp.min(candidates)
+    admissible = jnp.all((~active) | finite)
+    return jnp.where(admissible, jnp.minimum(first, 1.0), 0.0), admissible
+
+
 def _inverse_quadratic(
     a: Array, fa: Array, b: Array, fb: Array, c: Array, fc: Array
 ) -> Array:
@@ -908,4 +955,5 @@ __all__ = [
     "ScalarRootResult",
     "TOMS748",
     "scalar_root",
+    "quadratic_event_bound",
 ]

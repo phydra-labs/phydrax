@@ -260,13 +260,11 @@ def test_operator_suite_scenario_1() -> None:
     sensor_axis = _axis(6, name="sensor")
     query_axis = _axis(5)
     encoder_a = phx.nn.operator.architectures.IntegralBranchEncoder(
-        # ty: ignore[invalid-argument-type]
         feature_model=_FeatureMap(2, 2),
         latent_size=2,
         coord_dim=1,
     )
     encoder_b = phx.nn.operator.architectures.IntegralBranchEncoder(
-        # ty: ignore[invalid-argument-type]
         feature_model=_FeatureMap(2, 2),
         latent_size=2,
         coord_dim=1,

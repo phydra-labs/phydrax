@@ -4,6 +4,24 @@
 
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
+from importlib import import_module
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from . import analysis, identification
+    from .identification import (
+        AbstractDiscreteModelRolloutTransition,
+        DirectDiscreteModelRolloutTransition,
+        DiscreteModelRolloutTransitionResult,
+        LearnedMarginalTransition,
+        LearnedPathwiseTransition,
+        ProgressiveLinearRefinementPolicy,
+        ProgressiveLinearRefinementRecord,
+        ProgressiveLinearRefinementState,
+        TargetDiscreteModelObjective,
+    )
+
 from .._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
 from .._identity import (
     callable_payload,
@@ -12,7 +30,6 @@ from .._identity import (
     SemanticProvenance,
     strict_module_payload,
 )
-from . import analysis, identification
 from ._affine import affine_exponential_step, AffineExponentialResult
 from ._affine_evolution import (
     AffineLinearEvolutionResult,
@@ -128,17 +145,32 @@ from ._trajectory import (
     TrajectoryData,
     TrajectoryTransitions,
 )
-from .identification import (
-    AbstractDiscreteModelRolloutTransition,
-    DirectDiscreteModelRolloutTransition,
-    DiscreteModelRolloutTransitionResult,
-    LearnedMarginalTransition,
-    LearnedPathwiseTransition,
-    ProgressiveLinearRefinementPolicy,
-    ProgressiveLinearRefinementRecord,
-    ProgressiveLinearRefinementState,
-    TargetDiscreteModelObjective,
+
+
+_IDENTIFICATION_EXPORTS = frozenset(
+    {
+        "AbstractDiscreteModelRolloutTransition",
+        "DirectDiscreteModelRolloutTransition",
+        "DiscreteModelRolloutTransitionResult",
+        "LearnedMarginalTransition",
+        "LearnedPathwiseTransition",
+        "ProgressiveLinearRefinementPolicy",
+        "ProgressiveLinearRefinementRecord",
+        "ProgressiveLinearRefinementState",
+        "TargetDiscreteModelObjective",
+    }
 )
+
+
+def __getattr__(name: str) -> object:
+    if name in {"analysis", "identification"}:
+        value = import_module(f".{name}", __name__)
+    elif name in _IDENTIFICATION_EXPORTS:
+        value = getattr(import_module(".identification", __name__), name)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
 
 
 __all__ = [

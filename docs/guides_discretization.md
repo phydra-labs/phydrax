@@ -264,19 +264,35 @@ result = phx.linalg.solve(system, right_hand_side)
 solution = compiled.expand(result.value)
 ```
 
-The native reference family currently includes triangle P1/P2,
-quadrilateral Q1, and tetrahedron P1. Weak residuals live in the coordinate
-dual of the test space; solver adapters perform Riesz conversion explicitly.
-Consistent mass remains distinct from the field pairing. Fixed-topology
-geometry evaluation is JAX-differentiable through
+The native reference system is not limited to triangle P1/P2, quadrilateral Q1,
+and tetrahedron P1. `SimplexNodalFamily` and `ReferenceNodalFamily` provide
+arbitrary-order admitted simplex and tensor nodal elements, while `form_element`
+and `FiniteElementDeRhamComplex` provide full or trimmed compatible form
+families across their admitted simplex, tensor, prism, and pyramid cells. A
+specific generator or solver still supports only the exact cell/family/order
+combination it declares; the independent capabilities are not a Cartesian
+product.
+
+`CellGeometrySpec` owns coordinate elements and routes independently of solution
+fields. For a d-dimensional cell in d-dimensional physical space, geometry
+admission factors J directly: the measure is `abs(det(J))`, and rank/condition
+evidence belongs to J rather than to the squared Gram matrix. For an embedded
+d-manifold in a higher-dimensional ambient space, the runtime retains the
+tangent metric `G = J.T @ J`, uses `sqrt(det(G))` as physical measure density,
+and maps scalar reference gradients by `J @ inverse(G)`. Metric inversion,
+determinant, rank, and condition use the native small/dense linear-algebra
+owners; nonfinite, singular, or nonpositive metric evidence refuses the cell.
+An ambient volume surrogate is never substituted for this manifold measure.
+
+Weak residuals live in the coordinate dual of the test space; solver adapters
+perform Riesz conversion explicitly. Consistent mass remains distinct from the
+field pairing. Fixed-topology geometry evaluation is JAX-differentiable through
 `space.evaluate_geometry(field_name, coordinates)`.
 
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
-DOF maps, constraints, functionals, sparse lowering, and DAE integration.
-
-Mesh construction, certification, provider execution, and general topology
-transitions belong to [Meshing](guides_meshing.md). `CellGeometrySpec` is the
-shared geometry-node contract; it is independent of finite-element fields.
+DOF maps, embedded metrics, constraints, functionals, sparse lowering, and DAE
+integration. Mesh construction, certification, provider execution, and general
+topology transitions belong to [Meshing](guides_meshing.md).
 
 ## Explicit polygon H1 elements
 

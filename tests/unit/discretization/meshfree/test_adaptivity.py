@@ -6,7 +6,11 @@ import numpy as np
 import pytest
 from jax import Array
 
-from phydrax.discretization import PointCloudPlan, TopologyEpoch
+from phydrax.discretization import (
+    PointCloudPlan,
+    TopologyEpoch,
+    TransferGeometryBinding,
+)
 from phydrax.discretization._point_cloud import PreparedPointCloudDiscretization
 from phydrax.discretization.meshfree import (
     adaptation_acceptance,
@@ -439,7 +443,18 @@ def test_accepted_epoch_conserves_content_and_rejection_publishes_nothing(
     assert linear.evidence.status is PointTransferStatus.INFEASIBLE
     assert linear.evidence.witness_kind == "left-null" and linear.transfer is None
 
-    transfer = prepare_adaptation_transfer(cloud, proposal)
+    transfer = prepare_adaptation_transfer(
+        cloud,
+        proposal,
+        geometry=TransferGeometryBinding(
+            SOURCE.geometry_id,
+            TARGET.geometry_id,
+            "topology-correspondence",
+            source_topology_id=SOURCE.topology_id,
+            target_topology_id=TARGET.topology_id,
+            coverage_defect=None,
+        ),
+    )
     assert transfer.admitted
     assert transfer.evidence.conservative and transfer.evidence.constant_preserving
     target = np.asarray(proposal.target_points)

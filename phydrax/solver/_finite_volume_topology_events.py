@@ -10,6 +10,7 @@ from enum import IntEnum
 from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -18,16 +19,28 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import TopologyEpoch
+from ..discretization import TopologyEpoch, TopologyEpochTransition
+from ..discretization.finite_volume import (
+    PreparedUnstructuredConservativeRemap,
+    UnstructuredConservativeRemapPlan,
+    UnstructuredFiniteVolumeDiscretization,
+)
+from ..lifecycle import (
+    commit_composition_rebind,
+    Composition,
+    CompositionEntry,
+    CompositionRebind,
+    CompositionRebindReceipt,
+    CompositionTransport,
+)
 from ..meshing import CellMeshTransition
 from ..typing import checked
+from ._finite_volume_content import FiniteVolumeConservativeContentState
 
 
 if TYPE_CHECKING:
-    from ..discretization.finite_volume._automatic_remap import (
-        PreparedUnstructuredConservativeRemap,
-    )
     from ..geometry._supermesh import CommonRefinementPolicy
+    from ..meshing._adaptation import MeshAdaptationResult
 
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)
@@ -1568,9 +1581,16 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
 class FiniteVolumeTopologyEventTransactionResult:
     """Host-side result of one atomic topology-event transaction.
 
-    ``automatic_remap`` is the common-refinement remap the transaction prepared
-    from its source and target geometry (``None`` when a remap was supplied); its
+    ``automatic_remap`` is the common-refinement remap the transaction bound,
+    either prepared from its source and target geometry or supplied as a
+    ``PreparedUnstructuredConservativeRemap`` (``None`` for any other remap); its
     ``status`` and ``evidence`` explain a failed remap preparation.
+
+    ``receipt`` is the composition rebind that staged the candidate topology
+    epoch, its prepared finite-volume artifacts, and the transported content;
+    ``None`` when the transaction refused before staging. A committed result
+    always carries a published receipt; an unpublished receipt carries the
+    accepted source composition and its refused transport evidence.
     """
 
     journal: FiniteVolumeTopologyEventJournal
@@ -1582,6 +1602,7 @@ class FiniteVolumeTopologyEventTransactionResult:
     committed: bool
     failure: TopologyEventStatus | None = None
     automatic_remap: PreparedUnstructuredConservativeRemap | None = None
+    receipt: CompositionRebindReceipt | None = None
 
     @property
     def state(self) -> Any:
@@ -1648,6 +1669,11 @@ def _host_report_value(report: Any, name: str, /) -> np.ndarray | None:
 
 
 def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
+    """Admit coverage residuals with the canonical certified measure intervals.
+
+    The requested geometric-gap tolerance is distinct from outward integration
+    errors: their explicit maximum/aggregate bounds accompany each residual.
+    """
     report = _host_field(remap, "report")
     if report is _MISSING:
         report = remap
@@ -1675,6 +1701,27 @@ def _coverage_passed(remap: Any, tolerance: float, /) -> bool:
         if value is None:
             return False
         checked_values.append(np.asarray(value, dtype=np.float64))
+    if isinstance(remap, UnstructuredConservativeRemapPlan):
+        bounds = (
+            report.maximum_target_coverage_error_bound,
+            report.maximum_source_coverage_error_bound,
+            report.total_target_coverage_error_bound,
+            report.total_source_coverage_error_bound,
+            report.total_source_coverage_error_bound,
+        )
+        if remap.surface_chart_deformation is not None:
+            # Both UV domains have actual native coverage certificates. Old
+            # source contents minus new target areas is physical deformation,
+            # not an uncovered-target geometric gap.
+            checked_values = [checked_values[index] for index in (1, 3, 4)]
+            bounds = tuple(bounds[index] for index in (1, 3, 4))
+        return bool(np.asarray(report.coverage_complete)) and all(
+            np.all(np.isfinite(value))
+            and np.all(np.isfinite(bound))
+            and np.all(np.asarray(bound) >= 0.0)
+            and np.all(np.abs(value) <= tolerance + np.asarray(bound))
+            for value, bound in zip(checked_values, bounds, strict=True)
+        )
     return all(
         np.all(np.isfinite(value)) and np.all(np.abs(value) <= tolerance)
         for value in checked_values
@@ -1699,18 +1746,14 @@ def _failure_reason(value: Any, default: TopologyEventStatus, /) -> TopologyEven
     return default
 
 
-def _conservation_passed(
-    remap: Any,
-    source_content: Any,
-    target_content: Any,
-    tolerance: float,
-    /,
-) -> bool:
+def _conservation_defect(
+    remap: Any, source_content: Any, target_content: Any, /
+) -> np.ndarray | None:
+    """The remap-reported content change of one transfer, or ``None`` if unreported."""
+
     report = _host_field(remap, "report")
     if report is _MISSING:
         report = remap
-    if source_content is None and target_content is None:
-        return _coverage_passed(remap, tolerance)
     method = _host_field(remap, "conservation_defect")
     defect = _host_field(report, "conservation_defect")
     if method is _MISSING:
@@ -1732,9 +1775,23 @@ def _conservation_passed(
             target_average = target_content
         if source_average is not _MISSING and target_average is not _MISSING:
             defect = method(source_average, target_average)
-    if defect is _MISSING:
+    if defect is _MISSING or defect is None or callable(defect):
+        return None
+    return np.asarray(defect, dtype=np.float64)
+
+
+def _conservation_passed(
+    remap: Any,
+    source_content: Any,
+    target_content: Any,
+    tolerance: float,
+    /,
+) -> bool:
+    if source_content is None and target_content is None:
+        return _coverage_passed(remap, tolerance)
+    value = _conservation_defect(remap, source_content, target_content)
+    if value is None:
         return False
-    value: np.ndarray = np.asarray(defect, dtype=np.float64)
     return bool(np.all(np.isfinite(value)) and np.all(np.abs(value) <= tolerance))
 
 
@@ -1795,6 +1852,73 @@ def _call_transfer(callback: Callable[..., Any], source: Any, remap: Any, /) -> 
     return callback(source)
 
 
+_OWNER = "finite-volume"
+_TOPOLOGY_ENTRY = "finite-volume/topology"
+_ARTIFACTS_ENTRY = "finite-volume/prepared-artifacts"
+_CONTENT_ENTRY = "finite-volume/content"
+_CELL_AVERAGE_SEMANTICS = "finite-volume-cell-average"
+
+
+def _topology_entry(epoch: TopologyEpoch, /) -> CompositionEntry:
+    return CompositionEntry(
+        epoch,
+        entry_id=_TOPOLOGY_ENTRY,
+        role="topology",
+        owner_id=_OWNER,
+        structure_id=epoch.epoch_id,
+        revision_id=epoch.epoch_id,
+        semantics_id="finite-volume-topology-epoch",
+    )
+
+
+def _artifacts_entry(
+    artifacts: FiniteVolumeTopologyArtifacts, topology: CompositionEntry, /
+) -> CompositionEntry:
+    return CompositionEntry(
+        artifacts,
+        entry_id=_ARTIFACTS_ENTRY,
+        role="prepared-graph",
+        owner_id=_OWNER,
+        structure_id=artifacts.artifacts_id,
+        revision_id=artifacts.artifacts_id,
+        semantics_id="finite-volume-topology-artifacts",
+        dependencies=(topology.binding("structure"),),
+    )
+
+
+def _content_entry(
+    content: Any, topology: CompositionEntry, journal_id: str, /
+) -> CompositionEntry:
+    """Content accepted with `journal_id` on the epoch of `topology`.
+
+    Finite-volume content enters as float64 cell averages, the field space of
+    unstructured cell remaps; other owner content enters whole.
+    """
+
+    if isinstance(content, FiniteVolumeConservativeContentState):
+        value = content.precision.reduction(content.cell_average()).astype(jnp.float64)
+        semantics = _CELL_AVERAGE_SEMANTICS
+    else:
+        value = content
+        semantics = "finite-volume-topology-event-content"
+    return CompositionEntry(
+        value,
+        entry_id=_CONTENT_ENTRY,
+        role="physical-state",
+        owner_id=_OWNER,
+        structure_id=topology.structure_id,
+        revision_id=canonical_fingerprint(
+            {
+                "kind": "finite-volume-topology-event-content",
+                "journal": journal_id,
+                "epoch": topology.structure_id,
+            }
+        ),
+        semantics_id=semantics,
+        dependencies=(topology.binding("structure"),),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FiniteVolumeRemeshArtifact:
     """Typed remesh candidate consumed without dynamic field inspection."""
@@ -1809,6 +1933,7 @@ class FiniteVolumeRemeshArtifact:
     result_id: str
     payload_ids: tuple[str | None, ...] = ()
     target_geometry: Any = None
+    adaptation: MeshAdaptationResult | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.transition, CellMeshTransition):
@@ -1823,6 +1948,21 @@ class FiniteVolumeRemeshArtifact:
             raise TypeError("status must be TopologyEventStatus.")
         if not str(self.result_id):
             raise ValueError("Finite-volume remesh result_id must be non-empty.")
+        if self.adaptation is not None:
+            from ..meshing._adaptation import MeshAdaptationResult
+
+            if not isinstance(self.adaptation, MeshAdaptationResult):
+                raise TypeError(
+                    "adaptation must be the actual preceding MeshAdaptationResult."
+                )
+            if (
+                self.adaptation.transition is None
+                or self.adaptation.transition.transition_id
+                != self.transition.transition_id
+            ):
+                raise ValueError(
+                    "The remesh artifact does not bind its actual preceding mesh transition."
+                )
 
 
 @dataclass(frozen=True)
@@ -2006,7 +2146,7 @@ def _host_artifact_candidate(
             else explicit.status
         ),
         source_content=(
-            _host_field(prepared, "source_content")
+            _first_host_field(prepared, ("source_content",))
             if explicit.source_content is None
             else explicit.source_content
         ),
@@ -2039,6 +2179,15 @@ def _resolve_topology_event_candidate(
         payload_ids,
     )
     if isinstance(prepared, FiniteVolumeRemeshArtifact):
+        if prepared.adaptation is not None:
+            if (
+                self.adaptation is not None
+                and self.adaptation.result_id != prepared.adaptation.result_id
+            ):
+                raise ValueError(
+                    "The FV receipt and transaction name different preceding mesh adaptations."
+                )
+            self.adaptation = prepared.adaptation
         if self.target_geometry is None and prepared.target_geometry is not None:
             self.target_geometry = prepared.target_geometry
         return prepared, _remesh_artifact_candidate(explicit, prepared)
@@ -2050,18 +2199,26 @@ def _resolve_topology_event_candidate(
 def _prepare_automatic_remap(
     self: FiniteVolumeTopologyEventTransaction,
     source_content: Any,
+    supplied: Any,
     /,
 ) -> PreparedUnstructuredConservativeRemap | FiniteVolumeTopologyEventTransactionResult:
+    """Admit a supplied prepared remap or prepare one from the bound geometries."""
+
     from ..discretization.finite_volume._automatic_remap import (
         prepare_unstructured_conservative_remap,
     )
     from ..geometry._supermesh import CommonRefinementStatus
 
-    automatic_remap = prepare_unstructured_conservative_remap(
-        self.source_geometry,
-        self.target_geometry,
-        provenance=self.remap_provenance,
-        policy=self.remap_policy,
+    automatic_remap = (
+        supplied
+        if isinstance(supplied, PreparedUnstructuredConservativeRemap)
+        else prepare_unstructured_conservative_remap(
+            self.source_geometry,
+            self.target_geometry,
+            provenance=self.remap_provenance,
+            policy=self.remap_policy,
+            adaptation=self.adaptation,
+        )
     )
     match automatic_remap.status:
         case CommonRefinementStatus.SUCCESS:
@@ -2151,12 +2308,12 @@ def _prepare_topology_event_artifacts(
     if resource_ok is False:
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
     automatic_remap = None
-    if (
+    if isinstance(candidate.remap, PreparedUnstructuredConservativeRemap) or (
         candidate.remap is None
         and self.source_geometry is not None
         and self.target_geometry is not None
     ):
-        remap_outcome = _prepare_automatic_remap(self, source_content)
+        remap_outcome = _prepare_automatic_remap(self, source_content, candidate.remap)
         if isinstance(remap_outcome, FiniteVolumeTopologyEventTransactionResult):
             return remap_outcome
         automatic_remap = remap_outcome
@@ -2216,6 +2373,7 @@ class FiniteVolumeTopologyEventTransaction:
         target_geometry: Any = None,
         remap_policy: CommonRefinementPolicy | None = None,
         remap_provenance: str = "topology-event",
+        adaptation: MeshAdaptationResult | None = None,
     ) -> None:
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
             raise TypeError("journal must be FiniteVolumeTopologyEventJournal.")
@@ -2237,6 +2395,13 @@ class FiniteVolumeTopologyEventTransaction:
             remap_policy, CommonRefinementPolicy
         ):
             raise TypeError("remap_policy must be a CommonRefinementPolicy or None.")
+        if adaptation is not None:
+            from ..meshing._adaptation import MeshAdaptationResult
+
+            if not isinstance(adaptation, MeshAdaptationResult):
+                raise TypeError(
+                    "adaptation must be the actual preceding MeshAdaptationResult or None."
+                )
         if not isinstance(remap_provenance, str):
             raise TypeError("remap_provenance must be a string.")
         if not remap_provenance:
@@ -2263,6 +2428,7 @@ class FiniteVolumeTopologyEventTransaction:
         self.target_geometry = target_geometry
         self.remap_policy = remap_policy
         self.remap_provenance = remap_provenance
+        self.adaptation = adaptation
 
     def _outcome(
         self,
@@ -2275,6 +2441,7 @@ class FiniteVolumeTopologyEventTransaction:
         result_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         committed: bool = False,
         automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
+        receipt: CompositionRebindReceipt | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         current_journal = self.journal if journal is None else journal
         count = int(np.asarray(current_journal.count))
@@ -2294,6 +2461,7 @@ class FiniteVolumeTopologyEventTransaction:
             committed,
             None if committed else status,
             automatic_remap,
+            receipt,
         )
 
     def _failure(
@@ -2303,9 +2471,12 @@ class FiniteVolumeTopologyEventTransaction:
         /,
         *,
         automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
+        receipt: CompositionRebindReceipt | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         if status is TopologyEventStatus.FAILED_STALE_EPOCH:
-            return self._outcome(content_state, status, automatic_remap=automatic_remap)
+            return self._outcome(
+                content_state, status, automatic_remap=automatic_remap, receipt=receipt
+            )
         try:
             requested = self.journal.append_requested_batch(
                 self.requests, self.accepted_step, self.time
@@ -2315,6 +2486,7 @@ class FiniteVolumeTopologyEventTransaction:
                 content_state,
                 TopologyEventStatus.FAILED_RESOURCE_LIMIT,
                 automatic_remap=automatic_remap,
+                receipt=receipt,
             )
         sequences = tuple(
             int(np.asarray(requested.count)) - len(self.requests) + index
@@ -2322,7 +2494,11 @@ class FiniteVolumeTopologyEventTransaction:
         )
         failed = requested.fail_batch(sequences, status=status)
         return self._outcome(
-            content_state, status, journal=failed, automatic_remap=automatic_remap
+            content_state,
+            status,
+            journal=failed,
+            automatic_remap=automatic_remap,
+            receipt=receipt,
         )
 
     def _candidate_epoch_is_stale(
@@ -2428,13 +2604,52 @@ class FiniteVolumeTopologyEventTransaction:
         active_cell_mask: Any,
         admissibility: Callable[[Any], Any] | bool | None,
     ) -> TopologyEventStatus | None:
-        """Check conservation, positivity, and admissibility of transferred content."""
+        """Admit content using the existing epoch owner's quantitative budget.
 
+        For canonical FV remaps, physical measure errors and arithmetic roundoff
+        are taken from ``TopologyEpochTransition.apply``. The later composition
+        transport still checks the complete staged image, not only its total.
+        """
+
+        conservation_tolerance = self.coverage_tolerance
+        if (
+            isinstance(prepared_event.remap, UnstructuredConservativeRemapPlan)
+            and isinstance(
+                prepared_event.source_content, FiniteVolumeConservativeContentState
+            )
+            and isinstance(candidate_content, FiniteVolumeConservativeContentState)
+            and prepared_event.candidate_epoch.epoch_id != self.journal.current_epoch_id
+        ):
+            source_entry = _content_entry(
+                prepared_event.source_content,
+                _topology_entry(self.journal.epoch_table[-1]),
+                self.journal.journal_id,
+            )
+            target_entry = _content_entry(
+                candidate_content,
+                _topology_entry(prepared_event.candidate_epoch),
+                self.journal.journal_id,
+            )
+            transition = self._remap_transition(
+                prepared_event.remap,
+                source_entry,
+                target_entry,
+                prepared_event.candidate_epoch,
+            )
+            if isinstance(transition, TopologyEventStatus):
+                return transition
+            image = transition.apply(source_entry.value)
+            if not bool(np.asarray(image.successful)):
+                return TopologyEventStatus.FAILED_COVERAGE
+            conservation_tolerance = max(
+                conservation_tolerance,
+                float(np.asarray(image.content_tolerance)),
+            )
         if not _conservation_passed(
             prepared_event.remap,
             prepared_event.source_content,
             candidate_content,
-            self.coverage_tolerance,
+            conservation_tolerance,
         ):
             return TopologyEventStatus.FAILED_COVERAGE
         if positivity_ok is False or not _active_content_valid(
@@ -2453,13 +2668,193 @@ class FiniteVolumeTopologyEventTransaction:
             return TopologyEventStatus.FAILED_POSITIVITY
         return None
 
+    def _remap_transition(
+        self,
+        remap: UnstructuredConservativeRemapPlan,
+        source: CompositionEntry,
+        target: CompositionEntry,
+        candidate_epoch: TopologyEpoch,
+        /,
+    ) -> TopologyEpochTransition | TopologyEventStatus:
+        """Bind a complete remap to the actual accepted/candidate geometry epochs.
+
+        Equal topology and volumes do not make a translated coordinate map the
+        same scientific geometry. A stale supplied remap is a rollback status,
+        not an exception from the lower-level epoch-transfer constructor.
+        """
+
+        source_epoch = self.journal.epoch_table[-1]
+        source_geometry = self.source_geometry
+        target_geometry = self.target_geometry
+        if not isinstance(
+            source_geometry, UnstructuredFiniteVolumeDiscretization
+        ) or not isinstance(target_geometry, UnstructuredFiniteVolumeDiscretization):
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        if (
+            remap.source_topology_id != source_epoch.topology_id
+            or remap.target_topology_id != candidate_epoch.topology_id
+            or remap.source_geometry_id != source_epoch.geometry_id
+            or remap.target_geometry_id != candidate_epoch.geometry_id
+        ):
+            return TopologyEventStatus.FAILED_STALE_EPOCH
+        if not remap.require_complete:
+            return TopologyEventStatus.FAILED_COVERAGE
+        if any(
+            eqx.tree_equal(
+                geometry.cell_space.vector_space.structure(),
+                jax.ShapeDtypeStruct(entry.value.shape, entry.value.dtype),
+            )
+            is not True
+            for geometry, entry in ((source_geometry, source), (target_geometry, target))
+        ):
+            return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        return remap.epoch_transition(
+            source_geometry.cell_space,
+            target_geometry.cell_space,
+            source_epoch,
+            candidate_epoch,
+        )
+
+    def _content_transport(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        candidate_content: Any,
+        source: CompositionEntry,
+        target: CompositionEntry,
+        /,
+    ) -> CompositionTransport | TopologyEventStatus:
+        """Physical-remap evidence of the transferred content.
+
+        A complete conservative cell remap between distinct epochs contributes
+        its own topology-epoch transition, which succeeds only when the staged
+        averages are the transition image of the accepted averages. Any other
+        transfer (active-set regrids, sliding-map refreshes, owner repairs)
+        carries this transaction's conservation evidence: the remap-reported
+        content change against the transaction tolerance, as a zero-change
+        ledger.
+        """
+
+        remap = prepared_event.remap
+        candidate_epoch = prepared_event.candidate_epoch
+        if (
+            isinstance(remap, UnstructuredConservativeRemapPlan)
+            and source.semantics_id == _CELL_AVERAGE_SEMANTICS
+            and candidate_epoch.epoch_id != source.structure_id
+        ):
+            transition = self._remap_transition(remap, source, target, candidate_epoch)
+            if isinstance(transition, TopologyEventStatus):
+                return transition
+            return transition.composition_transport(source, target)
+        defect = _conservation_defect(
+            remap, prepared_event.source_content, candidate_content
+        )
+        if defect is None:
+            return TopologyEventStatus.FAILED_COVERAGE
+        return CompositionTransport(
+            "physical-remap",
+            (source.entry_id,),
+            (target,),
+            source_structure_ids=(source.structure_id,),
+            route_id=canonical_fingerprint(
+                {
+                    "kind": "finite-volume-topology-event-transfer",
+                    "source": source.structure_id,
+                    "target": target.structure_id,
+                    "artifacts": prepared_event.candidate_artifacts.artifacts_id,
+                    "requests": [request.request_id for request in self.requests],
+                }
+            ),
+            # Staged only after coverage, conservation, positivity, and
+            # admissibility of the transferred content all passed.
+            successful=jnp.asarray(True),
+            source_content=np.zeros_like(defect),
+            target_content=defect,
+            content_tolerance=np.full_like(defect, self.coverage_tolerance),
+        )
+
+    def _stage_rebind(
+        self,
+        prepared_event: _PreparedTopologyEvent,
+        candidate_content: Any,
+        committed: FiniteVolumeTopologyEventJournal,
+        /,
+    ) -> CompositionRebind | TopologyEventStatus:
+        """Stage topology, prepared artifacts, and content as one composition rebind.
+
+        Topology and artifacts are retained when unchanged and reprepared
+        otherwise. Accepted content crosses only by an explicit physical-remap
+        transport, or is retained when neither the epoch nor the content changes;
+        content that appears or vanishes across the event refuses the rebind.
+        """
+
+        source_epoch = self.journal.epoch_table[-1]
+        source_artifacts = self.journal.artifact_table[-1]
+        candidate_epoch = prepared_event.candidate_epoch
+        candidate_artifacts = prepared_event.candidate_artifacts
+        source_content = prepared_event.source_content
+        epoch_changed = candidate_epoch.epoch_id != source_epoch.epoch_id
+        source_topology = _topology_entry(source_epoch)
+        target_topology = _topology_entry(candidate_epoch)
+        source_entries = [
+            source_topology,
+            _artifacts_entry(source_artifacts, source_topology),
+        ]
+        retain: list[str] = []
+        reprepare: list[CompositionEntry] = []
+        transports: list[CompositionTransport] = []
+        if epoch_changed:
+            reprepare.append(target_topology)
+        else:
+            retain.append(_TOPOLOGY_ENTRY)
+        if candidate_artifacts.artifacts_id == source_artifacts.artifacts_id:
+            retain.append(_ARTIFACTS_ENTRY)
+        else:
+            reprepare.append(_artifacts_entry(candidate_artifacts, target_topology))
+        if source_content is None:
+            if candidate_content is not None:
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+        elif candidate_content is None:
+            if epoch_changed:
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            source_entries.append(
+                _content_entry(source_content, source_topology, self.journal.journal_id)
+            )
+            retain.append(_CONTENT_ENTRY)
+        else:
+            source_state = _content_entry(
+                source_content, source_topology, self.journal.journal_id
+            )
+            target_state = _content_entry(
+                candidate_content, target_topology, committed.journal_id
+            )
+            if target_state.semantics_id != source_state.semantics_id:
+                return TopologyEventStatus.FAILED_MISSING_ARTIFACT
+            transport = self._content_transport(
+                prepared_event, candidate_content, source_state, target_state
+            )
+            if isinstance(transport, TopologyEventStatus):
+                return transport
+            source_entries.append(source_state)
+            transports.append(transport)
+        source = Composition(
+            source_entries,
+            boundary_id=f"finite-volume-accepted-step-{self.accepted_step}",
+        )
+        return CompositionRebind(
+            source, retain=retain, reprepare=reprepare, transports=transports
+        )
+
     def _commit_prepared(
         self,
         prepared_event: _PreparedTopologyEvent,
         candidate_content: Any,
         /,
     ) -> FiniteVolumeTopologyEventTransactionResult:
-        """Append and commit the coalesced requests as one journal transition."""
+        """Stage the journal transition and composition rebind; publish them together.
+
+        The committed journal is published only with a published rebind receipt;
+        a refused receipt returns the failure outcome with the accepted content.
+        """
 
         try:
             requested = self.journal.append_requested_batch(
@@ -2480,6 +2875,21 @@ class FiniteVolumeTopologyEventTransaction:
                 TopologyEventStatus.FAILED_RESOURCE_LIMIT,
                 automatic_remap=prepared_event.automatic_remap,
             )
+        rebind = self._stage_rebind(prepared_event, candidate_content, committed)
+        if isinstance(rebind, TopologyEventStatus):
+            return self._failure(
+                prepared_event.source_content,
+                rebind,
+                automatic_remap=prepared_event.automatic_remap,
+            )
+        receipt = commit_composition_rebind(rebind, accepted_boundary=self.accepted)
+        if not receipt.published:
+            return self._failure(
+                prepared_event.source_content,
+                TopologyEventStatus.FAILED_COVERAGE,
+                automatic_remap=prepared_event.automatic_remap,
+                receipt=receipt,
+            )
         return self._outcome(
             candidate_content
             if candidate_content is not None
@@ -2490,6 +2900,7 @@ class FiniteVolumeTopologyEventTransaction:
             result_artifacts=prepared_event.candidate_artifacts,
             committed=True,
             automatic_remap=prepared_event.automatic_remap,
+            receipt=receipt,
         )
 
     def execute(

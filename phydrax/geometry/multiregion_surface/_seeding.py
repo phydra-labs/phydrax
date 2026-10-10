@@ -311,7 +311,10 @@ def _midpoint_subdivision(
     edges, inverse = np.unique(keys, axis=0, return_inverse=True)
     midpoint = vertex_count + inverse.reshape((-1, 3))
     positions = np.concatenate(
-        (seed.positions, 0.5 * (seed.positions[edges[:, 0]] + seed.positions[edges[:, 1]]))
+        (
+            seed.positions,
+            0.5 * (seed.positions[edges[:, 0]] + seed.positions[edges[:, 1]]),
+        )
     )
     if project is not None:
         center, radius = project
@@ -420,8 +423,12 @@ def _strip(inner: np.ndarray, outer: np.ndarray, /) -> np.ndarray:
     while i < inner_count or j < outer_count:
         a = inner[i % inner_count]
         b = outer[j % outer_count]
-        next_inner = inner[(i + 1) % inner_count, 1] + 2.0 * np.pi * ((i + 1) // inner_count)
-        next_outer = outer[(j + 1) % outer_count, 1] + 2.0 * np.pi * ((j + 1) // outer_count)
+        next_inner = inner[(i + 1) % inner_count, 1] + 2.0 * np.pi * (
+            (i + 1) // inner_count
+        )
+        next_outer = outer[(j + 1) % outer_count, 1] + 2.0 * np.pi * (
+            (j + 1) // outer_count
+        )
         advance_inner = j >= outer_count or (i < inner_count and next_inner <= next_outer)
         if advance_inner:
             triangles.append((a[0], b[0], inner[(i + 1) % inner_count, 0]))
@@ -432,9 +439,7 @@ def _strip(inner: np.ndarray, outer: np.ndarray, /) -> np.ndarray:
     return np.asarray(triangles, dtype=np.int64)
 
 
-def _ring_rows(
-    start: int, count: int, offset: float, /
-) -> np.ndarray:
+def _ring_rows(start: int, count: int, offset: float, /) -> np.ndarray:
     angles = offset + 2.0 * np.pi * np.arange(count) / count
     return np.stack((start + np.arange(count), np.mod(angles, 2.0 * np.pi)), axis=1)
 
@@ -506,7 +511,9 @@ def _spherical_cap(
     """Cap of the sphere ``(center, radius)`` from its apex on ``axis_sign * z``."""
     levels = max(1, round(radius * polar_limit / spacing))
     polar = polar_limit * np.arange(1, levels) / levels
-    counts = [max(6, round(2.0 * np.pi * radius * np.sin(angle) / spacing)) for angle in polar]
+    counts = [
+        max(6, round(2.0 * np.pi * radius * np.sin(angle) / spacing)) for angle in polar
+    ]
 
     def point(level: int, angles: np.ndarray, /) -> np.ndarray:
         psi = 0.0 if level == 0 else polar[level - 1]
@@ -538,7 +545,8 @@ def _flat_disk(
     def point(level: int, angles: np.ndarray, /) -> np.ndarray:
         r = 0.0 if level == 0 else radii[level - 1]
         return np.stack(
-            (r * np.cos(angles), r * np.sin(angles), np.full(angles.shape, height)), axis=1
+            (r * np.cos(angles), r * np.sin(angles), np.full(angles.shape, height)),
+            axis=1,
         )
 
     return _polar_cap(ring_indices, ring_angles, point, counts, first_index)
@@ -576,7 +584,11 @@ def seed_double_bubble(
     ring_angles = 2.0 * np.pi * (np.arange(count) + (math.sqrt(5.0) - 2.0)) / count
     ring_indices = np.arange(count, dtype=np.int64)
     ring = np.stack(
-        (ring_radius * np.cos(ring_angles), ring_radius * np.sin(ring_angles), np.zeros(count)),
+        (
+            ring_radius * np.cos(ring_angles),
+            ring_radius * np.sin(ring_angles),
+            np.zeros(count),
+        ),
         axis=1,
     )
     center_first = np.asarray((0.0, 0.0, -offset))
@@ -674,7 +686,11 @@ def seed_catenoid(
     levels = positive_integer(rows, "rows")
     if count < 6 or levels < 2:
         raise ValueError("A catenoid band needs ring_points >= 6 and rows >= 2.")
-    neck = radius if neck_radius is None else positive_finite_float(neck_radius, "neck_radius")
+    neck = (
+        radius
+        if neck_radius is None
+        else positive_finite_float(neck_radius, "neck_radius")
+    )
     heights = np.linspace(-half, half, levels + 1)
     profile = radius - (radius - neck) * (1.0 - (heights / half) ** 2)
     angles = 2.0 * np.pi * np.arange(count) / count
@@ -762,7 +778,9 @@ def seed_from_vertex_tissue(
     if not isinstance(plan, VertexTissuePlan):
         raise TypeError("plan must be a VertexTissuePlan.")
     if plan.dimension != 3:
-        raise ValueError("Only 3D polyhedral vertex tissues convert to multiregion seeds.")
+        raise ValueError(
+            "Only 3D polyhedral vertex tissues convert to multiregion seeds."
+        )
     prefix = canonical_identifier(region_prefix, "region_prefix")
     coordinates = np.asarray(positions, dtype=np.float64)
     if coordinates.shape != (plan.vertex_capacity, 3):
@@ -806,9 +824,7 @@ def seed_from_vertex_tissue(
             right_region = ambient
             if first_sign < 0:
                 loop = loop[::-1]
-        fan = np.stack(
-            (np.full(loop.size - 2, loop[0]), loop[1:-1], loop[2:]), axis=1
-        )
+        fan = np.stack((np.full(loop.size - 2, loop[0]), loop[1:-1], loop[2:]), axis=1)
         triangles.append(compact[fan])
         labels.append(
             np.broadcast_to((region_of_cell[left_cell], right_region), (loop.size - 2, 2))

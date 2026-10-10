@@ -118,9 +118,9 @@ def _host_opposite(topology: MultiRegionSurfaceTopology, /) -> np.ndarray:
     edge_faces = np.asarray(topology.edge_faces, dtype=np.int64)
     rows = faces[np.maximum(edge_faces, 0)]
     on_edge = (rows == edges[:, None, 0:1]) | (rows == edges[:, None, 1:2])
-    opposite = np.take_along_axis(
-        rows, np.argmax(~on_edge, axis=2)[..., None], axis=2
-    )[..., 0]
+    opposite = np.take_along_axis(rows, np.argmax(~on_edge, axis=2)[..., None], axis=2)[
+        ..., 0
+    ]
     return np.where(edge_faces >= 0, opposite, -1)
 
 
@@ -146,6 +146,7 @@ class PreparedMultiRegionSurface(StrictModule):
 
     topology: MultiRegionSurfaceTopology
     evidence: MultiRegionSurfaceEvidence
+    validation_policy: MultiRegionSurfaceValidationPolicy
     face_corners: RowRelation
     face_regions: EdgeRelation
     face_region_signs: Float[_GeometryRouteDim]
@@ -165,6 +166,7 @@ class PreparedMultiRegionSurface(StrictModule):
         *,
         policy: MultiRegionSurfaceValidationPolicy | None = None,
     ) -> None:
+        policy = MultiRegionSurfaceValidationPolicy() if policy is None else policy
         evidence = validate_multiregion_surface(topology, state, policy=policy)
         if not evidence.accepted:
             raise MultiRegionSurfacePreparationError(evidence)
@@ -175,15 +177,16 @@ class PreparedMultiRegionSurface(StrictModule):
         faces = np.asarray(topology.faces, dtype=np.int64)
         labels = np.asarray(topology.face_labels, dtype=np.int64)
         finite = np.asarray(topology.region_finite)
-        region_valid = np.repeat(face_active, 2) & finite[
-            np.maximum(labels, 0).reshape(-1)
-        ]
+        region_valid = (
+            np.repeat(face_active, 2) & finite[np.maximum(labels, 0).reshape(-1)]
+        )
         corner_targets = faces * slots + np.asarray(topology.face_corner_slots)
         points = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
         triangles = points[faces[: topology.face_count]]
         coordinate = np.dtype(topology.plan.coordinate_dtype)
         self.topology = topology
         self.evidence = evidence
+        self.validation_policy = policy
         self.face_corners = RowRelation(
             np.maximum(faces, 0),
             source_size=vcap,
@@ -231,6 +234,29 @@ class PreparedMultiRegionSurface(StrictModule):
             }
         )
 
+    def validate_restored(
+        self,
+        topology: MultiRegionSurfaceTopology,
+        state: MultiRegionSurfaceState,
+        /,
+    ) -> PreparedMultiRegionSurface:
+        """Rebuild all routes and BVH from original authority and retained controls."""
+        rebuilt = PreparedMultiRegionSurface(
+            topology,
+            state,
+            policy=self.validation_policy,
+        )
+        if (
+            rebuilt.prepared_id != self.prepared_id
+            or rebuilt.validation_policy.policy_id != self.validation_policy.policy_id
+            or jax.tree_util.tree_structure(rebuilt) != jax.tree_util.tree_structure(self)
+            or array_tree_fingerprint(rebuilt) != array_tree_fingerprint(self)
+        ):
+            raise ValueError(
+                "Prepared multiregion surface contradicts its retained authority."
+            )
+        return rebuilt
+
     # ----------------------------------------------------------------- geometry
 
     def face_corner_positions(self, positions: ArrayLike, /) -> Array:
@@ -240,7 +266,9 @@ class PreparedMultiRegionSurface(StrictModule):
     def face_area_vectors(self, positions: ArrayLike, /) -> Array:
         """``(x1 - x0) x (x2 - x0) / 2`` per face, pointing out of ``left``."""
         corners = self.face_corner_positions(positions)
-        return 0.5 * jnp.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+        return 0.5 * jnp.cross(
+            corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+        )
 
     def face_areas(self, positions: ArrayLike, /) -> Array:
         return _safe_norm(self.face_area_vectors(positions), self.topology.face_active)
@@ -294,7 +322,9 @@ class PreparedMultiRegionSurface(StrictModule):
         areas = _safe_norm(vectors, active)
         safe = jnp.where(active, areas, 1.0)
         normals = jnp.where(active[:, None], vectors / safe[:, None], 0.0)
-        energy, gradient = jax.value_and_grad(self.surface_energy)(positions, face_tension)
+        energy, gradient = jax.value_and_grad(self.surface_energy)(
+            positions, face_tension
+        )
         forces = jnp.where(self.topology.vertex_active[:, None], -gradient, 0.0)
         volumes = self.region_volumes(positions)
         return MultiRegionSurfaceGeometry(
@@ -320,11 +350,17 @@ class PreparedMultiRegionSurface(StrictModule):
         axis_norm = _safe_norm(axis, topology.edge_active)
         unit = axis / jnp.where(topology.edge_active, axis_norm, 1.0)[:, None]
         rays = points[jnp.maximum(self.edge_opposite, 0)] - start[:, None, :]
-        rays = rays - jnp.sum(rays * unit[:, None, :], axis=-1, keepdims=True) * unit[:, None, :]
+        rays = (
+            rays
+            - jnp.sum(rays * unit[:, None, :], axis=-1, keepdims=True) * unit[:, None, :]
+        )
         first = rays[:, 0]
-        first = first / jnp.where(
-            topology.edge_active, _safe_norm(first, topology.edge_active), 1.0
-        )[:, None]
+        first = (
+            first
+            / jnp.where(
+                topology.edge_active, _safe_norm(first, topology.edge_active), 1.0
+            )[:, None]
+        )
         second = jnp.cross(unit, first)
         phase = jnp.arctan2(
             jnp.sum(rays * second[:, None, :], axis=-1),
@@ -340,7 +376,9 @@ class PreparedMultiRegionSurface(StrictModule):
         following = jnp.roll(sorted_phase, -1, axis=1)
         last = position == (valence[:, None] - 1)
         angles = jnp.where(
-            last, sorted_phase[:, :1] + 2.0 * jnp.pi - sorted_phase, following - sorted_phase
+            last,
+            sorted_phase[:, :1] + 2.0 * jnp.pi - sorted_phase,
+            following - sorted_phase,
         )
         faces = jnp.take_along_axis(jnp.maximum(topology.edge_faces, 0), order, axis=1)
         signs = jnp.take_along_axis(topology.edge_face_signs, order, axis=1)

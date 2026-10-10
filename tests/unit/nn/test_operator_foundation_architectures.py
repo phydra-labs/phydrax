@@ -948,6 +948,7 @@ def test_pde_contracts() -> None:
                     phx.equations.PDEParameter(
                         "a",
                         value=(1.0, 2.0),
+                        representation="vector",
                         components=2,
                         scale=(1.0, 1.0),
                     ),
@@ -958,6 +959,7 @@ def test_pde_contracts() -> None:
                     phx.equations.PDEParameter(
                         "a",
                         value=(1.0, 3.0),
+                        representation="vector",
                         components=2,
                         scale=(1.0, 2.0),
                     ),

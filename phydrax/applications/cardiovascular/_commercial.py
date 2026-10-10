@@ -879,7 +879,6 @@ class CardiovascularCommercialSupportProfile:
     """One exact local, non-PHI, non-regulated technical support profile."""
 
     name: str
-    version: str
     support_tuple: SupportTuple
     claims_matrix: CardiovascularClaimsMatrix
     resource_policy: CardiovascularResourcePolicy
@@ -895,7 +894,6 @@ class CardiovascularCommercialSupportProfile:
 
     def __post_init__(self) -> None:
         name = _identifier(self.name, "commercial support profile name")
-        version = _identifier(self.version, "commercial support profile version")
         if not isinstance(self.support_tuple, SupportTuple):
             raise TypeError("support_tuple must be SupportTuple.")
         if self.support_tuple.capability != _CARDIOVASCULAR_CAPABILITY:
@@ -965,14 +963,12 @@ class CardiovascularCommercialSupportProfile:
         generic = CapabilityProfile(
             name,
             "phydrax",
-            version,
             (self.support_tuple,),
             dependencies=dependencies,
             required_gates=tuple(gate.gate_key for gate in CardiovascularReleaseGate),
             released=False,
         )
         object.__setattr__(self, "name", name)
-        object.__setattr__(self, "version", version)
         object.__setattr__(self, "dependency_profile_ids", dependencies)
         object.__setattr__(self, "required_artifact_kinds", artifact_kinds)
         object.__setattr__(self, "capability_profile", generic)
@@ -1593,7 +1589,6 @@ def evaluate_cardiovascular_release_candidate(
     candidate_profile = CapabilityProfile(
         profile.capability_profile.name,
         profile.capability_profile.provider,
-        profile.capability_profile.version,
         (profile.support_tuple,),
         dependencies=profile.dependency_profile_ids,
         required_gates=profile.capability_profile.required_gates,
@@ -1735,7 +1730,6 @@ def assess_cardiovascular_release(
     released_profile = CapabilityProfile(
         candidate.capability_profile.name,
         candidate.capability_profile.provider,
-        candidate.capability_profile.version,
         candidate.capability_profile.support_tuples,
         dependencies=candidate.capability_profile.dependencies,
         required_gates=candidate.capability_profile.required_gates,

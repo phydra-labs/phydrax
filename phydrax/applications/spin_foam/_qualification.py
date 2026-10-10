@@ -50,7 +50,6 @@ def spin_foam_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "research-only",
             (support,),
             required_gates=gates[support.capability],
             released=False,

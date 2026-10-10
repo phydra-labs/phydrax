@@ -599,7 +599,6 @@ def battery_dfn_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{capability}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(capability, attributes),),
             required_gates=gates,
         )

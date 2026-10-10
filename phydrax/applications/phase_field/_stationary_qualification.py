@@ -21,7 +21,6 @@ def stationary_soliton_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 "analytic-tanh-reference",

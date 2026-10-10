@@ -37,14 +37,12 @@ license-files = ["LICENSE", "LICENSES/*", "NOTICE"]
 
 dependencies = [
     "blackjax>=1.6.2,<2",
-    "cadquery-ocp-novtk>=8.0.1.0.0,<9",
     "diffrax>=0.7.2,<0.8",
     "equinox>=0.13.8,<0.14",
     "jax>=0.11.2,<0.12",
     "jaxtyping>=0.3.11,<0.4",
     "lineax>=0.1.1,<0.2",
     "loguru>=0.7.3,<0.8",
-    "meshio>=5.3.5,<6",
     "mpmath>=1.3.0,<2",
     "numpy>=2.5.3,<3",
     "opt-einsum>=3.4.0,<4",
@@ -58,6 +56,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cad-occt-interop = [
+    "cadquery-ocp-novtk>=8.0.1.0.0,<9",
+    "build123d>=0.13.0,<0.14",
+    "cadquery-ocp-stubs>=8.0.1.0.0,<9",
+]
+mesh-file-interop = [
+    "meshio>=5.3.5,<6",
+]
 geophysical-data = [
     "xarray>=2026.7.0,<2027",
     "zarr>=3.4.0,<4",
@@ -116,9 +122,6 @@ geospatial-render = [
 ]
 geodesy = [
   "pyproj>=3.8.0,<4",
-]
-geometry-pyvista = [
-  "pyvista>=0.49.0,<0.50",
 ]
 geophysics-io = [
   "georinex>=1.16.2,<2",
@@ -222,7 +225,6 @@ wandb = [
 ]
 tests = [
     "PyWavelets>=1.10.0,<2",
-    "build123d>=0.13.0,<0.14",
     "hypothesis>=6.168.1,<7",
     "polars>=1.44.2,<2",
     "tensorboard>=2.21.0,<3",
@@ -241,7 +243,6 @@ qa = [
     "scikit-learn>=1.9.1,<2",
     "ty==0.0.84",
     "scipy-stubs>=1.18.1.1,<1.19",
-    "cadquery-ocp-stubs>=8.0.1.0.0,<9",
 ]
 
 
@@ -356,24 +357,31 @@ respect-type-ignore-comments = false
 # at their import boundary, so the diagnostic set does not depend on which
 # optional extras are installed.
 replace-imports-with-any = [
+  "OCP.**",
+  "build123d.**",
+  "meshio.**",
   "arviz.**",
+  "ase.**",
   "cryptography.**",
   "cvxpy.**",
   "dafoam.**",
   "design.**",
   "e3nn.**",
+  "griffe.**",
   "h5py.h5o",
   "mace.**",
   "manifold3d.**",
   "marimo.**",
+  "matplotlib.**",
   "mini_studies.**",
+  "modepy.**",
   "mpi4py.**",
+  "mujoco.**",
   "open3d.**",
   "openmdao.**",
   "parameter_targets.**",
   "petsc4py.**",
   "psutil.**",
-  "pyvista.**",
   "qdesignoptimizer.**",
   "qiskit_metal.**",
   "scikits.**",
@@ -381,10 +389,12 @@ replace-imports-with-any = [
   "sksparse.**",
   "sparseqr.**",
   "torch.**",
+  "triangle.**",
   "uproot.**",
   "win32api.**",
   "win32con.**",
   "win32job.**",
+  "xarray.**",
 ]
 
 [tool.ty.rules]

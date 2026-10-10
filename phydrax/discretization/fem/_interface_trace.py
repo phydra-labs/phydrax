@@ -24,6 +24,7 @@ from ...linalg import (
     FunctionLinearOperator,
 )
 from .._cell_complex import TetrahedralConnectivity
+from .._cell_geometry import coordinate_lagrange_element
 from .._topology import EntitySelection
 from ._generic import FiniteElementDiscretization
 from ._reference import FiniteElementSpec
@@ -305,12 +306,8 @@ def prepare_matching_scalar_interface_trace_3d(
     coordinate_dofs = np.asarray(discretization.coordinate_dofs[0], dtype=np.int32)
     if (
         not isinstance(coordinate_element, FiniteElementSpec)
-        or coordinate_element.cell_kind != "tetrahedron"
-        or coordinate_element.family != "Lagrange"
-        or coordinate_element.degree != 1
-        or coordinate_element.continuity != "conforming"
-        or coordinate_element.value_spec.form_type.degree != 0
-        or coordinate_element.value_spec.proxy != "scalar"
+        or coordinate_element.element_id
+        != coordinate_lagrange_element("tetrahedron", 1).element_id
         or coordinate_dofs.shape != cells.shape
         or not np.array_equal(coordinate_dofs, cells)
     ):

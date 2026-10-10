@@ -14,20 +14,51 @@ Ownership is explicit:
 such as certified periodic Fourier embeddings declare exact input periodicity.
 """
 
+from importlib import import_module
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from . import (
+        activations,
+        atomistic,
+        flows,
+        latent,
+        layers,
+        models,
+        neural_tangent,
+        operator,
+        parameters,
+        population,
+        quantum,
+    )
+
 from .._model import PeriodicInputCertificate
-from . import (
-    activations,
-    atomistic,
-    flows,
-    latent,
-    layers,
-    models,
-    neural_tangent,
-    operator,
-    parameters,
-    population,
-    quantum,
+
+
+_MODULE_EXPORTS = frozenset(
+    {
+        "activations",
+        "atomistic",
+        "flows",
+        "latent",
+        "layers",
+        "models",
+        "neural_tangent",
+        "operator",
+        "parameters",
+        "population",
+        "quantum",
+    }
 )
+
+
+def __getattr__(name: str) -> object:
+    if name not in _MODULE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = import_module(f".{name}", __name__)
+    globals()[name] = value
+    return value
 
 
 __all__ = [

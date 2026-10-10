@@ -653,3 +653,44 @@ Non-Abelian paths use
 order. Matrix gauge-link spaces reference the canonical edge
 `DiscreteFieldSpace` and pointwise Lie-group geometry rather than introducing
 another topology or field owner.
+
+## Weighted graph partitioning
+
+`partition_graph` splits a `WeightedCSRGraph` (symmetric, nonnegative integer
+vertex and edge weights, canonical sorted rows) into `GraphPartitionPlan.part_count`
+parts with the native deterministic multilevel k-way route: heavy-edge matching
+coarsening, recursive greedy-growing bisection of the coarsest graph, and
+boundary Fiduccia-Mattheyses refinement in which no move exceeds a part
+capacity. Part `p` targets `W * share_p` of the total vertex weight `W`; its
+capacity is `max(floor(maximum_imbalance * t_p), ceil(t_p))`. The default
+`require_nonempty` policy gives every part a vertex. `GraphPartitionEvidence`
+is measured from the returned parts: weighted edge cut, cut-edge and boundary
+vertex counts, part weights against targets and capacities, the imbalance and
+its lower bound, indivisible heavy vertices, a determinism statement, the
+backend identity and `GraphPartitionWork` counters. An unbalanced outcome is a
+status (`indivisible_vertex_overload` or `balance_not_reached`), never a
+silently relaxed capacity, and the cut is not claimed optimal. A `work_limit`
+bounds adjacency visits; exhausting it is a resource refusal.
+`MeshPartitionKind.GRAPH` distributes meshes through this route.
+
+::: phydrax.graph.WeightedCSRGraph
+
+---
+
+::: phydrax.graph.GraphPartitionPlan
+
+---
+
+::: phydrax.graph.partition_graph
+
+---
+
+::: phydrax.graph.GraphPartitionResult
+
+---
+
+::: phydrax.graph.GraphPartitionEvidence
+
+---
+
+::: phydrax.graph.GraphPartitionWork

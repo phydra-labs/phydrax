@@ -141,8 +141,8 @@ def _facet_parameterization(
     if corners.shape[-1] != dimension + 1:
         raise ValueError("Facet corners must have codimension one.")
     if corners.shape[0] == dimension + 1:
-        directions = corners[1:] - corners[0]
-        points = corners[0] + parameter @ directions
+        directions = corners[1:] - corners[:1]
+        points = corners[:1] + parameter @ directions
         tangents = jnp.broadcast_to(
             directions.T, (parameter.shape[0], dimension + 1, dimension)
         )
@@ -175,7 +175,7 @@ def _facet_frame(
     signs = jnp.asarray(
         1 - 2 * (np.arange(dimension, dtype=np.int32) % 2), dtype=minors.dtype
     )
-    normals = jnp.flip(minors, axis=-1) * signs
+    normals = jnp.flip(minors, axis=-1) * signs[None, :]
     return points, normals
 
 

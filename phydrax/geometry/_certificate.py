@@ -8,8 +8,20 @@ import math
 from dataclasses import dataclass, replace
 from enum import Enum
 from numbers import Real
+from typing import Literal, TypeAlias
 
 from .._validation import optional_identifier
+from ..typing import parse
+
+
+FieldBoundOrigin: TypeAlias = Literal["declared", "established", "sampled"]
+"""Provenance of a field's Lipschitz and evaluation-error bounds.
+
+``established`` bounds are derived by the owning representation (for example an
+analytic signed distance); ``declared`` bounds are supplied by the caller and
+are trusted, not verified; ``sampled`` bounds are estimated from samples and
+bound nothing between them.
+"""
 
 
 class ZeroSetAccuracy(str, Enum):
@@ -50,8 +62,10 @@ class FieldCertificate:
 
     `lipschitz_upper_bound` bounds the field's Lipschitz constant and
     `evaluation_error` bounds the absolute error of an evaluated field value;
-    both are `None` when undeclared. `topology_identity` is the canonical
-    identifier of the certified region topology (`None` when uncertified).
+    both are `None` when undeclared. `bound_origin` states whether those bounds
+    are established by the owning representation, declared by the caller, or
+    sampled. `topology_identity` is the canonical identifier of the certified
+    region topology (`None` when uncertified).
     """
 
     zero_set_accuracy: ZeroSetAccuracy
@@ -65,6 +79,7 @@ class FieldCertificate:
     lipschitz_upper_bound: float | None = None
     evaluation_error: float | None = None
     topology_identity: str | None = None
+    bound_origin: FieldBoundOrigin = "declared"
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -81,10 +96,20 @@ class FieldCertificate:
                     f"FieldCertificate.{name} must be finite and non-negative when declared."
                 )
         optional_identifier(self.topology_identity, "FieldCertificate.topology_identity")
+        parse(self.bound_origin, FieldBoundOrigin, "FieldCertificate.bound_origin")
 
     @property
     def is_signed_distance(self) -> bool:
         return self.distance_semantics is DistanceSemantics.EXACT
+
+    @property
+    def bounds_established(self) -> bool:
+        """Whether declared Lipschitz/evaluation bounds are owner-established."""
+        return (
+            self.bound_origin == "established"
+            and self.lipschitz_upper_bound is not None
+            and self.evaluation_error is not None
+        )
 
     def translated(self) -> FieldCertificate:
         """Return the unchanged guarantees with translation provenance."""
@@ -95,10 +120,13 @@ class FieldCertificate:
 class ExactSDFEnclosureCertificate:
     """Global Lipschitz enclosure qualification of an exact SDF field certificate.
 
-    The field certificate owns the declared evaluation error and Lipschitz
-    upper bound. This certificate qualifies interval sign classification. It
-    does not by itself claim exact cell measures: boxes intersecting the zero
-    set remain as explicit lower/upper measure uncertainty.
+    The field certificate owns the evaluation error and Lipschitz upper bound.
+    This certificate qualifies interval sign classification only when those
+    bounds are established by the owning representation
+    (``certifies_global_enclosure``); caller-declared or sampled bounds leave the
+    enclosure unqualified. It does not by itself claim exact cell measures:
+    boxes intersecting the zero set remain as explicit lower/upper measure
+    uncertainty.
     """
 
     field: FieldCertificate
@@ -129,7 +157,7 @@ class ExactSDFEnclosureCertificate:
 
     @property
     def certifies_global_enclosure(self) -> bool:
-        return True
+        return self.field.bounds_established
 
 
 _EXACT_SDF_CERTIFICATE = FieldCertificate(
@@ -143,6 +171,7 @@ _EXACT_SDF_CERTIFICATE = FieldCertificate(
     provenance=("analytic",),
     lipschitz_upper_bound=1.0,
     evaluation_error=0.0,
+    bound_origin="established",
 )
 
 
@@ -197,6 +226,7 @@ def sharp_union_certificate(
 __all__ = [
     "ExactSDFEnclosureCertificate",
     "DistanceSemantics",
+    "FieldBoundOrigin",
     "FieldCertificate",
     "FieldRegularity",
     "SignReliability",

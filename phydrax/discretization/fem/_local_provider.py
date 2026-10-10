@@ -39,11 +39,68 @@ from .._local_variational import (
 
 
 if TYPE_CHECKING:
+    from .._cell_geometry import (
+        BarycentricCellGeometryElement,
+        CellGeometryElement,
+        LayerColumnCellGeometryElement,
+        PolynomialComposedCellGeometryElement,
+        RationalComposedCellGeometryElement,
+        RestrictedCellGeometryElement,
+        SplineCellGeometryElement,
+    )
+    from .._coordinate_enclosure import Polynomial
     from ._generic import FiniteElementDiscretization
     from ._reference import FiniteElementSpec
 
 
-def _tabulation_hessians(element: FiniteElementSpec, points: Array, /) -> Array:
+def _require_tabulated_coordinate_element(
+    element: CellGeometryElement,
+) -> (
+    FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+    | SplineCellGeometryElement
+    | LayerColumnCellGeometryElement
+):
+    from .._cell_geometry import (
+        BarycentricCellGeometryElement,
+        LayerColumnCellGeometryElement,
+        PolynomialComposedCellGeometryElement,
+        RationalComposedCellGeometryElement,
+        RestrictedCellGeometryElement,
+        SplineCellGeometryElement,
+    )
+    from ._reference import FiniteElementSpec
+
+    if not isinstance(
+        element,
+        (
+            FiniteElementSpec,
+            BarycentricCellGeometryElement,
+            RestrictedCellGeometryElement,
+            PolynomialComposedCellGeometryElement,
+            RationalComposedCellGeometryElement,
+            SplineCellGeometryElement,
+            LayerColumnCellGeometryElement,
+        ),
+    ):
+        raise TypeError("Coordinate element must support scalar coordinate tabulation.")
+    return element
+
+
+def _tabulation_hessians(
+    element: FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+    | SplineCellGeometryElement
+    | LayerColumnCellGeometryElement,
+    points: Array,
+    /,
+) -> Array:
     """Differentiate the element's owned reference-gradient action."""
 
     def point_gradient(point: Array) -> Array:
@@ -314,36 +371,51 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
-        metric = ein.contract("cqdi,cqdj->cqij", jacobian, jacobian)
-        dimension = metric.shape[-1]
+        dimension = jacobian.shape[-1]
+        square = jacobian.shape[-2] == dimension
+        matrix = (
+            jacobian if square else ein.contract("cqdi,cqdj->cqij", jacobian, jacobian)
+        )
         if dimension <= 4:
-            result = inverse_small_linear(SmallLinearSolvePlan(dimension), metric)
-            inverse_metric = result.value
+            result = inverse_small_linear(SmallLinearSolvePlan(dimension), matrix)
+            inverse_matrix = result.value
             successful = result.successful
-            measure = jnp.sqrt(jnp.where(successful, result.determinant, 0.0))
+            measure = (
+                jnp.abs(result.determinant)
+                if square
+                else jnp.sqrt(jnp.where(successful, result.determinant, 0.0))
+            )
         else:
             space = ArraySpace(
                 (dimension,),
-                dtype=metric.dtype,
+                dtype=matrix.dtype,
                 space_id=f"{self.action_id}:reference-tangent",
             )
             operator = DenseLinearOperator(
-                metric,
+                matrix,
                 source=space,
                 target=space,
-                operator_id=f"{self.action_id}:metric",
+                operator_id=f"{self.action_id}:jacobian"
+                if square
+                else f"{self.action_id}:metric",
             )
             prepared = factorize(operator, FactorizationPolicy("lu"))
             result = prepared.materialize_inverse()
-            inverse_metric = result.value
-            successful = result.successful & (prepared.determinant_sign() > 0.0)
-            measure = jnp.exp(0.5 * prepared.log_abs_determinant())
+            inverse_matrix = result.value
+            successful = result.successful
+            if not square:
+                successful = successful & (prepared.determinant_sign() > 0.0)
+            measure = jnp.exp(prepared.log_abs_determinant() * (1.0 if square else 0.5))
         measure = eqx.error_if(
             measure,
             jnp.any(~successful | ~jnp.isfinite(measure) | (measure <= 0.0)),
             "Finite-element metric measure must be positive and finite.",
         )
-        inverse = ein.contract("cqij,cqdj->cqid", inverse_metric, jacobian)
+        inverse = (
+            inverse_matrix
+            if square
+            else ein.contract("cqij,cqdj->cqid", inverse_matrix, jacobian)
+        )
         inverse_hessian = None
         if self.coordinate_hessians.size:
             mapping_hessian = ein.contract(
@@ -363,6 +435,128 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             inverse,
             inverse_hessian=inverse_hessian,
         )
+
+
+def _scalar_dg_reference_polynomials(
+    element: FiniteElementSpec,
+) -> tuple[Polynomial, ...]:
+    from .._coordinate_enclosure import source_basis
+
+    if (
+        element.conformity != "L2"
+        or element.mapping != "identity"
+        or element.representation != "point_value"
+        or element.value_shape
+        or any(dofs for dimension in element.entity_dofs[:-1] for dofs in dimension)
+        or element.entity_dofs[-1] != (tuple(range(element.local_dof_count)),)
+    ):
+        raise ValueError(
+            "Prepared-local L2 execution requires actual scalar point-value cell functionals."
+        )
+    basis = source_basis(element)
+    if basis is None or len(basis) != element.local_dof_count:
+        raise ValueError(
+            "Prepared-local DG execution requires its canonical owned scalar reference source."
+        )
+    return basis
+
+
+def _coordinate_reference_polynomials(
+    element: CellGeometryElement,
+) -> tuple[Polynomial, ...]:
+    from .._cell_geometry import RestrictedCellGeometryElement
+    from .._cell_geometry_transfer import _mapped_expression_restriction
+    from .._coordinate_enclosure import RationalPolynomial, source_basis
+
+    if isinstance(element, RestrictedCellGeometryElement):
+        restricted = _mapped_expression_restriction(
+            _coordinate_reference_polynomials(element.source_element),
+            element.source_element.cell_kind,
+            element.cell_kind,
+            np.asarray(element.matrix),
+            np.asarray(element.offset),
+        )
+        if any(isinstance(value, RationalPolynomial) for value in restricted):
+            raise ValueError(
+                "Polynomial-exact local quadrature cannot certify a genuinely rational coordinate restriction."
+            )
+        return tuple(
+            value for value in restricted if not isinstance(value, RationalPolynomial)
+        )
+    basis = source_basis(element)
+    if basis is None:
+        raise ValueError(
+            "Prepared-local DG geometry requires its authoritative polynomial reference source."
+        )
+    return basis
+
+
+def _scalar_cell_quadrature_degree(
+    elements: Sequence[FiniteElementSpec],
+    coordinate_element: FiniteElementSpec
+    | BarycentricCellGeometryElement
+    | RestrictedCellGeometryElement
+    | PolynomialComposedCellGeometryElement
+    | RationalComposedCellGeometryElement
+    | SplineCellGeometryElement
+    | LayerColumnCellGeometryElement,
+) -> int:
+    """Rule width for scalar mass/energy products, independent of runtime coefficients.
+
+    Exact source-basis degree bounds include affine restriction composition;
+    nominal root degree or cancellation in today's coordinates cannot understate
+    tomorrow's density degree. Nonlinear densities still use explicit user rules.
+    """
+    from .._coordinate_enclosure import source_basis
+
+    geometry = _coordinate_reference_polynomials(coordinate_element)
+    candidates = tuple(
+        _scalar_dg_reference_polynomials(element)
+        if element.conformity == "L2"
+        else source_basis(element)
+        for element in elements
+    )
+    fields_list: list[tuple[Polynomial, ...]] = []
+    for basis in candidates:
+        if basis is None:
+            raise ValueError(
+                "Mixed scalar DG cell execution requires canonical polynomial field sources."
+            )
+        fields_list.append(basis)
+    fields = tuple(fields_list)
+    kind, dimension = (
+        coordinate_element.cell_kind,
+        coordinate_element.topological_dimension,
+    )
+
+    def degree(bases: Sequence[tuple[Polynomial, ...]], axes: tuple[int, ...]) -> int:
+        return max(
+            (
+                sum(index[axis] for axis in axes)
+                for basis in bases
+                for polynomial in basis
+                for index in polynomial
+            ),
+            default=0,
+        )
+
+    if kind in ("interval", "triangle", "tetrahedron"):
+        field_degree = degree(fields, tuple(range(dimension)))
+        geometry_degree = degree((geometry,), tuple(range(dimension)))
+        count = field_degree + (dimension * geometry_degree + 1) // 2
+    elif kind == "prism":
+        count = max(
+            degree(fields, axes) + (3 * degree((geometry,), axes) + 1) // 2
+            for axes in ((0, 1), (2,))
+        )
+    else:
+        count = max(
+            degree(fields, (axis,)) + (dimension * degree((geometry,), (axis,)) + 1) // 2
+            for axis in range(dimension)
+        )
+    count = max(count, 2)
+    # The owning Duffy rule includes one extra tetrahedral axis node.
+    return max(0, count - (2 if kind == "tetrahedron" else 1))
 
 
 @final
@@ -503,12 +697,39 @@ class FiniteElementLocalProvider(StrictModule):
         ):
             raise ValueError("Finite-element cell domain belongs to another support.")
         names = tuple(str(name) for name in field_names)
-        if any(
-            element.continuity != "conforming" or element.value_spec.form_type.degree != 0
-            for name in names
-            for element in discretization.elements[discretization._field_index(name)]
-        ):
-            raise ValueError("Generic prepared-local FE execution currently requires H1.")
+        bindings = tuple(discretization.local_field_binding(name) for name in names)
+        has_dg = False
+        for name, binding in zip(names, bindings, strict=True):
+            if binding.conformity == "H1":
+                continue
+            if binding.conformity != "L2":
+                raise ValueError(
+                    "Prepared-local cell execution requires H1 or implemented scalar DG fields."
+                )
+            has_dg = True
+            field_index = discretization._field_index(name)
+            dofs = discretization.dof_maps[field_index]
+            for element in discretization.elements[field_index]:
+                _scalar_dg_reference_polynomials(element)
+            routes = np.concatenate(
+                [np.asarray(route).reshape(-1) for route in dofs.cell_dofs]
+            )
+            if (
+                dofs.association != "cell"
+                or routes.size != dofs.global_dof_count
+                or np.unique(routes).size != routes.size
+                or any(np.any(np.asarray(signs) != 1) for signs in dofs.orientations)
+                or any(
+                    not np.array_equal(
+                        np.asarray(transform),
+                        np.broadcast_to(np.eye(transform.shape[-1]), transform.shape),
+                    )
+                    for transform in dofs.cell_transforms
+                )
+            ):
+                raise ValueError(
+                    "Scalar DG local actions require complete unshared identity-oriented cell routes."
+                )
         mode = "dense" if str(kernel_mode) == "auto" else str(kernel_mode)
         if mode not in ("dense", "partial", "sum_factorized", "collocated"):
             raise ValueError("Unknown FE prepared-local kernel mode.")
@@ -538,13 +759,19 @@ class FiniteElementLocalProvider(StrictModule):
             domain_rows = np.asarray(
                 [rows_by_entity[int(entity)] for entity in entities], dtype=np.int32
             )
-            degrees = tuple(
-                discretization.elements[discretization._field_index(name)][
-                    block_index
-                ].degree
+            elements = tuple(
+                discretization.elements[discretization._field_index(name)][block_index]
                 for name in names
             )
-            points, weights = _degree_aware_reference_rule(block.cell_kind, max(degrees))
+            coordinate_element = _require_tabulated_coordinate_element(
+                discretization.coordinate_elements[block_index]
+            )
+            degree = (
+                _scalar_cell_quadrature_degree(elements, coordinate_element)
+                if has_dg
+                else max(element.degree for element in elements)
+            )
+            points, weights = _degree_aware_reference_rule(block.cell_kind, degree)
             references = []
             gathers = []
             for name in names:
@@ -588,11 +815,8 @@ class FiniteElementLocalProvider(StrictModule):
                 gathers.append(
                     discretization.dof_maps[field_index].cell_dofs[block_index][selected]
                 )
-            coordinate_element = discretization.coordinate_elements[block_index]
-            # ty: ignore[unresolved-attribute]
             coordinate_basis, coordinate_gradients = coordinate_element.tabulate(points)
             coordinate_hessians = (
-                # ty: ignore[invalid-argument-type]
                 _tabulation_hessians(coordinate_element, points)
                 if maximum_derivative_order == 2
                 else None

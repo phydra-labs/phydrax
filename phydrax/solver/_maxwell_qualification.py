@@ -65,7 +65,6 @@ def maxwell_far_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_REQUIRED_GATES,
             released=False,
@@ -96,7 +95,6 @@ def maxwell_antenna_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_ANTENNA_REQUIRED_GATES,
             released=False,
@@ -125,7 +123,6 @@ def maxwell_dispersion_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_DISPERSION_REQUIRED_GATES,
             released=False,
@@ -188,7 +185,6 @@ def maxwell_moving_charge_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 *_MOVING_CHARGE_GATES[support.capability],
@@ -237,7 +233,6 @@ def maxwell_frequency_moving_charge_candidate_profiles() -> tuple[CapabilityProf
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_FREQUENCY_MOVING_CHARGE_GATES,
             released=False,

@@ -1,0 +1,1265 @@
+{
+  "cases": [
+    {
+      "controls": [
+        "hole",
+        "embedded-segment",
+        "hard-size",
+        "minimum-angle",
+        "maximum-vertices"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 2,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "plate": 3.84
+      },
+      "family": "triangle",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "plate",
+            3.84
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "1cf1ff8b7588fb748a57f8b35953e2bc3d4a22d802e4f006707e2aa044152b72"
+      },
+      "minimum_angle_radians": 0.4363323129985824,
+      "minimum_mean_ratio": null,
+      "name": "planar-capacity-refusal",
+      "source_artifact": {
+        "bytes": 157,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::planar-capacity-refusal",
+        "media_type": "application/json",
+        "sha256": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33"
+      },
+      "source_digest": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Same plate with deliberately impossible entity budget",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "fb13d4042f6bb9faa6581aa4399c848a8c4c899f88d621a6abcbecf3f4f54c2e",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "hole",
+        "embedded-segment",
+        "hard-size",
+        "minimum-angle"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 2,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "plate": 3.84
+      },
+      "family": "triangle",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "plate",
+            3.84
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "1cf1ff8b7588fb748a57f8b35953e2bc3d4a22d802e4f006707e2aa044152b72"
+      },
+      "minimum_angle_radians": 0.4363323129985824,
+      "minimum_mean_ratio": null,
+      "name": "planar-hole-feature",
+      "source_artifact": {
+        "bytes": 157,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::planar-hole-feature",
+        "media_type": "application/json",
+        "sha256": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33"
+      },
+      "source_digest": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Analytic square minus square; PHYDRA original corpus",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "fb13d4042f6bb9faa6581aa4399c848a8c4c899f88d621a6abcbecf3f4f54c2e",
+      "workflow": "planar-features"
+    },
+    {
+      "controls": [
+        "hole",
+        "embedded-segment",
+        "hard-size",
+        "minimum-angle",
+        "stale-source-revision"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 2,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "plate": 3.84
+      },
+      "family": "triangle",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "plate",
+            3.84
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "1cf1ff8b7588fb748a57f8b35953e2bc3d4a22d802e4f006707e2aa044152b72"
+      },
+      "minimum_angle_radians": 0.4363323129985824,
+      "minimum_mean_ratio": null,
+      "name": "planar-stale-revision",
+      "source_artifact": {
+        "bytes": 157,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::planar-stale-revision",
+        "media_type": "application/json",
+        "sha256": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33"
+      },
+      "source_digest": "19425471c28468fa916d6e3e7f581e012e34bcaafbc542364f9597628111ed33",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Same plate with mismatched request revision",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "fb13d4042f6bb9faa6581aa4399c848a8c4c899f88d621a6abcbecf3f4f54c2e",
+      "workflow": "source-identity"
+    },
+    {
+      "controls": [
+        "thin-channel",
+        "hard-size",
+        "minimum-angle"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 2,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "plate": 0.324
+      },
+      "family": "triangle",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "plate",
+            0.324
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "1292864a1bdcbff29f11c7d756f4aa28fdd752b5b113327f76769e95d91a2042"
+      },
+      "minimum_angle_radians": 0.4363323129985824,
+      "minimum_mean_ratio": null,
+      "name": "planar-thin-channel",
+      "source_artifact": {
+        "bytes": 190,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::planar-thin-channel",
+        "media_type": "application/json",
+        "sha256": "8d95e8b82b7c2e89e2e1599bac0d57a9badab8272d839cf027bd4a8bd54dc022"
+      },
+      "source_digest": "8d95e8b82b7c2e89e2e1599bac0d57a9badab8272d839cf027bd4a8bd54dc022",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Analytic dumbbell with width 0.02; PHYDRA original corpus",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "879e4147bd9ff57c6c02f473ebf6d770e60c468f8064a5bdeb548fd38cd1aa50",
+      "workflow": "planar-features"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "maximum-cavity"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-cavity-refusal",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-cavity-refusal",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity source with one deliberately insufficient allowance",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "disconnected",
+        "hard-size",
+        "minimum-quality"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 2.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            2.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "d470d6debbb37ff2a212762b579dfa13f2ec309407a7845d6bd9e91af2ace5fd"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-disconnected",
+      "source_artifact": {
+        "bytes": 567,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-disconnected",
+        "media_type": "application/json",
+        "sha256": "0186f65c1775cdaa6784f680aaaaf1f343d18d4aa350eb84b66c91cc9befab2e"
+      },
+      "source_digest": "0186f65c1775cdaa6784f680aaaaf1f343d18d4aa350eb84b66c91cc9befab2e",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Independent declared axis-aligned box union",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "09dedcdc1e55bf730f25214ef839cb5b2688095870044fb6d91db56b72ceb535",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "maximum-entities"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-entities-refusal",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-entities-refusal",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity source with one deliberately insufficient allowance",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "fixed-boundary",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 1.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            1.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "4f76a02ef5d630ea83e16723f1e55de3eb840c07eaec1d81722d2bab6b8a0c36"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "plc-fixed-boundary",
+      "source_artifact": {
+        "bytes": 353,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-fixed-boundary",
+        "media_type": "application/json",
+        "sha256": "d8d2baeecf0d8afc95e7d6e57b0b0ca2a768ba71c1d6418407fab465a106e47c"
+      },
+      "source_digest": "d8d2baeecf0d8afc95e7d6e57b0b0ca2a768ba71c1d6418407fab465a106e47c",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original test_fixed_boundary_triangles_are_published_unchanged",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "231b6cc9f71dfcbda3615b6e8f546dd0eb56167647c2b7a030455a1b3ce7bcba",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "intersecting-constraints",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "a": 1.0,
+        "b": 1.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "a",
+            1.0
+          ],
+          [
+            "b",
+            1.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "3973338a21a424bbc1cfe00dc628236d079b643ba37e20823bd50209420dc70c"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "plc-incompatible-constraints",
+      "source_artifact": {
+        "bytes": 495,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-incompatible-constraints",
+        "media_type": "application/json",
+        "sha256": "d6f606bdb7db4407b2afc4f5a3c7e485409a1efeea703a1c53992ec1481bd2c5"
+      },
+      "source_digest": "d6f606bdb7db4407b2afc4f5a3c7e485409a1efeea703a1c53992ec1481bd2c5",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original test_intersecting_facets_are_refused_with_the_polygons",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "773c0ce22d28a8f9f1c1625bcaee8ec80749413a235aeeaadf7355b47eb8e88a",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-material-cavity",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-material-cavity",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Analytic two-box material partition and cavity; PHYDRA original corpus",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "nonconvex",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 3.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            3.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "5c5499c4087cdf4f6d4edb0703c399e1efa8aa983d6a901d60322295f8f68195"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "plc-nonconvex",
+      "source_artifact": {
+        "bytes": 380,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-nonconvex",
+        "media_type": "application/json",
+        "sha256": "56a28cf191db4a37bfd1a4ef7ddcbf0475d7ea20f45fcd52bbebd74fc9fc6e64"
+      },
+      "source_digest": "56a28cf191db4a37bfd1a4ef7ddcbf0475d7ea20f45fcd52bbebd74fc9fc6e64",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Independent declared axis-aligned box union",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "7f6aa3b3f4002f161fa10a2cccf4633fdcf2349cd4c9f14ae4e6c63358f707b4",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "maximum-queries"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-queries-refusal",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-queries-refusal",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity source with one deliberately insufficient allowance",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "sliver-rich",
+        "soft-size",
+        "dihedral-25"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 1.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            1.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "4f76a02ef5d630ea83e16723f1e55de3eb840c07eaec1d81722d2bab6b8a0c36"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "plc-sliver-rich",
+      "source_artifact": {
+        "bytes": 318,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-sliver-rich",
+        "media_type": "application/json",
+        "sha256": "ebd00cbabc8b8057a16c718e1a63a6ddd699f8cea1fa7bb79de13808982695bb"
+      },
+      "source_digest": "ebd00cbabc8b8057a16c718e1a63a6ddd699f8cea1fa7bb79de13808982695bb",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original test_native_volume_exudation source and four-pass schedule",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "ea28e048448cfe7df4555d18f2d3e4448697ed061f05ab720bd35d042cf8ae99",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "small-angle",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 16.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            16.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "aabb0031f08bcd3f65071cad31604afea16931dc5179a576c654ad7fded27816"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "plc-small-angle",
+      "source_artifact": {
+        "bytes": 248,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-small-angle",
+        "media_type": "application/json",
+        "sha256": "763cd5f31c52e086c881ef5931b19b67be09244ee662482e882735bdc186fe21"
+      },
+      "source_digest": "763cd5f31c52e086c881ef5931b19b67be09244ee662482e882735bdc186fe21",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original test_small_angle_wedge_is_protected_and_meshed",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "e6c7ad48a62827e46b02874f2ec42dc0d24441f9bbe98f4edd3d4a93dca4af70",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "stale-source-revision"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-stale-revision",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-stale-revision",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity with deliberately stale request revision",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "source-identity"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "maximum-storage"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-storage-refusal",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-storage-refusal",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity source with one deliberately insufficient allowance",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "thin-channel",
+        "hard-size",
+        "minimum-quality"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "solid": 0.324
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "solid",
+            0.324
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "7e024e57d8c9e68067ff2fa8dce35bf760b0b95699e244ed7f9e5c8bcc90200e"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-thin-channel",
+      "source_artifact": {
+        "bytes": 688,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-thin-channel",
+        "media_type": "application/json",
+        "sha256": "540020924fd14bc49eda50b805c3860cd9336134f93bcb71a7afb1cbf183d1ac"
+      },
+      "source_digest": "540020924fd14bc49eda50b805c3860cd9336134f93bcb71a7afb1cbf183d1ac",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Independent declared axis-aligned box union",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "58799babae15911aa74fff0e07515e0152d458a1002bb338d1c1745caef4caa9",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "triple-junction",
+        "material-interface",
+        "hard-size",
+        "minimum-quality"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "first": 1.0,
+        "second": 1.0,
+        "third": 2.0
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "first",
+            1.0
+          ],
+          [
+            "second",
+            1.0
+          ],
+          [
+            "third",
+            2.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "3c4009400ce426ae476795e287cb3c3fcc4bc9cb0f64dd3b1b1e5bb659133066"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-triple-junction",
+      "source_artifact": {
+        "bytes": 760,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-triple-junction",
+        "media_type": "application/json",
+        "sha256": "0543e923f36695482f1acbf546fb2b9226bb6dfc0a18b1a8690ce10c1c4b6848"
+      },
+      "source_digest": "0543e923f36695482f1acbf546fb2b9226bb6dfc0a18b1a8690ce10c1c4b6848",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Independent declared axis-aligned box union",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "896b13be18c84f2c9c269e3dd348631a188ab86f9002e95320164a929106656b",
+      "workflow": "constrained-solid"
+    },
+    {
+      "controls": [
+        "cavity",
+        "material-interface",
+        "embedded-segment",
+        "hard-size",
+        "minimum-quality",
+        "maximum-work"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "refusal",
+      "expected_region_measures": {
+        "left": 1.0,
+        "right": 0.875
+      },
+      "family": "tetrahedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            1.0
+          ],
+          [
+            "right",
+            0.875
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "07d7dd3943f8b5846071e9fbb27cb337d5b420e18ed6898f0902ee5b2c22e7e0"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": 0.05,
+      "name": "plc-work-refusal",
+      "source_artifact": {
+        "bytes": 708,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::plc-work-refusal",
+        "media_type": "application/json",
+        "sha256": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db"
+      },
+      "source_digest": "322b1f11b0629c510a32d6e8523237986e833dab2fd21e56f240a4e86a8732db",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original cavity source with one deliberately insufficient allowance",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "47f2626d653736dbc8700959023cdf2ae41eec8e046c138f2f58dcbb7f787218",
+      "workflow": "resource-boundary"
+    },
+    {
+      "controls": [
+        "seam",
+        "collapsed-poles",
+        "hard-size",
+        "hard-source-deviation"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 2,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "surface": 12.566370614359172
+      },
+      "family": "triangle",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "surface",
+            12.566370614359172
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "72284b2882d64ca1f13f44558a78cdb596b5511f610e650199e40d9b0d4a2361"
+      },
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "sphere-feature-surface",
+      "source_artifact": {
+        "bytes": 177,
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::sphere-feature-surface",
+        "media_type": "application/json",
+        "sha256": "8bad6527eb1a1e33fa037f84e9c9f17c787a6260fc0254acc1645a49449ac8a9"
+      },
+      "source_digest": "8bad6527eb1a1e33fa037f84e9c9f17c787a6260fc0254acc1645a49449ac8a9",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Analytic unit sphere; PHYDRA original source fixture",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "6fd128d3a297ee4cb45a493feda6bbf0a996002e9f466099739e7f38d84b6063",
+      "workflow": "planar-features"
+    },
+    {
+      "controls": [
+        "nonconvex",
+        "material-interface",
+        "prescribed-sites",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "left": 2.0,
+        "right": 1.0
+      },
+      "family": "polyhedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            2.0
+          ],
+          [
+            "right",
+            1.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "d7ed98b3eeae46db283c94affa179a4e051be0e86b331a4904c90dcf4a97d6e5"
+      },
+      "input_id": "cb3ea1b2d56cb7c79c53d30595ceeb6ac4702693a0d308bf244d758ddadd7e08",
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "polyhedral-material-L",
+      "source_artifact": {
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::polyhedral-material-L",
+        "media_type": "application/vnd.phydrax.plc",
+        "sha256": "03bb243702bcd74bdc60a571f02cf6857ff411b4982176136b1f3f8e70bcc0cc"
+      },
+      "source_digest": "03bb243702bcd74bdc60a571f02cf6857ff411b4982176136b1f3f8e70bcc0cc",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Three analytic unit voxels; PHYDRA original fixture",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "03bb243702bcd74bdc60a571f02cf6857ff411b4982176136b1f3f8e70bcc0cc",
+      "workflow": "polyhedral-system"
+    },
+    {
+      "controls": [
+        "periodic-quotient",
+        "prescribed-sites",
+        "soft-size",
+        "zero-periodic-tolerance"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "material-0": 1.0
+      },
+      "family": "polyhedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "material-0",
+            1.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "a09818c07adb87296be2be70c077362d5aebbf4164c1fad8f3f0dd866455e906"
+      },
+      "input_id": "fce9135894c01d49df302d257f3e5305776766a736a34511912fd1e7c4e7a53f",
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "polyhedral-periodic-cube",
+      "periodic_constraints": [
+        "a017b5fbcba0d7e026189c95053fea97a5b03ebca8fb2f9ef958fe8159d4eece",
+        "6e8f0df1800578db941810bcc4b640351e47df8421ff03e9b13086a890b8ed85",
+        "9a9159493b741968a06c48e3d26c4aac6047487e45fc7181351ff731743a0f80"
+      ],
+      "sites": [
+        [
+          0.25,
+          0.5,
+          0.5
+        ],
+        [
+          0.75,
+          0.5,
+          0.5
+        ]
+      ],
+      "source_artifact": {
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::polyhedral-periodic-cube",
+        "media_type": "application/vnd.phydrax.plc",
+        "sha256": "8fc43c28c220e8c206c4a46cb7cfe044693f3c63d798e9defded4f4098b2cccc"
+      },
+      "source_digest": "8fc43c28c220e8c206c4a46cb7cfe044693f3c63d798e9defded4f4098b2cccc",
+      "source_id": "polyhedral-domain",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Original three-axis periodic cube and two prescribed zero-weight sites",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "r1",
+      "weights": [
+        0.0,
+        0.0
+      ],
+      "workflow": "polyhedral-system"
+    },
+    {
+      "controls": [
+        "nonconvex",
+        "material-interface",
+        "prescribed-sites",
+        "soft-size"
+      ],
+      "coordinate_unit": "meter",
+      "dimension": 3,
+      "expected_admission": "positive",
+      "expected_region_measures": {
+        "left": 4.0,
+        "right": 2.0
+      },
+      "family": "polyhedron",
+      "independent_reference": {
+        "coordinate_unit": "meter",
+        "expected_region_measures": [
+          [
+            "left",
+            4.0
+          ],
+          [
+            "right",
+            2.0
+          ]
+        ],
+        "kind": "independent-analytic-region-measures",
+        "reference_digest": "57566d65c0ef8239f5e1a2649b14d601831ee8ec91af00d37d8a96bd7b39f6a7"
+      },
+      "input_id": "ec45db52d671bc825fbc9b71416df3500eb24aeacf39fadb7dbe8748313c14b2",
+      "minimum_angle_radians": null,
+      "minimum_mean_ratio": null,
+      "name": "polyhedral-stretched-L",
+      "source_artifact": {
+        "kind": "analytic-generated-fixture",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_meshing_cases.py::polyhedral-stretched-L",
+        "media_type": "application/vnd.phydrax.plc",
+        "sha256": "c74a799346ab51169b0d99861d8f0420ffdf9ba910c6e19706ee2d9a3e6056dd"
+      },
+      "source_digest": "c74a799346ab51169b0d99861d8f0420ffdf9ba910c6e19706ee2d9a3e6056dd",
+      "source_provenance": {
+        "author": "PHYDRA, Inc.",
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "origin": "Same three voxels stretched twofold along x",
+        "redistribution": "repository-internal"
+      },
+      "source_revision": "c74a799346ab51169b0d99861d8f0420ffdf9ba910c6e19706ee2d9a3e6056dd",
+      "workflow": "polyhedral-system"
+    }
+  ],
+  "coordinate_unit": "meter",
+  "hybrid_layer_sources": [
+    {
+      "orbit_ids": [],
+      "periodic_trace": {
+        "evidence": ".tmp/layer_first_periodic_trace_attempt1.json",
+        "exact_x_residuals": [
+          "-101121/2361183241434822606848",
+          "-6620711477/77371252455336267181195264"
+        ],
+        "required_period_x": 1,
+        "status": "refused"
+      },
+      "profile": "original-curved-periodic-refusal",
+      "profile_control_points": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.5,
+          0.2
+        ],
+        [
+          1.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.05
+        ],
+        [
+          0.5,
+          0.25
+        ],
+        [
+          0.0,
+          0.05
+        ]
+      ],
+      "role": "negative-refusal",
+      "source_artifact": {
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_hybrid_layer_source.py::ORIGINAL_CURVED_PERIODIC_SOURCE_DIGEST",
+        "media_type": "application/vnd.phydrax.source-identity+json"
+      },
+      "source_digest": "ebeaa8557815eada07f50d04b77fe40d4ed2809392af56d147c6876bace97a35",
+      "source_id": "curved-periodic-narrow-gap",
+      "source_revision": "fadef789744332ba906c2bf1b82231d331e7cc7f4128997191b2d97cb9301e4f",
+      "upper_construction": "Original upper curve independently authored; immutable negative source."
+    },
+    {
+      "orbit_ids": [
+        "corrected-profile-coefficient:4",
+        "corrected-profile-coefficient:6",
+        "corrected-profile-coefficient:7",
+        "corrected-profile-x-orbit:0x0.0p+0",
+        "corrected-profile-x-orbit:0x1.0000000000000p+0",
+        "corrected-profile-x-orbit:0x1.0000000000000p-1",
+        "corrected-wall-x-orbit:0",
+        "corrected-wall-x-orbit:1"
+      ],
+      "periodic_trace": {
+        "construction": "representative-coefficient-plus-unit-translation",
+        "exact_x_residuals": [
+          "0",
+          "0"
+        ],
+        "required_period_x": 1,
+        "status": "required-certified"
+      },
+      "profile": "curved-periodic-layer-core",
+      "profile_control_points": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.5,
+          0.1875
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "role": "positive",
+      "source_artifact": {
+        "fiber_graph": true,
+        "license": "LicenseRef-PHYDRA-Proprietary",
+        "locator": "tools/_hybrid_layer_source.py::corrected_periodic_layer_source",
+        "mapped_domain_id": "78c304f2b99052d26ca7f234cdd423da5ee59050d942dc38218ee29921a97c6d",
+        "media_type": "text/x-python",
+        "source_binding_id": "b5f3d366ae32ddcb7144334d9b381e1bb829403253dd13cd7f363784d23c2078"
+      },
+      "source_digest": "059b334cd5a016c500d608e1fce185b727874f055aefddbf618b6d69a7e5c3cf",
+      "source_id": "curved-periodic-narrow-gap-exact-x-orbits",
+      "source_revision": "2afa0d240a29259b557d12f944cb39d3475327f89a75bd020459f1b0b863073c",
+      "upper_construction": "Upper coefficients and every x=1 mate are translated from shared fundamental-domain representatives."
+    }
+  ],
+  "kind": "native-meshing-corpus",
+  "mandatory_workflows": [
+    "planar-features",
+    "constrained-solid",
+    "implicit-domain",
+    "labeled-image",
+    "imperfect-surface",
+    "native-cad",
+    "periodic-system",
+    "hybrid-layers",
+    "general-quads-hexes",
+    "polyhedral-system",
+    "distributed-lifecycle",
+    "moving-overset",
+    "design-learned-loop"
+  ],
+  "registration_id": "32cb394bcb750a93e17386064c3292c91a350fe3f71f65d60981a328e57cf377"
+}

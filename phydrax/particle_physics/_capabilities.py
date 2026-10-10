@@ -22,6 +22,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
 
     profile: CapabilityProfile
     differentiation: DerivativeEvidence
+    provider_release: str = eqx.field(static=True)
     configuration_checksum: str = eqx.field(static=True)
     data_checksums: tuple[str, ...] = eqx.field(static=True)
     input_profile_ids: tuple[str, ...] = eqx.field(static=True)
@@ -42,6 +43,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
         differentiation: DerivativeEvidence,
         /,
         *,
+        provider_release: str,
         configuration_checksum: str,
         data_checksums: Sequence[str] = (),
         input_profile_ids: Sequence[str],
@@ -69,6 +71,9 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
                 raise ValueError(f"{name} must contain distinct non-empty values.")
             return tuple(sorted(result))
 
+        release = str(provider_release).strip()
+        if not release:
+            raise ValueError("provider_release must be non-empty.")
         configuration = str(configuration_checksum).strip()
         if not configuration:
             raise ValueError("configuration_checksum must be non-empty.")
@@ -97,6 +102,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
             raise ValueError("'none' cannot be combined with another side effect.")
         self.profile = profile
         self.differentiation = differentiation
+        self.provider_release = release
         self.configuration_checksum = configuration
         self.data_checksums = data
         self.input_profile_ids = inputs
@@ -112,6 +118,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
             {
                 "kind": "hep-provider-binding",
                 "profile": profile.profile_id,
+                "provider_release": release,
                 "differentiation": differentiation.evidence_id,
                 "configuration": configuration,
                 "data": list(data),
@@ -130,10 +137,6 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
     @property
     def provider_id(self) -> str:
         return self.profile.provider
-
-    @property
-    def provider_release(self) -> str:
-        return self.profile.version
 
     def supports(self, capability: str, /) -> bool:
         return str(capability) == self.profile.capability

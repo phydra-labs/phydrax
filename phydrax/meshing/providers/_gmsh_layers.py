@@ -13,7 +13,8 @@ import numpy as np
 
 from ...discretization import CellMesh
 from ...discretization._cell_complex import PolyhedralConnectivity
-from ...geometry.brep import BRepModel, PlanarEmbedding
+from ...geometry._planar_embedding import PlanarEmbedding
+from ...geometry.brep import BRepModel
 from .._boundary_layer import _nearest_distances
 from .._contracts import MeshingFailure, MeshingFailureCategory, SurfaceMeshingSpec
 from .._controls import (
@@ -35,6 +36,7 @@ from ._gmsh_import import (
     _resolve_entities,
     _source_scale,
 )
+from ._gmsh_inventory import _cad_occurrence_inventory
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,18 +478,19 @@ def _prepare_swept_geometry(
     ):
         return None
     source = _brep_model(plan.source)
+    inventory = _cad_occurrence_inventory(source)
     scale = _source_scale(source)
     if cad_entities is None:
         volume_entities = tuple(gmsh.model.getEntities(3))
-        if source.topology.num_solids != 1 or len(volume_entities) != 1:
+        if inventory.topology.num_solids != 1 or len(volume_entities) != 1:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
                 "Non-semantic swept meshing requires one source solid.",
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
         face_to_surface = tuple(
-            _resolve_entities(gmsh, source, shape, _entity_scope(source, 2, (face,)))[0]
-            for face in range(source.report.num_faces)
+            _resolve_entities(gmsh, source, _entity_scope(source, 2, (face,)))[0]
+            for face in range(len(inventory.entities[2]))
         )
         solid_to_volume = (int(volume_entities[0][1]),)
     else:
@@ -502,8 +505,8 @@ def _prepare_swept_geometry(
         levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
         for solid_value in solid_ids:
             solid = int(solid_value)
-            source_candidates = source_faces & set(source.topology.solid_faces[solid])
-            target_candidates = target_faces & set(source.topology.solid_faces[solid])
+            source_candidates = source_faces & set(inventory.topology.solid_faces[solid])
+            target_candidates = target_faces & set(inventory.topology.solid_faces[solid])
             if len(source_candidates) != 1 or len(target_candidates) != 1:
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SPECIFICATION,
@@ -575,7 +578,7 @@ def _prepare_swept_geometry(
                 )
             lateral_faces = tuple(
                 int(face)
-                for face in source.topology.solid_faces[solid]
+                for face in inventory.topology.solid_faces[solid]
                 if face not in (source_face, target_face)
             )
             prepared.append(
@@ -602,7 +605,7 @@ def _prepare_swept_geometry(
         for face in value.lateral_face_indices:
             adjacent = tuple(
                 by_solid[owner]
-                for owner in source.topology.face_solids[face]
+                for owner in inventory.topology.face_solids[face]
                 if owner != value.solid_index and owner in by_solid
             )
             for other in adjacent:
@@ -1064,11 +1067,12 @@ def _audit_swept_interfaces(
         )
     )
     controlled = {value.solid_index for value in sweep.volumes}
+    inventory = _cad_occurrence_inventory(source)
     expected_caps = {
         face
         for value in sweep.volumes
         for face in (value.source_face_index, value.target_face_index)
-        if any(owner not in controlled for owner in source.topology.face_solids[face])
+        if any(owner not in controlled for owner in inventory.topology.face_solids[face])
     }
     observed_caps = set()
     for face_index, adjacent in enumerate(incidents):

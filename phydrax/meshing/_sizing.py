@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 
 import equinox as eqx
@@ -89,6 +90,10 @@ class SizeCompliancePolicy(StrictModule, NonTrainableState):
                 "target_statistics": statistics,
             }
         )
+
+    def tolerance(self, value: float, /) -> float:
+        """Absolute size tolerance explicitly requested at this magnitude."""
+        return self.absolute_tolerance + self.relative_tolerance * abs(value)
 
 
 def _size(value: float, name: str, /) -> float:
@@ -283,6 +288,97 @@ class ProximitySizeControl(StrictModule, NonTrainableState):
         )
 
 
+class SourceProximityGapEvidence(StrictModule, NonTrainableState):
+    """Source-bound lower gap enclosures, not arbitrary nearest sample distances."""
+
+    source_scope: MeshingScope
+    target_scope: MeshingScope
+    sample_entity_ids: Array
+    sample_points: Array
+    lower_bounds: Array
+    complete: Array
+    control_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        control: ProximitySizeControl,
+        sample_entity_ids: ArrayLike,
+        sample_points: ArrayLike,
+        lower_bounds: ArrayLike,
+        complete: ArrayLike,
+        /,
+    ) -> None:
+        if not isinstance(control, ProximitySizeControl):
+            raise TypeError("Source gap evidence requires ProximitySizeControl.")
+        identifiers = np.asarray(sample_entity_ids)
+        points = np.asarray(sample_points, dtype=np.float64)
+        lower = np.asarray(lower_bounds, dtype=np.float64)
+        decided = np.asarray(complete)
+        if identifiers.ndim != 1 or not np.issubdtype(identifiers.dtype, np.integer):
+            raise ValueError("Source gap sample IDs must be one integer vector.")
+        if (
+            points.ndim != 2
+            or points.shape[0] != identifiers.size
+            or not np.all(np.isfinite(points))
+        ):
+            raise ValueError(
+                "Source gap points must be one aligned finite physical-coordinate matrix."
+            )
+        if (
+            lower.shape != identifiers.shape
+            or np.any(np.isnan(lower))
+            or np.any(lower < 0)
+        ):
+            raise ValueError("Source gap lower bounds must be aligned and nonnegative.")
+        if decided.dtype != np.dtype(np.bool_) or decided.shape != identifiers.shape:
+            raise ValueError(
+                "Source gap completeness must be one aligned Boolean vector."
+            )
+        self.source_scope, self.target_scope = control.source_scope, control.target_scope
+        self.sample_entity_ids = jnp.asarray(identifiers, dtype=jnp.int64)
+        self.sample_points = jnp.asarray(points, dtype=jnp.float64)
+        self.lower_bounds = jnp.asarray(lower, dtype=jnp.float64)
+        self.complete = jnp.asarray(decided, dtype=jnp.bool_)
+        self.control_id = control.control_id
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "source-proximity-gap-evidence",
+                "control": control.control_id,
+                "source": control.source_scope.scope_id,
+                "target": control.target_scope.scope_id,
+                "samples": array_tree_fingerprint((identifiers, points, lower, decided)),
+            }
+        )
+
+    def require_current(
+        self,
+        control: ProximitySizeControl,
+        identifiers: np.ndarray,
+        mask: np.ndarray,
+        points: np.ndarray,
+        /,
+    ) -> np.ndarray:
+        if (
+            self.control_id != control.control_id
+            or self.source_scope.scope_id != control.source_scope.scope_id
+            or self.target_scope.scope_id != control.target_scope.scope_id
+            or not np.array_equal(np.asarray(self.sample_entity_ids), identifiers)
+            or not np.array_equal(np.asarray(self.sample_points), points)
+        ):
+            raise ValueError(
+                "Source gap evidence is stale or binds another query workset."
+            )
+        if not np.all(np.asarray(self.complete)[mask]):
+            raise ValueError("Source proximity lower-gap enclosure remains unresolved.")
+        lower = np.asarray(self.lower_bounds, dtype=np.float64)
+        if control.strength is SizeControlStrength.HARD and np.any(lower[mask] <= 0):
+            raise ValueError(
+                "Hard proximity controls require separated source lower-gap evidence."
+            )
+        return lower
+
+
 SizeControl = UniformSizeControl | CurvatureSizeControl | ProximitySizeControl
 
 
@@ -453,8 +549,8 @@ def _proximity_gaps(
     only when the nearest opposite sample faces the query (negative normal dot
     product); other samples receive an infinite gap.
     """
-    source = np.isin(identifiers, np.asarray(control.source_scope.entity_ids))
-    target = np.isin(identifiers, np.asarray(control.target_scope.entity_ids))
+    source = np.isin(identifiers, np.asarray(control.source_scope.global_entity_ids))
+    target = np.isin(identifiers, np.asarray(control.target_scope.global_entity_ids))
     source_only = np.flatnonzero(source & ~target)
     target_only = np.flatnonzero(target & ~source)
     if not source_only.size or not target_only.size:
@@ -484,6 +580,7 @@ def _control_candidate(
     identifiers: np.ndarray,
     curvature: np.ndarray | None,
     normals: np.ndarray | None,
+    proximity: SourceProximityGapEvidence | None,
     /,
 ) -> np.ndarray:
     if isinstance(control, UniformSizeControl):
@@ -500,13 +597,23 @@ def _control_candidate(
             where=curvature > 0.0,
         )
     elif isinstance(control, ProximitySizeControl):
-        value = (
+        gap = (
             _proximity_gaps(control, points, identifiers, normals)
-            / control.elements_per_gap
+            if proximity is None
+            else proximity.require_current(control, identifiers, mask, points)
         )
+        value = gap / control.elements_per_gap
     else:
         raise TypeError("Unsupported size control.")
     if control.minimum_size is not None:
+        if (
+            control.strength is SizeControlStrength.HARD
+            and (isinstance(control, CurvatureSizeControl) or proximity is not None)
+            and np.any(value[mask] < control.minimum_size)
+        ):
+            raise ValueError(
+                "An active hard source curvature/gap bound contradicts minimum_size."
+            )
         value = np.maximum(value, control.minimum_size)
     if control.maximum_size is not None:
         value = np.minimum(value, control.maximum_size)
@@ -613,14 +720,17 @@ def resolve_size_controls(
     curvature: ArrayLike | None = None,
     normals: ArrayLike | None = None,
     adjacency: ArrayLike | None = None,
+    proximity_gaps: Mapping[str, SourceProximityGapEvidence] | None = None,
     combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
 ) -> tuple[ResolvedSizeField, SizeResolutionReport]:
     """Resolve targets only after intersecting every active hard size interval.
 
-    Proximity gaps are measured by exact BVH nearest queries between samples of
-    the source and target scopes. Hard growth limits on ``adjacency`` edges
-    enforce ``h_i <= h_j + (rate - 1) |x_i - x_j|`` exactly through the metric
-    owner's minimum-first relaxation.
+    Without ``proximity_gaps``, gaps are exact BVH nearest distances between
+    supplied samples only: they do not certify a continuous source gap.
+    Supplied source lower-gap evidence must bind the exact original control,
+    scopes, revisions and sample workset; unresolved evidence is refused.
+    Hard growth limits on ``adjacency`` enforce
+    ``h_i <= h_j + (rate - 1) |x_i - x_j|`` through the metric owner.
     """
 
     controls_ = tuple(controls)
@@ -634,6 +744,16 @@ def resolve_size_controls(
         for control in controls_
     ):
         raise TypeError("controls must contain supported size controls.")
+    supplied_gaps = {} if proximity_gaps is None else dict(proximity_gaps)
+    known_gaps = {
+        control.control_id
+        for control in controls_
+        if isinstance(control, ProximitySizeControl)
+    }
+    if set(supplied_gaps) - known_gaps or not all(
+        isinstance(value, SourceProximityGapEvidence) for value in supplied_gaps.values()
+    ):
+        raise ValueError("Source gap evidence must bind known proximity controls.")
     if not isinstance(domain, SizeFieldDomain):
         raise TypeError("domain must be SizeFieldDomain.")
     if not isinstance(combination, SizeCombinationPolicy):
@@ -663,7 +783,10 @@ def resolve_size_controls(
         scopes = _control_scopes(control)
         entity_ids = np.unique(
             np.concatenate(
-                tuple(np.asarray(scope.entity_ids, dtype=np.int64) for scope in scopes)
+                tuple(
+                    np.asarray(scope.global_entity_ids, dtype=np.int64)
+                    for scope in scopes
+                )
             )
         )
         mask = np.isin(identifiers, entity_ids)
@@ -672,16 +795,33 @@ def resolve_size_controls(
         for second in controls_[left + 1 :]:
             if any(
                 first_scope.entity_set_id == second_scope.entity_set_id
-                and np.intersect1d(first_scope.entity_ids, second_scope.entity_ids).size
+                and np.intersect1d(
+                    first_scope.global_entity_ids, second_scope.global_entity_ids
+                ).size
                 for first_scope in scopes
                 for second_scope in _control_scopes(second)
             ):
                 overlaps.append((control.control_id, second.control_id))
         candidates.append(
             _control_candidate(
-                control, mask, points, identifiers, curvature_values, normal_values
+                control,
+                mask,
+                points,
+                identifiers,
+                curvature_values,
+                normal_values,
+                supplied_gaps.get(control.control_id),
             )
         )
+        source_gap = supplied_gaps.get(control.control_id)
+        if (
+            isinstance(control, ProximitySizeControl)
+            and source_gap is not None
+            and control.maximum_size is None
+        ):
+            # Infinite certified gap means no facing source feature: there is
+            # no active geometric bound, rather than an infinite hard target.
+            mask &= np.isfinite(np.asarray(source_gap.lower_bounds))
         masks.append(mask)
         lower_bounds.append(
             0.0
@@ -754,7 +894,7 @@ def size_field_metric(
 ) -> MeshMetricField:
     """Compile a resolved size field into isotropic metric constraints.
 
-    Row ``i`` becomes ``h_i**-2 I`` for the entity ``scope.entity_ids[i]``, which
+    Row ``i`` becomes ``h_i**-2 I`` for ``scope.global_entity_ids[i]``, which
     must equal the field's sample entity IDs in order. Declared size bounds are
     the resolved extremes, so the metric can be combined with solution-adaptive
     metrics through :func:`combine_mesh_metrics`. The field's hard growth limits
@@ -766,7 +906,7 @@ def size_field_metric(
     if not isinstance(scope, MeshingScope):
         raise TypeError("scope must be MeshingScope.")
     if not np.array_equal(
-        np.asarray(scope.entity_ids, dtype=np.int64),
+        np.asarray(scope.global_entity_ids, dtype=np.int64),
         np.asarray(field.sample_entity_ids),
     ):
         raise ValueError("Scope entity IDs must equal the size-field sample entity IDs.")
@@ -792,6 +932,7 @@ __all__ = [
     "SizeControlStrength",
     "SizeFieldDomain",
     "SizeResolutionReport",
+    "SourceProximityGapEvidence",
     "UniformSizeControl",
     "resolve_size_controls",
     "size_field_metric",

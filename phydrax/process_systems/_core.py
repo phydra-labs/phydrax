@@ -218,7 +218,6 @@ def process_system_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"formulation": formulation}),),
             required_gates=("mass-balance", "analytic-control", "public-workflow"),
         )

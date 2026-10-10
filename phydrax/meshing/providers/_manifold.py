@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import StrEnum
 from importlib.metadata import version
 from importlib.util import find_spec
 
@@ -13,7 +12,7 @@ from numpy.typing import ArrayLike
 
 from ..._identity import SemanticProvenance
 from ...discretization import CellMesh
-from ...geometry.surface import SurfaceMetadata, SurfaceModel
+from ...geometry.surface import SurfaceBooleanOperation, SurfaceMetadata, SurfaceModel
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from .._association import GeometryAssociation, GeometryAssociationKind
 from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
@@ -41,12 +40,6 @@ _BARYCENTRIC_PLAN = SmallLinearSolvePlan(2)
 # Relative bound on backend-transferred values against independently recomputed
 # barycentric interpolation on the reported source face.
 _PROPERTY_TRANSFER_TOLERANCE = 1.0e-8
-
-
-class SurfaceBooleanOperation(StrEnum):
-    UNION = "union"
-    DIFFERENCE = "difference"
-    INTERSECTION = "intersection"
 
 
 def _surface_faces(surface: SurfaceModel, /) -> np.ndarray:
@@ -538,4 +531,4 @@ class ManifoldProvider:
         return tuple(associations)
 
 
-__all__ = ["ManifoldProvider", "SurfaceBooleanOperation"]
+__all__ = ["ManifoldProvider"]

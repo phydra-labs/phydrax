@@ -16,7 +16,7 @@ Operational coordinates and half-open intervals live in `phydrax.measurement`. A
 
 ## Provider ownership
 
-`HEPProviderBinding` binds a generic released `CapabilityProfile` to one configuration, input/output profiles, units, frames, device/dtype support, side effects, licenses, reproducibility, and generic derivative evidence. Native applications depend on this provider-neutral binding; concrete SDKs remain under `phydrax.interchange.hep`.
+`HEPProviderBinding` binds a generic released `CapabilityProfile` to an explicit external `provider_release`, one configuration, input/output profiles, units, frames, device/dtype support, side effects, licenses, reproducibility, and generic derivative evidence. The external release is required binding metadata and participates in `binding_id`; it is not an internal capability generation. Pinned executable admission compares against that external release. Internal capability profiles and `build_hep_qualification_bundle` have no version parameter and use canonical support, provider, dependency, gate, and evidence identity. Native applications depend on this provider-neutral binding; concrete SDKs remain under `phydrax.interchange.hep`.
 
 ## Statistics
 

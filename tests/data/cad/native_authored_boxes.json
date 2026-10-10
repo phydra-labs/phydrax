@@ -1,0 +1,34 @@
+{
+  "kind": "native-authored-cad-boxes",
+  "title": "Exact nested axis-aligned boxes for native STEP, IGES, and BRep-text round trips",
+  "author": "PHYDRA, Inc.",
+  "license": "LicenseRef-PHYDRA-Proprietary",
+  "provenance": {
+    "method": "independently-authored analytic coordinates",
+    "origin": "PHYDRA native meshing qualification corpus",
+    "redistribution": "repository-internal"
+  },
+  "coordinate_unit": "meter",
+  "operands": [
+    {
+      "name": "first",
+      "lower": [0.0, 0.0, 0.0],
+      "upper": [1.0, 1.0, 1.0]
+    },
+    {
+      "name": "second",
+      "lower": [0.25, 0.0, 0.0],
+      "upper": [0.75, 1.0, 1.0]
+    }
+  ],
+  "independent_reference": {
+    "intersection_bounds": [
+      [0.25, 0.0, 0.0],
+      [0.75, 1.0, 1.0]
+    ],
+    "intersection_volume": 0.5,
+    "selected_top_area": 0.5,
+    "method": "analytic axis-aligned interval intersection"
+  },
+  "record_id": "fd939176a2a980d232b2317dd07cb734fdb8d015a1a7a8a5329a1b6f77f226a9"
+}

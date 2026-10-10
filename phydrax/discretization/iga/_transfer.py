@@ -28,7 +28,13 @@ from ...linalg import (
     AlgebraArraySpace,
     ArraySpace,
     AxisArraySpace,
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
     FunctionLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
     transpose,
 )
 from ...typing import checked
@@ -36,6 +42,7 @@ from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._transfer import FieldTransfer, TransferProperties
 from ._basis import SplineAxisPlan, TensorSplineBasisSpec
+from ._geometry import NURBSGeometryState
 
 
 TransferClass: TypeAlias = Literal["exact", "projected"]
@@ -333,6 +340,55 @@ class TransferPlan(StrictModule, NonTrainableState):
         transferred = self.P.mv_block(columns)
         return transferred.reshape(target_shape + payload_shape)
 
+    def apply_rational_payload(
+        self, coefficients: ArrayLike, weights: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        """Transfer a rational field numerator and its shared denominator."""
+        if self.evidence.transfer_class != "exact":
+            raise ValueError("Rational field preservation requires an exact transfer.")
+        values, denominator = jnp.asarray(coefficients), jnp.asarray(weights)
+        source = self.P.source
+        if not isinstance(source, _SHAPED_SPACES) or denominator.shape != source.shape:
+            raise ValueError("Rational weights must match the transfer source shape.")
+        if values.shape[: denominator.ndim] != denominator.shape:
+            raise ValueError("Rational payload must begin with the source control shape.")
+        denominator = eqx.error_if(
+            denominator,
+            jnp.any(~jnp.isfinite(denominator)) | jnp.any(denominator <= 0.0),
+            "Rational weights must be finite and strictly positive.",
+        )
+        payload_rank = values.ndim - denominator.ndim
+        broadcast_shape = denominator.shape + (1,) * payload_rank
+        numerator = self.apply_payload(values * denominator.reshape(broadcast_shape))
+        target_weights = self.apply_payload(denominator)
+        target_weights = eqx.error_if(
+            target_weights,
+            jnp.any(~jnp.isfinite(target_weights)) | jnp.any(target_weights <= 0.0),
+            "Transferred rational weights must be finite and strictly positive.",
+        )
+        target_broadcast_shape = target_weights.shape + (1,) * payload_rank
+        return numerator / target_weights.reshape(target_broadcast_shape), target_weights
+
+    def apply_geometry(self, geometry: NURBSGeometryState, /) -> NURBSGeometryState:
+        """Reuse an exact transfer on the source homogeneous geometry bank.
+
+        Coordinates and weights are transferred together; transferring Cartesian
+        control points alone does not preserve a rational source map. The result
+        retains the transferred denominator scale, including under differentiation.
+        """
+        if not isinstance(geometry, NURBSGeometryState):
+            raise TypeError("geometry must be NURBSGeometryState.")
+        if self.evidence.transfer_class != "exact" or (
+            "homogeneous-geometry" not in self.evidence.preserved
+        ):
+            raise ValueError(
+                "Geometry preservation requires an exact qualified transfer."
+            )
+        points, weights = self.apply_rational_payload(
+            geometry.control_points, geometry.weights
+        )
+        return NURBSGeometryState(points, weights)
+
     def is_valid_for(
         self,
         *,
@@ -380,6 +436,35 @@ class TransferPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "IGA transfer was invalidated by a plan, layout, or revision change."
             )
+
+    def bind_numeric(
+        self, source_revision: NumericRevision, target_revision: NumericRevision, /
+    ) -> TransferPlan:
+        """Bind new numeric banks while reusing a fixed exact tensor transfer.
+
+        This is not a topology, layout or basis transition: all structural
+        owners, factors, transpose actions and evidence remain unchanged. Both
+        revisions must describe the caller's actual source and target banks.
+        """
+        if self.evidence.transfer_class != "exact" or (
+            "homogeneous-geometry" not in self.evidence.preserved
+        ):
+            raise ValueError("Numeric rebinding requires an exact tensor transfer.")
+        return TransferPlan(
+            self.field_transfer,
+            self.evidence,
+            source_plan_id=self.source_plan_id,
+            target_plan_id=self.target_plan_id,
+            source_layout_id=self.source_layout_id,
+            target_layout_id=self.target_layout_id,
+            source_revision=source_revision,
+            target_revision=target_revision,
+            restriction_operator=self.restriction_operator,
+            composition=self.composition,
+            archive_arrays=tuple(
+                zip(self.archive_names, self.archive_arrays, strict=True)
+            ),
+        )
 
     def transition_archive_payload(self, /) -> tuple[dict[str, Any], dict[str, Array]]:
         """Return deterministic metadata and arrays for a lifecycle archive shard."""
@@ -518,7 +603,13 @@ def _exact_axis_matrix(
             raise ValueError(
                 f"Exact IGA degree elevation collocation is ill-conditioned: condition estimate {solve_condition:.6g}."
             )
-        matrix = np.linalg.solve(target_collocation, source_collocation)
+        matrix = np.asarray(
+            solve(
+                LinearSystem(DenseLinearOperator(jnp.asarray(target_collocation))),
+                jnp.asarray(source_collocation),
+                policy=LinearSolvePolicy(DenseLU(), failure=FailurePolicy("error")),
+            ).value
+        )
     points = _verification_points(source, target)
     residual = _basis_matrix(target, points) @ matrix - _basis_matrix(source, points)
     scale = max(1.0, float(np.max(np.abs(_basis_matrix(source, points)))))

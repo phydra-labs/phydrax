@@ -814,6 +814,16 @@ solution is `NONFINITE`, while a finite pivot whose magnitude is at or below the
 declared tolerance is `ZERO_PIVOT`. Prepared factor solves preserve that
 distinction in their lower, upper, and aggregate statuses.
 
+Numeric preparation gathers coefficients into the dependency schedule once per
+refresh, including the transpose/adjoint orientation. The prepared substitution
+stores `scheduled_values`, not a second unscheduled off-diagonal value cache.
+Symbolic analysis retains schedule positions, columns and validity masks for
+both orientations. Each application still checks its actual right-hand side
+and solution; cached coefficient and pivot evidence does not certify a new
+right-hand side. Padding keeps the original CSR reduction width and order.
+Prepared storage, coefficient refresh, and any promoted solve workspace remain
+part of resource admission; caching does not waive their coexistence costs.
+
 `SparseFactorizationPolicy` separates ordering and fill construction from numeric
 factorization. `prepare_sparse_factorization` computes immutable symbolic LU or
 Cholesky routes and binds the first values; `refresh_sparse_factorization` reuses
@@ -839,6 +849,24 @@ window. Plan and prepared bytes therefore scale with `nnz(L + U)`, not with the
 number of elimination updates, and `SparseFactorizationPreconditionerBuilder`
 charges exactly those bytes. Every pivot's targets are unique, so the scatter is
 deterministic.
+
+`SparseFactorizationPreconditionerBuilder(policy, form="lu-congruence")`
+prepares the native coordinate metric
+`P.T @ L^-H @ abs(diag(U))^-1 @ L^-1 @ P`. It requires complete, unshifted
+native LU without pivot replacement. `prepare_sparse_factor_congruence`
+returns `PreparedSparseFactorCongruence`, retaining the actual LU factors and
+one prepared lower-adjoint substitution cache. Repeated application does not
+reprepare that cache; refresh and coexistence storage/workspace remain admitted
+against the original factor and preconditioner byte policies.
+
+`SparseFactorCongruencePreconditioner` applies this coordinate Hermitian metric
+to the source pairing's Riesz covector, not an assumed Euclidean residual.
+Transformed SPD evidence is conditional on actual finite/nonzero signed-U
+diagonal and factor/solve success; raw rank/status/refusal evidence is retained.
+This is a factor congruence, not LDL, an exact absolute Hessian, a
+Gauss–Newton surrogate or a private inverse. Scoped factor, pairing, refresh
+and byte-refusal checks passed; a saved native MINRES probe does not qualify the
+complete original periodic fit/lifecycle/cold/cap campaigns.
 
 `SparseFactorizationPolicy.ordering` selects one symmetric ordering of the graph
 of `A + Aᵀ`: `"natural"` (identity, no graph work), `"reverse-cuthill-mckee"`,
@@ -953,8 +981,13 @@ smoother.
 preconditioner sources for an explicit 2 by 2 `BlockLinearOperator`. Diagonal,
 lower, upper, and LDU forms preserve block PyTree structure. Pivot refresh
 precedes Schur reconstruction and Schur-action refresh, preventing stale Schur
-state. Triangular forms remain nonsymmetric unless the complete action has
-independent valid evidence.
+state. Without an explicit property override, diagonal composition derives SPD
+by direct sum, and paired LDU derives SPD by congruence, only when both component
+actions certify linearity, stationarity, self-adjointness and positive
+definiteness and the declared pairing gates hold. This transformed evidence
+does not certify numeric factor success: component failure/refusal statuses
+remain authoritative. Lower and upper triangular forms are nonsymmetric and
+reject self-adjoint or positive-definite overrides.
 
 ### Named block coordinates
 

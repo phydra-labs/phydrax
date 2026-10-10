@@ -585,6 +585,8 @@ qualification scenarios.
 
 ## Meshing
 
+Public facade workflows:
+
 ```text
 python examples/meshing_native.py
 python examples/adaptive_bisection_heat.py
@@ -594,15 +596,34 @@ python examples/ale_conservative_remesh.py
 python examples/cad_high_order_curving.py
 python examples/boundary_layer_core_mesh.py
 python examples/delaunay_voronoi.py
+python examples/native_surface_meshing.py
+python examples/native_tetrahedral_meshing.py
+python examples/native_multiblock_meshing.py
+python examples/native_polyhedral_meshing.py
 python -m tools.meshing_qualification --scenario bisection
 python -m tools.meshing_benchmarks --case host-bisection --resolution 64 --repeats 1
 ```
 
-The [meshing guide](../guides_meshing.md#workflows) describes what each script
-certifies. Triangulation, supermesh, and remap routes need the meshcore library
-(`phydrax[meshcore]` or `PHYDRAX_MESHCORE_LIBRARY`); the CAD-curving and
-boundary-layer core scripts need Gmsh and OCP. Qualification scenarios whose
-external dependency is absent print an explicit `missing-dependency` record.
+Bounded repository integration recipes additionally include
+`native_quad_hex_meshing.py`, `curved_native_transfer.py`, and
+`hp_metric_order_adaptation.py`. The qualification-only
+`tools/native_moving_overset.py` exercises source-aware motion and restart.
+`tools/layer_core_lifecycle_continuation.py` consumes an already published
+source archive and therefore also requires its path and expected content ID.
+Those tools use internal source/archive owners; they do not enlarge the public
+API.
+
+The [meshing guide](../guides_meshing.md#workflows) records each route's exact
+source, certification, resource, periodic, tolerance, and evidence boundaries.
+Native generation, triangulation, supermesh, and remap routes require the
+separately packaged meshcore library (`phydrax[meshcore]` or
+`PHYDRAX_MESHCORE_LIBRARY`). `cad_high_order_curving.py` and
+`boundary_layer_core_mesh.py` are now native and do not require Gmsh or OCP.
+`meshing_omega_h.py` remains an explicit optional Omega_h comparison; Gmsh, Mmg,
+fTetWild, Manifold, OpenVDB, Poisson, VoroCrust, TIOGA, METIS, and OCCT/OCP are
+likewise used only by their named provider or interchange boundaries. An absent
+optional provider is `missing-dependency`, never a native pass or product
+failure.
 
 ## Medical imaging and neurofluid transport
 

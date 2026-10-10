@@ -167,7 +167,9 @@ def test_tetrahedral_contracts() -> None:
     )
     assert static_metrics.face_blocks[0].layout.quadrature_count == 6
 
-    faces = np.asarray(discretization.connectivity.faces)
+    connectivity = discretization.connectivity
+    assert isinstance(connectivity, phx.discretization.TetrahedralConnectivity)
+    faces = np.asarray(connectivity.faces)
     face = int(np.flatnonzero(np.all(faces == (0, 1, 2), axis=1))[0])
     points = np.asarray(discretization.face_quadrature_points[face])
     weights = np.asarray(discretization.face_quadrature_weights[face])

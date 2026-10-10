@@ -18,6 +18,7 @@ from ...discretization import (
     CircleAverageKernel,
     EmbeddedMeasureTransferPlan,
     EmbeddedSourceAssociation,
+    MetricNetworkPlan,
     PreparedMetricNetwork,
 )
 from ...equations import (
@@ -27,9 +28,9 @@ from ...equations import (
     NetworkTransportPlan,
     PreparedMixedDimensionalTransport,
 )
-from ...geometry import CompartmentComplex
+from ...geometry import CompartmentComplex, CompartmentMeshingSource
 from ...imaging import DiffusionTensorImage, LabelVolume, MedicalImageAsset
-from ...meshing import CompartmentMeshingResult
+from ...meshing import CellMeshingResult
 from ...units import conversion_factor, derived_unit, LENGTH, TIME, UnitDefinition
 
 
@@ -38,7 +39,7 @@ class NeurofluidCase:
     case_id: str
     segmentation: LabelVolume
     compartments: CompartmentComplex
-    bulk_mesh: CompartmentMeshingResult
+    bulk_mesh: CellMeshingResult
     network: PreparedMetricNetwork
     concentration_series: MedicalImageAsset | None = None
     diffusion_tensor: DiffusionTensorImage | None = None
@@ -58,23 +59,25 @@ class NeurofluidCase:
         if self.compartments.source_revision != self.segmentation.label_volume_id:
             raise ValueError("Compartment complex and segmentation revisions differ.")
         self.compartments.require_valid_adjacency()
-        if not isinstance(self.bulk_mesh, CompartmentMeshingResult):
-            raise TypeError("bulk_mesh must be CompartmentMeshingResult.")
-        compartment_ids = {
-            value.compartment_id for value in self.compartments.compartments
-        }
-        if (
-            set(self.bulk_mesh.cell_compartment_ids) != compartment_ids
-            or {zone.name for zone in self.bulk_mesh.zones} != compartment_ids
-        ):
-            raise ValueError(
-                "Compartment mesh zones must exactly match the compartment complex."
-            )
+        if not isinstance(self.bulk_mesh, CellMeshingResult):
+            raise TypeError("bulk_mesh must be CellMeshingResult.")
+        evidence = self.bulk_mesh.region_evidence
+        if evidence is None:
+            raise ValueError("Neurofluid bulk meshes require source-region evidence.")
+        evidence.require_source(self.compartments)
+        evidence.require_current(
+            self.bulk_mesh.mesh,
+            self.bulk_mesh.zones,
+            self.bulk_mesh.patches,
+            geometry=self.bulk_mesh.geometry,
+        )
+        if evidence.source_revision != self.segmentation.label_volume_id:
+            raise ValueError("Bulk mesh and segmentation revisions differ.")
         if not isinstance(self.network, PreparedMetricNetwork):
             raise TypeError("network must be PreparedMetricNetwork.")
         spatial_ids = {
             self.segmentation.asset.spatial_affine.coordinate_contract.spatial_id,
-            self.bulk_mesh.result.coordinate_contract.spatial_id,
+            self.bulk_mesh.coordinate_contract.spatial_id,
             self.network.coordinate_contract.spatial_id,
         }
         if len(spatial_ids) != 1:
@@ -106,7 +109,7 @@ class NeurofluidCase:
                     "case": self.case_id,
                     "segmentation": self.segmentation.label_volume_id,
                     "compartments": self.compartments.complex_id,
-                    "bulk_mesh": self.bulk_mesh.result.mesh.mesh_id,
+                    "bulk_mesh": self.bulk_mesh.result_id,
                     "network": self.network.network_id,
                     "concentration": None
                     if self.concentration_series is None
@@ -393,7 +396,7 @@ class NeurofluidTransportPlan:
         )
 
     def prepare(self) -> PreparedMixedDimensionalTransport:
-        mesh = self.case.bulk_mesh.result.mesh
+        mesh = self.case.bulk_mesh.mesh
         bulk_plan = BulkDGTransportPlan(
             mesh,
             self.parameters.porosity,
@@ -419,7 +422,7 @@ class NeurofluidTransportPlan:
         tangents /= tangent_norm[:, None]
         transfer = EmbeddedMeasureTransferPlan(
             mesh,
-            self.case.bulk_mesh.result.coordinate_contract,
+            self.case.bulk_mesh.coordinate_contract,
             np.asarray(network.mesh.coordinates),
             np.asarray(network.node_measures),
             np.asarray(bulk.mass),
@@ -441,6 +444,209 @@ class NeurofluidTransportPlan:
             self.parameters.reservoir_coefficients,
         )
         return mixed.prepare()
+
+
+@dataclass(frozen=True, slots=True)
+class NeurofluidTransportCheckpoint:
+    """Owned mixed-carrier physics and complete accepted history, without a runtime."""
+
+    source: CompartmentMeshingSource
+    result: CellMeshingResult
+    network_plan: MetricNetworkPlan
+    parameters: NeurofluidTransportParameters
+    initial: MixedDimensionalTransportState
+    history: MixedDimensionalTransportState
+    accepted: Array
+    final: MixedDimensionalTransportState
+    continued: tuple[
+        MixedDimensionalTransportState, tuple[MixedDimensionalTransportState, Array]
+    ]
+    ad_tangent: MixedDimensionalTransportState
+    ad_value: MixedDimensionalTransportState
+    case_id: str
+    physics_ids: tuple[str, str, str]
+    size: int
+    steps: int
+    dt: float
+    step_cursor: int
+    time: float
+    target_error: float
+    balance_tolerance: float
+    checkpoint_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.source) is not CompartmentMeshingSource
+            or type(self.result) is not CellMeshingResult
+            or type(self.network_plan) is not MetricNetworkPlan
+            or type(self.parameters) is not NeurofluidTransportParameters
+        ):
+            raise TypeError(
+                "Transport checkpoints require exact original native source and unprepared physics owners."
+            )
+        if (
+            type(self.size) is not int
+            or self.size < 2
+            or type(self.steps) is not int
+            or self.steps < 1
+            or any(
+                not np.isfinite(value) or value <= 0.0
+                for value in (self.dt, self.target_error, self.balance_tolerance)
+            )
+        ):
+            raise ValueError(
+                "Transport checkpoints retain their positive original source/time/physical controls."
+            )
+        if (
+            type(self.step_cursor) is not int
+            or self.step_cursor != self.steps
+            or not np.isfinite(self.time)
+            or self.time != self.steps * self.dt
+        ):
+            raise ValueError(
+                "Accepted transport clock/cursor must bind its actual complete native history."
+            )
+        if (
+            type(self.physics_ids) is not tuple
+            or len(self.physics_ids) != 3
+            or any(type(value) is not str or not value for value in self.physics_ids)
+        ):
+            raise ValueError(
+                "Transport checkpoints require original case, plan and runtime identities."
+            )
+        self.source.validate_source_integrity()
+        if self.result.region_evidence is None or self.result.certification is None:
+            raise ValueError(
+                "Transport checkpoints require full region and source certification authority."
+            )
+        self.result.region_evidence.require_source(self.source.compartments)
+        self.result.certification.require_passed()
+        if not self.result.audit.passed or not self.result.compliance.passed:
+            raise ValueError(
+                "Accepted transport checkpoints require the original passing audit and hard generation request."
+            )
+        network = self.network_plan.prepare()
+        case = NeurofluidCase(
+            self.case_id,
+            self.source.labels,
+            self.source.compartments,
+            self.result,
+            network,
+        )
+        plan = NeurofluidTransportPlan(case, self.parameters)
+        if (
+            case.case_revision,
+            plan.plan_id,
+            plan.prepare().runtime_id,
+        ) != self.physics_ids:
+            raise ValueError(
+                "Transport checkpoint source or material constructor facts changed original physics."
+            )
+        sizes = (
+            self.result.mesh.entity_set(3).count,
+            self.network_plan.mesh.entity_set(0).count,
+            len(self.parameters.reservoir_volumes),
+        )
+
+        def state(
+            value: MixedDimensionalTransportState, *, history: bool = False
+        ) -> None:
+            if type(value) is not MixedDimensionalTransportState:
+                raise TypeError(
+                    "Accepted transport fields must retain their exact three-component state owner."
+                )
+            for name, count in zip(("bulk", "network", "reservoirs"), sizes, strict=True):
+                values = np.asarray(getattr(value, name))
+                expected = (self.steps, count) if history else (count,)
+                if (
+                    values.shape != expected
+                    or values.dtype != np.dtype("float64")
+                    or not np.all(np.isfinite(values))
+                ):
+                    raise ValueError(
+                        "Transport fields differ from their actual physical carrier, precision or accepted history."
+                    )
+
+        for value in (self.initial, self.final, self.ad_tangent, self.ad_value):
+            state(value)
+        state(self.history, history=True)
+        if (
+            np.asarray(self.accepted).shape != (self.steps,)
+            or np.asarray(self.accepted).dtype != np.dtype("bool")
+            or not np.all(np.asarray(self.accepted))
+        ):
+            raise ValueError(
+                "Transport checkpoints retain only complete actual accepted native steps."
+            )
+        for name in ("bulk", "network", "reservoirs"):
+            if not np.array_equal(
+                np.asarray(getattr(self.history, name))[-1],
+                np.asarray(getattr(self.final, name)),
+            ):
+                raise ValueError(
+                    "Transport final fields do not equal the actual last accepted history state."
+                )
+        if (
+            type(self.continued) is not tuple
+            or len(self.continued) != 2
+            or type(self.continued[1]) is not tuple
+            or len(self.continued[1]) != 2
+        ):
+            raise TypeError(
+                "Transport continuation retains its actual native scan result."
+            )
+        state(self.continued[0])
+        state(self.continued[1][0], history=True)
+        continued_accepted = np.asarray(self.continued[1][1])
+        if (
+            continued_accepted.shape != (self.steps,)
+            or continued_accepted.dtype != np.dtype("bool")
+            or not np.all(continued_accepted)
+        ):
+            raise ValueError(
+                "Transport continuation must retain every actual accepted step."
+            )
+        for name in ("bulk", "network", "reservoirs"):
+            if not np.array_equal(
+                np.asarray(getattr(self.continued[1][0], name))[-1],
+                np.asarray(getattr(self.continued[0], name)),
+            ):
+                raise ValueError(
+                    "Continued final fields differ from their real accepted history."
+                )
+        object.__setattr__(
+            self,
+            "checkpoint_id",
+            canonical_fingerprint(
+                {
+                    "kind": "neurofluid-transport-checkpoint",
+                    "source": self.source.source_id,
+                    "revision": self.source.source_revision,
+                    "result": self.result.result_id,
+                    "network": self.network_plan.plan_id,
+                    "parameters": self.parameters.parameter_id,
+                    "physics": self.physics_ids,
+                    "size": self.size,
+                    "steps": self.steps,
+                    "dt": self.dt,
+                    "step_cursor": self.step_cursor,
+                    "time": self.time,
+                    "target_error": self.target_error,
+                    "balance_tolerance": self.balance_tolerance,
+                    "accepted_fields": array_tree_fingerprint(
+                        (
+                            self.initial,
+                            self.history,
+                            self.accepted,
+                            self.final,
+                            self.continued,
+                            self.ad_tangent,
+                            self.ad_value,
+                        )
+                    ),
+                }
+            ),
+        )
 
 
 class NeurofluidDiagnosticReport(StrictModule):
@@ -506,6 +712,7 @@ __all__ = [
     "NeurofluidDiagnosticReport",
     "NeurofluidTransportParameters",
     "NeurofluidTransportPlan",
+    "NeurofluidTransportCheckpoint",
     "TracerConcentrationEvidence",
     "NeurofluidTransportUnits",
     "TracerConcentrationResult",

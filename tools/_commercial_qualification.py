@@ -972,7 +972,6 @@ def assemble_candidate_profile(
     profile = CapabilityProfile(
         _identifier(name, "profile name"),
         _identifier(provider, "profile provider"),
-        "candidate",
         tuple(supports),
         dependencies=tuple(dependency_by_id.values()),
         required_gates=tuple(sorted(criterion_ids)),

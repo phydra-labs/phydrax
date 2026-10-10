@@ -203,7 +203,6 @@ _REQUIRED_GATES = (
 
 def _candidate(
     name: str,
-    version: str,
     cache: dict[str, CapabilityProfile],
     /,
 ) -> CapabilityProfile:
@@ -217,7 +216,7 @@ def _candidate(
     capability, attributes, dependency_names = _PROFILE_SPECS[name]
     dependencies = []
     for dependency_name in dependency_names:
-        profile = _candidate(dependency_name, version, cache)
+        profile = _candidate(dependency_name, cache)
         dependencies.append(
             SupportDependency(
                 profile.profile_id,
@@ -227,7 +226,6 @@ def _candidate(
     profile = CapabilityProfile(
         name,
         "phydrax",
-        version,
         (SupportTuple(capability, attributes),),
         dependencies=tuple(dependencies),
         required_gates=_REQUIRED_GATES,
@@ -240,22 +238,17 @@ def _candidate(
 def semiconductor_candidate_profile(
     name: str,
     /,
-    *,
-    version: str = "candidate",
 ) -> CapabilityProfile:
     """Return one evidence-free exact candidate; this never grants admission."""
 
-    return _candidate(name, version, {})
+    return _candidate(name, {})
 
 
-def semiconductor_candidate_profiles(
-    *,
-    version: str = "candidate",
-) -> tuple[CapabilityProfile, ...]:
+def semiconductor_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     """Return all exact owner-local semiconductor candidates in stable order."""
 
     cache: dict[str, CapabilityProfile] = {}
-    return tuple(_candidate(name, version, cache) for name in sorted(_PROFILE_SPECS))
+    return tuple(_candidate(name, cache) for name in sorted(_PROFILE_SPECS))
 
 
 def semiconductor_detector_campaign() -> ScientificCampaign:

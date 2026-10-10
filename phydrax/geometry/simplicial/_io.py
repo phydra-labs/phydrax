@@ -6,10 +6,13 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-import meshio
 import numpy as np
+
+
+if TYPE_CHECKING:
+    import meshio
 
 from phydrax import ein
 
@@ -156,14 +159,20 @@ def _meshio_triangles(mesh: meshio.Mesh) -> tuple[np.ndarray, np.ndarray]:
 
 
 def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
-    """Canonicalize native arrays, a TriangleMesh, Meshio data, or a mesh file."""
+    """Canonicalize native arrays, a TriangleMesh, Meshio data, or a mesh file.
+
+    Native arrays and ``TriangleMesh`` values never load the external meshio
+    codec; it is imported only at the file and ``meshio.Mesh`` boundaries.
+    """
 
     if isinstance(source, TriangleMesh):
         return _canonical_triangle_arrays(source.vertices, source.faces)
-    if isinstance(source, meshio.Mesh):
-        return _canonical_triangle_arrays(*_meshio_triangles(source))
     if isinstance(source, tuple) and len(source) == 2:
         return _canonical_triangle_arrays(source[0], source[1])
+    import meshio
+
+    if isinstance(source, meshio.Mesh):
+        return _canonical_triangle_arrays(*_meshio_triangles(source))
     if isinstance(source, (str, Path)):
         source_path = Path(source).expanduser().absolute()
         resource = read_bounded_resource(

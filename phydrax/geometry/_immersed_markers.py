@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast
+from typing import cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,13 +16,16 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization._lagrangian_marker import (
-    LagrangianMarkerDiscretization,
-    LagrangianMarkerKinematics,
-    LagrangianMarkerSetPlan,
-)
 from ..typing import checked
 from ._atlas import BoundaryAtlas
+
+
+if TYPE_CHECKING:
+    from ..discretization._lagrangian_marker import (
+        LagrangianMarkerDiscretization,
+        LagrangianMarkerKinematics,
+        LagrangianMarkerSetPlan,
+    )
 
 
 MarkerVelocityProvider = Callable[[Array, Array], Array]
@@ -160,6 +163,8 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         name: str = "immersed-atlas-markers",
     ) -> LagrangianMarkerSetPlan:
         """Freeze one materialized reference measure for a prepared solve epoch."""
+        from ..discretization._lagrangian_marker import LagrangianMarkerSetPlan
+
         return LagrangianMarkerSetPlan(
             self.marker_ids,
             materialization.position,

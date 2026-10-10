@@ -42,6 +42,7 @@ from phydrax.nn.atomistic._mace_prepare import (
 from phydrax.nn.atomistic._radial_projection import RadialTableDeclaration
 from phydrax.typing import parse
 from phydrax.units import ANGSTROM, ELECTRONVOLT
+from tests._support.recipes import recipe_field_names, recipe_field_position
 
 
 SCALE = AtomisticScaleContract(ANGSTROM, ELECTRONVOLT)
@@ -170,8 +171,8 @@ def test_extra_recipe_field_refuses(written: Any, tmp_path: Path) -> None:
     target = tmp_path / "field.phydrax"
 
     def edit(manifest: dict[str, Any], arrays: dict[str, Any]) -> None:
-        fields = manifest["model_recipe"]["fields"]
-        fields["unexpected"] = {"kind": "literal", "value": 1}
+        # An item no registered field owns.
+        manifest["model_recipe"]["items"].append({"kind": "literal", "value": 1})
 
     _rewrite(path, target, edit)
     with pytest.raises(ArrayArchiveCorruptionError, match="recipe is invalid"):
@@ -200,8 +201,12 @@ def test_structurally_valid_invalid_cutoff_fails_scientific_validation(
     target = tmp_path / "cutoff.phydrax"
 
     def edit(manifest: dict[str, Any], arrays: dict[str, Any]) -> None:
-        configuration = manifest["model_recipe"]["fields"]["configuration"]["fields"]
-        configuration["cutoff"] = {"kind": "literal", "value": -3.0}
+        recipe = manifest["model_recipe"]
+        configuration = recipe["items"][recipe_field_position(recipe, "configuration")]
+        configuration["items"][recipe_field_position(configuration, "cutoff")] = {
+            "kind": "literal",
+            "value": -3.0,
+        }
 
     _rewrite(path, target, edit)
     with pytest.raises(AtomisticModelArtifactError, match="scientific validation"):
@@ -229,7 +234,8 @@ def test_oversized_declared_array_refuses_before_allocation(
     target = tmp_path / "oversized.phydrax"
 
     def edit(manifest: dict[str, Any], arrays: dict[str, Any]) -> None:
-        manifest["model_recipe"]["fields"]["embedding"]["shape"] = [1 << 40]
+        recipe = manifest["model_recipe"]
+        recipe["items"][recipe_field_position(recipe, "embedding")]["shape"] = [1 << 40]
 
     _rewrite(path, target, edit)
     with pytest.raises(ArrayArchiveCorruptionError, match="recipe is invalid"):
@@ -472,9 +478,10 @@ def test_prepared_payload_change_retaining_identities_is_refused(
 
 def _first_basis_recipe(node: Any) -> dict[str, Any] | None:
     if isinstance(node, dict):
-        fields = node.get("fields")
-        if isinstance(fields, dict) and {"path_count", "basis_id"} <= set(fields):
-            return fields
+        if node.get("kind") == "dataclass" and {"path_count", "basis_id"} <= set(
+            recipe_field_names(node)
+        ):
+            return node
         children = node.values()
     elif isinstance(node, list):
         children = node
@@ -497,9 +504,13 @@ def test_huge_consistent_basis_dimensions_refuse_before_replay_allocation(
     def edit(manifest: dict[str, Any], arrays: dict[str, Any]) -> None:
         basis = _first_basis_recipe(manifest["model_recipe"])
         assert basis is not None
-        components = 2 * basis["output_degree"]["value"] + 1
-        basis["path_count"]["value"] = paths
-        basis["relation"]["fields"]["target_size"]["value"] = components * paths
+        items = basis["items"]
+        components = 2 * items[recipe_field_position(basis, "output_degree")]["value"] + 1
+        items[recipe_field_position(basis, "path_count")]["value"] = paths
+        relation = items[recipe_field_position(basis, "relation")]
+        relation["items"][recipe_field_position(relation, "target_size")]["value"] = (
+            components * paths
+        )
 
     # The tiny archive declares a dense replay of ~2**40 * terms entries; the
     # owner binds paths to the admitted W leaves and refuses before allocating.

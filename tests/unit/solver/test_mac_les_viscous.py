@@ -359,7 +359,10 @@ def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout() -> None:
     del state
     method = phx.solver.MACSBDF2Method(dynamics, 1.0e-3, solve_method="transform")
 
-    with pytest.raises(ValueError, match="fixed-step"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'method': expected AbstractFixedStepMethod; got MACSBDF2Method",
+    ):
         phx.solver.MACAdaptiveRolloutPlan(
             dynamics,
             # ty: ignore[invalid-argument-type]

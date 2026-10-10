@@ -70,7 +70,11 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
 
 
 def _component_roots(discretization: VirtualElementDiscretization, /) -> np.ndarray:
-    vertex_count = discretization.mesh.coordinates.shape[0]
+    periodic = discretization.mesh.periodic_topology
+    vertex_count = discretization.dof_map.vertex_dof_count
+    vertex_route = (
+        np.arange(vertex_count) if periodic is None else np.asarray(periodic.orbits(0)[0])
+    )
     parents = np.arange(vertex_count, dtype=np.int32)
 
     def root(value: int) -> int:
@@ -82,6 +86,7 @@ def _component_roots(discretization: VirtualElementDiscretization, /) -> np.ndar
 
     for block in discretization.mesh.blocks:
         for cell in np.asarray(block.vertices, dtype=np.int32):
+            cell = vertex_route[cell]
             first = root(int(cell[0]))
             for vertex in cell[1:]:
                 second = root(int(vertex))
@@ -121,8 +126,21 @@ def virtual_element_dirichlet_constraint(
         connectivity = cast(PolygonalConnectivity, discretization.mesh.connectivity)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         selected = np.asarray(domain.entity_indices, dtype=np.int32)
+        selected_vertices = edges[selected].reshape((-1,))
+        periodic = discretization.mesh.periodic_topology
+        if periodic is not None:
+            physical_boundary = np.asarray(
+                periodic.quotient.entities(1).subset("boundary").mask
+            )
+            edge_route = np.asarray(periodic.orbits(1)[0])
+            if np.any(~physical_boundary[edge_route[selected]]):
+                raise ValueError(
+                    "Periodic cut facets are not physical Dirichlet boundaries."
+                )
+            selected_vertices = np.asarray(periodic.orbits(0)[0])[selected_vertices]
+            selected = edge_route[selected]
         if discretization.dof_map.vertex_dof_count:
-            mask[np.unique(edges[selected].reshape((-1,)))] = True
+            mask[np.unique(selected_vertices)] = True
         edge_width = discretization.field.element.edge_interior_dof_count
         if edge_width:
             offset = discretization.dof_map.vertex_dof_count

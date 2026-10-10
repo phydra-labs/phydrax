@@ -161,7 +161,6 @@ def biophysical_candidate_profile(
     name: str,
     /,
     *,
-    version: str = "candidate",
     dependencies: Sequence[str] = (),
 ) -> CapabilityProfile:
     """Return one unreleased, evidence-free profile for an exact scientific scope."""
@@ -175,7 +174,6 @@ def biophysical_candidate_profile(
     return CapabilityProfile(
         name,
         "phydrax",
-        version,
         (support,),
         dependencies=dependencies,
         required_gates=required_gates,

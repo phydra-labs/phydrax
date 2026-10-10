@@ -31,7 +31,13 @@ from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ._lineage import EntityLineageKind
 from ._metric import interpolate_mesh_metric, metric_edge_lengths
-from ._topology_edit import entity_keys, EntityRelations, key_rows, SimplexTopologyEdit
+from ._topology_edit import (
+    CellTopologyEdit,
+    entity_keys,
+    EntityRelations,
+    key_rows,
+    source_family_blocks,
+)
 
 
 _LOWER = float(1.0 / np.sqrt(2.0))
@@ -192,7 +198,7 @@ class LocalMetricEvidence(StrictModule, NonTrainableState):
 class LocalMetricOutcome(NamedTuple):
     """Target topology edit, its vertex-aligned metric, and the evidence."""
 
-    edit: SimplexTopologyEdit
+    edit: CellTopologyEdit
     metric: np.ndarray
     evidence: LocalMetricEvidence
 
@@ -230,7 +236,7 @@ class _Source(NamedTuple):
     cells: np.ndarray
     cell_ids: np.ndarray
     edge_keys: np.ndarray
-    block_count: int
+    blocks: tuple[tuple[str, str], ...]
 
 
 class _Counts(NamedTuple):
@@ -602,7 +608,7 @@ def _initial_state(
         cells=cells,
         cell_ids=cell_ids,
         edge_keys=entity_keys(mesh, 1),
-        block_count=len(mesh.blocks),
+        blocks=tuple((block.name, block.cell_kind) for block in mesh.blocks),
     )
     return state, source
 
@@ -1597,26 +1603,34 @@ def _assemble(state: _State, source: _Source, mode: PredicateMode, /) -> Any:
     stencil = _stencil(state, source, order, mode)
     cell_identifiers = _cell_identifiers(state, source, final)
     target_cells = row_of[state.cells].astype(np.int32)
+    families = len(source.blocks)
     block_cells = tuple(
-        target_cells[state.cell_block == block] for block in range(source.block_count)
+        target_cells[state.cell_block == block] for block in range(families)
     )
     block_ids = tuple(
-        cell_identifiers[state.cell_block == block] for block in range(source.block_count)
+        cell_identifiers[state.cell_block == block] for block in range(families)
     )
     relations = (
         _vertex_relations(state, order, identifiers, final, stencil),
         _edge_relations(state, source, final),
         _cell_relations(state, source, cell_identifiers),
     )
-    edit = SimplexTopologyEdit(
-        coordinates=state.points[order],
-        vertex_global_ids=identifiers,
-        block_cells=block_cells,
-        block_cell_ids=block_ids,
-        stencil_sources=stencil[0],
-        stencil_weights=stencil[1],
-        stencil_valid=stencil[2],
-        relations=relations,
+    # A pass that kept every source cell and vertex only relocated vertices.
+    relocated = (
+        np.all(state.cell_ids >= 0)
+        and state.cell_ids.size == source.cell_ids.size
+        and np.all(state.source_rows[order] >= 0)
+        and order.size == source.vertex_ids.size
+    )
+    edit = CellTopologyEdit(
+        "relocation" if relocated else "local_reconnection",
+        state.points[order],
+        identifiers,
+        source_family_blocks(source.blocks, block_cells, block_ids),
+        stencil[0],
+        stencil[1],
+        stencil[2],
+        relations,
     )
     return edit, state.metric[order]
 

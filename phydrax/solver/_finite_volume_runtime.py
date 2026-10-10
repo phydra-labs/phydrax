@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import equinox as eqx
 import jax
@@ -286,6 +286,21 @@ class FiniteVolumeStageFluxTrace(StrictModule):
             raise ValueError("provider_id must be non-empty.")
         self.stages = stages
         self.provider_id = identity
+
+
+class _StaticRetryCarry(NamedTuple):
+    """Bounded positivity-retry recurrence state of one structured advance."""
+
+    accepted: Array
+    accepted_average: Array
+    accepted_dt: Array
+    retries: Array
+    report: FiniteVolumeAdmissibilityReport
+    flux_rates: tuple[Array, ...]
+    balanced_contributions: tuple[ShallowWaterBalancedFaceResult, ...] | None
+    accepted_stage_flux_trace: FiniteVolumeStageFluxTrace | None
+    attempted_stage_flux_trace: FiniteVolumeStageFluxTrace | None
+    current_dt: Array
 
 
 class FiniteVolumeRuntimeState(StrictModule):
@@ -1680,13 +1695,8 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         # One accepted boundary produces one request and one transaction.  The
         # scheduler owns append/commit ordering and keeps failed artifacts out of
         # the runtime state.
-        event_kind = getattr(
-            TopologyEventKind,
-            "SLIDING_REFRESH",
-            TopologyEventKind.OVERSET_DONOR_REBUILD,
-        )
         request = FiniteVolumeTopologyEventRequest(
-            event_kind,
+            TopologyEventKind.OVERSET_DONOR_REBUILD,
             prior_state.content_state.topology_epoch_id,
             plan.plan_id,
             payload_id=coupling.evidence_id,
@@ -1741,10 +1751,18 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             status=TopologyEventStatus.SUCCESS,
             coverage_tolerance=plan.coverage_tolerance,
         )
+        # The prepared runtime and accepted content are refreshed only from a
+        # published rebind: its receipt carries the coverage, conservation, and
+        # admissibility evidence the transaction required before publication.
+        receipt = transaction.receipt
+        published_content = transaction.content_state
         if (
             not transaction.committed
+            or receipt is None
+            or not receipt.published
             or transaction.result_epoch is None
             or transaction.result_artifacts is None
+            or not isinstance(published_content, FiniteVolumeConservativeContentState)
         ):
             raise RuntimeError(
                 "Accepted sliding refresh transaction failed; "
@@ -1755,7 +1773,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             raise RuntimeError("Sliding refresh committed without an event successor.")
         event_id = transaction.events[-1].event_id
         refreshed_state = FiniteVolumeRuntimeState(
-            remapped_content,
+            published_content,
             journal,
             accepted_state.step_size,
             accepted_step=accepted_state.accepted_step,
@@ -2889,11 +2907,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         attempted = self.precision.decision(
             jnp.minimum(self.precision.decision(runtime_state.step_size), stable)
         )
-        accepted = jnp.asarray(False)
-        accepted_average = original_average
-        accepted_dt = jnp.asarray(0.0, dtype=attempted.dtype)
-        retries = jnp.asarray(0, dtype=jnp.int32)
-        last_report = FiniteVolumeAdmissibilityReport(
+        initial_report = FiniteVolumeAdmissibilityReport(
             high_order_valid=jnp.asarray(False),
             fallback_valid=jnp.asarray(False),
             blend_factor=jnp.asarray(
@@ -2911,81 +2925,155 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 dtype=jnp.dtype(self.precision.reduction_dtype),
             ),
         )
-        accepted_flux_rates = self._zero_static_flux_rates()
-        accepted_balanced_contributions: (
-            tuple[ShallowWaterBalancedFaceResult, ...] | None
-        ) = None
-        accepted_stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
-        attempted_stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
-        current_dt = self.precision.decision(attempted)
-        for retry in range(self.policy.maximum_retries + 1):
+
+        def attempt(
+            step_size: Array, /
+        ) -> tuple[
+            PositivityBlendResult | BalancedPositivityBlendResult,
+            FiniteVolumeStageFluxTrace | None,
+        ]:
             candidate, stage_flux_trace = self._candidate_with_stage_flux_trace(
-                runtime_state.time, original_average, current_dt, args
+                runtime_state.time, original_average, step_size, args
             )
-            finite = jnp.all(jnp.isfinite(candidate.state))
-            valid = (
-                finite
-                & candidate.report.fallback_valid
-                & candidate.report.limited_state_valid
-            )
-            take = (~accepted) & valid
-            if self.stage_flux_provider is not None:
-                if stage_flux_trace is None:
-                    raise RuntimeError(
-                        "Bound stage-flux provider did not produce an SSPRK3 trace."
-                    )
-                attempted_stage_flux_trace = stage_flux_trace
-                if accepted_stage_flux_trace is None:
-                    accepted_stage_flux_trace = jax.tree.map(
-                        jnp.zeros_like, stage_flux_trace
-                    )
-                accepted_stage_flux_trace = jax.tree.map(
-                    lambda new, old: jnp.where(take, new, old),
-                    stage_flux_trace,
-                    accepted_stage_flux_trace,
+            if self.stage_flux_provider is not None and stage_flux_trace is None:
+                raise RuntimeError(
+                    "Bound stage-flux provider did not produce an SSPRK3 trace."
                 )
-            accepted_average = jnp.where(
-                take,
-                self.precision.storage(candidate.state),
-                accepted_average,
+            return candidate, stage_flux_trace
+
+        def select_tree(condition: Array, new: _TreeT, old: _TreeT, /) -> _TreeT:
+            return jax.tree.map(
+                lambda new_value, old_value: jnp.where(condition, new_value, old_value),
+                new,
+                old,
             )
-            accepted_dt = jnp.where(
-                take,
-                self.precision.decision(current_dt),
-                accepted_dt,
+
+        def zeros(structure: _TreeT, /) -> _TreeT:
+            return jax.tree.map(
+                lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype), structure
             )
-            retries = jnp.where(take, retry, retries)
-            last_report = jax.tree.map(
-                lambda new, old: jnp.where(take, new, old),
-                candidate.report,
-                last_report,
-            )
-            accepted_flux_rates = tuple(
-                jnp.where(
-                    take,
-                    self.precision.reduction(new),
-                    old,
-                )
-                for new, old in zip(
-                    candidate.integrated_fluxes,
-                    accepted_flux_rates,
-                    strict=True,
-                )
-            )
+
+        def commit(
+            carry: _StaticRetryCarry,
+            candidate: PositivityBlendResult | BalancedPositivityBlendResult,
+            stage_flux_trace: FiniteVolumeStageFluxTrace | None,
+            retry: Array,
+            take: Array,
+            /,
+        ) -> _StaticRetryCarry:
+            balanced = carry.balanced_contributions
             if isinstance(candidate, BalancedPositivityBlendResult):
-                if accepted_balanced_contributions is None:
-                    accepted_balanced_contributions = jax.tree.map(
-                        jnp.zeros_like, candidate.contributions
+                if balanced is None:
+                    raise RuntimeError(
+                        "Hydrostatic retry state lacks balanced face evidence."
                     )
-                accepted_balanced_contributions = jax.tree.map(
-                    lambda new, old: jnp.where(take, new, old),
-                    candidate.contributions,
-                    accepted_balanced_contributions,
-                )
-            accepted = accepted | take
-            current_dt = self.precision.decision(
-                current_dt * self.policy.reduction_factor
+                balanced = select_tree(take, candidate.contributions, balanced)
+            accepted_trace = carry.accepted_stage_flux_trace
+            attempted_trace = carry.attempted_stage_flux_trace
+            if stage_flux_trace is not None:
+                if accepted_trace is None:
+                    raise RuntimeError("Stage-flux retry state lacks attempt evidence.")
+                accepted_trace = select_tree(take, stage_flux_trace, accepted_trace)
+                attempted_trace = stage_flux_trace
+            return _StaticRetryCarry(
+                accepted=carry.accepted | take,
+                accepted_average=jnp.where(
+                    take,
+                    self.precision.storage(candidate.state),
+                    carry.accepted_average,
+                ),
+                accepted_dt=jnp.where(
+                    take,
+                    self.precision.decision(carry.current_dt),
+                    carry.accepted_dt,
+                ),
+                retries=jnp.where(take, retry, carry.retries),
+                report=select_tree(take, candidate.report, carry.report),
+                flux_rates=tuple(
+                    jnp.where(take, self.precision.reduction(new), old)
+                    for new, old in zip(
+                        candidate.integrated_fluxes, carry.flux_rates, strict=True
+                    )
+                ),
+                balanced_contributions=balanced,
+                accepted_stage_flux_trace=accepted_trace,
+                attempted_stage_flux_trace=attempted_trace,
+                current_dt=carry.current_dt,
             )
+
+        def retry_step(
+            carry: _StaticRetryCarry, retry: Array, /
+        ) -> tuple[_StaticRetryCarry, None]:
+            def run_attempt(value: _StaticRetryCarry) -> _StaticRetryCarry:
+                candidate, stage_flux_trace = attempt(value.current_dt)
+                valid = (
+                    jnp.all(jnp.isfinite(candidate.state))
+                    & candidate.report.fallback_valid
+                    & candidate.report.limited_state_valid
+                )
+                return commit(
+                    value, candidate, stage_flux_trace, retry, (~value.accepted) & valid
+                )
+
+            # Attempts after the first valid one are skipped; every attempt still
+            # reduces the step so the exhausted-retry status sees the same dt.
+            advanced = jax.lax.cond(
+                carry.accepted, lambda value: value, run_attempt, carry
+            )
+            return (
+                advanced._replace(
+                    current_dt=self.precision.decision(
+                        carry.current_dt * self.policy.reduction_factor
+                    )
+                ),
+                None,
+            )
+
+        # One abstract attempt fixes the optional evidence structure, so the
+        # bounded retry recurrence traces and compiles a single attempt body.
+        # Committing that rejected template fixes the carry dtypes to those the
+        # recurrence produces.
+        initial_dt = self.precision.decision(attempted)
+        candidate_structure, trace_structure = jax.eval_shape(attempt, initial_dt)
+        empty_candidate = zeros(candidate_structure)
+        empty_trace = None if trace_structure is None else zeros(trace_structure)
+        initial = commit(
+            _StaticRetryCarry(
+                accepted=jnp.asarray(False),
+                accepted_average=original_average,
+                accepted_dt=jnp.asarray(0.0, dtype=attempted.dtype),
+                retries=jnp.asarray(0, dtype=jnp.int32),
+                report=initial_report,
+                flux_rates=self._zero_static_flux_rates(),
+                balanced_contributions=(
+                    empty_candidate.contributions
+                    if isinstance(empty_candidate, BalancedPositivityBlendResult)
+                    else None
+                ),
+                accepted_stage_flux_trace=empty_trace,
+                attempted_stage_flux_trace=empty_trace,
+                current_dt=initial_dt,
+            ),
+            empty_candidate,
+            empty_trace,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(False),
+        )
+        final, _ = jax.lax.scan(
+            retry_step,
+            initial,
+            jnp.arange(self.policy.maximum_retries + 1, dtype=jnp.int32),
+        )
+        accepted = final.accepted
+        accepted_average = final.accepted_average
+        accepted_dt = final.accepted_dt
+        retries = final.retries
+        last_report = final.report
+        accepted_flux_rates = final.flux_rates
+        accepted_balanced_contributions = final.balanced_contributions
+        accepted_stage_flux_trace = final.accepted_stage_flux_trace
+        attempted_stage_flux_trace = final.attempted_stage_flux_trace
+        current_dt = final.current_dt
 
         minimum_reached = current_dt < self.precision.decision(
             self.policy.minimum_step_size

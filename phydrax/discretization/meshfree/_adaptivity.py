@@ -50,6 +50,7 @@ from ...sparse import EdgeRelation
 from ...typing import Bool, Dim, Float64, Int64, parse
 from .._point_cloud import PreparedPointCloudDiscretization
 from .._point_cloud_pde import PointCollocationStability, PointStabilityOutcome
+from .._transfer import TransferGeometryBinding
 from ..fem import dorfler_mark, maximum_mark
 from ._capacity import bucketed_storage_capacity
 from ._multilevel import _priority_independent_set, _SELECTED, _stable_priorities
@@ -1319,6 +1320,7 @@ def prepare_adaptation_transfer(
     nonnegative: bool = False,
     linear_policy: LinearSolvePolicy | None = None,
     conic_policy: ConvexSolvePolicy | None = None,
+    geometry: TransferGeometryBinding | None = None,
 ) -> PreparedPointTransfer:
     """Joint conservative, constant and moment-preserving source-to-target transfer.
 
@@ -1335,7 +1337,9 @@ def prepare_adaptation_transfer(
     for measures that integrate those monomials identically. Refusals are
     returned, never repaired. ``linear_policy`` / ``conic_policy`` select the
     owner's native correction solves (status-mode failure only); a step limit
-    too small for the correction reports ``PROVIDER_UNRESOLVED``.
+    too small for the correction reports ``PROVIDER_UNRESOLVED``. ``geometry``
+    declares the source/target topology epochs the transfer is prepared between;
+    it is required for the transfer to form an epoch transition.
     """
     if not isinstance(cloud, PreparedPointCloudDiscretization):
         raise TypeError("cloud must be a PreparedPointCloudDiscretization.")
@@ -1365,6 +1369,7 @@ def prepare_adaptation_transfer(
         ),
         linear_policy=linear_policy,
         conic_policy=conic_policy,
+        geometry=geometry,
     ).prepare()
 
 

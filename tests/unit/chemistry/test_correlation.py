@@ -29,9 +29,7 @@ def _h2_store() -> Any:
     gaussian = phx.operators.quantum.gaussian
     basis = gaussian.GaussianBasisPlan.from_contracted_s(
         [1, 2],
-        # ty: ignore[invalid-argument-type]
         [_EXPONENTS, _EXPONENTS],
-        # ty: ignore[invalid-argument-type]
         [_COEFFICIENTS, _COEFFICIENTS],
         source_id="correlation-hydrogen",
     ).prepare(system)

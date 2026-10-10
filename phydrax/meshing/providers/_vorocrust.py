@@ -487,6 +487,10 @@ def _remaining_limits(limits: MeshingLimits, deadline: float, /) -> MeshingLimit
         maximum_cells=limits.maximum_cells,
         maximum_connectivity_entries=limits.maximum_connectivity_entries,
         maximum_data_bytes=limits.maximum_data_bytes,
+        maximum_work_units=limits.maximum_work_units,
+        maximum_cavity_cells=limits.maximum_cavity_cells,
+        maximum_geometry_queries=limits.maximum_geometry_queries,
+        maximum_scratch_bytes=limits.maximum_scratch_bytes,
         maximum_wall_seconds=remaining,
     )
 

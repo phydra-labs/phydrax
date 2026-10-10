@@ -485,27 +485,27 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.equations.SmoothCompressibleD2VKineticMethod
+::: phydrax.discretization.SmoothCompressibleD2VKineticMethod
 
 ---
 
-::: phydrax.equations.PositiveEnergyEquilibriumPlan
+::: phydrax.discretization.PositiveEnergyEquilibriumPlan
 
 ---
 
-::: phydrax.equations.EnergyEquilibriumResult
+::: phydrax.discretization.EnergyEquilibriumResult
 
 ---
 
-::: phydrax.equations.EnergyEquilibriumEvidence
+::: phydrax.discretization.EnergyEquilibriumEvidence
 
 ---
 
-::: phydrax.equations.SmoothCompressibleLearnedEquilibriumEvidence
+::: phydrax.discretization.SmoothCompressibleLearnedEquilibriumEvidence
 
 ---
 
-::: phydrax.equations.SmoothCompressibleLearnedCollisionResult
+::: phydrax.discretization.SmoothCompressibleLearnedCollisionResult
 
 ---
 
@@ -594,7 +594,7 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.equations.FixedConformingFVKineticInterfacePlan
+::: phydrax.discretization.FixedConformingFVKineticInterfacePlan
 
 ## Fixed-step execution and export
 

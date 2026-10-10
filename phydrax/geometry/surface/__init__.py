@@ -7,6 +7,22 @@
 from importlib import import_module
 from typing import Any
 
+from ._arrangement import (
+    arrange_triangle_surfaces,
+    SurfaceArrangement,
+    SurfaceArrangementError,
+    SurfaceArrangementEvidence,
+    SurfaceArrangementLimits,
+    SurfaceArrangementStatus,
+)
+from ._boolean import (
+    surface_boolean,
+    SurfaceBooleanError,
+    SurfaceBooleanOperation,
+    SurfaceBooleanResult,
+    SurfaceBooleanStatus,
+    SurfaceClosureEvidence,
+)
 from ._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -69,6 +85,20 @@ __all__ = [
     "SurfaceSelection",
     "SurfaceValidityCertificate",
     "intersect_plane_surface",
+]
+__all__ += [
+    "SurfaceArrangement",
+    "SurfaceArrangementError",
+    "SurfaceArrangementEvidence",
+    "SurfaceArrangementLimits",
+    "SurfaceArrangementStatus",
+    "SurfaceBooleanError",
+    "SurfaceBooleanOperation",
+    "SurfaceBooleanResult",
+    "SurfaceBooleanStatus",
+    "SurfaceClosureEvidence",
+    "arrange_triangle_surfaces",
+    "surface_boolean",
 ]
 __all__ += [
     name

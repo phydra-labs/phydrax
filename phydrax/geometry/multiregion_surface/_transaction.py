@@ -41,6 +41,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...discretization._topology_epoch import TopologyEpoch, TopologyEpochTransition
+from ...discretization._transfer import TransferGeometryBinding
 from ...lifecycle import commit_candidate, TransactionalCandidate
 from ...typing import Dim, Float, parse
 from ._contracts import (
@@ -1106,14 +1107,28 @@ def apply_surface_events(
         sheet_field_names=state.sheet_field_names,
         region_field_names=state.region_field_names,
     )
+    geometry = TransferGeometryBinding(
+        _geometry_id(topology, source_points),
+        _geometry_id(
+            candidate.topology,
+            np.asarray(
+                committed_state.positions[: candidate.topology.vertex_count],
+                dtype=np.float64,
+            ),
+        ),
+        "topology-correspondence",
+        source_topology_id=topology.topology_id,
+        target_topology_id=candidate.topology.topology_id,
+        coverage_defect=None,
+    )
     transition = transfers.sheet.epoch_transition(
-        source_epoch, target_epoch, field_name="sheet-slot-content"
+        source_epoch, target_epoch, field_name="sheet-slot-content", geometry=geometry
     )
     face_transfer = transfers.face
     if face_transfer is None:
         raise RuntimeError("A remeshing transaction must prepare a face transfer.")
     face_transition = face_transfer.epoch_transition(
-        source_epoch, target_epoch, field_name="face-content"
+        source_epoch, target_epoch, field_name="face-content", geometry=geometry
     )
     return SurfaceEventPassResult(
         candidate.topology,
@@ -1511,6 +1526,23 @@ def _commit_surface_burst(
         source_epoch,
         target_epoch,
         field_name="surviving-sheet-slot-content",
+        geometry=TransferGeometryBinding(
+            _geometry_id(
+                topology,
+                np.asarray(state.positions[: topology.vertex_count], dtype=np.float64),
+            ),
+            _geometry_id(
+                candidate_topology,
+                np.asarray(
+                    committed_state.positions[: candidate_topology.vertex_count],
+                    dtype=np.float64,
+                ),
+            ),
+            "topology-correspondence",
+            source_topology_id=topology.topology_id,
+            target_topology_id=candidate_topology.topology_id,
+            coverage_defect=None,
+        ),
     )
     return SurfaceBurstResult(
         candidate_topology,

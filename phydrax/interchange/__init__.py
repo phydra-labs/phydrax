@@ -5,8 +5,17 @@
 """Generic external-representation interchange contracts."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
+
+if TYPE_CHECKING:
+    from ._cad_occt import (
+        import_occt_brep,
+        model_from_occt_shape,
+        persist_occt_shape,
+        read_occt_shape,
+    )
+    from ._cad_occt_projection import prepare_occt_projection, PreparedOcctProjection
 from .. import _external_runtime as external_runtime
 from .._document_resource import (
     decode_json_resource,
@@ -89,6 +98,28 @@ from ._black_hole import (
     NeutralBlackHoleArtifact,
 )
 from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
+from ._cad import (
+    approximate_intersection_curve,
+    CadCoverage,
+    CadCurveApproximation,
+    CadCurveFitPolicy,
+    CadExportPolicy,
+    CadExportResult,
+    CadImportPolicy,
+    CadImportResult,
+    CadInterchangeError,
+    CadRefusal,
+    CadRefusalReason,
+)
+from ._cad_archive import BRepArchiveReceipt, load_brep_archive, save_brep_archive
+from ._cad_brep_text import (
+    BRepTextVersion,
+    decode_brep_text_bytes,
+    decode_brep_text_resource,
+    read_brep_text,
+    write_brep_text,
+)
+from ._cad_io import read_cad
 from ._catalog import (
     CarrierKind,
     format_capabilities,
@@ -120,6 +151,12 @@ from ._geospatial import (
     GeospatialContract,
     GeospatialTransform,
     QualifiedGeospatialGrid,
+)
+from ._iges import (
+    decode_iges_bytes,
+    decode_iges_resource,
+    read_iges,
+    write_iges,
 )
 from ._inspection import (
     HostInspectionConversion,
@@ -236,6 +273,14 @@ from ._segy_rev2 import (
     read_segy_rev2,
     SEGYRev2IEEEProfile,
 )
+from ._step import (
+    decode_step_bytes,
+    decode_step_resource,
+    read_step,
+    STEP_ENTITY_COVERAGE,
+    StepSchema,
+    write_step,
+)
 from ._time_reference import (
     convert_time,
     LeapSecondTable,
@@ -261,6 +306,15 @@ def __getattr__(name: str) -> Any:
         value = import_module(".hep", __name__)
     elif name in _external_runtime_all:
         value = external_runtime.__dict__[name]
+    elif name in (
+        "import_occt_brep",
+        "model_from_occt_shape",
+        "persist_occt_shape",
+        "read_occt_shape",
+    ):
+        value = import_module("._cad_occt", __name__).__dict__[name]
+    elif name in ("PreparedOcctProjection", "prepare_occt_projection"):
+        value = import_module("._cad_occt_projection", __name__).__dict__[name]
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     globals()[name] = value
@@ -268,7 +322,7 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | {"hep"} | set(_external_runtime_all))
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -470,5 +524,41 @@ __all__ = [
     "LegacyKineticBoundaryImport",
     "import_packed_kinetic_boundary",
     "read_compressible_kinetic_yaml",
+    "BRepArchiveReceipt",
+    "CadCoverage",
+    "CadCurveApproximation",
+    "CadCurveFitPolicy",
+    "CadExportPolicy",
+    "CadExportResult",
+    "CadImportPolicy",
+    "CadImportResult",
+    "CadInterchangeError",
+    "CadRefusal",
+    "CadRefusalReason",
+    "STEP_ENTITY_COVERAGE",
+    "StepSchema",
+    "approximate_intersection_curve",
+    "decode_step_bytes",
+    "decode_step_resource",
+    "load_brep_archive",
+    "read_step",
+    "save_brep_archive",
+    "write_step",
+    "read_cad",
+    "decode_brep_text_bytes",
+    "decode_brep_text_resource",
+    "decode_iges_bytes",
+    "decode_iges_resource",
+    "import_occt_brep",
+    "model_from_occt_shape",
+    "persist_occt_shape",
+    "read_brep_text",
+    "read_iges",
+    "read_occt_shape",
+    "write_brep_text",
+    "write_iges",
+    "PreparedOcctProjection",
+    "prepare_occt_projection",
+    "BRepTextVersion",
 ]
 __all__ += [name for name in _external_runtime_all if name not in __all__]

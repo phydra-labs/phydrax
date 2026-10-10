@@ -36,6 +36,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import (
@@ -45,6 +46,7 @@ from ..._validation import (
     unique_identifiers,
 )
 from ...typing import checked, Dim, HostInt64, Identifier, parse, Scope
+from .._mesh_certificates import PiecewiseLinearDomain
 from ._contracts import (
     MultiRegionSurfaceCapacityEvidence,
     MultiRegionSurfaceCapacityPlan,
@@ -57,7 +59,7 @@ from ._geometry import PreparedMultiRegionSurface
 from ._seeding import MultiRegionSurfaceSeed
 from ._state import MultiRegionSurfaceState
 from ._topology import MultiRegionSurfaceTopology
-from ._validation import validate_multiregion_surface
+from ._validation import _geometry_id, validate_multiregion_surface
 
 
 if TYPE_CHECKING:
@@ -232,10 +234,6 @@ class LabelFieldSurfaceExtractionEvidence(StrictModule, NonTrainableState):
         if not isinstance(status, LabelFieldSurfaceExtractionStatus):
             raise TypeError("status must be a LabelFieldSurfaceExtractionStatus.")
         route_ = parse(route, LabelFieldSurfaceExtractionRoute, "route")
-        if validation is not None and not isinstance(
-            validation, MultiRegionSurfaceEvidence
-        ):
-            raise TypeError("validation must be MultiRegionSurfaceEvidence or None.")
         accepted = status is LabelFieldSurfaceExtractionStatus.ACCEPTED
         collision = bool(
             accepted
@@ -310,17 +308,13 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
         evidence: LabelFieldSurfaceExtractionEvidence,
         /,
     ) -> None:
-        if candidate_seed is not None and not isinstance(
-            candidate_seed, MultiRegionSurfaceSeed
-        ):
-            raise TypeError("candidate_seed must be MultiRegionSurfaceSeed or None.")
         authority = (topology, state, surface)
         if evidence.accepted:
-            if not isinstance(topology, MultiRegionSurfaceTopology):
+            if topology is None:
                 raise TypeError("An accepted extraction needs a topology.")
-            if not isinstance(state, MultiRegionSurfaceState):
+            if state is None:
                 raise TypeError("An accepted extraction needs a state.")
-            if not isinstance(surface, PreparedMultiRegionSurface):
+            if surface is None:
                 raise TypeError("An accepted extraction needs a prepared surface.")
             if candidate_seed is None or not evidence.collision_certified:
                 raise ValueError(
@@ -338,6 +332,207 @@ class LabelFieldSurfaceExtractionResult(StrictModule, NonTrainableState):
     @property
     def accepted(self) -> bool:
         return self.evidence.accepted
+
+    def validate_source_integrity(self) -> PreparedMultiRegionSurface | None:
+        """Validate the actual accepted authority and all prepared descendants."""
+        LabelFieldSurfaceExtractionResult(
+            self.candidate_seed,
+            self.topology,
+            self.state,
+            self.surface,
+            self.lineage,
+            self.evidence,
+        )
+        if not self.accepted:
+            return None
+        if self.topology is None or self.state is None or self.surface is None:
+            raise ValueError("An accepted extraction lost its retained authority.")
+        self.state.require_topology(self.topology)
+        rebuilt = self.surface.validate_restored(self.topology, self.state)
+        validation = self.evidence.validation
+        if (
+            validation is None
+            or validation.evidence_id != self.surface.evidence.evidence_id
+            or self.evidence.lineage_id != self.lineage.lineage_id
+            or self.lineage.region_ids != self.topology.region_ids
+        ):
+            raise ValueError("Label extraction evidence contradicts its retained source.")
+        return rebuilt
+
+
+@final
+class LabelFieldVolumeBinding(StrictModule, NonTrainableState):
+    """Volume authority of an accepted shared reconstructed interface.
+
+    The input is categorical lattice samples. The represented volume is the
+    explicitly selected Freudenthal marching-tetrahedra reconstruction, not
+    occupied voxel cells and not a topology certificate for an unknown field
+    between the samples. Its extraction error and source ancestry remain
+    attached to the domain consumed by native constrained recovery.
+    """
+
+    domain: PiecewiseLinearDomain
+    extraction: LabelFieldSurfaceExtractionResult
+    coordinate_contract: SpatialCoordinateContract
+    lineage: LabelFieldSurfaceLineage
+    extraction_evidence: LabelFieldSurfaceExtractionEvidence
+    interpretation: str = eqx.field(static=True)
+    source_id: str = eqx.field(static=True)
+    source_revision: str = eqx.field(static=True)
+    binding_id: str = eqx.field(static=True)
+    interface_definitions: tuple[tuple[str, str, str, bool], ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        extraction: LabelFieldSurfaceExtractionResult,
+        coordinate_contract: SpatialCoordinateContract,
+        /,
+    ) -> None:
+        if not isinstance(extraction, LabelFieldSurfaceExtractionResult):
+            raise TypeError("extraction must be LabelFieldSurfaceExtractionResult.")
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+        extraction.validate_source_integrity()
+        if not extraction.accepted or not extraction.evidence.collision_certified:
+            raise ValueError(
+                "A volume binding requires accepted shared-interface extraction."
+            )
+        topology = extraction.topology
+        state = extraction.state
+        if topology is None or state is None:
+            raise ValueError("An accepted extraction has no represented geometry.")
+        state.require_topology(topology)
+        for mask, count in (
+            (topology.vertex_active, topology.vertex_count),
+            (topology.edge_active, topology.edge_count),
+            (topology.face_active, topology.face_count),
+            (topology.region_active, topology.region_count),
+            (topology.pair_active, topology.region_pair_count),
+        ):
+            active = np.asarray(mask, dtype=np.bool_)
+            if not np.array_equal(active, np.arange(active.size) < count):
+                raise ValueError(
+                    "Reconstructed authority requires canonical active prefixes."
+                )
+        if (
+            not np.array_equal(state.vertex_active, topology.vertex_active)
+            or not np.array_equal(state.region_active, topology.region_active)
+            or not np.array_equal(state.slot_active, topology.slot_active)
+        ):
+            raise ValueError(
+                "Reconstructed state masks contradict its topology authority."
+            )
+        positions = np.asarray(state.positions[: topology.vertex_count], dtype=np.float64)
+        validation = extraction.evidence.validation
+        if (
+            validation is None
+            or validation.topology_id != topology.topology_id
+            or validation.lineage_id != topology.lineage_id
+            or validation.geometry_id != _geometry_id(topology, positions)
+            or extraction.evidence.lineage_id != extraction.lineage.lineage_id
+            or extraction.lineage.region_ids != topology.region_ids
+        ):
+            raise ValueError("Reconstructed authority carries stale extraction evidence.")
+        boundary = extraction.lineage.boundary_region_id
+        if boundary not in topology.region_ids:
+            raise ValueError(
+                "The reconstructed volume requires explicit exterior identity."
+            )
+        finite = tuple(value for value in topology.region_ids if value != boundary)
+        if not finite:
+            raise ValueError("A reconstructed material volume needs a finite region.")
+        mapping = np.asarray(
+            [
+                -1 if value == boundary else finite.index(value)
+                for value in topology.region_ids
+            ],
+            dtype=np.int64,
+        )
+        source = canonical_fingerprint(
+            {
+                "kind": "label-field-volume-source",
+                "lineage": extraction.lineage.lineage_id,
+                "coordinates": coordinate_contract.spatial_id,
+            }
+        )
+        domain = PiecewiseLinearDomain(
+            positions,
+            topology.host_faces(),
+            mapping[topology.host_face_labels()],
+            finite,
+            source_id=source,
+        )
+        interior = np.unique(
+            np.sort(
+                domain.facet_regions[np.all(domain.facet_regions >= 0, axis=1)], axis=1
+            ),
+            axis=0,
+        )
+        self.interface_definitions = tuple(
+            (
+                canonical_fingerprint(
+                    {
+                        "kind": "reconstructed-material-interface",
+                        "source": source,
+                        "regions": tuple(sorted((finite[first], finite[second]))),
+                    }
+                ),
+                finite[first],
+                finite[second],
+                True,
+            )
+            for first, second in interior.tolist()
+        )
+        self.domain = domain
+        self.extraction = extraction
+        self.coordinate_contract = coordinate_contract
+        self.lineage = extraction.lineage
+        self.extraction_evidence = extraction.evidence
+        self.interpretation = "freudenthal-categorical-interface-reconstruction"
+        self.source_id = source
+        self.source_revision = domain.source_revision
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "label-field-volume-binding",
+                "source": source,
+                "domain": domain.domain_id,
+                "topology": topology.topology_id,
+                "surface_lineage": topology.lineage_id,
+                "vertex_global_ids": array_tree_fingerprint(
+                    np.asarray(
+                        topology.vertex_global_ids[: topology.vertex_count],
+                        dtype=np.int64,
+                    )
+                ),
+                "face_global_ids": array_tree_fingerprint(
+                    np.asarray(
+                        topology.face_global_ids[: topology.face_count], dtype=np.int64
+                    )
+                ),
+                "epoch": topology.epoch,
+                "validation": validation.evidence_id,
+                "extraction": extraction.evidence.evidence_id,
+                "interpretation": self.interpretation,
+                "interfaces": self.interface_definitions,
+            }
+        )
+
+    def validate_source_integrity(self) -> None:
+        """Re-admit the actual retained extraction, not a reconstructed provenance ID."""
+        expected = LabelFieldVolumeBinding(self.extraction, self.coordinate_contract)
+        if (
+            expected.binding_id != self.binding_id
+            or expected.source_id != self.source_id
+            or expected.source_revision != self.source_revision
+            or expected.interface_definitions != self.interface_definitions
+            or expected.interpretation != self.interpretation
+            or array_tree_fingerprint(expected.domain)
+            != array_tree_fingerprint(self.domain)
+            or expected.lineage.lineage_id != self.lineage.lineage_id
+            or expected.extraction_evidence.evidence_id
+            != self.extraction_evidence.evidence_id
+        ):
+            raise ValueError("Reconstructed image volume source authority is stale.")
 
 
 @final
@@ -1181,5 +1376,6 @@ __all__ = [
     "LabelFieldSurfaceExtractionRoute",
     "LabelFieldSurfaceExtractionStatus",
     "LabelFieldSurfaceLineage",
+    "LabelFieldVolumeBinding",
     "PreparedLabelFieldSurfaceExtraction",
 ]

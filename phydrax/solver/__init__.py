@@ -1,2828 +1,4304 @@
 #
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Lazy public solver facade; solver capabilities load from their canonical owners."""
 
-"""
-# Solver
-
-Solvers aggregate numerical terms and attached model losses for training or
-evaluation. `FunctionalSolver` consumes one ordered `terms` collection.
-
-Hard `EnforcementSpec` declarations compile local boundary/initial ansätze and
-joint typed field realizations into an `EnforcementProgram`. Finite, fiberwise,
-coefficient, kernel, nonlinear, and feasibility routes are applied once before
-term evaluation. Dynamic realization state advances only at accepted-step
-boundaries.
-
-!!! example
-    ```python
-    import jax.random as jr
-    import phydrax as phx
-
-    geom = phx.domain.Interval1d(0.0, 1.0)
-
-    @geom.Function("x")
-    def u(x):
-        return 1.0
-
-    component = geom.component()
-    condition = phx.conditions.Residual("u", component, lambda field: field)
-    source = phx.integration.per_step(
-        phx.integration.mean_over(component),
-        phx.domain.PointSampling(
-            32,
-            layout=phx.domain.SampleLayout((("x",),)),
-        ),
-    )
-    term = phx.terms.ResidualPenalty(condition, source)
-
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": u},
-        terms=(term,),
-    )
-
-    loss = solver.loss(key=jr.key(0))
-    print(loss)
-    ```
-"""
-
-from typing import Any
-
-from . import advanced, coupling, maxwell
-from ._adaptive_tdvp import (
-    AdaptiveTDVPPlan,
-    AdaptiveTDVPResult,
-    solve_adaptive_tdvp,
-)
-from ._advanced_potential_flow3d import (
-    NonlinearPotentialFlowPolicy3D,
-    NonlinearPotentialFlowState3D,
-    NonlinearPotentialFlowStep3D,
-    prepare_nonlinear_potential_flow_3d,
-    PreparedNonlinearPotentialFlow3D,
-    SecondOrderPotentialFlowPlan3D,
-)
-from ._aerothermal_material import (
-    ConjugateAerothermalExchange,
-    ConjugateAerothermalInterfacePlan,
-    ConservativeRecessionRemapPlan,
-    ConservativeRecessionRemapResult,
-    FixedConnectivityRecessionPlan,
-    RecessionEvaluation,
-)
-from ._aerothermodynamic_topology import (
-    AerothermodynamicALEEvidence,
-    AerothermodynamicALEPlan,
-    AerothermodynamicTopologyTransaction,
-    HighEnthalpyAMREvidence,
-    HighEnthalpyAMRIndicatorPlan,
-)
-from ._balance_law import (
-    AbstractBalanceLawProcessPlan,
-    AbstractPreparedBalanceLawProcess,
-    BalanceLawAcceptedBudget,
-    BalanceLawAdvanceResult,
-    BalanceLawProcessAdvance,
-    BalanceLawProcessState,
-    BalanceLawRolloutResult,
-    BalanceLawRuntimeState,
-    PreparedBalanceLawRuntime,
-    ScheduledBalanceLawRolloutPlan,
-)
-from ._balance_law_adaptive import (
-    AdaptiveBalanceLawRolloutPlan,
-    AdaptiveBalanceLawRolloutResult,
-    BalanceLawAdaptivePolicy,
-    BalanceLawAdaptiveStatus,
-    BalanceLawDecisionJournal,
-)
-from ._balance_law_checkpoint import (
-    BalanceLawCheckpoint,
-    BalanceLawCheckpointPlan,
-    read_balance_law_checkpoint,
-    write_balance_law_checkpoint,
-)
-from ._balance_law_transport import (
-    AbstractPreparedBalanceLawTransport,
-    BalanceLawSourceView,
-    BalanceLawTransportAdvance,
-    BalanceLawTransportState,
-    prepare_balance_law_transport,
-    PreparedConstrainedMHDBalanceLawTransport,
-    PreparedFiniteVolumeBalanceLawTransport,
-)
-from ._bdf_method import BDFMethod
-from ._bem_fracture3d import (
-    advance_bem_fracture_3d,
-    BEMFractureEpochTransition3D,
-    BEMFractureProblem3D,
-    BEMFractureResult3D,
-    prepare_bem_fracture_3d,
-    PreparedBEMFracture3D,
-)
-from ._block_amr_embedded_events import (
-    MovingEmbeddedBoundaryEventEvidence,
-    MovingEmbeddedBoundaryEventPlan,
-    MovingEmbeddedBoundaryEventResult,
-)
-from ._block_amr_lifecycle import (
-    CutCellOutputSnapshot,
-    CutCellRestartRegistry,
-    MultivaluedBlockAMRCheckpoint,
-    MultivaluedBlockAMRCheckpointPlan,
-    read_multivalued_block_amr_checkpoint,
-    write_multivalued_block_amr_checkpoint,
-    write_multivalued_cut_cell_output,
-)
-from ._block_amr_runtime import (
-    AMRTimeSchedulePlan,
-    BlockAMRAdvancePhase,
-    BlockAMRAdvanceResult,
-    BlockAMRRuntimePlan,
-    BlockAMRRuntimeState,
-    PreparedBlockAMRRuntime,
-)
-from ._boosted_frame import (
-    BoostedExternalField,
-    BoostedFrameEvidence,
-    BoostedFramePlan,
-    BoostedFrameState,
-    BoostedFrameStepResult,
-    BoostedLabFieldSnapshot,
-    BoostedLabParticleSnapshot,
-    BoostedParticles,
-    BoostedParticleSnapshotBuffer,
-    BoostedSnapshotPlan,
-    BoostedSnapshotState,
-    PreparedBoostedFrame,
-)
-from ._boundary_integral import (
-    InteriorLaplaceDirichletResult,
-    solve_interior_laplace_dirichlet_2d,
-)
-from ._calabi_yau import (
-    CalabiYauMetricProblem,
-    CalabiYauMetricResult,
-    CalabiYauSolvePolicy,
-    solve_calabi_yau_metric,
-)
-from ._calabi_yau_archive import CalabiYauMetricArtifact, freeze_calabi_yau_result
-from ._calabi_yau_campaigns import (
-    CalabiYauCampaign,
-    cp1_calibration,
-    prepare_elliptic_curve,
-    prepare_fermat_calabi_yau,
-    prepare_fermat_quintic,
-    prepare_quartic_k3,
-)
-from ._calabi_yau_evidence import (
-    CalabiYauMetricEvidence,
-    CalabiYauMetricEvidencePlan,
-    evaluate_calabi_yau_metric_evidence,
-)
-from ._calabi_yau_qualification import (
-    calabi_yau_candidate_profiles,
-    calabi_yau_candidate_support_tuples,
-)
-from ._calabi_yau_registry import (
-    CalabiYauCheckpointRegistry,
-    load_calabi_yau_checkpoint,
-    register_calabi_yau_checkpoint,
-)
-from ._cfd_dem import (
-    advance_cfd_dem_window,
-    CFDEMCouplingSchedulePlan,
-    CFDEMCouplingState,
-    CFDEMMacroStepResult,
-)
-from ._channel_flow import (
-    CHANNEL_FLOW_EXPLICIT_RESTRICTION,
-    CHANNEL_FLOW_INITIAL_CONSTRAINT,
-    CHANNEL_FLOW_STOKES_FAILURE,
-    CHANNEL_FLOW_SUCCESS,
-    ChannelFlowDiagnosticsHistory,
-    ChannelFlowSolution,
-    ChannelSBDF2Method,
-    ChannelSBDF2State,
-    PreparedChannelSBDF2Method,
-    solve_channel_sbdf2,
-)
-from ._charged_particle_transport import (
-    ChargedParticleTransportPlan,
-    ChargedParticleTransportResult,
-    ChargedParticleTransportStatus,
-    ChargedStepBank,
-)
-from ._charged_step_radiation import (
-    ChargedStepRadiationPlan,
-    ChargedStepRadiationResult,
-)
-from ._chemical_equilibrium import (
-    ChemicalEquilibriumEnsemble,
-    ChemicalEquilibriumEvidence,
-    ChemicalEquilibriumPlan,
-    ChemicalEquilibriumResult,
-    ChemicalEquilibriumThermodynamicState,
-)
-from ._chemical_reactor import (
-    ChemicalReactorKind,
-    ChemicalReactorPlan,
-    ChemicalReactorSolution,
-    ChemicalReactorThermodynamicState,
-    PreparedChemicalReactorDynamics,
-)
-from ._circuit_qed import (
-    assemble_circuit_qed_hamiltonian,
-    CircuitDrivePort,
-    CircuitInteraction,
-    CircuitModeKind,
-    CircuitModePlacement,
-    CircuitQEDDeviceCostEstimate,
-    CircuitQEDDeviceDiagnostics,
-    CircuitQEDDeviceParameters,
-    CircuitQEDDevicePlan,
-    CircuitQEDDevicePolicy,
-    CircuitQEDDeviceSpec,
-    plan_circuit_qed_device,
-    prepare_circuit_qed_device,
-    PreparedCircuitQEDDevice,
-    refresh_circuit_qed_device,
-)
-from ._cochain_electrostatic import (
-    CochainElectrostaticBoundaryPlan,
-    CochainElectrostaticPlan,
-    CochainElectrostaticResult,
-    ElectrostaticBoundaryKind,
-)
-from ._cochain_multirate import (
-    CochainMultirateDiagnostics,
-    CochainMultiratePlan,
-    CochainRatePartition,
-)
-from ._cochain_pic_field import CochainMaxwellPICFieldSolver
-from ._collocation import (
-    assemble_stochastic_collocation,
-    COLLOCATION_NONFINITE,
-    COLLOCATION_SOLVER_FAILURE,
-    COLLOCATION_SUCCESS,
-    CollocationAxisRule,
-    evaluate_stochastic_collocation,
-    materialize_stochastic_collocation,
-    run_stochastic_collocation,
-    StochasticCollocationDesign,
-    StochasticCollocationDiagnostics,
-    StochasticCollocationNode,
-    StochasticCollocationNodeEvaluation,
-    StochasticCollocationPlan,
-    StochasticCollocationResult,
-)
-from ._compatible_systems import (
-    CompatibleElasticityDynamics,
-    CompatibleElasticityState,
-    CompatibleIdealMHDInductionDynamics,
-    CompatibleIdealMHDState,
-    CompatibleIncompressibleProjection,
-    CompatiblePoroelasticDynamics,
-    CompatiblePoroelasticState,
-    CompatiblePressurePreconditioner,
-    CompatibleProjectionStatus,
-    CompatibleThermoelasticDynamics,
-    CompatibleThermoelasticState,
-    CompatibleVariableDensityProjection,
-    IncompressibleProjectionResult,
-)
-from ._component_training import (
-    ComponentOptimizer,
-    ComponentTrainingResult,
-    train_components,
-)
-from ._compressible_kinetic import CompressibleKineticFixedStepMethod
-from ._compressible_kinetic_output import (
-    CompressibleKineticVTKResult,
-    write_compressible_kinetic_vti,
-)
-from ._conservation_temporal import (
-    ConservationIMEXFixedStepMethod,
-    ConservationIMEXMethod,
-    ConservationIMEXResult,
-    ElementBlockPreconditioner,
-    ImplicitConservationStageResult,
-    prepare_element_block_preconditioner,
-)
-from ._constrained_mechanics import (
-    ConstrainedMechanicalState,
-    ConstrainedMechanicalStep,
-    ConstrainedMechanicsEvidence,
-    ConstrainedMechanicsStatus,
-    PreparedSHAKERATTLEPlan,
-    SHAKERATTLEPlan,
-)
-from ._constrained_mhd import (
-    ConstrainedMHDDiagnostics,
-    ConstrainedMHDRunStatus,
-    ConstrainedMHDSSPRK3Plan,
-    ConstrainedMHDState,
-    ConstrainedMHDStepResult,
-)
-from ._continuum_dsmc import (
-    ContinuumDSMCConservedSchema,
-    ContinuumDSMCInterfaceExchange,
-    ContinuumDSMCInterfacePlan,
-    ContinuumDSMCReason,
-    ContinuumToDSMCConversionPlan,
-    ContinuumToDSMCConversionResult,
-    DSMCToContinuumReductionPlan,
-    DSMCToContinuumReductionResult,
-    HybridOwnershipEpochPlan,
-    HybridOwnershipEpochState,
-    HybridOwnershipRequest,
-)
-from ._convergence import (
-    coupled_strong_error,
-    NoiseTruncationLevel,
-    NoiseTruncationStudy,
-    SPDEConvergenceLevel,
-    SPDEConvergenceMetric,
-    SPDEConvergenceStudy,
-    SPDEErrorBudget,
-    SPDERefinementAxis,
-    weak_observable_estimate,
-    WeakObservableEstimate,
-)
-from ._convolution_quadrature import __all__ as _convolution_quadrature_all
-from ._coupled import (
-    CoupledCost,
-    CoupledHierarchyResult,
-    CoupledLevelResult,
-    CoupledLevelSolver,
-    CoupledObservable,
-    CoupledValidity,
-    solve_coupled_hierarchy,
-)
-from ._coupled_field_checkpoint import (
-    CoupledFieldCheckpoint,
-    CoupledFieldCheckpointPlan,
-    read_coupled_field_checkpoint,
-    write_coupled_field_checkpoint,
-)
-from ._dae_coordinate_adapter import (
-    AutonomousDAEBlockLinearization,
-    DAEBlockCoordinate,
-    DAEBlockJacobian,
-    DAEBlockLinearization,
-    DAECoordinateAdapter,
-    DAERootCoordinates,
-    DAERootKind,
-    DAEScaleKind,
-    DAESetupHook,
-    InputDAEBlockLinearization,
-)
-from ._dae_events import (
-    certify_dae_regularity,
-    dae_consistency_candidate,
-    DAEConsistencyCandidate,
-    DAEConsistencyPolicy,
-    DAEEventPlan,
-    DAEEventReplayEvidence,
-    DAEEventResult,
-    DAEEventStatus,
-    DAERegularityCertificate,
-    DAERegularityCertificatePlan,
-    DAERegularityDomain,
-    DAEResetMap,
-    manifold_bdf_stage,
-    ManifoldBDFMethod,
-    ManifoldBDFStage,
-    PreparedDAEEventPlan,
-)
-from ._dae_initialization import (
-    DAEInitializationMode,
-    DAEInitializationResult,
-    DAEInitializationSpec,
-    DAEInitializationStatus,
-)
-from ._dark_sector_epoch_runtime import (
-    admit_dark_sector_work,
-    CONSERVATION_COMPONENTS,
-    dark_sector_epoch_checkpoint,
-    DarkSectorEpochPlan,
-    DarkSectorEpochResult,
-    DarkSectorEpochState,
-    DarkSectorResumePoint,
-    DarkSectorRunCoordinator,
-    DarkSectorWorkAdmission,
-    decode_content_id,
-    empty_dark_sector_epoch_state,
-    encode_content_id,
-    encode_content_ids,
-    EpochStatus,
-    finalize_dark_sector_epoch,
-    replace_dark_sector_conservation,
-    replace_dark_sector_pool,
-)
-from ._deep_bsde import DeepBSDEResult, solve_deep_bsde
-from ._deep_picard import (
-    DeepPicardDiagnostics,
-    DeepPicardInitialSource,
-    DeepPicardResult,
-    PicardSourceContext,
-    solve_deep_picard,
-    StructuredPicardSource,
-    StructuredSourceBuilder,
-)
-from ._deep_splitting import (
-    DeepSplittingDiagnostics,
-    DeepSplittingInterpolation,
-    DeepSplittingResult,
-    DeepSplittingSamplingMode,
-    DeepSplittingSolution,
-    solve_deep_splitting,
-)
-from ._delay import (
-    ConstantDelay,
-    DelayDifferentialProblem,
-    DelayHistory,
-    DelayHistoryDerivative,
-    DelayHistoryWindow,
-    DelayTerm,
-    DelayValues,
-    DelayVectorField,
-    DelayWienerTerm,
-    DerivativeDelay,
-    DistributedDelay,
-    DistributedDelayKernel,
-    EndpointNeutralFunctional,
-    FunctionalDelay,
-    HistoryFunctional,
-    NeutralDelayProblem,
-    NeutralFunctional,
-    NeutralRecoveryGuess,
-    PointDelay,
-    StateDependentDelay,
-    StateDependentLag,
-)
-from ._delay_adjoint import CheckpointedDelayAdjoint, SegmentedDelayAdjoint
-from ._delay_capabilities import (
-    AbstractStochasticDelayInterpolation,
-    AcceptedStochasticDelayInterpolation,
-    adaptive_stochastic_delay_step_doubling,
-    AdaptiveStochasticDelayPolicy,
-    backsolve_delay_adjoint,
-    BacksolveDelayAdjoint,
-    CertifiedTruncatedFunctionalDelay,
-    DelayBacksolveEvidence,
-    DelayPrimalTape,
-    evaluate_certified_truncated_delay,
-    ExponentialConvolutionDelay,
-    InfiniteMemoryEvidence,
-    ItoEulerDelayInterpolation,
-    SRKMKDelayInterpolation,
-    StochasticDelayControllerEvidence,
-    StochasticDelayInterpolationCapabilities,
-    StratonovichEulerHeunDelayInterpolation,
-)
-from ._delay_segmented import (
-    DelaySegmentArchive,
-    DelaySegmentContinuation,
-    fixed_delay_history_capacity,
-    SegmentedDelayResult,
-    solve_diffrax_delay_segmented,
-)
-from ._deterministic_ensemble import __all__ as _deterministic_ensemble_all
-from ._differential import (
-    DifferentialInterpretation,
-    DifferentialProblem,
-    DifferentialSolution,
-    DifferentialVectorField,
-    NoiseStructure,
-    WienerCoefficientRepresentation,
-    WienerTerm,
-)
-from ._differential_algebraic import (
-    DAEAdaptivePolicy,
-    DAEAttemptHistory,
-    DAEAttemptStatus,
-    DAEContinuation,
-    DAEFailureMode,
-    DAERegularityEvidence,
-    DAERegularityFailureMode,
-    DAERegularityMode,
-    DAERegularityPolicy,
-    DAERegularityStatus,
-    DAEReplayEvidence,
-    DAEReplayMode,
-    DAEReplayPolicy,
-    DAESolvePlan,
-    DAESolvePolicy,
-    DAEStatus,
-    DAEStepHistory,
-    DAETemporalReusePolicy,
-    DAETerminationStatus,
-    DifferentialAlgebraicProblem,
-    DifferentialAlgebraicSolution,
-    discretized_dae_problem,
-    initialize_dae,
-    plan_dae,
-    prepare_dae,
-    PreparedDAESolve,
-    solve_dae,
-)
-from ._diffrax_backend import (
-    DifferentialIterationMetrics,
-    solve_diffrax,
-    solve_diffrax_ensemble,
-)
-from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
-from ._diffrax_delay_backend import solve_diffrax_delay
-from ._diffrax_state_packing import (
-    DiffraxComplexStatePolicy,
-    DiffraxComplexStateStrategy,
-)
-from ._discrete_ordinates import (
-    DiscreteOrdinatesEvidence,
-    DiscreteOrdinatesResult,
-    DiscreteOrdinatesTransportPlan,
-)
-from ._discrete_velocity import (
-    ConservativeFiniteVolumeDVMPlan,
-    FiniteVolumeDVMResidualEvidence,
-    PreparedConservativeFiniteVolumeDVM,
-)
-from ._distributed_aerothermodynamics import (
-    DistributedAerothermodynamicPlan,
-    DistributedConservationLedger,
-    DistributedOwnershipEvidence,
-)
-from ._distributed_pic import (
-    AbstractDistributedPICFieldSolver,
-    distribute_pic_field_solver,
-    DistributedElectromagneticPICPlan,
-    DistributedPICExecutor,
-    DistributedPICStepResult,
-    pic_distribution_support,
-    PICDistributedEvidence,
-    PICDistributedRoute,
-    PICDistributionSupport,
-)
-from ._distributed_wave_amr import (
-    DistributedWaveAMRCheckpointEvidence,
-    DistributedWaveAMRDiagnostics,
-    DistributedWaveAMRGravityEvidence,
-    DistributedWaveAMRLinearEvidence,
-    DistributedWaveAMRObservables,
-    DistributedWaveAMRRestoreEvidence,
-    DistributedWaveAMRResult,
-    DistributedWaveAMRState,
-    DistributedWaveAMRTopologyTransferResult,
-    PreparedDistributedWaveAMR,
-    PreparedDistributedWaveAMRTopologyTransition,
-)
-from ._dmrg import (
-    FiniteDMRGCostEstimate,
-    FiniteDMRGDiagnostics,
-    FiniteDMRGPlan,
-    FiniteDMRGPolicy,
-    FiniteDMRGProblem,
-    FiniteDMRGResult,
-    FiniteDMRGStatus,
-    plan_finite_dmrg,
-    prepare_finite_dmrg,
-    PreparedFiniteDMRG,
-    refresh_finite_dmrg,
-    solve_finite_dmrg,
-)
-from ._dressed_spectrum import (
-    dressed_quantum_subspace,
-    DressedSpectrumCostEstimate,
-    DressedSpectrumDiagnostics,
-    DressedSpectrumPlan,
-    DressedSpectrumPolicy,
-    DressedStateLabel,
-    plan_dressed_spectrum,
-    prepare_dressed_spectrum,
-    PreparedDressedSpectrum,
-    refresh_dressed_spectrum,
-)
-from ._driving_path import (
-    AbstractDifferentiableDrivingPath,
-    CallableDrivingPath,
-    CausalBackwardHermiteDrivingPath,
-    DrivingPathFitDiagnostics,
-    FixedBSplineDrivingPath,
-    OfflineCubicDrivingPath,
-    PiecewiseLinearDrivingPath,
-)
-from ._dsmc_runtime import (
-    DSMCBoundaryExchangeLedger,
-    DSMCProductionPlan,
-    DSMCRuntimeState,
-    DSMCStepResult,
-)
-from ._dynamic_vector_cq import (
-    prepare_dynamic_elasticity_fem_bem_cq_3d,
-    prepare_dynamic_maxwell_fem_bem_cq_3d,
-    PreparedDynamicElasticityFEMBEM3D,
-    PreparedDynamicMaxwellFEMBEM3D,
-    PreparedDynamicVectorFEMBEM3D,
-)
-from ._dynamics_evolution import DiffraxEvolution
-from ._elasticity_boundary import __all__ as _elasticity_boundary_all
-from ._electrode_reaction import (
-    MACReactiveElectrodeBinding,
-    MACReactiveElectrodeEvaluation,
-    ReactiveElectrodeEvaluation,
-    ReactiveElectrodePlan,
-    ReactiveElectrodeState,
-    ReactiveElectrodeStepResult,
-)
-from ._electrohydrodynamic import (
-    CochainElectrohydrodynamicEvaluation,
-    CochainElectrohydrodynamicForcePlan,
-    MACElectrohydrodynamicEvaluation,
-    MACElectrohydrodynamicForcePlan,
-)
-from ._electromagnetic_pic import (
-    ElectromagneticPICDiagnostics,
-    ElectromagneticPICFixedStepMethod,
-    ElectromagneticPICPlan,
-    ElectromagneticPICState,
-    ElectromagneticPICStepResult,
-    PICFieldHistory,
-    PICRestartCheckpoint,
-)
-from ._electrostatic_conductors import (
-    ConductorCircuitSolveResult,
-    ElectrostaticConductorCoupling,
-    ElectrostaticConductorState,
-)
-from ._electrostatic_pic import (
-    ElectrostaticPICDiagnostics,
-    ElectrostaticPICFixedStepMethod,
-    ElectrostaticPICPlan,
-    ElectrostaticPICState,
-    ElectrostaticPICStepResult,
-)
-from ._em_shower import (
-    EMShowerPlan,
-    EMShowerResult,
-    EMShowerStatus,
-    ShowerParticleBatch,
-    ShowerSpecies,
-)
-from ._etdrk import (
-    ETDRKMethod,
-    LESStabilityGuardedETDRKMethod,
-    PreparedETDRKMethod,
-    PreparedLESStabilityGuardedETDRKMethod,
-    solve_etdrk,
-)
-from ._evolution_observation import (
-    BoundedEvolutionObservation,
-    BoundedEvolutionObservationPlan,
-    OBSERVATION_NONFINITE,
-    observe_evolution_bounded,
-)
-from ._fbsde import (
-    CoupledFBSDEProblem,
-    CoupledFBSDEResult,
-    solve_coupled_fbsde_explicit,
-)
-from ._fem_bem_scalar import __all__ as _fem_bem_scalar_all
-from ._fem_bem_vector import __all__ as _fem_bem_vector_all
-from ._fem_multirate import (
-    conservative_multirate_flux,
-    ConservativeLocalTimeStepPlan,
-    DGInterfaceFluxResult,
-    DGMultirateTracePlan,
-    DGTraceHistory,
-    TimeSlabFluxLedger,
-)
-from ._fermionic_gaussian import (
-    damped_fermionic_mode,
-    FermionicGaussianProblem,
-    FermionicGaussianSolution,
-    open_kitaev_chain,
-    solve_fermionic_gaussian,
-)
-from ._fidelity_pinn import (
-    bind_fidelity_pinn_level,
-    condition_fidelity_correction,
-    evaluate_fidelity_pinn,
-    FidelityFieldTransfer,
-    FidelityPINNEvaluation,
-    FidelityPINNResult,
-    FidelityPINNStage,
-    prepare_fidelity_pinn_stage,
-)
-from ._field_equilibrium import (
-    FieldEquilibriumFormulation,
-    prepare_functional_stationarity,
-    prepare_virtual_work_equilibrium,
-    PreparedFieldEquilibrium,
-)
-from ._finite_cptp import (
-    FiniteCPTPIntegrationResult,
-    FiniteLindbladChannelPlan,
-    integrate_finite_cptp,
-)
-from ._finite_element_adaptivity import (
-    FiniteElementHPTopologyResult,
-    FiniteElementTopologyResult,
-    FiniteElementTopologyTransaction,
-    read_finite_element_hp_epoch,
-    write_finite_element_hp_epoch,
-)
-from ._finite_element_checkpoint import (
-    FiniteElementCheckpoint,
-    read_finite_element_checkpoint,
-    write_finite_element_checkpoint,
-    write_partitioned_finite_element_checkpoint,
-)
-from ._finite_element_result import (
-    FiniteElementResult,
-    FiniteElementRunConfiguration,
-    FiniteElementSolveDiagnostics,
-    read_finite_element_result,
-    write_finite_element_result,
-)
-from ._finite_element_schedule import (
-    FiniteElementAcceptedState,
-    FiniteElementAcceptedStepSchedule,
-    FiniteElementAttemptResult,
-    FiniteElementRestartManifest,
-    FiniteElementStepDiagnostics,
-    FiniteElementStepPolicy,
-    read_finite_element_restart,
-    write_finite_element_restart,
-)
-from ._finite_particle_transport import (
-    FiniteParticleStepResult,
-    FiniteParticleTransportPlan,
-    FiniteParticleTransportReason,
-    FiniteParticleTransportState,
-)
-from ._finite_response import (
-    FiniteExcitedStateResult,
-    FiniteResponseEvidence,
-    FiniteResponsePolicy,
-    FiniteResponseProblem,
-    FiniteResponseResult,
-    FiniteResponseStatus,
-    mps_projector_mpo,
-    solve_finite_excited_state,
-    solve_finite_response,
-)
-from ._finite_subspace_tdvp import (
-    FiniteSubspaceTDVPPlan,
-    FiniteSubspaceTDVPResult,
-    FiniteVariationalSubspaceTDVPProblem,
-    prepare_finite_subspace_tdvp,
-    solve_finite_subspace_tdvp,
-)
-from ._finite_volume import (
-    DirectionalSplitFiniteVolumePlan,
-    FiniteVolumeStepResult,
-    SplittingKind,
-    UnsplitFiniteVolumeSSPRK3Plan,
-)
-from ._finite_volume_case import (
-    FiniteVolumeCaseSpec,
-    FiniteVolumeExecutionSpec,
-    FiniteVolumePrecisionPolicy,
-    PrecisionDType,
-)
-from ._finite_volume_case_loader import (
-    load_finite_volume_case,
-    PreparedFiniteVolumeCase,
-)
-from ._finite_volume_checkpoint import (
-    FiniteVolumeCheckpoint,
-    FiniteVolumeCheckpointPlan,
-    read_finite_volume_checkpoint,
-    write_finite_volume_checkpoint,
-)
-from ._finite_volume_content import (
-    apply_stage_rate_euler_update,
-    FiniteVolumeConservativeContentState,
-)
-from ._finite_volume_implicit import (
-    FiniteVolumeBackwardEulerPlan,
-    FiniteVolumeImplicitStage,
-    FiniteVolumeImplicitStepResult,
-    PreparedFiniteVolumeBackwardEulerStep,
-)
-from ._finite_volume_output import FiniteVolumeOutputPlan
-from ._finite_volume_phase_change import (
-    FiniteVolumePhaseChangeStrangMethod,
-    FiniteVolumePhaseChangeStrangResult,
-)
-from ._finite_volume_rollout import (
-    AdaptiveFiniteVolumeRolloutPlan,
-    FiniteVolumeGradientReport,
-    FiniteVolumeReplayMode,
-    FiniteVolumeReplayPolicy,
-    FiniteVolumeRetentionPolicy,
-    FiniteVolumeRolloutResult,
-    ScheduledFiniteVolumeRolloutPlan,
-)
-from ._finite_volume_runtime import (
-    FiniteVolumeAdvanceResult,
-    FiniteVolumeALEAdvanceEvidence,
-    FiniteVolumeEmbeddedAdvanceEvidence,
-    FiniteVolumeRunStatus,
-    FiniteVolumeRuntimeState,
-    FiniteVolumeScheduledAdvanceResult,
-    FiniteVolumeStageFlux,
-    FiniteVolumeStageFluxProvider,
-    FiniteVolumeStageFluxTrace,
-    FiniteVolumeStepPolicy,
-    PreparedFiniteVolumeRuntime,
-)
-from ._finite_volume_topology_events import (
-    FiniteVolumeRemeshArtifact,
-    FiniteVolumeTopologyArtifactEvidence,
-    FiniteVolumeTopologyArtifacts,
-    FiniteVolumeTopologyEvent,
-    FiniteVolumeTopologyEventJournal,
-    FiniteVolumeTopologyEventRequest,
-    FiniteVolumeTopologyEventScheduler,
-    FiniteVolumeTopologyEventTransaction,
-    FiniteVolumeTopologyEventTransactionResult,
-    TopologyEventKind,
-    TopologyEventState,
-    TopologyEventStatus,
-)
-from ._fixed_step import (
-    AbstractAcceptedStepTransform,
-    AbstractFixedStepMethod,
-    AbstractSSPRKStageTransform,
-    AcceptedStepTransformResult,
-    AdaptiveReplayPreparationPolicy,
-    CallableFixedStepMethod,
-    CallableSSPRKStageTransform,
-    CompositeAcceptedStepTransform,
-    FixedStepEvidence,
-    FixedStepEvidenceRetention,
-    FixedStepIterationMetrics,
-    FixedStepProblem,
-    FixedStepReplayMode,
-    FixedStepReplayPolicy,
-    FixedStepResult,
-    FixedStepRetentionPolicy,
-    FixedStepRolloutPlan,
-    FixedStepRolloutResult,
-    FixedStepSolution,
-    FixedStepStatus,
-    IdentityAcceptedStepTransform,
-    IdentitySSPRKStageTransform,
-    inactive_fixed_step_retry,
-    LearnedStepCorrection,
-    LearnedStepCorrectionReason,
-    prepare_replay_schedule,
-    PreparedReplaySchedule,
-    RetriedFixedStepResult,
-    retry_fixed_step,
-    RobustRetryPolicy,
-    solve_fixed_step,
-    SSPRK33FixedStepMethod,
-    SSPRK54FixedStepMethod,
-    StageTransformResult,
-)
-from ._fock_continuation import (
-    FockContinuationPolicy,
-    FockContinuationResult,
-    FockContinuationStage,
-    FockRefinementCertificate,
-    PreparedFockRefinementPlan,
-    solve_fock_continuation,
-    solve_prepared_fock_refinement,
-)
-from ._fokker_planck_approximation import (
-    DensityFokkerPlanckResult,
-    ParticleFokkerPlanckPlan,
-    ParticleFokkerPlanckResult,
-    solve_particle_fokker_planck,
-    solve_sparse_grid_fokker_planck,
-    SparseGridFokkerPlanckPlan,
-    WeakObservable,
-)
-from ._fractional_memory import (
-    CaputoFractionalProblem,
-    FractionalVectorField,
-    solve_caputo_fractional,
-)
-from ._functional_checkpoint import (
-    FunctionalTrainingCheckpoint,
-    load_functional_training_checkpoint,
-    save_functional_training_checkpoint,
-)
-from ._functional_correction import (
-    freeze_domain_function,
-    FunctionalCorrectionProblem,
-    prepare_functional_correction,
-)
-from ._functional_differential import (
-    FunctionalCollocationPlan,
-    FunctionalDifferentialBoundaryProblem,
-    FunctionalDifferentialContext,
-    FunctionalDifferentialSolution,
-    solve_functional_differential,
-)
-from ._functional_ntk import (
-    FunctionalNTKView,
-    prepare_functional_ntk,
-    PreparedFunctionalNTK,
-)
-from ._functional_precision import FunctionalMatmulPrecision, FunctionalPrecisionPolicy
-from ._functional_sharding import FunctionalShardingPolicy
-from ._functional_solver import FunctionalSolver
-from ._functional_training import (
-    CausalResidualPolicy,
-    FunctionalCheckpointPolicy,
-    FunctionalDiagnosticsPolicy,
-    FunctionalSelectionPolicy,
-    FunctionalTermBalancePolicy,
-    FunctionalTrainingPlan,
-    FunctionalTrainingState,
-    PseudoTransientAdaptation,
-    PseudoTransientPolicy,
-    ResidualRelaxationMap,
-)
-from ._functional_windows import (
-    FunctionalTimeWindowPlan,
-    FunctionalTimeWindowResult,
-    FunctionalWindowAdapter,
-    train_functional_time_windows,
-)
-from ._gaussian_lindblad import (
-    damped_thermal_oscillator,
-    GaussianLindbladProblem,
-    GaussianLindbladSolution,
-    solve_gaussian_lindblad,
-)
-from ._generalized_alpha import (
-    GeneralizedAlphaMethod,
-    GeneralizedAlphaSolution,
-    solve_generalized_alpha,
-)
-from ._geometric import (
-    AbstractGeometricSolver,
-    commutator_free_midpoint_tableau,
-    CommutatorFreeSolver,
-    CommutatorFreeTableau,
-    GeometricEuler,
-    GeometricLocalInterpolation,
-    RKMK,
-    SeparableHamiltonianVectorField,
-    solver_state_geometry,
-    SRKMK,
-    StormerVerlet,
-)
-from ._gr_m1_finite_volume import (
-    FixedGridGRM1SSPRK3Plan,
-    GRM1BoundaryCondition,
-    GRM1BoundaryKind,
-    GRM1BoundaryPair,
-    GRM1ConservationLedger,
-    GRM1FiniteVolumeRunStatus,
-    GRM1FiniteVolumeState,
-    GRM1ReconstructionKind,
-    GRM1SpatialRate,
-    GRM1StepResult,
-)
-from ._gr_multigroup_radiation import (
-    FixedGridGRMultigroupM1SSPRK3Plan,
-    GRMultigroupM1State,
-    GRMultigroupM1StepResult,
-)
-from ._gr_neutrino import (
-    FixedGridGRNeutrinoM1Plan,
-    GRNeutrinoLeptonLedger,
-    GRNeutrinoM1State,
-    GRNeutrinoM1StepResult,
-)
-from ._gr_polarized_radiation_feedback import (
-    GRPolarizedRadiationFeedbackLedger,
-    GRPolarizedRadiationFeedbackPlan,
-    GRPolarizedRadiationFeedbackResult,
-    GRPolarizedRadiationFeedbackState,
-    polarized_propagation_matrix,
-)
-from ._grmhd_boundary import (
-    GRMHDBoundaryCondition,
-    GRMHDBoundaryKind,
-    GRMHDBoundaryPair,
-    GRMHDBoundarySide,
-    GRMHDBoundaryTrace,
-)
-from ._grmhd_ct import (
-    GRMHDConstrainedTransportPlan,
-    GRMHDCTDefectLedger,
-    GRMHDCTRate,
-    GRMHDCTState,
-    GRMHDMagneticStateLayout,
-    GRMHDVectorPotentialGauge,
-    VectorPotentialGaugeKind,
-)
-from ._grmhd_force_free_transition import (
-    GRMHDForceFreeHybridState,
-    GRMHDForceFreeTransitionLedger,
-    GRMHDForceFreeTransitionPlan,
-    GRMHDForceFreeTransitionResult,
-)
-from ._grmhd_runtime import (
-    GRMHDDefectLedger,
-    GRMHDRunStatus,
-    GRMHDSpatialRate,
-    GRMHDSSPRK3Plan,
-    GRMHDStageEvidence,
-    GRMHDStageProposal,
-    GRMHDState,
-    GRMHDStepResult,
-)
-from ._grrmhd_runtime import (
-    FixedGridGRRMHDIMEXPlan,
-    GRRMHDDefectLedger,
-    GRRMHDRunStatus,
-    GRRMHDStageEvidence,
-    GRRMHDStageProposal,
-    GRRMHDState,
-    GRRMHDStepResult,
-)
-from ._grrmhd_source import (
-    GRRadiationExchangeLedger,
-    GRRMHDImplicitSourcePlan,
-    GRRMHDSourceResult,
-    GRRMHDSourceStatus,
-)
-from ._guided_elastic_modes import (
-    GuidedElasticModePlan,
-    GuidedElasticModeResult,
-    GuidedElasticModeStatus,
-    prepare_guided_elastic_modes,
-    PreparedGuidedElasticModes,
-    solve_guided_elastic_modes,
-)
-from ._harmonic_constraints import HarmonicConstraint, HarmonicConstraintPolicy
-from ._helmholtz import (
-    ExteriorHelmholtzDirichletResult2D,
-    solve_exterior_helmholtz_dirichlet_2d,
-)
-from ._helmholtz3d import (
-    ExteriorHelmholtzDirichletResult3D,
-    solve_exterior_helmholtz_dirichlet_3d,
-)
-from ._heom import (
-    drude_lorentz_qubit_heom,
-    HEOMHierarchy,
-    HEOMProblem,
-    HEOMSolution,
-    solve_heom,
-    thermal_drude_lorentz_qubit_heom,
-)
-from ._heom_implicit import (
-    HEOMAdaptiveBDFEvidence,
-    HEOMAdaptiveBDFResult,
-    HEOMBDFEvidence,
-    HEOMBDFResult,
-    HEOMImplicitEvidence,
-    HEOMImplicitResult,
-    HEOMTierBlockPreconditioner,
-    solve_heom_adaptive_bdf,
-    solve_heom_backward_euler,
-    solve_heom_bdf,
-)
-from ._heom_production import (
-    HEOMContinuationResult,
-    HEOMContinuationStage,
-    HEOMGridContinuationResult,
-    HEOMRefinementCertificate,
-    PreparedHEOMRefinementPlan,
-    solve_heom_continuation,
-    solve_heom_continuation_grid,
-    solve_prepared_heom_refinement,
-)
-from ._heom_scaled import (
-    prepare_scaled_heom_topology,
-    ScaledHEOMTopology,
-)
-from ._hybrid_event import (
-    empty_hybrid_event_tape,
-    hybrid_event_jvp,
-    hybrid_event_vjp,
-    HybridEventActionResult,
-    HybridEventPlan,
-    HybridEventRootResult,
-    HybridEventSensitivityResult,
-    HybridEventTape,
-    HybridGuardPlan,
-    HybridReplayPolicy,
-    HybridReplayResult,
-    localize_hybrid_event,
-    localize_hybrid_event_root,
-    localize_numerical_event,
-    NumericalEventResult,
-    record_hybrid_event,
-    replay_hybrid_events,
-)
-from ._hybrid_schedule import (
-    execute_hybrid_schedule,
-    HybridSchedulePlan,
-    HybridScheduleResult,
-    prepare_hybrid_schedule,
-    PreparedHybridSchedule,
-    replay_hybrid_schedule,
-    ScheduledHybridGuard,
-)
-from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
-from ._hydrostatic_free_surface import (
-    HydrostaticFreeSurfaceResult,
-    LinearImplicitFreeSurfacePlan,
-)
-from ._ias15 import IAS15Plan, IAS15Result
-from ._imc_ddmc import (
-    HybridIMCDDMCPlan,
-    IMCDDMCEvidence,
-    IMCDDMCState,
-    IMCDDMCStepResult,
-)
-from ._implicit_runge_kutta import (
-    GaussLegendreInterpolation,
-    GaussLegendreIRK,
-    solve_implicit_runge_kutta,
-)
-from ._impurity import __all__ as _impurity_all
-from ._jump import (
-    finite_state_generator,
-    FiniteStateGenerator,
-    GeneratorBoundaryPolicy,
-    JumpAlgorithm,
-    JumpDifferentialProblem,
-    JumpDifferentialSolution,
-    JumpSolution,
-    solve_direct_ssa,
-    solve_jump_differential,
-    solve_next_reaction,
-)
-from ._jump_delay import (
-    DelayJumpMap,
-    JumpDelayBackendResult,
-    JumpDelayProblem,
-    solve_jump_delay,
-)
-from ._jump_hitting import (
-    event_first_hit,
-    finite_generator_hitting,
-    FiniteHittingResult,
-    JumpFirstHit,
-)
-from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
-from ._keldysh_scba import (
-    KeldyshSCBAPolicy,
-    KeldyshSCBAProblem,
-    KeldyshSCBAResult,
-    solve_keldysh_scba,
-)
-from ._laplace_capacitance import (
-    advance_laplace_capacitance_3d,
-    differentiate_laplace_capacitance_coordinates_3d,
-    LaplaceCapacitanceCoordinateJVP3D,
-    LaplaceCapacitanceEpochTransition3D,
-    LaplaceCapacitancePlan3D,
-    LaplaceCapacitanceResult3D,
-    LaplaceCapacitanceSensitivityEvidence3D,
-    prepare_laplace_stable_dual_calderon_3d,
-    PreparedLaplaceCapacitance3D,
-    PreparedLaplaceStableDualCalderon3D,
-)
-from ._lattice_boltzmann import LatticeBoltzmannFixedStepMethod
-from ._levy import (
-    LevySDEProblem,
-    LevySDEScheme,
-    LevySDESolution,
-    LevySDESolverDiagnostics,
-    LevySDEVectorField,
-    LevySmallJumpApproximation,
-    solve_levy_sde,
-)
-from ._lifting_complete import __all__ as _lifting_complete_all
-from ._lindblad import (
-    amplitude_damping_problem,
-    dephasing_problem,
-    LindbladProblem,
-    LindbladSolution,
-    solve_lindblad,
-)
-from ._linear_trial_space import LinearTrialSpaceResult, solve_linear_trial_space
-from ._local_hamiltonian import (
-    FixedGridLocalHamiltonian,
-    local_hamiltonian_linear_operator,
-    LocalHamiltonian,
-    LocalHamiltonianDifferentiationMode,
-    LocalHamiltonianEvolutionCostEstimate,
-    LocalHamiltonianEvolutionDiagnostics,
-    LocalHamiltonianEvolutionPlan,
-    LocalHamiltonianEvolutionPolicy,
-    LocalHamiltonianEvolutionResult,
-    LocalHamiltonianEvolutionStatus,
-    LocalHamiltonianTerm,
-    materialize_local_hamiltonian,
-    plan_local_hamiltonian_evolution,
-    prepare_local_hamiltonian_evolution,
-    PreparedLocalHamiltonianEvolution,
-    ProductFormulaOrder,
-    refresh_local_hamiltonian_evolution,
-    solve_local_hamiltonian_evolution,
-)
-from ._local_hamiltonian_tensor import (
-    fixed_grid_local_hamiltonian_mpo_coefficients,
-    LocalHamiltonianMPOEvidence,
-    LocalHamiltonianMPOPolicy,
-    LocalHamiltonianMPOResult,
-    lower_local_hamiltonian_to_mpo,
-)
-from ._lpdo_quantum_program import (
-    execute_lpdo_quantum_program,
-    LPDOQuantumOperationEvidence,
-    LPDOQuantumProgramCostEstimate,
-    LPDOQuantumProgramDiagnostics,
-    LPDOQuantumProgramPlan,
-    LPDOQuantumProgramPolicy,
-    LPDOQuantumProgramResult,
-    LPDOQuantumProgramRoute,
-    LPDOQuantumProgramStatus,
-    plan_lpdo_quantum_program,
-    prepare_lpdo_quantum_program,
-    PreparedLPDOQuantumProgram,
-    refresh_lpdo_quantum_program,
-)
-from ._mac_adaptive import (
-    MACAcceptedGridTrace,
-    MACAdaptiveAdvanceResult,
-    MACAdaptiveAttemptJournal,
-    MACAdaptivePolicy,
-    MACAdaptiveRolloutPlan,
-    MACAdaptiveRolloutResult,
-    MACAdaptiveRuntimeState,
-    MACAdaptiveStatus,
-    MACCompositeStepController,
-    MACCompositeStepRestriction,
-    MACFrozenGridReplayPlan,
-    MACFrozenGridReplayResult,
-    MACNamedRateLimit,
-)
-from ._mac_ale import (
-    MACALEGeometryPlan,
-    MACALEResult,
-    MACALEStageGeometry,
-    MACRemeshEpochPlan,
-    MACRemeshEpochResult,
-)
-from ._mac_compartment_projection import (
-    MACCompartmentBlockOperator,
-    MACCompartmentBlockVector,
-    MACCompartmentConstraint,
-    MACCompartmentGauge,
-    MACCompartmentProjectionPlan,
-    MACCompartmentProjectionResult,
-    MACCompartmentProjectionStatus,
-)
-from ._mac_composite_projection import (
-    CompositeGaugeProjector,
-    CompositeMACProjectionPlan,
-    CompositeMACProjectionResult,
-)
-from ._mac_deformable_contact import (
-    DeformableContactAssembly,
-    DeformableContactKinematics,
-    DeformableContactResidualEvaluation,
-    DeformableContactResidualPlan,
-)
-from ._mac_dfib import (
-    MACDFIBProjectionPlan,
-    MACDFIBProjectionResult,
-    MACDivergenceFreeMarkerTransfer,
-    MACDivergenceFreeTransferDiagnostics,
-)
-from ._mac_distributed_projection import (
-    MACCollectiveAdapter,
-    MACDistributedProjectionPlan,
-    MACDistributedProjectionResult,
-)
-from ._mac_electrostatic import (
-    MACElectrostaticBoundaryKind,
-    MACElectrostaticBoundaryPlan,
-    MACElectrostaticPlan,
-    MACElectrostaticResult,
-)
-from ._mac_enthalpy_porosity import (
-    MACEnthalpyPorosityIMEXEulerMethod,
-    MACEnthalpyPorosityIMEXResult,
-    MACEnthalpyPorositySBDF2Method,
-    MACEnthalpyPorositySBDF2Result,
-    MACEnthalpyPorositySBDF2State,
-    MACEnthalpyPorosityStepStatus,
-)
-from ._mac_finite_volume_checkpoint import (
-    MACFiniteVolumeCheckpoint,
-    MACFiniteVolumeCheckpointPlan,
-    read_mac_finite_volume_checkpoint,
-    write_mac_finite_volume_checkpoint,
-)
-from ._mac_free_surface import (
-    MACFreeSurfaceProjectionPlan,
-    MACFreeSurfaceProjectionResult,
-)
-from ._mac_ghost_fluid import (
-    MACGhostFluidProjectionPlan,
-    MACGhostFluidProjectionResult,
-)
-from ._mac_immersed_boundary import (
-    MACImmersedBoundaryProjectionPlan,
-    MACImmersedBoundaryProjectionResult,
-    MACImmersedBoundaryProjectionStatus,
-    MACImmersedBoundarySolveMethod,
-)
-from ._mac_immersed_contact import (
-    MACRigidImmersedContactMethod,
-    MACRigidImmersedContactResult,
-    MACRigidImmersedJointMethod,
-    MACRigidImmersedJointResult,
-    RigidContactGeometryProvider,
-    RigidImmersedAcceptedMethod,
-)
-from ._mac_immersed_deformable import (
-    MACDeformableImmersedBackwardEulerMethod,
-    MACDeformableImmersedEnergyLedger,
-    MACDeformableImmersedState,
-    MACDeformableImmersedStatus,
-    MACDeformableImmersedStepResult,
-    StructuralContactResidual,
-    StructuralEnergy,
-)
-from ._mac_immersed_newmark import (
-    MACDeformableImmersedNewmarkMethod,
-    MACDeformableImmersedNewmarkResult,
-    MACDeformableImmersedNewmarkState,
-)
-from ._mac_immersed_preconditioner import (
-    MACImmersedPressureBlockPreconditionerEvidence,
-    MACImmersedPressureBlockPreconditionerPlan,
-)
-from ._mac_immersed_rigid import (
-    MACRigidImmersedBackwardEulerMethod,
-    MACRigidImmersedEnergyLedger,
-    MACRigidImmersedEulerMethod,
-    MACRigidImmersedMidpointMethod,
-    MACRigidImmersedProjectionPlan,
-    MACRigidImmersedProjectionResult,
-    MACRigidImmersedStatus,
-    MACRigidImmersedStepResult,
-)
-from ._mac_immersed_step import (
-    MACImmersedBoundaryIMEXEulerMethod,
-    MACImmersedBoundaryIMEXEulerResult,
-    MACImmersedBoundarySBDF2Method,
-    MACImmersedBoundarySBDF2Result,
-    MACImmersedBoundarySBDF2State,
-    MACImmersedBoundaryStepStatus,
-    MarkerMotionProvider,
-)
-from ._mac_multiphase_projection import (
-    MACMultiphaseProjectionPlan,
-    MACMultiphaseProjectionResult,
-)
-from ._mac_penalty_ib_cfd_dem import (
-    advance_mac_penalty_ib_cfd_dem_window,
-    MACPenaltyIBCouplingSchedulePlan,
-    MACPenaltyIBCouplingState,
-    MACPenaltyIBMacroStepResult,
-    MACPenaltyIBWindowStatus,
-)
-from ._mac_poisson_nernst_planck import (
-    MACPoissonNernstPlanckEvaluation,
-    MACPoissonNernstPlanckPlan,
-    MACPoissonNernstPlanckStepResult,
-)
-from ._mac_pressure_operator import (
-    execute_weighted_pressure_iteration,
-    MACPressureCoefficientKind,
-    MACPressureCoefficientReport,
-    MACPressureExecutionEvidence,
-    MACPressureOperatorSpec,
-    MACPressurePreconditionerKind,
-    MACPressurePreparationEvidence,
-    MACPressureRobinSide,
-    MACPressureRouteKind,
-    MACPressureRouteRequest,
-    MACPressureSolveResult,
-    MACWeightedPressureAction,
-    MACWeightedPressureIterationResult,
-    PreparedMACPressureOperator,
-)
-from ._mac_sensitivity import (
-    MACDerivativeMode,
-    MACFixedGridSensitivityPlan,
-    MACNeutralMode,
-    MACReplayCertification,
-    MACSegmentedShadowingPlan,
-    MACShadowingSensitivityResult,
-    MACShadowingStatus,
-    MACTerminalJVPResult,
-    MACTerminalVJPResult,
-)
-from ._mac_sharp_interface import (
-    MACImmersedInterfaceProjectionPlan,
-    MACInterfaceEnforcement,
-    MACInterfaceJumpSource,
-    MACInterfaceMethodSelector,
-    MACMovingSharpInterfaceEpochPlan,
-    MACMovingSharpInterfaceEpochResult,
-    MACSharpGeometryProvider,
-    MACSharpInterfaceForce,
-    MACSharpInterfaceProjectionPlan,
-    MACSharpInterfaceProjectionResult,
-    MACSharpInterfaceStatus,
-    MACSharpOperatorEvidence,
-)
-from ._mac_stage_inverse_general import (
-    MACOperatorStageInverseMomentum,
-    MACOperatorStageSolveResult,
-    MACVariableDensityStageInverseMomentum,
-    MACVariableViscosityStagePlan,
-)
-from ._mac_stage_inverse_momentum import (
-    MACDiagonalStageInverseMomentum,
-    MACHelmholtzStageInverseMomentum,
-    MACStageInverseMomentum,
-    MACStageInverseMomentumDiagnostics,
-)
-from ._mac_stochastic_immersed import (
-    FIBOverdampedPlan,
-    FIBOverdampedStepResult,
-    FluctuationDissipationReport,
-    MACDiscreteStochasticStressPlan,
-    MACFluctuatingHydrodynamicsPlan,
-    MACFluctuatingHydrodynamicsResult,
-    MACInertialStochasticStepPlan,
-    MACInertialStochasticStepResult,
-    MobilityProvider,
-    StochasticDifferentiationPolicy,
-    StochasticReplayKey,
-)
-from ._mac_variable_density import (
-    MACVariableDensityProjectionPlan,
-    MACVariableDensityProjectionResult,
-    MACVariableDensityRateProjectionResult,
-)
-from ._mac_variational_viscosity import (
-    MACVariationalViscosityPlan,
-    MACVariationalViscosityResult,
-)
-from ._mac_viscous import (
-    MAC_VISCOUS_BOUNDARY_FAILURE,
-    MAC_VISCOUS_CLOSURE_FAILURE,
-    MAC_VISCOUS_HELMHOLTZ_FAILURE,
-    MAC_VISCOUS_HISTORY_INVALID,
-    MAC_VISCOUS_PROJECTION_FAILURE,
-    MAC_VISCOUS_SUCCESS,
-    MACHelmholtzResourceEstimate,
-    MACHelmholtzResult,
-    MACHelmholtzSolveMethod,
-    MACHelmholtzSolvePlan,
-    MACIMEXEulerMethod,
-    MACIMEXEulerResult,
-    MACSBDF2GStabilityLedger,
-    MACSBDF2Method,
-    MACSBDF2State,
-    MACSBDF2StepResult,
-)
-from ._marker_flow_checkpoint import (
-    MarkerFlowCheckpointPayload,
-    MarkerFlowCheckpointPlan,
-    MarkerFlowReplayDerivativeReport,
-    MarkerFlowReplayPlan,
-    MarkerFlowReplayRecord,
-    MarkerFlowReplayResult,
-    read_marker_flow_checkpoint,
-    write_marker_flow_checkpoint,
-)
-from ._marker_flow_output import MarkerFlowOutputPlan
-from ._marker_flow_qualification import (
-    MarkerFlowQualificationEvidence,
-    MarkerFlowQualificationPlan,
-    MarkerFlowQualificationProfile,
-    MarkerFlowQualificationResult,
-    observed_convergence_order,
-)
-from ._marker_flow_runtime import (
-    HydrodynamicLoadPlan,
-    HydrodynamicLoadRecord,
-    marker_flow_artifact_reference,
-    MarkerFlowAdaptiveStepPlan,
-    MarkerFlowArtifactKind,
-    MarkerFlowArtifactReference,
-    MarkerFlowCompiledExportPlan,
-    MarkerFlowCompiledExportReport,
-    MarkerFlowStepLimiter,
-    MarkerFlowStepRestriction,
-    MarkerFlowTrajectoryAdapter,
-    MarkerFlowTrajectoryResult,
-)
-from ._markov_cubature import (
-    MarkovCubatureDiagnostics,
-    MarkovCubatureMethod,
-    MarkovCubaturePlan,
-    MarkovCubatureSolution,
-    MarkovCubatureStatus,
-    PolynomialRecombination,
-    solve_markov_cubature,
-)
-from ._markov_cubature_error import (
-    markov_cubature_error_evidence,
-    MarkovCubatureErrorEvidence,
-    MarkovCubatureRefinementPolicy,
-    refine_markov_cubature,
-    WeakObservableEnvelope,
-)
-from ._material_point_adaptive import (
-    AdaptiveMPMRolloutPlan,
-    AdaptiveMPMRolloutResult,
-    MPMAdaptiveAttemptJournal,
-    MPMAdaptivePolicy,
-    MPMAdaptiveStatus,
-)
-from ._material_point_checkpoint import (
-    MPMCheckpointManifest,
-    MPMCheckpointPlan,
-)
-from ._material_point_commercial_implicit import (
-    linearize_kway_contact,
-    MPMBlockJacobiPreconditioner,
-    MPMCompactImplicitOperator,
-    MPMCompactOperatorResult,
-    MPMImplicitContactLinearization,
-    MPMImplicitTopologyPlan,
-    MPMImplicitUnknownLayout,
-    MPMMovingDomainDerivative,
-    MPMRouteSupersetPlan,
-    MPMRouteSupersetState,
-    MPMSparseContactOperator,
-    MPMSparsePhaseFieldOperator,
-    MPMTwoLevelMultigrid,
-)
-from ._material_point_fracture import (
-    MPMPhaseFieldEvidence,
-    MPMPhaseFieldFracturePlan,
-    MPMPhaseFieldRuntimeState,
-    MPMPhaseFieldStepResult,
-    PreparedMPMPhaseFieldDynamics,
-)
-from ._material_point_implicit import (
-    ImplicitMPMDiagnostics,
-    ImplicitMPMMethodPlan,
-    ImplicitMPMStepResult,
-    PreparedImplicitMPMDynamics,
-)
-from ._material_point_output import (
-    MPMBoundedOutputBuffer,
-    MPMOutputManifest,
-    MPMOutputPlan,
-)
-from ._material_point_rollout import (
-    MPMGradientKind,
-    MPMGradientReport,
-    MPMReplayEvidence,
-    MPMReplayMode,
-    MPMReplayPolicy,
-    MPMRetainedTrajectory,
-    MPMRetentionMode,
-    MPMRolloutResult,
-    ScheduledMPMRolloutPlan,
-)
-from ._material_point_supervisor import MPMOperationalResult, MPMRunSupervisor
-from ._matrix_product_tdvp import (
-    FiniteTDVPAlgorithm,
-    FiniteTDVPCheckpoint,
-    FiniteTDVPCostEstimate,
-    FiniteTDVPDiagnostics,
-    FiniteTDVPMode,
-    FiniteTDVPPlan,
-    FiniteTDVPPolicy,
-    FiniteTDVPProblem,
-    FiniteTDVPResult,
-    FiniteTDVPStatus,
-    plan_finite_tdvp,
-    prepare_finite_tdvp,
-    PreparedFiniteTDVP,
-    refresh_finite_tdvp,
-    solve_finite_tdvp,
-)
-from ._maxwell_boundary import __all__ as _maxwell_boundary_all
-from ._maxwell_reduced import (
-    CompatibleMaxwell1DPlan,
-    CompatibleMaxwell1DState,
-    CompatibleMaxwell2DPlan,
-    CompatibleMaxwell2DState,
-    PreparedReducedMaxwellCPML,
-    PreparedReducedMaxwellCPMLTerm,
-    ReducedMaxwellDiagnostics,
-)
-from ._memory import (
-    ConvolutionKernel,
-    ConvolutionVolterraProblem,
-    MemoryEquationSolution,
-    solve_convolution_volterra,
-    solve_stochastic_volterra,
-    StochasticVolterraProblem,
-    VolterraFreeTerm,
-    VolterraKernel,
-    VolterraVectorField,
-)
-from ._memory_kernel import (
-    certify_memory_kernel_map,
-    DynamicalMapPhysicality,
-    exponential_memory_qubit_problem,
-    MemoryKernelMapCertification,
-    MemoryKernelMasterEquation,
-    OpenSystemHistorySolution,
-    QuantumMemoryKernel,
-    solve_memory_kernel,
-    solve_time_local_open_system,
-    TimeLocalOpenSystemProblem,
-)
-from ._meshfree_incompressible import (
-    IncompressibleDensityModel,
-    MeshfreeCycleEvidence,
-    MeshfreeFlowEvidence,
-    MeshfreeFlowStatus,
-    MeshfreeIncompressibleFlowPlan,
-    MeshfreeIncompressibleState,
-    MeshfreeIncompressibleStepResult,
-    MeshfreeVelocityReconstruction,
-    PreparedMeshfreeIncompressibleFlow,
-)
-from ._meshfree_lagrangian import (
-    MeshfreeLagrangianEvidence,
-    MeshfreeLagrangianFlowPlan,
-    MeshfreeLagrangianFlowState,
-    MeshfreeLagrangianStatus,
-    MeshfreeLagrangianStepResult,
-    MeshfreeMeasureConversion,
-    MeshfreeMeasureTransferPlan,
-    MeshfreeMeasureTransferResult,
-    MeshfreeSPHComparison,
-    MeshfreeSPHReconstruction,
-    PreparedMeshfreeLagrangianFlow,
-    PreparedMeshfreeMeasureTransfer,
-)
-from ._meshfree_surface_flow import (
-    MeshfreeSurfaceStokesPlan,
-    MeshfreeSurfaceStokesResult,
-)
-from ._moving_cut_cell import (
-    LocalizedMovingCutCellResult,
-    MovingCutCellState,
-    MovingCutCellStepEvidence,
-    MovingCutCellStepResult,
-    MovingMultivaluedCutCellPlan,
-    MovingTopologyLocalizationEvidence,
-    MovingTopologyLocalizationPlan,
-    UncoveredStateProvider,
-)
-from ._moving_window_pic import (
-    PICMovingWindowPlan,
-    PICMovingWindowResult,
-    PICMovingWindowState,
-    PICWindowInjection,
-)
-from ._mps_quantum_jump import (
-    LocalMPSJump,
-    MPSQuantumJumpProblem,
-    MPSQuantumTrajectoryResult,
-    solve_mps_quantum_jump,
-)
-from ._mps_quantum_program import (
-    execute_mps_quantum_program,
-    MPSQuantumOperationEvidence,
-    MPSQuantumProgramCostEstimate,
-    MPSQuantumProgramDiagnostics,
-    MPSQuantumProgramPlan,
-    MPSQuantumProgramPolicy,
-    MPSQuantumProgramResult,
-    MPSQuantumProgramRoute,
-    MPSQuantumProgramStatus,
-    plan_mps_quantum_program,
-    prepare_mps_quantum_program,
-    PreparedMPSQuantumProgram,
-    refresh_mps_quantum_program,
-)
-from ._multiphysics_inference import (
-    FieldObservationPlan,
-    ParticleMarginalLikelihoodPlan,
-    SimulationSensitivityReport,
-    WhitenedFieldInferencePlan,
-)
-from ._multirate import (
-    multirate_amr_schedule_plan,
-    MultiratePartitionedRK,
-    PartitionedDifferentialProblem,
-    solve_multirate,
-)
-from ._multiterminal_transport import (
-    MultiTerminalCoherentProblem,
-    MultiTerminalCoherentResult,
-    PeriodicLeadContactPlan,
-    solve_dephasing_probes,
-    solve_multiterminal_coherent,
-    solve_voltage_probes,
-    TransportProbePlan,
-    TransportProbeResult,
-)
-from ._nematic import (
-    MACNematicCouplingEvaluation,
-    MACNematicCouplingPlan,
-    MACNematicState,
-    MACNematicStepResult,
-    NematicEvaluation,
-    NematicStepResult,
-    PreparedNematicDynamics,
-    PreparedNematicSemiImplicitStepPlan,
-)
-from ._neural_cde import (
-    neural_cde_loss,
-    NeuralCDETrainingData,
-    NeuralCDETrainingState,
-    NeuralCDEVectorField,
-    train_neural_cde,
-)
-from ._neural_galerkin import (
-    FieldProjectionMetric,
-    NeuralFieldEvolutionResult,
-    NeuralGalerkinAdjointPolicy,
-    NeuralGalerkinAudit,
-    NeuralGalerkinEpoch,
-    NeuralGalerkinEpochPlan,
-    NeuralGalerkinEpochResult,
-    NeuralGalerkinProblem,
-    NeuralGalerkinReplayJournal,
-    NeuralTangentSolvePolicy,
-    RateFunction,
-    replay_neural_galerkin_epochs,
-    solve_neural_galerkin,
-    solve_neural_galerkin_epochs,
-    TangentFormulation,
-)
-from ._neural_quantum_jump import (
-    NeuralJumpProjectionProblem,
-    NeuralJumpProjectionResult,
-    NeuralNoJumpTDVPProblem,
-    NeuralNoJumpTDVPResult,
-    solve_neural_jump_projection,
-    solve_neural_no_jump_tdvp,
-)
-from ._neural_sampled_trajectory import (
-    audit_connected_vmc_jump_projection,
-    ConnectedVMCJumpProjectionAudit,
-    ConnectedVMCNeuralTrajectoryPolicy,
-    ConnectedVMCNeuralTrajectoryProblem,
-    ConnectedVMCNeuralTrajectoryResult,
-    NeuralRateEvidence,
-    solve_connected_vmc_neural_trajectory,
-)
-from ._nonmarkov_campaign import (
-    lorentzian_qubit_comparison,
-    NonMarkovianComparisonResult,
-    spin_boson_dephasing_comparison,
-    SpinBosonComparisonResult,
-)
-from ._nonmatching_fem_bem3d import (
-    CoupledFEMBEMResult3D,
-    prepare_maxwell_fem_bem_3d,
-    prepare_scalar_nonmatching_fem_bem_3d,
-    PreparedNonmatchingFEMBEM3D,
-)
-from ._open_certificates import (
-    certify_finite_lindblad_steady_state,
-    certify_finite_refinement,
-    certify_process_identifiability,
-    FiniteRefinementCertificate,
-    FiniteSteadyStateCertificate,
-    ProcessIdentifiabilityCertificate,
-)
-from ._panel_complete import __all__ as _panel_complete_all
-from ._panels3d_complete import __all__ as _panels3d_complete_all
-from ._particle_conversion import (
-    advance_particle_conversion,
-    ParticleConversionBackend,
-    ParticleConversionReplayRecord,
-    ParticleConversionSolverPlan,
-    ParticleConversionStepResult,
-)
-from ._particle_conversion_sensitivity import (
-    particle_conversion_surrogate_bias,
-    particle_conversion_validity_certificate,
-    ParticleConversionSensitivityPolicy,
-    ParticleConversionSensitivityResult,
-    ParticleConversionSurrogateBiasCertificate,
-    ParticleConversionValidityCertificate,
-    sharp_particle_conversion_jvp,
-    sharp_particle_conversion_vjp,
-)
-from ._particle_epoch import (
-    advance_particle_epoch_segments,
-    ParticleEpochSegmentRecord,
-    ParticleEpochTrajectory,
-    pullback_particle_epoch_transition,
-    segmented_particle_epoch_vjp,
-)
-from ._particle_gravity import (
-    BarnesHutGravityPlan,
-    CartesianExpansionSpace,
-    CartesianFMMOperators,
-    CartesianFMMResourceEvidence,
-    DirectParticleGravityPlan,
-    DistributedParticleLayout,
-    LaplaceMonopoleFieldResult,
-    MeshComplementCalibrationEvidence,
-    MeshComplementCalibrationPlan,
-    NewtonianPairKernel,
-    ParticleGravityEvidence,
-    ParticleOctreePlan3D,
-    PeriodicBarnesHutPlan,
-    PeriodicEwaldEvidence,
-    PeriodicEwaldForcePlan,
-    PeriodicEwaldResult,
-    PreparedParticleOctree3D,
-    PreparedUniformFMMStructure,
-    TreeGravityEvidence,
-    TreeGravityResult,
-    TreePMPlan,
-    TreePMResult,
-    TreePMShortRangeKernel,
-    TreePMSplitPolicy,
-    UniformFMMPlan,
-)
-from ._particle_mesh_gravity import (
-    ParticleMeshGravityDiagnostics,
-    ParticleMeshGravityForceResult,
-    ParticleMeshGravityPlan,
-    ParticleMeshGravityState,
-    ParticleMeshGravityStepResult,
-)
-from ._particle_methods import (
-    DEMFixedStepMethod,
-    DFSPHFixedStepMethod,
-    FLIPFixedStepMethod,
-    IISPHFixedStepMethod,
-    TransportVelocityFixedStepMethod,
-)
-from ._particle_transforms import ShepardDensityRenormalizationTransform
-from ._particles import (
-    InteractingParticleProblem,
-    InteractingParticleSolution,
-    ParticleVectorField,
-    solve_interacting_particles,
-)
-from ._passive_tracer import (
-    MACPassiveTracerContinuationState,
-    MACPassiveTracerFixedStepMethod,
-)
-from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
-from ._phase_equilibrium import (
-    FixedTwoPhaseTPFlashPlan,
-    FixedTwoPhaseTPFlashResult,
-    PhaseEquilibriumStatus,
-    TPDSearchPlan,
-    TPDStabilityResult,
-)
-from ._photon_transport import (
-    PhotonTransportPlan,
-    PhotonTransportResult,
-    PhotonTransportStatus,
-)
-from ._pic_cherenkov_guard import PICCherenkovGuard
-from ._pic_current_source import (
-    PICMaxwellCurrentSourcePlan,
-    PreparedPICMaxwellCurrentSource,
-)
-from ._pic_field_handoff import (
-    hand_off_pic_state,
-    PICFieldHandoffEvidence,
-    PICFieldHandoffResult,
-    PICFieldHandoffRoute,
-)
-from ._pic_field_solver import (
-    AbstractPICFieldFilter,
-    AbstractPreparedPICFieldSolver,
-    PICCapabilityRecord,
-    PICEnergyAccounting,
-    PICFieldAdvance,
-    PICFieldDeposit,
-    PICFieldSample,
-    PICFieldSolverCapabilities,
-    PICFieldSolverCapability,
-    PICFilterContinuityReport,
-    PICGalileanGrid,
-    PICGatherDerivativeOrder,
-    PICGaussProjection,
-    PICGaussProjectionResult,
-    PICGaussProjectionRoute,
-    PICHuygensSampling,
-    PICMultiDeposit,
-    PICOpenDomain,
-    PICPrecisionPolicy,
-    PICRelativisticFieldResult,
-    PICRelativisticSelfFields,
-    PICRestartComponent,
-    PICRestartState,
-    PICSelfFieldInitialization,
-    PICSpectralSymbol,
-    PICTensorKind,
-    PICTensorLayout,
-    PICTensorMap,
-    PICWindowShift,
-)
-from ._pic_filter import PICFilterPlan
-from ._pic_providers import (
-    pic_oracle_case,
-    pic_oracle_wakefield_case,
-    picongpu_input,
-    PIConGPUProvider,
-    PICOracleCase,
-    PICOracleCode,
-    PICOracleFields,
-    PICOracleLaser,
-    PICOracleModalFields,
-    PICOracleResult,
-    PICOracleScenario,
-    PICOracleSpecies,
-    PICOracleSpectralSolver,
-    PICOracleTrack,
-    PICOracleTrackResult,
-    PICOracleWakefieldCase,
-    PICOracleWakefieldResult,
-    read_pic_oracle_openpmd,
-    read_pic_oracle_track,
-    read_smilei_fields,
-    read_warpx_wakefield,
-    run_picongpu,
-    run_smilei,
-    run_warpx,
-    run_warpx_track,
-    run_warpx_wakefield,
-    smilei_input,
-    SmileiProvider,
-    warpx_input,
-    warpx_preroll_steps,
-    WarpXProvider,
-)
-from ._pic_restart import PICRestartManifest, PICRestartPlan, PICRestartResult
-from ._plasma_electrostatic import (
-    ElectrostaticPlasmaCouplingPlan,
-    ElectrostaticPlasmaCouplingResult,
-)
-from ._poisson_nernst_planck import (
-    PoissonNernstPlanckEvaluation,
-    PoissonNernstPlanckPlan,
-    PoissonNernstPlanckStepResult,
-)
-from ._polar_complete import __all__ as _polar_complete_all
-from ._potential_flow_hydrodynamics import __all__ as _hydrodynamics_all
-from ._probabilistic_ode import (
-    PROBABILISTIC_ODE_NONFINITE,
-    probabilistic_ode_status_name,
-    PROBABILISTIC_ODE_STEP_LIMIT_REACHED,
-    PROBABILISTIC_ODE_STIFF,
-    PROBABILISTIC_ODE_SUCCESS,
-    ProbabilisticODECalibration,
-    ProbabilisticODECovarianceOutput,
-    ProbabilisticODEFactorization,
-    ProbabilisticODEMethod,
-    ProbabilisticODESolution,
-    ProbabilisticODEStatus,
-    ProbabilisticODEUpdate,
-    solve_probabilistic_ode,
-)
-from ._process_learning import (
-    fit_stinespring_process_model,
-    process_experiment_probabilities,
-    process_output_densities,
-    ProcessExperimentPlan,
-    ProcessFitResult,
-    QuantumDigitalTwinState,
-    StinespringProcessModel,
-)
-from ._process_tomography import (
-    CausalProcessTomographyProblem,
-    CausalProcessTomographyResult,
-    fit_causal_process_initial_state,
-    informationally_complete_process_experiments,
-    ProcessTomographyExperiment,
-    tomography_designs_disjoint,
-)
-from ._production_resources import (
-    prepare_production_resource_forecast,
-    PreparedCompilationService,
-    ProductionResourceBudget,
-    ProductionResourceForecast,
-)
-from ._production_runtime import (
-    ArtifactCheckpointStore,
-    CheckpointCommitReceipt,
-    CheckpointGenerationPolicy,
-    CheckpointMigrationRecord,
-    DurableCheckpointStore,
-    PreparedProductionRun,
-    ProductionArchivePolicy,
-    ProductionCaseManifest,
-    ProductionEvidenceState,
-    ProductionFailureRecord,
-    ProductionIterationMetrics,
-    ProductionRunPlan,
-    ProductionRunResult,
-    ProductionRunState,
-    ProductionTerminalManifest,
-    ProductionTriggerAction,
-    ProductionTriggerBinding,
-)
-from ._projector_monte_carlo import (
-    initialize_projector_monte_carlo,
-    prepare_projector_monte_carlo,
-    solve_projector_monte_carlo,
-    step_projector_monte_carlo,
-    validate_projector_state,
-)
-from ._projector_monte_carlo_contracts import (
-    PreparedProjectorMonteCarlo,
-    ProjectorMonteCarloEvidence,
-    ProjectorMonteCarloHistory,
-    ProjectorMonteCarloPlan,
-    ProjectorMonteCarloProblem,
-    ProjectorMonteCarloResult,
-    ProjectorMonteCarloState,
-    ProjectorMonteCarloStatus,
-    ProjectorMonteCarloStepResult,
-)
-from ._projector_monte_carlo_estimators import (
-    analyze_projector_monte_carlo,
-    ProjectorEstimatorPolicy,
-    ProjectorMonteCarloAnalysis,
-    ProjectorReweightedEstimate,
-    ProjectorSystematicRecord,
-    ProjectorWeightDiagnostics,
-    ProjectorWeightStatus,
-)
-from ._projector_monte_carlo_lifecycle import (
-    read_projector_monte_carlo_checkpoint,
-    transport_projector_monte_carlo_resources,
-    write_projector_monte_carlo_checkpoint,
-    write_projector_monte_carlo_result,
-)
-from ._projector_monte_carlo_observables import (
-    observe_projector_state,
-    ProjectorMonteCarloObservation,
-)
-from ._pseudomode import (
-    jaynes_cummings_pseudomode_problem,
-    PseudomodeEmbeddingProblem,
-    PseudomodeSolution,
-    solve_pseudomode,
-)
-from ._purified_lindblad import (
-    apply_local_kraus_channel,
-    local_kraus_channel_from_lindblad,
-    LocalKrausChannel,
-    PurificationTruncationEvidence,
-    PurifiedLindbladProblem,
-    PurifiedLindbladResult,
-    solve_purified_lindblad,
-)
-from ._purified_tebd import (
-    apply_lpdo_two_site_unitary,
-    diagnose_purified_stationarity,
-    PurifiedStationarityDiagnostic,
-    PurifiedStrangProblem,
-    PurifiedStrangResult,
-    solve_purified_strang,
-)
-from ._quantum_compilation import (
-    compile_quantum_program,
-    HardwareTopology,
-    QuantumCompilationPolicy,
-    QuantumCompilationResult,
-    QuantumDecompositionRecord,
-    RouteStrategy,
-)
-from ._quantum_control import (
-    assemble_fixed_grid_local_hamiltonian,
-    LinearQuantumControlTransfer,
-    QuantumCarrier,
-    QuantumControlLine,
-    QuantumControlSchedule,
-    QuantumControlScheduleDiagnostics,
-    QuantumControlScheduleResult,
-    sample_quantum_control_schedule,
-)
-from ._quantum_expectation import (
-    DenseQuantumExpectationDiagnostics,
-    DenseQuantumExpectationResult,
-    DenseQuantumExpectationStatus,
-    DenseQuantumObservableCostEstimate,
-    DenseQuantumObservablePlan,
-    DenseQuantumObservablePolicy,
-    evaluate_dense_quantum_observables,
-    plan_dense_quantum_observables,
-)
-from ._quantum_experiment import (
-    ClassicalRegisterLayout,
-    estimate_quantum_experiment_gradient,
-    execute_quantum_experiment_exact,
-    prepare_quantum_experiment,
-    PreparedQuantumExperiment,
-    QuantumExperimentExactResult,
-    QuantumExperimentProgram,
-    QuantumShotBatchResult,
-    sample_quantum_experiment,
-    StochasticGradientEstimatorEvidence,
-)
-from ._quantum_gradients import (
-    evaluate_parameter_shift_jacobian,
-    execute_dense_quantum_template,
-    ParameterShiftJacobianResult,
-    ParameterShiftPlan,
-    plan_parameter_shift,
-    prepare_dense_quantum_template,
-    PreparedDenseQuantumTemplate,
-)
-from ._quantum_jump import (
-    amplitude_damping_trajectory_problem,
-    QuantumJumpProblem,
-    QuantumTrajectoryEnsemble,
-    solve_quantum_jump_ensemble,
-    StateVectorOperator,
-)
-from ._quantum_jump_event import (
-    EventDrivenQuantumJumpResult,
-    QuantumJumpEventTable,
-    solve_event_driven_quantum_jump,
-)
-from ._quantum_jump_generic import (
-    quantum_jump_differential_problem,
-    solve_quantum_jump_generic,
-)
-from ._quantum_lattice import __all__ as _quantum_lattice_all
-from ._quantum_lifecycle import __all__ as _quantum_lifecycle_all
-from ._quantum_measurement import (
-    apply_dense_quantum_instrument,
-    apply_lpdo_quantum_instrument,
-    apply_mps_quantum_instrument,
-    DenseInstrumentBranchResult,
-    LPDOInstrumentBranchResult,
-    measure_dense_quantum_program,
-    MPSInstrumentBranchResult,
-    QuantumInstrument,
-    QuantumMeasurementResult,
-    QuantumPOVM,
-)
-from ._quantum_program import (
-    DenseQuantumOperationEvidence,
-    DenseQuantumProgramCostEstimate,
-    DenseQuantumProgramDiagnostics,
-    DenseQuantumProgramPlan,
-    DenseQuantumProgramPolicy,
-    DenseQuantumProgramResult,
-    DenseQuantumProgramStatus,
-    DensityPositivityAudit,
-    execute_dense_quantum_program,
-    plan_dense_quantum_program,
-    prepare_dense_quantum_program,
-    PreparedDenseQuantumProgram,
-    refresh_dense_quantum_program,
-)
-from ._quantum_propagation import (
-    solve_unitary_propagator,
-    UnitaryGroupKind,
-    UnitaryPropagatorProblem,
-    UnitaryPropagatorSolution,
-)
-from ._quantum_response import __all__ as _quantum_response_all
-from ._quantum_service import (
-    admit_quantum_service_request,
-    QuantumProgramInterchange,
-    QuantumResultInterchange,
-    QuantumServiceAdmission,
-    QuantumServicePolicy,
-    QuantumServiceRequest,
-    QuantumServiceRunRecord,
-    record_quantum_service_run,
-)
-from ._quantum_tomography import (
-    freeze_quantum_tomography,
-    QuantumTomographyArtifact,
-    QuantumTomographyPolicy,
-    QuantumTomographyProblem,
-    QuantumTomographyResult,
-    solve_quantum_tomography,
-)
-from ._quantum_tomography_campaigns import tetrahedral_qubit_tomography
-from ._quantum_trajectory_contract import (
-    QuantumTrajectoryCheckpoint,
-    QuantumTrajectoryEventTable,
-    QuantumTrajectoryPlan,
-    QuantumTrajectoryStatus,
-)
-from ._radau_iia import RadauIIAMethod
-from ._radiation_balance_law import (
-    MultigroupRadiationMatterProcessPlan,
-    MultigroupRadiationMatterResult,
-    RadiationMatterLedger,
-)
-from ._radiative_cooling import (
-    PreparedRadiativeCoolingProcess,
-    RadiativeCoolingDiagnostics,
-    RadiativeCoolingProcessPlan,
-)
-from ._reactive_cfd_dem import (
-    advance_reactive_cfd_dem_window,
-    initialize_reactive_cfd_dem,
-    ReactiveCFDDEMCouplingState,
-    ReactiveCFDDEMEvaluation,
-    ReactiveCFDDEMMacroStepResult,
-    ReactiveCouplingMode,
-    ReactiveFluidFields,
-    ReactiveParticleCouplingSchedulePlan,
-)
-from ._reactive_lattice_boltzmann import (
-    ReactiveLocalStepper,
-    ReactiveLocalStepResult,
-    ReactiveSpeciesCouplingSchedulePlan,
-    ReactiveSpeciesLatticeBoltzmannDiagnostics,
-    ReactiveSpeciesLatticeBoltzmannState,
-    ReactiveSpeciesLatticeBoltzmannStepResult,
-)
-from ._reactive_monolithic import (
-    initialize_reactive_monolithic_state,
-    make_reactive_monolithic_stage,
-    prepare_reactive_monolithic_step,
-    PreparedReactiveMonolithicStep,
-    reactive_monolithic_vjp,
-    ReactiveMonolithicPreconditionerEvidence,
-    ReactiveMonolithicPreconditionerMode,
-    ReactiveMonolithicSolverPlan,
-    ReactiveMonolithicState,
-    ReactiveMonolithicStepResult,
-    solve_reactive_monolithic_step,
-)
-from ._reactive_replay import (
-    checkpointed_reactive_rollout,
-    checkpointed_reactive_vjp,
-    evaluate_reactive_parameter_ensemble,
-    reactive_replay_matches,
-    ReactiveCheckpointPolicy,
-    ReactiveCheckpointVJPResult,
-    ReactiveParameterEnsembleResult,
-    ReactiveReplayRecord,
-    ReactiveReplayResult,
-)
-from ._reduced_pic import ReducedMaxwellPICFieldSolver
-from ._reflected_bsde import (
-    predict_reflected_path_dependent_control,
-    predict_reflected_path_dependent_value,
-    reflected_path_dependent_bsde_diagnostics,
-    ReflectedPathDependentBSDEDiagnostics,
-    ReflectedPathDependentBSDEResult,
-    solve_reflected_path_dependent_bsde,
-)
-from ._regression_bsde import (
-    AbstractBSDERegressionBasis,
-    BSDERegressionScheme,
-    CallableBSDERegressionBasis,
-    least_squares_bsde_diagnostics,
-    LeastSquaresBSDEDiagnostics,
-    LeastSquaresBSDEResult,
-    PolynomialBSDERegressionBasis,
-    predict_bsde_least_squares_control,
-    predict_bsde_least_squares_value,
-    solve_bsde_least_squares,
-)
-from ._relativistic_finite_volume import (
-    FixedGridGRHDSSPRK3Plan,
-    GRHDBoundaryCondition,
-    GRHDBoundaryPair,
-    GRHDBoundaryTrace,
-    GRHDConservationLedger,
-    GRHDFaceFluxPlan,
-    GRHDFaceFluxResult,
-    GRHDFiniteVolumeEvaluation,
-    GRHDFiniteVolumeRunStatus,
-    GRHDFiniteVolumeState,
-    GRHDFiniteVolumeStepResult,
-    lower_valencia_stage_geometry,
-    metric_aware_grhd_boundary_trace,
-    ValenciaFiniteVolumeStageGeometry,
-)
-from ._relativistic_primitive import (
-    AtmosphereCorrectionLedger,
-    AtmosphereFloorPolicy,
-    AtmosphereFloorStatus,
-    GRHDC2PCandidateRecord,
-    GRHDC2PPolicy,
-    GRHDC2PResult,
-    GRHDC2PStatus,
-)
-from ._resistive_grrmhd_runtime import (
-    FixedGridResistiveGRRMHDIMEXPlan,
-    ResistiveGRRMHDLedger,
-    ResistiveGRRMHDRunStatus,
-    ResistiveGRRMHDState,
-    ResistiveGRRMHDStepResult,
-)
-from ._resolved_electroosmosis import (
-    ResolvedElectroosmoticLedger,
-    ResolvedElectroosmoticState,
-    ResolvedElectroosmoticStepResult,
-    ResolvedElectroosmoticStokesPlan,
-)
-from ._rosenbrock import RosenbrockAdaptivePolicy, RosenbrockWMethod
-from ._rosenbrock_replay import (
-    prepare_rosenbrock,
-    PreparedRosenbrockSolve,
-    refresh_rosenbrock_schedule,
-    RosenbrockReplayAdequacy,
-    RosenbrockReplayStatus,
-    schedule_rosenbrock,
-    ScheduledRosenbrockSolve,
-    solve_rosenbrock,
-    solve_scheduled_rosenbrock,
-)
-from ._rotor import __all__ as _rotor_all
-from ._rough import (
-    AbstractRoughSolver,
-    Davie,
-    RoughDifferentialProblem,
-    RoughDifferentialSolution,
-    RoughDrift,
-    RoughEuler,
-    RoughVectorFields,
-    solve_rough_differential,
-)
-from ._rough_delay import (
-    RoughDelayDifferentialProblem,
-    RoughDelayDrift,
-    RoughDelayVectorFields,
-    solve_rough_delay,
-)
-from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
-from ._rough_logode import LinearLogODE, LogODE
-from ._rough_prepare import (
-    prepare_rough_evolution,
-    PreparedRoughEvolution,
-    RoughEvolutionPolicy,
-    solve_prepared_rough,
-)
-from ._runtime_lifecycle import (
-    AcceptedStepTrigger,
-    AcceptedStepTriggerGraph,
-    AcceptedStepTriggerGraphState,
-    AcceptedStepTriggerState,
-    BoundedAsyncPublisher,
-    ByteBoundedAsyncPublisher,
-    ExactTimeSchedule,
-    MomentWeighting,
-    read_runtime_checkpoint,
-    ReplayClassification,
-    restore_runtime_checkpoint_arrays,
-    RuntimeCheckpointEncodingPlan,
-    RuntimeCheckpointEnvelope,
-    RuntimeCheckpointLeafBinding,
-    RuntimeIdentityClass,
-    RuntimeIdentityInventory,
-    RuntimeIdentityRole,
-    RuntimeMigrationKind,
-    RuntimeMigrationReceipt,
-    RuntimeRestartRelation,
-    StaleRuntimeCheckpointError,
-    StreamingMomentPlan,
-    StreamingMomentState,
-    StreamingObservablePlan,
-    StreamingObservableState,
-    UnsupportedReplayError,
-    write_runtime_checkpoint,
-)
-from ._scalar_boundary3d import __all__ as _scalar_boundary_all
-from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
-from ._scalar_screen_junction3d import (
-    prepare_scalar_screen_junction_solve_3d,
-    PreparedScalarScreenJunctionSolve3D,
-    ScalarScreenJunctionCondition3D,
-    ScalarScreenJunctionResult3D,
-)
-from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
-from ._secondary_stack import SecondaryParticleStack, SecondaryStackSpec
-from ._segmented_execution import (
-    FixedCapacitySegmentEvidence,
-    FixedCapacitySegmentPolicy,
-    FixedCapacitySegmentStep,
-    run_fixed_capacity_segments,
-)
-from ._self_gravity import (
-    NewtonianGravityDiagnostics,
-    NewtonianSelfGravityPlan,
-    PreparedNewtonianSelfGravity,
-)
-from ._semi_implicit_pic import (
-    PICGaussCorrectionPlan,
-    PICGaussCorrectionResult,
-    SemiImplicitPICDiagnostics,
-    SemiImplicitPICPlan,
-    SemiImplicitPICResult,
-    SemiImplicitPICState,
-)
-from ._semilinear import (
-    exact_modal_stochastic_convolution,
-    SemilinearFallback,
-    SemilinearSPDEScheme,
-    solve_semilinear_spde,
-)
-from ._semilinear_drift import SemilinearDrift
-from ._separated_fokker_planck import (
-    SeparatedFokkerPlanckPlan,
-    solve_separated_fokker_planck,
-)
-from ._smooth_compressible_d2v import OracleSmoothCompressibleD2V17FixedStepMethod
-from ._solver_objective import (
-    AbstractSolverObjective,
-    AcceptedResultPolicy,
-    algorithmic_work_loss,
-    AlgorithmicWorkObjective,
-    AlgorithmicWorkResult,
-    RolloutObjective,
-    SolverCaseResult,
-    SolverObjective,
-    SolverObjectiveAdmission,
-    SolverObjectiveEvaluation,
-)
-from ._sparse_flip import (
-    SparseMACFreeSurfaceProjectionPlan,
-    SparseMACFreeSurfaceProjectionResult,
-)
-from ._spde import (
-    SemidiscreteSPDE,
-    semidiscretize_reaction_diffusion,
-    semidiscretize_semilinear_spde,
-    semidiscretize_spde,
-)
-from ._spde_truncation import (
-    prepare_spde_approximation,
-    PreparedSPDEApproximation,
-    solve_spde_approximation,
-    SPDEApproximationFamily,
-    SPDEApproximationLevel,
-    SPDEApproximationResult,
-)
-from ._spectral_artifacts import (
-    read_spectral_state_artifact,
-    SpectralStateArtifact,
-    write_spectral_state_artifact,
-)
-from ._spectral_coordinates import (
-    HERMITIAN_COORDINATE_INVALID,
-    HermitianCoordinateEvolution,
-)
-from ._spectral_forcing import (
-    PreparedSpectralOUForcing,
-    SpectralOUForcingDiagnostics,
-    SpectralOUForcingPlan,
-)
-from ._spectral_hp_completion import (
-    BDDCFETIDPTracePlan,
-    FrozenHPAdjointSchedule,
-    goal_oriented_eigen_indicators,
-    HPEigenspaceTransfer,
-    HPFASMultigrid,
-    HPNewtonKrylovBuilder,
-    HPNewtonKrylovResult,
-    HPRestrictedSchwarz,
-    MeshVaryingUQAggregator,
-    NonlinearLocalCondensation,
-    RelaxedHPMarking,
-)
-from ._split_differential import (
-    split_differential_problem,
-    SplitDifferentialProblem,
-)
-from ._ssp_runge_kutta import SSPRK33, ssprk33_step, SSPRK54, ssprk54_step
-from ._state_partition import StatePartition
-from ._stencil_evolution import (
-    PreparedSplitFieldPML,
-    PreparedStaggeredAcoustics,
-    SplitFieldPMLPlan,
-    StaggeredAcousticPlan,
-    StaggeredAcousticState,
-)
-from ._stinespring_tomography import (
-    fit_causal_process_memory,
-    fit_stinespring_process,
-    ProcessMemoryRefitResult,
-    StinespringTomographyProblem,
-    StinespringTomographyResult,
-)
-from ._stokes_boundary import __all__ as _stokes_boundary_all
-from ._structured_incompressible import (
-    MACPressureClosureReport,
-    MACPressureCompatibilityKind,
-    MACPressureGaugeKind,
-    MACPressureProjectionPlan,
-    MACPressureProjectionResult,
-    MACPressureSolveMethod,
-    MACRateProjectionResult,
-)
-from ._symplectic import (
-    integrate_stormer_verlet,
-    SeparableHamiltonianResult,
-    stormer_verlet_step,
-)
-from ._temporal_extensions import (
-    AdamsBashforthMoultonMethod,
-    ExponentialRosenbrockEulerMethod,
-    FixedStepTemporalResult,
-    IMEXBDF2Integrator,
-    parareal,
-    RadauIIAIntegrator,
-    RKCMethod,
-)
-from ._temporal_method import (
-    NoiseRequirement,
-    TemporalCheckpointing,
-    TemporalDecisionSemantics,
-    TemporalDifferentiationEvidence,
-    TemporalDifferentiationForm,
-    TemporalDifferentiationOrientation,
-    TemporalEquationForm,
-    TemporalEventSemantics,
-    TemporalMethodCapabilities,
-    TemporalMethodClass,
-    TemporalSolveEvidence,
-    TemporalStochasticSemantics,
-)
-from ._temporal_precision import TemporalPrecisionPolicy
-from ._tensor_open_quantum import (
-    apply_mpo_lindbladian,
-    evolve_lpdo_local_channels,
-    LPDOChannelEvolutionEvidence,
-    LPDOChannelEvolutionPlan,
-    LPDOChannelEvolutionResult,
-    LPDOSteadyStateResult,
-    MPOHamiltonian,
-    MPOLindbladian,
-    MPOLindbladianActionResult,
-    solve_lpdo_steady_state,
-)
-from ._thermal_pure_quantum import __all__ as _thermal_pure_quantum_all
-from ._thermochemical_source import (
-    FixedWorkThermochemicalSourcePlan,
-    ThermochemicalSourceEvidence,
-    ThermochemicalSourceResult,
-)
-from ._thermochemistry import (
-    PreparedThermochemistryProcess,
-    ThermochemistryDiagnostics,
-    ThermochemistryProcessPlan,
-)
-from ._theta import ThetaMethod
-from ._thin_edl_slip import (
-    ThinEDLElectroosmoticSlipPlan,
-    ThinEDLReason,
-    ThinEDLSlipEvaluation,
-)
-from ._uniform_vumps import (
-    plan_uniform_vumps,
-    prepare_uniform_vumps,
-    PreparedUniformVUMPS,
-    refresh_uniform_vumps,
-    solve_uniform_tangent_response,
-    solve_uniform_vumps,
-    UniformTangentPolicy,
-    UniformTangentResponse,
-    UniformTangentStatus,
-    UniformVUMPSCostEstimate,
-    UniformVUMPSDiagnostics,
-    UniformVUMPSPlan,
-    UniformVUMPSPolicy,
-    UniformVUMPSProblem,
-    UniformVUMPSResult,
-    UniformVUMPSStatus,
-)
-from ._unstructured_amr_runtime import (
-    PreparedUnstructuredAMRRuntime,
-    UnstructuredAMRAdvanceResult,
-    UnstructuredAMRRefluxReport,
-    UnstructuredAMRRuntimeState,
-)
-from ._unstructured_em_pic import UnstructuredMaxwellPICFieldSolver
-from ._unstructured_incompressible import (
-    UnstructuredPressureCorrectionPlan,
-    UnstructuredPressureCorrectionResult,
-    UnstructuredPressureProjectionPlan,
-    UnstructuredPressureProjectionResult,
-)
-from ._unstructured_les import (
-    UNSTRUCTURED_LES_CONSERVATION_FAILURE,
-    UNSTRUCTURED_LES_ENERGY_FAILURE,
-    UNSTRUCTURED_LES_INADMISSIBLE_STATE,
-    UNSTRUCTURED_LES_PRESSURE_FAILURE,
-    UNSTRUCTURED_LES_STEP_RESTRICTION,
-    UNSTRUCTURED_LES_SUCCESS,
-    UnstructuredLowMachLESFixedStepMethod,
-    UnstructuredLowMachLESRestartState,
-    UnstructuredLowMachLESStepEvidence,
-    UnstructuredLowMachLESStepInputs,
-    UnstructuredLowMachLESStepRestriction,
-    UnstructuredLowMachLESStepResult,
-)
-from ._unstructured_stage_runtime import (
-    PreparedUnstructuredSSPRK3Runtime,
-    StageEpochExecutor,
-    UnstructuredSSPRK3EpochResult,
-    UnstructuredSSPRK3EpochStageResult,
-)
-from ._uvlm import __all__ as _uvlm_all
-from ._variable_patch_checkpoint import (
-    read_variable_patch_checkpoint,
-    VariablePatchCheckpoint,
-    VariablePatchCheckpointPlan,
-    write_variable_patch_checkpoint,
-)
-from ._variable_sector_vmc import __all__ as _variable_sector_vmc_all
-from ._variational_monte_carlo import (
-    evaluate_variational_monte_carlo,
-    read_variational_monte_carlo_checkpoint,
-    solve_variational_monte_carlo,
-    VariationalMonteCarloEstimate,
-    VariationalMonteCarloPolicy,
-    VariationalMonteCarloProblem,
-    VariationalMonteCarloResult,
-    VariationalMonteCarloState,
-    VMC_IMAGINARY_ENERGY,
-    VMC_INVALID_SAMPLES,
-    VMC_LINEAR_FAILURE,
-    VMC_NONFINITE,
-    vmc_status_name,
-    VMC_SUCCESS,
-    VMCStatus,
-    write_variational_monte_carlo_checkpoint,
-)
-from ._variational_monte_carlo_subspace import (
-    evaluate_variational_monte_carlo_subspace,
-    solve_variational_monte_carlo_subspace,
-    VariationalMonteCarloSubspaceEstimate,
-    VariationalMonteCarloSubspaceProblem,
-    VariationalMonteCarloSubspaceResult,
-    VariationalMonteCarloSubspaceState,
-    VMC_SUBSPACE_INVALID_SAMPLES,
-    VMC_SUBSPACE_LINEAR_FAILURE,
-    VMC_SUBSPACE_NONFINITE,
-    VMC_SUBSPACE_RITZ_FAILURE,
-    VMC_SUBSPACE_SINGULAR_SPAN,
-    vmc_subspace_status_name,
-    VMC_SUBSPACE_SUCCESS,
-    VMCSubspaceStatus,
-)
-from ._variational_tdvp import (
-    solve_variational_tdvp,
-    TDVPMode,
-    VariationalTDVPPolicy,
-    VariationalTDVPResult,
-)
-from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
-from ._vortex_immersed import __all__ as _vortex_immersed_all
-from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_loads import __all__ as _vortex_loads_all
-from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import __all__ as _vortex_step_all
-from ._wake_complete import __all__ as _wake_complete_all
-from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
-from ._xxz_open import (
-    boundary_driven_xxz_problem,
-    qualify_boundary_driven_xxz,
-    XXZQualificationResult,
-)
-from .maxwell import (
-    CompatibleMaxwellDiagnostics,
-    CompatibleMaxwellPlan,
-    CompatibleMaxwellState,
-    PreparedCompatibleMaxwell,
-)
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
 
 
-_FUNCTIONAL_DECOMPOSITION_EXPORTS = frozenset(
-    {
-        "AitkenTracePlan",
-        "AitkenTraceState",
-        "aitken_relax_trace_state",
-        "capture_generalized_trace_state",
-        "AsynchronousSchwarzPlan",
-        "AsynchronousSchwarzResult",
-        "AsynchronousSchwarzState",
-        "AdaptiveRefinementPlan",
-        "AdaptiveTopologyEvidence",
-        "AdaptiveTopologyTransaction",
-        "AugmentedInterfacePlan",
-        "DecompositionKFACResult",
-        "TrainableAxisPartition",
-        "TrainablePartitionEvidence",
-        "DecompositionShardingEvidence",
-        "DistributedCollectiveEvidence",
-        "DistributedCollectiveResult",
-        "DecompositionDeploymentArtifact",
-        "AugmentedInterfaceResult",
-        "DiscreteTracePenalty",
-        "BlockDecompositionTraining",
-        "FixedPatchParticipant",
-        "DiscreteOperatorTracePenalty",
-        "FunctionalCoarseCorrection",
-        "LocalCurvaturePlan",
-        "FunctionalCyclePlan",
-        "FunctionalCycleResult",
-        "LocalCurvatureResult",
-        "FunctionalDecompositionEvidence",
-        "FunctionalDecompositionShardingPlan",
-        "FunctionalDecompositionPlan",
-        "FunctionalHierarchyPlan",
-        "FunctionalPatchParticipant",
-        "FunctionalHierarchyResult",
-        "MatrixFreeGaussNewtonPlan",
-        "MatrixFreeGaussNewtonResult",
-        "FunctionalDecompositionProblem",
-        "FunctionalDecompositionResult",
-        "FunctionalDecompositionState",
-        "HybridFunctionalDecomposition",
-        "FunctionalDecompositionIterationMetrics",
-        "GlobalScope",
-        "JointDecompositionTraining",
-        "PairScope",
-        "PatchScope",
-        "PreparedFunctionalDecomposition",
-        "SchwarzTraceQuantity",
-        "SchwarzDecompositionTraining",
-        "SchwarzTraceState",
-        "ScopedFunctionalTerm",
-        "ShardedLocalFieldFamily",
-        "functional_decomposition",
-        "load_functional_decomposition_checkpoint",
-        "TraceExchangeState",
-        "load_decomposition_artifact",
-        "save_decomposition_artifact",
-        "capture_schwarz_trace_state",
-        "dense_local_curvature_step",
-        "solve_decomposition_kfac",
-        "solve_local_kfac",
-        "solve_overlap_kfac",
-        "matrix_free_gauss_newton_step",
-        "solve_asynchronous_schwarz",
-        "localize_residual_penalty",
-        "prepare_functional_decomposition",
-        "train_functional_cycles",
-        "train_functional_hierarchy",
-        "coarsen_axis_partition",
-        "distributed_pou_collective",
-        "distributed_schwarz_exchange",
-        "prepare_adaptive_topology_transaction",
-        "place_local_field_family",
-        "place_schwarz_trace_state",
-        "refine_axis_partition",
-        "save_functional_decomposition_checkpoint",
-        "solve_augmented_interface",
-        "solve_functional_decomposition",
-    }
-)
-
-_CHARACTERISTIC_PROJECTION_EXPORTS = frozenset(
-    {
-        "CharacteristicProjectionProblem",
-        "CharacteristicProjectionResult",
-        "CharacteristicTraceResult",
-        "CharacteristicVelocity",
-        "CharacteristicWrap",
-        "solve_characteristic_projection",
-        "trace_characteristics",
-        "CharacteristicBoundaryAction",
-        "CharacteristicBoundaryPolicy",
-        "DiffusiveCharacteristicPlan",
-        "DiffusiveCharacteristicResult",
-        "trace_diffusive_characteristics",
-    }
-)
-
+_SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
+    "AMRTimeSchedulePlan": ("._block_amr_runtime", "AMRTimeSchedulePlan"),
+    "AbstractAcceptedStepTransform": ("._fixed_step", "AbstractAcceptedStepTransform"),
+    "AbstractBSDERegressionBasis": ("._regression_bsde", "AbstractBSDERegressionBasis"),
+    "AbstractBalanceLawProcessPlan": ("._balance_law", "AbstractBalanceLawProcessPlan"),
+    "AbstractDifferentiableDrivingPath": (
+        "._driving_path",
+        "AbstractDifferentiableDrivingPath",
+    ),
+    "AbstractDistributedPICFieldSolver": (
+        "._distributed_pic",
+        "AbstractDistributedPICFieldSolver",
+    ),
+    "AbstractFixedStepMethod": ("._fixed_step", "AbstractFixedStepMethod"),
+    "AbstractGeometricSolver": ("._geometric", "AbstractGeometricSolver"),
+    "AbstractPICFieldFilter": ("._pic_field_solver", "AbstractPICFieldFilter"),
+    "AbstractPreparedBalanceLawProcess": (
+        "._balance_law",
+        "AbstractPreparedBalanceLawProcess",
+    ),
+    "AbstractPreparedBalanceLawTransport": (
+        "._balance_law_transport",
+        "AbstractPreparedBalanceLawTransport",
+    ),
+    "AbstractPreparedPICFieldSolver": (
+        "._pic_field_solver",
+        "AbstractPreparedPICFieldSolver",
+    ),
+    "AbstractRoughSolver": ("._rough", "AbstractRoughSolver"),
+    "AbstractSSPRKStageTransform": ("._fixed_step", "AbstractSSPRKStageTransform"),
+    "AbstractSolverObjective": ("._solver_objective", "AbstractSolverObjective"),
+    "AbstractStochasticDelayInterpolation": (
+        "._delay_capabilities",
+        "AbstractStochasticDelayInterpolation",
+    ),
+    "AcceptedResultPolicy": ("._solver_objective", "AcceptedResultPolicy"),
+    "AcceptedStepTransformResult": ("._fixed_step", "AcceptedStepTransformResult"),
+    "AcceptedStepTrigger": ("._runtime_lifecycle", "AcceptedStepTrigger"),
+    "AcceptedStepTriggerGraph": ("._runtime_lifecycle", "AcceptedStepTriggerGraph"),
+    "AcceptedStepTriggerGraphState": (
+        "._runtime_lifecycle",
+        "AcceptedStepTriggerGraphState",
+    ),
+    "AcceptedStepTriggerState": ("._runtime_lifecycle", "AcceptedStepTriggerState"),
+    "AcceptedStochasticDelayInterpolation": (
+        "._delay_capabilities",
+        "AcceptedStochasticDelayInterpolation",
+    ),
+    "AdamsBashforthMoultonMethod": (
+        "._temporal_extensions",
+        "AdamsBashforthMoultonMethod",
+    ),
+    "AdaptiveBalanceLawRolloutPlan": (
+        "._balance_law_adaptive",
+        "AdaptiveBalanceLawRolloutPlan",
+    ),
+    "AdaptiveBalanceLawRolloutResult": (
+        "._balance_law_adaptive",
+        "AdaptiveBalanceLawRolloutResult",
+    ),
+    "AdaptiveFiniteVolumeRolloutPlan": (
+        "._finite_volume_rollout",
+        "AdaptiveFiniteVolumeRolloutPlan",
+    ),
+    "AdaptiveMPMRolloutPlan": ("._material_point_adaptive", "AdaptiveMPMRolloutPlan"),
+    "AdaptiveMPMRolloutResult": ("._material_point_adaptive", "AdaptiveMPMRolloutResult"),
+    "AdaptiveReplayPreparationPolicy": (
+        "._fixed_step",
+        "AdaptiveReplayPreparationPolicy",
+    ),
+    "AdaptiveStochasticDelayPolicy": (
+        "._delay_capabilities",
+        "AdaptiveStochasticDelayPolicy",
+    ),
+    "AdaptiveTDVPPlan": ("._adaptive_tdvp", "AdaptiveTDVPPlan"),
+    "AdaptiveTDVPResult": ("._adaptive_tdvp", "AdaptiveTDVPResult"),
+    "AerothermodynamicALEEvidence": (
+        "._aerothermodynamic_topology",
+        "AerothermodynamicALEEvidence",
+    ),
+    "AerothermodynamicALEPlan": (
+        "._aerothermodynamic_topology",
+        "AerothermodynamicALEPlan",
+    ),
+    "AerothermodynamicTopologyTransaction": (
+        "._aerothermodynamic_topology",
+        "AerothermodynamicTopologyTransaction",
+    ),
+    "AlgorithmicWorkObjective": ("._solver_objective", "AlgorithmicWorkObjective"),
+    "AlgorithmicWorkResult": ("._solver_objective", "AlgorithmicWorkResult"),
+    "ArtifactCheckpointStore": ("._production_runtime", "ArtifactCheckpointStore"),
+    "AtmosphereCorrectionLedger": (
+        "._relativistic_primitive",
+        "AtmosphereCorrectionLedger",
+    ),
+    "AtmosphereFloorPolicy": ("._relativistic_primitive", "AtmosphereFloorPolicy"),
+    "AtmosphereFloorStatus": ("._relativistic_primitive", "AtmosphereFloorStatus"),
+    "AutonomousDAEBlockLinearization": (
+        "._dae_coordinate_adapter",
+        "AutonomousDAEBlockLinearization",
+    ),
+    "BDDCFETIDPTracePlan": ("._spectral_hp_completion", "BDDCFETIDPTracePlan"),
+    "BDFMethod": ("._bdf_method", "BDFMethod"),
+    "BEMFractureEpochTransition3D": ("._bem_fracture3d", "BEMFractureEpochTransition3D"),
+    "BEMFractureProblem3D": ("._bem_fracture3d", "BEMFractureProblem3D"),
+    "BEMFractureResult3D": ("._bem_fracture3d", "BEMFractureResult3D"),
+    "BSDERegressionScheme": ("._regression_bsde", "BSDERegressionScheme"),
+    "BacksolveDelayAdjoint": ("._delay_capabilities", "BacksolveDelayAdjoint"),
+    "BalanceLawAcceptedBudget": ("._balance_law", "BalanceLawAcceptedBudget"),
+    "BalanceLawAdaptivePolicy": ("._balance_law_adaptive", "BalanceLawAdaptivePolicy"),
+    "BalanceLawAdaptiveStatus": ("._balance_law_adaptive", "BalanceLawAdaptiveStatus"),
+    "BalanceLawAdvanceResult": ("._balance_law", "BalanceLawAdvanceResult"),
+    "BalanceLawCheckpoint": ("._balance_law_checkpoint", "BalanceLawCheckpoint"),
+    "BalanceLawCheckpointPlan": ("._balance_law_checkpoint", "BalanceLawCheckpointPlan"),
+    "BalanceLawDecisionJournal": ("._balance_law_adaptive", "BalanceLawDecisionJournal"),
+    "BalanceLawProcessAdvance": ("._balance_law", "BalanceLawProcessAdvance"),
+    "BalanceLawProcessState": ("._balance_law", "BalanceLawProcessState"),
+    "BalanceLawRolloutResult": ("._balance_law", "BalanceLawRolloutResult"),
+    "BalanceLawRuntimeState": ("._balance_law", "BalanceLawRuntimeState"),
+    "BalanceLawSourceView": ("._balance_law_transport", "BalanceLawSourceView"),
+    "BalanceLawTransportAdvance": (
+        "._balance_law_transport",
+        "BalanceLawTransportAdvance",
+    ),
+    "BalanceLawTransportState": ("._balance_law_transport", "BalanceLawTransportState"),
+    "BarnesHutGravityPlan": ("._particle_gravity", "BarnesHutGravityPlan"),
+    "BlockAMRAdvancePhase": ("._block_amr_runtime", "BlockAMRAdvancePhase"),
+    "BlockAMRAdvanceResult": ("._block_amr_runtime", "BlockAMRAdvanceResult"),
+    "BlockAMRRuntimePlan": ("._block_amr_runtime", "BlockAMRRuntimePlan"),
+    "BlockAMRRuntimeState": ("._block_amr_runtime", "BlockAMRRuntimeState"),
+    "BoostedExternalField": ("._boosted_frame", "BoostedExternalField"),
+    "BoostedFrameEvidence": ("._boosted_frame", "BoostedFrameEvidence"),
+    "BoostedFramePlan": ("._boosted_frame", "BoostedFramePlan"),
+    "BoostedFrameState": ("._boosted_frame", "BoostedFrameState"),
+    "BoostedFrameStepResult": ("._boosted_frame", "BoostedFrameStepResult"),
+    "BoostedLabFieldSnapshot": ("._boosted_frame", "BoostedLabFieldSnapshot"),
+    "BoostedLabParticleSnapshot": ("._boosted_frame", "BoostedLabParticleSnapshot"),
+    "BoostedParticleSnapshotBuffer": ("._boosted_frame", "BoostedParticleSnapshotBuffer"),
+    "BoostedParticles": ("._boosted_frame", "BoostedParticles"),
+    "BoostedSnapshotPlan": ("._boosted_frame", "BoostedSnapshotPlan"),
+    "BoostedSnapshotState": ("._boosted_frame", "BoostedSnapshotState"),
+    "BoundedAsyncPublisher": ("._runtime_lifecycle", "BoundedAsyncPublisher"),
+    "BoundedEvolutionObservation": (
+        "._evolution_observation",
+        "BoundedEvolutionObservation",
+    ),
+    "BoundedEvolutionObservationPlan": (
+        "._evolution_observation",
+        "BoundedEvolutionObservationPlan",
+    ),
+    "ByteBoundedAsyncPublisher": ("._runtime_lifecycle", "ByteBoundedAsyncPublisher"),
+    "CFDEMCouplingSchedulePlan": ("._cfd_dem", "CFDEMCouplingSchedulePlan"),
+    "CFDEMCouplingState": ("._cfd_dem", "CFDEMCouplingState"),
+    "CFDEMMacroStepResult": ("._cfd_dem", "CFDEMMacroStepResult"),
+    "CHANNEL_FLOW_EXPLICIT_RESTRICTION": (
+        "._channel_flow",
+        "CHANNEL_FLOW_EXPLICIT_RESTRICTION",
+    ),
+    "CHANNEL_FLOW_INITIAL_CONSTRAINT": (
+        "._channel_flow",
+        "CHANNEL_FLOW_INITIAL_CONSTRAINT",
+    ),
+    "CHANNEL_FLOW_STOKES_FAILURE": ("._channel_flow", "CHANNEL_FLOW_STOKES_FAILURE"),
+    "CHANNEL_FLOW_SUCCESS": ("._channel_flow", "CHANNEL_FLOW_SUCCESS"),
+    "COLLOCATION_NONFINITE": ("._collocation", "COLLOCATION_NONFINITE"),
+    "COLLOCATION_SOLVER_FAILURE": ("._collocation", "COLLOCATION_SOLVER_FAILURE"),
+    "COLLOCATION_SUCCESS": ("._collocation", "COLLOCATION_SUCCESS"),
+    "CONSERVATION_COMPONENTS": ("._dark_sector_epoch_runtime", "CONSERVATION_COMPONENTS"),
+    "CalabiYauCampaign": ("._calabi_yau_campaigns", "CalabiYauCampaign"),
+    "CalabiYauCheckpointRegistry": (
+        "._calabi_yau_registry",
+        "CalabiYauCheckpointRegistry",
+    ),
+    "CalabiYauMetricArtifact": ("._calabi_yau_archive", "CalabiYauMetricArtifact"),
+    "CalabiYauMetricEvidence": ("._calabi_yau_evidence", "CalabiYauMetricEvidence"),
+    "CalabiYauMetricEvidencePlan": (
+        "._calabi_yau_evidence",
+        "CalabiYauMetricEvidencePlan",
+    ),
+    "CalabiYauMetricProblem": ("._calabi_yau", "CalabiYauMetricProblem"),
+    "CalabiYauMetricResult": ("._calabi_yau", "CalabiYauMetricResult"),
+    "CalabiYauSolvePolicy": ("._calabi_yau", "CalabiYauSolvePolicy"),
+    "CallableBSDERegressionBasis": ("._regression_bsde", "CallableBSDERegressionBasis"),
+    "CallableDrivingPath": ("._driving_path", "CallableDrivingPath"),
+    "CallableFixedStepMethod": ("._fixed_step", "CallableFixedStepMethod"),
+    "CallableSSPRKStageTransform": ("._fixed_step", "CallableSSPRKStageTransform"),
+    "CaputoFractionalProblem": ("._fractional_memory", "CaputoFractionalProblem"),
+    "CartesianExpansionSpace": ("._particle_gravity", "CartesianExpansionSpace"),
+    "CartesianFMMOperators": ("._particle_gravity", "CartesianFMMOperators"),
+    "CartesianFMMResourceEvidence": (
+        "._particle_gravity",
+        "CartesianFMMResourceEvidence",
+    ),
+    "CausalBackwardHermiteDrivingPath": (
+        "._driving_path",
+        "CausalBackwardHermiteDrivingPath",
+    ),
+    "CausalProcessTomographyProblem": (
+        "._process_tomography",
+        "CausalProcessTomographyProblem",
+    ),
+    "CausalProcessTomographyResult": (
+        "._process_tomography",
+        "CausalProcessTomographyResult",
+    ),
+    "CausalResidualPolicy": ("._functional_training", "CausalResidualPolicy"),
+    "CertifiedTruncatedFunctionalDelay": (
+        "._delay_capabilities",
+        "CertifiedTruncatedFunctionalDelay",
+    ),
+    "ChannelFlowDiagnosticsHistory": ("._channel_flow", "ChannelFlowDiagnosticsHistory"),
+    "ChannelFlowSolution": ("._channel_flow", "ChannelFlowSolution"),
+    "ChannelSBDF2Method": ("._channel_flow", "ChannelSBDF2Method"),
+    "ChannelSBDF2State": ("._channel_flow", "ChannelSBDF2State"),
+    "ChargedParticleTransportPlan": (
+        "._charged_particle_transport",
+        "ChargedParticleTransportPlan",
+    ),
+    "ChargedParticleTransportResult": (
+        "._charged_particle_transport",
+        "ChargedParticleTransportResult",
+    ),
+    "ChargedParticleTransportStatus": (
+        "._charged_particle_transport",
+        "ChargedParticleTransportStatus",
+    ),
+    "ChargedStepBank": ("._charged_particle_transport", "ChargedStepBank"),
+    "ChargedStepRadiationPlan": ("._charged_step_radiation", "ChargedStepRadiationPlan"),
+    "ChargedStepRadiationResult": (
+        "._charged_step_radiation",
+        "ChargedStepRadiationResult",
+    ),
+    "CheckpointCommitReceipt": ("._production_runtime", "CheckpointCommitReceipt"),
+    "CheckpointGenerationPolicy": ("._production_runtime", "CheckpointGenerationPolicy"),
+    "CheckpointMigrationRecord": ("._production_runtime", "CheckpointMigrationRecord"),
+    "CheckpointedDelayAdjoint": ("._delay_adjoint", "CheckpointedDelayAdjoint"),
+    "ChemicalEquilibriumEnsemble": (
+        "._chemical_equilibrium",
+        "ChemicalEquilibriumEnsemble",
+    ),
+    "ChemicalEquilibriumEvidence": (
+        "._chemical_equilibrium",
+        "ChemicalEquilibriumEvidence",
+    ),
+    "ChemicalEquilibriumPlan": ("._chemical_equilibrium", "ChemicalEquilibriumPlan"),
+    "ChemicalEquilibriumResult": ("._chemical_equilibrium", "ChemicalEquilibriumResult"),
+    "ChemicalEquilibriumThermodynamicState": (
+        "._chemical_equilibrium",
+        "ChemicalEquilibriumThermodynamicState",
+    ),
+    "ChemicalReactorKind": ("._chemical_reactor", "ChemicalReactorKind"),
+    "ChemicalReactorPlan": ("._chemical_reactor", "ChemicalReactorPlan"),
+    "ChemicalReactorSolution": ("._chemical_reactor", "ChemicalReactorSolution"),
+    "ChemicalReactorThermodynamicState": (
+        "._chemical_reactor",
+        "ChemicalReactorThermodynamicState",
+    ),
+    "CircuitDrivePort": ("._circuit_qed", "CircuitDrivePort"),
+    "CircuitInteraction": ("._circuit_qed", "CircuitInteraction"),
+    "CircuitModeKind": ("._circuit_qed", "CircuitModeKind"),
+    "CircuitModePlacement": ("._circuit_qed", "CircuitModePlacement"),
+    "CircuitQEDDeviceCostEstimate": ("._circuit_qed", "CircuitQEDDeviceCostEstimate"),
+    "CircuitQEDDeviceDiagnostics": ("._circuit_qed", "CircuitQEDDeviceDiagnostics"),
+    "CircuitQEDDeviceParameters": ("._circuit_qed", "CircuitQEDDeviceParameters"),
+    "CircuitQEDDevicePlan": ("._circuit_qed", "CircuitQEDDevicePlan"),
+    "CircuitQEDDevicePolicy": ("._circuit_qed", "CircuitQEDDevicePolicy"),
+    "CircuitQEDDeviceSpec": ("._circuit_qed", "CircuitQEDDeviceSpec"),
+    "ClassicalRegisterLayout": ("._quantum_experiment", "ClassicalRegisterLayout"),
+    "CochainElectrohydrodynamicEvaluation": (
+        "._electrohydrodynamic",
+        "CochainElectrohydrodynamicEvaluation",
+    ),
+    "CochainElectrohydrodynamicForcePlan": (
+        "._electrohydrodynamic",
+        "CochainElectrohydrodynamicForcePlan",
+    ),
+    "CochainElectrostaticBoundaryPlan": (
+        "._cochain_electrostatic",
+        "CochainElectrostaticBoundaryPlan",
+    ),
+    "CochainElectrostaticPlan": ("._cochain_electrostatic", "CochainElectrostaticPlan"),
+    "CochainElectrostaticResult": (
+        "._cochain_electrostatic",
+        "CochainElectrostaticResult",
+    ),
+    "CochainMaxwellPICFieldSolver": (
+        "._cochain_pic_field",
+        "CochainMaxwellPICFieldSolver",
+    ),
+    "CochainMultirateDiagnostics": ("._cochain_multirate", "CochainMultirateDiagnostics"),
+    "CochainMultiratePlan": ("._cochain_multirate", "CochainMultiratePlan"),
+    "CochainRatePartition": ("._cochain_multirate", "CochainRatePartition"),
+    "CollocationAxisRule": ("._collocation", "CollocationAxisRule"),
+    "CommutatorFreeSolver": ("._geometric", "CommutatorFreeSolver"),
+    "CommutatorFreeTableau": ("._geometric", "CommutatorFreeTableau"),
+    "CompatibleElasticityDynamics": (
+        "._compatible_systems",
+        "CompatibleElasticityDynamics",
+    ),
+    "CompatibleElasticityState": ("._compatible_systems", "CompatibleElasticityState"),
+    "CompatibleIdealMHDInductionDynamics": (
+        "._compatible_systems",
+        "CompatibleIdealMHDInductionDynamics",
+    ),
+    "CompatibleIdealMHDState": ("._compatible_systems", "CompatibleIdealMHDState"),
+    "CompatibleIncompressibleProjection": (
+        "._compatible_systems",
+        "CompatibleIncompressibleProjection",
+    ),
+    "CompatibleMaxwell1DPlan": ("._maxwell_reduced", "CompatibleMaxwell1DPlan"),
+    "CompatibleMaxwell1DState": ("._maxwell_reduced", "CompatibleMaxwell1DState"),
+    "CompatibleMaxwell2DPlan": ("._maxwell_reduced", "CompatibleMaxwell2DPlan"),
+    "CompatibleMaxwell2DState": ("._maxwell_reduced", "CompatibleMaxwell2DState"),
+    "CompatibleMaxwellDiagnostics": (".maxwell", "CompatibleMaxwellDiagnostics"),
+    "CompatibleMaxwellPlan": (".maxwell", "CompatibleMaxwellPlan"),
+    "CompatibleMaxwellState": (".maxwell", "CompatibleMaxwellState"),
+    "CompatiblePoroelasticDynamics": (
+        "._compatible_systems",
+        "CompatiblePoroelasticDynamics",
+    ),
+    "CompatiblePoroelasticState": ("._compatible_systems", "CompatiblePoroelasticState"),
+    "CompatiblePressurePreconditioner": (
+        "._compatible_systems",
+        "CompatiblePressurePreconditioner",
+    ),
+    "CompatibleProjectionStatus": ("._compatible_systems", "CompatibleProjectionStatus"),
+    "CompatibleThermoelasticDynamics": (
+        "._compatible_systems",
+        "CompatibleThermoelasticDynamics",
+    ),
+    "CompatibleThermoelasticState": (
+        "._compatible_systems",
+        "CompatibleThermoelasticState",
+    ),
+    "CompatibleVariableDensityProjection": (
+        "._compatible_systems",
+        "CompatibleVariableDensityProjection",
+    ),
+    "ComponentOptimizer": ("._component_training", "ComponentOptimizer"),
+    "ComponentTrainingResult": ("._component_training", "ComponentTrainingResult"),
+    "CompositeAcceptedStepTransform": ("._fixed_step", "CompositeAcceptedStepTransform"),
+    "CompositeGaugeProjector": ("._mac_composite_projection", "CompositeGaugeProjector"),
+    "CompositeMACProjectionPlan": (
+        "._mac_composite_projection",
+        "CompositeMACProjectionPlan",
+    ),
+    "CompositeMACProjectionResult": (
+        "._mac_composite_projection",
+        "CompositeMACProjectionResult",
+    ),
+    "CompressibleKineticFixedStepMethod": (
+        "._compressible_kinetic",
+        "CompressibleKineticFixedStepMethod",
+    ),
+    "CompressibleKineticVTKResult": (
+        "._compressible_kinetic_output",
+        "CompressibleKineticVTKResult",
+    ),
+    "ConductorCircuitSolveResult": (
+        "._electrostatic_conductors",
+        "ConductorCircuitSolveResult",
+    ),
+    "ConjugateAerothermalExchange": (
+        "._aerothermal_material",
+        "ConjugateAerothermalExchange",
+    ),
+    "ConjugateAerothermalInterfacePlan": (
+        "._aerothermal_material",
+        "ConjugateAerothermalInterfacePlan",
+    ),
+    "ConnectedVMCJumpProjectionAudit": (
+        "._neural_sampled_trajectory",
+        "ConnectedVMCJumpProjectionAudit",
+    ),
+    "ConnectedVMCNeuralTrajectoryPolicy": (
+        "._neural_sampled_trajectory",
+        "ConnectedVMCNeuralTrajectoryPolicy",
+    ),
+    "ConnectedVMCNeuralTrajectoryProblem": (
+        "._neural_sampled_trajectory",
+        "ConnectedVMCNeuralTrajectoryProblem",
+    ),
+    "ConnectedVMCNeuralTrajectoryResult": (
+        "._neural_sampled_trajectory",
+        "ConnectedVMCNeuralTrajectoryResult",
+    ),
+    "ConservationIMEXFixedStepMethod": (
+        "._conservation_temporal",
+        "ConservationIMEXFixedStepMethod",
+    ),
+    "ConservationIMEXMethod": ("._conservation_temporal", "ConservationIMEXMethod"),
+    "ConservationIMEXResult": ("._conservation_temporal", "ConservationIMEXResult"),
+    "ConservativeFiniteVolumeDVMPlan": (
+        "._discrete_velocity",
+        "ConservativeFiniteVolumeDVMPlan",
+    ),
+    "ConservativeLocalTimeStepPlan": ("._fem_multirate", "ConservativeLocalTimeStepPlan"),
+    "ConservativeRecessionRemapPlan": (
+        "._aerothermal_material",
+        "ConservativeRecessionRemapPlan",
+    ),
+    "ConservativeRecessionRemapResult": (
+        "._aerothermal_material",
+        "ConservativeRecessionRemapResult",
+    ),
+    "ConstantDelay": ("._delay", "ConstantDelay"),
+    "ConstrainedMHDDiagnostics": ("._constrained_mhd", "ConstrainedMHDDiagnostics"),
+    "ConstrainedMHDRunStatus": ("._constrained_mhd", "ConstrainedMHDRunStatus"),
+    "ConstrainedMHDSSPRK3Plan": ("._constrained_mhd", "ConstrainedMHDSSPRK3Plan"),
+    "ConstrainedMHDState": ("._constrained_mhd", "ConstrainedMHDState"),
+    "ConstrainedMHDStepResult": ("._constrained_mhd", "ConstrainedMHDStepResult"),
+    "ConstrainedMechanicalState": (
+        "._constrained_mechanics",
+        "ConstrainedMechanicalState",
+    ),
+    "ConstrainedMechanicalStep": ("._constrained_mechanics", "ConstrainedMechanicalStep"),
+    "ConstrainedMechanicsEvidence": (
+        "._constrained_mechanics",
+        "ConstrainedMechanicsEvidence",
+    ),
+    "ConstrainedMechanicsStatus": (
+        "._constrained_mechanics",
+        "ConstrainedMechanicsStatus",
+    ),
+    "ContinuumDSMCConservedSchema": ("._continuum_dsmc", "ContinuumDSMCConservedSchema"),
+    "ContinuumDSMCInterfaceExchange": (
+        "._continuum_dsmc",
+        "ContinuumDSMCInterfaceExchange",
+    ),
+    "ContinuumDSMCInterfacePlan": ("._continuum_dsmc", "ContinuumDSMCInterfacePlan"),
+    "ContinuumDSMCReason": ("._continuum_dsmc", "ContinuumDSMCReason"),
+    "ContinuumToDSMCConversionPlan": (
+        "._continuum_dsmc",
+        "ContinuumToDSMCConversionPlan",
+    ),
+    "ContinuumToDSMCConversionResult": (
+        "._continuum_dsmc",
+        "ContinuumToDSMCConversionResult",
+    ),
+    "ControlledDifferentialSolution": ("._diffrax_cde", "ControlledDifferentialSolution"),
+    "ConvolutionKernel": ("._memory", "ConvolutionKernel"),
+    "ConvolutionVolterraProblem": ("._memory", "ConvolutionVolterraProblem"),
+    "CoupledCost": ("._coupled", "CoupledCost"),
+    "CoupledFBSDEProblem": ("._fbsde", "CoupledFBSDEProblem"),
+    "CoupledFBSDEResult": ("._fbsde", "CoupledFBSDEResult"),
+    "CoupledFEMBEMResult3D": ("._nonmatching_fem_bem3d", "CoupledFEMBEMResult3D"),
+    "CoupledFieldCheckpoint": ("._coupled_field_checkpoint", "CoupledFieldCheckpoint"),
+    "CoupledFieldCheckpointPlan": (
+        "._coupled_field_checkpoint",
+        "CoupledFieldCheckpointPlan",
+    ),
+    "CoupledHierarchyResult": ("._coupled", "CoupledHierarchyResult"),
+    "CoupledLevelResult": ("._coupled", "CoupledLevelResult"),
+    "CoupledLevelSolver": ("._coupled", "CoupledLevelSolver"),
+    "CoupledObservable": ("._coupled", "CoupledObservable"),
+    "CoupledValidity": ("._coupled", "CoupledValidity"),
+    "CutCellOutputSnapshot": ("._block_amr_lifecycle", "CutCellOutputSnapshot"),
+    "CutCellRestartRegistry": ("._block_amr_lifecycle", "CutCellRestartRegistry"),
+    "DAEAdaptivePolicy": ("._differential_algebraic", "DAEAdaptivePolicy"),
+    "DAEAttemptHistory": ("._differential_algebraic", "DAEAttemptHistory"),
+    "DAEAttemptStatus": ("._differential_algebraic", "DAEAttemptStatus"),
+    "DAEBlockCoordinate": ("._dae_coordinate_adapter", "DAEBlockCoordinate"),
+    "DAEBlockJacobian": ("._dae_coordinate_adapter", "DAEBlockJacobian"),
+    "DAEBlockLinearization": ("._dae_coordinate_adapter", "DAEBlockLinearization"),
+    "DAEConsistencyCandidate": ("._dae_events", "DAEConsistencyCandidate"),
+    "DAEConsistencyPolicy": ("._dae_events", "DAEConsistencyPolicy"),
+    "DAEContinuation": ("._differential_algebraic", "DAEContinuation"),
+    "DAECoordinateAdapter": ("._dae_coordinate_adapter", "DAECoordinateAdapter"),
+    "DAEEventPlan": ("._dae_events", "DAEEventPlan"),
+    "DAEEventReplayEvidence": ("._dae_events", "DAEEventReplayEvidence"),
+    "DAEEventResult": ("._dae_events", "DAEEventResult"),
+    "DAEEventStatus": ("._dae_events", "DAEEventStatus"),
+    "DAEFailureMode": ("._differential_algebraic", "DAEFailureMode"),
+    "DAEInitializationMode": ("._dae_initialization", "DAEInitializationMode"),
+    "DAEInitializationResult": ("._dae_initialization", "DAEInitializationResult"),
+    "DAEInitializationSpec": ("._dae_initialization", "DAEInitializationSpec"),
+    "DAEInitializationStatus": ("._dae_initialization", "DAEInitializationStatus"),
+    "DAERegularityCertificate": ("._dae_events", "DAERegularityCertificate"),
+    "DAERegularityCertificatePlan": ("._dae_events", "DAERegularityCertificatePlan"),
+    "DAERegularityDomain": ("._dae_events", "DAERegularityDomain"),
+    "DAERegularityEvidence": ("._differential_algebraic", "DAERegularityEvidence"),
+    "DAERegularityFailureMode": ("._differential_algebraic", "DAERegularityFailureMode"),
+    "DAERegularityMode": ("._differential_algebraic", "DAERegularityMode"),
+    "DAERegularityPolicy": ("._differential_algebraic", "DAERegularityPolicy"),
+    "DAERegularityStatus": ("._differential_algebraic", "DAERegularityStatus"),
+    "DAEReplayEvidence": ("._differential_algebraic", "DAEReplayEvidence"),
+    "DAEReplayMode": ("._differential_algebraic", "DAEReplayMode"),
+    "DAEReplayPolicy": ("._differential_algebraic", "DAEReplayPolicy"),
+    "DAEResetMap": ("._dae_events", "DAEResetMap"),
+    "DAERootCoordinates": ("._dae_coordinate_adapter", "DAERootCoordinates"),
+    "DAERootKind": ("._dae_coordinate_adapter", "DAERootKind"),
+    "DAEScaleKind": ("._dae_coordinate_adapter", "DAEScaleKind"),
+    "DAESetupHook": ("._dae_coordinate_adapter", "DAESetupHook"),
+    "DAESolvePlan": ("._differential_algebraic", "DAESolvePlan"),
+    "DAESolvePolicy": ("._differential_algebraic", "DAESolvePolicy"),
+    "DAEStatus": ("._differential_algebraic", "DAEStatus"),
+    "DAEStepHistory": ("._differential_algebraic", "DAEStepHistory"),
+    "DAETemporalReusePolicy": ("._differential_algebraic", "DAETemporalReusePolicy"),
+    "DAETerminationStatus": ("._differential_algebraic", "DAETerminationStatus"),
+    "DEMFixedStepMethod": ("._particle_methods", "DEMFixedStepMethod"),
+    "DFSPHFixedStepMethod": ("._particle_methods", "DFSPHFixedStepMethod"),
+    "DGInterfaceFluxResult": ("._fem_multirate", "DGInterfaceFluxResult"),
+    "DGMultirateTracePlan": ("._fem_multirate", "DGMultirateTracePlan"),
+    "DGTraceHistory": ("._fem_multirate", "DGTraceHistory"),
+    "DSMCBoundaryExchangeLedger": ("._dsmc_runtime", "DSMCBoundaryExchangeLedger"),
+    "DSMCProductionPlan": ("._dsmc_runtime", "DSMCProductionPlan"),
+    "DSMCRuntimeState": ("._dsmc_runtime", "DSMCRuntimeState"),
+    "DSMCStepResult": ("._dsmc_runtime", "DSMCStepResult"),
+    "DSMCToContinuumReductionPlan": ("._continuum_dsmc", "DSMCToContinuumReductionPlan"),
+    "DSMCToContinuumReductionResult": (
+        "._continuum_dsmc",
+        "DSMCToContinuumReductionResult",
+    ),
+    "DarkSectorEpochPlan": ("._dark_sector_epoch_runtime", "DarkSectorEpochPlan"),
+    "DarkSectorEpochResult": ("._dark_sector_epoch_runtime", "DarkSectorEpochResult"),
+    "DarkSectorEpochState": ("._dark_sector_epoch_runtime", "DarkSectorEpochState"),
+    "DarkSectorResumePoint": ("._dark_sector_epoch_runtime", "DarkSectorResumePoint"),
+    "DarkSectorRunCoordinator": (
+        "._dark_sector_epoch_runtime",
+        "DarkSectorRunCoordinator",
+    ),
+    "DarkSectorWorkAdmission": ("._dark_sector_epoch_runtime", "DarkSectorWorkAdmission"),
+    "Davie": ("._rough", "Davie"),
+    "DeepBSDEResult": ("._deep_bsde", "DeepBSDEResult"),
+    "DeepPicardDiagnostics": ("._deep_picard", "DeepPicardDiagnostics"),
+    "DeepPicardInitialSource": ("._deep_picard", "DeepPicardInitialSource"),
+    "DeepPicardResult": ("._deep_picard", "DeepPicardResult"),
+    "DeepSplittingDiagnostics": ("._deep_splitting", "DeepSplittingDiagnostics"),
+    "DeepSplittingInterpolation": ("._deep_splitting", "DeepSplittingInterpolation"),
+    "DeepSplittingResult": ("._deep_splitting", "DeepSplittingResult"),
+    "DeepSplittingSamplingMode": ("._deep_splitting", "DeepSplittingSamplingMode"),
+    "DeepSplittingSolution": ("._deep_splitting", "DeepSplittingSolution"),
+    "DeformableContactAssembly": (
+        "._mac_deformable_contact",
+        "DeformableContactAssembly",
+    ),
+    "DeformableContactKinematics": (
+        "._mac_deformable_contact",
+        "DeformableContactKinematics",
+    ),
+    "DeformableContactResidualEvaluation": (
+        "._mac_deformable_contact",
+        "DeformableContactResidualEvaluation",
+    ),
+    "DeformableContactResidualPlan": (
+        "._mac_deformable_contact",
+        "DeformableContactResidualPlan",
+    ),
+    "DelayBacksolveEvidence": ("._delay_capabilities", "DelayBacksolveEvidence"),
+    "DelayDifferentialProblem": ("._delay", "DelayDifferentialProblem"),
+    "DelayHistory": ("._delay", "DelayHistory"),
+    "DelayHistoryDerivative": ("._delay", "DelayHistoryDerivative"),
+    "DelayHistoryWindow": ("._delay", "DelayHistoryWindow"),
+    "DelayJumpMap": ("._jump_delay", "DelayJumpMap"),
+    "DelayPrimalTape": ("._delay_capabilities", "DelayPrimalTape"),
+    "DelaySegmentArchive": ("._delay_segmented", "DelaySegmentArchive"),
+    "DelaySegmentContinuation": ("._delay_segmented", "DelaySegmentContinuation"),
+    "DelayTerm": ("._delay", "DelayTerm"),
+    "DelayValues": ("._delay", "DelayValues"),
+    "DelayVectorField": ("._delay", "DelayVectorField"),
+    "DelayWienerTerm": ("._delay", "DelayWienerTerm"),
+    "DenseInstrumentBranchResult": (
+        "._quantum_measurement",
+        "DenseInstrumentBranchResult",
+    ),
+    "DenseQuantumExpectationDiagnostics": (
+        "._quantum_expectation",
+        "DenseQuantumExpectationDiagnostics",
+    ),
+    "DenseQuantumExpectationResult": (
+        "._quantum_expectation",
+        "DenseQuantumExpectationResult",
+    ),
+    "DenseQuantumExpectationStatus": (
+        "._quantum_expectation",
+        "DenseQuantumExpectationStatus",
+    ),
+    "DenseQuantumObservableCostEstimate": (
+        "._quantum_expectation",
+        "DenseQuantumObservableCostEstimate",
+    ),
+    "DenseQuantumObservablePlan": ("._quantum_expectation", "DenseQuantumObservablePlan"),
+    "DenseQuantumObservablePolicy": (
+        "._quantum_expectation",
+        "DenseQuantumObservablePolicy",
+    ),
+    "DenseQuantumOperationEvidence": (
+        "._quantum_program",
+        "DenseQuantumOperationEvidence",
+    ),
+    "DenseQuantumProgramCostEstimate": (
+        "._quantum_program",
+        "DenseQuantumProgramCostEstimate",
+    ),
+    "DenseQuantumProgramDiagnostics": (
+        "._quantum_program",
+        "DenseQuantumProgramDiagnostics",
+    ),
+    "DenseQuantumProgramPlan": ("._quantum_program", "DenseQuantumProgramPlan"),
+    "DenseQuantumProgramPolicy": ("._quantum_program", "DenseQuantumProgramPolicy"),
+    "DenseQuantumProgramResult": ("._quantum_program", "DenseQuantumProgramResult"),
+    "DenseQuantumProgramStatus": ("._quantum_program", "DenseQuantumProgramStatus"),
+    "DensityFokkerPlanckResult": (
+        "._fokker_planck_approximation",
+        "DensityFokkerPlanckResult",
+    ),
+    "DensityPositivityAudit": ("._quantum_program", "DensityPositivityAudit"),
+    "DerivativeDelay": ("._delay", "DerivativeDelay"),
+    "DifferentialAlgebraicProblem": (
+        "._differential_algebraic",
+        "DifferentialAlgebraicProblem",
+    ),
+    "DifferentialAlgebraicSolution": (
+        "._differential_algebraic",
+        "DifferentialAlgebraicSolution",
+    ),
+    "DifferentialInterpretation": ("._differential", "DifferentialInterpretation"),
+    "DifferentialIterationMetrics": ("._diffrax_backend", "DifferentialIterationMetrics"),
+    "DifferentialProblem": ("._differential", "DifferentialProblem"),
+    "DifferentialSolution": ("._differential", "DifferentialSolution"),
+    "DifferentialVectorField": ("._differential", "DifferentialVectorField"),
+    "DiffraxComplexStatePolicy": ("._diffrax_state_packing", "DiffraxComplexStatePolicy"),
+    "DiffraxComplexStateStrategy": (
+        "._diffrax_state_packing",
+        "DiffraxComplexStateStrategy",
+    ),
+    "DiffraxEvolution": ("._dynamics_evolution", "DiffraxEvolution"),
+    "DirectParticleGravityPlan": ("._particle_gravity", "DirectParticleGravityPlan"),
+    "DirectionalSplitFiniteVolumePlan": (
+        "._finite_volume",
+        "DirectionalSplitFiniteVolumePlan",
+    ),
+    "DiscreteOrdinatesEvidence": ("._discrete_ordinates", "DiscreteOrdinatesEvidence"),
+    "DiscreteOrdinatesResult": ("._discrete_ordinates", "DiscreteOrdinatesResult"),
+    "DiscreteOrdinatesTransportPlan": (
+        "._discrete_ordinates",
+        "DiscreteOrdinatesTransportPlan",
+    ),
+    "DistributedAerothermodynamicPlan": (
+        "._distributed_aerothermodynamics",
+        "DistributedAerothermodynamicPlan",
+    ),
+    "DistributedConservationLedger": (
+        "._distributed_aerothermodynamics",
+        "DistributedConservationLedger",
+    ),
+    "DistributedDelay": ("._delay", "DistributedDelay"),
+    "DistributedDelayKernel": ("._delay", "DistributedDelayKernel"),
+    "DistributedElectromagneticPICPlan": (
+        "._distributed_pic",
+        "DistributedElectromagneticPICPlan",
+    ),
+    "DistributedOwnershipEvidence": (
+        "._distributed_aerothermodynamics",
+        "DistributedOwnershipEvidence",
+    ),
+    "DistributedPICExecutor": ("._distributed_pic", "DistributedPICExecutor"),
+    "DistributedPICStepResult": ("._distributed_pic", "DistributedPICStepResult"),
+    "DistributedParticleLayout": ("._particle_gravity", "DistributedParticleLayout"),
+    "DistributedWaveAMRCheckpointEvidence": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRCheckpointEvidence",
+    ),
+    "DistributedWaveAMRDiagnostics": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRDiagnostics",
+    ),
+    "DistributedWaveAMRGravityEvidence": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRGravityEvidence",
+    ),
+    "DistributedWaveAMRLinearEvidence": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRLinearEvidence",
+    ),
+    "DistributedWaveAMRObservables": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRObservables",
+    ),
+    "DistributedWaveAMRRestoreEvidence": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRRestoreEvidence",
+    ),
+    "DistributedWaveAMRResult": ("._distributed_wave_amr", "DistributedWaveAMRResult"),
+    "DistributedWaveAMRState": ("._distributed_wave_amr", "DistributedWaveAMRState"),
+    "DistributedWaveAMRTopologyTransferResult": (
+        "._distributed_wave_amr",
+        "DistributedWaveAMRTopologyTransferResult",
+    ),
+    "DressedSpectrumCostEstimate": ("._dressed_spectrum", "DressedSpectrumCostEstimate"),
+    "DressedSpectrumDiagnostics": ("._dressed_spectrum", "DressedSpectrumDiagnostics"),
+    "DressedSpectrumPlan": ("._dressed_spectrum", "DressedSpectrumPlan"),
+    "DressedSpectrumPolicy": ("._dressed_spectrum", "DressedSpectrumPolicy"),
+    "DressedStateLabel": ("._dressed_spectrum", "DressedStateLabel"),
+    "DrivingPathFitDiagnostics": ("._driving_path", "DrivingPathFitDiagnostics"),
+    "DurableCheckpointStore": ("._production_runtime", "DurableCheckpointStore"),
+    "DynamicalMapPhysicality": ("._memory_kernel", "DynamicalMapPhysicality"),
+    "EMShowerPlan": ("._em_shower", "EMShowerPlan"),
+    "EMShowerResult": ("._em_shower", "EMShowerResult"),
+    "EMShowerStatus": ("._em_shower", "EMShowerStatus"),
+    "ETDRKMethod": ("._etdrk", "ETDRKMethod"),
+    "ElectromagneticPICDiagnostics": (
+        "._electromagnetic_pic",
+        "ElectromagneticPICDiagnostics",
+    ),
+    "ElectromagneticPICFixedStepMethod": (
+        "._electromagnetic_pic",
+        "ElectromagneticPICFixedStepMethod",
+    ),
+    "ElectromagneticPICPlan": ("._electromagnetic_pic", "ElectromagneticPICPlan"),
+    "ElectromagneticPICState": ("._electromagnetic_pic", "ElectromagneticPICState"),
+    "ElectromagneticPICStepResult": (
+        "._electromagnetic_pic",
+        "ElectromagneticPICStepResult",
+    ),
+    "ElectrostaticBoundaryKind": ("._cochain_electrostatic", "ElectrostaticBoundaryKind"),
+    "ElectrostaticConductorCoupling": (
+        "._electrostatic_conductors",
+        "ElectrostaticConductorCoupling",
+    ),
+    "ElectrostaticConductorState": (
+        "._electrostatic_conductors",
+        "ElectrostaticConductorState",
+    ),
+    "ElectrostaticPICDiagnostics": ("._electrostatic_pic", "ElectrostaticPICDiagnostics"),
+    "ElectrostaticPICFixedStepMethod": (
+        "._electrostatic_pic",
+        "ElectrostaticPICFixedStepMethod",
+    ),
+    "ElectrostaticPICPlan": ("._electrostatic_pic", "ElectrostaticPICPlan"),
+    "ElectrostaticPICState": ("._electrostatic_pic", "ElectrostaticPICState"),
+    "ElectrostaticPICStepResult": ("._electrostatic_pic", "ElectrostaticPICStepResult"),
+    "ElectrostaticPlasmaCouplingPlan": (
+        "._plasma_electrostatic",
+        "ElectrostaticPlasmaCouplingPlan",
+    ),
+    "ElectrostaticPlasmaCouplingResult": (
+        "._plasma_electrostatic",
+        "ElectrostaticPlasmaCouplingResult",
+    ),
+    "ElementBlockPreconditioner": (
+        "._conservation_temporal",
+        "ElementBlockPreconditioner",
+    ),
+    "EndpointNeutralFunctional": ("._delay", "EndpointNeutralFunctional"),
+    "EpochStatus": ("._dark_sector_epoch_runtime", "EpochStatus"),
+    "EventDrivenQuantumJumpResult": (
+        "._quantum_jump_event",
+        "EventDrivenQuantumJumpResult",
+    ),
+    "ExactTimeSchedule": ("._runtime_lifecycle", "ExactTimeSchedule"),
+    "ExponentialConvolutionDelay": (
+        "._delay_capabilities",
+        "ExponentialConvolutionDelay",
+    ),
+    "ExponentialRosenbrockEulerMethod": (
+        "._temporal_extensions",
+        "ExponentialRosenbrockEulerMethod",
+    ),
+    "ExteriorHelmholtzDirichletResult2D": (
+        "._helmholtz",
+        "ExteriorHelmholtzDirichletResult2D",
+    ),
+    "ExteriorHelmholtzDirichletResult3D": (
+        "._helmholtz3d",
+        "ExteriorHelmholtzDirichletResult3D",
+    ),
+    "FIBOverdampedPlan": ("._mac_stochastic_immersed", "FIBOverdampedPlan"),
+    "FIBOverdampedStepResult": ("._mac_stochastic_immersed", "FIBOverdampedStepResult"),
+    "FLIPFixedStepMethod": ("._particle_methods", "FLIPFixedStepMethod"),
+    "FermionicGaussianProblem": ("._fermionic_gaussian", "FermionicGaussianProblem"),
+    "FermionicGaussianSolution": ("._fermionic_gaussian", "FermionicGaussianSolution"),
+    "FidelityFieldTransfer": ("._fidelity_pinn", "FidelityFieldTransfer"),
+    "FidelityPINNEvaluation": ("._fidelity_pinn", "FidelityPINNEvaluation"),
+    "FidelityPINNResult": ("._fidelity_pinn", "FidelityPINNResult"),
+    "FidelityPINNStage": ("._fidelity_pinn", "FidelityPINNStage"),
+    "FieldEquilibriumFormulation": ("._field_equilibrium", "FieldEquilibriumFormulation"),
+    "FieldObservationPlan": ("._multiphysics_inference", "FieldObservationPlan"),
+    "FieldProjectionMetric": ("._neural_galerkin", "FieldProjectionMetric"),
+    "FiniteCPTPIntegrationResult": ("._finite_cptp", "FiniteCPTPIntegrationResult"),
+    "FiniteDMRGCostEstimate": ("._dmrg", "FiniteDMRGCostEstimate"),
+    "FiniteDMRGDiagnostics": ("._dmrg", "FiniteDMRGDiagnostics"),
+    "FiniteDMRGPlan": ("._dmrg", "FiniteDMRGPlan"),
+    "FiniteDMRGPolicy": ("._dmrg", "FiniteDMRGPolicy"),
+    "FiniteDMRGProblem": ("._dmrg", "FiniteDMRGProblem"),
+    "FiniteDMRGResult": ("._dmrg", "FiniteDMRGResult"),
+    "FiniteDMRGStatus": ("._dmrg", "FiniteDMRGStatus"),
+    "FiniteElementAcceptedState": (
+        "._finite_element_schedule",
+        "FiniteElementAcceptedState",
+    ),
+    "FiniteElementAcceptedStepSchedule": (
+        "._finite_element_schedule",
+        "FiniteElementAcceptedStepSchedule",
+    ),
+    "FiniteElementAttemptResult": (
+        "._finite_element_schedule",
+        "FiniteElementAttemptResult",
+    ),
+    "FiniteElementCheckpoint": ("._finite_element_checkpoint", "FiniteElementCheckpoint"),
+    "FiniteElementHPTopologyResult": (
+        "._finite_element_adaptivity",
+        "FiniteElementHPTopologyResult",
+    ),
+    "FiniteElementRestartManifest": (
+        "._finite_element_schedule",
+        "FiniteElementRestartManifest",
+    ),
+    "FiniteElementResult": ("._finite_element_result", "FiniteElementResult"),
+    "FiniteElementRunConfiguration": (
+        "._finite_element_result",
+        "FiniteElementRunConfiguration",
+    ),
+    "FiniteElementSolveDiagnostics": (
+        "._finite_element_result",
+        "FiniteElementSolveDiagnostics",
+    ),
+    "FiniteElementStepDiagnostics": (
+        "._finite_element_schedule",
+        "FiniteElementStepDiagnostics",
+    ),
+    "FiniteElementStepPolicy": ("._finite_element_schedule", "FiniteElementStepPolicy"),
+    "FiniteElementTopologyResult": (
+        "._finite_element_adaptivity",
+        "FiniteElementTopologyResult",
+    ),
+    "FiniteElementTopologyTransaction": (
+        "._finite_element_adaptivity",
+        "FiniteElementTopologyTransaction",
+    ),
+    "FiniteExcitedStateResult": ("._finite_response", "FiniteExcitedStateResult"),
+    "FiniteHittingResult": ("._jump_hitting", "FiniteHittingResult"),
+    "FiniteLindbladChannelPlan": ("._finite_cptp", "FiniteLindbladChannelPlan"),
+    "FiniteParticleStepResult": (
+        "._finite_particle_transport",
+        "FiniteParticleStepResult",
+    ),
+    "FiniteParticleTransportPlan": (
+        "._finite_particle_transport",
+        "FiniteParticleTransportPlan",
+    ),
+    "FiniteParticleTransportReason": (
+        "._finite_particle_transport",
+        "FiniteParticleTransportReason",
+    ),
+    "FiniteParticleTransportState": (
+        "._finite_particle_transport",
+        "FiniteParticleTransportState",
+    ),
+    "FiniteRefinementCertificate": ("._open_certificates", "FiniteRefinementCertificate"),
+    "FiniteResponseEvidence": ("._finite_response", "FiniteResponseEvidence"),
+    "FiniteResponsePolicy": ("._finite_response", "FiniteResponsePolicy"),
+    "FiniteResponseProblem": ("._finite_response", "FiniteResponseProblem"),
+    "FiniteResponseResult": ("._finite_response", "FiniteResponseResult"),
+    "FiniteResponseStatus": ("._finite_response", "FiniteResponseStatus"),
+    "FiniteStateGenerator": ("._jump", "FiniteStateGenerator"),
+    "FiniteSteadyStateCertificate": (
+        "._open_certificates",
+        "FiniteSteadyStateCertificate",
+    ),
+    "FiniteSubspaceTDVPPlan": ("._finite_subspace_tdvp", "FiniteSubspaceTDVPPlan"),
+    "FiniteSubspaceTDVPResult": ("._finite_subspace_tdvp", "FiniteSubspaceTDVPResult"),
+    "FiniteTDVPAlgorithm": ("._matrix_product_tdvp", "FiniteTDVPAlgorithm"),
+    "FiniteTDVPCheckpoint": ("._matrix_product_tdvp", "FiniteTDVPCheckpoint"),
+    "FiniteTDVPCostEstimate": ("._matrix_product_tdvp", "FiniteTDVPCostEstimate"),
+    "FiniteTDVPDiagnostics": ("._matrix_product_tdvp", "FiniteTDVPDiagnostics"),
+    "FiniteTDVPMode": ("._matrix_product_tdvp", "FiniteTDVPMode"),
+    "FiniteTDVPPlan": ("._matrix_product_tdvp", "FiniteTDVPPlan"),
+    "FiniteTDVPPolicy": ("._matrix_product_tdvp", "FiniteTDVPPolicy"),
+    "FiniteTDVPProblem": ("._matrix_product_tdvp", "FiniteTDVPProblem"),
+    "FiniteTDVPResult": ("._matrix_product_tdvp", "FiniteTDVPResult"),
+    "FiniteTDVPStatus": ("._matrix_product_tdvp", "FiniteTDVPStatus"),
+    "FiniteVariationalSubspaceTDVPProblem": (
+        "._finite_subspace_tdvp",
+        "FiniteVariationalSubspaceTDVPProblem",
+    ),
+    "FiniteVolumeALEAdvanceEvidence": (
+        "._finite_volume_runtime",
+        "FiniteVolumeALEAdvanceEvidence",
+    ),
+    "FiniteVolumeAdvanceResult": ("._finite_volume_runtime", "FiniteVolumeAdvanceResult"),
+    "FiniteVolumeBackwardEulerPlan": (
+        "._finite_volume_implicit",
+        "FiniteVolumeBackwardEulerPlan",
+    ),
+    "FiniteVolumeCaseSpec": ("._finite_volume_case", "FiniteVolumeCaseSpec"),
+    "FiniteVolumeCheckpoint": ("._finite_volume_checkpoint", "FiniteVolumeCheckpoint"),
+    "FiniteVolumeCheckpointPlan": (
+        "._finite_volume_checkpoint",
+        "FiniteVolumeCheckpointPlan",
+    ),
+    "FiniteVolumeConservativeContentState": (
+        "._finite_volume_content",
+        "FiniteVolumeConservativeContentState",
+    ),
+    "FiniteVolumeDVMResidualEvidence": (
+        "._discrete_velocity",
+        "FiniteVolumeDVMResidualEvidence",
+    ),
+    "FiniteVolumeEmbeddedAdvanceEvidence": (
+        "._finite_volume_runtime",
+        "FiniteVolumeEmbeddedAdvanceEvidence",
+    ),
+    "FiniteVolumeExecutionSpec": ("._finite_volume_case", "FiniteVolumeExecutionSpec"),
+    "FiniteVolumeGradientReport": (
+        "._finite_volume_rollout",
+        "FiniteVolumeGradientReport",
+    ),
+    "FiniteVolumeImplicitStage": (
+        "._finite_volume_implicit",
+        "FiniteVolumeImplicitStage",
+    ),
+    "FiniteVolumeImplicitStepResult": (
+        "._finite_volume_implicit",
+        "FiniteVolumeImplicitStepResult",
+    ),
+    "FiniteVolumeOutputPlan": ("._finite_volume_output", "FiniteVolumeOutputPlan"),
+    "FiniteVolumePhaseChangeStrangMethod": (
+        "._finite_volume_phase_change",
+        "FiniteVolumePhaseChangeStrangMethod",
+    ),
+    "FiniteVolumePhaseChangeStrangResult": (
+        "._finite_volume_phase_change",
+        "FiniteVolumePhaseChangeStrangResult",
+    ),
+    "FiniteVolumePrecisionPolicy": (
+        "._finite_volume_case",
+        "FiniteVolumePrecisionPolicy",
+    ),
+    "FiniteVolumeRemeshArtifact": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeRemeshArtifact",
+    ),
+    "FiniteVolumeReplayMode": ("._finite_volume_rollout", "FiniteVolumeReplayMode"),
+    "FiniteVolumeReplayPolicy": ("._finite_volume_rollout", "FiniteVolumeReplayPolicy"),
+    "FiniteVolumeRetentionPolicy": (
+        "._finite_volume_rollout",
+        "FiniteVolumeRetentionPolicy",
+    ),
+    "FiniteVolumeRolloutResult": ("._finite_volume_rollout", "FiniteVolumeRolloutResult"),
+    "FiniteVolumeRunStatus": ("._finite_volume_runtime", "FiniteVolumeRunStatus"),
+    "FiniteVolumeRuntimeState": ("._finite_volume_runtime", "FiniteVolumeRuntimeState"),
+    "FiniteVolumeScheduledAdvanceResult": (
+        "._finite_volume_runtime",
+        "FiniteVolumeScheduledAdvanceResult",
+    ),
+    "FiniteVolumeStageFlux": ("._finite_volume_runtime", "FiniteVolumeStageFlux"),
+    "FiniteVolumeStageFluxProvider": (
+        "._finite_volume_runtime",
+        "FiniteVolumeStageFluxProvider",
+    ),
+    "FiniteVolumeStageFluxTrace": (
+        "._finite_volume_runtime",
+        "FiniteVolumeStageFluxTrace",
+    ),
+    "FiniteVolumeStepPolicy": ("._finite_volume_runtime", "FiniteVolumeStepPolicy"),
+    "FiniteVolumeStepResult": ("._finite_volume", "FiniteVolumeStepResult"),
+    "FiniteVolumeTopologyArtifactEvidence": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyArtifactEvidence",
+    ),
+    "FiniteVolumeTopologyArtifacts": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyArtifacts",
+    ),
+    "FiniteVolumeTopologyEvent": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEvent",
+    ),
+    "FiniteVolumeTopologyEventJournal": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEventJournal",
+    ),
+    "FiniteVolumeTopologyEventRequest": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEventRequest",
+    ),
+    "FiniteVolumeTopologyEventScheduler": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEventScheduler",
+    ),
+    "FiniteVolumeTopologyEventTransaction": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEventTransaction",
+    ),
+    "FiniteVolumeTopologyEventTransactionResult": (
+        "._finite_volume_topology_events",
+        "FiniteVolumeTopologyEventTransactionResult",
+    ),
+    "FixedBSplineDrivingPath": ("._driving_path", "FixedBSplineDrivingPath"),
+    "FixedCapacitySegmentEvidence": (
+        "._segmented_execution",
+        "FixedCapacitySegmentEvidence",
+    ),
+    "FixedCapacitySegmentPolicy": ("._segmented_execution", "FixedCapacitySegmentPolicy"),
+    "FixedCapacitySegmentStep": ("._segmented_execution", "FixedCapacitySegmentStep"),
+    "FixedConnectivityRecessionPlan": (
+        "._aerothermal_material",
+        "FixedConnectivityRecessionPlan",
+    ),
+    "FixedGridGRHDSSPRK3Plan": (
+        "._relativistic_finite_volume",
+        "FixedGridGRHDSSPRK3Plan",
+    ),
+    "FixedGridGRM1SSPRK3Plan": ("._gr_m1_finite_volume", "FixedGridGRM1SSPRK3Plan"),
+    "FixedGridGRMultigroupM1SSPRK3Plan": (
+        "._gr_multigroup_radiation",
+        "FixedGridGRMultigroupM1SSPRK3Plan",
+    ),
+    "FixedGridGRNeutrinoM1Plan": ("._gr_neutrino", "FixedGridGRNeutrinoM1Plan"),
+    "FixedGridGRRMHDIMEXPlan": ("._grrmhd_runtime", "FixedGridGRRMHDIMEXPlan"),
+    "FixedGridLocalHamiltonian": ("._local_hamiltonian", "FixedGridLocalHamiltonian"),
+    "FixedGridResistiveGRRMHDIMEXPlan": (
+        "._resistive_grrmhd_runtime",
+        "FixedGridResistiveGRRMHDIMEXPlan",
+    ),
+    "FixedStepEvidence": ("._fixed_step", "FixedStepEvidence"),
+    "FixedStepEvidenceRetention": ("._fixed_step", "FixedStepEvidenceRetention"),
+    "FixedStepIterationMetrics": ("._fixed_step", "FixedStepIterationMetrics"),
+    "FixedStepProblem": ("._fixed_step", "FixedStepProblem"),
+    "FixedStepReplayMode": ("._fixed_step", "FixedStepReplayMode"),
+    "FixedStepReplayPolicy": ("._fixed_step", "FixedStepReplayPolicy"),
+    "FixedStepResult": ("._fixed_step", "FixedStepResult"),
+    "FixedStepRetentionPolicy": ("._fixed_step", "FixedStepRetentionPolicy"),
+    "FixedStepRolloutPlan": ("._fixed_step", "FixedStepRolloutPlan"),
+    "FixedStepRolloutResult": ("._fixed_step", "FixedStepRolloutResult"),
+    "FixedStepSolution": ("._fixed_step", "FixedStepSolution"),
+    "FixedStepStatus": ("._fixed_step", "FixedStepStatus"),
+    "FixedStepTemporalResult": ("._temporal_extensions", "FixedStepTemporalResult"),
+    "FixedTwoPhaseTPFlashPlan": ("._phase_equilibrium", "FixedTwoPhaseTPFlashPlan"),
+    "FixedTwoPhaseTPFlashResult": ("._phase_equilibrium", "FixedTwoPhaseTPFlashResult"),
+    "FixedWorkThermochemicalSourcePlan": (
+        "._thermochemical_source",
+        "FixedWorkThermochemicalSourcePlan",
+    ),
+    "FluctuationDissipationReport": (
+        "._mac_stochastic_immersed",
+        "FluctuationDissipationReport",
+    ),
+    "FockContinuationPolicy": ("._fock_continuation", "FockContinuationPolicy"),
+    "FockContinuationResult": ("._fock_continuation", "FockContinuationResult"),
+    "FockContinuationStage": ("._fock_continuation", "FockContinuationStage"),
+    "FockRefinementCertificate": ("._fock_continuation", "FockRefinementCertificate"),
+    "FractionalVectorField": ("._fractional_memory", "FractionalVectorField"),
+    "FrozenHPAdjointSchedule": ("._spectral_hp_completion", "FrozenHPAdjointSchedule"),
+    "FunctionalCheckpointPolicy": ("._functional_training", "FunctionalCheckpointPolicy"),
+    "FunctionalCollocationPlan": (
+        "._functional_differential",
+        "FunctionalCollocationPlan",
+    ),
+    "FunctionalCorrectionProblem": (
+        "._functional_correction",
+        "FunctionalCorrectionProblem",
+    ),
+    "FunctionalDelay": ("._delay", "FunctionalDelay"),
+    "FunctionalDiagnosticsPolicy": (
+        "._functional_training",
+        "FunctionalDiagnosticsPolicy",
+    ),
+    "FunctionalDifferentialBoundaryProblem": (
+        "._functional_differential",
+        "FunctionalDifferentialBoundaryProblem",
+    ),
+    "FunctionalDifferentialContext": (
+        "._functional_differential",
+        "FunctionalDifferentialContext",
+    ),
+    "FunctionalDifferentialSolution": (
+        "._functional_differential",
+        "FunctionalDifferentialSolution",
+    ),
+    "FunctionalMatmulPrecision": ("._functional_precision", "FunctionalMatmulPrecision"),
+    "FunctionalNTKView": ("._functional_ntk", "FunctionalNTKView"),
+    "FunctionalPrecisionPolicy": ("._functional_precision", "FunctionalPrecisionPolicy"),
+    "FunctionalSelectionPolicy": ("._functional_training", "FunctionalSelectionPolicy"),
+    "FunctionalShardingPolicy": ("._functional_sharding", "FunctionalShardingPolicy"),
+    "FunctionalSolver": ("._functional_solver", "FunctionalSolver"),
+    "FunctionalTermBalancePolicy": (
+        "._functional_training",
+        "FunctionalTermBalancePolicy",
+    ),
+    "FunctionalTimeWindowPlan": ("._functional_windows", "FunctionalTimeWindowPlan"),
+    "FunctionalTimeWindowResult": ("._functional_windows", "FunctionalTimeWindowResult"),
+    "FunctionalTrainingCheckpoint": (
+        "._functional_checkpoint",
+        "FunctionalTrainingCheckpoint",
+    ),
+    "FunctionalTrainingPlan": ("._functional_training", "FunctionalTrainingPlan"),
+    "FunctionalTrainingState": ("._functional_training", "FunctionalTrainingState"),
+    "FunctionalWindowAdapter": ("._functional_windows", "FunctionalWindowAdapter"),
+    "GRHDBoundaryCondition": ("._relativistic_finite_volume", "GRHDBoundaryCondition"),
+    "GRHDBoundaryPair": ("._relativistic_finite_volume", "GRHDBoundaryPair"),
+    "GRHDBoundaryTrace": ("._relativistic_finite_volume", "GRHDBoundaryTrace"),
+    "GRHDC2PCandidateRecord": ("._relativistic_primitive", "GRHDC2PCandidateRecord"),
+    "GRHDC2PPolicy": ("._relativistic_primitive", "GRHDC2PPolicy"),
+    "GRHDC2PResult": ("._relativistic_primitive", "GRHDC2PResult"),
+    "GRHDC2PStatus": ("._relativistic_primitive", "GRHDC2PStatus"),
+    "GRHDConservationLedger": ("._relativistic_finite_volume", "GRHDConservationLedger"),
+    "GRHDFaceFluxPlan": ("._relativistic_finite_volume", "GRHDFaceFluxPlan"),
+    "GRHDFaceFluxResult": ("._relativistic_finite_volume", "GRHDFaceFluxResult"),
+    "GRHDFiniteVolumeEvaluation": (
+        "._relativistic_finite_volume",
+        "GRHDFiniteVolumeEvaluation",
+    ),
+    "GRHDFiniteVolumeRunStatus": (
+        "._relativistic_finite_volume",
+        "GRHDFiniteVolumeRunStatus",
+    ),
+    "GRHDFiniteVolumeState": ("._relativistic_finite_volume", "GRHDFiniteVolumeState"),
+    "GRHDFiniteVolumeStepResult": (
+        "._relativistic_finite_volume",
+        "GRHDFiniteVolumeStepResult",
+    ),
+    "GRM1BoundaryCondition": ("._gr_m1_finite_volume", "GRM1BoundaryCondition"),
+    "GRM1BoundaryKind": ("._gr_m1_finite_volume", "GRM1BoundaryKind"),
+    "GRM1BoundaryPair": ("._gr_m1_finite_volume", "GRM1BoundaryPair"),
+    "GRM1ConservationLedger": ("._gr_m1_finite_volume", "GRM1ConservationLedger"),
+    "GRM1FiniteVolumeRunStatus": ("._gr_m1_finite_volume", "GRM1FiniteVolumeRunStatus"),
+    "GRM1FiniteVolumeState": ("._gr_m1_finite_volume", "GRM1FiniteVolumeState"),
+    "GRM1ReconstructionKind": ("._gr_m1_finite_volume", "GRM1ReconstructionKind"),
+    "GRM1SpatialRate": ("._gr_m1_finite_volume", "GRM1SpatialRate"),
+    "GRM1StepResult": ("._gr_m1_finite_volume", "GRM1StepResult"),
+    "GRMHDBoundaryCondition": ("._grmhd_boundary", "GRMHDBoundaryCondition"),
+    "GRMHDBoundaryKind": ("._grmhd_boundary", "GRMHDBoundaryKind"),
+    "GRMHDBoundaryPair": ("._grmhd_boundary", "GRMHDBoundaryPair"),
+    "GRMHDBoundarySide": ("._grmhd_boundary", "GRMHDBoundarySide"),
+    "GRMHDBoundaryTrace": ("._grmhd_boundary", "GRMHDBoundaryTrace"),
+    "GRMHDCTDefectLedger": ("._grmhd_ct", "GRMHDCTDefectLedger"),
+    "GRMHDCTRate": ("._grmhd_ct", "GRMHDCTRate"),
+    "GRMHDCTState": ("._grmhd_ct", "GRMHDCTState"),
+    "GRMHDConstrainedTransportPlan": ("._grmhd_ct", "GRMHDConstrainedTransportPlan"),
+    "GRMHDDefectLedger": ("._grmhd_runtime", "GRMHDDefectLedger"),
+    "GRMHDForceFreeHybridState": (
+        "._grmhd_force_free_transition",
+        "GRMHDForceFreeHybridState",
+    ),
+    "GRMHDForceFreeTransitionLedger": (
+        "._grmhd_force_free_transition",
+        "GRMHDForceFreeTransitionLedger",
+    ),
+    "GRMHDForceFreeTransitionPlan": (
+        "._grmhd_force_free_transition",
+        "GRMHDForceFreeTransitionPlan",
+    ),
+    "GRMHDForceFreeTransitionResult": (
+        "._grmhd_force_free_transition",
+        "GRMHDForceFreeTransitionResult",
+    ),
+    "GRMHDMagneticStateLayout": ("._grmhd_ct", "GRMHDMagneticStateLayout"),
+    "GRMHDRunStatus": ("._grmhd_runtime", "GRMHDRunStatus"),
+    "GRMHDSSPRK3Plan": ("._grmhd_runtime", "GRMHDSSPRK3Plan"),
+    "GRMHDSpatialRate": ("._grmhd_runtime", "GRMHDSpatialRate"),
+    "GRMHDStageEvidence": ("._grmhd_runtime", "GRMHDStageEvidence"),
+    "GRMHDStageProposal": ("._grmhd_runtime", "GRMHDStageProposal"),
+    "GRMHDState": ("._grmhd_runtime", "GRMHDState"),
+    "GRMHDStepResult": ("._grmhd_runtime", "GRMHDStepResult"),
+    "GRMHDVectorPotentialGauge": ("._grmhd_ct", "GRMHDVectorPotentialGauge"),
+    "GRMultigroupM1State": ("._gr_multigroup_radiation", "GRMultigroupM1State"),
+    "GRMultigroupM1StepResult": ("._gr_multigroup_radiation", "GRMultigroupM1StepResult"),
+    "GRNeutrinoLeptonLedger": ("._gr_neutrino", "GRNeutrinoLeptonLedger"),
+    "GRNeutrinoM1State": ("._gr_neutrino", "GRNeutrinoM1State"),
+    "GRNeutrinoM1StepResult": ("._gr_neutrino", "GRNeutrinoM1StepResult"),
+    "GRPolarizedRadiationFeedbackLedger": (
+        "._gr_polarized_radiation_feedback",
+        "GRPolarizedRadiationFeedbackLedger",
+    ),
+    "GRPolarizedRadiationFeedbackPlan": (
+        "._gr_polarized_radiation_feedback",
+        "GRPolarizedRadiationFeedbackPlan",
+    ),
+    "GRPolarizedRadiationFeedbackResult": (
+        "._gr_polarized_radiation_feedback",
+        "GRPolarizedRadiationFeedbackResult",
+    ),
+    "GRPolarizedRadiationFeedbackState": (
+        "._gr_polarized_radiation_feedback",
+        "GRPolarizedRadiationFeedbackState",
+    ),
+    "GRRMHDDefectLedger": ("._grrmhd_runtime", "GRRMHDDefectLedger"),
+    "GRRMHDImplicitSourcePlan": ("._grrmhd_source", "GRRMHDImplicitSourcePlan"),
+    "GRRMHDRunStatus": ("._grrmhd_runtime", "GRRMHDRunStatus"),
+    "GRRMHDSourceResult": ("._grrmhd_source", "GRRMHDSourceResult"),
+    "GRRMHDSourceStatus": ("._grrmhd_source", "GRRMHDSourceStatus"),
+    "GRRMHDStageEvidence": ("._grrmhd_runtime", "GRRMHDStageEvidence"),
+    "GRRMHDStageProposal": ("._grrmhd_runtime", "GRRMHDStageProposal"),
+    "GRRMHDState": ("._grrmhd_runtime", "GRRMHDState"),
+    "GRRMHDStepResult": ("._grrmhd_runtime", "GRRMHDStepResult"),
+    "GRRadiationExchangeLedger": ("._grrmhd_source", "GRRadiationExchangeLedger"),
+    "GaussLegendreIRK": ("._implicit_runge_kutta", "GaussLegendreIRK"),
+    "GaussLegendreInterpolation": (
+        "._implicit_runge_kutta",
+        "GaussLegendreInterpolation",
+    ),
+    "GaussianLindbladProblem": ("._gaussian_lindblad", "GaussianLindbladProblem"),
+    "GaussianLindbladSolution": ("._gaussian_lindblad", "GaussianLindbladSolution"),
+    "GeneralizedAlphaMethod": ("._generalized_alpha", "GeneralizedAlphaMethod"),
+    "GeneralizedAlphaSolution": ("._generalized_alpha", "GeneralizedAlphaSolution"),
+    "GeneratorBoundaryPolicy": ("._jump", "GeneratorBoundaryPolicy"),
+    "GeometricEuler": ("._geometric", "GeometricEuler"),
+    "GeometricLocalInterpolation": ("._geometric", "GeometricLocalInterpolation"),
+    "GuidedElasticModePlan": ("._guided_elastic_modes", "GuidedElasticModePlan"),
+    "GuidedElasticModeResult": ("._guided_elastic_modes", "GuidedElasticModeResult"),
+    "GuidedElasticModeStatus": ("._guided_elastic_modes", "GuidedElasticModeStatus"),
+    "HEOMAdaptiveBDFEvidence": ("._heom_implicit", "HEOMAdaptiveBDFEvidence"),
+    "HEOMAdaptiveBDFResult": ("._heom_implicit", "HEOMAdaptiveBDFResult"),
+    "HEOMBDFEvidence": ("._heom_implicit", "HEOMBDFEvidence"),
+    "HEOMBDFResult": ("._heom_implicit", "HEOMBDFResult"),
+    "HEOMContinuationResult": ("._heom_production", "HEOMContinuationResult"),
+    "HEOMContinuationStage": ("._heom_production", "HEOMContinuationStage"),
+    "HEOMGridContinuationResult": ("._heom_production", "HEOMGridContinuationResult"),
+    "HEOMHierarchy": ("._heom", "HEOMHierarchy"),
+    "HEOMImplicitEvidence": ("._heom_implicit", "HEOMImplicitEvidence"),
+    "HEOMImplicitResult": ("._heom_implicit", "HEOMImplicitResult"),
+    "HEOMProblem": ("._heom", "HEOMProblem"),
+    "HEOMRefinementCertificate": ("._heom_production", "HEOMRefinementCertificate"),
+    "HEOMSolution": ("._heom", "HEOMSolution"),
+    "HEOMTierBlockPreconditioner": ("._heom_implicit", "HEOMTierBlockPreconditioner"),
+    "HERMITIAN_COORDINATE_INVALID": (
+        "._spectral_coordinates",
+        "HERMITIAN_COORDINATE_INVALID",
+    ),
+    "HPEigenspaceTransfer": ("._spectral_hp_completion", "HPEigenspaceTransfer"),
+    "HPFASMultigrid": ("._spectral_hp_completion", "HPFASMultigrid"),
+    "HPNewtonKrylovBuilder": ("._spectral_hp_completion", "HPNewtonKrylovBuilder"),
+    "HPNewtonKrylovResult": ("._spectral_hp_completion", "HPNewtonKrylovResult"),
+    "HPRestrictedSchwarz": ("._spectral_hp_completion", "HPRestrictedSchwarz"),
+    "HardwareTopology": ("._quantum_compilation", "HardwareTopology"),
+    "HarmonicConstraint": ("._harmonic_constraints", "HarmonicConstraint"),
+    "HarmonicConstraintPolicy": ("._harmonic_constraints", "HarmonicConstraintPolicy"),
+    "HermitianCoordinateEvolution": (
+        "._spectral_coordinates",
+        "HermitianCoordinateEvolution",
+    ),
+    "HighEnthalpyAMREvidence": (
+        "._aerothermodynamic_topology",
+        "HighEnthalpyAMREvidence",
+    ),
+    "HighEnthalpyAMRIndicatorPlan": (
+        "._aerothermodynamic_topology",
+        "HighEnthalpyAMRIndicatorPlan",
+    ),
+    "HistoryFunctional": ("._delay", "HistoryFunctional"),
+    "HybridEventActionResult": ("._hybrid_event", "HybridEventActionResult"),
+    "HybridEventPlan": ("._hybrid_event", "HybridEventPlan"),
+    "HybridEventRootResult": ("._hybrid_event", "HybridEventRootResult"),
+    "HybridEventSensitivityResult": ("._hybrid_event", "HybridEventSensitivityResult"),
+    "HybridEventTape": ("._hybrid_event", "HybridEventTape"),
+    "HybridGuardPlan": ("._hybrid_event", "HybridGuardPlan"),
+    "HybridIMCDDMCPlan": ("._imc_ddmc", "HybridIMCDDMCPlan"),
+    "HybridOwnershipEpochPlan": ("._continuum_dsmc", "HybridOwnershipEpochPlan"),
+    "HybridOwnershipEpochState": ("._continuum_dsmc", "HybridOwnershipEpochState"),
+    "HybridOwnershipRequest": ("._continuum_dsmc", "HybridOwnershipRequest"),
+    "HybridReplayPolicy": ("._hybrid_event", "HybridReplayPolicy"),
+    "HybridReplayResult": ("._hybrid_event", "HybridReplayResult"),
+    "HybridSchedulePlan": ("._hybrid_schedule", "HybridSchedulePlan"),
+    "HybridScheduleResult": ("._hybrid_schedule", "HybridScheduleResult"),
+    "HydrodynamicLoadPlan": ("._marker_flow_runtime", "HydrodynamicLoadPlan"),
+    "HydrodynamicLoadRecord": ("._marker_flow_runtime", "HydrodynamicLoadRecord"),
+    "HydrostaticFreeSurfaceResult": (
+        "._hydrostatic_free_surface",
+        "HydrostaticFreeSurfaceResult",
+    ),
+    "IAS15Plan": ("._ias15", "IAS15Plan"),
+    "IAS15Result": ("._ias15", "IAS15Result"),
+    "IISPHFixedStepMethod": ("._particle_methods", "IISPHFixedStepMethod"),
+    "IMCDDMCEvidence": ("._imc_ddmc", "IMCDDMCEvidence"),
+    "IMCDDMCState": ("._imc_ddmc", "IMCDDMCState"),
+    "IMCDDMCStepResult": ("._imc_ddmc", "IMCDDMCStepResult"),
+    "IMEXBDF2Integrator": ("._temporal_extensions", "IMEXBDF2Integrator"),
+    "IdentityAcceptedStepTransform": ("._fixed_step", "IdentityAcceptedStepTransform"),
+    "IdentitySSPRKStageTransform": ("._fixed_step", "IdentitySSPRKStageTransform"),
+    "ImplicitConservationStageResult": (
+        "._conservation_temporal",
+        "ImplicitConservationStageResult",
+    ),
+    "ImplicitMPMDiagnostics": ("._material_point_implicit", "ImplicitMPMDiagnostics"),
+    "ImplicitMPMMethodPlan": ("._material_point_implicit", "ImplicitMPMMethodPlan"),
+    "ImplicitMPMStepResult": ("._material_point_implicit", "ImplicitMPMStepResult"),
+    "IncompressibleDensityModel": (
+        "._meshfree_incompressible",
+        "IncompressibleDensityModel",
+    ),
+    "IncompressibleProjectionResult": (
+        "._compatible_systems",
+        "IncompressibleProjectionResult",
+    ),
+    "InfiniteMemoryEvidence": ("._delay_capabilities", "InfiniteMemoryEvidence"),
+    "InputDAEBlockLinearization": (
+        "._dae_coordinate_adapter",
+        "InputDAEBlockLinearization",
+    ),
+    "InteractingParticleProblem": ("._particles", "InteractingParticleProblem"),
+    "InteractingParticleSolution": ("._particles", "InteractingParticleSolution"),
+    "InteriorLaplaceDirichletResult": (
+        "._boundary_integral",
+        "InteriorLaplaceDirichletResult",
+    ),
+    "ItoEulerDelayInterpolation": ("._delay_capabilities", "ItoEulerDelayInterpolation"),
+    "JumpAlgorithm": ("._jump", "JumpAlgorithm"),
+    "JumpDelayBackendResult": ("._jump_delay", "JumpDelayBackendResult"),
+    "JumpDelayProblem": ("._jump_delay", "JumpDelayProblem"),
+    "JumpDifferentialProblem": ("._jump", "JumpDifferentialProblem"),
+    "JumpDifferentialSolution": ("._jump", "JumpDifferentialSolution"),
+    "JumpFirstHit": ("._jump_hitting", "JumpFirstHit"),
+    "JumpSolution": ("._jump", "JumpSolution"),
+    "KDKCoefficients": ("._kdk", "KDKCoefficients"),
+    "KDKCompletion": ("._kdk", "KDKCompletion"),
+    "KDKProposal": ("._kdk", "KDKProposal"),
+    "KDKTransactionPlan": ("._kdk", "KDKTransactionPlan"),
+    "KeldyshSCBAPolicy": ("._keldysh_scba", "KeldyshSCBAPolicy"),
+    "KeldyshSCBAProblem": ("._keldysh_scba", "KeldyshSCBAProblem"),
+    "KeldyshSCBAResult": ("._keldysh_scba", "KeldyshSCBAResult"),
+    "LESStabilityGuardedETDRKMethod": ("._etdrk", "LESStabilityGuardedETDRKMethod"),
+    "LPDOChannelEvolutionEvidence": (
+        "._tensor_open_quantum",
+        "LPDOChannelEvolutionEvidence",
+    ),
+    "LPDOChannelEvolutionPlan": ("._tensor_open_quantum", "LPDOChannelEvolutionPlan"),
+    "LPDOChannelEvolutionResult": ("._tensor_open_quantum", "LPDOChannelEvolutionResult"),
+    "LPDOInstrumentBranchResult": ("._quantum_measurement", "LPDOInstrumentBranchResult"),
+    "LPDOQuantumOperationEvidence": (
+        "._lpdo_quantum_program",
+        "LPDOQuantumOperationEvidence",
+    ),
+    "LPDOQuantumProgramCostEstimate": (
+        "._lpdo_quantum_program",
+        "LPDOQuantumProgramCostEstimate",
+    ),
+    "LPDOQuantumProgramDiagnostics": (
+        "._lpdo_quantum_program",
+        "LPDOQuantumProgramDiagnostics",
+    ),
+    "LPDOQuantumProgramPlan": ("._lpdo_quantum_program", "LPDOQuantumProgramPlan"),
+    "LPDOQuantumProgramPolicy": ("._lpdo_quantum_program", "LPDOQuantumProgramPolicy"),
+    "LPDOQuantumProgramResult": ("._lpdo_quantum_program", "LPDOQuantumProgramResult"),
+    "LPDOQuantumProgramRoute": ("._lpdo_quantum_program", "LPDOQuantumProgramRoute"),
+    "LPDOQuantumProgramStatus": ("._lpdo_quantum_program", "LPDOQuantumProgramStatus"),
+    "LPDOSteadyStateResult": ("._tensor_open_quantum", "LPDOSteadyStateResult"),
+    "LaplaceCapacitanceCoordinateJVP3D": (
+        "._laplace_capacitance",
+        "LaplaceCapacitanceCoordinateJVP3D",
+    ),
+    "LaplaceCapacitanceEpochTransition3D": (
+        "._laplace_capacitance",
+        "LaplaceCapacitanceEpochTransition3D",
+    ),
+    "LaplaceCapacitancePlan3D": ("._laplace_capacitance", "LaplaceCapacitancePlan3D"),
+    "LaplaceCapacitanceResult3D": ("._laplace_capacitance", "LaplaceCapacitanceResult3D"),
+    "LaplaceCapacitanceSensitivityEvidence3D": (
+        "._laplace_capacitance",
+        "LaplaceCapacitanceSensitivityEvidence3D",
+    ),
+    "LaplaceMonopoleFieldResult": ("._particle_gravity", "LaplaceMonopoleFieldResult"),
+    "LatticeBoltzmannFixedStepMethod": (
+        "._lattice_boltzmann",
+        "LatticeBoltzmannFixedStepMethod",
+    ),
+    "LearnedStepCorrection": ("._fixed_step", "LearnedStepCorrection"),
+    "LearnedStepCorrectionReason": ("._fixed_step", "LearnedStepCorrectionReason"),
+    "LeastSquaresBSDEDiagnostics": ("._regression_bsde", "LeastSquaresBSDEDiagnostics"),
+    "LeastSquaresBSDEResult": ("._regression_bsde", "LeastSquaresBSDEResult"),
+    "LevySDEProblem": ("._levy", "LevySDEProblem"),
+    "LevySDEScheme": ("._levy", "LevySDEScheme"),
+    "LevySDESolution": ("._levy", "LevySDESolution"),
+    "LevySDESolverDiagnostics": ("._levy", "LevySDESolverDiagnostics"),
+    "LevySDEVectorField": ("._levy", "LevySDEVectorField"),
+    "LevySmallJumpApproximation": ("._levy", "LevySmallJumpApproximation"),
+    "LiftedRoughVectorFields": ("._rough_lift", "LiftedRoughVectorFields"),
+    "LindbladProblem": ("._lindblad", "LindbladProblem"),
+    "LindbladSolution": ("._lindblad", "LindbladSolution"),
+    "LinearImplicitFreeSurfacePlan": (
+        "._hydrostatic_free_surface",
+        "LinearImplicitFreeSurfacePlan",
+    ),
+    "LinearLogODE": ("._rough_logode", "LinearLogODE"),
+    "LinearQuantumControlTransfer": ("._quantum_control", "LinearQuantumControlTransfer"),
+    "LinearTrialSpaceResult": ("._linear_trial_space", "LinearTrialSpaceResult"),
+    "LocalHamiltonian": ("._local_hamiltonian", "LocalHamiltonian"),
+    "LocalHamiltonianDifferentiationMode": (
+        "._local_hamiltonian",
+        "LocalHamiltonianDifferentiationMode",
+    ),
+    "LocalHamiltonianEvolutionCostEstimate": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionCostEstimate",
+    ),
+    "LocalHamiltonianEvolutionDiagnostics": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionDiagnostics",
+    ),
+    "LocalHamiltonianEvolutionPlan": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionPlan",
+    ),
+    "LocalHamiltonianEvolutionPolicy": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionPolicy",
+    ),
+    "LocalHamiltonianEvolutionResult": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionResult",
+    ),
+    "LocalHamiltonianEvolutionStatus": (
+        "._local_hamiltonian",
+        "LocalHamiltonianEvolutionStatus",
+    ),
+    "LocalHamiltonianMPOEvidence": (
+        "._local_hamiltonian_tensor",
+        "LocalHamiltonianMPOEvidence",
+    ),
+    "LocalHamiltonianMPOPolicy": (
+        "._local_hamiltonian_tensor",
+        "LocalHamiltonianMPOPolicy",
+    ),
+    "LocalHamiltonianMPOResult": (
+        "._local_hamiltonian_tensor",
+        "LocalHamiltonianMPOResult",
+    ),
+    "LocalHamiltonianTerm": ("._local_hamiltonian", "LocalHamiltonianTerm"),
+    "LocalKrausChannel": ("._purified_lindblad", "LocalKrausChannel"),
+    "LocalMPSJump": ("._mps_quantum_jump", "LocalMPSJump"),
+    "LocalizedMovingCutCellResult": ("._moving_cut_cell", "LocalizedMovingCutCellResult"),
+    "LogODE": ("._rough_logode", "LogODE"),
+    "MACALEGeometryPlan": ("._mac_ale", "MACALEGeometryPlan"),
+    "MACALEResult": ("._mac_ale", "MACALEResult"),
+    "MACALEStageGeometry": ("._mac_ale", "MACALEStageGeometry"),
+    "MACAcceptedGridTrace": ("._mac_adaptive", "MACAcceptedGridTrace"),
+    "MACAdaptiveAdvanceResult": ("._mac_adaptive", "MACAdaptiveAdvanceResult"),
+    "MACAdaptiveAttemptJournal": ("._mac_adaptive", "MACAdaptiveAttemptJournal"),
+    "MACAdaptivePolicy": ("._mac_adaptive", "MACAdaptivePolicy"),
+    "MACAdaptiveRolloutPlan": ("._mac_adaptive", "MACAdaptiveRolloutPlan"),
+    "MACAdaptiveRolloutResult": ("._mac_adaptive", "MACAdaptiveRolloutResult"),
+    "MACAdaptiveRuntimeState": ("._mac_adaptive", "MACAdaptiveRuntimeState"),
+    "MACAdaptiveStatus": ("._mac_adaptive", "MACAdaptiveStatus"),
+    "MACCollectiveAdapter": ("._mac_distributed_projection", "MACCollectiveAdapter"),
+    "MACCompartmentBlockOperator": (
+        "._mac_compartment_projection",
+        "MACCompartmentBlockOperator",
+    ),
+    "MACCompartmentBlockVector": (
+        "._mac_compartment_projection",
+        "MACCompartmentBlockVector",
+    ),
+    "MACCompartmentConstraint": (
+        "._mac_compartment_projection",
+        "MACCompartmentConstraint",
+    ),
+    "MACCompartmentGauge": ("._mac_compartment_projection", "MACCompartmentGauge"),
+    "MACCompartmentProjectionPlan": (
+        "._mac_compartment_projection",
+        "MACCompartmentProjectionPlan",
+    ),
+    "MACCompartmentProjectionResult": (
+        "._mac_compartment_projection",
+        "MACCompartmentProjectionResult",
+    ),
+    "MACCompartmentProjectionStatus": (
+        "._mac_compartment_projection",
+        "MACCompartmentProjectionStatus",
+    ),
+    "MACCompositeStepController": ("._mac_adaptive", "MACCompositeStepController"),
+    "MACCompositeStepRestriction": ("._mac_adaptive", "MACCompositeStepRestriction"),
+    "MACDFIBProjectionPlan": ("._mac_dfib", "MACDFIBProjectionPlan"),
+    "MACDFIBProjectionResult": ("._mac_dfib", "MACDFIBProjectionResult"),
+    "MACDeformableImmersedBackwardEulerMethod": (
+        "._mac_immersed_deformable",
+        "MACDeformableImmersedBackwardEulerMethod",
+    ),
+    "MACDeformableImmersedEnergyLedger": (
+        "._mac_immersed_deformable",
+        "MACDeformableImmersedEnergyLedger",
+    ),
+    "MACDeformableImmersedNewmarkMethod": (
+        "._mac_immersed_newmark",
+        "MACDeformableImmersedNewmarkMethod",
+    ),
+    "MACDeformableImmersedNewmarkResult": (
+        "._mac_immersed_newmark",
+        "MACDeformableImmersedNewmarkResult",
+    ),
+    "MACDeformableImmersedNewmarkState": (
+        "._mac_immersed_newmark",
+        "MACDeformableImmersedNewmarkState",
+    ),
+    "MACDeformableImmersedState": (
+        "._mac_immersed_deformable",
+        "MACDeformableImmersedState",
+    ),
+    "MACDeformableImmersedStatus": (
+        "._mac_immersed_deformable",
+        "MACDeformableImmersedStatus",
+    ),
+    "MACDeformableImmersedStepResult": (
+        "._mac_immersed_deformable",
+        "MACDeformableImmersedStepResult",
+    ),
+    "MACDerivativeMode": ("._mac_sensitivity", "MACDerivativeMode"),
+    "MACDiagonalStageInverseMomentum": (
+        "._mac_stage_inverse_momentum",
+        "MACDiagonalStageInverseMomentum",
+    ),
+    "MACDiscreteStochasticStressPlan": (
+        "._mac_stochastic_immersed",
+        "MACDiscreteStochasticStressPlan",
+    ),
+    "MACDistributedProjectionPlan": (
+        "._mac_distributed_projection",
+        "MACDistributedProjectionPlan",
+    ),
+    "MACDistributedProjectionResult": (
+        "._mac_distributed_projection",
+        "MACDistributedProjectionResult",
+    ),
+    "MACDivergenceFreeMarkerTransfer": ("._mac_dfib", "MACDivergenceFreeMarkerTransfer"),
+    "MACDivergenceFreeTransferDiagnostics": (
+        "._mac_dfib",
+        "MACDivergenceFreeTransferDiagnostics",
+    ),
+    "MACElectrohydrodynamicEvaluation": (
+        "._electrohydrodynamic",
+        "MACElectrohydrodynamicEvaluation",
+    ),
+    "MACElectrohydrodynamicForcePlan": (
+        "._electrohydrodynamic",
+        "MACElectrohydrodynamicForcePlan",
+    ),
+    "MACElectrostaticBoundaryKind": (
+        "._mac_electrostatic",
+        "MACElectrostaticBoundaryKind",
+    ),
+    "MACElectrostaticBoundaryPlan": (
+        "._mac_electrostatic",
+        "MACElectrostaticBoundaryPlan",
+    ),
+    "MACElectrostaticPlan": ("._mac_electrostatic", "MACElectrostaticPlan"),
+    "MACElectrostaticResult": ("._mac_electrostatic", "MACElectrostaticResult"),
+    "MACEnthalpyPorosityIMEXEulerMethod": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityIMEXEulerMethod",
+    ),
+    "MACEnthalpyPorosityIMEXResult": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityIMEXResult",
+    ),
+    "MACEnthalpyPorositySBDF2Method": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorositySBDF2Method",
+    ),
+    "MACEnthalpyPorositySBDF2Result": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorositySBDF2Result",
+    ),
+    "MACEnthalpyPorositySBDF2State": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorositySBDF2State",
+    ),
+    "MACEnthalpyPorosityStepStatus": (
+        "._mac_enthalpy_porosity",
+        "MACEnthalpyPorosityStepStatus",
+    ),
+    "MACFiniteVolumeCheckpoint": (
+        "._mac_finite_volume_checkpoint",
+        "MACFiniteVolumeCheckpoint",
+    ),
+    "MACFiniteVolumeCheckpointPlan": (
+        "._mac_finite_volume_checkpoint",
+        "MACFiniteVolumeCheckpointPlan",
+    ),
+    "MACFixedGridSensitivityPlan": ("._mac_sensitivity", "MACFixedGridSensitivityPlan"),
+    "MACFluctuatingHydrodynamicsPlan": (
+        "._mac_stochastic_immersed",
+        "MACFluctuatingHydrodynamicsPlan",
+    ),
+    "MACFluctuatingHydrodynamicsResult": (
+        "._mac_stochastic_immersed",
+        "MACFluctuatingHydrodynamicsResult",
+    ),
+    "MACFreeSurfaceProjectionPlan": (
+        "._mac_free_surface",
+        "MACFreeSurfaceProjectionPlan",
+    ),
+    "MACFreeSurfaceProjectionResult": (
+        "._mac_free_surface",
+        "MACFreeSurfaceProjectionResult",
+    ),
+    "MACFrozenGridReplayPlan": ("._mac_adaptive", "MACFrozenGridReplayPlan"),
+    "MACFrozenGridReplayResult": ("._mac_adaptive", "MACFrozenGridReplayResult"),
+    "MACGhostFluidProjectionPlan": ("._mac_ghost_fluid", "MACGhostFluidProjectionPlan"),
+    "MACGhostFluidProjectionResult": (
+        "._mac_ghost_fluid",
+        "MACGhostFluidProjectionResult",
+    ),
+    "MACHelmholtzResourceEstimate": ("._mac_viscous", "MACHelmholtzResourceEstimate"),
+    "MACHelmholtzResult": ("._mac_viscous", "MACHelmholtzResult"),
+    "MACHelmholtzSolveMethod": ("._mac_viscous", "MACHelmholtzSolveMethod"),
+    "MACHelmholtzSolvePlan": ("._mac_viscous", "MACHelmholtzSolvePlan"),
+    "MACHelmholtzStageInverseMomentum": (
+        "._mac_stage_inverse_momentum",
+        "MACHelmholtzStageInverseMomentum",
+    ),
+    "MACIMEXEulerMethod": ("._mac_viscous", "MACIMEXEulerMethod"),
+    "MACIMEXEulerResult": ("._mac_viscous", "MACIMEXEulerResult"),
+    "MACImmersedBoundaryIMEXEulerMethod": (
+        "._mac_immersed_step",
+        "MACImmersedBoundaryIMEXEulerMethod",
+    ),
+    "MACImmersedBoundaryIMEXEulerResult": (
+        "._mac_immersed_step",
+        "MACImmersedBoundaryIMEXEulerResult",
+    ),
+    "MACImmersedBoundaryProjectionPlan": (
+        "._mac_immersed_boundary",
+        "MACImmersedBoundaryProjectionPlan",
+    ),
+    "MACImmersedBoundaryProjectionResult": (
+        "._mac_immersed_boundary",
+        "MACImmersedBoundaryProjectionResult",
+    ),
+    "MACImmersedBoundaryProjectionStatus": (
+        "._mac_immersed_boundary",
+        "MACImmersedBoundaryProjectionStatus",
+    ),
+    "MACImmersedBoundarySBDF2Method": (
+        "._mac_immersed_step",
+        "MACImmersedBoundarySBDF2Method",
+    ),
+    "MACImmersedBoundarySBDF2Result": (
+        "._mac_immersed_step",
+        "MACImmersedBoundarySBDF2Result",
+    ),
+    "MACImmersedBoundarySBDF2State": (
+        "._mac_immersed_step",
+        "MACImmersedBoundarySBDF2State",
+    ),
+    "MACImmersedBoundarySolveMethod": (
+        "._mac_immersed_boundary",
+        "MACImmersedBoundarySolveMethod",
+    ),
+    "MACImmersedBoundaryStepStatus": (
+        "._mac_immersed_step",
+        "MACImmersedBoundaryStepStatus",
+    ),
+    "MACImmersedInterfaceProjectionPlan": (
+        "._mac_sharp_interface",
+        "MACImmersedInterfaceProjectionPlan",
+    ),
+    "MACImmersedPressureBlockPreconditionerEvidence": (
+        "._mac_immersed_preconditioner",
+        "MACImmersedPressureBlockPreconditionerEvidence",
+    ),
+    "MACImmersedPressureBlockPreconditionerPlan": (
+        "._mac_immersed_preconditioner",
+        "MACImmersedPressureBlockPreconditionerPlan",
+    ),
+    "MACInertialStochasticStepPlan": (
+        "._mac_stochastic_immersed",
+        "MACInertialStochasticStepPlan",
+    ),
+    "MACInertialStochasticStepResult": (
+        "._mac_stochastic_immersed",
+        "MACInertialStochasticStepResult",
+    ),
+    "MACInterfaceEnforcement": ("._mac_sharp_interface", "MACInterfaceEnforcement"),
+    "MACInterfaceJumpSource": ("._mac_sharp_interface", "MACInterfaceJumpSource"),
+    "MACInterfaceMethodSelector": ("._mac_sharp_interface", "MACInterfaceMethodSelector"),
+    "MACMovingSharpInterfaceEpochPlan": (
+        "._mac_sharp_interface",
+        "MACMovingSharpInterfaceEpochPlan",
+    ),
+    "MACMovingSharpInterfaceEpochResult": (
+        "._mac_sharp_interface",
+        "MACMovingSharpInterfaceEpochResult",
+    ),
+    "MACMultiphaseProjectionPlan": (
+        "._mac_multiphase_projection",
+        "MACMultiphaseProjectionPlan",
+    ),
+    "MACMultiphaseProjectionResult": (
+        "._mac_multiphase_projection",
+        "MACMultiphaseProjectionResult",
+    ),
+    "MACNamedRateLimit": ("._mac_adaptive", "MACNamedRateLimit"),
+    "MACNematicCouplingEvaluation": ("._nematic", "MACNematicCouplingEvaluation"),
+    "MACNematicCouplingPlan": ("._nematic", "MACNematicCouplingPlan"),
+    "MACNematicState": ("._nematic", "MACNematicState"),
+    "MACNematicStepResult": ("._nematic", "MACNematicStepResult"),
+    "MACNeutralMode": ("._mac_sensitivity", "MACNeutralMode"),
+    "MACOperatorStageInverseMomentum": (
+        "._mac_stage_inverse_general",
+        "MACOperatorStageInverseMomentum",
+    ),
+    "MACOperatorStageSolveResult": (
+        "._mac_stage_inverse_general",
+        "MACOperatorStageSolveResult",
+    ),
+    "MACPassiveTracerContinuationState": (
+        "._passive_tracer",
+        "MACPassiveTracerContinuationState",
+    ),
+    "MACPassiveTracerFixedStepMethod": (
+        "._passive_tracer",
+        "MACPassiveTracerFixedStepMethod",
+    ),
+    "MACPenaltyIBCouplingSchedulePlan": (
+        "._mac_penalty_ib_cfd_dem",
+        "MACPenaltyIBCouplingSchedulePlan",
+    ),
+    "MACPenaltyIBCouplingState": (
+        "._mac_penalty_ib_cfd_dem",
+        "MACPenaltyIBCouplingState",
+    ),
+    "MACPenaltyIBMacroStepResult": (
+        "._mac_penalty_ib_cfd_dem",
+        "MACPenaltyIBMacroStepResult",
+    ),
+    "MACPenaltyIBWindowStatus": ("._mac_penalty_ib_cfd_dem", "MACPenaltyIBWindowStatus"),
+    "MACPoissonNernstPlanckEvaluation": (
+        "._mac_poisson_nernst_planck",
+        "MACPoissonNernstPlanckEvaluation",
+    ),
+    "MACPoissonNernstPlanckPlan": (
+        "._mac_poisson_nernst_planck",
+        "MACPoissonNernstPlanckPlan",
+    ),
+    "MACPoissonNernstPlanckStepResult": (
+        "._mac_poisson_nernst_planck",
+        "MACPoissonNernstPlanckStepResult",
+    ),
+    "MACPressureClosureReport": (
+        "._structured_incompressible",
+        "MACPressureClosureReport",
+    ),
+    "MACPressureCoefficientKind": (
+        "._mac_pressure_operator",
+        "MACPressureCoefficientKind",
+    ),
+    "MACPressureCoefficientReport": (
+        "._mac_pressure_operator",
+        "MACPressureCoefficientReport",
+    ),
+    "MACPressureCompatibilityKind": (
+        "._structured_incompressible",
+        "MACPressureCompatibilityKind",
+    ),
+    "MACPressureExecutionEvidence": (
+        "._mac_pressure_operator",
+        "MACPressureExecutionEvidence",
+    ),
+    "MACPressureGaugeKind": ("._structured_incompressible", "MACPressureGaugeKind"),
+    "MACPressureOperatorSpec": ("._mac_pressure_operator", "MACPressureOperatorSpec"),
+    "MACPressurePreconditionerKind": (
+        "._mac_pressure_operator",
+        "MACPressurePreconditionerKind",
+    ),
+    "MACPressurePreparationEvidence": (
+        "._mac_pressure_operator",
+        "MACPressurePreparationEvidence",
+    ),
+    "MACPressureProjectionPlan": (
+        "._structured_incompressible",
+        "MACPressureProjectionPlan",
+    ),
+    "MACPressureProjectionResult": (
+        "._structured_incompressible",
+        "MACPressureProjectionResult",
+    ),
+    "MACPressureRobinSide": ("._mac_pressure_operator", "MACPressureRobinSide"),
+    "MACPressureRouteKind": ("._mac_pressure_operator", "MACPressureRouteKind"),
+    "MACPressureRouteRequest": ("._mac_pressure_operator", "MACPressureRouteRequest"),
+    "MACPressureSolveMethod": ("._structured_incompressible", "MACPressureSolveMethod"),
+    "MACPressureSolveResult": ("._mac_pressure_operator", "MACPressureSolveResult"),
+    "MACRateProjectionResult": ("._structured_incompressible", "MACRateProjectionResult"),
+    "MACReactiveElectrodeBinding": (
+        "._electrode_reaction",
+        "MACReactiveElectrodeBinding",
+    ),
+    "MACReactiveElectrodeEvaluation": (
+        "._electrode_reaction",
+        "MACReactiveElectrodeEvaluation",
+    ),
+    "MACRemeshEpochPlan": ("._mac_ale", "MACRemeshEpochPlan"),
+    "MACRemeshEpochResult": ("._mac_ale", "MACRemeshEpochResult"),
+    "MACReplayCertification": ("._mac_sensitivity", "MACReplayCertification"),
+    "MACRigidImmersedBackwardEulerMethod": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedBackwardEulerMethod",
+    ),
+    "MACRigidImmersedContactMethod": (
+        "._mac_immersed_contact",
+        "MACRigidImmersedContactMethod",
+    ),
+    "MACRigidImmersedContactResult": (
+        "._mac_immersed_contact",
+        "MACRigidImmersedContactResult",
+    ),
+    "MACRigidImmersedEnergyLedger": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedEnergyLedger",
+    ),
+    "MACRigidImmersedEulerMethod": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedEulerMethod",
+    ),
+    "MACRigidImmersedJointMethod": (
+        "._mac_immersed_contact",
+        "MACRigidImmersedJointMethod",
+    ),
+    "MACRigidImmersedJointResult": (
+        "._mac_immersed_contact",
+        "MACRigidImmersedJointResult",
+    ),
+    "MACRigidImmersedMidpointMethod": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedMidpointMethod",
+    ),
+    "MACRigidImmersedProjectionPlan": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedProjectionPlan",
+    ),
+    "MACRigidImmersedProjectionResult": (
+        "._mac_immersed_rigid",
+        "MACRigidImmersedProjectionResult",
+    ),
+    "MACRigidImmersedStatus": ("._mac_immersed_rigid", "MACRigidImmersedStatus"),
+    "MACRigidImmersedStepResult": ("._mac_immersed_rigid", "MACRigidImmersedStepResult"),
+    "MACSBDF2GStabilityLedger": ("._mac_viscous", "MACSBDF2GStabilityLedger"),
+    "MACSBDF2Method": ("._mac_viscous", "MACSBDF2Method"),
+    "MACSBDF2State": ("._mac_viscous", "MACSBDF2State"),
+    "MACSBDF2StepResult": ("._mac_viscous", "MACSBDF2StepResult"),
+    "MACSegmentedShadowingPlan": ("._mac_sensitivity", "MACSegmentedShadowingPlan"),
+    "MACShadowingSensitivityResult": (
+        "._mac_sensitivity",
+        "MACShadowingSensitivityResult",
+    ),
+    "MACShadowingStatus": ("._mac_sensitivity", "MACShadowingStatus"),
+    "MACSharpGeometryProvider": ("._mac_sharp_interface", "MACSharpGeometryProvider"),
+    "MACSharpInterfaceForce": ("._mac_sharp_interface", "MACSharpInterfaceForce"),
+    "MACSharpInterfaceProjectionPlan": (
+        "._mac_sharp_interface",
+        "MACSharpInterfaceProjectionPlan",
+    ),
+    "MACSharpInterfaceProjectionResult": (
+        "._mac_sharp_interface",
+        "MACSharpInterfaceProjectionResult",
+    ),
+    "MACSharpInterfaceStatus": ("._mac_sharp_interface", "MACSharpInterfaceStatus"),
+    "MACSharpOperatorEvidence": ("._mac_sharp_interface", "MACSharpOperatorEvidence"),
+    "MACStageInverseMomentum": (
+        "._mac_stage_inverse_momentum",
+        "MACStageInverseMomentum",
+    ),
+    "MACStageInverseMomentumDiagnostics": (
+        "._mac_stage_inverse_momentum",
+        "MACStageInverseMomentumDiagnostics",
+    ),
+    "MACTerminalJVPResult": ("._mac_sensitivity", "MACTerminalJVPResult"),
+    "MACTerminalVJPResult": ("._mac_sensitivity", "MACTerminalVJPResult"),
+    "MACVariableDensityProjectionPlan": (
+        "._mac_variable_density",
+        "MACVariableDensityProjectionPlan",
+    ),
+    "MACVariableDensityProjectionResult": (
+        "._mac_variable_density",
+        "MACVariableDensityProjectionResult",
+    ),
+    "MACVariableDensityRateProjectionResult": (
+        "._mac_variable_density",
+        "MACVariableDensityRateProjectionResult",
+    ),
+    "MACVariableDensityStageInverseMomentum": (
+        "._mac_stage_inverse_general",
+        "MACVariableDensityStageInverseMomentum",
+    ),
+    "MACVariableViscosityStagePlan": (
+        "._mac_stage_inverse_general",
+        "MACVariableViscosityStagePlan",
+    ),
+    "MACVariationalViscosityPlan": (
+        "._mac_variational_viscosity",
+        "MACVariationalViscosityPlan",
+    ),
+    "MACVariationalViscosityResult": (
+        "._mac_variational_viscosity",
+        "MACVariationalViscosityResult",
+    ),
+    "MACWeightedPressureAction": ("._mac_pressure_operator", "MACWeightedPressureAction"),
+    "MACWeightedPressureIterationResult": (
+        "._mac_pressure_operator",
+        "MACWeightedPressureIterationResult",
+    ),
+    "MAC_VISCOUS_BOUNDARY_FAILURE": ("._mac_viscous", "MAC_VISCOUS_BOUNDARY_FAILURE"),
+    "MAC_VISCOUS_CLOSURE_FAILURE": ("._mac_viscous", "MAC_VISCOUS_CLOSURE_FAILURE"),
+    "MAC_VISCOUS_HELMHOLTZ_FAILURE": ("._mac_viscous", "MAC_VISCOUS_HELMHOLTZ_FAILURE"),
+    "MAC_VISCOUS_HISTORY_INVALID": ("._mac_viscous", "MAC_VISCOUS_HISTORY_INVALID"),
+    "MAC_VISCOUS_PROJECTION_FAILURE": ("._mac_viscous", "MAC_VISCOUS_PROJECTION_FAILURE"),
+    "MAC_VISCOUS_SUCCESS": ("._mac_viscous", "MAC_VISCOUS_SUCCESS"),
+    "MPMAdaptiveAttemptJournal": (
+        "._material_point_adaptive",
+        "MPMAdaptiveAttemptJournal",
+    ),
+    "MPMAdaptivePolicy": ("._material_point_adaptive", "MPMAdaptivePolicy"),
+    "MPMAdaptiveStatus": ("._material_point_adaptive", "MPMAdaptiveStatus"),
+    "MPMBlockJacobiPreconditioner": (
+        "._material_point_commercial_implicit",
+        "MPMBlockJacobiPreconditioner",
+    ),
+    "MPMBoundedOutputBuffer": ("._material_point_output", "MPMBoundedOutputBuffer"),
+    "MPMCheckpointManifest": ("._material_point_checkpoint", "MPMCheckpointManifest"),
+    "MPMCheckpointPlan": ("._material_point_checkpoint", "MPMCheckpointPlan"),
+    "MPMCompactImplicitOperator": (
+        "._material_point_commercial_implicit",
+        "MPMCompactImplicitOperator",
+    ),
+    "MPMCompactOperatorResult": (
+        "._material_point_commercial_implicit",
+        "MPMCompactOperatorResult",
+    ),
+    "MPMGradientKind": ("._material_point_rollout", "MPMGradientKind"),
+    "MPMGradientReport": ("._material_point_rollout", "MPMGradientReport"),
+    "MPMImplicitContactLinearization": (
+        "._material_point_commercial_implicit",
+        "MPMImplicitContactLinearization",
+    ),
+    "MPMImplicitTopologyPlan": (
+        "._material_point_commercial_implicit",
+        "MPMImplicitTopologyPlan",
+    ),
+    "MPMImplicitUnknownLayout": (
+        "._material_point_commercial_implicit",
+        "MPMImplicitUnknownLayout",
+    ),
+    "MPMMovingDomainDerivative": (
+        "._material_point_commercial_implicit",
+        "MPMMovingDomainDerivative",
+    ),
+    "MPMOperationalResult": ("._material_point_supervisor", "MPMOperationalResult"),
+    "MPMOutputManifest": ("._material_point_output", "MPMOutputManifest"),
+    "MPMOutputPlan": ("._material_point_output", "MPMOutputPlan"),
+    "MPMPhaseFieldEvidence": ("._material_point_fracture", "MPMPhaseFieldEvidence"),
+    "MPMPhaseFieldFracturePlan": (
+        "._material_point_fracture",
+        "MPMPhaseFieldFracturePlan",
+    ),
+    "MPMPhaseFieldRuntimeState": (
+        "._material_point_fracture",
+        "MPMPhaseFieldRuntimeState",
+    ),
+    "MPMPhaseFieldStepResult": ("._material_point_fracture", "MPMPhaseFieldStepResult"),
+    "MPMReplayEvidence": ("._material_point_rollout", "MPMReplayEvidence"),
+    "MPMReplayMode": ("._material_point_rollout", "MPMReplayMode"),
+    "MPMReplayPolicy": ("._material_point_rollout", "MPMReplayPolicy"),
+    "MPMRetainedTrajectory": ("._material_point_rollout", "MPMRetainedTrajectory"),
+    "MPMRetentionMode": ("._material_point_rollout", "MPMRetentionMode"),
+    "MPMRolloutResult": ("._material_point_rollout", "MPMRolloutResult"),
+    "MPMRouteSupersetPlan": (
+        "._material_point_commercial_implicit",
+        "MPMRouteSupersetPlan",
+    ),
+    "MPMRouteSupersetState": (
+        "._material_point_commercial_implicit",
+        "MPMRouteSupersetState",
+    ),
+    "MPMRunSupervisor": ("._material_point_supervisor", "MPMRunSupervisor"),
+    "MPMSparseContactOperator": (
+        "._material_point_commercial_implicit",
+        "MPMSparseContactOperator",
+    ),
+    "MPMSparsePhaseFieldOperator": (
+        "._material_point_commercial_implicit",
+        "MPMSparsePhaseFieldOperator",
+    ),
+    "MPMTwoLevelMultigrid": (
+        "._material_point_commercial_implicit",
+        "MPMTwoLevelMultigrid",
+    ),
+    "MPOHamiltonian": ("._tensor_open_quantum", "MPOHamiltonian"),
+    "MPOLindbladian": ("._tensor_open_quantum", "MPOLindbladian"),
+    "MPOLindbladianActionResult": ("._tensor_open_quantum", "MPOLindbladianActionResult"),
+    "MPSInstrumentBranchResult": ("._quantum_measurement", "MPSInstrumentBranchResult"),
+    "MPSQuantumJumpProblem": ("._mps_quantum_jump", "MPSQuantumJumpProblem"),
+    "MPSQuantumOperationEvidence": (
+        "._mps_quantum_program",
+        "MPSQuantumOperationEvidence",
+    ),
+    "MPSQuantumProgramCostEstimate": (
+        "._mps_quantum_program",
+        "MPSQuantumProgramCostEstimate",
+    ),
+    "MPSQuantumProgramDiagnostics": (
+        "._mps_quantum_program",
+        "MPSQuantumProgramDiagnostics",
+    ),
+    "MPSQuantumProgramPlan": ("._mps_quantum_program", "MPSQuantumProgramPlan"),
+    "MPSQuantumProgramPolicy": ("._mps_quantum_program", "MPSQuantumProgramPolicy"),
+    "MPSQuantumProgramResult": ("._mps_quantum_program", "MPSQuantumProgramResult"),
+    "MPSQuantumProgramRoute": ("._mps_quantum_program", "MPSQuantumProgramRoute"),
+    "MPSQuantumProgramStatus": ("._mps_quantum_program", "MPSQuantumProgramStatus"),
+    "MPSQuantumTrajectoryResult": ("._mps_quantum_jump", "MPSQuantumTrajectoryResult"),
+    "ManifoldBDFMethod": ("._dae_events", "ManifoldBDFMethod"),
+    "ManifoldBDFStage": ("._dae_events", "ManifoldBDFStage"),
+    "MarkerFlowAdaptiveStepPlan": ("._marker_flow_runtime", "MarkerFlowAdaptiveStepPlan"),
+    "MarkerFlowArtifactKind": ("._marker_flow_runtime", "MarkerFlowArtifactKind"),
+    "MarkerFlowArtifactReference": (
+        "._marker_flow_runtime",
+        "MarkerFlowArtifactReference",
+    ),
+    "MarkerFlowCheckpointPayload": (
+        "._marker_flow_checkpoint",
+        "MarkerFlowCheckpointPayload",
+    ),
+    "MarkerFlowCheckpointPlan": ("._marker_flow_checkpoint", "MarkerFlowCheckpointPlan"),
+    "MarkerFlowCompiledExportPlan": (
+        "._marker_flow_runtime",
+        "MarkerFlowCompiledExportPlan",
+    ),
+    "MarkerFlowCompiledExportReport": (
+        "._marker_flow_runtime",
+        "MarkerFlowCompiledExportReport",
+    ),
+    "MarkerFlowOutputPlan": ("._marker_flow_output", "MarkerFlowOutputPlan"),
+    "MarkerFlowQualificationEvidence": (
+        "._marker_flow_qualification",
+        "MarkerFlowQualificationEvidence",
+    ),
+    "MarkerFlowQualificationPlan": (
+        "._marker_flow_qualification",
+        "MarkerFlowQualificationPlan",
+    ),
+    "MarkerFlowQualificationProfile": (
+        "._marker_flow_qualification",
+        "MarkerFlowQualificationProfile",
+    ),
+    "MarkerFlowQualificationResult": (
+        "._marker_flow_qualification",
+        "MarkerFlowQualificationResult",
+    ),
+    "MarkerFlowReplayDerivativeReport": (
+        "._marker_flow_checkpoint",
+        "MarkerFlowReplayDerivativeReport",
+    ),
+    "MarkerFlowReplayPlan": ("._marker_flow_checkpoint", "MarkerFlowReplayPlan"),
+    "MarkerFlowReplayRecord": ("._marker_flow_checkpoint", "MarkerFlowReplayRecord"),
+    "MarkerFlowReplayResult": ("._marker_flow_checkpoint", "MarkerFlowReplayResult"),
+    "MarkerFlowStepLimiter": ("._marker_flow_runtime", "MarkerFlowStepLimiter"),
+    "MarkerFlowStepRestriction": ("._marker_flow_runtime", "MarkerFlowStepRestriction"),
+    "MarkerFlowTrajectoryAdapter": (
+        "._marker_flow_runtime",
+        "MarkerFlowTrajectoryAdapter",
+    ),
+    "MarkerFlowTrajectoryResult": ("._marker_flow_runtime", "MarkerFlowTrajectoryResult"),
+    "MarkerMotionProvider": ("._mac_immersed_step", "MarkerMotionProvider"),
+    "MarkovCubatureDiagnostics": ("._markov_cubature", "MarkovCubatureDiagnostics"),
+    "MarkovCubatureErrorEvidence": (
+        "._markov_cubature_error",
+        "MarkovCubatureErrorEvidence",
+    ),
+    "MarkovCubatureMethod": ("._markov_cubature", "MarkovCubatureMethod"),
+    "MarkovCubaturePlan": ("._markov_cubature", "MarkovCubaturePlan"),
+    "MarkovCubatureRefinementPolicy": (
+        "._markov_cubature_error",
+        "MarkovCubatureRefinementPolicy",
+    ),
+    "MarkovCubatureSolution": ("._markov_cubature", "MarkovCubatureSolution"),
+    "MarkovCubatureStatus": ("._markov_cubature", "MarkovCubatureStatus"),
+    "MaterialTopologyTransferResult": (
+        "._finite_element_adaptivity",
+        "MaterialTopologyTransferResult",
+    ),
+    "MemoryEquationSolution": ("._memory", "MemoryEquationSolution"),
+    "MemoryKernelMapCertification": ("._memory_kernel", "MemoryKernelMapCertification"),
+    "MemoryKernelMasterEquation": ("._memory_kernel", "MemoryKernelMasterEquation"),
+    "MeshComplementCalibrationEvidence": (
+        "._particle_gravity",
+        "MeshComplementCalibrationEvidence",
+    ),
+    "MeshComplementCalibrationPlan": (
+        "._particle_gravity",
+        "MeshComplementCalibrationPlan",
+    ),
+    "MeshVaryingUQAggregator": ("._spectral_hp_completion", "MeshVaryingUQAggregator"),
+    "MeshfreeCycleEvidence": ("._meshfree_incompressible", "MeshfreeCycleEvidence"),
+    "MeshfreeFlowEvidence": ("._meshfree_incompressible", "MeshfreeFlowEvidence"),
+    "MeshfreeFlowStatus": ("._meshfree_incompressible", "MeshfreeFlowStatus"),
+    "MeshfreeIncompressibleFlowPlan": (
+        "._meshfree_incompressible",
+        "MeshfreeIncompressibleFlowPlan",
+    ),
+    "MeshfreeIncompressibleState": (
+        "._meshfree_incompressible",
+        "MeshfreeIncompressibleState",
+    ),
+    "MeshfreeIncompressibleStepResult": (
+        "._meshfree_incompressible",
+        "MeshfreeIncompressibleStepResult",
+    ),
+    "MeshfreeLagrangianEvidence": ("._meshfree_lagrangian", "MeshfreeLagrangianEvidence"),
+    "MeshfreeLagrangianFlowPlan": ("._meshfree_lagrangian", "MeshfreeLagrangianFlowPlan"),
+    "MeshfreeLagrangianFlowState": (
+        "._meshfree_lagrangian",
+        "MeshfreeLagrangianFlowState",
+    ),
+    "MeshfreeLagrangianStatus": ("._meshfree_lagrangian", "MeshfreeLagrangianStatus"),
+    "MeshfreeLagrangianStepResult": (
+        "._meshfree_lagrangian",
+        "MeshfreeLagrangianStepResult",
+    ),
+    "MeshfreeMeasureConversion": ("._meshfree_lagrangian", "MeshfreeMeasureConversion"),
+    "MeshfreeMeasureTransferPlan": (
+        "._meshfree_lagrangian",
+        "MeshfreeMeasureTransferPlan",
+    ),
+    "MeshfreeMeasureTransferResult": (
+        "._meshfree_lagrangian",
+        "MeshfreeMeasureTransferResult",
+    ),
+    "MeshfreeSPHComparison": ("._meshfree_lagrangian", "MeshfreeSPHComparison"),
+    "MeshfreeSPHReconstruction": ("._meshfree_lagrangian", "MeshfreeSPHReconstruction"),
+    "MeshfreeSurfaceStokesPlan": ("._meshfree_surface_flow", "MeshfreeSurfaceStokesPlan"),
+    "MeshfreeSurfaceStokesResult": (
+        "._meshfree_surface_flow",
+        "MeshfreeSurfaceStokesResult",
+    ),
+    "MeshfreeVelocityReconstruction": (
+        "._meshfree_incompressible",
+        "MeshfreeVelocityReconstruction",
+    ),
+    "MobilityProvider": ("._mac_stochastic_immersed", "MobilityProvider"),
+    "MomentWeighting": ("._runtime_lifecycle", "MomentWeighting"),
+    "MovingCutCellState": ("._moving_cut_cell", "MovingCutCellState"),
+    "MovingCutCellStepEvidence": ("._moving_cut_cell", "MovingCutCellStepEvidence"),
+    "MovingCutCellStepResult": ("._moving_cut_cell", "MovingCutCellStepResult"),
+    "MovingEmbeddedBoundaryEventEvidence": (
+        "._block_amr_embedded_events",
+        "MovingEmbeddedBoundaryEventEvidence",
+    ),
+    "MovingEmbeddedBoundaryEventPlan": (
+        "._block_amr_embedded_events",
+        "MovingEmbeddedBoundaryEventPlan",
+    ),
+    "MovingEmbeddedBoundaryEventResult": (
+        "._block_amr_embedded_events",
+        "MovingEmbeddedBoundaryEventResult",
+    ),
+    "MovingMultivaluedCutCellPlan": ("._moving_cut_cell", "MovingMultivaluedCutCellPlan"),
+    "MovingTopologyLocalizationEvidence": (
+        "._moving_cut_cell",
+        "MovingTopologyLocalizationEvidence",
+    ),
+    "MovingTopologyLocalizationPlan": (
+        "._moving_cut_cell",
+        "MovingTopologyLocalizationPlan",
+    ),
+    "MultiTerminalCoherentProblem": (
+        "._multiterminal_transport",
+        "MultiTerminalCoherentProblem",
+    ),
+    "MultiTerminalCoherentResult": (
+        "._multiterminal_transport",
+        "MultiTerminalCoherentResult",
+    ),
+    "MultigroupRadiationMatterProcessPlan": (
+        "._radiation_balance_law",
+        "MultigroupRadiationMatterProcessPlan",
+    ),
+    "MultigroupRadiationMatterResult": (
+        "._radiation_balance_law",
+        "MultigroupRadiationMatterResult",
+    ),
+    "MultiratePartitionedRK": ("._multirate", "MultiratePartitionedRK"),
+    "MultivaluedBlockAMRCheckpoint": (
+        "._block_amr_lifecycle",
+        "MultivaluedBlockAMRCheckpoint",
+    ),
+    "MultivaluedBlockAMRCheckpointPlan": (
+        "._block_amr_lifecycle",
+        "MultivaluedBlockAMRCheckpointPlan",
+    ),
+    "NematicEvaluation": ("._nematic", "NematicEvaluation"),
+    "NematicStepResult": ("._nematic", "NematicStepResult"),
+    "NeuralCDETrainingData": ("._neural_cde", "NeuralCDETrainingData"),
+    "NeuralCDETrainingState": ("._neural_cde", "NeuralCDETrainingState"),
+    "NeuralCDEVectorField": ("._neural_cde", "NeuralCDEVectorField"),
+    "NeuralFieldEvolutionResult": ("._neural_galerkin", "NeuralFieldEvolutionResult"),
+    "NeuralGalerkinAdjointPolicy": ("._neural_galerkin", "NeuralGalerkinAdjointPolicy"),
+    "NeuralGalerkinAudit": ("._neural_galerkin", "NeuralGalerkinAudit"),
+    "NeuralGalerkinEpoch": ("._neural_galerkin", "NeuralGalerkinEpoch"),
+    "NeuralGalerkinEpochPlan": ("._neural_galerkin", "NeuralGalerkinEpochPlan"),
+    "NeuralGalerkinEpochResult": ("._neural_galerkin", "NeuralGalerkinEpochResult"),
+    "NeuralGalerkinProblem": ("._neural_galerkin", "NeuralGalerkinProblem"),
+    "NeuralGalerkinReplayJournal": ("._neural_galerkin", "NeuralGalerkinReplayJournal"),
+    "NeuralJumpProjectionProblem": (
+        "._neural_quantum_jump",
+        "NeuralJumpProjectionProblem",
+    ),
+    "NeuralJumpProjectionResult": ("._neural_quantum_jump", "NeuralJumpProjectionResult"),
+    "NeuralNoJumpTDVPProblem": ("._neural_quantum_jump", "NeuralNoJumpTDVPProblem"),
+    "NeuralNoJumpTDVPResult": ("._neural_quantum_jump", "NeuralNoJumpTDVPResult"),
+    "NeuralRateEvidence": ("._neural_sampled_trajectory", "NeuralRateEvidence"),
+    "NeuralTangentSolvePolicy": ("._neural_galerkin", "NeuralTangentSolvePolicy"),
+    "NeutralDelayProblem": ("._delay", "NeutralDelayProblem"),
+    "NeutralFunctional": ("._delay", "NeutralFunctional"),
+    "NeutralRecoveryGuess": ("._delay", "NeutralRecoveryGuess"),
+    "NewtonianGravityDiagnostics": ("._self_gravity", "NewtonianGravityDiagnostics"),
+    "NewtonianPairKernel": ("._particle_gravity", "NewtonianPairKernel"),
+    "NewtonianSelfGravityPlan": ("._self_gravity", "NewtonianSelfGravityPlan"),
+    "NoiseRequirement": ("._temporal_method", "NoiseRequirement"),
+    "NoiseStructure": ("._differential", "NoiseStructure"),
+    "NoiseTruncationLevel": ("._convergence", "NoiseTruncationLevel"),
+    "NoiseTruncationStudy": ("._convergence", "NoiseTruncationStudy"),
+    "NonMarkovianComparisonResult": (
+        "._nonmarkov_campaign",
+        "NonMarkovianComparisonResult",
+    ),
+    "NonlinearLocalCondensation": (
+        "._spectral_hp_completion",
+        "NonlinearLocalCondensation",
+    ),
+    "NonlinearPotentialFlowPolicy3D": (
+        "._advanced_potential_flow3d",
+        "NonlinearPotentialFlowPolicy3D",
+    ),
+    "NonlinearPotentialFlowState3D": (
+        "._advanced_potential_flow3d",
+        "NonlinearPotentialFlowState3D",
+    ),
+    "NonlinearPotentialFlowStep3D": (
+        "._advanced_potential_flow3d",
+        "NonlinearPotentialFlowStep3D",
+    ),
+    "NumericalEventResult": ("._hybrid_event", "NumericalEventResult"),
+    "OBSERVATION_NONFINITE": ("._evolution_observation", "OBSERVATION_NONFINITE"),
+    "OfflineCubicDrivingPath": ("._driving_path", "OfflineCubicDrivingPath"),
+    "OpenSystemHistorySolution": ("._memory_kernel", "OpenSystemHistorySolution"),
+    "OracleSmoothCompressibleD2V17FixedStepMethod": (
+        "._smooth_compressible_d2v",
+        "OracleSmoothCompressibleD2V17FixedStepMethod",
+    ),
+    "PICCapabilityRecord": ("._pic_field_solver", "PICCapabilityRecord"),
+    "PICCherenkovGuard": ("._pic_cherenkov_guard", "PICCherenkovGuard"),
+    "PICDistributedEvidence": ("._distributed_pic", "PICDistributedEvidence"),
+    "PICDistributedRoute": ("._distributed_pic", "PICDistributedRoute"),
+    "PICDistributionSupport": ("._distributed_pic", "PICDistributionSupport"),
+    "PICEnergyAccounting": ("._pic_field_solver", "PICEnergyAccounting"),
+    "PICFieldAdvance": ("._pic_field_solver", "PICFieldAdvance"),
+    "PICFieldDeposit": ("._pic_field_solver", "PICFieldDeposit"),
+    "PICFieldHandoffEvidence": ("._pic_field_handoff", "PICFieldHandoffEvidence"),
+    "PICFieldHandoffResult": ("._pic_field_handoff", "PICFieldHandoffResult"),
+    "PICFieldHandoffRoute": ("._pic_field_handoff", "PICFieldHandoffRoute"),
+    "PICFieldHistory": ("._electromagnetic_pic", "PICFieldHistory"),
+    "PICFieldSample": ("._pic_field_solver", "PICFieldSample"),
+    "PICFieldSolverCapabilities": ("._pic_field_solver", "PICFieldSolverCapabilities"),
+    "PICFieldSolverCapability": ("._pic_field_solver", "PICFieldSolverCapability"),
+    "PICFilterContinuityReport": ("._pic_field_solver", "PICFilterContinuityReport"),
+    "PICFilterPlan": ("._pic_filter", "PICFilterPlan"),
+    "PICGalileanGrid": ("._pic_field_solver", "PICGalileanGrid"),
+    "PICGatherDerivativeOrder": ("._pic_field_solver", "PICGatherDerivativeOrder"),
+    "PICGaussCorrectionPlan": ("._semi_implicit_pic", "PICGaussCorrectionPlan"),
+    "PICGaussCorrectionResult": ("._semi_implicit_pic", "PICGaussCorrectionResult"),
+    "PICGaussProjection": ("._pic_field_solver", "PICGaussProjection"),
+    "PICGaussProjectionResult": ("._pic_field_solver", "PICGaussProjectionResult"),
+    "PICGaussProjectionRoute": ("._pic_field_solver", "PICGaussProjectionRoute"),
+    "PICHuygensSampling": ("._pic_field_solver", "PICHuygensSampling"),
+    "PICMaxwellCurrentSourcePlan": (
+        "._pic_current_source",
+        "PICMaxwellCurrentSourcePlan",
+    ),
+    "PICMovingWindowPlan": ("._moving_window_pic", "PICMovingWindowPlan"),
+    "PICMovingWindowResult": ("._moving_window_pic", "PICMovingWindowResult"),
+    "PICMovingWindowState": ("._moving_window_pic", "PICMovingWindowState"),
+    "PICMultiDeposit": ("._pic_field_solver", "PICMultiDeposit"),
+    "PICOpenDomain": ("._pic_field_solver", "PICOpenDomain"),
+    "PICOracleCase": ("._pic_providers", "PICOracleCase"),
+    "PICOracleCode": ("._pic_providers", "PICOracleCode"),
+    "PICOracleFields": ("._pic_providers", "PICOracleFields"),
+    "PICOracleLaser": ("._pic_providers", "PICOracleLaser"),
+    "PICOracleModalFields": ("._pic_providers", "PICOracleModalFields"),
+    "PICOracleResult": ("._pic_providers", "PICOracleResult"),
+    "PICOracleScenario": ("._pic_providers", "PICOracleScenario"),
+    "PICOracleSpecies": ("._pic_providers", "PICOracleSpecies"),
+    "PICOracleSpectralSolver": ("._pic_providers", "PICOracleSpectralSolver"),
+    "PICOracleTrack": ("._pic_providers", "PICOracleTrack"),
+    "PICOracleTrackResult": ("._pic_providers", "PICOracleTrackResult"),
+    "PICOracleWakefieldCase": ("._pic_providers", "PICOracleWakefieldCase"),
+    "PICOracleWakefieldResult": ("._pic_providers", "PICOracleWakefieldResult"),
+    "PICPrecisionPolicy": ("._pic_field_solver", "PICPrecisionPolicy"),
+    "PICRelativisticFieldResult": ("._pic_field_solver", "PICRelativisticFieldResult"),
+    "PICRelativisticSelfFields": ("._pic_field_solver", "PICRelativisticSelfFields"),
+    "PICRestartCheckpoint": ("._electromagnetic_pic", "PICRestartCheckpoint"),
+    "PICRestartComponent": ("._pic_field_solver", "PICRestartComponent"),
+    "PICRestartManifest": ("._pic_restart", "PICRestartManifest"),
+    "PICRestartPlan": ("._pic_restart", "PICRestartPlan"),
+    "PICRestartResult": ("._pic_restart", "PICRestartResult"),
+    "PICRestartState": ("._pic_field_solver", "PICRestartState"),
+    "PICSelfFieldInitialization": ("._pic_field_solver", "PICSelfFieldInitialization"),
+    "PICSpectralSymbol": ("._pic_field_solver", "PICSpectralSymbol"),
+    "PICTensorKind": ("._pic_field_solver", "PICTensorKind"),
+    "PICTensorLayout": ("._pic_field_solver", "PICTensorLayout"),
+    "PICTensorMap": ("._pic_field_solver", "PICTensorMap"),
+    "PICWindowInjection": ("._moving_window_pic", "PICWindowInjection"),
+    "PICWindowShift": ("._pic_field_solver", "PICWindowShift"),
+    "PIConGPUProvider": ("._pic_providers", "PIConGPUProvider"),
+    "PROBABILISTIC_ODE_NONFINITE": ("._probabilistic_ode", "PROBABILISTIC_ODE_NONFINITE"),
+    "PROBABILISTIC_ODE_STEP_LIMIT_REACHED": (
+        "._probabilistic_ode",
+        "PROBABILISTIC_ODE_STEP_LIMIT_REACHED",
+    ),
+    "PROBABILISTIC_ODE_STIFF": ("._probabilistic_ode", "PROBABILISTIC_ODE_STIFF"),
+    "PROBABILISTIC_ODE_SUCCESS": ("._probabilistic_ode", "PROBABILISTIC_ODE_SUCCESS"),
+    "ParameterShiftJacobianResult": (
+        "._quantum_gradients",
+        "ParameterShiftJacobianResult",
+    ),
+    "ParameterShiftPlan": ("._quantum_gradients", "ParameterShiftPlan"),
+    "ParticleConversionBackend": ("._particle_conversion", "ParticleConversionBackend"),
+    "ParticleConversionReplayRecord": (
+        "._particle_conversion",
+        "ParticleConversionReplayRecord",
+    ),
+    "ParticleConversionSensitivityPolicy": (
+        "._particle_conversion_sensitivity",
+        "ParticleConversionSensitivityPolicy",
+    ),
+    "ParticleConversionSensitivityResult": (
+        "._particle_conversion_sensitivity",
+        "ParticleConversionSensitivityResult",
+    ),
+    "ParticleConversionSolverPlan": (
+        "._particle_conversion",
+        "ParticleConversionSolverPlan",
+    ),
+    "ParticleConversionStepResult": (
+        "._particle_conversion",
+        "ParticleConversionStepResult",
+    ),
+    "ParticleConversionSurrogateBiasCertificate": (
+        "._particle_conversion_sensitivity",
+        "ParticleConversionSurrogateBiasCertificate",
+    ),
+    "ParticleConversionValidityCertificate": (
+        "._particle_conversion_sensitivity",
+        "ParticleConversionValidityCertificate",
+    ),
+    "ParticleEpochSegmentRecord": ("._particle_epoch", "ParticleEpochSegmentRecord"),
+    "ParticleEpochTrajectory": ("._particle_epoch", "ParticleEpochTrajectory"),
+    "ParticleFokkerPlanckPlan": (
+        "._fokker_planck_approximation",
+        "ParticleFokkerPlanckPlan",
+    ),
+    "ParticleFokkerPlanckResult": (
+        "._fokker_planck_approximation",
+        "ParticleFokkerPlanckResult",
+    ),
+    "ParticleGravityEvidence": ("._particle_gravity", "ParticleGravityEvidence"),
+    "ParticleMarginalLikelihoodPlan": (
+        "._multiphysics_inference",
+        "ParticleMarginalLikelihoodPlan",
+    ),
+    "ParticleMeshGravityDiagnostics": (
+        "._particle_mesh_gravity",
+        "ParticleMeshGravityDiagnostics",
+    ),
+    "ParticleMeshGravityForceResult": (
+        "._particle_mesh_gravity",
+        "ParticleMeshGravityForceResult",
+    ),
+    "ParticleMeshGravityPlan": ("._particle_mesh_gravity", "ParticleMeshGravityPlan"),
+    "ParticleMeshGravityState": ("._particle_mesh_gravity", "ParticleMeshGravityState"),
+    "ParticleMeshGravityStepResult": (
+        "._particle_mesh_gravity",
+        "ParticleMeshGravityStepResult",
+    ),
+    "ParticleOctreePlan3D": ("._particle_gravity", "ParticleOctreePlan3D"),
+    "ParticleVectorField": ("._particles", "ParticleVectorField"),
+    "PartitionedDifferentialProblem": ("._multirate", "PartitionedDifferentialProblem"),
+    "PeriodicBarnesHutPlan": ("._particle_gravity", "PeriodicBarnesHutPlan"),
+    "PeriodicEwaldEvidence": ("._particle_gravity", "PeriodicEwaldEvidence"),
+    "PeriodicEwaldForcePlan": ("._particle_gravity", "PeriodicEwaldForcePlan"),
+    "PeriodicEwaldResult": ("._particle_gravity", "PeriodicEwaldResult"),
+    "PeriodicLeadContactPlan": ("._multiterminal_transport", "PeriodicLeadContactPlan"),
+    "PhaseEquilibriumStatus": ("._phase_equilibrium", "PhaseEquilibriumStatus"),
+    "PhotonTransportPlan": ("._photon_transport", "PhotonTransportPlan"),
+    "PhotonTransportResult": ("._photon_transport", "PhotonTransportResult"),
+    "PhotonTransportStatus": ("._photon_transport", "PhotonTransportStatus"),
+    "PicardSourceContext": ("._deep_picard", "PicardSourceContext"),
+    "PiecewiseLinearDrivingPath": ("._driving_path", "PiecewiseLinearDrivingPath"),
+    "PointDelay": ("._delay", "PointDelay"),
+    "PoissonNernstPlanckEvaluation": (
+        "._poisson_nernst_planck",
+        "PoissonNernstPlanckEvaluation",
+    ),
+    "PoissonNernstPlanckPlan": ("._poisson_nernst_planck", "PoissonNernstPlanckPlan"),
+    "PoissonNernstPlanckStepResult": (
+        "._poisson_nernst_planck",
+        "PoissonNernstPlanckStepResult",
+    ),
+    "PolynomialBSDERegressionBasis": (
+        "._regression_bsde",
+        "PolynomialBSDERegressionBasis",
+    ),
+    "PolynomialRecombination": ("._markov_cubature", "PolynomialRecombination"),
+    "PrecisionDType": ("._finite_volume_case", "PrecisionDType"),
+    "PreparedBEMFracture3D": ("._bem_fracture3d", "PreparedBEMFracture3D"),
+    "PreparedBalanceLawRuntime": ("._balance_law", "PreparedBalanceLawRuntime"),
+    "PreparedBlockAMRRuntime": ("._block_amr_runtime", "PreparedBlockAMRRuntime"),
+    "PreparedBoostedFrame": ("._boosted_frame", "PreparedBoostedFrame"),
+    "PreparedChannelSBDF2Method": ("._channel_flow", "PreparedChannelSBDF2Method"),
+    "PreparedChemicalReactorDynamics": (
+        "._chemical_reactor",
+        "PreparedChemicalReactorDynamics",
+    ),
+    "PreparedCircuitQEDDevice": ("._circuit_qed", "PreparedCircuitQEDDevice"),
+    "PreparedCompatibleMaxwell": (".maxwell", "PreparedCompatibleMaxwell"),
+    "PreparedCompilationService": (
+        "._production_resources",
+        "PreparedCompilationService",
+    ),
+    "PreparedConservativeFiniteVolumeDVM": (
+        "._discrete_velocity",
+        "PreparedConservativeFiniteVolumeDVM",
+    ),
+    "PreparedConstrainedMHDBalanceLawTransport": (
+        "._balance_law_transport",
+        "PreparedConstrainedMHDBalanceLawTransport",
+    ),
+    "PreparedDAEEventPlan": ("._dae_events", "PreparedDAEEventPlan"),
+    "PreparedDAESolve": ("._differential_algebraic", "PreparedDAESolve"),
+    "PreparedDenseQuantumProgram": ("._quantum_program", "PreparedDenseQuantumProgram"),
+    "PreparedDenseQuantumTemplate": (
+        "._quantum_gradients",
+        "PreparedDenseQuantumTemplate",
+    ),
+    "PreparedDistributedWaveAMR": (
+        "._distributed_wave_amr",
+        "PreparedDistributedWaveAMR",
+    ),
+    "PreparedDistributedWaveAMRTopologyTransition": (
+        "._distributed_wave_amr",
+        "PreparedDistributedWaveAMRTopologyTransition",
+    ),
+    "PreparedDressedSpectrum": ("._dressed_spectrum", "PreparedDressedSpectrum"),
+    "PreparedDynamicElasticityFEMBEM3D": (
+        "._dynamic_vector_cq",
+        "PreparedDynamicElasticityFEMBEM3D",
+    ),
+    "PreparedDynamicMaxwellFEMBEM3D": (
+        "._dynamic_vector_cq",
+        "PreparedDynamicMaxwellFEMBEM3D",
+    ),
+    "PreparedDynamicVectorFEMBEM3D": (
+        "._dynamic_vector_cq",
+        "PreparedDynamicVectorFEMBEM3D",
+    ),
+    "PreparedETDRKMethod": ("._etdrk", "PreparedETDRKMethod"),
+    "PreparedFieldEquilibrium": ("._field_equilibrium", "PreparedFieldEquilibrium"),
+    "PreparedFiniteDMRG": ("._dmrg", "PreparedFiniteDMRG"),
+    "PreparedFiniteTDVP": ("._matrix_product_tdvp", "PreparedFiniteTDVP"),
+    "PreparedFiniteVolumeBackwardEulerStep": (
+        "._finite_volume_implicit",
+        "PreparedFiniteVolumeBackwardEulerStep",
+    ),
+    "PreparedFiniteVolumeBalanceLawTransport": (
+        "._balance_law_transport",
+        "PreparedFiniteVolumeBalanceLawTransport",
+    ),
+    "PreparedFiniteVolumeCase": (
+        "._finite_volume_case_loader",
+        "PreparedFiniteVolumeCase",
+    ),
+    "PreparedFiniteVolumeRuntime": (
+        "._finite_volume_runtime",
+        "PreparedFiniteVolumeRuntime",
+    ),
+    "PreparedFockRefinementPlan": ("._fock_continuation", "PreparedFockRefinementPlan"),
+    "PreparedFunctionalNTK": ("._functional_ntk", "PreparedFunctionalNTK"),
+    "PreparedGuidedElasticModes": (
+        "._guided_elastic_modes",
+        "PreparedGuidedElasticModes",
+    ),
+    "PreparedHEOMRefinementPlan": ("._heom_production", "PreparedHEOMRefinementPlan"),
+    "PreparedHybridSchedule": ("._hybrid_schedule", "PreparedHybridSchedule"),
+    "PreparedImplicitMPMDynamics": (
+        "._material_point_implicit",
+        "PreparedImplicitMPMDynamics",
+    ),
+    "PreparedLESStabilityGuardedETDRKMethod": (
+        "._etdrk",
+        "PreparedLESStabilityGuardedETDRKMethod",
+    ),
+    "PreparedLPDOQuantumProgram": (
+        "._lpdo_quantum_program",
+        "PreparedLPDOQuantumProgram",
+    ),
+    "PreparedLaplaceCapacitance3D": (
+        "._laplace_capacitance",
+        "PreparedLaplaceCapacitance3D",
+    ),
+    "PreparedLaplaceStableDualCalderon3D": (
+        "._laplace_capacitance",
+        "PreparedLaplaceStableDualCalderon3D",
+    ),
+    "PreparedLocalHamiltonianEvolution": (
+        "._local_hamiltonian",
+        "PreparedLocalHamiltonianEvolution",
+    ),
+    "PreparedMACPressureOperator": (
+        "._mac_pressure_operator",
+        "PreparedMACPressureOperator",
+    ),
+    "PreparedMPMPhaseFieldDynamics": (
+        "._material_point_fracture",
+        "PreparedMPMPhaseFieldDynamics",
+    ),
+    "PreparedMPSQuantumProgram": ("._mps_quantum_program", "PreparedMPSQuantumProgram"),
+    "PreparedMeshfreeIncompressibleFlow": (
+        "._meshfree_incompressible",
+        "PreparedMeshfreeIncompressibleFlow",
+    ),
+    "PreparedMeshfreeLagrangianFlow": (
+        "._meshfree_lagrangian",
+        "PreparedMeshfreeLagrangianFlow",
+    ),
+    "PreparedMeshfreeMeasureTransfer": (
+        "._meshfree_lagrangian",
+        "PreparedMeshfreeMeasureTransfer",
+    ),
+    "PreparedNematicDynamics": ("._nematic", "PreparedNematicDynamics"),
+    "PreparedNematicSemiImplicitStepPlan": (
+        "._nematic",
+        "PreparedNematicSemiImplicitStepPlan",
+    ),
+    "PreparedNewtonianSelfGravity": ("._self_gravity", "PreparedNewtonianSelfGravity"),
+    "PreparedNonlinearPotentialFlow3D": (
+        "._advanced_potential_flow3d",
+        "PreparedNonlinearPotentialFlow3D",
+    ),
+    "PreparedNonmatchingFEMBEM3D": (
+        "._nonmatching_fem_bem3d",
+        "PreparedNonmatchingFEMBEM3D",
+    ),
+    "PreparedPICMaxwellCurrentSource": (
+        "._pic_current_source",
+        "PreparedPICMaxwellCurrentSource",
+    ),
+    "PreparedParticleOctree3D": ("._particle_gravity", "PreparedParticleOctree3D"),
+    "PreparedProductionRun": ("._production_runtime", "PreparedProductionRun"),
+    "PreparedProjectorMonteCarlo": (
+        "._projector_monte_carlo_contracts",
+        "PreparedProjectorMonteCarlo",
+    ),
+    "PreparedQuantumExperiment": ("._quantum_experiment", "PreparedQuantumExperiment"),
+    "PreparedRadiativeCoolingProcess": (
+        "._radiative_cooling",
+        "PreparedRadiativeCoolingProcess",
+    ),
+    "PreparedReactiveMonolithicStep": (
+        "._reactive_monolithic",
+        "PreparedReactiveMonolithicStep",
+    ),
+    "PreparedReducedMaxwellCPML": ("._maxwell_reduced", "PreparedReducedMaxwellCPML"),
+    "PreparedReducedMaxwellCPMLTerm": (
+        "._maxwell_reduced",
+        "PreparedReducedMaxwellCPMLTerm",
+    ),
+    "PreparedReplaySchedule": ("._fixed_step", "PreparedReplaySchedule"),
+    "PreparedRosenbrockSolve": ("._rosenbrock_replay", "PreparedRosenbrockSolve"),
+    "PreparedRoughEvolution": ("._rough_prepare", "PreparedRoughEvolution"),
+    "PreparedSHAKERATTLEPlan": ("._constrained_mechanics", "PreparedSHAKERATTLEPlan"),
+    "PreparedSPDEApproximation": ("._spde_truncation", "PreparedSPDEApproximation"),
+    "PreparedScalarScreenJunctionSolve3D": (
+        "._scalar_screen_junction3d",
+        "PreparedScalarScreenJunctionSolve3D",
+    ),
+    "PreparedSpectralOUForcing": ("._spectral_forcing", "PreparedSpectralOUForcing"),
+    "PreparedSplitFieldPML": ("._stencil_evolution", "PreparedSplitFieldPML"),
+    "PreparedStaggeredAcoustics": ("._stencil_evolution", "PreparedStaggeredAcoustics"),
+    "PreparedThermochemistryProcess": (
+        "._thermochemistry",
+        "PreparedThermochemistryProcess",
+    ),
+    "PreparedUniformFMMStructure": ("._particle_gravity", "PreparedUniformFMMStructure"),
+    "PreparedUniformVUMPS": ("._uniform_vumps", "PreparedUniformVUMPS"),
+    "PreparedUnstructuredAMRRuntime": (
+        "._unstructured_amr_runtime",
+        "PreparedUnstructuredAMRRuntime",
+    ),
+    "PreparedUnstructuredSSPRK3Runtime": (
+        "._unstructured_stage_runtime",
+        "PreparedUnstructuredSSPRK3Runtime",
+    ),
+    "ProbabilisticODECalibration": ("._probabilistic_ode", "ProbabilisticODECalibration"),
+    "ProbabilisticODECovarianceOutput": (
+        "._probabilistic_ode",
+        "ProbabilisticODECovarianceOutput",
+    ),
+    "ProbabilisticODEFactorization": (
+        "._probabilistic_ode",
+        "ProbabilisticODEFactorization",
+    ),
+    "ProbabilisticODEMethod": ("._probabilistic_ode", "ProbabilisticODEMethod"),
+    "ProbabilisticODESolution": ("._probabilistic_ode", "ProbabilisticODESolution"),
+    "ProbabilisticODEStatus": ("._probabilistic_ode", "ProbabilisticODEStatus"),
+    "ProbabilisticODEUpdate": ("._probabilistic_ode", "ProbabilisticODEUpdate"),
+    "ProcessExperimentPlan": ("._process_learning", "ProcessExperimentPlan"),
+    "ProcessFitResult": ("._process_learning", "ProcessFitResult"),
+    "ProcessIdentifiabilityCertificate": (
+        "._open_certificates",
+        "ProcessIdentifiabilityCertificate",
+    ),
+    "ProcessMemoryRefitResult": ("._stinespring_tomography", "ProcessMemoryRefitResult"),
+    "ProcessTomographyExperiment": (
+        "._process_tomography",
+        "ProcessTomographyExperiment",
+    ),
+    "ProductFormulaOrder": ("._local_hamiltonian", "ProductFormulaOrder"),
+    "ProductionArchivePolicy": ("._production_runtime", "ProductionArchivePolicy"),
+    "ProductionCaseManifest": ("._production_runtime", "ProductionCaseManifest"),
+    "ProductionEvidenceState": ("._production_runtime", "ProductionEvidenceState"),
+    "ProductionFailureRecord": ("._production_runtime", "ProductionFailureRecord"),
+    "ProductionIterationMetrics": ("._production_runtime", "ProductionIterationMetrics"),
+    "ProductionResourceBudget": ("._production_resources", "ProductionResourceBudget"),
+    "ProductionResourceForecast": (
+        "._production_resources",
+        "ProductionResourceForecast",
+    ),
+    "ProductionRunPlan": ("._production_runtime", "ProductionRunPlan"),
+    "ProductionRunResult": ("._production_runtime", "ProductionRunResult"),
+    "ProductionRunState": ("._production_runtime", "ProductionRunState"),
+    "ProductionTerminalManifest": ("._production_runtime", "ProductionTerminalManifest"),
+    "ProductionTriggerAction": ("._production_runtime", "ProductionTriggerAction"),
+    "ProductionTriggerBinding": ("._production_runtime", "ProductionTriggerBinding"),
+    "ProjectorEstimatorPolicy": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorEstimatorPolicy",
+    ),
+    "ProjectorMonteCarloAnalysis": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorMonteCarloAnalysis",
+    ),
+    "ProjectorMonteCarloEvidence": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloEvidence",
+    ),
+    "ProjectorMonteCarloHistory": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloHistory",
+    ),
+    "ProjectorMonteCarloObservation": (
+        "._projector_monte_carlo_observables",
+        "ProjectorMonteCarloObservation",
+    ),
+    "ProjectorMonteCarloPlan": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloPlan",
+    ),
+    "ProjectorMonteCarloProblem": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloProblem",
+    ),
+    "ProjectorMonteCarloResult": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloResult",
+    ),
+    "ProjectorMonteCarloState": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloState",
+    ),
+    "ProjectorMonteCarloStatus": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloStatus",
+    ),
+    "ProjectorMonteCarloStepResult": (
+        "._projector_monte_carlo_contracts",
+        "ProjectorMonteCarloStepResult",
+    ),
+    "ProjectorReweightedEstimate": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorReweightedEstimate",
+    ),
+    "ProjectorSystematicRecord": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorSystematicRecord",
+    ),
+    "ProjectorWeightDiagnostics": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorWeightDiagnostics",
+    ),
+    "ProjectorWeightStatus": (
+        "._projector_monte_carlo_estimators",
+        "ProjectorWeightStatus",
+    ),
+    "PseudoTransientAdaptation": ("._functional_training", "PseudoTransientAdaptation"),
+    "PseudoTransientPolicy": ("._functional_training", "PseudoTransientPolicy"),
+    "PseudomodeEmbeddingProblem": ("._pseudomode", "PseudomodeEmbeddingProblem"),
+    "PseudomodeSolution": ("._pseudomode", "PseudomodeSolution"),
+    "PurificationTruncationEvidence": (
+        "._purified_lindblad",
+        "PurificationTruncationEvidence",
+    ),
+    "PurifiedLindbladProblem": ("._purified_lindblad", "PurifiedLindbladProblem"),
+    "PurifiedLindbladResult": ("._purified_lindblad", "PurifiedLindbladResult"),
+    "PurifiedStationarityDiagnostic": (
+        "._purified_tebd",
+        "PurifiedStationarityDiagnostic",
+    ),
+    "PurifiedStrangProblem": ("._purified_tebd", "PurifiedStrangProblem"),
+    "PurifiedStrangResult": ("._purified_tebd", "PurifiedStrangResult"),
+    "QuantumCarrier": ("._quantum_control", "QuantumCarrier"),
+    "QuantumCompilationPolicy": ("._quantum_compilation", "QuantumCompilationPolicy"),
+    "QuantumCompilationResult": ("._quantum_compilation", "QuantumCompilationResult"),
+    "QuantumControlLine": ("._quantum_control", "QuantumControlLine"),
+    "QuantumControlSchedule": ("._quantum_control", "QuantumControlSchedule"),
+    "QuantumControlScheduleDiagnostics": (
+        "._quantum_control",
+        "QuantumControlScheduleDiagnostics",
+    ),
+    "QuantumControlScheduleResult": ("._quantum_control", "QuantumControlScheduleResult"),
+    "QuantumDecompositionRecord": ("._quantum_compilation", "QuantumDecompositionRecord"),
+    "QuantumDigitalTwinState": ("._process_learning", "QuantumDigitalTwinState"),
+    "QuantumExperimentExactResult": (
+        "._quantum_experiment",
+        "QuantumExperimentExactResult",
+    ),
+    "QuantumExperimentProgram": ("._quantum_experiment", "QuantumExperimentProgram"),
+    "QuantumInstrument": ("._quantum_measurement", "QuantumInstrument"),
+    "QuantumJumpEventTable": ("._quantum_jump_event", "QuantumJumpEventTable"),
+    "QuantumJumpProblem": ("._quantum_jump", "QuantumJumpProblem"),
+    "QuantumMeasurementResult": ("._quantum_measurement", "QuantumMeasurementResult"),
+    "QuantumMemoryKernel": ("._memory_kernel", "QuantumMemoryKernel"),
+    "QuantumPOVM": ("._quantum_measurement", "QuantumPOVM"),
+    "QuantumProgramInterchange": ("._quantum_service", "QuantumProgramInterchange"),
+    "QuantumResultInterchange": ("._quantum_service", "QuantumResultInterchange"),
+    "QuantumServiceAdmission": ("._quantum_service", "QuantumServiceAdmission"),
+    "QuantumServicePolicy": ("._quantum_service", "QuantumServicePolicy"),
+    "QuantumServiceRequest": ("._quantum_service", "QuantumServiceRequest"),
+    "QuantumServiceRunRecord": ("._quantum_service", "QuantumServiceRunRecord"),
+    "QuantumShotBatchResult": ("._quantum_experiment", "QuantumShotBatchResult"),
+    "QuantumTomographyArtifact": ("._quantum_tomography", "QuantumTomographyArtifact"),
+    "QuantumTomographyPolicy": ("._quantum_tomography", "QuantumTomographyPolicy"),
+    "QuantumTomographyProblem": ("._quantum_tomography", "QuantumTomographyProblem"),
+    "QuantumTomographyResult": ("._quantum_tomography", "QuantumTomographyResult"),
+    "QuantumTrajectoryCheckpoint": (
+        "._quantum_trajectory_contract",
+        "QuantumTrajectoryCheckpoint",
+    ),
+    "QuantumTrajectoryEnsemble": ("._quantum_jump", "QuantumTrajectoryEnsemble"),
+    "QuantumTrajectoryEventTable": (
+        "._quantum_trajectory_contract",
+        "QuantumTrajectoryEventTable",
+    ),
+    "QuantumTrajectoryPlan": ("._quantum_trajectory_contract", "QuantumTrajectoryPlan"),
+    "QuantumTrajectoryStatus": (
+        "._quantum_trajectory_contract",
+        "QuantumTrajectoryStatus",
+    ),
+    "RKCMethod": ("._temporal_extensions", "RKCMethod"),
+    "RKMK": ("._geometric", "RKMK"),
+    "RadauIIAIntegrator": ("._temporal_extensions", "RadauIIAIntegrator"),
+    "RadauIIAMethod": ("._radau_iia", "RadauIIAMethod"),
+    "RadiationMatterLedger": ("._radiation_balance_law", "RadiationMatterLedger"),
+    "RadiativeCoolingDiagnostics": ("._radiative_cooling", "RadiativeCoolingDiagnostics"),
+    "RadiativeCoolingProcessPlan": ("._radiative_cooling", "RadiativeCoolingProcessPlan"),
+    "RateFunction": ("._neural_galerkin", "RateFunction"),
+    "ReactiveCFDDEMCouplingState": ("._reactive_cfd_dem", "ReactiveCFDDEMCouplingState"),
+    "ReactiveCFDDEMEvaluation": ("._reactive_cfd_dem", "ReactiveCFDDEMEvaluation"),
+    "ReactiveCFDDEMMacroStepResult": (
+        "._reactive_cfd_dem",
+        "ReactiveCFDDEMMacroStepResult",
+    ),
+    "ReactiveCheckpointPolicy": ("._reactive_replay", "ReactiveCheckpointPolicy"),
+    "ReactiveCheckpointVJPResult": ("._reactive_replay", "ReactiveCheckpointVJPResult"),
+    "ReactiveCouplingMode": ("._reactive_cfd_dem", "ReactiveCouplingMode"),
+    "ReactiveElectrodeEvaluation": (
+        "._electrode_reaction",
+        "ReactiveElectrodeEvaluation",
+    ),
+    "ReactiveElectrodePlan": ("._electrode_reaction", "ReactiveElectrodePlan"),
+    "ReactiveElectrodeState": ("._electrode_reaction", "ReactiveElectrodeState"),
+    "ReactiveElectrodeStepResult": (
+        "._electrode_reaction",
+        "ReactiveElectrodeStepResult",
+    ),
+    "ReactiveFluidFields": ("._reactive_cfd_dem", "ReactiveFluidFields"),
+    "ReactiveLocalStepResult": (
+        "._reactive_lattice_boltzmann",
+        "ReactiveLocalStepResult",
+    ),
+    "ReactiveLocalStepper": ("._reactive_lattice_boltzmann", "ReactiveLocalStepper"),
+    "ReactiveMonolithicPreconditionerEvidence": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicPreconditionerEvidence",
+    ),
+    "ReactiveMonolithicPreconditionerMode": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicPreconditionerMode",
+    ),
+    "ReactiveMonolithicSolverPlan": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicSolverPlan",
+    ),
+    "ReactiveMonolithicState": ("._reactive_monolithic", "ReactiveMonolithicState"),
+    "ReactiveMonolithicStepResult": (
+        "._reactive_monolithic",
+        "ReactiveMonolithicStepResult",
+    ),
+    "ReactiveParameterEnsembleResult": (
+        "._reactive_replay",
+        "ReactiveParameterEnsembleResult",
+    ),
+    "ReactiveParticleCouplingSchedulePlan": (
+        "._reactive_cfd_dem",
+        "ReactiveParticleCouplingSchedulePlan",
+    ),
+    "ReactiveReplayRecord": ("._reactive_replay", "ReactiveReplayRecord"),
+    "ReactiveReplayResult": ("._reactive_replay", "ReactiveReplayResult"),
+    "ReactiveSpeciesCouplingSchedulePlan": (
+        "._reactive_lattice_boltzmann",
+        "ReactiveSpeciesCouplingSchedulePlan",
+    ),
+    "ReactiveSpeciesLatticeBoltzmannDiagnostics": (
+        "._reactive_lattice_boltzmann",
+        "ReactiveSpeciesLatticeBoltzmannDiagnostics",
+    ),
+    "ReactiveSpeciesLatticeBoltzmannState": (
+        "._reactive_lattice_boltzmann",
+        "ReactiveSpeciesLatticeBoltzmannState",
+    ),
+    "ReactiveSpeciesLatticeBoltzmannStepResult": (
+        "._reactive_lattice_boltzmann",
+        "ReactiveSpeciesLatticeBoltzmannStepResult",
+    ),
+    "RecessionEvaluation": ("._aerothermal_material", "RecessionEvaluation"),
+    "ReducedMaxwellDiagnostics": ("._maxwell_reduced", "ReducedMaxwellDiagnostics"),
+    "ReducedMaxwellPICFieldSolver": ("._reduced_pic", "ReducedMaxwellPICFieldSolver"),
+    "ReflectedPathDependentBSDEDiagnostics": (
+        "._reflected_bsde",
+        "ReflectedPathDependentBSDEDiagnostics",
+    ),
+    "ReflectedPathDependentBSDEResult": (
+        "._reflected_bsde",
+        "ReflectedPathDependentBSDEResult",
+    ),
+    "RelaxedHPMarking": ("._spectral_hp_completion", "RelaxedHPMarking"),
+    "ReplayClassification": ("._runtime_lifecycle", "ReplayClassification"),
+    "ResidualRelaxationMap": ("._functional_training", "ResidualRelaxationMap"),
+    "ResistiveGRRMHDLedger": ("._resistive_grrmhd_runtime", "ResistiveGRRMHDLedger"),
+    "ResistiveGRRMHDRunStatus": (
+        "._resistive_grrmhd_runtime",
+        "ResistiveGRRMHDRunStatus",
+    ),
+    "ResistiveGRRMHDState": ("._resistive_grrmhd_runtime", "ResistiveGRRMHDState"),
+    "ResistiveGRRMHDStepResult": (
+        "._resistive_grrmhd_runtime",
+        "ResistiveGRRMHDStepResult",
+    ),
+    "ResolvedElectroosmoticLedger": (
+        "._resolved_electroosmosis",
+        "ResolvedElectroosmoticLedger",
+    ),
+    "ResolvedElectroosmoticState": (
+        "._resolved_electroosmosis",
+        "ResolvedElectroosmoticState",
+    ),
+    "ResolvedElectroosmoticStepResult": (
+        "._resolved_electroosmosis",
+        "ResolvedElectroosmoticStepResult",
+    ),
+    "ResolvedElectroosmoticStokesPlan": (
+        "._resolved_electroosmosis",
+        "ResolvedElectroosmoticStokesPlan",
+    ),
+    "RetriedFixedStepResult": ("._fixed_step", "RetriedFixedStepResult"),
+    "RigidContactGeometryProvider": (
+        "._mac_immersed_contact",
+        "RigidContactGeometryProvider",
+    ),
+    "RigidImmersedAcceptedMethod": (
+        "._mac_immersed_contact",
+        "RigidImmersedAcceptedMethod",
+    ),
+    "RobustRetryPolicy": ("._fixed_step", "RobustRetryPolicy"),
+    "RolloutObjective": ("._solver_objective", "RolloutObjective"),
+    "RosenbrockAdaptivePolicy": ("._rosenbrock", "RosenbrockAdaptivePolicy"),
+    "RosenbrockReplayAdequacy": ("._rosenbrock_replay", "RosenbrockReplayAdequacy"),
+    "RosenbrockReplayStatus": ("._rosenbrock_replay", "RosenbrockReplayStatus"),
+    "RosenbrockWMethod": ("._rosenbrock", "RosenbrockWMethod"),
+    "RoughDelayDifferentialProblem": ("._rough_delay", "RoughDelayDifferentialProblem"),
+    "RoughDelayDrift": ("._rough_delay", "RoughDelayDrift"),
+    "RoughDelayVectorFields": ("._rough_delay", "RoughDelayVectorFields"),
+    "RoughDifferentialProblem": ("._rough", "RoughDifferentialProblem"),
+    "RoughDifferentialSolution": ("._rough", "RoughDifferentialSolution"),
+    "RoughDrift": ("._rough", "RoughDrift"),
+    "RoughEuler": ("._rough", "RoughEuler"),
+    "RoughEvolutionPolicy": ("._rough_prepare", "RoughEvolutionPolicy"),
+    "RoughVectorFields": ("._rough", "RoughVectorFields"),
+    "RouteStrategy": ("._quantum_compilation", "RouteStrategy"),
+    "RuntimeCheckpointEncodingPlan": (
+        "._runtime_lifecycle",
+        "RuntimeCheckpointEncodingPlan",
+    ),
+    "RuntimeCheckpointEnvelope": ("._runtime_lifecycle", "RuntimeCheckpointEnvelope"),
+    "RuntimeCheckpointLeafBinding": (
+        "._runtime_lifecycle",
+        "RuntimeCheckpointLeafBinding",
+    ),
+    "RuntimeIdentityClass": ("._runtime_lifecycle", "RuntimeIdentityClass"),
+    "RuntimeIdentityInventory": ("._runtime_lifecycle", "RuntimeIdentityInventory"),
+    "RuntimeIdentityRole": ("._runtime_lifecycle", "RuntimeIdentityRole"),
+    "RuntimeMigrationKind": ("._runtime_lifecycle", "RuntimeMigrationKind"),
+    "RuntimeMigrationReceipt": ("._runtime_lifecycle", "RuntimeMigrationReceipt"),
+    "RuntimeRestartRelation": ("._runtime_lifecycle", "RuntimeRestartRelation"),
+    "SHAKERATTLEPlan": ("._constrained_mechanics", "SHAKERATTLEPlan"),
+    "SPDEApproximationFamily": ("._spde_truncation", "SPDEApproximationFamily"),
+    "SPDEApproximationLevel": ("._spde_truncation", "SPDEApproximationLevel"),
+    "SPDEApproximationResult": ("._spde_truncation", "SPDEApproximationResult"),
+    "SPDEConvergenceLevel": ("._convergence", "SPDEConvergenceLevel"),
+    "SPDEConvergenceMetric": ("._convergence", "SPDEConvergenceMetric"),
+    "SPDEConvergenceStudy": ("._convergence", "SPDEConvergenceStudy"),
+    "SPDEErrorBudget": ("._convergence", "SPDEErrorBudget"),
+    "SPDERefinementAxis": ("._convergence", "SPDERefinementAxis"),
+    "SRKMK": ("._geometric", "SRKMK"),
+    "SRKMKDelayInterpolation": ("._delay_capabilities", "SRKMKDelayInterpolation"),
+    "SSPRK33": ("._ssp_runge_kutta", "SSPRK33"),
+    "SSPRK33FixedStepMethod": ("._fixed_step", "SSPRK33FixedStepMethod"),
+    "SSPRK54": ("._ssp_runge_kutta", "SSPRK54"),
+    "SSPRK54FixedStepMethod": ("._fixed_step", "SSPRK54FixedStepMethod"),
+    "ScalarScreenJunctionCondition3D": (
+        "._scalar_screen_junction3d",
+        "ScalarScreenJunctionCondition3D",
+    ),
+    "ScalarScreenJunctionResult3D": (
+        "._scalar_screen_junction3d",
+        "ScalarScreenJunctionResult3D",
+    ),
+    "ScaledHEOMTopology": ("._heom_scaled", "ScaledHEOMTopology"),
+    "ScheduleStepResult": ("._schedule", "ScheduleStepResult"),
+    "ScheduledBalanceLawRolloutPlan": ("._balance_law", "ScheduledBalanceLawRolloutPlan"),
+    "ScheduledFiniteVolumeRolloutPlan": (
+        "._finite_volume_rollout",
+        "ScheduledFiniteVolumeRolloutPlan",
+    ),
+    "ScheduledHybridGuard": ("._hybrid_schedule", "ScheduledHybridGuard"),
+    "ScheduledMPMRolloutPlan": ("._material_point_rollout", "ScheduledMPMRolloutPlan"),
+    "ScheduledRosenbrockSolve": ("._rosenbrock_replay", "ScheduledRosenbrockSolve"),
+    "SecondOrderPotentialFlowPlan3D": (
+        "._advanced_potential_flow3d",
+        "SecondOrderPotentialFlowPlan3D",
+    ),
+    "SecondaryParticleStack": ("._secondary_stack", "SecondaryParticleStack"),
+    "SecondaryStackSpec": ("._secondary_stack", "SecondaryStackSpec"),
+    "SegmentedDelayAdjoint": ("._delay_adjoint", "SegmentedDelayAdjoint"),
+    "SegmentedDelayResult": ("._delay_segmented", "SegmentedDelayResult"),
+    "SemiImplicitPICDiagnostics": ("._semi_implicit_pic", "SemiImplicitPICDiagnostics"),
+    "SemiImplicitPICPlan": ("._semi_implicit_pic", "SemiImplicitPICPlan"),
+    "SemiImplicitPICResult": ("._semi_implicit_pic", "SemiImplicitPICResult"),
+    "SemiImplicitPICState": ("._semi_implicit_pic", "SemiImplicitPICState"),
+    "SemidiscreteSPDE": ("._spde", "SemidiscreteSPDE"),
+    "SemilinearDrift": ("._semilinear_drift", "SemilinearDrift"),
+    "SemilinearFallback": ("._semilinear", "SemilinearFallback"),
+    "SemilinearSPDEScheme": ("._semilinear", "SemilinearSPDEScheme"),
+    "SeparableHamiltonianResult": ("._symplectic", "SeparableHamiltonianResult"),
+    "SeparableHamiltonianVectorField": ("._geometric", "SeparableHamiltonianVectorField"),
+    "SeparatedFokkerPlanckPlan": (
+        "._separated_fokker_planck",
+        "SeparatedFokkerPlanckPlan",
+    ),
+    "ShepardDensityRenormalizationTransform": (
+        "._particle_transforms",
+        "ShepardDensityRenormalizationTransform",
+    ),
+    "ShowerParticleBatch": ("._em_shower", "ShowerParticleBatch"),
+    "ShowerSpecies": ("._em_shower", "ShowerSpecies"),
+    "SimulationSensitivityReport": (
+        "._multiphysics_inference",
+        "SimulationSensitivityReport",
+    ),
+    "SmileiProvider": ("._pic_providers", "SmileiProvider"),
+    "SolveSchedule": ("._schedule", "SolveSchedule"),
+    "SolveStage": ("._schedule", "SolveStage"),
+    "SolverCaseResult": ("._solver_objective", "SolverCaseResult"),
+    "SolverObjective": ("._solver_objective", "SolverObjective"),
+    "SolverObjectiveAdmission": ("._solver_objective", "SolverObjectiveAdmission"),
+    "SolverObjectiveEvaluation": ("._solver_objective", "SolverObjectiveEvaluation"),
+    "SparseGridFokkerPlanckPlan": (
+        "._fokker_planck_approximation",
+        "SparseGridFokkerPlanckPlan",
+    ),
+    "SparseMACFreeSurfaceProjectionPlan": (
+        "._sparse_flip",
+        "SparseMACFreeSurfaceProjectionPlan",
+    ),
+    "SparseMACFreeSurfaceProjectionResult": (
+        "._sparse_flip",
+        "SparseMACFreeSurfaceProjectionResult",
+    ),
+    "SpectralOUForcingDiagnostics": (
+        "._spectral_forcing",
+        "SpectralOUForcingDiagnostics",
+    ),
+    "SpectralOUForcingPlan": ("._spectral_forcing", "SpectralOUForcingPlan"),
+    "SpectralStateArtifact": ("._spectral_artifacts", "SpectralStateArtifact"),
+    "SpinBosonComparisonResult": ("._nonmarkov_campaign", "SpinBosonComparisonResult"),
+    "SplitDifferentialProblem": ("._split_differential", "SplitDifferentialProblem"),
+    "SplitFieldPMLPlan": ("._stencil_evolution", "SplitFieldPMLPlan"),
+    "SplittingKind": ("._finite_volume", "SplittingKind"),
+    "StageEpochExecutor": ("._unstructured_stage_runtime", "StageEpochExecutor"),
+    "StageTransformResult": ("._fixed_step", "StageTransformResult"),
+    "StaggeredAcousticPlan": ("._stencil_evolution", "StaggeredAcousticPlan"),
+    "StaggeredAcousticState": ("._stencil_evolution", "StaggeredAcousticState"),
+    "StaleRuntimeCheckpointError": ("._runtime_lifecycle", "StaleRuntimeCheckpointError"),
+    "StateDependentDelay": ("._delay", "StateDependentDelay"),
+    "StateDependentLag": ("._delay", "StateDependentLag"),
+    "StatePartition": ("._state_partition", "StatePartition"),
+    "StateVectorOperator": ("._quantum_jump", "StateVectorOperator"),
+    "StinespringProcessModel": ("._process_learning", "StinespringProcessModel"),
+    "StinespringTomographyProblem": (
+        "._stinespring_tomography",
+        "StinespringTomographyProblem",
+    ),
+    "StinespringTomographyResult": (
+        "._stinespring_tomography",
+        "StinespringTomographyResult",
+    ),
+    "StochasticCollocationDesign": ("._collocation", "StochasticCollocationDesign"),
+    "StochasticCollocationDiagnostics": (
+        "._collocation",
+        "StochasticCollocationDiagnostics",
+    ),
+    "StochasticCollocationNode": ("._collocation", "StochasticCollocationNode"),
+    "StochasticCollocationNodeEvaluation": (
+        "._collocation",
+        "StochasticCollocationNodeEvaluation",
+    ),
+    "StochasticCollocationPlan": ("._collocation", "StochasticCollocationPlan"),
+    "StochasticCollocationResult": ("._collocation", "StochasticCollocationResult"),
+    "StochasticDelayControllerEvidence": (
+        "._delay_capabilities",
+        "StochasticDelayControllerEvidence",
+    ),
+    "StochasticDelayInterpolationCapabilities": (
+        "._delay_capabilities",
+        "StochasticDelayInterpolationCapabilities",
+    ),
+    "StochasticDifferentiationPolicy": (
+        "._mac_stochastic_immersed",
+        "StochasticDifferentiationPolicy",
+    ),
+    "StochasticGradientEstimatorEvidence": (
+        "._quantum_experiment",
+        "StochasticGradientEstimatorEvidence",
+    ),
+    "StochasticReplayKey": ("._mac_stochastic_immersed", "StochasticReplayKey"),
+    "StochasticVolterraProblem": ("._memory", "StochasticVolterraProblem"),
+    "StormerVerlet": ("._geometric", "StormerVerlet"),
+    "StratonovichEulerHeunDelayInterpolation": (
+        "._delay_capabilities",
+        "StratonovichEulerHeunDelayInterpolation",
+    ),
+    "StreamingMomentPlan": ("._runtime_lifecycle", "StreamingMomentPlan"),
+    "StreamingMomentState": ("._runtime_lifecycle", "StreamingMomentState"),
+    "StreamingObservablePlan": ("._runtime_lifecycle", "StreamingObservablePlan"),
+    "StreamingObservableState": ("._runtime_lifecycle", "StreamingObservableState"),
+    "StructuralContactResidual": (
+        "._mac_immersed_deformable",
+        "StructuralContactResidual",
+    ),
+    "StructuralEnergy": ("._mac_immersed_deformable", "StructuralEnergy"),
+    "StructuredPicardSource": ("._deep_picard", "StructuredPicardSource"),
+    "StructuredSourceBuilder": ("._deep_picard", "StructuredSourceBuilder"),
+    "TDVPMode": ("._variational_tdvp", "TDVPMode"),
+    "TPDSearchPlan": ("._phase_equilibrium", "TPDSearchPlan"),
+    "TPDStabilityResult": ("._phase_equilibrium", "TPDStabilityResult"),
+    "TangentFormulation": ("._neural_galerkin", "TangentFormulation"),
+    "TemporalCheckpointing": ("._temporal_method", "TemporalCheckpointing"),
+    "TemporalDecisionSemantics": ("._temporal_method", "TemporalDecisionSemantics"),
+    "TemporalDifferentiationEvidence": (
+        "._temporal_method",
+        "TemporalDifferentiationEvidence",
+    ),
+    "TemporalDifferentiationForm": ("._temporal_method", "TemporalDifferentiationForm"),
+    "TemporalDifferentiationOrientation": (
+        "._temporal_method",
+        "TemporalDifferentiationOrientation",
+    ),
+    "TemporalEquationForm": ("._temporal_method", "TemporalEquationForm"),
+    "TemporalEventSemantics": ("._temporal_method", "TemporalEventSemantics"),
+    "TemporalMethodCapabilities": ("._temporal_method", "TemporalMethodCapabilities"),
+    "TemporalMethodClass": ("._temporal_method", "TemporalMethodClass"),
+    "TemporalPrecisionPolicy": ("._temporal_precision", "TemporalPrecisionPolicy"),
+    "TemporalSolveEvidence": ("._temporal_method", "TemporalSolveEvidence"),
+    "TemporalStochasticSemantics": ("._temporal_method", "TemporalStochasticSemantics"),
+    "ThermochemicalSourceEvidence": (
+        "._thermochemical_source",
+        "ThermochemicalSourceEvidence",
+    ),
+    "ThermochemicalSourceResult": (
+        "._thermochemical_source",
+        "ThermochemicalSourceResult",
+    ),
+    "ThermochemistryDiagnostics": ("._thermochemistry", "ThermochemistryDiagnostics"),
+    "ThermochemistryProcessPlan": ("._thermochemistry", "ThermochemistryProcessPlan"),
+    "ThetaMethod": ("._theta", "ThetaMethod"),
+    "ThinEDLElectroosmoticSlipPlan": ("._thin_edl_slip", "ThinEDLElectroosmoticSlipPlan"),
+    "ThinEDLReason": ("._thin_edl_slip", "ThinEDLReason"),
+    "ThinEDLSlipEvaluation": ("._thin_edl_slip", "ThinEDLSlipEvaluation"),
+    "TimeLaw": ("._schedule", "TimeLaw"),
+    "TimeLocalOpenSystemProblem": ("._memory_kernel", "TimeLocalOpenSystemProblem"),
+    "TimeSlabFluxLedger": ("._fem_multirate", "TimeSlabFluxLedger"),
+    "TopologyEventKind": ("._finite_volume_topology_events", "TopologyEventKind"),
+    "TopologyEventState": ("._finite_volume_topology_events", "TopologyEventState"),
+    "TopologyEventStatus": ("._finite_volume_topology_events", "TopologyEventStatus"),
+    "TransportProbePlan": ("._multiterminal_transport", "TransportProbePlan"),
+    "TransportProbeResult": ("._multiterminal_transport", "TransportProbeResult"),
+    "TransportVelocityFixedStepMethod": (
+        "._particle_methods",
+        "TransportVelocityFixedStepMethod",
+    ),
+    "TreeGravityEvidence": ("._particle_gravity", "TreeGravityEvidence"),
+    "TreeGravityResult": ("._particle_gravity", "TreeGravityResult"),
+    "TreePMPlan": ("._particle_gravity", "TreePMPlan"),
+    "TreePMResult": ("._particle_gravity", "TreePMResult"),
+    "TreePMShortRangeKernel": ("._particle_gravity", "TreePMShortRangeKernel"),
+    "TreePMSplitPolicy": ("._particle_gravity", "TreePMSplitPolicy"),
+    "UNSTRUCTURED_LES_CONSERVATION_FAILURE": (
+        "._unstructured_les",
+        "UNSTRUCTURED_LES_CONSERVATION_FAILURE",
+    ),
+    "UNSTRUCTURED_LES_ENERGY_FAILURE": (
+        "._unstructured_les",
+        "UNSTRUCTURED_LES_ENERGY_FAILURE",
+    ),
+    "UNSTRUCTURED_LES_INADMISSIBLE_STATE": (
+        "._unstructured_les",
+        "UNSTRUCTURED_LES_INADMISSIBLE_STATE",
+    ),
+    "UNSTRUCTURED_LES_PRESSURE_FAILURE": (
+        "._unstructured_les",
+        "UNSTRUCTURED_LES_PRESSURE_FAILURE",
+    ),
+    "UNSTRUCTURED_LES_STEP_RESTRICTION": (
+        "._unstructured_les",
+        "UNSTRUCTURED_LES_STEP_RESTRICTION",
+    ),
+    "UNSTRUCTURED_LES_SUCCESS": ("._unstructured_les", "UNSTRUCTURED_LES_SUCCESS"),
+    "UncoveredStateProvider": ("._moving_cut_cell", "UncoveredStateProvider"),
+    "UniformFMMPlan": ("._particle_gravity", "UniformFMMPlan"),
+    "UniformTangentPolicy": ("._uniform_vumps", "UniformTangentPolicy"),
+    "UniformTangentResponse": ("._uniform_vumps", "UniformTangentResponse"),
+    "UniformTangentStatus": ("._uniform_vumps", "UniformTangentStatus"),
+    "UniformVUMPSCostEstimate": ("._uniform_vumps", "UniformVUMPSCostEstimate"),
+    "UniformVUMPSDiagnostics": ("._uniform_vumps", "UniformVUMPSDiagnostics"),
+    "UniformVUMPSPlan": ("._uniform_vumps", "UniformVUMPSPlan"),
+    "UniformVUMPSPolicy": ("._uniform_vumps", "UniformVUMPSPolicy"),
+    "UniformVUMPSProblem": ("._uniform_vumps", "UniformVUMPSProblem"),
+    "UniformVUMPSResult": ("._uniform_vumps", "UniformVUMPSResult"),
+    "UniformVUMPSStatus": ("._uniform_vumps", "UniformVUMPSStatus"),
+    "UnitaryGroupKind": ("._quantum_propagation", "UnitaryGroupKind"),
+    "UnitaryPropagatorProblem": ("._quantum_propagation", "UnitaryPropagatorProblem"),
+    "UnitaryPropagatorSolution": ("._quantum_propagation", "UnitaryPropagatorSolution"),
+    "UnsplitFiniteVolumeSSPRK3Plan": ("._finite_volume", "UnsplitFiniteVolumeSSPRK3Plan"),
+    "UnstructuredAMRAdvanceResult": (
+        "._unstructured_amr_runtime",
+        "UnstructuredAMRAdvanceResult",
+    ),
+    "UnstructuredAMRRefluxReport": (
+        "._unstructured_amr_runtime",
+        "UnstructuredAMRRefluxReport",
+    ),
+    "UnstructuredAMRRuntimeState": (
+        "._unstructured_amr_runtime",
+        "UnstructuredAMRRuntimeState",
+    ),
+    "UnstructuredLowMachLESFixedStepMethod": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESFixedStepMethod",
+    ),
+    "UnstructuredLowMachLESRestartState": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESRestartState",
+    ),
+    "UnstructuredLowMachLESStepEvidence": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESStepEvidence",
+    ),
+    "UnstructuredLowMachLESStepInputs": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESStepInputs",
+    ),
+    "UnstructuredLowMachLESStepRestriction": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESStepRestriction",
+    ),
+    "UnstructuredLowMachLESStepResult": (
+        "._unstructured_les",
+        "UnstructuredLowMachLESStepResult",
+    ),
+    "UnstructuredMaxwellPICFieldSolver": (
+        "._unstructured_em_pic",
+        "UnstructuredMaxwellPICFieldSolver",
+    ),
+    "UnstructuredPressureCorrectionPlan": (
+        "._unstructured_incompressible",
+        "UnstructuredPressureCorrectionPlan",
+    ),
+    "UnstructuredPressureCorrectionResult": (
+        "._unstructured_incompressible",
+        "UnstructuredPressureCorrectionResult",
+    ),
+    "UnstructuredPressureProjectionPlan": (
+        "._unstructured_incompressible",
+        "UnstructuredPressureProjectionPlan",
+    ),
+    "UnstructuredPressureProjectionResult": (
+        "._unstructured_incompressible",
+        "UnstructuredPressureProjectionResult",
+    ),
+    "UnstructuredSSPRK3EpochResult": (
+        "._unstructured_stage_runtime",
+        "UnstructuredSSPRK3EpochResult",
+    ),
+    "UnstructuredSSPRK3EpochStageResult": (
+        "._unstructured_stage_runtime",
+        "UnstructuredSSPRK3EpochStageResult",
+    ),
+    "UnsupportedReplayError": ("._runtime_lifecycle", "UnsupportedReplayError"),
+    "VMCStatus": ("._variational_monte_carlo", "VMCStatus"),
+    "VMCSubspaceStatus": ("._variational_monte_carlo_subspace", "VMCSubspaceStatus"),
+    "VMC_IMAGINARY_ENERGY": ("._variational_monte_carlo", "VMC_IMAGINARY_ENERGY"),
+    "VMC_INVALID_SAMPLES": ("._variational_monte_carlo", "VMC_INVALID_SAMPLES"),
+    "VMC_LINEAR_FAILURE": ("._variational_monte_carlo", "VMC_LINEAR_FAILURE"),
+    "VMC_NONFINITE": ("._variational_monte_carlo", "VMC_NONFINITE"),
+    "VMC_SUBSPACE_INVALID_SAMPLES": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_INVALID_SAMPLES",
+    ),
+    "VMC_SUBSPACE_LINEAR_FAILURE": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_LINEAR_FAILURE",
+    ),
+    "VMC_SUBSPACE_NONFINITE": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_NONFINITE",
+    ),
+    "VMC_SUBSPACE_RITZ_FAILURE": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_RITZ_FAILURE",
+    ),
+    "VMC_SUBSPACE_SINGULAR_SPAN": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_SINGULAR_SPAN",
+    ),
+    "VMC_SUBSPACE_SUCCESS": (
+        "._variational_monte_carlo_subspace",
+        "VMC_SUBSPACE_SUCCESS",
+    ),
+    "VMC_SUCCESS": ("._variational_monte_carlo", "VMC_SUCCESS"),
+    "ValenciaFiniteVolumeStageGeometry": (
+        "._relativistic_finite_volume",
+        "ValenciaFiniteVolumeStageGeometry",
+    ),
+    "VariablePatchCheckpoint": ("._variable_patch_checkpoint", "VariablePatchCheckpoint"),
+    "VariablePatchCheckpointPlan": (
+        "._variable_patch_checkpoint",
+        "VariablePatchCheckpointPlan",
+    ),
+    "VariationalMonteCarloEstimate": (
+        "._variational_monte_carlo",
+        "VariationalMonteCarloEstimate",
+    ),
+    "VariationalMonteCarloPolicy": (
+        "._variational_monte_carlo",
+        "VariationalMonteCarloPolicy",
+    ),
+    "VariationalMonteCarloProblem": (
+        "._variational_monte_carlo",
+        "VariationalMonteCarloProblem",
+    ),
+    "VariationalMonteCarloResult": (
+        "._variational_monte_carlo",
+        "VariationalMonteCarloResult",
+    ),
+    "VariationalMonteCarloState": (
+        "._variational_monte_carlo",
+        "VariationalMonteCarloState",
+    ),
+    "VariationalMonteCarloSubspaceEstimate": (
+        "._variational_monte_carlo_subspace",
+        "VariationalMonteCarloSubspaceEstimate",
+    ),
+    "VariationalMonteCarloSubspaceProblem": (
+        "._variational_monte_carlo_subspace",
+        "VariationalMonteCarloSubspaceProblem",
+    ),
+    "VariationalMonteCarloSubspaceResult": (
+        "._variational_monte_carlo_subspace",
+        "VariationalMonteCarloSubspaceResult",
+    ),
+    "VariationalMonteCarloSubspaceState": (
+        "._variational_monte_carlo_subspace",
+        "VariationalMonteCarloSubspaceState",
+    ),
+    "VariationalTDVPPolicy": ("._variational_tdvp", "VariationalTDVPPolicy"),
+    "VariationalTDVPResult": ("._variational_tdvp", "VariationalTDVPResult"),
+    "VectorPotentialGaugeKind": ("._grmhd_ct", "VectorPotentialGaugeKind"),
+    "VolterraFreeTerm": ("._memory", "VolterraFreeTerm"),
+    "VolterraKernel": ("._memory", "VolterraKernel"),
+    "VolterraVectorField": ("._memory", "VolterraVectorField"),
+    "WarpXProvider": ("._pic_providers", "WarpXProvider"),
+    "WeakObservable": ("._fokker_planck_approximation", "WeakObservable"),
+    "WeakObservableEnvelope": ("._markov_cubature_error", "WeakObservableEnvelope"),
+    "WeakObservableEstimate": ("._convergence", "WeakObservableEstimate"),
+    "WhitenedFieldInferencePlan": (
+        "._multiphysics_inference",
+        "WhitenedFieldInferencePlan",
+    ),
+    "WienerCoefficientRepresentation": (
+        "._differential",
+        "WienerCoefficientRepresentation",
+    ),
+    "WienerNoiseBlock": ("._wiener_operator", "WienerNoiseBlock"),
+    "WienerNoiseLayout": ("._wiener_operator", "WienerNoiseLayout"),
+    "WienerTerm": ("._differential", "WienerTerm"),
+    "XXZQualificationResult": ("._xxz_open", "XXZQualificationResult"),
+    "adaptive_stochastic_delay_step_doubling": (
+        "._delay_capabilities",
+        "adaptive_stochastic_delay_step_doubling",
+    ),
+    "admit_dark_sector_work": ("._dark_sector_epoch_runtime", "admit_dark_sector_work"),
+    "admit_quantum_service_request": (
+        "._quantum_service",
+        "admit_quantum_service_request",
+    ),
+    "advance_bem_fracture_3d": ("._bem_fracture3d", "advance_bem_fracture_3d"),
+    "advance_cfd_dem_window": ("._cfd_dem", "advance_cfd_dem_window"),
+    "advance_laplace_capacitance_3d": (
+        "._laplace_capacitance",
+        "advance_laplace_capacitance_3d",
+    ),
+    "advance_mac_penalty_ib_cfd_dem_window": (
+        "._mac_penalty_ib_cfd_dem",
+        "advance_mac_penalty_ib_cfd_dem_window",
+    ),
+    "advance_particle_conversion": (
+        "._particle_conversion",
+        "advance_particle_conversion",
+    ),
+    "advance_particle_epoch_segments": (
+        "._particle_epoch",
+        "advance_particle_epoch_segments",
+    ),
+    "advance_reactive_cfd_dem_window": (
+        "._reactive_cfd_dem",
+        "advance_reactive_cfd_dem_window",
+    ),
+    "advanced": (".advanced", None),
+    "algorithmic_work_loss": ("._solver_objective", "algorithmic_work_loss"),
+    "amplitude_damping_problem": ("._lindblad", "amplitude_damping_problem"),
+    "amplitude_damping_trajectory_problem": (
+        "._quantum_jump",
+        "amplitude_damping_trajectory_problem",
+    ),
+    "analyze_projector_monte_carlo": (
+        "._projector_monte_carlo_estimators",
+        "analyze_projector_monte_carlo",
+    ),
+    "apply_dense_quantum_instrument": (
+        "._quantum_measurement",
+        "apply_dense_quantum_instrument",
+    ),
+    "apply_local_kraus_channel": ("._purified_lindblad", "apply_local_kraus_channel"),
+    "apply_lpdo_quantum_instrument": (
+        "._quantum_measurement",
+        "apply_lpdo_quantum_instrument",
+    ),
+    "apply_lpdo_two_site_unitary": ("._purified_tebd", "apply_lpdo_two_site_unitary"),
+    "apply_mpo_lindbladian": ("._tensor_open_quantum", "apply_mpo_lindbladian"),
+    "apply_mps_quantum_instrument": (
+        "._quantum_measurement",
+        "apply_mps_quantum_instrument",
+    ),
+    "apply_stage_rate_euler_update": (
+        "._finite_volume_content",
+        "apply_stage_rate_euler_update",
+    ),
+    "assemble_circuit_qed_hamiltonian": (
+        "._circuit_qed",
+        "assemble_circuit_qed_hamiltonian",
+    ),
+    "assemble_fixed_grid_local_hamiltonian": (
+        "._quantum_control",
+        "assemble_fixed_grid_local_hamiltonian",
+    ),
+    "assemble_stochastic_collocation": (
+        "._collocation",
+        "assemble_stochastic_collocation",
+    ),
+    "audit_connected_vmc_jump_projection": (
+        "._neural_sampled_trajectory",
+        "audit_connected_vmc_jump_projection",
+    ),
+    "backsolve_delay_adjoint": ("._delay_capabilities", "backsolve_delay_adjoint"),
+    "bind_fidelity_pinn_level": ("._fidelity_pinn", "bind_fidelity_pinn_level"),
+    "boundary_driven_xxz_problem": ("._xxz_open", "boundary_driven_xxz_problem"),
+    "calabi_yau_candidate_profiles": (
+        "._calabi_yau_qualification",
+        "calabi_yau_candidate_profiles",
+    ),
+    "calabi_yau_candidate_support_tuples": (
+        "._calabi_yau_qualification",
+        "calabi_yau_candidate_support_tuples",
+    ),
+    "certify_dae_regularity": ("._dae_events", "certify_dae_regularity"),
+    "certify_finite_lindblad_steady_state": (
+        "._open_certificates",
+        "certify_finite_lindblad_steady_state",
+    ),
+    "certify_finite_refinement": ("._open_certificates", "certify_finite_refinement"),
+    "certify_memory_kernel_map": ("._memory_kernel", "certify_memory_kernel_map"),
+    "certify_process_identifiability": (
+        "._open_certificates",
+        "certify_process_identifiability",
+    ),
+    "checkpointed_reactive_rollout": (
+        "._reactive_replay",
+        "checkpointed_reactive_rollout",
+    ),
+    "checkpointed_reactive_vjp": ("._reactive_replay", "checkpointed_reactive_vjp"),
+    "commutator_free_midpoint_tableau": (
+        "._geometric",
+        "commutator_free_midpoint_tableau",
+    ),
+    "compile_quantum_program": ("._quantum_compilation", "compile_quantum_program"),
+    "condition_fidelity_correction": ("._fidelity_pinn", "condition_fidelity_correction"),
+    "conservative_multirate_flux": ("._fem_multirate", "conservative_multirate_flux"),
+    "coupled_strong_error": ("._convergence", "coupled_strong_error"),
+    "coupling": (".coupling", None),
+    "cp1_calibration": ("._calabi_yau_campaigns", "cp1_calibration"),
+    "dae_consistency_candidate": ("._dae_events", "dae_consistency_candidate"),
+    "damped_fermionic_mode": ("._fermionic_gaussian", "damped_fermionic_mode"),
+    "damped_thermal_oscillator": ("._gaussian_lindblad", "damped_thermal_oscillator"),
+    "dark_sector_epoch_checkpoint": (
+        "._dark_sector_epoch_runtime",
+        "dark_sector_epoch_checkpoint",
+    ),
+    "decode_content_id": ("._dark_sector_epoch_runtime", "decode_content_id"),
+    "dephasing_problem": ("._lindblad", "dephasing_problem"),
+    "diagnose_purified_stationarity": (
+        "._purified_tebd",
+        "diagnose_purified_stationarity",
+    ),
+    "differentiate_laplace_capacitance_coordinates_3d": (
+        "._laplace_capacitance",
+        "differentiate_laplace_capacitance_coordinates_3d",
+    ),
+    "discretized_dae_problem": ("._differential_algebraic", "discretized_dae_problem"),
+    "distribute_pic_field_solver": ("._distributed_pic", "distribute_pic_field_solver"),
+    "dressed_quantum_subspace": ("._dressed_spectrum", "dressed_quantum_subspace"),
+    "drude_lorentz_qubit_heom": ("._heom", "drude_lorentz_qubit_heom"),
+    "empty_dark_sector_epoch_state": (
+        "._dark_sector_epoch_runtime",
+        "empty_dark_sector_epoch_state",
+    ),
+    "empty_hybrid_event_tape": ("._hybrid_event", "empty_hybrid_event_tape"),
+    "encode_content_id": ("._dark_sector_epoch_runtime", "encode_content_id"),
+    "encode_content_ids": ("._dark_sector_epoch_runtime", "encode_content_ids"),
+    "estimate_quantum_experiment_gradient": (
+        "._quantum_experiment",
+        "estimate_quantum_experiment_gradient",
+    ),
+    "evaluate_calabi_yau_metric_evidence": (
+        "._calabi_yau_evidence",
+        "evaluate_calabi_yau_metric_evidence",
+    ),
+    "evaluate_certified_truncated_delay": (
+        "._delay_capabilities",
+        "evaluate_certified_truncated_delay",
+    ),
+    "evaluate_dense_quantum_observables": (
+        "._quantum_expectation",
+        "evaluate_dense_quantum_observables",
+    ),
+    "evaluate_fidelity_pinn": ("._fidelity_pinn", "evaluate_fidelity_pinn"),
+    "evaluate_parameter_shift_jacobian": (
+        "._quantum_gradients",
+        "evaluate_parameter_shift_jacobian",
+    ),
+    "evaluate_reactive_parameter_ensemble": (
+        "._reactive_replay",
+        "evaluate_reactive_parameter_ensemble",
+    ),
+    "evaluate_stochastic_collocation": (
+        "._collocation",
+        "evaluate_stochastic_collocation",
+    ),
+    "evaluate_variational_monte_carlo": (
+        "._variational_monte_carlo",
+        "evaluate_variational_monte_carlo",
+    ),
+    "evaluate_variational_monte_carlo_subspace": (
+        "._variational_monte_carlo_subspace",
+        "evaluate_variational_monte_carlo_subspace",
+    ),
+    "event_first_hit": ("._jump_hitting", "event_first_hit"),
+    "evolve_lpdo_local_channels": ("._tensor_open_quantum", "evolve_lpdo_local_channels"),
+    "exact_modal_stochastic_convolution": (
+        "._semilinear",
+        "exact_modal_stochastic_convolution",
+    ),
+    "execute_dense_quantum_program": (
+        "._quantum_program",
+        "execute_dense_quantum_program",
+    ),
+    "execute_dense_quantum_template": (
+        "._quantum_gradients",
+        "execute_dense_quantum_template",
+    ),
+    "execute_hybrid_schedule": ("._hybrid_schedule", "execute_hybrid_schedule"),
+    "execute_lpdo_quantum_program": (
+        "._lpdo_quantum_program",
+        "execute_lpdo_quantum_program",
+    ),
+    "execute_mps_quantum_program": (
+        "._mps_quantum_program",
+        "execute_mps_quantum_program",
+    ),
+    "execute_quantum_experiment_exact": (
+        "._quantum_experiment",
+        "execute_quantum_experiment_exact",
+    ),
+    "execute_weighted_pressure_iteration": (
+        "._mac_pressure_operator",
+        "execute_weighted_pressure_iteration",
+    ),
+    "exponential_memory_qubit_problem": (
+        "._memory_kernel",
+        "exponential_memory_qubit_problem",
+    ),
+    "finalize_dark_sector_epoch": (
+        "._dark_sector_epoch_runtime",
+        "finalize_dark_sector_epoch",
+    ),
+    "finite_generator_hitting": ("._jump_hitting", "finite_generator_hitting"),
+    "finite_state_generator": ("._jump", "finite_state_generator"),
+    "fit_causal_process_initial_state": (
+        "._process_tomography",
+        "fit_causal_process_initial_state",
+    ),
+    "fit_causal_process_memory": (
+        "._stinespring_tomography",
+        "fit_causal_process_memory",
+    ),
+    "fit_stinespring_process": ("._stinespring_tomography", "fit_stinespring_process"),
+    "fit_stinespring_process_model": (
+        "._process_learning",
+        "fit_stinespring_process_model",
+    ),
+    "fixed_delay_history_capacity": ("._delay_segmented", "fixed_delay_history_capacity"),
+    "fixed_grid_local_hamiltonian_mpo_coefficients": (
+        "._local_hamiltonian_tensor",
+        "fixed_grid_local_hamiltonian_mpo_coefficients",
+    ),
+    "freeze_calabi_yau_result": ("._calabi_yau_archive", "freeze_calabi_yau_result"),
+    "freeze_domain_function": ("._functional_correction", "freeze_domain_function"),
+    "freeze_quantum_tomography": ("._quantum_tomography", "freeze_quantum_tomography"),
+    "goal_oriented_eigen_indicators": (
+        "._spectral_hp_completion",
+        "goal_oriented_eigen_indicators",
+    ),
+    "hand_off_pic_state": ("._pic_field_handoff", "hand_off_pic_state"),
+    "hybrid_event_jvp": ("._hybrid_event", "hybrid_event_jvp"),
+    "hybrid_event_vjp": ("._hybrid_event", "hybrid_event_vjp"),
+    "inactive_fixed_step_retry": ("._fixed_step", "inactive_fixed_step_retry"),
+    "informationally_complete_process_experiments": (
+        "._process_tomography",
+        "informationally_complete_process_experiments",
+    ),
+    "initialize_dae": ("._differential_algebraic", "initialize_dae"),
+    "initialize_projector_monte_carlo": (
+        "._projector_monte_carlo",
+        "initialize_projector_monte_carlo",
+    ),
+    "initialize_reactive_cfd_dem": ("._reactive_cfd_dem", "initialize_reactive_cfd_dem"),
+    "initialize_reactive_monolithic_state": (
+        "._reactive_monolithic",
+        "initialize_reactive_monolithic_state",
+    ),
+    "integrate_finite_cptp": ("._finite_cptp", "integrate_finite_cptp"),
+    "integrate_stormer_verlet": ("._symplectic", "integrate_stormer_verlet"),
+    "jaynes_cummings_pseudomode_problem": (
+        "._pseudomode",
+        "jaynes_cummings_pseudomode_problem",
+    ),
+    "least_squares_bsde_diagnostics": (
+        "._regression_bsde",
+        "least_squares_bsde_diagnostics",
+    ),
+    "lift_rough_vector_fields": ("._rough_lift", "lift_rough_vector_fields"),
+    "linearize_kway_contact": (
+        "._material_point_commercial_implicit",
+        "linearize_kway_contact",
+    ),
+    "load_calabi_yau_checkpoint": ("._calabi_yau_registry", "load_calabi_yau_checkpoint"),
+    "load_finite_volume_case": ("._finite_volume_case_loader", "load_finite_volume_case"),
+    "load_functional_training_checkpoint": (
+        "._functional_checkpoint",
+        "load_functional_training_checkpoint",
+    ),
+    "local_hamiltonian_linear_operator": (
+        "._local_hamiltonian",
+        "local_hamiltonian_linear_operator",
+    ),
+    "local_kraus_channel_from_lindblad": (
+        "._purified_lindblad",
+        "local_kraus_channel_from_lindblad",
+    ),
+    "localize_hybrid_event": ("._hybrid_event", "localize_hybrid_event"),
+    "localize_hybrid_event_root": ("._hybrid_event", "localize_hybrid_event_root"),
+    "localize_numerical_event": ("._hybrid_event", "localize_numerical_event"),
+    "lorentzian_qubit_comparison": (
+        "._nonmarkov_campaign",
+        "lorentzian_qubit_comparison",
+    ),
+    "lower_local_hamiltonian_to_mpo": (
+        "._local_hamiltonian_tensor",
+        "lower_local_hamiltonian_to_mpo",
+    ),
+    "lower_valencia_stage_geometry": (
+        "._relativistic_finite_volume",
+        "lower_valencia_stage_geometry",
+    ),
+    "make_reactive_monolithic_stage": (
+        "._reactive_monolithic",
+        "make_reactive_monolithic_stage",
+    ),
+    "manifold_bdf_stage": ("._dae_events", "manifold_bdf_stage"),
+    "marker_flow_artifact_reference": (
+        "._marker_flow_runtime",
+        "marker_flow_artifact_reference",
+    ),
+    "markov_cubature_error_evidence": (
+        "._markov_cubature_error",
+        "markov_cubature_error_evidence",
+    ),
+    "materialize_local_hamiltonian": (
+        "._local_hamiltonian",
+        "materialize_local_hamiltonian",
+    ),
+    "materialize_stochastic_collocation": (
+        "._collocation",
+        "materialize_stochastic_collocation",
+    ),
+    "maxwell": (".maxwell", None),
+    "measure_dense_quantum_program": (
+        "._quantum_measurement",
+        "measure_dense_quantum_program",
+    ),
+    "metric_aware_grhd_boundary_trace": (
+        "._relativistic_finite_volume",
+        "metric_aware_grhd_boundary_trace",
+    ),
+    "mps_projector_mpo": ("._finite_response", "mps_projector_mpo"),
+    "multirate_amr_schedule_plan": ("._multirate", "multirate_amr_schedule_plan"),
+    "neural_cde_loss": ("._neural_cde", "neural_cde_loss"),
+    "observe_evolution_bounded": ("._evolution_observation", "observe_evolution_bounded"),
+    "observe_projector_state": (
+        "._projector_monte_carlo_observables",
+        "observe_projector_state",
+    ),
+    "observed_convergence_order": (
+        "._marker_flow_qualification",
+        "observed_convergence_order",
+    ),
+    "open_kitaev_chain": ("._fermionic_gaussian", "open_kitaev_chain"),
+    "parareal": ("._temporal_extensions", "parareal"),
+    "particle_conversion_surrogate_bias": (
+        "._particle_conversion_sensitivity",
+        "particle_conversion_surrogate_bias",
+    ),
+    "particle_conversion_validity_certificate": (
+        "._particle_conversion_sensitivity",
+        "particle_conversion_validity_certificate",
+    ),
+    "pic_distribution_support": ("._distributed_pic", "pic_distribution_support"),
+    "pic_oracle_case": ("._pic_providers", "pic_oracle_case"),
+    "pic_oracle_wakefield_case": ("._pic_providers", "pic_oracle_wakefield_case"),
+    "picongpu_input": ("._pic_providers", "picongpu_input"),
+    "plan_circuit_qed_device": ("._circuit_qed", "plan_circuit_qed_device"),
+    "plan_dae": ("._differential_algebraic", "plan_dae"),
+    "plan_dense_quantum_observables": (
+        "._quantum_expectation",
+        "plan_dense_quantum_observables",
+    ),
+    "plan_dense_quantum_program": ("._quantum_program", "plan_dense_quantum_program"),
+    "plan_dressed_spectrum": ("._dressed_spectrum", "plan_dressed_spectrum"),
+    "plan_finite_dmrg": ("._dmrg", "plan_finite_dmrg"),
+    "plan_finite_tdvp": ("._matrix_product_tdvp", "plan_finite_tdvp"),
+    "plan_local_hamiltonian_evolution": (
+        "._local_hamiltonian",
+        "plan_local_hamiltonian_evolution",
+    ),
+    "plan_lpdo_quantum_program": ("._lpdo_quantum_program", "plan_lpdo_quantum_program"),
+    "plan_mps_quantum_program": ("._mps_quantum_program", "plan_mps_quantum_program"),
+    "plan_parameter_shift": ("._quantum_gradients", "plan_parameter_shift"),
+    "plan_uniform_vumps": ("._uniform_vumps", "plan_uniform_vumps"),
+    "polarized_propagation_matrix": (
+        "._gr_polarized_radiation_feedback",
+        "polarized_propagation_matrix",
+    ),
+    "predict_bsde_least_squares_control": (
+        "._regression_bsde",
+        "predict_bsde_least_squares_control",
+    ),
+    "predict_bsde_least_squares_value": (
+        "._regression_bsde",
+        "predict_bsde_least_squares_value",
+    ),
+    "predict_reflected_path_dependent_control": (
+        "._reflected_bsde",
+        "predict_reflected_path_dependent_control",
+    ),
+    "predict_reflected_path_dependent_value": (
+        "._reflected_bsde",
+        "predict_reflected_path_dependent_value",
+    ),
+    "prepare_balance_law_transport": (
+        "._balance_law_transport",
+        "prepare_balance_law_transport",
+    ),
+    "prepare_bem_fracture_3d": ("._bem_fracture3d", "prepare_bem_fracture_3d"),
+    "prepare_circuit_qed_device": ("._circuit_qed", "prepare_circuit_qed_device"),
+    "prepare_dae": ("._differential_algebraic", "prepare_dae"),
+    "prepare_dense_quantum_program": (
+        "._quantum_program",
+        "prepare_dense_quantum_program",
+    ),
+    "prepare_dense_quantum_template": (
+        "._quantum_gradients",
+        "prepare_dense_quantum_template",
+    ),
+    "prepare_dressed_spectrum": ("._dressed_spectrum", "prepare_dressed_spectrum"),
+    "prepare_dynamic_elasticity_fem_bem_cq_3d": (
+        "._dynamic_vector_cq",
+        "prepare_dynamic_elasticity_fem_bem_cq_3d",
+    ),
+    "prepare_dynamic_maxwell_fem_bem_cq_3d": (
+        "._dynamic_vector_cq",
+        "prepare_dynamic_maxwell_fem_bem_cq_3d",
+    ),
+    "prepare_element_block_preconditioner": (
+        "._conservation_temporal",
+        "prepare_element_block_preconditioner",
+    ),
+    "prepare_elliptic_curve": ("._calabi_yau_campaigns", "prepare_elliptic_curve"),
+    "prepare_fermat_calabi_yau": ("._calabi_yau_campaigns", "prepare_fermat_calabi_yau"),
+    "prepare_fermat_quintic": ("._calabi_yau_campaigns", "prepare_fermat_quintic"),
+    "prepare_fidelity_pinn_stage": ("._fidelity_pinn", "prepare_fidelity_pinn_stage"),
+    "prepare_finite_dmrg": ("._dmrg", "prepare_finite_dmrg"),
+    "prepare_finite_subspace_tdvp": (
+        "._finite_subspace_tdvp",
+        "prepare_finite_subspace_tdvp",
+    ),
+    "prepare_finite_tdvp": ("._matrix_product_tdvp", "prepare_finite_tdvp"),
+    "prepare_functional_correction": (
+        "._functional_correction",
+        "prepare_functional_correction",
+    ),
+    "prepare_functional_ntk": ("._functional_ntk", "prepare_functional_ntk"),
+    "prepare_functional_stationarity": (
+        "._field_equilibrium",
+        "prepare_functional_stationarity",
+    ),
+    "prepare_guided_elastic_modes": (
+        "._guided_elastic_modes",
+        "prepare_guided_elastic_modes",
+    ),
+    "prepare_hybrid_schedule": ("._hybrid_schedule", "prepare_hybrid_schedule"),
+    "prepare_laplace_stable_dual_calderon_3d": (
+        "._laplace_capacitance",
+        "prepare_laplace_stable_dual_calderon_3d",
+    ),
+    "prepare_local_hamiltonian_evolution": (
+        "._local_hamiltonian",
+        "prepare_local_hamiltonian_evolution",
+    ),
+    "prepare_lpdo_quantum_program": (
+        "._lpdo_quantum_program",
+        "prepare_lpdo_quantum_program",
+    ),
+    "prepare_maxwell_fem_bem_3d": (
+        "._nonmatching_fem_bem3d",
+        "prepare_maxwell_fem_bem_3d",
+    ),
+    "prepare_mps_quantum_program": (
+        "._mps_quantum_program",
+        "prepare_mps_quantum_program",
+    ),
+    "prepare_nonlinear_potential_flow_3d": (
+        "._advanced_potential_flow3d",
+        "prepare_nonlinear_potential_flow_3d",
+    ),
+    "prepare_production_resource_forecast": (
+        "._production_resources",
+        "prepare_production_resource_forecast",
+    ),
+    "prepare_projector_monte_carlo": (
+        "._projector_monte_carlo",
+        "prepare_projector_monte_carlo",
+    ),
+    "prepare_quantum_experiment": ("._quantum_experiment", "prepare_quantum_experiment"),
+    "prepare_quartic_k3": ("._calabi_yau_campaigns", "prepare_quartic_k3"),
+    "prepare_reactive_monolithic_step": (
+        "._reactive_monolithic",
+        "prepare_reactive_monolithic_step",
+    ),
+    "prepare_replay_schedule": ("._fixed_step", "prepare_replay_schedule"),
+    "prepare_rosenbrock": ("._rosenbrock_replay", "prepare_rosenbrock"),
+    "prepare_rough_evolution": ("._rough_prepare", "prepare_rough_evolution"),
+    "prepare_scalar_nonmatching_fem_bem_3d": (
+        "._nonmatching_fem_bem3d",
+        "prepare_scalar_nonmatching_fem_bem_3d",
+    ),
+    "prepare_scalar_screen_junction_solve_3d": (
+        "._scalar_screen_junction3d",
+        "prepare_scalar_screen_junction_solve_3d",
+    ),
+    "prepare_scaled_heom_topology": ("._heom_scaled", "prepare_scaled_heom_topology"),
+    "prepare_spde_approximation": ("._spde_truncation", "prepare_spde_approximation"),
+    "prepare_uniform_vumps": ("._uniform_vumps", "prepare_uniform_vumps"),
+    "prepare_virtual_work_equilibrium": (
+        "._field_equilibrium",
+        "prepare_virtual_work_equilibrium",
+    ),
+    "probabilistic_ode_status_name": (
+        "._probabilistic_ode",
+        "probabilistic_ode_status_name",
+    ),
+    "process_experiment_probabilities": (
+        "._process_learning",
+        "process_experiment_probabilities",
+    ),
+    "process_output_densities": ("._process_learning", "process_output_densities"),
+    "pullback_particle_epoch_transition": (
+        "._particle_epoch",
+        "pullback_particle_epoch_transition",
+    ),
+    "qualify_boundary_driven_xxz": ("._xxz_open", "qualify_boundary_driven_xxz"),
+    "quantum_jump_differential_problem": (
+        "._quantum_jump_generic",
+        "quantum_jump_differential_problem",
+    ),
+    "reactive_monolithic_vjp": ("._reactive_monolithic", "reactive_monolithic_vjp"),
+    "reactive_replay_matches": ("._reactive_replay", "reactive_replay_matches"),
+    "read_balance_law_checkpoint": (
+        "._balance_law_checkpoint",
+        "read_balance_law_checkpoint",
+    ),
+    "read_coupled_field_checkpoint": (
+        "._coupled_field_checkpoint",
+        "read_coupled_field_checkpoint",
+    ),
+    "read_finite_element_checkpoint": (
+        "._finite_element_checkpoint",
+        "read_finite_element_checkpoint",
+    ),
+    "read_finite_element_hp_epoch": (
+        "._finite_element_adaptivity",
+        "read_finite_element_hp_epoch",
+    ),
+    "read_finite_element_restart": (
+        "._finite_element_schedule",
+        "read_finite_element_restart",
+    ),
+    "read_finite_element_result": (
+        "._finite_element_result",
+        "read_finite_element_result",
+    ),
+    "read_finite_volume_checkpoint": (
+        "._finite_volume_checkpoint",
+        "read_finite_volume_checkpoint",
+    ),
+    "read_mac_finite_volume_checkpoint": (
+        "._mac_finite_volume_checkpoint",
+        "read_mac_finite_volume_checkpoint",
+    ),
+    "read_marker_flow_checkpoint": (
+        "._marker_flow_checkpoint",
+        "read_marker_flow_checkpoint",
+    ),
+    "read_multivalued_block_amr_checkpoint": (
+        "._block_amr_lifecycle",
+        "read_multivalued_block_amr_checkpoint",
+    ),
+    "read_pic_oracle_openpmd": ("._pic_providers", "read_pic_oracle_openpmd"),
+    "read_pic_oracle_track": ("._pic_providers", "read_pic_oracle_track"),
+    "read_projector_monte_carlo_checkpoint": (
+        "._projector_monte_carlo_lifecycle",
+        "read_projector_monte_carlo_checkpoint",
+    ),
+    "read_runtime_checkpoint": ("._runtime_lifecycle", "read_runtime_checkpoint"),
+    "read_smilei_fields": ("._pic_providers", "read_smilei_fields"),
+    "read_spectral_state_artifact": (
+        "._spectral_artifacts",
+        "read_spectral_state_artifact",
+    ),
+    "read_variable_patch_checkpoint": (
+        "._variable_patch_checkpoint",
+        "read_variable_patch_checkpoint",
+    ),
+    "read_variational_monte_carlo_checkpoint": (
+        "._variational_monte_carlo",
+        "read_variational_monte_carlo_checkpoint",
+    ),
+    "read_warpx_wakefield": ("._pic_providers", "read_warpx_wakefield"),
+    "record_hybrid_event": ("._hybrid_event", "record_hybrid_event"),
+    "record_quantum_service_run": ("._quantum_service", "record_quantum_service_run"),
+    "refine_markov_cubature": ("._markov_cubature_error", "refine_markov_cubature"),
+    "refinement_parent_cells": ("._finite_element_adaptivity", "refinement_parent_cells"),
+    "reflected_path_dependent_bsde_diagnostics": (
+        "._reflected_bsde",
+        "reflected_path_dependent_bsde_diagnostics",
+    ),
+    "refresh_circuit_qed_device": ("._circuit_qed", "refresh_circuit_qed_device"),
+    "refresh_dense_quantum_program": (
+        "._quantum_program",
+        "refresh_dense_quantum_program",
+    ),
+    "refresh_dressed_spectrum": ("._dressed_spectrum", "refresh_dressed_spectrum"),
+    "refresh_finite_dmrg": ("._dmrg", "refresh_finite_dmrg"),
+    "refresh_finite_tdvp": ("._matrix_product_tdvp", "refresh_finite_tdvp"),
+    "refresh_local_hamiltonian_evolution": (
+        "._local_hamiltonian",
+        "refresh_local_hamiltonian_evolution",
+    ),
+    "refresh_lpdo_quantum_program": (
+        "._lpdo_quantum_program",
+        "refresh_lpdo_quantum_program",
+    ),
+    "refresh_mps_quantum_program": (
+        "._mps_quantum_program",
+        "refresh_mps_quantum_program",
+    ),
+    "refresh_rosenbrock_schedule": ("._rosenbrock_replay", "refresh_rosenbrock_schedule"),
+    "refresh_uniform_vumps": ("._uniform_vumps", "refresh_uniform_vumps"),
+    "register_calabi_yau_checkpoint": (
+        "._calabi_yau_registry",
+        "register_calabi_yau_checkpoint",
+    ),
+    "replace_dark_sector_conservation": (
+        "._dark_sector_epoch_runtime",
+        "replace_dark_sector_conservation",
+    ),
+    "replace_dark_sector_pool": (
+        "._dark_sector_epoch_runtime",
+        "replace_dark_sector_pool",
+    ),
+    "replay_hybrid_events": ("._hybrid_event", "replay_hybrid_events"),
+    "replay_hybrid_schedule": ("._hybrid_schedule", "replay_hybrid_schedule"),
+    "replay_neural_galerkin_epochs": (
+        "._neural_galerkin",
+        "replay_neural_galerkin_epochs",
+    ),
+    "restore_runtime_checkpoint_arrays": (
+        "._runtime_lifecycle",
+        "restore_runtime_checkpoint_arrays",
+    ),
+    "retry_fixed_step": ("._fixed_step", "retry_fixed_step"),
+    "run_fixed_capacity_segments": (
+        "._segmented_execution",
+        "run_fixed_capacity_segments",
+    ),
+    "run_picongpu": ("._pic_providers", "run_picongpu"),
+    "run_smilei": ("._pic_providers", "run_smilei"),
+    "run_stochastic_collocation": ("._collocation", "run_stochastic_collocation"),
+    "run_warpx": ("._pic_providers", "run_warpx"),
+    "run_warpx_track": ("._pic_providers", "run_warpx_track"),
+    "run_warpx_wakefield": ("._pic_providers", "run_warpx_wakefield"),
+    "sample_quantum_control_schedule": (
+        "._quantum_control",
+        "sample_quantum_control_schedule",
+    ),
+    "sample_quantum_experiment": ("._quantum_experiment", "sample_quantum_experiment"),
+    "save_functional_training_checkpoint": (
+        "._functional_checkpoint",
+        "save_functional_training_checkpoint",
+    ),
+    "schedule_rosenbrock": ("._rosenbrock_replay", "schedule_rosenbrock"),
+    "segmented_particle_epoch_vjp": ("._particle_epoch", "segmented_particle_epoch_vjp"),
+    "semidiscretize_reaction_diffusion": ("._spde", "semidiscretize_reaction_diffusion"),
+    "semidiscretize_semilinear_spde": ("._spde", "semidiscretize_semilinear_spde"),
+    "semidiscretize_spde": ("._spde", "semidiscretize_spde"),
+    "sharp_particle_conversion_jvp": (
+        "._particle_conversion_sensitivity",
+        "sharp_particle_conversion_jvp",
+    ),
+    "sharp_particle_conversion_vjp": (
+        "._particle_conversion_sensitivity",
+        "sharp_particle_conversion_vjp",
+    ),
+    "smilei_input": ("._pic_providers", "smilei_input"),
+    "solve_adaptive_tdvp": ("._adaptive_tdvp", "solve_adaptive_tdvp"),
+    "solve_bsde_least_squares": ("._regression_bsde", "solve_bsde_least_squares"),
+    "solve_calabi_yau_metric": ("._calabi_yau", "solve_calabi_yau_metric"),
+    "solve_caputo_fractional": ("._fractional_memory", "solve_caputo_fractional"),
+    "solve_channel_sbdf2": ("._channel_flow", "solve_channel_sbdf2"),
+    "solve_connected_vmc_neural_trajectory": (
+        "._neural_sampled_trajectory",
+        "solve_connected_vmc_neural_trajectory",
+    ),
+    "solve_convolution_volterra": ("._memory", "solve_convolution_volterra"),
+    "solve_coupled_fbsde_explicit": ("._fbsde", "solve_coupled_fbsde_explicit"),
+    "solve_coupled_hierarchy": ("._coupled", "solve_coupled_hierarchy"),
+    "solve_dae": ("._differential_algebraic", "solve_dae"),
+    "solve_deep_bsde": ("._deep_bsde", "solve_deep_bsde"),
+    "solve_deep_picard": ("._deep_picard", "solve_deep_picard"),
+    "solve_deep_splitting": ("._deep_splitting", "solve_deep_splitting"),
+    "solve_dephasing_probes": ("._multiterminal_transport", "solve_dephasing_probes"),
+    "solve_diffrax": ("._diffrax_backend", "solve_diffrax"),
+    "solve_diffrax_cde": ("._diffrax_cde", "solve_diffrax_cde"),
+    "solve_diffrax_delay": ("._diffrax_delay_backend", "solve_diffrax_delay"),
+    "solve_diffrax_delay_segmented": (
+        "._delay_segmented",
+        "solve_diffrax_delay_segmented",
+    ),
+    "solve_diffrax_ensemble": ("._diffrax_backend", "solve_diffrax_ensemble"),
+    "solve_direct_ssa": ("._jump", "solve_direct_ssa"),
+    "solve_etdrk": ("._etdrk", "solve_etdrk"),
+    "solve_event_driven_quantum_jump": (
+        "._quantum_jump_event",
+        "solve_event_driven_quantum_jump",
+    ),
+    "solve_exterior_helmholtz_dirichlet_2d": (
+        "._helmholtz",
+        "solve_exterior_helmholtz_dirichlet_2d",
+    ),
+    "solve_exterior_helmholtz_dirichlet_3d": (
+        "._helmholtz3d",
+        "solve_exterior_helmholtz_dirichlet_3d",
+    ),
+    "solve_fermionic_gaussian": ("._fermionic_gaussian", "solve_fermionic_gaussian"),
+    "solve_finite_dmrg": ("._dmrg", "solve_finite_dmrg"),
+    "solve_finite_excited_state": ("._finite_response", "solve_finite_excited_state"),
+    "solve_finite_response": ("._finite_response", "solve_finite_response"),
+    "solve_finite_subspace_tdvp": (
+        "._finite_subspace_tdvp",
+        "solve_finite_subspace_tdvp",
+    ),
+    "solve_finite_tdvp": ("._matrix_product_tdvp", "solve_finite_tdvp"),
+    "solve_fixed_step": ("._fixed_step", "solve_fixed_step"),
+    "solve_fock_continuation": ("._fock_continuation", "solve_fock_continuation"),
+    "solve_functional_differential": (
+        "._functional_differential",
+        "solve_functional_differential",
+    ),
+    "solve_gaussian_lindblad": ("._gaussian_lindblad", "solve_gaussian_lindblad"),
+    "solve_generalized_alpha": ("._generalized_alpha", "solve_generalized_alpha"),
+    "solve_guided_elastic_modes": (
+        "._guided_elastic_modes",
+        "solve_guided_elastic_modes",
+    ),
+    "solve_heom": ("._heom", "solve_heom"),
+    "solve_heom_adaptive_bdf": ("._heom_implicit", "solve_heom_adaptive_bdf"),
+    "solve_heom_backward_euler": ("._heom_implicit", "solve_heom_backward_euler"),
+    "solve_heom_bdf": ("._heom_implicit", "solve_heom_bdf"),
+    "solve_heom_continuation": ("._heom_production", "solve_heom_continuation"),
+    "solve_heom_continuation_grid": ("._heom_production", "solve_heom_continuation_grid"),
+    "solve_implicit_runge_kutta": (
+        "._implicit_runge_kutta",
+        "solve_implicit_runge_kutta",
+    ),
+    "solve_interacting_particles": ("._particles", "solve_interacting_particles"),
+    "solve_interior_laplace_dirichlet_2d": (
+        "._boundary_integral",
+        "solve_interior_laplace_dirichlet_2d",
+    ),
+    "solve_jump_delay": ("._jump_delay", "solve_jump_delay"),
+    "solve_jump_differential": ("._jump", "solve_jump_differential"),
+    "solve_keldysh_scba": ("._keldysh_scba", "solve_keldysh_scba"),
+    "solve_levy_sde": ("._levy", "solve_levy_sde"),
+    "solve_lindblad": ("._lindblad", "solve_lindblad"),
+    "solve_linear_trial_space": ("._linear_trial_space", "solve_linear_trial_space"),
+    "solve_local_hamiltonian_evolution": (
+        "._local_hamiltonian",
+        "solve_local_hamiltonian_evolution",
+    ),
+    "solve_lpdo_steady_state": ("._tensor_open_quantum", "solve_lpdo_steady_state"),
+    "solve_markov_cubature": ("._markov_cubature", "solve_markov_cubature"),
+    "solve_memory_kernel": ("._memory_kernel", "solve_memory_kernel"),
+    "solve_mps_quantum_jump": ("._mps_quantum_jump", "solve_mps_quantum_jump"),
+    "solve_multirate": ("._multirate", "solve_multirate"),
+    "solve_multiterminal_coherent": (
+        "._multiterminal_transport",
+        "solve_multiterminal_coherent",
+    ),
+    "solve_neural_galerkin": ("._neural_galerkin", "solve_neural_galerkin"),
+    "solve_neural_galerkin_epochs": ("._neural_galerkin", "solve_neural_galerkin_epochs"),
+    "solve_neural_jump_projection": (
+        "._neural_quantum_jump",
+        "solve_neural_jump_projection",
+    ),
+    "solve_neural_no_jump_tdvp": ("._neural_quantum_jump", "solve_neural_no_jump_tdvp"),
+    "solve_next_reaction": ("._jump", "solve_next_reaction"),
+    "solve_particle_fokker_planck": (
+        "._fokker_planck_approximation",
+        "solve_particle_fokker_planck",
+    ),
+    "solve_prepared_fock_refinement": (
+        "._fock_continuation",
+        "solve_prepared_fock_refinement",
+    ),
+    "solve_prepared_heom_refinement": (
+        "._heom_production",
+        "solve_prepared_heom_refinement",
+    ),
+    "solve_prepared_rough": ("._rough_prepare", "solve_prepared_rough"),
+    "solve_probabilistic_ode": ("._probabilistic_ode", "solve_probabilistic_ode"),
+    "solve_projector_monte_carlo": (
+        "._projector_monte_carlo",
+        "solve_projector_monte_carlo",
+    ),
+    "solve_pseudomode": ("._pseudomode", "solve_pseudomode"),
+    "solve_purified_lindblad": ("._purified_lindblad", "solve_purified_lindblad"),
+    "solve_purified_strang": ("._purified_tebd", "solve_purified_strang"),
+    "solve_quantum_jump_ensemble": ("._quantum_jump", "solve_quantum_jump_ensemble"),
+    "solve_quantum_jump_generic": (
+        "._quantum_jump_generic",
+        "solve_quantum_jump_generic",
+    ),
+    "solve_quantum_tomography": ("._quantum_tomography", "solve_quantum_tomography"),
+    "solve_reactive_monolithic_step": (
+        "._reactive_monolithic",
+        "solve_reactive_monolithic_step",
+    ),
+    "solve_reflected_path_dependent_bsde": (
+        "._reflected_bsde",
+        "solve_reflected_path_dependent_bsde",
+    ),
+    "solve_rosenbrock": ("._rosenbrock_replay", "solve_rosenbrock"),
+    "solve_rough_delay": ("._rough_delay", "solve_rough_delay"),
+    "solve_rough_differential": ("._rough", "solve_rough_differential"),
+    "solve_scheduled_rosenbrock": ("._rosenbrock_replay", "solve_scheduled_rosenbrock"),
+    "solve_semilinear_spde": ("._semilinear", "solve_semilinear_spde"),
+    "solve_separated_fokker_planck": (
+        "._separated_fokker_planck",
+        "solve_separated_fokker_planck",
+    ),
+    "solve_sparse_grid_fokker_planck": (
+        "._fokker_planck_approximation",
+        "solve_sparse_grid_fokker_planck",
+    ),
+    "solve_spde_approximation": ("._spde_truncation", "solve_spde_approximation"),
+    "solve_stochastic_volterra": ("._memory", "solve_stochastic_volterra"),
+    "solve_time_local_open_system": ("._memory_kernel", "solve_time_local_open_system"),
+    "solve_uniform_tangent_response": (
+        "._uniform_vumps",
+        "solve_uniform_tangent_response",
+    ),
+    "solve_uniform_vumps": ("._uniform_vumps", "solve_uniform_vumps"),
+    "solve_unitary_propagator": ("._quantum_propagation", "solve_unitary_propagator"),
+    "solve_variational_monte_carlo": (
+        "._variational_monte_carlo",
+        "solve_variational_monte_carlo",
+    ),
+    "solve_variational_monte_carlo_subspace": (
+        "._variational_monte_carlo_subspace",
+        "solve_variational_monte_carlo_subspace",
+    ),
+    "solve_variational_tdvp": ("._variational_tdvp", "solve_variational_tdvp"),
+    "solve_voltage_probes": ("._multiterminal_transport", "solve_voltage_probes"),
+    "solver_state_geometry": ("._geometric", "solver_state_geometry"),
+    "spin_boson_dephasing_comparison": (
+        "._nonmarkov_campaign",
+        "spin_boson_dephasing_comparison",
+    ),
+    "split_differential_problem": ("._split_differential", "split_differential_problem"),
+    "ssprk33_step": ("._ssp_runge_kutta", "ssprk33_step"),
+    "ssprk54_step": ("._ssp_runge_kutta", "ssprk54_step"),
+    "step_projector_monte_carlo": (
+        "._projector_monte_carlo",
+        "step_projector_monte_carlo",
+    ),
+    "stormer_verlet_step": ("._symplectic", "stormer_verlet_step"),
+    "tetrahedral_qubit_tomography": (
+        "._quantum_tomography_campaigns",
+        "tetrahedral_qubit_tomography",
+    ),
+    "thermal_drude_lorentz_qubit_heom": ("._heom", "thermal_drude_lorentz_qubit_heom"),
+    "tomography_designs_disjoint": (
+        "._process_tomography",
+        "tomography_designs_disjoint",
+    ),
+    "train_components": ("._component_training", "train_components"),
+    "train_functional_time_windows": (
+        "._functional_windows",
+        "train_functional_time_windows",
+    ),
+    "train_neural_cde": ("._neural_cde", "train_neural_cde"),
+    "transport_projector_monte_carlo_resources": (
+        "._projector_monte_carlo_lifecycle",
+        "transport_projector_monte_carlo_resources",
+    ),
+    "validate_projector_state": ("._projector_monte_carlo", "validate_projector_state"),
+    "vmc_status_name": ("._variational_monte_carlo", "vmc_status_name"),
+    "vmc_subspace_status_name": (
+        "._variational_monte_carlo_subspace",
+        "vmc_subspace_status_name",
+    ),
+    "warpx_input": ("._pic_providers", "warpx_input"),
+    "warpx_preroll_steps": ("._pic_providers", "warpx_preroll_steps"),
+    "weak_observable_estimate": ("._convergence", "weak_observable_estimate"),
+    "write_balance_law_checkpoint": (
+        "._balance_law_checkpoint",
+        "write_balance_law_checkpoint",
+    ),
+    "write_compressible_kinetic_vti": (
+        "._compressible_kinetic_output",
+        "write_compressible_kinetic_vti",
+    ),
+    "write_coupled_field_checkpoint": (
+        "._coupled_field_checkpoint",
+        "write_coupled_field_checkpoint",
+    ),
+    "write_finite_element_checkpoint": (
+        "._finite_element_checkpoint",
+        "write_finite_element_checkpoint",
+    ),
+    "write_finite_element_hp_epoch": (
+        "._finite_element_adaptivity",
+        "write_finite_element_hp_epoch",
+    ),
+    "write_finite_element_restart": (
+        "._finite_element_schedule",
+        "write_finite_element_restart",
+    ),
+    "write_finite_element_result": (
+        "._finite_element_result",
+        "write_finite_element_result",
+    ),
+    "write_finite_volume_checkpoint": (
+        "._finite_volume_checkpoint",
+        "write_finite_volume_checkpoint",
+    ),
+    "write_mac_finite_volume_checkpoint": (
+        "._mac_finite_volume_checkpoint",
+        "write_mac_finite_volume_checkpoint",
+    ),
+    "write_marker_flow_checkpoint": (
+        "._marker_flow_checkpoint",
+        "write_marker_flow_checkpoint",
+    ),
+    "write_multivalued_block_amr_checkpoint": (
+        "._block_amr_lifecycle",
+        "write_multivalued_block_amr_checkpoint",
+    ),
+    "write_multivalued_cut_cell_output": (
+        "._block_amr_lifecycle",
+        "write_multivalued_cut_cell_output",
+    ),
+    "write_partitioned_finite_element_checkpoint": (
+        "._finite_element_checkpoint",
+        "write_partitioned_finite_element_checkpoint",
+    ),
+    "write_projector_monte_carlo_checkpoint": (
+        "._projector_monte_carlo_lifecycle",
+        "write_projector_monte_carlo_checkpoint",
+    ),
+    "write_projector_monte_carlo_result": (
+        "._projector_monte_carlo_lifecycle",
+        "write_projector_monte_carlo_result",
+    ),
+    "write_runtime_checkpoint": ("._runtime_lifecycle", "write_runtime_checkpoint"),
+    "write_spectral_state_artifact": (
+        "._spectral_artifacts",
+        "write_spectral_state_artifact",
+    ),
+    "write_variable_patch_checkpoint": (
+        "._variable_patch_checkpoint",
+        "write_variable_patch_checkpoint",
+    ),
+    "write_variational_monte_carlo_checkpoint": (
+        "._variational_monte_carlo",
+        "write_variational_monte_carlo_checkpoint",
+    ),
+}
 
 _FACADE_EXPORT_MODULES = (
+    "._characteristic_projection",
     "._convolution_quadrature",
     "._deterministic_ensemble",
     "._elasticity_boundary",
     "._fem_bem_scalar",
     "._fem_bem_vector",
+    ".functional_decomposition",
     "._hodge_laplace",
     "._hydrodynamic_response",
     "._impurity",
@@ -2854,32 +4330,2759 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
+if TYPE_CHECKING:
+    from . import advanced, coupling, maxwell
+    from ._adaptive_tdvp import (
+        AdaptiveTDVPPlan,
+        AdaptiveTDVPResult,
+        solve_adaptive_tdvp,
+    )
+    from ._advanced_potential_flow3d import (
+        NonlinearPotentialFlowPolicy3D,
+        NonlinearPotentialFlowState3D,
+        NonlinearPotentialFlowStep3D,
+        prepare_nonlinear_potential_flow_3d,
+        PreparedNonlinearPotentialFlow3D,
+        SecondOrderPotentialFlowPlan3D,
+    )
+    from ._aerothermal_material import (
+        ConjugateAerothermalExchange,
+        ConjugateAerothermalInterfacePlan,
+        ConservativeRecessionRemapPlan,
+        ConservativeRecessionRemapResult,
+        FixedConnectivityRecessionPlan,
+        RecessionEvaluation,
+    )
+    from ._aerothermodynamic_topology import (
+        AerothermodynamicALEEvidence,
+        AerothermodynamicALEPlan,
+        AerothermodynamicTopologyTransaction,
+        HighEnthalpyAMREvidence,
+        HighEnthalpyAMRIndicatorPlan,
+    )
+    from ._balance_law import (
+        AbstractBalanceLawProcessPlan,
+        AbstractPreparedBalanceLawProcess,
+        BalanceLawAcceptedBudget,
+        BalanceLawAdvanceResult,
+        BalanceLawProcessAdvance,
+        BalanceLawProcessState,
+        BalanceLawRolloutResult,
+        BalanceLawRuntimeState,
+        PreparedBalanceLawRuntime,
+        ScheduledBalanceLawRolloutPlan,
+    )
+    from ._balance_law_adaptive import (
+        AdaptiveBalanceLawRolloutPlan,
+        AdaptiveBalanceLawRolloutResult,
+        BalanceLawAdaptivePolicy,
+        BalanceLawAdaptiveStatus,
+        BalanceLawDecisionJournal,
+    )
+    from ._balance_law_checkpoint import (
+        BalanceLawCheckpoint,
+        BalanceLawCheckpointPlan,
+        read_balance_law_checkpoint,
+        write_balance_law_checkpoint,
+    )
+    from ._balance_law_transport import (
+        AbstractPreparedBalanceLawTransport,
+        BalanceLawSourceView,
+        BalanceLawTransportAdvance,
+        BalanceLawTransportState,
+        prepare_balance_law_transport,
+        PreparedConstrainedMHDBalanceLawTransport,
+        PreparedFiniteVolumeBalanceLawTransport,
+    )
+    from ._bdf_method import (
+        BDFMethod,
+    )
+    from ._bem_fracture3d import (
+        advance_bem_fracture_3d,
+        BEMFractureEpochTransition3D,
+        BEMFractureProblem3D,
+        BEMFractureResult3D,
+        prepare_bem_fracture_3d,
+        PreparedBEMFracture3D,
+    )
+    from ._block_amr_embedded_events import (
+        MovingEmbeddedBoundaryEventEvidence,
+        MovingEmbeddedBoundaryEventPlan,
+        MovingEmbeddedBoundaryEventResult,
+    )
+    from ._block_amr_lifecycle import (
+        CutCellOutputSnapshot,
+        CutCellRestartRegistry,
+        MultivaluedBlockAMRCheckpoint,
+        MultivaluedBlockAMRCheckpointPlan,
+        read_multivalued_block_amr_checkpoint,
+        write_multivalued_block_amr_checkpoint,
+        write_multivalued_cut_cell_output,
+    )
+    from ._block_amr_runtime import (
+        AMRTimeSchedulePlan,
+        BlockAMRAdvancePhase,
+        BlockAMRAdvanceResult,
+        BlockAMRRuntimePlan,
+        BlockAMRRuntimeState,
+        PreparedBlockAMRRuntime,
+    )
+    from ._boosted_frame import (
+        BoostedExternalField,
+        BoostedFrameEvidence,
+        BoostedFramePlan,
+        BoostedFrameState,
+        BoostedFrameStepResult,
+        BoostedLabFieldSnapshot,
+        BoostedLabParticleSnapshot,
+        BoostedParticles,
+        BoostedParticleSnapshotBuffer,
+        BoostedSnapshotPlan,
+        BoostedSnapshotState,
+        PreparedBoostedFrame,
+    )
+    from ._boundary_integral import (
+        InteriorLaplaceDirichletResult,
+        solve_interior_laplace_dirichlet_2d,
+    )
+    from ._calabi_yau import (
+        CalabiYauMetricProblem,
+        CalabiYauMetricResult,
+        CalabiYauSolvePolicy,
+        solve_calabi_yau_metric,
+    )
+    from ._calabi_yau_archive import (
+        CalabiYauMetricArtifact,
+        freeze_calabi_yau_result,
+    )
+    from ._calabi_yau_campaigns import (
+        CalabiYauCampaign,
+        cp1_calibration,
+        prepare_elliptic_curve,
+        prepare_fermat_calabi_yau,
+        prepare_fermat_quintic,
+        prepare_quartic_k3,
+    )
+    from ._calabi_yau_evidence import (
+        CalabiYauMetricEvidence,
+        CalabiYauMetricEvidencePlan,
+        evaluate_calabi_yau_metric_evidence,
+    )
+    from ._calabi_yau_qualification import (
+        calabi_yau_candidate_profiles,
+        calabi_yau_candidate_support_tuples,
+    )
+    from ._calabi_yau_registry import (
+        CalabiYauCheckpointRegistry,
+        load_calabi_yau_checkpoint,
+        register_calabi_yau_checkpoint,
+    )
+    from ._cfd_dem import (
+        advance_cfd_dem_window,
+        CFDEMCouplingSchedulePlan,
+        CFDEMCouplingState,
+        CFDEMMacroStepResult,
+    )
+    from ._channel_flow import (
+        CHANNEL_FLOW_EXPLICIT_RESTRICTION,
+        CHANNEL_FLOW_INITIAL_CONSTRAINT,
+        CHANNEL_FLOW_STOKES_FAILURE,
+        CHANNEL_FLOW_SUCCESS,
+        ChannelFlowDiagnosticsHistory,
+        ChannelFlowSolution,
+        ChannelSBDF2Method,
+        ChannelSBDF2State,
+        PreparedChannelSBDF2Method,
+        solve_channel_sbdf2,
+    )
+    from ._charged_particle_transport import (
+        ChargedParticleTransportPlan,
+        ChargedParticleTransportResult,
+        ChargedParticleTransportStatus,
+        ChargedStepBank,
+    )
+    from ._charged_step_radiation import (
+        ChargedStepRadiationPlan,
+        ChargedStepRadiationResult,
+    )
+    from ._chemical_equilibrium import (
+        ChemicalEquilibriumEnsemble,
+        ChemicalEquilibriumEvidence,
+        ChemicalEquilibriumPlan,
+        ChemicalEquilibriumResult,
+        ChemicalEquilibriumThermodynamicState,
+    )
+    from ._chemical_reactor import (
+        ChemicalReactorKind,
+        ChemicalReactorPlan,
+        ChemicalReactorSolution,
+        ChemicalReactorThermodynamicState,
+        PreparedChemicalReactorDynamics,
+    )
+    from ._circuit_qed import (
+        assemble_circuit_qed_hamiltonian,
+        CircuitDrivePort,
+        CircuitInteraction,
+        CircuitModeKind,
+        CircuitModePlacement,
+        CircuitQEDDeviceCostEstimate,
+        CircuitQEDDeviceDiagnostics,
+        CircuitQEDDeviceParameters,
+        CircuitQEDDevicePlan,
+        CircuitQEDDevicePolicy,
+        CircuitQEDDeviceSpec,
+        plan_circuit_qed_device,
+        prepare_circuit_qed_device,
+        PreparedCircuitQEDDevice,
+        refresh_circuit_qed_device,
+    )
+    from ._cochain_electrostatic import (
+        CochainElectrostaticBoundaryPlan,
+        CochainElectrostaticPlan,
+        CochainElectrostaticResult,
+        ElectrostaticBoundaryKind,
+    )
+    from ._cochain_multirate import (
+        CochainMultirateDiagnostics,
+        CochainMultiratePlan,
+        CochainRatePartition,
+    )
+    from ._cochain_pic_field import (
+        CochainMaxwellPICFieldSolver,
+    )
+    from ._collocation import (
+        assemble_stochastic_collocation,
+        COLLOCATION_NONFINITE,
+        COLLOCATION_SOLVER_FAILURE,
+        COLLOCATION_SUCCESS,
+        CollocationAxisRule,
+        evaluate_stochastic_collocation,
+        materialize_stochastic_collocation,
+        run_stochastic_collocation,
+        StochasticCollocationDesign,
+        StochasticCollocationDiagnostics,
+        StochasticCollocationNode,
+        StochasticCollocationNodeEvaluation,
+        StochasticCollocationPlan,
+        StochasticCollocationResult,
+    )
+    from ._compatible_systems import (
+        CompatibleElasticityDynamics,
+        CompatibleElasticityState,
+        CompatibleIdealMHDInductionDynamics,
+        CompatibleIdealMHDState,
+        CompatibleIncompressibleProjection,
+        CompatiblePoroelasticDynamics,
+        CompatiblePoroelasticState,
+        CompatiblePressurePreconditioner,
+        CompatibleProjectionStatus,
+        CompatibleThermoelasticDynamics,
+        CompatibleThermoelasticState,
+        CompatibleVariableDensityProjection,
+        IncompressibleProjectionResult,
+    )
+    from ._component_training import (
+        ComponentOptimizer,
+        ComponentTrainingResult,
+        train_components,
+    )
+    from ._compressible_kinetic import (
+        CompressibleKineticFixedStepMethod,
+    )
+    from ._compressible_kinetic_output import (
+        CompressibleKineticVTKResult,
+        write_compressible_kinetic_vti,
+    )
+    from ._conservation_temporal import (
+        ConservationIMEXFixedStepMethod,
+        ConservationIMEXMethod,
+        ConservationIMEXResult,
+        ElementBlockPreconditioner,
+        ImplicitConservationStageResult,
+        prepare_element_block_preconditioner,
+    )
+    from ._constrained_mechanics import (
+        ConstrainedMechanicalState,
+        ConstrainedMechanicalStep,
+        ConstrainedMechanicsEvidence,
+        ConstrainedMechanicsStatus,
+        PreparedSHAKERATTLEPlan,
+        SHAKERATTLEPlan,
+    )
+    from ._constrained_mhd import (
+        ConstrainedMHDDiagnostics,
+        ConstrainedMHDRunStatus,
+        ConstrainedMHDSSPRK3Plan,
+        ConstrainedMHDState,
+        ConstrainedMHDStepResult,
+    )
+    from ._continuum_dsmc import (
+        ContinuumDSMCConservedSchema,
+        ContinuumDSMCInterfaceExchange,
+        ContinuumDSMCInterfacePlan,
+        ContinuumDSMCReason,
+        ContinuumToDSMCConversionPlan,
+        ContinuumToDSMCConversionResult,
+        DSMCToContinuumReductionPlan,
+        DSMCToContinuumReductionResult,
+        HybridOwnershipEpochPlan,
+        HybridOwnershipEpochState,
+        HybridOwnershipRequest,
+    )
+    from ._convergence import (
+        coupled_strong_error,
+        NoiseTruncationLevel,
+        NoiseTruncationStudy,
+        SPDEConvergenceLevel,
+        SPDEConvergenceMetric,
+        SPDEConvergenceStudy,
+        SPDEErrorBudget,
+        SPDERefinementAxis,
+        weak_observable_estimate,
+        WeakObservableEstimate,
+    )
+    from ._coupled import (
+        CoupledCost,
+        CoupledHierarchyResult,
+        CoupledLevelResult,
+        CoupledLevelSolver,
+        CoupledObservable,
+        CoupledValidity,
+        solve_coupled_hierarchy,
+    )
+    from ._coupled_field_checkpoint import (
+        CoupledFieldCheckpoint,
+        CoupledFieldCheckpointPlan,
+        read_coupled_field_checkpoint,
+        write_coupled_field_checkpoint,
+    )
+    from ._dae_coordinate_adapter import (
+        AutonomousDAEBlockLinearization,
+        DAEBlockCoordinate,
+        DAEBlockJacobian,
+        DAEBlockLinearization,
+        DAECoordinateAdapter,
+        DAERootCoordinates,
+        DAERootKind,
+        DAEScaleKind,
+        DAESetupHook,
+        InputDAEBlockLinearization,
+    )
+    from ._dae_events import (
+        certify_dae_regularity,
+        dae_consistency_candidate,
+        DAEConsistencyCandidate,
+        DAEConsistencyPolicy,
+        DAEEventPlan,
+        DAEEventReplayEvidence,
+        DAEEventResult,
+        DAEEventStatus,
+        DAERegularityCertificate,
+        DAERegularityCertificatePlan,
+        DAERegularityDomain,
+        DAEResetMap,
+        manifold_bdf_stage,
+        ManifoldBDFMethod,
+        ManifoldBDFStage,
+        PreparedDAEEventPlan,
+    )
+    from ._dae_initialization import (
+        DAEInitializationMode,
+        DAEInitializationResult,
+        DAEInitializationSpec,
+        DAEInitializationStatus,
+    )
+    from ._dark_sector_epoch_runtime import (
+        admit_dark_sector_work,
+        CONSERVATION_COMPONENTS,
+        dark_sector_epoch_checkpoint,
+        DarkSectorEpochPlan,
+        DarkSectorEpochResult,
+        DarkSectorEpochState,
+        DarkSectorResumePoint,
+        DarkSectorRunCoordinator,
+        DarkSectorWorkAdmission,
+        decode_content_id,
+        empty_dark_sector_epoch_state,
+        encode_content_id,
+        encode_content_ids,
+        EpochStatus,
+        finalize_dark_sector_epoch,
+        replace_dark_sector_conservation,
+        replace_dark_sector_pool,
+    )
+    from ._deep_bsde import (
+        DeepBSDEResult,
+        solve_deep_bsde,
+    )
+    from ._deep_picard import (
+        DeepPicardDiagnostics,
+        DeepPicardInitialSource,
+        DeepPicardResult,
+        PicardSourceContext,
+        solve_deep_picard,
+        StructuredPicardSource,
+        StructuredSourceBuilder,
+    )
+    from ._deep_splitting import (
+        DeepSplittingDiagnostics,
+        DeepSplittingInterpolation,
+        DeepSplittingResult,
+        DeepSplittingSamplingMode,
+        DeepSplittingSolution,
+        solve_deep_splitting,
+    )
+    from ._delay import (
+        ConstantDelay,
+        DelayDifferentialProblem,
+        DelayHistory,
+        DelayHistoryDerivative,
+        DelayHistoryWindow,
+        DelayTerm,
+        DelayValues,
+        DelayVectorField,
+        DelayWienerTerm,
+        DerivativeDelay,
+        DistributedDelay,
+        DistributedDelayKernel,
+        EndpointNeutralFunctional,
+        FunctionalDelay,
+        HistoryFunctional,
+        NeutralDelayProblem,
+        NeutralFunctional,
+        NeutralRecoveryGuess,
+        PointDelay,
+        StateDependentDelay,
+        StateDependentLag,
+    )
+    from ._delay_adjoint import (
+        CheckpointedDelayAdjoint,
+        SegmentedDelayAdjoint,
+    )
+    from ._delay_capabilities import (
+        AbstractStochasticDelayInterpolation,
+        AcceptedStochasticDelayInterpolation,
+        adaptive_stochastic_delay_step_doubling,
+        AdaptiveStochasticDelayPolicy,
+        backsolve_delay_adjoint,
+        BacksolveDelayAdjoint,
+        CertifiedTruncatedFunctionalDelay,
+        DelayBacksolveEvidence,
+        DelayPrimalTape,
+        evaluate_certified_truncated_delay,
+        ExponentialConvolutionDelay,
+        InfiniteMemoryEvidence,
+        ItoEulerDelayInterpolation,
+        SRKMKDelayInterpolation,
+        StochasticDelayControllerEvidence,
+        StochasticDelayInterpolationCapabilities,
+        StratonovichEulerHeunDelayInterpolation,
+    )
+    from ._delay_segmented import (
+        DelaySegmentArchive,
+        DelaySegmentContinuation,
+        fixed_delay_history_capacity,
+        SegmentedDelayResult,
+        solve_diffrax_delay_segmented,
+    )
+    from ._differential import (
+        DifferentialInterpretation,
+        DifferentialProblem,
+        DifferentialSolution,
+        DifferentialVectorField,
+        NoiseStructure,
+        WienerCoefficientRepresentation,
+        WienerTerm,
+    )
+    from ._differential_algebraic import (
+        DAEAdaptivePolicy,
+        DAEAttemptHistory,
+        DAEAttemptStatus,
+        DAEContinuation,
+        DAEFailureMode,
+        DAERegularityEvidence,
+        DAERegularityFailureMode,
+        DAERegularityMode,
+        DAERegularityPolicy,
+        DAERegularityStatus,
+        DAEReplayEvidence,
+        DAEReplayMode,
+        DAEReplayPolicy,
+        DAESolvePlan,
+        DAESolvePolicy,
+        DAEStatus,
+        DAEStepHistory,
+        DAETemporalReusePolicy,
+        DAETerminationStatus,
+        DifferentialAlgebraicProblem,
+        DifferentialAlgebraicSolution,
+        discretized_dae_problem,
+        initialize_dae,
+        plan_dae,
+        prepare_dae,
+        PreparedDAESolve,
+        solve_dae,
+    )
+    from ._diffrax_backend import (
+        DifferentialIterationMetrics,
+        solve_diffrax,
+        solve_diffrax_ensemble,
+    )
+    from ._diffrax_cde import (
+        ControlledDifferentialSolution,
+        solve_diffrax_cde,
+    )
+    from ._diffrax_delay_backend import (
+        solve_diffrax_delay,
+    )
+    from ._diffrax_state_packing import (
+        DiffraxComplexStatePolicy,
+        DiffraxComplexStateStrategy,
+    )
+    from ._discrete_ordinates import (
+        DiscreteOrdinatesEvidence,
+        DiscreteOrdinatesResult,
+        DiscreteOrdinatesTransportPlan,
+    )
+    from ._discrete_velocity import (
+        ConservativeFiniteVolumeDVMPlan,
+        FiniteVolumeDVMResidualEvidence,
+        PreparedConservativeFiniteVolumeDVM,
+    )
+    from ._distributed_aerothermodynamics import (
+        DistributedAerothermodynamicPlan,
+        DistributedConservationLedger,
+        DistributedOwnershipEvidence,
+    )
+    from ._distributed_pic import (
+        AbstractDistributedPICFieldSolver,
+        distribute_pic_field_solver,
+        DistributedElectromagneticPICPlan,
+        DistributedPICExecutor,
+        DistributedPICStepResult,
+        pic_distribution_support,
+        PICDistributedEvidence,
+        PICDistributedRoute,
+        PICDistributionSupport,
+    )
+    from ._distributed_wave_amr import (
+        DistributedWaveAMRCheckpointEvidence,
+        DistributedWaveAMRDiagnostics,
+        DistributedWaveAMRGravityEvidence,
+        DistributedWaveAMRLinearEvidence,
+        DistributedWaveAMRObservables,
+        DistributedWaveAMRRestoreEvidence,
+        DistributedWaveAMRResult,
+        DistributedWaveAMRState,
+        DistributedWaveAMRTopologyTransferResult,
+        PreparedDistributedWaveAMR,
+        PreparedDistributedWaveAMRTopologyTransition,
+    )
+    from ._dmrg import (
+        FiniteDMRGCostEstimate,
+        FiniteDMRGDiagnostics,
+        FiniteDMRGPlan,
+        FiniteDMRGPolicy,
+        FiniteDMRGProblem,
+        FiniteDMRGResult,
+        FiniteDMRGStatus,
+        plan_finite_dmrg,
+        prepare_finite_dmrg,
+        PreparedFiniteDMRG,
+        refresh_finite_dmrg,
+        solve_finite_dmrg,
+    )
+    from ._dressed_spectrum import (
+        dressed_quantum_subspace,
+        DressedSpectrumCostEstimate,
+        DressedSpectrumDiagnostics,
+        DressedSpectrumPlan,
+        DressedSpectrumPolicy,
+        DressedStateLabel,
+        plan_dressed_spectrum,
+        prepare_dressed_spectrum,
+        PreparedDressedSpectrum,
+        refresh_dressed_spectrum,
+    )
+    from ._driving_path import (
+        AbstractDifferentiableDrivingPath,
+        CallableDrivingPath,
+        CausalBackwardHermiteDrivingPath,
+        DrivingPathFitDiagnostics,
+        FixedBSplineDrivingPath,
+        OfflineCubicDrivingPath,
+        PiecewiseLinearDrivingPath,
+    )
+    from ._dsmc_runtime import (
+        DSMCBoundaryExchangeLedger,
+        DSMCProductionPlan,
+        DSMCRuntimeState,
+        DSMCStepResult,
+    )
+    from ._dynamic_vector_cq import (
+        prepare_dynamic_elasticity_fem_bem_cq_3d,
+        prepare_dynamic_maxwell_fem_bem_cq_3d,
+        PreparedDynamicElasticityFEMBEM3D,
+        PreparedDynamicMaxwellFEMBEM3D,
+        PreparedDynamicVectorFEMBEM3D,
+    )
+    from ._dynamics_evolution import (
+        DiffraxEvolution,
+    )
+    from ._electrode_reaction import (
+        MACReactiveElectrodeBinding,
+        MACReactiveElectrodeEvaluation,
+        ReactiveElectrodeEvaluation,
+        ReactiveElectrodePlan,
+        ReactiveElectrodeState,
+        ReactiveElectrodeStepResult,
+    )
+    from ._electrohydrodynamic import (
+        CochainElectrohydrodynamicEvaluation,
+        CochainElectrohydrodynamicForcePlan,
+        MACElectrohydrodynamicEvaluation,
+        MACElectrohydrodynamicForcePlan,
+    )
+    from ._electromagnetic_pic import (
+        ElectromagneticPICDiagnostics,
+        ElectromagneticPICFixedStepMethod,
+        ElectromagneticPICPlan,
+        ElectromagneticPICState,
+        ElectromagneticPICStepResult,
+        PICFieldHistory,
+        PICRestartCheckpoint,
+    )
+    from ._electrostatic_conductors import (
+        ConductorCircuitSolveResult,
+        ElectrostaticConductorCoupling,
+        ElectrostaticConductorState,
+    )
+    from ._electrostatic_pic import (
+        ElectrostaticPICDiagnostics,
+        ElectrostaticPICFixedStepMethod,
+        ElectrostaticPICPlan,
+        ElectrostaticPICState,
+        ElectrostaticPICStepResult,
+    )
+    from ._em_shower import (
+        EMShowerPlan,
+        EMShowerResult,
+        EMShowerStatus,
+        ShowerParticleBatch,
+        ShowerSpecies,
+    )
+    from ._etdrk import (
+        ETDRKMethod,
+        LESStabilityGuardedETDRKMethod,
+        PreparedETDRKMethod,
+        PreparedLESStabilityGuardedETDRKMethod,
+        solve_etdrk,
+    )
+    from ._evolution_observation import (
+        BoundedEvolutionObservation,
+        BoundedEvolutionObservationPlan,
+        OBSERVATION_NONFINITE,
+        observe_evolution_bounded,
+    )
+    from ._fbsde import (
+        CoupledFBSDEProblem,
+        CoupledFBSDEResult,
+        solve_coupled_fbsde_explicit,
+    )
+    from ._fem_multirate import (
+        conservative_multirate_flux,
+        ConservativeLocalTimeStepPlan,
+        DGInterfaceFluxResult,
+        DGMultirateTracePlan,
+        DGTraceHistory,
+        TimeSlabFluxLedger,
+    )
+    from ._fermionic_gaussian import (
+        damped_fermionic_mode,
+        FermionicGaussianProblem,
+        FermionicGaussianSolution,
+        open_kitaev_chain,
+        solve_fermionic_gaussian,
+    )
+    from ._fidelity_pinn import (
+        bind_fidelity_pinn_level,
+        condition_fidelity_correction,
+        evaluate_fidelity_pinn,
+        FidelityFieldTransfer,
+        FidelityPINNEvaluation,
+        FidelityPINNResult,
+        FidelityPINNStage,
+        prepare_fidelity_pinn_stage,
+    )
+    from ._field_equilibrium import (
+        FieldEquilibriumFormulation,
+        prepare_functional_stationarity,
+        prepare_virtual_work_equilibrium,
+        PreparedFieldEquilibrium,
+    )
+    from ._finite_cptp import (
+        FiniteCPTPIntegrationResult,
+        FiniteLindbladChannelPlan,
+        integrate_finite_cptp,
+    )
+    from ._finite_element_adaptivity import (
+        FiniteElementHPTopologyResult,
+        FiniteElementTopologyResult,
+        FiniteElementTopologyTransaction,
+        MaterialTopologyTransferResult,
+        read_finite_element_hp_epoch,
+        refinement_parent_cells,
+        write_finite_element_hp_epoch,
+    )
+    from ._finite_element_checkpoint import (
+        FiniteElementCheckpoint,
+        read_finite_element_checkpoint,
+        write_finite_element_checkpoint,
+        write_partitioned_finite_element_checkpoint,
+    )
+    from ._finite_element_result import (
+        FiniteElementResult,
+        FiniteElementRunConfiguration,
+        FiniteElementSolveDiagnostics,
+        read_finite_element_result,
+        write_finite_element_result,
+    )
+    from ._finite_element_schedule import (
+        FiniteElementAcceptedState,
+        FiniteElementAcceptedStepSchedule,
+        FiniteElementAttemptResult,
+        FiniteElementRestartManifest,
+        FiniteElementStepDiagnostics,
+        FiniteElementStepPolicy,
+        read_finite_element_restart,
+        write_finite_element_restart,
+    )
+    from ._finite_particle_transport import (
+        FiniteParticleStepResult,
+        FiniteParticleTransportPlan,
+        FiniteParticleTransportReason,
+        FiniteParticleTransportState,
+    )
+    from ._finite_response import (
+        FiniteExcitedStateResult,
+        FiniteResponseEvidence,
+        FiniteResponsePolicy,
+        FiniteResponseProblem,
+        FiniteResponseResult,
+        FiniteResponseStatus,
+        mps_projector_mpo,
+        solve_finite_excited_state,
+        solve_finite_response,
+    )
+    from ._finite_subspace_tdvp import (
+        FiniteSubspaceTDVPPlan,
+        FiniteSubspaceTDVPResult,
+        FiniteVariationalSubspaceTDVPProblem,
+        prepare_finite_subspace_tdvp,
+        solve_finite_subspace_tdvp,
+    )
+    from ._finite_volume import (
+        DirectionalSplitFiniteVolumePlan,
+        FiniteVolumeStepResult,
+        SplittingKind,
+        UnsplitFiniteVolumeSSPRK3Plan,
+    )
+    from ._finite_volume_case import (
+        FiniteVolumeCaseSpec,
+        FiniteVolumeExecutionSpec,
+        FiniteVolumePrecisionPolicy,
+        PrecisionDType,
+    )
+    from ._finite_volume_case_loader import (
+        load_finite_volume_case,
+        PreparedFiniteVolumeCase,
+    )
+    from ._finite_volume_checkpoint import (
+        FiniteVolumeCheckpoint,
+        FiniteVolumeCheckpointPlan,
+        read_finite_volume_checkpoint,
+        write_finite_volume_checkpoint,
+    )
+    from ._finite_volume_content import (
+        apply_stage_rate_euler_update,
+        FiniteVolumeConservativeContentState,
+    )
+    from ._finite_volume_implicit import (
+        FiniteVolumeBackwardEulerPlan,
+        FiniteVolumeImplicitStage,
+        FiniteVolumeImplicitStepResult,
+        PreparedFiniteVolumeBackwardEulerStep,
+    )
+    from ._finite_volume_output import (
+        FiniteVolumeOutputPlan,
+    )
+    from ._finite_volume_phase_change import (
+        FiniteVolumePhaseChangeStrangMethod,
+        FiniteVolumePhaseChangeStrangResult,
+    )
+    from ._finite_volume_rollout import (
+        AdaptiveFiniteVolumeRolloutPlan,
+        FiniteVolumeGradientReport,
+        FiniteVolumeReplayMode,
+        FiniteVolumeReplayPolicy,
+        FiniteVolumeRetentionPolicy,
+        FiniteVolumeRolloutResult,
+        ScheduledFiniteVolumeRolloutPlan,
+    )
+    from ._finite_volume_runtime import (
+        FiniteVolumeAdvanceResult,
+        FiniteVolumeALEAdvanceEvidence,
+        FiniteVolumeEmbeddedAdvanceEvidence,
+        FiniteVolumeRunStatus,
+        FiniteVolumeRuntimeState,
+        FiniteVolumeScheduledAdvanceResult,
+        FiniteVolumeStageFlux,
+        FiniteVolumeStageFluxProvider,
+        FiniteVolumeStageFluxTrace,
+        FiniteVolumeStepPolicy,
+        PreparedFiniteVolumeRuntime,
+    )
+    from ._finite_volume_topology_events import (
+        FiniteVolumeRemeshArtifact,
+        FiniteVolumeTopologyArtifactEvidence,
+        FiniteVolumeTopologyArtifacts,
+        FiniteVolumeTopologyEvent,
+        FiniteVolumeTopologyEventJournal,
+        FiniteVolumeTopologyEventRequest,
+        FiniteVolumeTopologyEventScheduler,
+        FiniteVolumeTopologyEventTransaction,
+        FiniteVolumeTopologyEventTransactionResult,
+        TopologyEventKind,
+        TopologyEventState,
+        TopologyEventStatus,
+    )
+    from ._fixed_step import (
+        AbstractAcceptedStepTransform,
+        AbstractFixedStepMethod,
+        AbstractSSPRKStageTransform,
+        AcceptedStepTransformResult,
+        AdaptiveReplayPreparationPolicy,
+        CallableFixedStepMethod,
+        CallableSSPRKStageTransform,
+        CompositeAcceptedStepTransform,
+        FixedStepEvidence,
+        FixedStepEvidenceRetention,
+        FixedStepIterationMetrics,
+        FixedStepProblem,
+        FixedStepReplayMode,
+        FixedStepReplayPolicy,
+        FixedStepResult,
+        FixedStepRetentionPolicy,
+        FixedStepRolloutPlan,
+        FixedStepRolloutResult,
+        FixedStepSolution,
+        FixedStepStatus,
+        IdentityAcceptedStepTransform,
+        IdentitySSPRKStageTransform,
+        inactive_fixed_step_retry,
+        LearnedStepCorrection,
+        LearnedStepCorrectionReason,
+        prepare_replay_schedule,
+        PreparedReplaySchedule,
+        RetriedFixedStepResult,
+        retry_fixed_step,
+        RobustRetryPolicy,
+        solve_fixed_step,
+        SSPRK33FixedStepMethod,
+        SSPRK54FixedStepMethod,
+        StageTransformResult,
+    )
+    from ._fock_continuation import (
+        FockContinuationPolicy,
+        FockContinuationResult,
+        FockContinuationStage,
+        FockRefinementCertificate,
+        PreparedFockRefinementPlan,
+        solve_fock_continuation,
+        solve_prepared_fock_refinement,
+    )
+    from ._fokker_planck_approximation import (
+        DensityFokkerPlanckResult,
+        ParticleFokkerPlanckPlan,
+        ParticleFokkerPlanckResult,
+        solve_particle_fokker_planck,
+        solve_sparse_grid_fokker_planck,
+        SparseGridFokkerPlanckPlan,
+        WeakObservable,
+    )
+    from ._fractional_memory import (
+        CaputoFractionalProblem,
+        FractionalVectorField,
+        solve_caputo_fractional,
+    )
+    from ._functional_checkpoint import (
+        FunctionalTrainingCheckpoint,
+        load_functional_training_checkpoint,
+        save_functional_training_checkpoint,
+    )
+    from ._functional_correction import (
+        freeze_domain_function,
+        FunctionalCorrectionProblem,
+        prepare_functional_correction,
+    )
+    from ._functional_differential import (
+        FunctionalCollocationPlan,
+        FunctionalDifferentialBoundaryProblem,
+        FunctionalDifferentialContext,
+        FunctionalDifferentialSolution,
+        solve_functional_differential,
+    )
+    from ._functional_ntk import (
+        FunctionalNTKView,
+        prepare_functional_ntk,
+        PreparedFunctionalNTK,
+    )
+    from ._functional_precision import (
+        FunctionalMatmulPrecision,
+        FunctionalPrecisionPolicy,
+    )
+    from ._functional_sharding import (
+        FunctionalShardingPolicy,
+    )
+    from ._functional_solver import (
+        FunctionalSolver,
+    )
+    from ._functional_training import (
+        CausalResidualPolicy,
+        FunctionalCheckpointPolicy,
+        FunctionalDiagnosticsPolicy,
+        FunctionalSelectionPolicy,
+        FunctionalTermBalancePolicy,
+        FunctionalTrainingPlan,
+        FunctionalTrainingState,
+        PseudoTransientAdaptation,
+        PseudoTransientPolicy,
+        ResidualRelaxationMap,
+    )
+    from ._functional_windows import (
+        FunctionalTimeWindowPlan,
+        FunctionalTimeWindowResult,
+        FunctionalWindowAdapter,
+        train_functional_time_windows,
+    )
+    from ._gaussian_lindblad import (
+        damped_thermal_oscillator,
+        GaussianLindbladProblem,
+        GaussianLindbladSolution,
+        solve_gaussian_lindblad,
+    )
+    from ._generalized_alpha import (
+        GeneralizedAlphaMethod,
+        GeneralizedAlphaSolution,
+        solve_generalized_alpha,
+    )
+    from ._geometric import (
+        AbstractGeometricSolver,
+        commutator_free_midpoint_tableau,
+        CommutatorFreeSolver,
+        CommutatorFreeTableau,
+        GeometricEuler,
+        GeometricLocalInterpolation,
+        RKMK,
+        SeparableHamiltonianVectorField,
+        solver_state_geometry,
+        SRKMK,
+        StormerVerlet,
+    )
+    from ._gr_m1_finite_volume import (
+        FixedGridGRM1SSPRK3Plan,
+        GRM1BoundaryCondition,
+        GRM1BoundaryKind,
+        GRM1BoundaryPair,
+        GRM1ConservationLedger,
+        GRM1FiniteVolumeRunStatus,
+        GRM1FiniteVolumeState,
+        GRM1ReconstructionKind,
+        GRM1SpatialRate,
+        GRM1StepResult,
+    )
+    from ._gr_multigroup_radiation import (
+        FixedGridGRMultigroupM1SSPRK3Plan,
+        GRMultigroupM1State,
+        GRMultigroupM1StepResult,
+    )
+    from ._gr_neutrino import (
+        FixedGridGRNeutrinoM1Plan,
+        GRNeutrinoLeptonLedger,
+        GRNeutrinoM1State,
+        GRNeutrinoM1StepResult,
+    )
+    from ._gr_polarized_radiation_feedback import (
+        GRPolarizedRadiationFeedbackLedger,
+        GRPolarizedRadiationFeedbackPlan,
+        GRPolarizedRadiationFeedbackResult,
+        GRPolarizedRadiationFeedbackState,
+        polarized_propagation_matrix,
+    )
+    from ._grmhd_boundary import (
+        GRMHDBoundaryCondition,
+        GRMHDBoundaryKind,
+        GRMHDBoundaryPair,
+        GRMHDBoundarySide,
+        GRMHDBoundaryTrace,
+    )
+    from ._grmhd_ct import (
+        GRMHDConstrainedTransportPlan,
+        GRMHDCTDefectLedger,
+        GRMHDCTRate,
+        GRMHDCTState,
+        GRMHDMagneticStateLayout,
+        GRMHDVectorPotentialGauge,
+        VectorPotentialGaugeKind,
+    )
+    from ._grmhd_force_free_transition import (
+        GRMHDForceFreeHybridState,
+        GRMHDForceFreeTransitionLedger,
+        GRMHDForceFreeTransitionPlan,
+        GRMHDForceFreeTransitionResult,
+    )
+    from ._grmhd_runtime import (
+        GRMHDDefectLedger,
+        GRMHDRunStatus,
+        GRMHDSpatialRate,
+        GRMHDSSPRK3Plan,
+        GRMHDStageEvidence,
+        GRMHDStageProposal,
+        GRMHDState,
+        GRMHDStepResult,
+    )
+    from ._grrmhd_runtime import (
+        FixedGridGRRMHDIMEXPlan,
+        GRRMHDDefectLedger,
+        GRRMHDRunStatus,
+        GRRMHDStageEvidence,
+        GRRMHDStageProposal,
+        GRRMHDState,
+        GRRMHDStepResult,
+    )
+    from ._grrmhd_source import (
+        GRRadiationExchangeLedger,
+        GRRMHDImplicitSourcePlan,
+        GRRMHDSourceResult,
+        GRRMHDSourceStatus,
+    )
+    from ._guided_elastic_modes import (
+        GuidedElasticModePlan,
+        GuidedElasticModeResult,
+        GuidedElasticModeStatus,
+        prepare_guided_elastic_modes,
+        PreparedGuidedElasticModes,
+        solve_guided_elastic_modes,
+    )
+    from ._harmonic_constraints import (
+        HarmonicConstraint,
+        HarmonicConstraintPolicy,
+    )
+    from ._helmholtz import (
+        ExteriorHelmholtzDirichletResult2D,
+        solve_exterior_helmholtz_dirichlet_2d,
+    )
+    from ._helmholtz3d import (
+        ExteriorHelmholtzDirichletResult3D,
+        solve_exterior_helmholtz_dirichlet_3d,
+    )
+    from ._heom import (
+        drude_lorentz_qubit_heom,
+        HEOMHierarchy,
+        HEOMProblem,
+        HEOMSolution,
+        solve_heom,
+        thermal_drude_lorentz_qubit_heom,
+    )
+    from ._heom_implicit import (
+        HEOMAdaptiveBDFEvidence,
+        HEOMAdaptiveBDFResult,
+        HEOMBDFEvidence,
+        HEOMBDFResult,
+        HEOMImplicitEvidence,
+        HEOMImplicitResult,
+        HEOMTierBlockPreconditioner,
+        solve_heom_adaptive_bdf,
+        solve_heom_backward_euler,
+        solve_heom_bdf,
+    )
+    from ._heom_production import (
+        HEOMContinuationResult,
+        HEOMContinuationStage,
+        HEOMGridContinuationResult,
+        HEOMRefinementCertificate,
+        PreparedHEOMRefinementPlan,
+        solve_heom_continuation,
+        solve_heom_continuation_grid,
+        solve_prepared_heom_refinement,
+    )
+    from ._heom_scaled import (
+        prepare_scaled_heom_topology,
+        ScaledHEOMTopology,
+    )
+    from ._hybrid_event import (
+        empty_hybrid_event_tape,
+        hybrid_event_jvp,
+        hybrid_event_vjp,
+        HybridEventActionResult,
+        HybridEventPlan,
+        HybridEventRootResult,
+        HybridEventSensitivityResult,
+        HybridEventTape,
+        HybridGuardPlan,
+        HybridReplayPolicy,
+        HybridReplayResult,
+        localize_hybrid_event,
+        localize_hybrid_event_root,
+        localize_numerical_event,
+        NumericalEventResult,
+        record_hybrid_event,
+        replay_hybrid_events,
+    )
+    from ._hybrid_schedule import (
+        execute_hybrid_schedule,
+        HybridSchedulePlan,
+        HybridScheduleResult,
+        prepare_hybrid_schedule,
+        PreparedHybridSchedule,
+        replay_hybrid_schedule,
+        ScheduledHybridGuard,
+    )
+    from ._hydrostatic_free_surface import (
+        HydrostaticFreeSurfaceResult,
+        LinearImplicitFreeSurfacePlan,
+    )
+    from ._ias15 import (
+        IAS15Plan,
+        IAS15Result,
+    )
+    from ._imc_ddmc import (
+        HybridIMCDDMCPlan,
+        IMCDDMCEvidence,
+        IMCDDMCState,
+        IMCDDMCStepResult,
+    )
+    from ._implicit_runge_kutta import (
+        GaussLegendreInterpolation,
+        GaussLegendreIRK,
+        solve_implicit_runge_kutta,
+    )
+    from ._jump import (
+        finite_state_generator,
+        FiniteStateGenerator,
+        GeneratorBoundaryPolicy,
+        JumpAlgorithm,
+        JumpDifferentialProblem,
+        JumpDifferentialSolution,
+        JumpSolution,
+        solve_direct_ssa,
+        solve_jump_differential,
+        solve_next_reaction,
+    )
+    from ._jump_delay import (
+        DelayJumpMap,
+        JumpDelayBackendResult,
+        JumpDelayProblem,
+        solve_jump_delay,
+    )
+    from ._jump_hitting import (
+        event_first_hit,
+        finite_generator_hitting,
+        FiniteHittingResult,
+        JumpFirstHit,
+    )
+    from ._kdk import (
+        KDKCoefficients,
+        KDKCompletion,
+        KDKProposal,
+        KDKTransactionPlan,
+    )
+    from ._keldysh_scba import (
+        KeldyshSCBAPolicy,
+        KeldyshSCBAProblem,
+        KeldyshSCBAResult,
+        solve_keldysh_scba,
+    )
+    from ._laplace_capacitance import (
+        advance_laplace_capacitance_3d,
+        differentiate_laplace_capacitance_coordinates_3d,
+        LaplaceCapacitanceCoordinateJVP3D,
+        LaplaceCapacitanceEpochTransition3D,
+        LaplaceCapacitancePlan3D,
+        LaplaceCapacitanceResult3D,
+        LaplaceCapacitanceSensitivityEvidence3D,
+        prepare_laplace_stable_dual_calderon_3d,
+        PreparedLaplaceCapacitance3D,
+        PreparedLaplaceStableDualCalderon3D,
+    )
+    from ._lattice_boltzmann import (
+        LatticeBoltzmannFixedStepMethod,
+    )
+    from ._levy import (
+        LevySDEProblem,
+        LevySDEScheme,
+        LevySDESolution,
+        LevySDESolverDiagnostics,
+        LevySDEVectorField,
+        LevySmallJumpApproximation,
+        solve_levy_sde,
+    )
+    from ._lindblad import (
+        amplitude_damping_problem,
+        dephasing_problem,
+        LindbladProblem,
+        LindbladSolution,
+        solve_lindblad,
+    )
+    from ._linear_trial_space import (
+        LinearTrialSpaceResult,
+        solve_linear_trial_space,
+    )
+    from ._local_hamiltonian import (
+        FixedGridLocalHamiltonian,
+        local_hamiltonian_linear_operator,
+        LocalHamiltonian,
+        LocalHamiltonianDifferentiationMode,
+        LocalHamiltonianEvolutionCostEstimate,
+        LocalHamiltonianEvolutionDiagnostics,
+        LocalHamiltonianEvolutionPlan,
+        LocalHamiltonianEvolutionPolicy,
+        LocalHamiltonianEvolutionResult,
+        LocalHamiltonianEvolutionStatus,
+        LocalHamiltonianTerm,
+        materialize_local_hamiltonian,
+        plan_local_hamiltonian_evolution,
+        prepare_local_hamiltonian_evolution,
+        PreparedLocalHamiltonianEvolution,
+        ProductFormulaOrder,
+        refresh_local_hamiltonian_evolution,
+        solve_local_hamiltonian_evolution,
+    )
+    from ._local_hamiltonian_tensor import (
+        fixed_grid_local_hamiltonian_mpo_coefficients,
+        LocalHamiltonianMPOEvidence,
+        LocalHamiltonianMPOPolicy,
+        LocalHamiltonianMPOResult,
+        lower_local_hamiltonian_to_mpo,
+    )
+    from ._lpdo_quantum_program import (
+        execute_lpdo_quantum_program,
+        LPDOQuantumOperationEvidence,
+        LPDOQuantumProgramCostEstimate,
+        LPDOQuantumProgramDiagnostics,
+        LPDOQuantumProgramPlan,
+        LPDOQuantumProgramPolicy,
+        LPDOQuantumProgramResult,
+        LPDOQuantumProgramRoute,
+        LPDOQuantumProgramStatus,
+        plan_lpdo_quantum_program,
+        prepare_lpdo_quantum_program,
+        PreparedLPDOQuantumProgram,
+        refresh_lpdo_quantum_program,
+    )
+    from ._mac_adaptive import (
+        MACAcceptedGridTrace,
+        MACAdaptiveAdvanceResult,
+        MACAdaptiveAttemptJournal,
+        MACAdaptivePolicy,
+        MACAdaptiveRolloutPlan,
+        MACAdaptiveRolloutResult,
+        MACAdaptiveRuntimeState,
+        MACAdaptiveStatus,
+        MACCompositeStepController,
+        MACCompositeStepRestriction,
+        MACFrozenGridReplayPlan,
+        MACFrozenGridReplayResult,
+        MACNamedRateLimit,
+    )
+    from ._mac_ale import (
+        MACALEGeometryPlan,
+        MACALEResult,
+        MACALEStageGeometry,
+        MACRemeshEpochPlan,
+        MACRemeshEpochResult,
+    )
+    from ._mac_compartment_projection import (
+        MACCompartmentBlockOperator,
+        MACCompartmentBlockVector,
+        MACCompartmentConstraint,
+        MACCompartmentGauge,
+        MACCompartmentProjectionPlan,
+        MACCompartmentProjectionResult,
+        MACCompartmentProjectionStatus,
+    )
+    from ._mac_composite_projection import (
+        CompositeGaugeProjector,
+        CompositeMACProjectionPlan,
+        CompositeMACProjectionResult,
+    )
+    from ._mac_deformable_contact import (
+        DeformableContactAssembly,
+        DeformableContactKinematics,
+        DeformableContactResidualEvaluation,
+        DeformableContactResidualPlan,
+    )
+    from ._mac_dfib import (
+        MACDFIBProjectionPlan,
+        MACDFIBProjectionResult,
+        MACDivergenceFreeMarkerTransfer,
+        MACDivergenceFreeTransferDiagnostics,
+    )
+    from ._mac_distributed_projection import (
+        MACCollectiveAdapter,
+        MACDistributedProjectionPlan,
+        MACDistributedProjectionResult,
+    )
+    from ._mac_electrostatic import (
+        MACElectrostaticBoundaryKind,
+        MACElectrostaticBoundaryPlan,
+        MACElectrostaticPlan,
+        MACElectrostaticResult,
+    )
+    from ._mac_enthalpy_porosity import (
+        MACEnthalpyPorosityIMEXEulerMethod,
+        MACEnthalpyPorosityIMEXResult,
+        MACEnthalpyPorositySBDF2Method,
+        MACEnthalpyPorositySBDF2Result,
+        MACEnthalpyPorositySBDF2State,
+        MACEnthalpyPorosityStepStatus,
+    )
+    from ._mac_finite_volume_checkpoint import (
+        MACFiniteVolumeCheckpoint,
+        MACFiniteVolumeCheckpointPlan,
+        read_mac_finite_volume_checkpoint,
+        write_mac_finite_volume_checkpoint,
+    )
+    from ._mac_free_surface import (
+        MACFreeSurfaceProjectionPlan,
+        MACFreeSurfaceProjectionResult,
+    )
+    from ._mac_ghost_fluid import (
+        MACGhostFluidProjectionPlan,
+        MACGhostFluidProjectionResult,
+    )
+    from ._mac_immersed_boundary import (
+        MACImmersedBoundaryProjectionPlan,
+        MACImmersedBoundaryProjectionResult,
+        MACImmersedBoundaryProjectionStatus,
+        MACImmersedBoundarySolveMethod,
+    )
+    from ._mac_immersed_contact import (
+        MACRigidImmersedContactMethod,
+        MACRigidImmersedContactResult,
+        MACRigidImmersedJointMethod,
+        MACRigidImmersedJointResult,
+        RigidContactGeometryProvider,
+        RigidImmersedAcceptedMethod,
+    )
+    from ._mac_immersed_deformable import (
+        MACDeformableImmersedBackwardEulerMethod,
+        MACDeformableImmersedEnergyLedger,
+        MACDeformableImmersedState,
+        MACDeformableImmersedStatus,
+        MACDeformableImmersedStepResult,
+        StructuralContactResidual,
+        StructuralEnergy,
+    )
+    from ._mac_immersed_newmark import (
+        MACDeformableImmersedNewmarkMethod,
+        MACDeformableImmersedNewmarkResult,
+        MACDeformableImmersedNewmarkState,
+    )
+    from ._mac_immersed_preconditioner import (
+        MACImmersedPressureBlockPreconditionerEvidence,
+        MACImmersedPressureBlockPreconditionerPlan,
+    )
+    from ._mac_immersed_rigid import (
+        MACRigidImmersedBackwardEulerMethod,
+        MACRigidImmersedEnergyLedger,
+        MACRigidImmersedEulerMethod,
+        MACRigidImmersedMidpointMethod,
+        MACRigidImmersedProjectionPlan,
+        MACRigidImmersedProjectionResult,
+        MACRigidImmersedStatus,
+        MACRigidImmersedStepResult,
+    )
+    from ._mac_immersed_step import (
+        MACImmersedBoundaryIMEXEulerMethod,
+        MACImmersedBoundaryIMEXEulerResult,
+        MACImmersedBoundarySBDF2Method,
+        MACImmersedBoundarySBDF2Result,
+        MACImmersedBoundarySBDF2State,
+        MACImmersedBoundaryStepStatus,
+        MarkerMotionProvider,
+    )
+    from ._mac_multiphase_projection import (
+        MACMultiphaseProjectionPlan,
+        MACMultiphaseProjectionResult,
+    )
+    from ._mac_penalty_ib_cfd_dem import (
+        advance_mac_penalty_ib_cfd_dem_window,
+        MACPenaltyIBCouplingSchedulePlan,
+        MACPenaltyIBCouplingState,
+        MACPenaltyIBMacroStepResult,
+        MACPenaltyIBWindowStatus,
+    )
+    from ._mac_poisson_nernst_planck import (
+        MACPoissonNernstPlanckEvaluation,
+        MACPoissonNernstPlanckPlan,
+        MACPoissonNernstPlanckStepResult,
+    )
+    from ._mac_pressure_operator import (
+        execute_weighted_pressure_iteration,
+        MACPressureCoefficientKind,
+        MACPressureCoefficientReport,
+        MACPressureExecutionEvidence,
+        MACPressureOperatorSpec,
+        MACPressurePreconditionerKind,
+        MACPressurePreparationEvidence,
+        MACPressureRobinSide,
+        MACPressureRouteKind,
+        MACPressureRouteRequest,
+        MACPressureSolveResult,
+        MACWeightedPressureAction,
+        MACWeightedPressureIterationResult,
+        PreparedMACPressureOperator,
+    )
+    from ._mac_sensitivity import (
+        MACDerivativeMode,
+        MACFixedGridSensitivityPlan,
+        MACNeutralMode,
+        MACReplayCertification,
+        MACSegmentedShadowingPlan,
+        MACShadowingSensitivityResult,
+        MACShadowingStatus,
+        MACTerminalJVPResult,
+        MACTerminalVJPResult,
+    )
+    from ._mac_sharp_interface import (
+        MACImmersedInterfaceProjectionPlan,
+        MACInterfaceEnforcement,
+        MACInterfaceJumpSource,
+        MACInterfaceMethodSelector,
+        MACMovingSharpInterfaceEpochPlan,
+        MACMovingSharpInterfaceEpochResult,
+        MACSharpGeometryProvider,
+        MACSharpInterfaceForce,
+        MACSharpInterfaceProjectionPlan,
+        MACSharpInterfaceProjectionResult,
+        MACSharpInterfaceStatus,
+        MACSharpOperatorEvidence,
+    )
+    from ._mac_stage_inverse_general import (
+        MACOperatorStageInverseMomentum,
+        MACOperatorStageSolveResult,
+        MACVariableDensityStageInverseMomentum,
+        MACVariableViscosityStagePlan,
+    )
+    from ._mac_stage_inverse_momentum import (
+        MACDiagonalStageInverseMomentum,
+        MACHelmholtzStageInverseMomentum,
+        MACStageInverseMomentum,
+        MACStageInverseMomentumDiagnostics,
+    )
+    from ._mac_stochastic_immersed import (
+        FIBOverdampedPlan,
+        FIBOverdampedStepResult,
+        FluctuationDissipationReport,
+        MACDiscreteStochasticStressPlan,
+        MACFluctuatingHydrodynamicsPlan,
+        MACFluctuatingHydrodynamicsResult,
+        MACInertialStochasticStepPlan,
+        MACInertialStochasticStepResult,
+        MobilityProvider,
+        StochasticDifferentiationPolicy,
+        StochasticReplayKey,
+    )
+    from ._mac_variable_density import (
+        MACVariableDensityProjectionPlan,
+        MACVariableDensityProjectionResult,
+        MACVariableDensityRateProjectionResult,
+    )
+    from ._mac_variational_viscosity import (
+        MACVariationalViscosityPlan,
+        MACVariationalViscosityResult,
+    )
+    from ._mac_viscous import (
+        MAC_VISCOUS_BOUNDARY_FAILURE,
+        MAC_VISCOUS_CLOSURE_FAILURE,
+        MAC_VISCOUS_HELMHOLTZ_FAILURE,
+        MAC_VISCOUS_HISTORY_INVALID,
+        MAC_VISCOUS_PROJECTION_FAILURE,
+        MAC_VISCOUS_SUCCESS,
+        MACHelmholtzResourceEstimate,
+        MACHelmholtzResult,
+        MACHelmholtzSolveMethod,
+        MACHelmholtzSolvePlan,
+        MACIMEXEulerMethod,
+        MACIMEXEulerResult,
+        MACSBDF2GStabilityLedger,
+        MACSBDF2Method,
+        MACSBDF2State,
+        MACSBDF2StepResult,
+    )
+    from ._marker_flow_checkpoint import (
+        MarkerFlowCheckpointPayload,
+        MarkerFlowCheckpointPlan,
+        MarkerFlowReplayDerivativeReport,
+        MarkerFlowReplayPlan,
+        MarkerFlowReplayRecord,
+        MarkerFlowReplayResult,
+        read_marker_flow_checkpoint,
+        write_marker_flow_checkpoint,
+    )
+    from ._marker_flow_output import (
+        MarkerFlowOutputPlan,
+    )
+    from ._marker_flow_qualification import (
+        MarkerFlowQualificationEvidence,
+        MarkerFlowQualificationPlan,
+        MarkerFlowQualificationProfile,
+        MarkerFlowQualificationResult,
+        observed_convergence_order,
+    )
+    from ._marker_flow_runtime import (
+        HydrodynamicLoadPlan,
+        HydrodynamicLoadRecord,
+        marker_flow_artifact_reference,
+        MarkerFlowAdaptiveStepPlan,
+        MarkerFlowArtifactKind,
+        MarkerFlowArtifactReference,
+        MarkerFlowCompiledExportPlan,
+        MarkerFlowCompiledExportReport,
+        MarkerFlowStepLimiter,
+        MarkerFlowStepRestriction,
+        MarkerFlowTrajectoryAdapter,
+        MarkerFlowTrajectoryResult,
+    )
+    from ._markov_cubature import (
+        MarkovCubatureDiagnostics,
+        MarkovCubatureMethod,
+        MarkovCubaturePlan,
+        MarkovCubatureSolution,
+        MarkovCubatureStatus,
+        PolynomialRecombination,
+        solve_markov_cubature,
+    )
+    from ._markov_cubature_error import (
+        markov_cubature_error_evidence,
+        MarkovCubatureErrorEvidence,
+        MarkovCubatureRefinementPolicy,
+        refine_markov_cubature,
+        WeakObservableEnvelope,
+    )
+    from ._material_point_adaptive import (
+        AdaptiveMPMRolloutPlan,
+        AdaptiveMPMRolloutResult,
+        MPMAdaptiveAttemptJournal,
+        MPMAdaptivePolicy,
+        MPMAdaptiveStatus,
+    )
+    from ._material_point_checkpoint import (
+        MPMCheckpointManifest,
+        MPMCheckpointPlan,
+    )
+    from ._material_point_commercial_implicit import (
+        linearize_kway_contact,
+        MPMBlockJacobiPreconditioner,
+        MPMCompactImplicitOperator,
+        MPMCompactOperatorResult,
+        MPMImplicitContactLinearization,
+        MPMImplicitTopologyPlan,
+        MPMImplicitUnknownLayout,
+        MPMMovingDomainDerivative,
+        MPMRouteSupersetPlan,
+        MPMRouteSupersetState,
+        MPMSparseContactOperator,
+        MPMSparsePhaseFieldOperator,
+        MPMTwoLevelMultigrid,
+    )
+    from ._material_point_fracture import (
+        MPMPhaseFieldEvidence,
+        MPMPhaseFieldFracturePlan,
+        MPMPhaseFieldRuntimeState,
+        MPMPhaseFieldStepResult,
+        PreparedMPMPhaseFieldDynamics,
+    )
+    from ._material_point_implicit import (
+        ImplicitMPMDiagnostics,
+        ImplicitMPMMethodPlan,
+        ImplicitMPMStepResult,
+        PreparedImplicitMPMDynamics,
+    )
+    from ._material_point_output import (
+        MPMBoundedOutputBuffer,
+        MPMOutputManifest,
+        MPMOutputPlan,
+    )
+    from ._material_point_rollout import (
+        MPMGradientKind,
+        MPMGradientReport,
+        MPMReplayEvidence,
+        MPMReplayMode,
+        MPMReplayPolicy,
+        MPMRetainedTrajectory,
+        MPMRetentionMode,
+        MPMRolloutResult,
+        ScheduledMPMRolloutPlan,
+    )
+    from ._material_point_supervisor import (
+        MPMOperationalResult,
+        MPMRunSupervisor,
+    )
+    from ._matrix_product_tdvp import (
+        FiniteTDVPAlgorithm,
+        FiniteTDVPCheckpoint,
+        FiniteTDVPCostEstimate,
+        FiniteTDVPDiagnostics,
+        FiniteTDVPMode,
+        FiniteTDVPPlan,
+        FiniteTDVPPolicy,
+        FiniteTDVPProblem,
+        FiniteTDVPResult,
+        FiniteTDVPStatus,
+        plan_finite_tdvp,
+        prepare_finite_tdvp,
+        PreparedFiniteTDVP,
+        refresh_finite_tdvp,
+        solve_finite_tdvp,
+    )
+    from ._maxwell_reduced import (
+        CompatibleMaxwell1DPlan,
+        CompatibleMaxwell1DState,
+        CompatibleMaxwell2DPlan,
+        CompatibleMaxwell2DState,
+        PreparedReducedMaxwellCPML,
+        PreparedReducedMaxwellCPMLTerm,
+        ReducedMaxwellDiagnostics,
+    )
+    from ._memory import (
+        ConvolutionKernel,
+        ConvolutionVolterraProblem,
+        MemoryEquationSolution,
+        solve_convolution_volterra,
+        solve_stochastic_volterra,
+        StochasticVolterraProblem,
+        VolterraFreeTerm,
+        VolterraKernel,
+        VolterraVectorField,
+    )
+    from ._memory_kernel import (
+        certify_memory_kernel_map,
+        DynamicalMapPhysicality,
+        exponential_memory_qubit_problem,
+        MemoryKernelMapCertification,
+        MemoryKernelMasterEquation,
+        OpenSystemHistorySolution,
+        QuantumMemoryKernel,
+        solve_memory_kernel,
+        solve_time_local_open_system,
+        TimeLocalOpenSystemProblem,
+    )
+    from ._meshfree_incompressible import (
+        IncompressibleDensityModel,
+        MeshfreeCycleEvidence,
+        MeshfreeFlowEvidence,
+        MeshfreeFlowStatus,
+        MeshfreeIncompressibleFlowPlan,
+        MeshfreeIncompressibleState,
+        MeshfreeIncompressibleStepResult,
+        MeshfreeVelocityReconstruction,
+        PreparedMeshfreeIncompressibleFlow,
+    )
+    from ._meshfree_lagrangian import (
+        MeshfreeLagrangianEvidence,
+        MeshfreeLagrangianFlowPlan,
+        MeshfreeLagrangianFlowState,
+        MeshfreeLagrangianStatus,
+        MeshfreeLagrangianStepResult,
+        MeshfreeMeasureConversion,
+        MeshfreeMeasureTransferPlan,
+        MeshfreeMeasureTransferResult,
+        MeshfreeSPHComparison,
+        MeshfreeSPHReconstruction,
+        PreparedMeshfreeLagrangianFlow,
+        PreparedMeshfreeMeasureTransfer,
+    )
+    from ._meshfree_surface_flow import (
+        MeshfreeSurfaceStokesPlan,
+        MeshfreeSurfaceStokesResult,
+    )
+    from ._moving_cut_cell import (
+        LocalizedMovingCutCellResult,
+        MovingCutCellState,
+        MovingCutCellStepEvidence,
+        MovingCutCellStepResult,
+        MovingMultivaluedCutCellPlan,
+        MovingTopologyLocalizationEvidence,
+        MovingTopologyLocalizationPlan,
+        UncoveredStateProvider,
+    )
+    from ._moving_window_pic import (
+        PICMovingWindowPlan,
+        PICMovingWindowResult,
+        PICMovingWindowState,
+        PICWindowInjection,
+    )
+    from ._mps_quantum_jump import (
+        LocalMPSJump,
+        MPSQuantumJumpProblem,
+        MPSQuantumTrajectoryResult,
+        solve_mps_quantum_jump,
+    )
+    from ._mps_quantum_program import (
+        execute_mps_quantum_program,
+        MPSQuantumOperationEvidence,
+        MPSQuantumProgramCostEstimate,
+        MPSQuantumProgramDiagnostics,
+        MPSQuantumProgramPlan,
+        MPSQuantumProgramPolicy,
+        MPSQuantumProgramResult,
+        MPSQuantumProgramRoute,
+        MPSQuantumProgramStatus,
+        plan_mps_quantum_program,
+        prepare_mps_quantum_program,
+        PreparedMPSQuantumProgram,
+        refresh_mps_quantum_program,
+    )
+    from ._multiphysics_inference import (
+        FieldObservationPlan,
+        ParticleMarginalLikelihoodPlan,
+        SimulationSensitivityReport,
+        WhitenedFieldInferencePlan,
+    )
+    from ._multirate import (
+        multirate_amr_schedule_plan,
+        MultiratePartitionedRK,
+        PartitionedDifferentialProblem,
+        solve_multirate,
+    )
+    from ._multiterminal_transport import (
+        MultiTerminalCoherentProblem,
+        MultiTerminalCoherentResult,
+        PeriodicLeadContactPlan,
+        solve_dephasing_probes,
+        solve_multiterminal_coherent,
+        solve_voltage_probes,
+        TransportProbePlan,
+        TransportProbeResult,
+    )
+    from ._nematic import (
+        MACNematicCouplingEvaluation,
+        MACNematicCouplingPlan,
+        MACNematicState,
+        MACNematicStepResult,
+        NematicEvaluation,
+        NematicStepResult,
+        PreparedNematicDynamics,
+        PreparedNematicSemiImplicitStepPlan,
+    )
+    from ._neural_cde import (
+        neural_cde_loss,
+        NeuralCDETrainingData,
+        NeuralCDETrainingState,
+        NeuralCDEVectorField,
+        train_neural_cde,
+    )
+    from ._neural_galerkin import (
+        FieldProjectionMetric,
+        NeuralFieldEvolutionResult,
+        NeuralGalerkinAdjointPolicy,
+        NeuralGalerkinAudit,
+        NeuralGalerkinEpoch,
+        NeuralGalerkinEpochPlan,
+        NeuralGalerkinEpochResult,
+        NeuralGalerkinProblem,
+        NeuralGalerkinReplayJournal,
+        NeuralTangentSolvePolicy,
+        RateFunction,
+        replay_neural_galerkin_epochs,
+        solve_neural_galerkin,
+        solve_neural_galerkin_epochs,
+        TangentFormulation,
+    )
+    from ._neural_quantum_jump import (
+        NeuralJumpProjectionProblem,
+        NeuralJumpProjectionResult,
+        NeuralNoJumpTDVPProblem,
+        NeuralNoJumpTDVPResult,
+        solve_neural_jump_projection,
+        solve_neural_no_jump_tdvp,
+    )
+    from ._neural_sampled_trajectory import (
+        audit_connected_vmc_jump_projection,
+        ConnectedVMCJumpProjectionAudit,
+        ConnectedVMCNeuralTrajectoryPolicy,
+        ConnectedVMCNeuralTrajectoryProblem,
+        ConnectedVMCNeuralTrajectoryResult,
+        NeuralRateEvidence,
+        solve_connected_vmc_neural_trajectory,
+    )
+    from ._nonmarkov_campaign import (
+        lorentzian_qubit_comparison,
+        NonMarkovianComparisonResult,
+        spin_boson_dephasing_comparison,
+        SpinBosonComparisonResult,
+    )
+    from ._nonmatching_fem_bem3d import (
+        CoupledFEMBEMResult3D,
+        prepare_maxwell_fem_bem_3d,
+        prepare_scalar_nonmatching_fem_bem_3d,
+        PreparedNonmatchingFEMBEM3D,
+    )
+    from ._open_certificates import (
+        certify_finite_lindblad_steady_state,
+        certify_finite_refinement,
+        certify_process_identifiability,
+        FiniteRefinementCertificate,
+        FiniteSteadyStateCertificate,
+        ProcessIdentifiabilityCertificate,
+    )
+    from ._particle_conversion import (
+        advance_particle_conversion,
+        ParticleConversionBackend,
+        ParticleConversionReplayRecord,
+        ParticleConversionSolverPlan,
+        ParticleConversionStepResult,
+    )
+    from ._particle_conversion_sensitivity import (
+        particle_conversion_surrogate_bias,
+        particle_conversion_validity_certificate,
+        ParticleConversionSensitivityPolicy,
+        ParticleConversionSensitivityResult,
+        ParticleConversionSurrogateBiasCertificate,
+        ParticleConversionValidityCertificate,
+        sharp_particle_conversion_jvp,
+        sharp_particle_conversion_vjp,
+    )
+    from ._particle_epoch import (
+        advance_particle_epoch_segments,
+        ParticleEpochSegmentRecord,
+        ParticleEpochTrajectory,
+        pullback_particle_epoch_transition,
+        segmented_particle_epoch_vjp,
+    )
+    from ._particle_gravity import (
+        BarnesHutGravityPlan,
+        CartesianExpansionSpace,
+        CartesianFMMOperators,
+        CartesianFMMResourceEvidence,
+        DirectParticleGravityPlan,
+        DistributedParticleLayout,
+        LaplaceMonopoleFieldResult,
+        MeshComplementCalibrationEvidence,
+        MeshComplementCalibrationPlan,
+        NewtonianPairKernel,
+        ParticleGravityEvidence,
+        ParticleOctreePlan3D,
+        PeriodicBarnesHutPlan,
+        PeriodicEwaldEvidence,
+        PeriodicEwaldForcePlan,
+        PeriodicEwaldResult,
+        PreparedParticleOctree3D,
+        PreparedUniformFMMStructure,
+        TreeGravityEvidence,
+        TreeGravityResult,
+        TreePMPlan,
+        TreePMResult,
+        TreePMShortRangeKernel,
+        TreePMSplitPolicy,
+        UniformFMMPlan,
+    )
+    from ._particle_mesh_gravity import (
+        ParticleMeshGravityDiagnostics,
+        ParticleMeshGravityForceResult,
+        ParticleMeshGravityPlan,
+        ParticleMeshGravityState,
+        ParticleMeshGravityStepResult,
+    )
+    from ._particle_methods import (
+        DEMFixedStepMethod,
+        DFSPHFixedStepMethod,
+        FLIPFixedStepMethod,
+        IISPHFixedStepMethod,
+        TransportVelocityFixedStepMethod,
+    )
+    from ._particle_transforms import (
+        ShepardDensityRenormalizationTransform,
+    )
+    from ._particles import (
+        InteractingParticleProblem,
+        InteractingParticleSolution,
+        ParticleVectorField,
+        solve_interacting_particles,
+    )
+    from ._passive_tracer import (
+        MACPassiveTracerContinuationState,
+        MACPassiveTracerFixedStepMethod,
+    )
+    from ._phase_equilibrium import (
+        FixedTwoPhaseTPFlashPlan,
+        FixedTwoPhaseTPFlashResult,
+        PhaseEquilibriumStatus,
+        TPDSearchPlan,
+        TPDStabilityResult,
+    )
+    from ._photon_transport import (
+        PhotonTransportPlan,
+        PhotonTransportResult,
+        PhotonTransportStatus,
+    )
+    from ._pic_cherenkov_guard import (
+        PICCherenkovGuard,
+    )
+    from ._pic_current_source import (
+        PICMaxwellCurrentSourcePlan,
+        PreparedPICMaxwellCurrentSource,
+    )
+    from ._pic_field_handoff import (
+        hand_off_pic_state,
+        PICFieldHandoffEvidence,
+        PICFieldHandoffResult,
+        PICFieldHandoffRoute,
+    )
+    from ._pic_field_solver import (
+        AbstractPICFieldFilter,
+        AbstractPreparedPICFieldSolver,
+        PICCapabilityRecord,
+        PICEnergyAccounting,
+        PICFieldAdvance,
+        PICFieldDeposit,
+        PICFieldSample,
+        PICFieldSolverCapabilities,
+        PICFieldSolverCapability,
+        PICFilterContinuityReport,
+        PICGalileanGrid,
+        PICGatherDerivativeOrder,
+        PICGaussProjection,
+        PICGaussProjectionResult,
+        PICGaussProjectionRoute,
+        PICHuygensSampling,
+        PICMultiDeposit,
+        PICOpenDomain,
+        PICPrecisionPolicy,
+        PICRelativisticFieldResult,
+        PICRelativisticSelfFields,
+        PICRestartComponent,
+        PICRestartState,
+        PICSelfFieldInitialization,
+        PICSpectralSymbol,
+        PICTensorKind,
+        PICTensorLayout,
+        PICTensorMap,
+        PICWindowShift,
+    )
+    from ._pic_filter import (
+        PICFilterPlan,
+    )
+    from ._pic_providers import (
+        pic_oracle_case,
+        pic_oracle_wakefield_case,
+        picongpu_input,
+        PIConGPUProvider,
+        PICOracleCase,
+        PICOracleCode,
+        PICOracleFields,
+        PICOracleLaser,
+        PICOracleModalFields,
+        PICOracleResult,
+        PICOracleScenario,
+        PICOracleSpecies,
+        PICOracleSpectralSolver,
+        PICOracleTrack,
+        PICOracleTrackResult,
+        PICOracleWakefieldCase,
+        PICOracleWakefieldResult,
+        read_pic_oracle_openpmd,
+        read_pic_oracle_track,
+        read_smilei_fields,
+        read_warpx_wakefield,
+        run_picongpu,
+        run_smilei,
+        run_warpx,
+        run_warpx_track,
+        run_warpx_wakefield,
+        smilei_input,
+        SmileiProvider,
+        warpx_input,
+        warpx_preroll_steps,
+        WarpXProvider,
+    )
+    from ._pic_restart import (
+        PICRestartManifest,
+        PICRestartPlan,
+        PICRestartResult,
+    )
+    from ._plasma_electrostatic import (
+        ElectrostaticPlasmaCouplingPlan,
+        ElectrostaticPlasmaCouplingResult,
+    )
+    from ._poisson_nernst_planck import (
+        PoissonNernstPlanckEvaluation,
+        PoissonNernstPlanckPlan,
+        PoissonNernstPlanckStepResult,
+    )
+    from ._probabilistic_ode import (
+        PROBABILISTIC_ODE_NONFINITE,
+        probabilistic_ode_status_name,
+        PROBABILISTIC_ODE_STEP_LIMIT_REACHED,
+        PROBABILISTIC_ODE_STIFF,
+        PROBABILISTIC_ODE_SUCCESS,
+        ProbabilisticODECalibration,
+        ProbabilisticODECovarianceOutput,
+        ProbabilisticODEFactorization,
+        ProbabilisticODEMethod,
+        ProbabilisticODESolution,
+        ProbabilisticODEStatus,
+        ProbabilisticODEUpdate,
+        solve_probabilistic_ode,
+    )
+    from ._process_learning import (
+        fit_stinespring_process_model,
+        process_experiment_probabilities,
+        process_output_densities,
+        ProcessExperimentPlan,
+        ProcessFitResult,
+        QuantumDigitalTwinState,
+        StinespringProcessModel,
+    )
+    from ._process_tomography import (
+        CausalProcessTomographyProblem,
+        CausalProcessTomographyResult,
+        fit_causal_process_initial_state,
+        informationally_complete_process_experiments,
+        ProcessTomographyExperiment,
+        tomography_designs_disjoint,
+    )
+    from ._production_resources import (
+        prepare_production_resource_forecast,
+        PreparedCompilationService,
+        ProductionResourceBudget,
+        ProductionResourceForecast,
+    )
+    from ._production_runtime import (
+        ArtifactCheckpointStore,
+        CheckpointCommitReceipt,
+        CheckpointGenerationPolicy,
+        CheckpointMigrationRecord,
+        DurableCheckpointStore,
+        PreparedProductionRun,
+        ProductionArchivePolicy,
+        ProductionCaseManifest,
+        ProductionEvidenceState,
+        ProductionFailureRecord,
+        ProductionIterationMetrics,
+        ProductionRunPlan,
+        ProductionRunResult,
+        ProductionRunState,
+        ProductionTerminalManifest,
+        ProductionTriggerAction,
+        ProductionTriggerBinding,
+    )
+    from ._projector_monte_carlo import (
+        initialize_projector_monte_carlo,
+        prepare_projector_monte_carlo,
+        solve_projector_monte_carlo,
+        step_projector_monte_carlo,
+        validate_projector_state,
+    )
+    from ._projector_monte_carlo_contracts import (
+        PreparedProjectorMonteCarlo,
+        ProjectorMonteCarloEvidence,
+        ProjectorMonteCarloHistory,
+        ProjectorMonteCarloPlan,
+        ProjectorMonteCarloProblem,
+        ProjectorMonteCarloResult,
+        ProjectorMonteCarloState,
+        ProjectorMonteCarloStatus,
+        ProjectorMonteCarloStepResult,
+    )
+    from ._projector_monte_carlo_estimators import (
+        analyze_projector_monte_carlo,
+        ProjectorEstimatorPolicy,
+        ProjectorMonteCarloAnalysis,
+        ProjectorReweightedEstimate,
+        ProjectorSystematicRecord,
+        ProjectorWeightDiagnostics,
+        ProjectorWeightStatus,
+    )
+    from ._projector_monte_carlo_lifecycle import (
+        read_projector_monte_carlo_checkpoint,
+        transport_projector_monte_carlo_resources,
+        write_projector_monte_carlo_checkpoint,
+        write_projector_monte_carlo_result,
+    )
+    from ._projector_monte_carlo_observables import (
+        observe_projector_state,
+        ProjectorMonteCarloObservation,
+    )
+    from ._pseudomode import (
+        jaynes_cummings_pseudomode_problem,
+        PseudomodeEmbeddingProblem,
+        PseudomodeSolution,
+        solve_pseudomode,
+    )
+    from ._purified_lindblad import (
+        apply_local_kraus_channel,
+        local_kraus_channel_from_lindblad,
+        LocalKrausChannel,
+        PurificationTruncationEvidence,
+        PurifiedLindbladProblem,
+        PurifiedLindbladResult,
+        solve_purified_lindblad,
+    )
+    from ._purified_tebd import (
+        apply_lpdo_two_site_unitary,
+        diagnose_purified_stationarity,
+        PurifiedStationarityDiagnostic,
+        PurifiedStrangProblem,
+        PurifiedStrangResult,
+        solve_purified_strang,
+    )
+    from ._quantum_compilation import (
+        compile_quantum_program,
+        HardwareTopology,
+        QuantumCompilationPolicy,
+        QuantumCompilationResult,
+        QuantumDecompositionRecord,
+        RouteStrategy,
+    )
+    from ._quantum_control import (
+        assemble_fixed_grid_local_hamiltonian,
+        LinearQuantumControlTransfer,
+        QuantumCarrier,
+        QuantumControlLine,
+        QuantumControlSchedule,
+        QuantumControlScheduleDiagnostics,
+        QuantumControlScheduleResult,
+        sample_quantum_control_schedule,
+    )
+    from ._quantum_expectation import (
+        DenseQuantumExpectationDiagnostics,
+        DenseQuantumExpectationResult,
+        DenseQuantumExpectationStatus,
+        DenseQuantumObservableCostEstimate,
+        DenseQuantumObservablePlan,
+        DenseQuantumObservablePolicy,
+        evaluate_dense_quantum_observables,
+        plan_dense_quantum_observables,
+    )
+    from ._quantum_experiment import (
+        ClassicalRegisterLayout,
+        estimate_quantum_experiment_gradient,
+        execute_quantum_experiment_exact,
+        prepare_quantum_experiment,
+        PreparedQuantumExperiment,
+        QuantumExperimentExactResult,
+        QuantumExperimentProgram,
+        QuantumShotBatchResult,
+        sample_quantum_experiment,
+        StochasticGradientEstimatorEvidence,
+    )
+    from ._quantum_gradients import (
+        evaluate_parameter_shift_jacobian,
+        execute_dense_quantum_template,
+        ParameterShiftJacobianResult,
+        ParameterShiftPlan,
+        plan_parameter_shift,
+        prepare_dense_quantum_template,
+        PreparedDenseQuantumTemplate,
+    )
+    from ._quantum_jump import (
+        amplitude_damping_trajectory_problem,
+        QuantumJumpProblem,
+        QuantumTrajectoryEnsemble,
+        solve_quantum_jump_ensemble,
+        StateVectorOperator,
+    )
+    from ._quantum_jump_event import (
+        EventDrivenQuantumJumpResult,
+        QuantumJumpEventTable,
+        solve_event_driven_quantum_jump,
+    )
+    from ._quantum_jump_generic import (
+        quantum_jump_differential_problem,
+        solve_quantum_jump_generic,
+    )
+    from ._quantum_measurement import (
+        apply_dense_quantum_instrument,
+        apply_lpdo_quantum_instrument,
+        apply_mps_quantum_instrument,
+        DenseInstrumentBranchResult,
+        LPDOInstrumentBranchResult,
+        measure_dense_quantum_program,
+        MPSInstrumentBranchResult,
+        QuantumInstrument,
+        QuantumMeasurementResult,
+        QuantumPOVM,
+    )
+    from ._quantum_program import (
+        DenseQuantumOperationEvidence,
+        DenseQuantumProgramCostEstimate,
+        DenseQuantumProgramDiagnostics,
+        DenseQuantumProgramPlan,
+        DenseQuantumProgramPolicy,
+        DenseQuantumProgramResult,
+        DenseQuantumProgramStatus,
+        DensityPositivityAudit,
+        execute_dense_quantum_program,
+        plan_dense_quantum_program,
+        prepare_dense_quantum_program,
+        PreparedDenseQuantumProgram,
+        refresh_dense_quantum_program,
+    )
+    from ._quantum_propagation import (
+        solve_unitary_propagator,
+        UnitaryGroupKind,
+        UnitaryPropagatorProblem,
+        UnitaryPropagatorSolution,
+    )
+    from ._quantum_service import (
+        admit_quantum_service_request,
+        QuantumProgramInterchange,
+        QuantumResultInterchange,
+        QuantumServiceAdmission,
+        QuantumServicePolicy,
+        QuantumServiceRequest,
+        QuantumServiceRunRecord,
+        record_quantum_service_run,
+    )
+    from ._quantum_tomography import (
+        freeze_quantum_tomography,
+        QuantumTomographyArtifact,
+        QuantumTomographyPolicy,
+        QuantumTomographyProblem,
+        QuantumTomographyResult,
+        solve_quantum_tomography,
+    )
+    from ._quantum_tomography_campaigns import (
+        tetrahedral_qubit_tomography,
+    )
+    from ._quantum_trajectory_contract import (
+        QuantumTrajectoryCheckpoint,
+        QuantumTrajectoryEventTable,
+        QuantumTrajectoryPlan,
+        QuantumTrajectoryStatus,
+    )
+    from ._radau_iia import (
+        RadauIIAMethod,
+    )
+    from ._radiation_balance_law import (
+        MultigroupRadiationMatterProcessPlan,
+        MultigroupRadiationMatterResult,
+        RadiationMatterLedger,
+    )
+    from ._radiative_cooling import (
+        PreparedRadiativeCoolingProcess,
+        RadiativeCoolingDiagnostics,
+        RadiativeCoolingProcessPlan,
+    )
+    from ._reactive_cfd_dem import (
+        advance_reactive_cfd_dem_window,
+        initialize_reactive_cfd_dem,
+        ReactiveCFDDEMCouplingState,
+        ReactiveCFDDEMEvaluation,
+        ReactiveCFDDEMMacroStepResult,
+        ReactiveCouplingMode,
+        ReactiveFluidFields,
+        ReactiveParticleCouplingSchedulePlan,
+    )
+    from ._reactive_lattice_boltzmann import (
+        ReactiveLocalStepper,
+        ReactiveLocalStepResult,
+        ReactiveSpeciesCouplingSchedulePlan,
+        ReactiveSpeciesLatticeBoltzmannDiagnostics,
+        ReactiveSpeciesLatticeBoltzmannState,
+        ReactiveSpeciesLatticeBoltzmannStepResult,
+    )
+    from ._reactive_monolithic import (
+        initialize_reactive_monolithic_state,
+        make_reactive_monolithic_stage,
+        prepare_reactive_monolithic_step,
+        PreparedReactiveMonolithicStep,
+        reactive_monolithic_vjp,
+        ReactiveMonolithicPreconditionerEvidence,
+        ReactiveMonolithicPreconditionerMode,
+        ReactiveMonolithicSolverPlan,
+        ReactiveMonolithicState,
+        ReactiveMonolithicStepResult,
+        solve_reactive_monolithic_step,
+    )
+    from ._reactive_replay import (
+        checkpointed_reactive_rollout,
+        checkpointed_reactive_vjp,
+        evaluate_reactive_parameter_ensemble,
+        reactive_replay_matches,
+        ReactiveCheckpointPolicy,
+        ReactiveCheckpointVJPResult,
+        ReactiveParameterEnsembleResult,
+        ReactiveReplayRecord,
+        ReactiveReplayResult,
+    )
+    from ._reduced_pic import (
+        ReducedMaxwellPICFieldSolver,
+    )
+    from ._reflected_bsde import (
+        predict_reflected_path_dependent_control,
+        predict_reflected_path_dependent_value,
+        reflected_path_dependent_bsde_diagnostics,
+        ReflectedPathDependentBSDEDiagnostics,
+        ReflectedPathDependentBSDEResult,
+        solve_reflected_path_dependent_bsde,
+    )
+    from ._regression_bsde import (
+        AbstractBSDERegressionBasis,
+        BSDERegressionScheme,
+        CallableBSDERegressionBasis,
+        least_squares_bsde_diagnostics,
+        LeastSquaresBSDEDiagnostics,
+        LeastSquaresBSDEResult,
+        PolynomialBSDERegressionBasis,
+        predict_bsde_least_squares_control,
+        predict_bsde_least_squares_value,
+        solve_bsde_least_squares,
+    )
+    from ._relativistic_finite_volume import (
+        FixedGridGRHDSSPRK3Plan,
+        GRHDBoundaryCondition,
+        GRHDBoundaryPair,
+        GRHDBoundaryTrace,
+        GRHDConservationLedger,
+        GRHDFaceFluxPlan,
+        GRHDFaceFluxResult,
+        GRHDFiniteVolumeEvaluation,
+        GRHDFiniteVolumeRunStatus,
+        GRHDFiniteVolumeState,
+        GRHDFiniteVolumeStepResult,
+        lower_valencia_stage_geometry,
+        metric_aware_grhd_boundary_trace,
+        ValenciaFiniteVolumeStageGeometry,
+    )
+    from ._relativistic_primitive import (
+        AtmosphereCorrectionLedger,
+        AtmosphereFloorPolicy,
+        AtmosphereFloorStatus,
+        GRHDC2PCandidateRecord,
+        GRHDC2PPolicy,
+        GRHDC2PResult,
+        GRHDC2PStatus,
+    )
+    from ._resistive_grrmhd_runtime import (
+        FixedGridResistiveGRRMHDIMEXPlan,
+        ResistiveGRRMHDLedger,
+        ResistiveGRRMHDRunStatus,
+        ResistiveGRRMHDState,
+        ResistiveGRRMHDStepResult,
+    )
+    from ._resolved_electroosmosis import (
+        ResolvedElectroosmoticLedger,
+        ResolvedElectroosmoticState,
+        ResolvedElectroosmoticStepResult,
+        ResolvedElectroosmoticStokesPlan,
+    )
+    from ._rosenbrock import (
+        RosenbrockAdaptivePolicy,
+        RosenbrockWMethod,
+    )
+    from ._rosenbrock_replay import (
+        prepare_rosenbrock,
+        PreparedRosenbrockSolve,
+        refresh_rosenbrock_schedule,
+        RosenbrockReplayAdequacy,
+        RosenbrockReplayStatus,
+        schedule_rosenbrock,
+        ScheduledRosenbrockSolve,
+        solve_rosenbrock,
+        solve_scheduled_rosenbrock,
+    )
+    from ._rough import (
+        AbstractRoughSolver,
+        Davie,
+        RoughDifferentialProblem,
+        RoughDifferentialSolution,
+        RoughDrift,
+        RoughEuler,
+        RoughVectorFields,
+        solve_rough_differential,
+    )
+    from ._rough_delay import (
+        RoughDelayDifferentialProblem,
+        RoughDelayDrift,
+        RoughDelayVectorFields,
+        solve_rough_delay,
+    )
+    from ._rough_lift import (
+        lift_rough_vector_fields,
+        LiftedRoughVectorFields,
+    )
+    from ._rough_logode import (
+        LinearLogODE,
+        LogODE,
+    )
+    from ._rough_prepare import (
+        prepare_rough_evolution,
+        PreparedRoughEvolution,
+        RoughEvolutionPolicy,
+        solve_prepared_rough,
+    )
+    from ._runtime_lifecycle import (
+        AcceptedStepTrigger,
+        AcceptedStepTriggerGraph,
+        AcceptedStepTriggerGraphState,
+        AcceptedStepTriggerState,
+        BoundedAsyncPublisher,
+        ByteBoundedAsyncPublisher,
+        ExactTimeSchedule,
+        MomentWeighting,
+        read_runtime_checkpoint,
+        ReplayClassification,
+        restore_runtime_checkpoint_arrays,
+        RuntimeCheckpointEncodingPlan,
+        RuntimeCheckpointEnvelope,
+        RuntimeCheckpointLeafBinding,
+        RuntimeIdentityClass,
+        RuntimeIdentityInventory,
+        RuntimeIdentityRole,
+        RuntimeMigrationKind,
+        RuntimeMigrationReceipt,
+        RuntimeRestartRelation,
+        StaleRuntimeCheckpointError,
+        StreamingMomentPlan,
+        StreamingMomentState,
+        StreamingObservablePlan,
+        StreamingObservableState,
+        UnsupportedReplayError,
+        write_runtime_checkpoint,
+    )
+    from ._scalar_screen_junction3d import (
+        prepare_scalar_screen_junction_solve_3d,
+        PreparedScalarScreenJunctionSolve3D,
+        ScalarScreenJunctionCondition3D,
+        ScalarScreenJunctionResult3D,
+    )
+    from ._schedule import (
+        ScheduleStepResult,
+        SolveSchedule,
+        SolveStage,
+        TimeLaw,
+    )
+    from ._secondary_stack import (
+        SecondaryParticleStack,
+        SecondaryStackSpec,
+    )
+    from ._segmented_execution import (
+        FixedCapacitySegmentEvidence,
+        FixedCapacitySegmentPolicy,
+        FixedCapacitySegmentStep,
+        run_fixed_capacity_segments,
+    )
+    from ._self_gravity import (
+        NewtonianGravityDiagnostics,
+        NewtonianSelfGravityPlan,
+        PreparedNewtonianSelfGravity,
+    )
+    from ._semi_implicit_pic import (
+        PICGaussCorrectionPlan,
+        PICGaussCorrectionResult,
+        SemiImplicitPICDiagnostics,
+        SemiImplicitPICPlan,
+        SemiImplicitPICResult,
+        SemiImplicitPICState,
+    )
+    from ._semilinear import (
+        exact_modal_stochastic_convolution,
+        SemilinearFallback,
+        SemilinearSPDEScheme,
+        solve_semilinear_spde,
+    )
+    from ._semilinear_drift import (
+        SemilinearDrift,
+    )
+    from ._separated_fokker_planck import (
+        SeparatedFokkerPlanckPlan,
+        solve_separated_fokker_planck,
+    )
+    from ._smooth_compressible_d2v import (
+        OracleSmoothCompressibleD2V17FixedStepMethod,
+    )
+    from ._solver_objective import (
+        AbstractSolverObjective,
+        AcceptedResultPolicy,
+        algorithmic_work_loss,
+        AlgorithmicWorkObjective,
+        AlgorithmicWorkResult,
+        RolloutObjective,
+        SolverCaseResult,
+        SolverObjective,
+        SolverObjectiveAdmission,
+        SolverObjectiveEvaluation,
+    )
+    from ._sparse_flip import (
+        SparseMACFreeSurfaceProjectionPlan,
+        SparseMACFreeSurfaceProjectionResult,
+    )
+    from ._spde import (
+        SemidiscreteSPDE,
+        semidiscretize_reaction_diffusion,
+        semidiscretize_semilinear_spde,
+        semidiscretize_spde,
+    )
+    from ._spde_truncation import (
+        prepare_spde_approximation,
+        PreparedSPDEApproximation,
+        solve_spde_approximation,
+        SPDEApproximationFamily,
+        SPDEApproximationLevel,
+        SPDEApproximationResult,
+    )
+    from ._spectral_artifacts import (
+        read_spectral_state_artifact,
+        SpectralStateArtifact,
+        write_spectral_state_artifact,
+    )
+    from ._spectral_coordinates import (
+        HERMITIAN_COORDINATE_INVALID,
+        HermitianCoordinateEvolution,
+    )
+    from ._spectral_forcing import (
+        PreparedSpectralOUForcing,
+        SpectralOUForcingDiagnostics,
+        SpectralOUForcingPlan,
+    )
+    from ._spectral_hp_completion import (
+        BDDCFETIDPTracePlan,
+        FrozenHPAdjointSchedule,
+        goal_oriented_eigen_indicators,
+        HPEigenspaceTransfer,
+        HPFASMultigrid,
+        HPNewtonKrylovBuilder,
+        HPNewtonKrylovResult,
+        HPRestrictedSchwarz,
+        MeshVaryingUQAggregator,
+        NonlinearLocalCondensation,
+        RelaxedHPMarking,
+    )
+    from ._split_differential import (
+        split_differential_problem,
+        SplitDifferentialProblem,
+    )
+    from ._ssp_runge_kutta import (
+        SSPRK33,
+        ssprk33_step,
+        SSPRK54,
+        ssprk54_step,
+    )
+    from ._state_partition import (
+        StatePartition,
+    )
+    from ._stencil_evolution import (
+        PreparedSplitFieldPML,
+        PreparedStaggeredAcoustics,
+        SplitFieldPMLPlan,
+        StaggeredAcousticPlan,
+        StaggeredAcousticState,
+    )
+    from ._stinespring_tomography import (
+        fit_causal_process_memory,
+        fit_stinespring_process,
+        ProcessMemoryRefitResult,
+        StinespringTomographyProblem,
+        StinespringTomographyResult,
+    )
+    from ._structured_incompressible import (
+        MACPressureClosureReport,
+        MACPressureCompatibilityKind,
+        MACPressureGaugeKind,
+        MACPressureProjectionPlan,
+        MACPressureProjectionResult,
+        MACPressureSolveMethod,
+        MACRateProjectionResult,
+    )
+    from ._symplectic import (
+        integrate_stormer_verlet,
+        SeparableHamiltonianResult,
+        stormer_verlet_step,
+    )
+    from ._temporal_extensions import (
+        AdamsBashforthMoultonMethod,
+        ExponentialRosenbrockEulerMethod,
+        FixedStepTemporalResult,
+        IMEXBDF2Integrator,
+        parareal,
+        RadauIIAIntegrator,
+        RKCMethod,
+    )
+    from ._temporal_method import (
+        NoiseRequirement,
+        TemporalCheckpointing,
+        TemporalDecisionSemantics,
+        TemporalDifferentiationEvidence,
+        TemporalDifferentiationForm,
+        TemporalDifferentiationOrientation,
+        TemporalEquationForm,
+        TemporalEventSemantics,
+        TemporalMethodCapabilities,
+        TemporalMethodClass,
+        TemporalSolveEvidence,
+        TemporalStochasticSemantics,
+    )
+    from ._temporal_precision import (
+        TemporalPrecisionPolicy,
+    )
+    from ._tensor_open_quantum import (
+        apply_mpo_lindbladian,
+        evolve_lpdo_local_channels,
+        LPDOChannelEvolutionEvidence,
+        LPDOChannelEvolutionPlan,
+        LPDOChannelEvolutionResult,
+        LPDOSteadyStateResult,
+        MPOHamiltonian,
+        MPOLindbladian,
+        MPOLindbladianActionResult,
+        solve_lpdo_steady_state,
+    )
+    from ._thermochemical_source import (
+        FixedWorkThermochemicalSourcePlan,
+        ThermochemicalSourceEvidence,
+        ThermochemicalSourceResult,
+    )
+    from ._thermochemistry import (
+        PreparedThermochemistryProcess,
+        ThermochemistryDiagnostics,
+        ThermochemistryProcessPlan,
+    )
+    from ._theta import (
+        ThetaMethod,
+    )
+    from ._thin_edl_slip import (
+        ThinEDLElectroosmoticSlipPlan,
+        ThinEDLReason,
+        ThinEDLSlipEvaluation,
+    )
+    from ._uniform_vumps import (
+        plan_uniform_vumps,
+        prepare_uniform_vumps,
+        PreparedUniformVUMPS,
+        refresh_uniform_vumps,
+        solve_uniform_tangent_response,
+        solve_uniform_vumps,
+        UniformTangentPolicy,
+        UniformTangentResponse,
+        UniformTangentStatus,
+        UniformVUMPSCostEstimate,
+        UniformVUMPSDiagnostics,
+        UniformVUMPSPlan,
+        UniformVUMPSPolicy,
+        UniformVUMPSProblem,
+        UniformVUMPSResult,
+        UniformVUMPSStatus,
+    )
+    from ._unstructured_amr_runtime import (
+        PreparedUnstructuredAMRRuntime,
+        UnstructuredAMRAdvanceResult,
+        UnstructuredAMRRefluxReport,
+        UnstructuredAMRRuntimeState,
+    )
+    from ._unstructured_em_pic import (
+        UnstructuredMaxwellPICFieldSolver,
+    )
+    from ._unstructured_incompressible import (
+        UnstructuredPressureCorrectionPlan,
+        UnstructuredPressureCorrectionResult,
+        UnstructuredPressureProjectionPlan,
+        UnstructuredPressureProjectionResult,
+    )
+    from ._unstructured_les import (
+        UNSTRUCTURED_LES_CONSERVATION_FAILURE,
+        UNSTRUCTURED_LES_ENERGY_FAILURE,
+        UNSTRUCTURED_LES_INADMISSIBLE_STATE,
+        UNSTRUCTURED_LES_PRESSURE_FAILURE,
+        UNSTRUCTURED_LES_STEP_RESTRICTION,
+        UNSTRUCTURED_LES_SUCCESS,
+        UnstructuredLowMachLESFixedStepMethod,
+        UnstructuredLowMachLESRestartState,
+        UnstructuredLowMachLESStepEvidence,
+        UnstructuredLowMachLESStepInputs,
+        UnstructuredLowMachLESStepRestriction,
+        UnstructuredLowMachLESStepResult,
+    )
+    from ._unstructured_stage_runtime import (
+        PreparedUnstructuredSSPRK3Runtime,
+        StageEpochExecutor,
+        UnstructuredSSPRK3EpochResult,
+        UnstructuredSSPRK3EpochStageResult,
+    )
+    from ._variable_patch_checkpoint import (
+        read_variable_patch_checkpoint,
+        VariablePatchCheckpoint,
+        VariablePatchCheckpointPlan,
+        write_variable_patch_checkpoint,
+    )
+    from ._variational_monte_carlo import (
+        evaluate_variational_monte_carlo,
+        read_variational_monte_carlo_checkpoint,
+        solve_variational_monte_carlo,
+        VariationalMonteCarloEstimate,
+        VariationalMonteCarloPolicy,
+        VariationalMonteCarloProblem,
+        VariationalMonteCarloResult,
+        VariationalMonteCarloState,
+        VMC_IMAGINARY_ENERGY,
+        VMC_INVALID_SAMPLES,
+        VMC_LINEAR_FAILURE,
+        VMC_NONFINITE,
+        vmc_status_name,
+        VMC_SUCCESS,
+        VMCStatus,
+        write_variational_monte_carlo_checkpoint,
+    )
+    from ._variational_monte_carlo_subspace import (
+        evaluate_variational_monte_carlo_subspace,
+        solve_variational_monte_carlo_subspace,
+        VariationalMonteCarloSubspaceEstimate,
+        VariationalMonteCarloSubspaceProblem,
+        VariationalMonteCarloSubspaceResult,
+        VariationalMonteCarloSubspaceState,
+        VMC_SUBSPACE_INVALID_SAMPLES,
+        VMC_SUBSPACE_LINEAR_FAILURE,
+        VMC_SUBSPACE_NONFINITE,
+        VMC_SUBSPACE_RITZ_FAILURE,
+        VMC_SUBSPACE_SINGULAR_SPAN,
+        vmc_subspace_status_name,
+        VMC_SUBSPACE_SUCCESS,
+        VMCSubspaceStatus,
+    )
+    from ._variational_tdvp import (
+        solve_variational_tdvp,
+        TDVPMode,
+        VariationalTDVPPolicy,
+        VariationalTDVPResult,
+    )
+    from ._wiener_operator import (
+        WienerNoiseBlock,
+        WienerNoiseLayout,
+    )
+    from ._xxz_open import (
+        boundary_driven_xxz_problem,
+        qualify_boundary_driven_xxz,
+        XXZQualificationResult,
+    )
+    from .maxwell import (
+        CompatibleMaxwellDiagnostics,
+        CompatibleMaxwellPlan,
+        CompatibleMaxwellState,
+        PreparedCompatibleMaxwell,
+    )
+
+
 def __getattr__(name: str) -> Any:
-    if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
-        from importlib import import_module
-
-        module = import_module(f"{__name__}.functional_decomposition")
-        return module if name == "functional_decomposition" else module.__dict__[name]
-    if name in _CHARACTERISTIC_PROJECTION_EXPORTS:
-        from . import _characteristic_projection as module
-
-        exports = {
-            "CharacteristicProjectionProblem": module.CharacteristicProjectionProblem,
-            "CharacteristicProjectionResult": module.CharacteristicProjectionResult,
-            "CharacteristicTraceResult": module.CharacteristicTraceResult,
-            "CharacteristicVelocity": module.CharacteristicVelocity,
-            "CharacteristicWrap": module.CharacteristicWrap,
-            "solve_characteristic_projection": module.solve_characteristic_projection,
-            "trace_characteristics": module.trace_characteristics,
-            "CharacteristicBoundaryAction": module.CharacteristicBoundaryAction,
-            "CharacteristicBoundaryPolicy": module.CharacteristicBoundaryPolicy,
-            "DiffusiveCharacteristicPlan": module.DiffusiveCharacteristicPlan,
-            "DiffusiveCharacteristicResult": module.DiffusiveCharacteristicResult,
-            "trace_diffusive_characteristics": module.trace_diffusive_characteristics,
-        }
-        return exports[name]
-    from importlib import import_module
-
+    owner = _SYMBOL_MODULES.get(name)
+    if owner is not None:
+        module_name, symbol = owner
+        module = import_module(module_name, __package__)
+        value = module if symbol is None else getattr(module, symbol)
+        globals()[name] = value
+        return value
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -2901,13 +7104,65 @@ __all__ = [
     "maxwell_cavity_modes",
     "FiniteElementMaxwellConstitutivePlan",
     "PreparedFiniteElementMaxwellConstitutive",
-    *_deterministic_ensemble_all,
-    *_variable_sector_vmc_all,
-    *_impurity_all,
-    *_quantum_lattice_all,
-    *_quantum_lifecycle_all,
-    *_quantum_response_all,
-    *_thermal_pure_quantum_all,
+    "ClassicalStatisticalScalarRecipe",
+    "DeterministicEnsembleEvidence",
+    "DeterministicEnsemblePlan",
+    "DeterministicEnsembleResult",
+    "DeterministicEnsembleStatus",
+    "DeterministicInitialCondition",
+    "MMSTInitialConditionRecipe",
+    "PreparedDeterministicEnsemble",
+    "WeightedEnsembleReducer",
+    "execute_deterministic_ensemble",
+    "PreparedVariableSectorVMC",
+    "SectorTailEvidence",
+    "StochasticReconfigurationResult",
+    "VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED",
+    "VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES",
+    "VARIABLE_SECTOR_VMC_INVALID_CHAIN",
+    "VARIABLE_SECTOR_VMC_INVALID_LOCAL_ENERGY",
+    "VARIABLE_SECTOR_VMC_SUCCESS",
+    "VariableSectorTDVPPlan",
+    "VariableSectorTDVPResult",
+    "VariableSectorVMCPlan",
+    "VariableSectorVMCResult",
+    "VariableSectorVMCState",
+    "evolve_variable_sector_tdvp",
+    "prepare_variable_sector_vmc",
+    "run_variable_sector_vmc",
+    "solve_stochastic_reconfiguration",
+    "solve_variable_sector_tdvp",
+    "variable_sector_vmc_status_name",
+    "AbstractImpurityProvider",
+    "AndersonBathFitEvidence",
+    "AndersonBathFitPlan",
+    "AndersonBathFitResult",
+    "EDImpurityPolicy",
+    "ExactDiagonalizationImpurityProvider",
+    "ImpuritySolveEvidence",
+    "ImpuritySolveRequest",
+    "ImpuritySolveResult",
+    "fit_causal_anderson_bath",
+    "solve_all_sector_ed_impurity",
+    "LocalHamiltonianQuantumLatticeEvidence",
+    "LocalHamiltonianQuantumLatticePolicy",
+    "LocalHamiltonianQuantumLatticeResult",
+    "lower_quantum_lattice_to_local_hamiltonian",
+    "QuantumResultArchiveArtifact",
+    "QuantumResultArtifactKind",
+    "read_quantum_result_archive",
+    "write_quantum_result_archive",
+    "FiniteTemperatureResponseEvidence",
+    "FiniteTemperatureResponseResult",
+    "ZeroTemperatureResponseEvidence",
+    "ZeroTemperatureResponseResult",
+    "finite_temperature_response",
+    "zero_temperature_response",
+    "PreparedThermalPureQuantum",
+    "ThermalPureQuantumPlan",
+    "ThermalPureQuantumResult",
+    "prepare_thermal_pure_quantum",
+    "thermal_pure_quantum",
     "advanced",
     "coupling",
     "functional_decomposition",
@@ -3932,7 +8187,9 @@ __all__ = [
     "read_finite_element_hp_epoch",
     "FiniteElementTopologyResult",
     "FiniteElementTopologyTransaction",
+    "MaterialTopologyTransferResult",
     "write_finite_element_hp_epoch",
+    "refinement_parent_cells",
     "read_finite_element_restart",
     "write_finite_element_restart",
     "FiniteVolumeCheckpoint",
@@ -4552,60 +8809,104 @@ __all__ = [
     "MeshfreeSPHReconstruction",
     "PreparedMeshfreeLagrangianFlow",
     "PreparedMeshfreeMeasureTransfer",
-]
-
-__all__ += [
-    name
-    for name in (
-        *_uvlm_all,
-        *_vortex_lattice_all,
-        *_vortex_panels_all,
-        *_vortex_step_all,
-        *_lifting_complete_all,
-        *_panel_complete_all,
-        *_panels3d_complete_all,
-        *_polar_complete_all,
-        *_rotor_all,
-        *_vortex_immersed_all,
-        *_vortex_loads_all,
-        *_wake_complete_all,
-        *_viscous_vortex_wall_all,
-    )
-    if name not in __all__
-]
-__all__ += [
-    name
-    for name in (
-        *_convolution_quadrature_all,
-        *_elasticity_boundary_all,
-        *_fem_bem_scalar_all,
-        *_hydrodynamics_all,
-        *_maxwell_boundary_all,
-        *_scalar_boundary_all,
-        *_stokes_boundary_all,
-    )
-    if name not in __all__
-]
-__all__ += [
-    name
-    for name in (
-        *_fem_bem_vector_all,
-        *_hydrodynamic_response_all,
-        *_periodic_vector_boundary_all,
-        *_scalar_interfaces_all,
-    )
-    if name not in __all__
-]
-
-__all__ += [
+    "UVLMState",
+    "UVLMStepResult",
+    "UnsteadyVortexLatticePlan",
+    "SteadyVortexLatticePlan",
+    "VortexLatticeResult",
+    "VortexPanelFlowPlan2D",
+    "VortexPanelResult2D",
+    "SampledAirfoilPolar",
+    "VortexStepPlan",
+    "VortexStepResult",
+    "CompleteLiftingResult",
+    "CompleteLiftingSystemPlan",
+    "LiftingConstraintEvidence",
+    "CompletePanelFlowPlan2D",
+    "CompletePanelLoad2D",
+    "CompletePanelResult2D",
+    "PanelCompressibilityPolicy",
+    "CompletePanelFlowPlan3D",
+    "CompletePanelResult3D",
+    "PanelLoadResult3D",
+    "CompressibilityCorrectionPlan",
+    "DynamicStallPlan",
+    "DynamicStallResult",
+    "DynamicStallState",
+    "MultiAxisAirfoilPolar",
+    "PolarEvaluation",
+    "BladeElementRotorPlan",
+    "RotorResult",
+    "MACVortexParticleTransferPlan",
+    "VortexImmersedHybridPlan",
+    "VortexImmersedStepResult",
+    "ImpulseLoadPlan",
+    "KuttaJoukowskiLoadPlan",
+    "TrefftzInducedDragPlan",
+    "UnsteadyBernoulliLoadPlan",
+    "VortexLoadResult",
+    "VortexWakeIntegratorPlan",
+    "WakeAdaptationCandidate",
+    "WakeAdaptationPlan",
+    "WakeStepEvidence",
+    "WakeStepResult",
+    "BoundaryIntegralVorticityFluxPlan2D",
+    "ReducedSeparationModel",
+    "SeparationModelResult",
+    "WallCrossingPlan",
+    "WallCrossingResult",
+    "WallVorticityFluxEvidence",
+    "WallVorticityFluxResult",
+    "ConvolutionQuadratureDeclaration",
+    "ConvolutionQuadratureErrorEvidence",
+    "ConvolutionQuadratureResourceEvidence",
+    "ConvolutionQuadratureResult",
+    "ConvolutionQuadratureStatus",
+    "PreparedConvolutionQuadrature",
+    "apply_convolution_quadrature",
+    "prepare_convolution_quadrature",
+    "ElasticityDirichletResult3D",
+    "solve_elasticity_interior_displacement_dirichlet_3d",
+    "PreparedScalarLaplaceFEMBEM3D",
+    "ScalarLaplaceFEMBEMResult3D",
+    "prepare_scalar_laplace_fem_bem_3d",
+    "solve_scalar_laplace_fem_bem_3d",
+    "PotentialFlowHydrodynamicsResult3D",
+    "solve_potential_flow_hydrodynamics_3d",
+    "PECEFIEResult3D",
+    "solve_pec_efie_3d",
+    "ScalarBoundarySolveResult3D",
+    "solve_helmholtz_boundary_3d",
+    "solve_laplace_boundary_3d",
+    "solve_scalar_boundary_3d",
+    "StokesDirichletResult3D",
+    "solve_stokes_interior_velocity_dirichlet_3d",
+    "ElasticityFEMBEMInterfaceQualification3D",
+    "ElasticityFEMBEMResult3D",
+    "PreparedElasticityFEMBEM3D",
+    "VectorFEMBEMSupportReport",
+    "prepare_elasticity_fem_bem_3d",
+    "solve_elasticity_fem_bem_3d",
+    "PreparedMatchingMaxwellFEMBEM3D",
+    "prepare_matching_maxwell_fem_bem_3d",
+    "vector_fem_bem_support_report",
+    "HydrodynamicResponseResult3D",
+    "HydrodynamicResponseStatus",
+    "WetSurfaceModalGeneralizedForceMap3D",
+    "solve_hydrodynamic_response_3d",
+    "PeriodicVectorBoundarySolveUnsupportedError",
+    "PeriodicVectorBoundarySupport3D",
+    "periodic_vector_boundary_support_3d",
+    "require_periodic_vector_boundary_solve_3d",
+    "PreparedScalarTransmission3D",
+    "ScalarTransmissionResult3D",
+    "prepare_scalar_transmission_3d",
+    "solve_scalar_transmission_3d",
     "HybridSchedulePlan",
     "HybridScheduleResult",
     "IAS15Plan",
     "IAS15Result",
     "ScheduledHybridGuard",
-]
-
-__all__ += [
     "BarnesHutGravityPlan",
     "CartesianExpansionSpace",
     "CartesianFMMOperators",
@@ -4642,23 +8943,14 @@ __all__ += [
     "TreePMSplitPolicy",
     "TreePMShortRangeKernel",
     "UniformFMMPlan",
-]
-
-__all__ += [
     "KDKCoefficients",
     "KDKCompletion",
     "KDKProposal",
     "KDKTransactionPlan",
-]
-
-__all__ += [
     "FieldObservationPlan",
     "ParticleMarginalLikelihoodPlan",
     "SimulationSensitivityReport",
     "WhitenedFieldInferencePlan",
-]
-
-__all__ += [
     "AdaptiveReplayPreparationPolicy",
     "PreparedReplaySchedule",
     "prepare_replay_schedule",
@@ -4915,9 +9207,6 @@ __all__ += [
     "StageEpochExecutor",
     "UnstructuredSSPRK3EpochResult",
     "UnstructuredSSPRK3EpochStageResult",
-]
-
-__all__ += [
     "AerothermodynamicALEEvidence",
     "AerothermodynamicALEPlan",
     "AerothermodynamicTopologyTransaction",
@@ -4982,9 +9271,6 @@ __all__ += [
     "RecessionEvaluation",
     "ThermochemicalSourceEvidence",
     "ThermochemicalSourceResult",
-]
-
-__all__ += [
     "AtmosphereCorrectionLedger",
     "AtmosphereFloorPolicy",
     "AtmosphereFloorStatus",
@@ -5068,9 +9354,6 @@ __all__ += [
     "lower_valencia_stage_geometry",
     "metric_aware_grhd_boundary_trace",
     "VectorPotentialGaugeKind",
-]
-
-__all__ += [
     "CONSERVATION_COMPONENTS",
     "DarkSectorEpochPlan",
     "DarkSectorEpochResult",
@@ -5088,9 +9371,6 @@ __all__ += [
     "finalize_dark_sector_epoch",
     "replace_dark_sector_conservation",
     "replace_dark_sector_pool",
-]
-
-__all__ += [
     "AbstractSolverObjective",
     "AcceptedResultPolicy",
     "AlgorithmicWorkObjective",
@@ -5104,9 +9384,6 @@ __all__ += [
     "SolverObjectiveEvaluation",
     "algorithmic_work_loss",
     "train_components",
-]
-
-__all__ += [
     "PreparedProjectorMonteCarlo",
     "ProjectorEstimatorPolicy",
     "ProjectorMonteCarloAnalysis",

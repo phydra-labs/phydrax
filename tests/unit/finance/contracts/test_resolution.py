@@ -182,7 +182,10 @@ def test_resolution_scenario_2() -> None:
     assert trade.trade_id != position.position_id
     assert not isinstance(trade, Position)
     assert not isinstance(position, Trade)
-    with pytest.raises(TypeError, match="unresolved"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'contract': expected AbstractContract; got ResolvedContract",
+    ):
         Trade(
             "bad-trade",
             resolved,  # ty: ignore[invalid-argument-type]
@@ -190,7 +193,10 @@ def test_resolution_scenario_2() -> None:
             _time(100, "bad-execution"),
             settlement=_settlement(),
         )
-    with pytest.raises(TypeError, match="resolved"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'contract': expected AbstractResolvedContract; got _Contract",
+    ):
         Position(
             "bad-position",
             definition,  # ty: ignore[invalid-argument-type]

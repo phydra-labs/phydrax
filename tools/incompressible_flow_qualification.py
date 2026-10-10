@@ -350,7 +350,6 @@ def assemble_candidate_profile(
     profile = phx.qualification.CapabilityProfile(
         name,
         provider,
-        "candidate",
         tuple(supports),
         required_gates=(),
         release_evidence=(),

@@ -45,7 +45,7 @@ def test_production_closure_scenario_1() -> None:
         {"geometry": "fixed", "certified": False},
         required_gates=("algebra", "scientific"),
     )
-    profile = declaration.profile(provider="phydrax", version="current")
+    profile = declaration.profile(provider="phydrax")
     assert not profile.released
     full = phx.linalg.ArraySpace((2,), dtype=jnp.float64, space_id="system-full")
     trial = _basis(full, [[1.0], [0.0]], "trial")

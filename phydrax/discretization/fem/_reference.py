@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import MethodType
 from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
@@ -32,6 +33,57 @@ type ElementMapping = Literal[
     "identity", "covariant_piola", "contravariant_piola", "density", "exterior"
 ]
 type _Tabulator = Callable[[Array], tuple[ArrayLike, ArrayLike]]
+
+
+class _FiniteElementTabulator(StrictModule, NonTrainableState):
+    """Retain the immutable basis owner rather than a bound Python method."""
+
+    source: object
+    method: str = eqx.field(static=True)
+
+    def __init__(self, source: object, method: str, /) -> None:
+        from ._high_order import ReferenceNodalFamily, SimplexNodalFamily
+        from ._spectral_hp_completion import HybridReferenceFamily
+
+        allowed = (
+            (FiniteElementSpec, "tabulate"),
+            (ReferenceNodalFamily, "tabulate"),
+            (SimplexNodalFamily, "tabulate"),
+            (HybridReferenceFamily, "tabulate_with_gradients"),
+        )
+        if (type(source), method) not in allowed:
+            raise TypeError(
+                "A portable tabulator requires its exact immutable basis owner."
+            )
+        self.source = source
+        self.method = method
+
+    def __call__(self, points: ArrayLike, /) -> tuple[ArrayLike, ArrayLike]:
+        return getattr(self.source, self.method)(points)
+
+
+def _portable_element_tabulator(tabulator: _Tabulator | None, /) -> _Tabulator | None:
+    if tabulator is None or isinstance(tabulator, StrictModule):
+        return tabulator
+    # Equinox publishes bound module methods as external ``eqx.Module`` wrappers.
+    if isinstance(tabulator, (MethodType, eqx.Module)):  # noqa: TID251
+        source = getattr(tabulator, "__self__", None)
+        evaluator = getattr(tabulator, "__func__", None)
+        from ._high_order import ReferenceNodalFamily, SimplexNodalFamily
+        from ._spectral_hp_completion import HybridReferenceFamily
+
+        if type(source) in (
+            FiniteElementSpec,
+            ReferenceNodalFamily,
+            SimplexNodalFamily,
+            HybridReferenceFamily,
+        ):
+            method = getattr(evaluator, "__name__", None)
+            if method is not None and evaluator is getattr(type(source), method, None):
+                return _FiniteElementTabulator(source, method)
+        return tabulator
+    # User callbacks remain executable locally but are not admitted to archives.
+    return tabulator
 
 
 @final
@@ -104,7 +156,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         self.representation = representation_
         self.reference_nodes = jnp.asarray(nodes)
         self.entity_dofs = entities
-        self.tabulator = tabulator
+        self.tabulator = _portable_element_tabulator(tabulator)
         self.tabulator_id = tabulator_id
         self.form_basis = form_basis
         self.element_id = canonical_fingerprint(

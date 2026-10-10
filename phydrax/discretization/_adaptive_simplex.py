@@ -59,6 +59,18 @@ _CODE_SENTINEL = np.iinfo(np.int64).max
 _MINIMUM_BUCKET = 64
 
 
+class _AdaptivePartDim(Dim, minimum=1):
+    """Saved logical owner records, independent of physical device placement."""
+
+
+class _AdaptiveProtectedEdgeDim(Dim, minimum=1):
+    """Capacity of the protected-edge code bank."""
+
+
+class _AdaptiveCounterDim(Dim, minimum=1):
+    """Numerical operation counters of one adaptive epoch."""
+
+
 class _AdaptiveVertexDim(Dim, minimum=1):
     """Allocated vertex slots in one adaptive simplex capacity bucket."""
 
@@ -171,13 +183,22 @@ class MaskedSimplexMesh(StrictModule, NonTrainableState):
     vertex_capacity: Size[_AdaptiveVertexDim] = eqx.field(static=True)
     cell_capacity: Size[_AdaptiveCellDim] = eqx.field(static=True)
     signature_id: Identifier = eqx.field(static=True)
-    coordinates: Float[_AdaptiveVertexDim, _AdaptiveAmbientDim]
-    vertex_ids: Int64[_AdaptiveVertexDim]
-    vertex_active: Bool[_AdaptiveVertexDim]
-    cells: Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
-    cell_ids: Int64[_AdaptiveCellDim]
-    cell_active: Bool[_AdaptiveCellDim]
-    facet_neighbors: Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    coordinates: (
+        Float[_AdaptiveVertexDim, _AdaptiveAmbientDim]
+        | Float[_AdaptivePartDim, _AdaptiveVertexDim, _AdaptiveAmbientDim]
+    )
+    vertex_ids: Int64[_AdaptiveVertexDim] | Int64[_AdaptivePartDim, _AdaptiveVertexDim]
+    vertex_active: Bool[_AdaptiveVertexDim] | Bool[_AdaptivePartDim, _AdaptiveVertexDim]
+    cells: (
+        Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+        | Int32[_AdaptivePartDim, _AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    )
+    cell_ids: Int64[_AdaptiveCellDim] | Int64[_AdaptivePartDim, _AdaptiveCellDim]
+    cell_active: Bool[_AdaptiveCellDim] | Bool[_AdaptivePartDim, _AdaptiveCellDim]
+    facet_neighbors: (
+        Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+        | Int32[_AdaptivePartDim, _AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    )
 
     def __init__(
         self,
@@ -192,29 +213,50 @@ class MaskedSimplexMesh(StrictModule, NonTrainableState):
     ) -> None:
         points = jnp.asarray(coordinates)
         rows = jnp.asarray(cells)
-        if points.ndim != 2 or not jnp.issubdtype(points.dtype, jnp.floating):
-            raise TypeError("coordinates must be a floating (vertices, ambient) array.")
-        if rows.ndim != 2 or rows.dtype != jnp.int32:
-            raise TypeError("cells must be an int32 (cells, d + 1) array.")
-        dimension = rows.shape[1] - 1
+        if points.ndim not in (2, 3) or not jnp.issubdtype(points.dtype, jnp.floating):
+            raise TypeError(
+                "coordinates must be floating (..., vertices, ambient) owner records."
+            )
+        if (
+            rows.ndim != points.ndim
+            or rows.dtype != jnp.int32
+            or rows.shape[:-2] != points.shape[:-2]
+        ):
+            raise TypeError(
+                "cells must be int32 (..., cells, d + 1) matching the owner axis."
+            )
+        batch_shape = points.shape[:-2]
+        dimension = rows.shape[-1] - 1
         kind = _CELL_KINDS.get(dimension)
         if kind is None:
             raise ValueError("Masked simplex meshes hold triangles or tetrahedra.")
-        ambient = points.shape[1]
+        ambient = points.shape[-1]
         if ambient < dimension or ambient > 3:
             raise ValueError("The ambient dimension must lie in [d, 3].")
-        vertex_count = _count(points.shape[0], "vertex capacity")
-        cell_count = _count(rows.shape[0], "cell capacity")
+        vertex_count = _count(points.shape[-2], "vertex capacity")
+        cell_count = _count(rows.shape[-2], "cell capacity")
         if vertex_count > _INDEX_LIMIT or cell_count * (dimension + 1) > _INDEX_LIMIT:
             raise ValueError("Masked simplex capacities must address int32 slots.")
         arrays = {
-            "vertex_ids": (jnp.asarray(vertex_ids), (vertex_count,), jnp.int64),
-            "vertex_active": (jnp.asarray(vertex_active), (vertex_count,), jnp.bool_),
-            "cell_ids": (jnp.asarray(cell_ids), (cell_count,), jnp.int64),
-            "cell_active": (jnp.asarray(cell_active), (cell_count,), jnp.bool_),
+            "vertex_ids": (
+                jnp.asarray(vertex_ids),
+                (*batch_shape, vertex_count),
+                jnp.int64,
+            ),
+            "vertex_active": (
+                jnp.asarray(vertex_active),
+                (*batch_shape, vertex_count),
+                jnp.bool_,
+            ),
+            "cell_ids": (jnp.asarray(cell_ids), (*batch_shape, cell_count), jnp.int64),
+            "cell_active": (
+                jnp.asarray(cell_active),
+                (*batch_shape, cell_count),
+                jnp.bool_,
+            ),
             "facet_neighbors": (
                 jnp.asarray(facet_neighbors),
-                (cell_count, dimension + 1),
+                (*batch_shape, cell_count, dimension + 1),
                 jnp.int32,
             ),
         }
@@ -238,12 +280,12 @@ class MaskedSimplexMesh(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return self.cells.shape[1] - 1
+        return self.cells.shape[-1] - 1
 
     @property
     def boundary_facets(self) -> Array:
         """Active half-facets without a neighbor, shaped ``(cells, d + 1)``."""
-        return self.cell_active[:, None] & (self.facet_neighbors < 0)
+        return self.cell_active[..., None] & (self.facet_neighbors < 0)
 
 
 def _facet_columns(width: int, /) -> np.ndarray:
@@ -508,28 +550,53 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
     ``refine_rejected`` / ``coarsen_marked`` the cumulative mark evidence.
     """
 
+    __strict_contract__ = True
+
     mesh: MaskedSimplexMesh
-    vertex_half_facets: Array
-    tuples: Array
-    tags: Array
-    blocks: Array
-    generations: Array
-    parents: Array
-    children: Array
-    bisection_vertices: Array
-    retired: Array
-    cell_classes: Array
-    facet_classes: Array
-    vertex_parents: Array
-    vertex_levels: Array
-    vertex_removal: Array
-    vertex_protected: Array
-    protected_codes: Array
-    refine_rejected: Array
-    coarsen_marked: Array
-    cursors: Array
-    clocks: Array
-    counters: Array
+    vertex_half_facets: (
+        Int32[_AdaptiveVertexDim] | Int32[_AdaptivePartDim, _AdaptiveVertexDim]
+    )
+    tuples: (
+        Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+        | Int32[_AdaptivePartDim, _AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    )
+    tags: Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    blocks: Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    generations: Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    parents: Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    children: (
+        Int32[_AdaptiveCellDim, Literal[2]]
+        | Int32[_AdaptivePartDim, _AdaptiveCellDim, Literal[2]]
+    )
+    bisection_vertices: (
+        Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    )
+    retired: Bool[_AdaptiveCellDim] | Bool[_AdaptivePartDim, _AdaptiveCellDim]
+    cell_classes: Int32[_AdaptiveCellDim] | Int32[_AdaptivePartDim, _AdaptiveCellDim]
+    facet_classes: (
+        Int32[_AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+        | Int32[_AdaptivePartDim, _AdaptiveCellDim, _AdaptiveSimplexWidthDim]
+    )
+    vertex_parents: (
+        Int32[_AdaptiveVertexDim, Literal[2]]
+        | Int32[_AdaptivePartDim, _AdaptiveVertexDim, Literal[2]]
+    )
+    vertex_levels: Int32[_AdaptiveVertexDim] | Int32[_AdaptivePartDim, _AdaptiveVertexDim]
+    vertex_removal: (
+        Int32[_AdaptiveVertexDim] | Int32[_AdaptivePartDim, _AdaptiveVertexDim]
+    )
+    vertex_protected: (
+        Bool[_AdaptiveVertexDim] | Bool[_AdaptivePartDim, _AdaptiveVertexDim]
+    )
+    protected_codes: (
+        Int64[_AdaptiveProtectedEdgeDim]
+        | Int64[_AdaptivePartDim, _AdaptiveProtectedEdgeDim]
+    )
+    refine_rejected: Bool[_AdaptiveCellDim] | Bool[_AdaptivePartDim, _AdaptiveCellDim]
+    coarsen_marked: Bool[_AdaptiveCellDim] | Bool[_AdaptivePartDim, _AdaptiveCellDim]
+    cursors: Int64[Literal[4]] | Int64[_AdaptivePartDim, Literal[4]]
+    clocks: Int32[Literal[3]] | Int32[_AdaptivePartDim, Literal[3]]
+    counters: Int64[_AdaptiveCounterDim] | Int64[_AdaptivePartDim, _AdaptiveCounterDim]
 
     @checked
     def __init__(
@@ -561,6 +628,7 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
     ) -> None:
         cells, vertices = mesh.cell_capacity, mesh.vertex_capacity
         width = mesh.dimension + 1
+        batch_shape = mesh.cells.shape[:-2]
         specification = {
             "vertex_half_facets": (vertex_half_facets, (vertices,), jnp.int32),
             "tuples": (tuples, (cells, width), jnp.int32),
@@ -585,13 +653,19 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
         }
         arrays = {}
         for name, (value, shape, dtype) in specification.items():
+            shape = (*batch_shape, *shape)
             array = jnp.asarray(value)
             if array.shape != shape or array.dtype != dtype:
                 raise TypeError(f"{name} must be {jnp.dtype(dtype).name} {shape}.")
             arrays[name] = array
         codes = jnp.asarray(protected_codes)
-        if codes.ndim != 1 or codes.dtype != jnp.int64 or codes.shape[0] < 1:
-            raise TypeError("protected_codes must be a non-empty int64 vector.")
+        if (
+            codes.shape[:-1] != batch_shape
+            or codes.ndim != len(batch_shape) + 1
+            or codes.dtype != jnp.int64
+            or codes.shape[-1] < 1
+        ):
+            raise TypeError("protected_codes must be a non-empty int64 owner code bank.")
         self.mesh = mesh
         self.vertex_half_facets = arrays["vertex_half_facets"]
         self.tuples = arrays["tuples"]
@@ -933,69 +1007,207 @@ def _local_issue(
     )
 
 
-def _parts_issue(
-    closure: _Closure, known: Any, position: Any, codes: Any, guard: bool, axis: str, /
-) -> _Issue:
-    """Part-independent issue: new vertex and cell IDs are global ranks.
+def _neighbor_edge_codes(
+    closure: _Closure,
+    candidate: Array,
+    low_ids: Array,
+    high_ids: Array,
+    axis: str,
+    neighbors: tuple[tuple[int, int], ...],
+    /,
+) -> tuple[Array, Array]:
+    """Reconcile split edges only along prepared shared-vertex neighbor routes."""
 
-    Every part gathers the candidate refinement edges (as global vertex-ID
-    pairs) and the selected cell IDs of all parts; ranks in the gathered sorted
-    order are the single-part issue order, so IDs do not depend on ownership.
-    Each part materializes the midpoints of the new edges it holds.
-    """
+    work = closure.work
+    vertices = work.vertex_ids.shape[0]
+    lookup = jnp.where(
+        jnp.arange(vertices) < work.cursors[0], work.vertex_ids, _CODE_SENTINEL
+    )
+    required = jnp.full((vertices,), _CODE_SENTINEL, dtype=jnp.int64)
+    count = jnp.zeros((), dtype=jnp.int32)
+    packet = jnp.stack(
+        (
+            jnp.where(candidate, low_ids, _CODE_SENTINEL),
+            jnp.where(candidate, high_ids, _CODE_SENTINEL),
+        )
+    )
+
+    def insert(
+        table: Array, previous: Array, incoming: Array, receive: Array
+    ) -> tuple[Array, Array]:
+        first, first_found = _slot_of(lookup, incoming[0])
+        second, second_found = _slot_of(lookup, incoming[1])
+        codes = _edge_codes(first, second, vertices)
+        known, _ = _members(closure.keys, codes)
+        valid = receive & first_found & second_found & ~known
+        ordered = jnp.sort(
+            jnp.concatenate((table, jnp.where(valid, codes, _CODE_SENTINEL)))
+        )
+        fresh = (ordered != _CODE_SENTINEL) & jnp.concatenate(
+            (jnp.ones((1,), dtype=jnp.bool_), ordered[1:] != ordered[:-1])
+        )
+        rank = jnp.cumsum(fresh, dtype=jnp.int32) - 1
+        target = jnp.where(fresh, rank, vertices)
+        compact = (
+            jnp.full_like(table, _CODE_SENTINEL).at[target].set(ordered, mode="drop")
+        )
+        # Remember overflow even if a subsequent merge uses the truncated table.
+        total = jnp.sum(fresh, dtype=jnp.int32)
+        return compact, jnp.maximum(previous, total)
+
+    required, count = insert(required, count, packet, jnp.asarray(True))
+    index = jax.lax.axis_index(axis)
+    for source, target in neighbors:
+        incoming = jax.lax.ppermute(packet, axis, ((source, target),))
+        required, count = insert(required, count, incoming, index == target)
+    return required, count
+
+
+def _ordered_edge_ranks(
+    low_ids: Array,
+    high_ids: Array,
+    candidate: Array,
+    required: Array,
+    work: _Work,
+    axis: str,
+    part_count: int,
+    /,
+) -> tuple[Array, Array]:
+    """Bounded distributed merge; only the current two-ID head travels the ring."""
+
+    low, high = jax.lax.sort(
+        (
+            jnp.where(candidate, low_ids, _CODE_SENTINEL),
+            jnp.where(candidate, high_ids, _CODE_SENTINEL),
+        ),
+        num_keys=2,
+    )
+    vertices = work.vertex_ids.shape[0]
+    required_low = work.vertex_ids[required // vertices % vertices]
+    required_high = work.vertex_ids[required % vertices]
+    ring = tuple((part, (part + 1) % part_count) for part in range(part_count))
+    initial = (
+        jnp.zeros((), dtype=jnp.int32),
+        jnp.zeros((), dtype=jnp.int64),
+        jnp.full(required.shape, -1, dtype=jnp.int64),
+        jnp.asarray(True),
+    )
+
+    def proceed(state: tuple[Array, Array, Array, Array]) -> Array:
+        return state[3]
+
+    def merge(
+        state: tuple[Array, Array, Array, Array],
+    ) -> tuple[Array, Array, Array, Array]:
+        position, count, ranks, _ = state
+        head = jnp.stack(
+            (
+                jnp.where(
+                    position < low.shape[0],
+                    low[jnp.minimum(position, low.shape[0] - 1)],
+                    _CODE_SENTINEL,
+                ),
+                jnp.where(
+                    position < high.shape[0],
+                    high[jnp.minimum(position, high.shape[0] - 1)],
+                    _CODE_SENTINEL,
+                ),
+            )
+        )
+
+        def circulate(_: int, state: tuple[Array, Array]) -> tuple[Array, Array]:
+            packet, best = state
+            packet = jax.lax.ppermute(packet, axis, ring)
+            smaller = (packet[0] < best[0]) | (
+                (packet[0] == best[0]) & (packet[1] < best[1])
+            )
+            return packet, jnp.where(smaller, packet, best)
+
+        _, best = jax.lax.fori_loop(0, part_count - 1, circulate, (head, head))
+        valid = best[0] != _CODE_SENTINEL
+        matches = (
+            (required != _CODE_SENTINEL)
+            & (required_low == best[0])
+            & (required_high == best[1])
+        )
+        ranks = jnp.where(matches & valid, count, ranks)
+        consumed = (low < best[0]) | ((low == best[0]) & (high <= best[1]))
+        position = jnp.sum(consumed, dtype=jnp.int32)
+        return position, count + valid.astype(jnp.int64), ranks, valid
+
+    _, count, ranks, _ = jax.lax.while_loop(proceed, merge, initial)
+    return ranks, count.astype(jnp.int32)
+
+
+def _ordered_cell_ranks(
+    work: _Work, selected: Array, axis: str, part_count: int, /
+) -> tuple[Array, Array]:
+    """Rank owned parents with one local-capacity packet, never a P*C table."""
+
+    packet = jnp.sort(jnp.where(selected, work.cell_ids, _CODE_SENTINEL))
+    rank = jnp.searchsorted(packet, work.cell_ids).astype(jnp.int64)
+    ring = tuple((part, (part + 1) % part_count) for part in range(part_count))
+
+    def circulate(_: int, state: tuple[Array, Array]) -> tuple[Array, Array]:
+        incoming, ranks = state
+        incoming = jax.lax.ppermute(incoming, axis, ring)
+        return incoming, ranks + jnp.searchsorted(incoming, work.cell_ids)
+
+    _, rank = jax.lax.fori_loop(0, part_count - 1, circulate, (packet, rank))
+    count = jax.lax.psum(jnp.sum(selected, dtype=jnp.int32), axis)
+    return rank, count
+
+
+def _parts_issue(
+    closure: _Closure,
+    known: Array,
+    position: Array,
+    codes: Array,
+    guard: bool,
+    axis: str,
+    part_count: int,
+    neighbors: tuple[tuple[int, int], ...],
+    /,
+) -> _Issue:
+    """Neighbor topology reconciliation plus bounded canonical ID ordering."""
 
     work, selected = closure.work, closure.selected
     vertices = work.vertex_ids.shape[0]
-    ids = work.vertex_ids
-    first_end, second_end = _refinement_edges(work)
-    low, high = jnp.minimum(first_end, second_end), jnp.maximum(first_end, second_end)
+    first, second = _refinement_edges(work)
+    low_ids = jnp.minimum(work.vertex_ids[first], work.vertex_ids[second])
+    high_ids = jnp.maximum(work.vertex_ids[first], work.vertex_ids[second])
     candidate = selected & ~known
-    gathered = (
-        jax.lax.all_gather(jnp.where(candidate, ids[low], _CODE_SENTINEL), axis),
-        jax.lax.all_gather(jnp.where(candidate, ids[high], _CODE_SENTINEL), axis),
+    required, created_local = _neighbor_edge_codes(
+        closure, candidate, low_ids, high_ids, axis, neighbors
     )
-    pair_low, pair_high = jax.lax.sort(
-        tuple(value.reshape((-1,)) for value in gathered), num_keys=2
+    global_rank, created_global = _ordered_edge_ranks(
+        low_ids, high_ids, candidate, required, work, axis, part_count
     )
-    fresh = (pair_low != _CODE_SENTINEL) & jnp.concatenate(
-        (
-            jnp.ones((1,), dtype=jnp.bool_),
-            (pair_low[1:] != pair_low[:-1]) | (pair_high[1:] != pair_high[:-1]),
-        )
-    )
-    global_rank = jnp.cumsum(fresh, dtype=jnp.int64) - 1
-    slots = jnp.arange(vertices, dtype=jnp.int64)
-    lookup = jnp.where(slots < work.cursors[0], ids, _CODE_SENTINEL)
-    low_slot, low_found = _slot_of(lookup, pair_low)
-    high_slot, high_found = _slot_of(lookup, pair_high)
-    relevant = fresh & low_found & high_found
-    local_rank = jnp.cumsum(relevant, dtype=jnp.int32) - 1
+    relevant = required != _CODE_SENTINEL
+    local_rank = jnp.arange(vertices, dtype=jnp.int32)
     vertex_slot = work.cursors[0].astype(jnp.int32)
-    local_codes = jnp.where(
-        relevant, _edge_codes(low_slot, high_slot, vertices), _CODE_SENTINEL
-    )
-    # Relevant codes ascend in gathered order (slot order is ID order).
-    compact = jnp.sort(local_codes)
-    midpoint_rank = jnp.searchsorted(compact, codes).astype(jnp.int32)
-    selected_ids = jax.lax.all_gather(
-        jnp.where(selected, work.cell_ids, _CODE_SENTINEL), axis
-    ).reshape((-1,))
-    ordered_ids = jnp.sort(selected_ids)
-    cell_rank = jnp.searchsorted(ordered_ids, work.cell_ids).astype(jnp.int64)
+    midpoint_rank = jnp.searchsorted(required, codes).astype(jnp.int32)
+    cell_rank, count_global = _ordered_cell_ranks(work, selected, axis, part_count)
     return _Issue(
         jnp.where(known, closure.values[position], vertex_slot + midpoint_rank),
         jnp.where(relevant, vertex_slot + local_rank, vertices),
-        jnp.stack((low_slot, high_slot), axis=1),
+        jnp.stack(
+            (
+                jnp.where(relevant, required // vertices, 0),
+                jnp.where(relevant, required % vertices, 0),
+            ),
+            axis=1,
+        ).astype(jnp.int32),
         work.cursors[2] + global_rank,
-        local_codes,
+        required,
         vertex_slot + local_rank,
         work.cursors[3] + 2 * cell_rank,
-        jnp.sum(relevant, dtype=jnp.int32),
-        jnp.sum(fresh, dtype=jnp.int32),
+        created_local,
+        created_global,
         jnp.sum(selected, dtype=jnp.int32),
-        jnp.sum(ordered_ids != _CODE_SENTINEL, dtype=jnp.int32),
+        count_global,
         (
-            jnp.any(_members(work.protected_codes, local_codes)[0])
+            jnp.any(_members(work.protected_codes, required)[0])
             if guard
             else jnp.asarray(False)
         ),
@@ -1116,7 +1328,13 @@ def _bisected(work: _Work, selected: Array, issue: _Issue, dimension: int, /) ->
 
 
 def _bisection_round(
-    closure: _Closure, dimension: int, guard: bool, axis: str | None, /
+    closure: _Closure,
+    dimension: int,
+    guard: bool,
+    axis: str | None,
+    part_count: int = 1,
+    neighbors: tuple[tuple[int, int], ...] = (),
+    /,
 ) -> _Closure:
     """Bisect the selected cells once; select every cell holding a split edge.
 
@@ -1134,7 +1352,9 @@ def _bisection_round(
     issue = (
         _local_issue(closure, known, position, codes, guard)
         if axis is None
-        else _parts_issue(closure, known, position, codes, guard, axis)
+        else _parts_issue(
+            closure, known, position, codes, guard, axis, part_count, neighbors
+        )
     )
     fits = (work.cursors[0] + issue.created_local <= vertices) & (
         work.cursors[1] + 2 * issue.count_local.astype(jnp.int64) <= cells
@@ -1191,6 +1411,8 @@ def _closure(
     layout: AdaptiveSimplexLayout,
     guard: bool,
     axis: str | None = None,
+    part_count: int = 1,
+    neighbors: tuple[tuple[int, int], ...] = (),
     /,
 ) -> _Closure:
     """Conformity closure of the marked cells in one compiled while loop.
@@ -1218,7 +1440,9 @@ def _closure(
         return closure.pending & (closure.status == 0) & (closure.iterations < limit)
 
     def step(closure: _Closure) -> Any:
-        return _bisection_round(closure, layout.dimension, guard, axis)
+        return _bisection_round(
+            closure, layout.dimension, guard, axis, part_count, neighbors
+        )
 
     result = jax.lax.while_loop(proceed, step, start)
     unfinished = result.pending & (result.status == 0)
@@ -1527,8 +1751,10 @@ class _Coarsening(NamedTuple):
     progressed: Array
 
 
-def _coarsening_pass(coarsening: _Coarsening, /) -> _Coarsening:
-    """Remove every good vertex: unprotected, star = marked families it created."""
+def _coarsening_candidates(
+    coarsening: _Coarsening, /
+) -> tuple[Array, Array, Array, Array]:
+    """Local complete-family midpoint admissibility, before any restoration."""
 
     work, marked = coarsening.work, coarsening.marked
     vertices, cells = work.vertex_ids.shape[0], work.cell_ids.shape[0]
@@ -1567,7 +1793,17 @@ def _coarsening_pass(coarsening: _Coarsening, /) -> _Coarsening:
         .set(True, mode="drop")
     )
     good = candidate & ~spoiled
-    removed = member & good[jnp.minimum(creator, vertices - 1)]
+    return member, parent, good, star > 0
+
+
+def _coarsening_apply(
+    coarsening: _Coarsening, member: Array, parent: Array, good: Array, /
+) -> _Coarsening:
+    """Restore only families whose midpoint has been admitted by every owner."""
+
+    work, marked = coarsening.work, coarsening.marked
+    vertices, cells = work.vertex_ids.shape[0], work.cell_ids.shape[0]
+    removed = member & good[jnp.minimum(work.bisection_vertices[parent], vertices - 1)]
     undo = (
         jnp.zeros((cells,), dtype=jnp.bool_)
         .at[jnp.where(removed, parent, cells)]
@@ -1594,6 +1830,13 @@ def _coarsening_pass(coarsening: _Coarsening, /) -> _Coarsening:
         coarsening.restored + jnp.sum(undo, dtype=jnp.int32),
         progressed,
     )
+
+
+def _coarsening_pass(coarsening: _Coarsening, /) -> _Coarsening:
+    """Remove every good vertex: unprotected, star = marked families it created."""
+
+    member, parent, good, _ = _coarsening_candidates(coarsening)
+    return _coarsening_apply(coarsening, member, parent, good)
 
 
 def _coarsen(
@@ -1722,13 +1965,23 @@ class AdaptiveSimplexParts(StrictModule, NonTrainableState):
 
     Part ``p`` of a stacked state runs on ``devices[p]``; the compiled
     refinement is cached per (layout, parts), never per ownership.
+    ``neighbor_pairs`` are reciprocal directed routes covering every shared
+    edge owner. Preparation may use the stronger shared-vertex adjacency;
+    refinement propagates through repeated neighbor exchanges, not a fixed
+    halo. Canonical ID ordering uses a separate bounded device ring.
     """
 
     mesh: Mesh = eqx.field(static=True)
     axis_name: str = eqx.field(static=True)
+    neighbor_pairs: tuple[tuple[int, int], ...] = eqx.field(static=True)
 
     def __init__(
-        self, devices: Sequence[jax.Device], /, *, axis_name: str = "parts"
+        self,
+        devices: Sequence[jax.Device],
+        /,
+        *,
+        axis_name: str = "parts",
+        neighbor_pairs: tuple[tuple[int, int], ...] | None = None,
     ) -> None:
         chosen = tuple(devices)
         if not chosen or not all(isinstance(device, jax.Device) for device in chosen):
@@ -1737,8 +1990,27 @@ class AdaptiveSimplexParts(StrictModule, NonTrainableState):
             raise ValueError("Every part needs its own device.")
         if not isinstance(axis_name, str) or not axis_name:
             raise ValueError("axis_name must be a non-empty string.")
+        if neighbor_pairs is None:
+            if len(chosen) != 1:
+                raise ValueError("Multiple parts require prepared neighbor_pairs.")
+            neighbor_pairs = ()
+        if not isinstance(neighbor_pairs, tuple) or any(
+            not isinstance(pair, tuple)
+            or len(pair) != 2
+            or any(not isinstance(index, int) for index in pair)
+            or pair[0] == pair[1]
+            or min(pair) < 0
+            or max(pair) >= len(chosen)
+            for pair in neighbor_pairs
+        ):
+            raise ValueError("neighbor_pairs must contain distinct valid part pairs.")
+        if len(set(neighbor_pairs)) != len(neighbor_pairs) or any(
+            (target, source) not in neighbor_pairs for source, target in neighbor_pairs
+        ):
+            raise ValueError("Neighbor routes must be unique and reciprocal.")
         self.mesh = Mesh(np.asarray(chosen, dtype=object), (axis_name,))
         self.axis_name = axis_name
+        self.neighbor_pairs = tuple(sorted(neighbor_pairs))
 
     @property
     def part_count(self) -> int:
@@ -1751,11 +2023,13 @@ def _refined_part(
     mask: Array,
     requested: Array,
     axis: str,
+    part_count: int,
+    neighbors: tuple[tuple[int, int], ...],
     /,
 ) -> AdaptiveSimplexUpdate:
     """Collective closure and evidence of one applied part refinement."""
 
-    closure = _closure(work, mask, layout, True, axis)
+    closure = _closure(work, mask, layout, True, axis, part_count, neighbors)
     increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
     increments = increments.at[
         jnp.asarray(
@@ -1818,7 +2092,15 @@ def _refine_parts(
             lambda: _refused(
                 state, work, requested, jnp.zeros_like(mask), layout.dimension, axis
             ),
-            lambda: _refined_part(layout, work, mask, requested, axis),
+            lambda: _refined_part(
+                layout,
+                work,
+                mask,
+                requested,
+                axis,
+                parts.part_count,
+                parts.neighbor_pairs,
+            ),
         )
         return jax.tree_util.tree_map(lambda value: value[None], update)
 
@@ -1841,11 +2123,12 @@ def refine_adaptive_simplex_parts(
     """Refine a part-sharded epoch: owned cells per part, closure across parts.
 
     ``states`` stacks one local state per part on a leading axis (each part
-    holds its owned cells and their vertices). Every closure round gathers the
-    candidate refinement edges and selected cell IDs of all parts, so new vertex
-    and cell IDs are global ranks, identical to the single-part issue whatever
-    the ownership; split edges on shared part boundaries select the neighbor
-    part's cells until the global fixed point. A round that would exceed any
+    holds its owned cells and their vertices). Each closure round reconciles
+    split edges through prepared shared-vertex neighbor packets. Repeated rounds
+    expand the forced cavity to its global fixed point rather than assuming a
+    one-ring halo. Bounded distributed ordering assigns new vertex and cell IDs
+    identically to single-part execution, independent of ownership, without
+    replicating global candidate tables. A round that would exceed any
     part's capacity or split a protected edge fails for all parts (arrays
     rolled back, terminal flags recorded on every part); there is no per-mark
     protected admissibility on parts. A terminal flag recorded on any part
@@ -1870,6 +2153,221 @@ def refine_adaptive_simplex_parts(
             f"marks must be a bool ({count}, {layout.cell_capacity}) per-part mask."
         )
     return _compiled_refine_parts(layout, parts, states, mask)
+
+
+def _neighbor_coarsening_vertices(
+    work: _Work,
+    good: Array,
+    present: Array,
+    axis: str,
+    part_count: int,
+    neighbors: tuple[tuple[int, int], ...],
+    /,
+) -> tuple[Array, Array]:
+    """Intersect midpoint admission by stable IDs along prepared owner routes.
+
+    A copy with an incomplete family, differing classes or protection vetoes
+    every connected copy before any parent is restored. Only one local-capacity
+    packet travels each route; no global star or candidate table is replicated.
+    The minimum participating part also counts each removed semantic vertex once.
+    """
+
+    vertices = work.vertex_ids.shape[0]
+    index = jax.lax.axis_index(axis)
+    lookup = jnp.where(
+        jnp.arange(vertices) < work.cursors[0], work.vertex_ids, _CODE_SENTINEL
+    )
+    ids = jnp.where(present, work.vertex_ids, _CODE_SENTINEL)
+    owner = jnp.where(present, index, part_count).astype(jnp.int32)
+
+    def exchange(_: Array, value: tuple[Array, Array]) -> tuple[Array, Array]:
+        admitted, owners = value
+        packet = (ids, admitted, owners)
+        blocked = jnp.zeros_like(admitted)
+        minimum = owners
+        for source, target in neighbors:
+            incoming_ids, incoming_good, incoming_owner = jax.lax.ppermute(
+                packet, axis, ((source, target),)
+            )
+            slots, found = _slot_of(lookup, incoming_ids)
+            receive = (index == target) & found
+            blocked = blocked.at[
+                jnp.where(receive & ~incoming_good, slots, vertices)
+            ].set(True, mode="drop")
+            minimum = minimum.at[jnp.where(receive, slots, vertices)].min(
+                incoming_owner, mode="drop"
+            )
+        return admitted & ~blocked, minimum
+
+    return jax.lax.fori_loop(0, max(part_count - 1, 0), exchange, (good, owner))
+
+
+def _coarsened_part(
+    layout: AdaptiveSimplexLayout,
+    work: _Work,
+    raw: Array,
+    marks: Array,
+    axis: str,
+    part_count: int,
+    neighbors: tuple[tuple[int, int], ...],
+    /,
+) -> AdaptiveSimplexUpdate:
+    """Bounded collective complete-family coarsening, with atomic failure."""
+
+    zero = jnp.zeros((), dtype=jnp.int32)
+    start = _Coarsening(work, marks, zero, zero, zero, _global_any(jnp.any(marks), axis))
+    index = jax.lax.axis_index(axis)
+
+    def candidates(value: _Coarsening) -> tuple[Array, Array, Array, Array]:
+        member, parent, good, present = _coarsening_candidates(value)
+        good, owner = _neighbor_coarsening_vertices(
+            value.work, good, present, axis, part_count, neighbors
+        )
+        return member, parent, good, owner
+
+    def apply(value: _Coarsening) -> _Coarsening:
+        member, parent, good, owner = candidates(value)
+        updated = _coarsening_apply(value, member, parent, good)
+        progressed = _global_any(updated.progressed, axis)
+        return updated._replace(
+            passes=value.passes + progressed.astype(jnp.int32),
+            removed=value.removed + jnp.sum(good & (owner == index), dtype=jnp.int32),
+            progressed=progressed,
+        )
+
+    limit = layout.maximum_coarsening_passes
+    result = jax.lax.while_loop(
+        lambda value: value.progressed & (value.passes < limit), apply, start
+    )
+    # Reaching the bound is not itself a limit: another lawful round must exist.
+    pending = jax.lax.cond(
+        result.progressed & (result.passes >= limit),
+        lambda: _global_any(jnp.any(candidates(result)[2]), axis),
+        lambda: jnp.asarray(False),
+    )
+    status = jnp.where(pending, int(AdaptiveSimplexStatus.PASS_LIMIT), 0)
+    requested = jax.lax.psum(jnp.sum(marks, dtype=jnp.int32), axis)
+    accepted = jax.lax.psum(jnp.sum(marks & result.work.retired, dtype=jnp.int32), axis)
+    increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
+    increments = increments.at[
+        jnp.asarray(
+            (
+                AdaptiveSimplexCounter.REQUESTED_COARSENINGS,
+                AdaptiveSimplexCounter.COARSENED_VERTICES,
+                AdaptiveSimplexCounter.COARSENING_PASSES,
+                AdaptiveSimplexCounter.RESTORED_CELLS,
+            )
+        )
+    ].set(
+        jnp.stack(
+            (
+                jnp.sum(marks, dtype=jnp.int32),
+                result.removed,
+                result.passes,
+                result.restored,
+            )
+        ).astype(jnp.int64)
+    )
+    final = result.work._replace(
+        coarsen_marked=result.work.coarsen_marked | raw,
+        clocks=result.work.clocks.at[1].add(result.passes),
+        counters=result.work.counters + increments,
+    )
+    update = _finished(
+        work,
+        final,
+        status,
+        layout.dimension,
+        requested=requested,
+        accepted=accepted,
+        rejected=raw & ~result.work.retired,
+        operations=jax.lax.psum(result.restored, axis),
+        iterations=result.passes,
+        vertices=jax.lax.psum(result.removed, axis),
+        axis=axis,
+    )
+    return eqx.tree_at(
+        lambda value: value.report.rejected,
+        update,
+        jnp.where(update.report.failed, raw, update.report.rejected),
+    )
+
+
+def _coarsen_parts(
+    layout: AdaptiveSimplexLayout,
+    parts: AdaptiveSimplexParts,
+    states: AdaptiveSimplexState,
+    marks: Array,
+    /,
+) -> AdaptiveSimplexUpdate:
+    axis = parts.axis_name
+    spec = PartitionSpec(axis)
+
+    def local(state_block: AdaptiveSimplexState, marks_block: Array) -> Any:
+        state = jax.tree_util.tree_map(lambda value: value[0], state_block)
+        work = _work(state)
+        raw = marks_block[0] & (work.cell_ids >= 0)
+        mask = raw & work.cell_active
+        requested = jax.lax.psum(jnp.sum(mask, dtype=jnp.int32), axis)
+        update = jax.lax.cond(
+            _terminal(work, axis) != 0,
+            lambda: _refused(state, work, requested, raw, layout.dimension, axis),
+            lambda: _coarsened_part(
+                layout, work, raw, mask, axis, parts.part_count, parts.neighbor_pairs
+            ),
+        )
+        return jax.tree_util.tree_map(lambda value: value[None], update)
+
+    mapped = jax.shard_map(
+        local, mesh=parts.mesh, in_specs=(spec, spec), out_specs=spec, check_vma=False
+    )
+    return mapped(states, marks)
+
+
+_compiled_coarsen_parts = eqx.filter_jit(_coarsen_parts)
+
+
+def coarsen_adaptive_simplex_parts(
+    layout: AdaptiveSimplexLayout,
+    parts: AdaptiveSimplexParts,
+    states: AdaptiveSimplexState,
+    marks: ArrayLike,
+    /,
+) -> AdaptiveSimplexUpdate:
+    """Collectively restore complete marked families in an owner-local forest.
+
+    Each parent and its two current children must remain on their owning part.
+    Prepared shared-vertex routes reconcile midpoint admissibility by semantic
+    vertex ID before restoration, including remote marks, classes and protection.
+    Parents retain their original cell IDs; removed child slots remain retired
+    and are never reused. A geometry failure rolls every part back atomically;
+    terminal epochs refuse the call collectively. PASS_LIMIT is applied only
+    when another admissible collective pass remains at the configured bound.
+
+    After migration, consume the accepted reassembled raw forest and its
+    measured family-execution routes, not the solver graph ownership view.
+    Stable-ID migration reunifies parent/sibling records before this kernel;
+    solver-owned requests must be routed to those complete raw families.
+    """
+
+    if not isinstance(layout, AdaptiveSimplexLayout):
+        raise TypeError("layout must be AdaptiveSimplexLayout.")
+    if not isinstance(parts, AdaptiveSimplexParts):
+        raise TypeError("parts must be AdaptiveSimplexParts.")
+    if not isinstance(states, AdaptiveSimplexState):
+        raise TypeError("states must be a stacked AdaptiveSimplexState.")
+    count = parts.part_count
+    if states.cursors.shape != (count, 4) or states.mesh.cells.shape[:2] != (
+        count,
+        layout.cell_capacity,
+    ):
+        raise ValueError("states must stack one local state per part of this layout.")
+    mask = jnp.asarray(marks)
+    if mask.shape != (count, layout.cell_capacity) or mask.dtype != jnp.bool_:
+        raise TypeError(
+            f"marks must be a bool ({count}, {layout.cell_capacity}) per-part mask."
+        )
+    return _compiled_coarsen_parts(layout, parts, states, mask)
 
 
 def adaptive_simplex_state(
@@ -1980,6 +2478,7 @@ __all__ = [
     "adaptive_simplex_bucket",
     "adaptive_simplex_state",
     "coarsen_adaptive_simplex",
+    "coarsen_adaptive_simplex_parts",
     "masked_simplex_facet_neighbors",
     "masked_simplex_signature",
     "maubach_bisection_tables",

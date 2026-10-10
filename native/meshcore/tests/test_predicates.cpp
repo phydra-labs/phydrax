@@ -237,13 +237,47 @@ void test_c_abi_batches() {
   PHX_CHECK(low == -120 && high == 120);
 }
 
+void test_original_relative_determinant_floor_is_exact_at_all_scales() {
+  for (int exponent : {0, -700, 700}) {
+    const double scale = std::ldexp(1.0, exponent);
+    const double a[3] = {0.0, 0.0, 0.0};
+    const double b[3] = {scale, scale, 0.0};
+    const double c[3] = {0.0, scale, scale};
+    const double d[3] = {0.0, 0.0, scale};
+    double score = 0.0;
+    PHX_CHECK(relative_orient3d_exact(a, b, c, d, 0.5, &score) == 0);
+    PHX_CHECK(score == 1.0);
+    PHX_CHECK(relative_orient3d_exact(
+        a, b, c, d, std::nextafter(0.5, 0.0), &score) == 1);
+    PHX_CHECK(relative_orient3d_exact(
+        a, b, c, d, std::nextafter(0.5, 1.0), &score) == -1);
+    PHX_CHECK(relative_orient3d_exact(a, c, b, d, 0.5, &score) == -1);
+  }
+}
+
+void test_authored_expansion_empty_ball_differs_from_rounded_cospherical_carriers() {
+  const double carrier[5][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {1, 1, 1}};
+  PHX_CHECK(insphere(carrier[0], carrier[1], carrier[2], carrier[3], carrier[4]) == 0);
+  Expansion source[5][3];
+  for (int point = 0; point < 5; ++point) {
+    for (int axis = 0; axis < 3; ++axis) source[point][axis] = Expansion(carrier[point][axis]);
+  }
+  source[4][2] = Expansion(1.0) - Expansion(0x1p-60);
+  PHX_CHECK(insphere_expansion(source[0], source[1], source[2], source[3], source[4]) > 0);
+  source[4][2] = Expansion(1.0);
+  source[3][2] = Expansion(1.0) - Expansion(0x1p-60);
+  PHX_CHECK(insphere_expansion(source[0], source[1], source[2], source[3], source[4]) < 0);
+}
+
 }  // namespace
 
 int main() {
+  test_original_relative_determinant_floor_is_exact_at_all_scales();
   test_orient2d_near_degenerate_grid();
   test_orient3d_exact_zero_and_ulp();
   test_orientation_conventions();
   test_incircle_insphere_exact_zero_and_ulp();
+  test_authored_expansion_empty_ball_differs_from_rounded_cospherical_carriers();
   test_sos_orientation();
   test_sos_lifted_consistency();
   test_c_abi_batches();

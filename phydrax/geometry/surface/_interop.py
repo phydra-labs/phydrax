@@ -19,9 +19,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from ..._physical import SpatialCoordinateContract
 from ..._publication import publish_bytes
+from ..._validation import positive_integer
 from ...units import (
     CENTIMETER,
     conversion_factor,
@@ -149,10 +150,7 @@ def _unit_from_symbol(value: str, /) -> UnitDefinition:
 
 
 def _positive_capacity(name: str, value: int, /) -> int:
-    capacity = int(value)
-    if capacity <= 0:
-        raise ValueError(f"{name} must be positive.")
-    return capacity
+    return positive_integer(value, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +168,10 @@ class SurfaceImportPolicy:
     cad_linear_deflection_in_source_units: float = 1.0e-3
     cad_angular_deflection: float = 0.1
     cad_trim_samples_per_edge: int = 33
+    cad_maximum_entities: int = 1_000_000
+    cad_maximum_parameters: int = 10_000_000
+    cad_maximum_depth: int = 64
+    cad_maximum_occurrences: int = 4096
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -202,6 +204,13 @@ class SurfaceImportPolicy:
             "maximum_fields",
             _positive_capacity("maximum_fields", self.maximum_fields),
         )
+        for name in (
+            "cad_maximum_entities",
+            "cad_maximum_parameters",
+            "cad_maximum_depth",
+            "cad_maximum_occurrences",
+        ):
+            object.__setattr__(self, name, _positive_capacity(name, getattr(self, name)))
         object.__setattr__(
             self,
             "cad_trim_samples_per_edge",
@@ -209,12 +218,14 @@ class SurfaceImportPolicy:
                 "cad_trim_samples_per_edge", self.cad_trim_samples_per_edge
             ),
         )
+        if self.cad_trim_samples_per_edge < 3:
+            raise ValueError("cad_trim_samples_per_edge must be at least three.")
         linear = float(self.cad_linear_deflection_in_source_units)
         angular = float(self.cad_angular_deflection)
         if not np.isfinite(linear) or linear <= 0.0:
             raise ValueError("cad_linear_deflection_in_source_units must be positive.")
-        if not np.isfinite(angular) or angular <= 0.0:
-            raise ValueError("cad_angular_deflection must be positive.")
+        if not np.isfinite(angular) or not 0.0 < angular < np.pi:
+            raise ValueError("cad_angular_deflection must be positive and below pi.")
         object.__setattr__(self, "cad_linear_deflection_in_source_units", linear)
         object.__setattr__(self, "cad_angular_deflection", angular)
 
@@ -743,24 +754,36 @@ def _import_meshio_surface(
 
 
 def _import_cad_surface(
-    source: Path,
+    resource: BoundedResource,
     file_format: SurfaceFileFormat,
     policy: SurfaceImportPolicy,
-    artifact_digest: str,
-    source_identity: str,
     /,
 ) -> SurfaceImportResult:
-    _require_module("OCP", f"{file_format.value} direct BRep import")
-    from ..brep._occt import import_brep
+    from ...interchange._cad import CadImportPolicy
+    from ...interchange._iges import decode_iges_resource
+    from ...interchange._step import decode_step_resource
+    from ..brep._constructors import BRepTessellationPolicy
 
-    cad_model = import_brep(
-        source,
-        coordinate_contract=SpatialCoordinateContract(policy.source_length_unit),
-        source_id=source_identity,
-        linear_deflection=policy.cad_linear_deflection_in_source_units,
-        angular_deflection=policy.cad_angular_deflection,
-        trim_samples_per_edge=policy.cad_trim_samples_per_edge,
+    cad_policy = CadImportPolicy(
+        SpatialCoordinateContract(policy.source_length_unit),
+        resource.manifest.limits,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=policy.cad_linear_deflection_in_source_units,
+            angular_deflection=policy.cad_angular_deflection,
+            trim_samples_per_edge=policy.cad_trim_samples_per_edge,
+            maximum_triangles=policy.maximum_cells,
+        ),
+        maximum_occurrences=policy.cad_maximum_occurrences,
     )
+    match file_format:
+        case SurfaceFileFormat.STEP:
+            imported = decode_step_resource(resource, cad_policy)
+        case SurfaceFileFormat.IGES:
+            imported = decode_iges_resource(resource, cad_policy)
+        case _:
+            raise SurfaceUnsupportedFormatError("CAD surfaces require STEP or IGES.")
+    cad_model = imported.model
+    artifact_digest = resource.manifest.content_sha256
     points = np.asarray(cad_model.mesh_vertices)
     faces = np.asarray(cad_model.mesh_faces)
     if points.shape[0] > policy.maximum_vertices or faces.shape[0] > policy.maximum_cells:
@@ -788,7 +811,7 @@ def _import_cad_surface(
             f"direct-brep-import:{file_format.value}",
             f"source-artifact-sha256:{artifact_digest}",
             f"coordinate-scale-to-si:{scale:.17g}",
-            "authoritative-cellmesh-from-reported-occt-tessellation",
+            "authoritative-cellmesh-from-derived-native-cad-tessellation",
         ),
         cell_tags=tags,
     )
@@ -807,7 +830,7 @@ def _import_cad_surface(
     report = SurfaceInteropReport(
         operation="import",
         file_format=file_format,
-        provider="OCP",
+        provider=f"phydrax-native-{file_format.value}",
         source_length_unit=policy.source_length_unit,
         target_length_unit=METER,
         coordinate_scale=scale,
@@ -840,32 +863,27 @@ def import_surface(
         raise TypeError("policy must be SurfaceImportPolicy.")
     source = Path(path).expanduser().absolute()
     format_ = _resolve_format(source, file_format)
-    if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-        _require_module("OCP", f"{format_.value} direct BRep import")
-    else:
+    cad_format = format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES)
+    if not cad_format:
         _require_module("meshio", f"{format_.value} surface import")
     resource = read_bounded_resource(
         source.name,
         trusted_root=source.parent,
         limits=ResourceLimits(
             policy.maximum_file_bytes,
-            64,
-            policy.maximum_vertices + policy.maximum_cells,
-            policy.maximum_fields,
+            policy.cad_maximum_depth if cad_format else 64,
+            policy.cad_maximum_entities
+            if cad_format
+            else policy.maximum_vertices + policy.maximum_cells,
+            policy.cad_maximum_parameters if cad_format else policy.maximum_fields,
             1024,
         ),
     )
+    if cad_format:
+        return _import_cad_surface(resource, format_, policy)
     with TemporaryDirectory(prefix="phydrax-surface-read-") as temporary:
         staged = Path(temporary) / source.name
         staged.write_bytes(resource.data)
-        if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-            return _import_cad_surface(
-                staged,
-                format_,
-                policy,
-                resource.manifest.content_sha256,
-                str(source),
-            )
         return _import_meshio_surface(
             staged,
             format_,

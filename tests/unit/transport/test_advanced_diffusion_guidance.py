@@ -22,7 +22,6 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
     likelihood = domain.Function("x", "t", "observation")(
         lambda state, time, observation: -0.5 * jnp.sum((state - observation) ** 2)
     )
-    # ty: ignore[possibly-missing-submodule]
     base = phx._score_field.StateTimeScoreField(
         base_function,
         state_label="x",
@@ -42,13 +41,11 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
     assert evaluations[0].exactness == "exact"
     assert jnp.allclose(score, expected)
     domain = _domains()
-    # ty: ignore[possibly-missing-submodule]
     unconditional = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",
         time_label="t",
     )
-    # ty: ignore[possibly-missing-submodule]
     conditional = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t", "observation")(
             lambda state, time, observation: -state + observation
@@ -86,7 +83,6 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
         jnp.full((2,), -10.0), jnp.full((2,), 10.0), label="x"
     )
     domain = state_domain @ phx.domain.TimeInterval(0.0, 1.0)
-    # ty: ignore[possibly-missing-submodule]
     score = phx._score_field.StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",

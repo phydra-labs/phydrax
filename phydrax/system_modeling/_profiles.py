@@ -20,7 +20,6 @@ def system_modeling_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, attrs),),
             required_gates=(
                 "connection-conservation",

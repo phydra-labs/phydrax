@@ -209,7 +209,11 @@ def test_conservative_fd_scenario_2() -> None:
     rhs = (velocity_expression * u).divergence("x")
     problem = _conservative_problem(
         rhs,
-        parameters=(phx.equations.PDEParameter("velocity", functional=True),),
+        parameters=(
+            phx.equations.PDEParameter(
+                "velocity", representation="vector", functional=True
+            ),
+        ),
     )
     compiled = phx.equations.compile_finite_difference_pde(problem, grid)
     x = grid.axes[0].nodes

@@ -29,15 +29,12 @@ from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
 from ..conditions._base import AbstractResidualCondition, Observation
 from ..integration import (
     AdaptiveIntegration,
-    CallerIntegration,
     ComponentTarget,
     DensityTarget,
-    FixedIntegration,
     from_samples,
     IntegrationRealization,
     IntegrationSource,
     MappedIntegrationBatch,
-    PerStepIntegration,
     PointIntegrationBatch,
     reduce,
     SeparableIntegrationBatch,
@@ -59,14 +56,6 @@ from ._integrated import (
     validate_condition_source,
 )
 from ._residual_layout import ResidualBlockLayout
-
-
-_SOURCE_TYPES = (
-    PerStepIntegration,
-    FixedIntegration,
-    CallerIntegration,
-    AdaptiveIntegration,
-)
 
 
 def _adaptive_component(source: AdaptiveIntegration, /) -> DomainComponent:
@@ -342,8 +331,6 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ) -> None:
-        if not isinstance(source, _SOURCE_TYPES):
-            raise TypeError("ResidualPenalty requires a typed IntegrationSource.")
         validate_condition_source(condition.on, source)
         if isinstance(source, AdaptiveIntegration):
             _validate_adaptive_source(source)
@@ -352,15 +339,8 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise ValueError("Term scale must be a scalar.")
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
             raise ValueError("Term scale must be finite and nonnegative.")
-        if density is not None:
-            if not isinstance(density, DomainFunction):
-                raise TypeError("Penalty density must be a DomainFunction or None.")
-            if not density.domain.same_support(condition.on.domain):
-                raise ValueError(
-                    "Penalty density domain is incompatible with the condition."
-                )
-        if blocks is not None and not isinstance(blocks, ResidualBlockLayout):
-            raise TypeError("blocks must be a ResidualBlockLayout or None.")
+        if density is not None and not density.domain.same_support(condition.on.domain):
+            raise ValueError("Penalty density domain is incompatible with the condition.")
         accuracy_eps = float(data_accuracy_eps)
         if not bool(jnp.isfinite(accuracy_eps)) or accuracy_eps <= 0.0:
             raise ValueError("data_accuracy_eps must be finite and positive.")

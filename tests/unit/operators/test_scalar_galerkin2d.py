@@ -564,7 +564,7 @@ def test_curve_refuses_non_simple_or_degenerate_polygons(
 def test_curve_requires_an_explicit_canonical_source_identity() -> None:
     unit = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
     with pytest.raises(TypeError):
-        ClosedPolygonalCurve2D(unit, source_id=3)  # ty: ignore[invalid-argument-type]
+        ClosedPolygonalCurve2D(unit, source_id=3)
     with pytest.raises(ValueError):
         ClosedPolygonalCurve2D(unit, source_id=" padded ")
     first = ClosedPolygonalCurve2D(unit, source_id="first")
@@ -581,7 +581,7 @@ def test_exterior_formulation_refuses_undeclared_configurations() -> None:
     with pytest.raises(ValueError):
         prepare_exterior_laplace_dirichlet_2d(
             galerkin,
-            far_field="radiating",  # ty: ignore[invalid-argument-type]
+            far_field="radiating",
         )
     mathematical = phx.linalg.LinearSolvePolicy(
         phx.linalg.GMRES(), differentiation=phx.linalg.DifferentiationPolicy()
@@ -595,7 +595,7 @@ def test_exterior_formulation_refuses_undeclared_configurations() -> None:
     with pytest.raises(ValueError, match="unrolled Krylov derivative"):
         prepare_exterior_laplace_dirichlet_2d(galerkin, linear=algorithmic)
     with pytest.raises(TypeError):
-        prepare_exterior_laplace_dirichlet_2d("galerkin")  # ty: ignore[invalid-argument-type]
+        prepare_exterior_laplace_dirichlet_2d("galerkin")
 
 
 def test_resource_and_quadrature_limits_refuse_before_use() -> None:

@@ -845,7 +845,6 @@ def _entry_profile(
     return CapabilityProfile(
         "battery.dfn-entry",
         "phydrax",
-        "release",
         (DFN_ENTRY_SUPPORT,),
         dependencies=(
             SupportDependency(source_profile_id, assessment.policy.support_tuple_id),

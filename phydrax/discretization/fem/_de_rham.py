@@ -36,6 +36,7 @@ from ...linalg._complexes import (
 from ...sparse import EdgeRelation, SparseCoordinateOperator
 from ...typing import checked, parse
 from .._cell_de_rham import AbstractCellDeRhamComplex
+from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellMesh
 from .._cochain_hodge import SparseHodge
 from .._side_actions import SideTraceProvider
@@ -74,12 +75,17 @@ def _moment_rule(
                     jnp.ones((1,), dtype=jnp.float64),
                 )
             else:
-                kind = (
-                    f"tensor:{dimension}"
-                    if basis.family == "tensor-trimmed"
-                    else f"simplex:{dimension}"
-                )
-                sites, cubature = _degree_aware_reference_rule(kind, polynomial_degree)
+                kind = basis.entity_kind(face)
+                degree = polynomial_degree
+                factors = basis.hybrid_factors
+                if kind in ("prism", "pyramid") and factors is not None:
+                    degree = max(
+                        degree,
+                        max(sum(alpha) for alpha in basis.exponents)
+                        + max(sum(alpha) for alpha in factors.body_test_exponents)
+                        + 2,
+                    )
+                sites, cubature = _degree_aware_reference_rule(kind, degree)
             reference, functional = basis.functional_weights_at(face, sites, cubature)
             points.append(reference)
             weights.append(functional)
@@ -279,7 +285,19 @@ def _complex_fields(
                 block.cell_kind,
                 degree,
                 polynomial_order,
-                family=family,
+                family=(
+                    "prism-trimmed"
+                    if family == "trimmed" and block.cell_kind == "prism"
+                    else "pyramid-trimmed"
+                    if family == "trimmed" and block.cell_kind == "pyramid"
+                    else "tensor-trimmed"
+                    if family == "trimmed"
+                    and (
+                        block.cell_kind in ("quadrilateral", "hexahedron")
+                        or block.cell_kind.startswith("tensor:")
+                    )
+                    else family
+                ),
                 twist=twist,
                 proxy=proxy,
             )
@@ -306,7 +324,15 @@ def _absolute_fe_complex(
     )
     differentials = []
     for degree in range(discretization.mesh.topological_dimension):
-        if family in ("trimmed", "tensor-trimmed") and order == 1:
+        if (
+            family in ("trimmed", "tensor-trimmed")
+            and order == 1
+            and discretization.mesh.periodic_topology is None
+            and all(
+                block.cell_kind not in ("prism", "pyramid")
+                for block in discretization.mesh.blocks
+            )
+        ):
             incidence = discretization.mesh.topology.incidences[degree]
             relation = incidence.relation
             valid = np.asarray(relation.valid, dtype=np.bool_)
@@ -605,6 +631,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         twist: FormTwist = "untwisted",
         hodge_solve: LinearSolvePolicy | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
+        coordinate_spec: CellGeometrySpec | None = None,
     ) -> None:
         selected = parse(family, FormElementFamily, "family")
         twist_ = parse(twist, FormTwist, "twist")
@@ -618,7 +645,12 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         dimension = mesh.topological_dimension
         fields = _complex_fields(mesh, selected, order, twist_)
         discretization = FiniteElementDiscretization(
-            FiniteElementPlan(mesh, fields, coefficient_dtype=coefficient_dtype)
+            FiniteElementPlan(
+                mesh,
+                fields,
+                coefficient_dtype=coefficient_dtype,
+                coordinate_spec=coordinate_spec,
+            )
         )
         hodges = tuple(
             _metric_hodge(discretization, degree, hodge_solve)
@@ -628,6 +660,10 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             {
                 "kind": "finite-element-de-rham",
                 "mesh": mesh.mesh_id,
+                "coordinate_layout": discretization.default_runtime.geometry_layout_id,
+                "coordinate_values": array_tree_fingerprint(
+                    discretization.default_runtime.coordinates
+                ),
                 "family": selected,
                 "order": order,
                 "twist": twist_,
@@ -840,7 +876,9 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             for cell in range(cell_map.cell_count):
                 points = basis.functional_points
                 cells = jnp.full((points.shape[0],), cell, dtype=jnp.int32)
-                geometry = cell_map.evaluate(self.mesh.coordinates, cells, points)
+                geometry = cell_map.evaluate(
+                    self.discretization.default_runtime.coordinates, cells, points
+                )
                 values = jnp.asarray(form(geometry.physical_points))
                 expected = (points.shape[0], form_type.component_count)
                 if values.shape != expected:
@@ -994,7 +1032,7 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
             cell_map = PreparedFiniteElementCellMap(self.discretization, block_index)
             for cell, cell_vertices in enumerate(np.asarray(block.vertices)):
                 geometry = cell_map.evaluate(
-                    self.mesh.coordinates,
+                    self.discretization.default_runtime.coordinates,
                     jnp.full((points.shape[0],), cell, dtype=jnp.int32),
                     points,
                 )
@@ -1051,9 +1089,15 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         if target.dimension != self.dimension or target.primal_twist != self.primal_twist:
             raise ValueError("FE transfer requires the same dimension and twist.")
         parents = None if parent_cells is None else np.asarray(parent_cells)
-        if parents is None and target.mesh.mesh_id != self.mesh.mesh_id:
+        if parents is None and (
+            target.mesh.mesh_id != self.mesh.mesh_id
+            or target.discretization.default_runtime.geometry_layout_id
+            != self.discretization.default_runtime.geometry_layout_id
+            or array_tree_fingerprint(target.discretization.default_runtime.coordinates)
+            != array_tree_fingerprint(self.discretization.default_runtime.coordinates)
+        ):
             raise ValueError(
-                "Distinct meshes require an explicit nested parent_cells relation."
+                "Distinct meshes or coordinate maps require an explicit nested parent_cells relation."
             )
         if parents is not None:
             shape = (sum(block.cell_count for block in target.mesh.blocks),)
@@ -1090,43 +1134,44 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
         target_offset = 0
         for block_index, block in enumerate(target.mesh.blocks):
             target_map = PreparedFiniteElementCellMap(target.discretization, block_index)
-            probe, _ = _degree_aware_reference_rule(block.cell_kind, self.dimension + 1)
+            refinement_element = _linear_reference_element(block.cell_kind)
+            geometry_degree = max(
+                target_map.coordinate_element.degree,
+                *(cell_map.coordinate_element.degree for cell_map in maps),
+            )
+            probe, _ = _degree_aware_reference_rule(
+                block.cell_kind, max(self.dimension + 1, 2 * geometry_degree)
+            )
             reference = jnp.concatenate(
-                (target_map.coordinate_element.reference_nodes, probe), axis=0
+                (refinement_element.reference_nodes, probe), axis=0
             )
             for cell in range(block.cell_count):
                 parent = int(parents[target_offset + cell])
                 source_block = int(np.searchsorted(offsets[1:], parent, side="right"))
                 source_cell = parent - int(offsets[source_block])
                 geometry = target_map.evaluate(
-                    target.mesh.coordinates,
+                    target.discretization.default_runtime.coordinates,
                     jnp.full((reference.shape[0],), cell, dtype=jnp.int32),
                     reference,
                 )
                 source_reference = _invert_known_cell(
                     maps[source_block],
-                    self.mesh.coordinates,
+                    self.discretization.default_runtime.coordinates,
                     source_cell,
                     geometry.physical_points,
                 )
-                host = np.asarray(source_reference)
-                tensor = self.family == "tensor-trimmed"
-                inside = (
-                    np.all((host >= -1e-10) & (host <= 1 + 1e-10))
-                    if tensor
-                    else np.all(host >= -1e-10)
-                    and np.all(np.sum(host, axis=-1) <= 1 + 1e-10)
+                from .._mapped_locator import reference_margin
+
+                kind = maps[source_block].coordinate_element.cell_kind
+                inside = np.all(
+                    np.asarray(reference_margin(kind, source_reference)) >= -1e-10
                 )
                 if not inside:
                     raise ValueError(
                         "A target child is not contained in its declared source parent."
                     )
-                corners = source_reference[
-                    : target_map.coordinate_element.local_dof_count
-                ]
-                represented = (
-                    target_map.coordinate_element.tabulate(reference)[0] @ corners
-                )
+                corners = source_reference[: refinement_element.local_dof_count]
+                represented = refinement_element.tabulate(reference)[0] @ corners
                 if np.max(np.abs(np.asarray(represented - source_reference))) > 1e-10:
                     raise ValueError(
                         "The parent relation is not a native reference-cell refinement."
@@ -1178,18 +1223,18 @@ class FiniteElementDeRhamComplex(AbstractCellDeRhamComplex):
                     source_block = int(np.searchsorted(offsets[1:], parent, side="right"))
                     source_cell = parent - int(offsets[source_block])
                     geometry = target_map.evaluate(
-                        target.mesh.coordinates,
+                        target.discretization.default_runtime.coordinates,
                         jnp.full((points.shape[0],), cell, dtype=jnp.int32),
                         points,
                     )
                     source_points = _invert_known_cell(
                         source_maps[source_block],
-                        self.mesh.coordinates,
+                        self.discretization.default_runtime.coordinates,
                         source_cell,
                         geometry.physical_points,
                     )
                     source_geometry = source_maps[source_block].evaluate(
-                        self.mesh.coordinates,
+                        self.discretization.default_runtime.coordinates,
                         jnp.full((points.shape[0],), source_cell, dtype=jnp.int32),
                         source_points,
                     )

@@ -223,10 +223,13 @@ def test_production_modalities_scenario_2() -> None:
     assert jnp.all(jnp.real(impedance) > 0)
 
     mesh = _hcurl_mesh()
-    hcurl = phx.discretization.TetrahedralNedelecSpace(mesh)
-    connectivity = mesh.connectivity
-    free = np.flatnonzero(~np.asarray(connectivity.boundary_edges))
-    source = np.zeros((1, hcurl.edge_count))
+    hcurl = phx.discretization.FiniteElementDeRhamComplex(
+        mesh,
+        family="trimmed",
+        order=1,
+    )
+    free = np.asarray(hcurl.active_indices(1, boundary="relative"))
+    source = np.zeros((1, hcurl.cell_counts[1]))
     source[0, free[0]] = 1.0
     receivers = source.copy()
     # ty: ignore[invalid-argument-type]
@@ -235,7 +238,7 @@ def test_production_modalities_scenario_2() -> None:
         1.0,
         geo.electromagnetics.VACUUM_PERMITTIVITY_F_M,
         1.0 / geo.electromagnetics.VACUUM_PERMEABILITY_H_M,
-        hcurl.cell_count,
+        hcurl.cell_counts[3],
     )
     # ty: ignore[invalid-argument-type]
     frequency = geo.FrequencyDomainEMPlan(mesh, survey).solve([2 * np.pi], material)

@@ -160,8 +160,10 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         == automatic.coupling_id
         == "0c2e26058e824fcf5243448ae5fa48830f165bb204a2a625ba9c46fd6c5ab92b"
     )
+    # Bytes of the pinned JAX 0.11 normal sampler: JAX 0.9 produced the same key
+    # stream and covariance factor, with six draws differing by at most 1.5e-15.
     assert values_digest == (
-        "9cf30c90eec6f2da47feff3c0fea917d48ee3c8a7059cf8a311ebbb66b87359c"
+        "cb03fffda7dfa62383aa3b6f4a058d6ddc0221b96c6633800b617022530e3868"
     )
 
 

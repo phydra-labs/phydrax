@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -29,6 +30,10 @@ from ...linalg import (
 from ...typing import checked
 from ._hp import FiniteElementHPTransferPlan
 from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
+
+
+if TYPE_CHECKING:
+    from ...meshing._decision import RouteFeasibility
 
 
 class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
@@ -226,13 +231,25 @@ class FiniteElementHPMultigridPlan(StrictModule, NonTrainableState):
 
 
 class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
-    """Inspectable route, metric, skeleton, and signature-cache invalidation."""
+    """Degree signature availability and actual prepared-layout invalidations.
+
+    Matching degree signatures do not prove compiled executable reuse. Common
+    admission additionally requires the compiler owner's actual layout identity.
+    """
 
     reused_signatures: tuple[str, ...] = eqx.field(static=True)
     new_signatures: tuple[str, ...] = eqx.field(static=True)
     routes_changed: bool = eqx.field(static=True)
     metrics_changed: bool = eqx.field(static=True)
     skeleton_changed: bool = eqx.field(static=True)
+    field_layouts_changed: bool = eqx.field(static=True)
+    symbolic_reusable: bool = eqx.field(static=True)
+    numeric_reusable: bool = eqx.field(static=True)
+    source_revision_id: str = eqx.field(static=True)
+    target_revision_id: str = eqx.field(static=True)
+    geometry_layout_id: str = eqx.field(static=True)
+    field_layouts: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    dofs: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -282,6 +299,40 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
         self.skeleton_changed = (
             accepted.interfaces.plan_id != candidate.interfaces.plan_id
         )
+        accepted_fields = (
+            ()
+            if accepted.discretization is None
+            else tuple(
+                sorted(
+                    (space.name, space.layout.layout_id)
+                    for space in accepted.discretization.field_spaces
+                )
+            )
+        )
+        candidate_fields = (
+            ()
+            if candidate.discretization is None
+            else tuple(
+                sorted(
+                    (space.name, space.layout.layout_id)
+                    for space in candidate.discretization.field_spaces
+                )
+            )
+        )
+        self.field_layouts_changed = accepted_fields != candidate_fields
+        self.symbolic_reusable = not (
+            self.routes_changed or self.skeleton_changed or self.field_layouts_changed
+        )
+        self.numeric_reusable = self.symbolic_reusable and not self.metrics_changed
+        self.source_revision_id = accepted.epoch_id
+        self.target_revision_id = candidate.epoch_id
+        self.geometry_layout_id = candidate.geometry.geometry_id
+        self.field_layouts = candidate_fields
+        self.dofs = (
+            0
+            if candidate.discretization is None
+            else sum(space.layout.size for space in candidate.discretization.field_spaces)
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-solver-refresh",
@@ -294,6 +345,32 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
                 "skeleton_changed": self.skeleton_changed,
             }
         )
+
+    def require_feasibility(
+        self,
+        feasibility: RouteFeasibility,
+        /,
+        *,
+        compiled_layout_id: str,
+    ) -> None:
+        """Bind refresh evidence to the actual independently compiled trial route."""
+        from ...meshing._decision import RouteFeasibility
+
+        if not isinstance(feasibility, RouteFeasibility):
+            raise TypeError("hp refresh admission requires RouteFeasibility.")
+        if (
+            feasibility.source_revision_id != self.source_revision_id
+            or feasibility.target_revision_id != self.target_revision_id
+            or feasibility.geometry_layout_id != self.geometry_layout_id
+            or feasibility.field_layouts != self.field_layouts
+            or feasibility.dofs != self.dofs
+            or not compiled_layout_id
+            or feasibility.compiled_layout_id != compiled_layout_id
+            or feasibility.issues
+        ):
+            raise ValueError(
+                "hp refresh does not realize the admitted compiled route and layouts."
+            )
 
 
 class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilder):

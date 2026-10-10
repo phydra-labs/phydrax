@@ -18,11 +18,15 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import PointCloudPlan, PreparedTensorGrid
+from ..discretization import CellGeometrySpec, PointCloudPlan, PreparedTensorGrid
 from ..discretization.iga import IsogeometricPlan
 from ..typing import checked
+from ._canonical import certify_cell_mesh
+from ._contracts import MeshingFailure, MeshingFailureCategory
+from ._lineage import identity_lineage, inherit_mesh_organization, inherit_scope
+from ._organization import MeshAttribute, MeshAttributeRole
 from ._result import CellMeshingResult
-from ._scope import MeshingEntityKind, MeshingScope
+from ._scope import _contains_ids, MeshingEntityKind, MeshingScope
 
 
 if TYPE_CHECKING:
@@ -68,6 +72,7 @@ class MeshPart(StrictModule, NonTrainableState):
         name_ = str(name).strip()
         if not name_:
             raise ValueError("Mesh part names must be non-empty.")
+        logical_values_id = None
         if isinstance(carrier, CellMeshingResult):
             contract = (
                 carrier.coordinate_contract
@@ -86,8 +91,49 @@ class MeshPart(StrictModule, NonTrainableState):
                 carrier.mesh.topological_dimension,
                 carrier.mesh.ambient_dimension,
             )
-            identity = carrier.result_id
-            values = (carrier.mesh, carrier.geometry)
+            storage = carrier.mesh.storage
+            if storage is None:
+                identity = carrier.result_id
+                values = (carrier.mesh, carrier.geometry)
+            else:
+                collective = carrier.collective_evidence
+                if collective is None:
+                    raise ValueError(
+                        "Distributed mesh parts require consumed collective publication evidence."
+                    )
+                collective.require_passed()
+                if (
+                    collective.mesh_id != carrier.mesh.mesh_id
+                    or collective.topology_id != carrier.mesh.topology_id
+                    or collective.topology_id != storage.logical_topology_id
+                    or collective.geometry_id != carrier.mesh.geometry_id
+                    or collective.geometry_id != storage.logical_geometry_id
+                    or collective.evidence_id != storage.evidence_id
+                    or collective.partition_count != storage.partition_count
+                    or collective.global_entity_counts != storage.global_entity_counts
+                    or carrier.geometry.storage_id != storage.storage_id
+                    or carrier.geometry.logical_geometry_id
+                    != storage.logical_coordinate_geometry_id
+                    or not carrier.geometry.geometry_layout_id
+                ):
+                    raise ValueError(
+                        "Distributed mesh-part geometry/logical publication bindings are stale."
+                    )
+                # Rank-local audits, lowered slots and shard payloads are not
+                # global scientific identity. This consumed witness binds the
+                # accepted logical publication without fetching global arrays.
+                logical_values_id = canonical_fingerprint(
+                    {
+                        "kind": "collective-part-numerical-values",
+                        "topology": storage.logical_topology_id,
+                        "geometry": storage.logical_geometry_id,
+                        "coordinate_layout": carrier.geometry.geometry_layout_id,
+                        "coverage": storage.evidence_id,
+                        "global_entity_counts": storage.global_entity_counts,
+                    }
+                )
+                identity = carrier.result_id
+                values = None
         else:
             contract = coordinate_contract
             if not isinstance(contract, SpatialCoordinateContract):
@@ -123,7 +169,9 @@ class MeshPart(StrictModule, NonTrainableState):
                 "name": name_,
                 "carrier_kind": kind.value,
                 "carrier": identity,
-                "values": array_tree_fingerprint(values),
+                "values": array_tree_fingerprint(values)
+                if logical_values_id is None
+                else logical_values_id,
                 "coordinates": contract.spatial_id,
             }
         )
@@ -231,6 +279,107 @@ class MeshPart(StrictModule, NonTrainableState):
             )
         raise ValueError("Spline spans do not expose point coordinates.")
 
+    def with_coordinates(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        motion_id: str,
+        geometry: CellGeometrySpec | None = None,
+    ) -> MeshPart:
+        """Recertify a cell part at moved vertex coordinates in mesh row order.
+
+        Topology and scientific entity IDs are unchanged; organization scopes
+        rebind through identity lineage. Non-vertex-aligned coordinate maps need
+        the explicit successor ``geometry``. Source-bound certificates,
+        classifications and associations require a fully recertified successor
+        part registered through the overset owner's ``reregister`` handoff.
+        ``motion_id`` names the numeric revision; unchanged coordinates return
+        this part itself.
+        """
+        carrier = self.carrier
+        if not isinstance(carrier, CellMeshingResult):
+            raise TypeError("Only certified cell mesh parts can move.")
+        points = np.asarray(coordinates)
+        if points.dtype.kind not in "iuf":
+            raise TypeError("Part motion coordinates must be real arrays.")
+        points = points.astype(np.float64)
+        current = np.asarray(carrier.mesh.coordinates, dtype=np.float64)
+        if points.shape != current.shape or not np.all(np.isfinite(points)):
+            raise ValueError(
+                f"Motion of {self.name!r} requires finite coordinates of shape "
+                f"{current.shape}."
+            )
+        if geometry is not None and not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("Motion geometry must be CellGeometrySpec or None.")
+        if np.array_equal(points, current) and geometry is None:
+            return self
+        elements, routes, old_coordinates = carrier.geometry.resolve(carrier.mesh)
+        vertex_aligned = (
+            np.array_equal(np.asarray(old_coordinates), current)
+            and all(
+                np.array_equal(np.asarray(route), np.asarray(block.vertices))
+                for route, block in zip(routes, carrier.mesh.blocks, strict=True)
+            )
+            and all(getattr(element, "degree", 1) == 1 for element in elements)
+        )
+        if geometry is None and not vertex_aligned:
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                "Non-vertex-aligned part motion requires the complete successor coordinate map.",
+                stage="motion",
+            )
+        if (
+            carrier.boundary is not None
+            or carrier.associations
+            or carrier.certification is not None
+            or carrier.region_evidence is not None
+            or any(
+                attribute.role is MeshAttributeRole.GEOMETRY_CLASSIFICATION
+                for attribute in carrier.attributes
+            )
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                f"Motion of {self.name!r} requires a recertified successor part "
+                "for its source geometry/classification/region obligations.",
+            )
+        mesh = carrier.mesh.with_coordinates(
+            points,
+            numeric_version=canonical_fingerprint(
+                {
+                    "kind": "mesh-part-motion",
+                    "motion": str(motion_id),
+                    "mesh": carrier.mesh.mesh_id,
+                    "coordinates": array_tree_fingerprint(points),
+                }
+            ),
+        )
+        lineage = identity_lineage(carrier.mesh, mesh)
+        patches, zones, labels = inherit_mesh_organization(carrier, mesh, lineage)
+        attributes = tuple(
+            MeshAttribute(
+                attribute.name,
+                attribute.role,
+                inherit_scope(attribute.scope, lineage, mesh, attribute.name),
+                attribute.global_values,
+                unit=attribute.unit,
+            )
+            for attribute in carrier.attributes
+        )
+        return MeshPart(
+            self.name,
+            certify_cell_mesh(
+                mesh,
+                self.coordinate_contract,
+                geometry=geometry,
+                patches=patches,
+                zones=zones,
+                labels=labels,
+                attributes=attributes,
+            ),
+        )
+
 
 class MeshAssembly(StrictModule, NonTrainableState):
     """Named parts and revision-bound coupling overlays, with no implicit welding."""
@@ -271,38 +420,88 @@ class MeshAssembly(StrictModule, NonTrainableState):
                 if scope.source_id not in by_name:
                     raise ValueError("Coupling endpoint is not owned by this assembly.")
                 by_name[scope.source_id].require_scope(scope)
-        receptors: dict[tuple[str, str], set[int]] = {}
-        holes: dict[tuple[str, str], set[int]] = {}
+        receptors: dict[tuple[str, str], list[MeshingScope]] = {}
+        holes: dict[tuple[str, str], list[MeshingScope]] = {}
+        hole_scopes: dict[tuple[str, str], str] = {}
         for overlay in overlays:
             if not isinstance(overlay, OversetCoupling):
                 continue
             key = (overlay.target_scope.source_id, overlay.target_scope.entity_set_id)
-            ids = set(np.asarray(overlay.target_scope.entity_ids).tolist())
-            owned = receptors.setdefault(key, set())
-            if owned.intersection(ids):
+            owned = receptors.setdefault(key, [])
+            if any(
+                bool(
+                    jnp.any(
+                        _contains_ids(
+                            previous.global_entity_ids,
+                            overlay.target_scope.global_entity_ids,
+                        )
+                    )
+                )
+                for previous in owned
+            ):
                 raise ValueError(
                     "Every overset receptor must have exactly one donor overlay."
                 )
-            owned.update(ids)
+            owned.append(overlay.target_scope)
             if overlay.hole_scope is not None:
                 by_name[overlay.hole_scope.source_id].require_scope(overlay.hole_scope)
-                holes.setdefault(key, set()).update(
-                    np.asarray(overlay.hole_scope.entity_ids).tolist()
+                # One part has one blanking: every overlay into it names it alike.
+                previous = hole_scopes.setdefault(key, overlay.hole_scope.scope_id)
+                if previous != overlay.hole_scope.scope_id:
+                    raise ValueError(
+                        "Overset overlays into one receptor entity set must share one "
+                        "hole scope."
+                    )
+                holes.setdefault(key, []).append(overlay.hole_scope)
+        for key, scopes in receptors.items():
+            if any(
+                bool(
+                    jnp.any(
+                        _contains_ids(
+                            scope.global_entity_ids,
+                            hole.global_entity_ids,
+                        )
+                    )
                 )
-        for key, ids in receptors.items():
-            if ids.intersection(holes.get(key, set())):
+                for scope in scopes
+                for hole in holes.get(key, ())
+            ):
                 raise ValueError("Overset receptor and hole ownership must be disjoint.")
         for overlay in overlays:
             if not isinstance(overlay, OversetCoupling):
                 continue
-            key = (overlay.source_scope.source_id, overlay.source_scope.entity_set_id)
-            forbidden = receptors.get(key, set()) | holes.get(key, set())
-            used = set(
-                np.asarray(overlay.donor_ids)[
-                    np.asarray(overlay.donor_weights) > 0
-                ].tolist()
-            )
-            if used.intersection(forbidden):
+            if overlay.field_query is not None:
+                support = overlay.support_cell_scope
+                if support is None:
+                    raise ValueError(
+                        "Query-mode overset donors require an explicit support-cell scope."
+                    )
+                key = (support.source_id, support.entity_set_id)
+                used = support.global_entity_ids
+            else:
+                key = (overlay.source_scope.source_id, overlay.source_scope.entity_set_id)
+                weights = overlay.donor_weights
+                if weights is None:
+                    raise ValueError(
+                        "Explicit overset vertex stencils require their owning donor weights."
+                    )
+                used = jnp.where(
+                    weights > 0,
+                    overlay.donor_ids,
+                    -1,
+                ).reshape(-1)
+            forbidden = (*receptors.get(key, ()), *holes.get(key, ()))
+            if any(
+                bool(
+                    jnp.any(
+                        _contains_ids(
+                            scope.global_entity_ids,
+                            used,
+                        )
+                    )
+                )
+                for scope in forbidden
+            ):
                 raise ValueError("Overset donors cannot be assembly receptors or holes.")
         overlays = tuple(sorted(overlays, key=lambda overlay: overlay.coupling_id))
         self.parts = values

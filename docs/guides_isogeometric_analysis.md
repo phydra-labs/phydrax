@@ -18,9 +18,38 @@ compiler with a matrix-free, sum-factorized local kernel.
 
 `BSplineGrid` is the canonical fixed grid also used by spline interpolation; the
 IGA namespace directly re-exports that class rather than defining a second knot
-convention. Knots are static topology. Control points and strictly positive
-weights are runtime values, and `NURBSGeometryState` fixes the otherwise
-nonunique common weight scale by normalizing weights to mean one.
+convention. Knot layout is fixed topology, with numeric knot banks retained as
+nontrainable dynamic leaves. Control points and strictly positive weights are
+runtime values. `NURBSGeometryState` retains the authored weight scale: a common
+rescaling preserves the rational map but changes scientific source content.
+`SplineAxisPlan.span_indices` remains the dynamic integer span bank.
+`SplineSpanTopology.span_indices` is structural compiler metadata represented by
+Python integer tuples, not static NumPy scalar leaves. Topology identity is
+computed from the original normalized int32 span arrays; compiler and archive
+recipe identities reflect the actual scalar representation without historical
+fingerprint substitution.
+
+`IsogeometricPlan.from_source` binds an untrimmed native `BSplineCurve` or
+`BSplineSurfacePatch` to the existing tensor basis and runtime geometry, retaining
+parameter order, domains, knots, degrees, control points and weights. It does not
+claim support for trimmed faces or periodic quotient spaces.
+
+For a qualified exact `prepare_tensor_transfer`, `TransferPlan.apply_geometry`
+reuses the prepared axis factors on homogeneous coordinates. This preserves the
+rational geometry under knot insertion or degree elevation; applying the
+polynomial transfer directly to Cartesian control points does not.
+`apply_rational_payload` transfers rational field coefficients together with
+their denominator and returns both target banks. The original source/target
+plan, layout and numeric revision checks remain mandatory at lifecycle binding.
+After a fixed-layout design edit, the factors remain reusable but the previous
+scientific binding is stale. Build source and target `NumericRevision` values
+from their actual control-point, weight and knot banks, then call
+`TransferPlan.bind_numeric(source_revision, target_revision)`. It retains the
+same exact factors, transpose/restriction actions and evidence while producing
+new revision/content/transfer identities and archive metadata. It cannot change
+the basis, parameter domain, layout or source/target plan owners; such changes
+require new transfer preparation. Projected transfers refuse this exact-reuse
+operation. Reusing factors does not authorize publishing old source identities.
 
 ```python
 import jax.numpy as jnp

@@ -15,6 +15,8 @@ A `CardiovascularCommercialSupportProfile` describes exactly one `SupportTuple`.
 
 The tuple may contain additional exact coordinates such as fidelity route, precision, anatomy representation, solver policy, and observation configuration. Changing any coordinate creates a different tuple and requires a separate profile and evidence bundle.
 
+The support profile has no internal generation or version field. Its canonical `profile_id` binds the exact capability profile, claims matrix, policies, dependencies, and artifact prerequisites; release candidates and signed decisions bind those content identities rather than a display version.
+
 The supplied profile also requires isolated local execution, a pinned dependency lock, no network access, no telemetry, no external data transfer, positive hard resource ceilings, and the categorical exclusion of:
 
 - clinical decision support;

@@ -361,7 +361,6 @@ class ROMCapabilityDeclaration(StrictModule, NonTrainableState):
         self,
         *,
         provider: str,
-        version: str,
         release_evidence: Sequence[ReleaseGateEvidence] = (),
     ) -> CapabilityProfile:
         evidence = tuple(release_evidence)
@@ -369,7 +368,6 @@ class ROMCapabilityDeclaration(StrictModule, NonTrainableState):
         return CapabilityProfile(
             self.capability,
             provider,
-            version,
             (SupportTuple(self.capability, dict(self.attributes)),),
             required_gates=self.required_gates,
             release_evidence=evidence,

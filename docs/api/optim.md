@@ -796,10 +796,13 @@ kind is required whenever an action is supplied so an approximate curvature
 model cannot masquerade as the exact objective Hessian.
 
 `OptimizationTermination` separates absolute and relative optimality, step, feasibility,
-maximum-step, and evaluation-budget controls. `maximum_evaluations` is checked between
-nonlinear iterations: one indivisible globalization step and the final result-packaging
-evaluation may increase the reported counter beyond that gate. Large static step budgets
-do not unroll Python; native runtimes stage their loops with JAX control flow.
+maximum-step, and evaluation-budget controls. Compiled gradient-based methods
+check `maximum_evaluations` between nonlinear iterations: one indivisible
+globalization step and the final result-packaging evaluation may increase their
+reported counter beyond that gate. Host model-based `BOBYQA`/`COBYQA` instead
+check the allowance before every objective call, including interpolation,
+polling and terminal checks. Large static budgets do not unroll compiled
+gradient runtimes; their loops use JAX control flow.
 
 Methods return `MinimizationResult` with accepted parameters, the corresponding objective
 and auxiliary output, a typed `OptimizationStatus`, numerical
@@ -2274,6 +2277,16 @@ region, and polling kernel. BOBYQA accepts bounds only; COBYQA evaluates the
 physical objective plus explicit feasibility merit and independently reports
 the final physical objective and feasibility. Neither method claims global
 optimality.
+
+These derivative-free methods accept genuinely host-owned objectives and
+constraint values: concrete bound-form preparation and primal feasibility do
+not trace callbacks or request Jacobians. Every objective and constraint call
+is counted. Nonfinite values return `NONFINITE_EVALUATION` without entering
+the interpolation model; exhausted allowances return
+`MAXIMUM_EVALUATIONS_REACHED` with the best observed feasible accepted state.
+An unavailable complete terminal finite-difference certificate is reported as
+NaN optimality with explicit status/provenance, never a fabricated zero
+gradient or success.
 
 `MultiStartPolicy` deterministically generates bounded-uniform or normal starts,
 divides the declared work budget across local solves, retains every status and

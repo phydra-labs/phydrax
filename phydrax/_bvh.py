@@ -155,8 +155,15 @@ def _build_split_levels(
     leaf_size: int,
     split: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray],
     /,
+    *,
+    _charge_work: Callable[[int], None] | None = None,
+    _reserve_storage: Callable[[int], None] | None = None,
 ) -> _Levels:
     """Level-synchronous top-down build; `split` reorders segments in place."""
+    if _charge_work is not None:
+        _charge_work(item_count + 2)
+    if _reserve_storage is not None:
+        _reserve_storage(8 * (item_count + 2))
     order = np.arange(item_count, dtype=np.int64)
     level_start = np.zeros((1,), dtype=np.int64)
     level_stop = np.full((1,), item_count, dtype=np.int64)
@@ -166,6 +173,11 @@ def _build_split_levels(
     rights: list[np.ndarray] = []
     node_count = 1
     while level_start.shape[0] > 0:
+        count = level_start.size
+        if _charge_work is not None:
+            _charge_work(6 * count)
+        if _reserve_storage is not None:
+            _reserve_storage(64 * count)
         divide = level_stop - level_start > leaf_size
         left = np.full(level_start.shape, -1, dtype=np.int64)
         right = np.full(level_start.shape, -1, dtype=np.int64)
@@ -189,15 +201,59 @@ def _build_split_levels(
     return order, starts, stops, lefts, rights
 
 
-def _median_split(lower: np.ndarray, upper: np.ndarray, centers: np.ndarray, /) -> Any:
+def _median_split(
+    lower: np.ndarray,
+    upper: np.ndarray,
+    centers: np.ndarray,
+    /,
+    *,
+    _charge_work: Callable[[int], None] | None = None,
+    _reserve_storage: Callable[[int], None] | None = None,
+) -> Any:
     def split(order: Any, segment_start: Any, segment_stop: Any) -> Any:
+        size = int(np.sum(segment_stop - segment_start))
+        if _charge_work is not None:
+            _charge_work(
+                segment_start.size
+                + size * (4 + 2 * lower.shape[1])
+                + 3 * segment_start.size * lower.shape[1]
+            )
+        if _reserve_storage is not None:
+            _reserve_storage(
+                8
+                * (
+                    8 * size
+                    + 4 * size * lower.shape[1]
+                    + 8 * segment_start.size * lower.shape[1]
+                )
+            )
         positions, segment, offsets = _segment_positions(segment_start, segment_stop)
         items = order[positions]
         box_min = np.minimum.reduceat(lower[items], offsets, axis=0)
         box_max = np.maximum.reduceat(upper[items], offsets, axis=0)
         axis = np.argmax(box_max - box_min, axis=1)
         key = centers[items, axis[segment]]
-        order[positions] = items[np.lexsort((items, key, segment))]
+        if _charge_work is None:
+            permutation = np.lexsort((items, key, segment))
+        else:
+            from functools import cmp_to_key
+
+            def compare(first: int, second: int) -> int:
+                for values in (segment, key, items):
+                    _charge_work(1)
+                    a, b = values[first], values[second]
+                    if a != b:
+                        return -1 if a < b else 1
+                return 0
+
+            permutation = np.asarray(
+                sorted(
+                    range(size),
+                    key=cmp_to_key(compare),  # ty: ignore[invalid-argument-type]
+                ),
+                dtype=np.int64,
+            )
+        order[positions] = items[permutation]
         return segment_start + (segment_stop - segment_start) // 2
 
     return split
@@ -452,8 +508,33 @@ def _pack(
     policy: BVHBuildPolicy,
     dtype: np.dtype,
     /,
+    *,
+    _charge_work: Callable[[int], None] | None = None,
+    _reserve_storage: Callable[[int], None] | None = None,
 ) -> PackedBVH:
     order, starts, stops, lefts, rights = levels
+    count = sum(level.size for level in starts)
+    payload_count = (
+        sum(int(np.count_nonzero(level < 0)) for level in lefts) * policy.leaf_size
+    )
+    if _charge_work is not None:
+        _charge_work(12 * count + 4 * lower.size + 3 * payload_count)
+        visits = sum(
+            int(stop_ - start_)
+            for level_start, level_stop in zip(starts, stops, strict=True)
+            for start_, stop_ in zip(level_start, level_stop, strict=True)
+        )
+        _charge_work(2 * (visits + count) * lower.shape[1])
+    if _reserve_storage is not None:
+        _reserve_storage(
+            8
+            * (
+                20 * count
+                + 6 * lower.size
+                + 6 * payload_count
+                + 4 * count * lower.shape[1]
+            )
+        )
     start = np.concatenate(starts)
     stop = np.concatenate(stops)
     left = np.concatenate(lefts)
@@ -505,6 +586,8 @@ def prepare_bvh(
     *,
     policy: BVHBuildPolicy = BVHBuildPolicy(),
     dtype: DTypeLike = jnp.float32,
+    _charge_work: Callable[[int], None] | None = None,
+    _reserve_storage: Callable[[int], None] | None = None,
 ) -> PackedBVH:
     """Build a level-ordered packed BVH over item bounding boxes (host NumPy).
 
@@ -513,9 +596,22 @@ def prepare_bvh(
     """
     if not isinstance(policy, BVHBuildPolicy):
         raise TypeError("policy must be a BVHBuildPolicy.")
+    if (_charge_work is None) != (_reserve_storage is None) or (
+        _charge_work is not None
+        and (not callable(_charge_work) or not callable(_reserve_storage))
+    ):
+        raise TypeError(
+            "Metered BVH construction requires both actual work and storage owners."
+        )
+    if _charge_work is not None and policy.kind != BVHBuildKind.MEDIAN:
+        raise ValueError("Metered BVH construction requires the canonical median policy.")
     storage = np.dtype(dtype)
     if not np.issubdtype(storage, np.floating):
         raise TypeError("dtype must be a floating dtype.")
+    if _charge_work is not None:
+        _charge_work(np.size(item_bbox_min) + np.size(item_bbox_max))
+    if _reserve_storage is not None:
+        _reserve_storage(16 * (np.size(item_bbox_min) + np.size(item_bbox_max)))
     lower = np.asarray(item_bbox_min, dtype=np.float64)
     upper = np.asarray(item_bbox_max, dtype=np.float64)
     if lower.ndim != 2 or upper.shape != lower.shape or lower.shape[1] == 0:
@@ -528,12 +624,26 @@ def prepare_bvh(
         raise ValueError("item bounds must be finite.")
     if np.any(lower > upper):
         raise ValueError("every item_bbox_min component must be <= item_bbox_max.")
+    if _charge_work is not None:
+        _charge_work(3 * lower.size)
+    if _reserve_storage is not None:
+        _reserve_storage(16 * lower.size)
     centers = 0.5 * (lower + upper)
     item_count = lower.shape[0]
     match policy.kind:
         case BVHBuildKind.MEDIAN:
             levels = _build_split_levels(
-                item_count, policy.leaf_size, _median_split(lower, upper, centers)
+                item_count,
+                policy.leaf_size,
+                _median_split(
+                    lower,
+                    upper,
+                    centers,
+                    _charge_work=_charge_work,
+                    _reserve_storage=_reserve_storage,
+                ),
+                _charge_work=_charge_work,
+                _reserve_storage=_reserve_storage,
             )
         case BVHBuildKind.SAH:
             levels = _build_split_levels(
@@ -547,7 +657,15 @@ def prepare_bvh(
             )
         case _:
             raise ValueError(f"Unsupported BVH build kind {policy.kind!r}.")
-    return _pack(lower, upper, levels, policy, storage)
+    return _pack(
+        lower,
+        upper,
+        levels,
+        policy,
+        storage,
+        _charge_work=_charge_work,
+        _reserve_storage=_reserve_storage,
+    )
 
 
 def reduce_packed_bvh_nodes(
@@ -1399,17 +1517,180 @@ def _host_boxes_overlap(
     return np.all(extent >= -(absolute_tolerance + relative_tolerance * scale), axis=-1)
 
 
-def _host_arrays(bvh: PackedBVH, /) -> tuple[np.ndarray, ...]:
-    return (
-        np.asarray(bvh.bbox_min, dtype=np.float64),
-        np.asarray(bvh.bbox_max, dtype=np.float64),
-        np.asarray(bvh.left, dtype=np.int64),
-        np.asarray(bvh.right, dtype=np.int64),
-        np.asarray(bvh.leaf_id, dtype=np.int64),
-        np.asarray(bvh.leaf_items, dtype=np.int64),
-        np.asarray(bvh.item_bbox_min, dtype=np.float64),
-        np.asarray(bvh.item_bbox_max, dtype=np.float64),
+def _host_arrays(
+    bvh: PackedBVH,
+    /,
+    *,
+    retain_owner: Callable[[object], None] | None = None,
+    admit_storage: Callable[[int], None] | None = None,
+) -> tuple[np.ndarray, ...]:
+    sources = (
+        (bvh.bbox_min, np.float64),
+        (bvh.bbox_max, np.float64),
+        (bvh.left, np.int64),
+        (bvh.right, np.int64),
+        (bvh.leaf_id, np.int64),
+        (bvh.leaf_items, np.int64),
+        (bvh.item_bbox_min, np.float64),
+        (bvh.item_bbox_max, np.float64),
     )
+    if admit_storage is not None:
+        admit_storage(
+            sum(value.size * np.dtype(dtype).itemsize for value, dtype in sources)
+        )
+    # This is the explicit device-to-host boundary. Resource-owning callers
+    # admit the complete host bank before conversion, never after a query.
+    arrays = tuple(
+        np.array(value, dtype=dtype, copy=True)
+        if retain_owner is not None
+        else np.asarray(value, dtype=dtype)
+        for value, dtype in sources
+    )
+    if retain_owner is not None:
+        retain_owner(arrays)
+    return arrays
+
+
+def bvh_host_minima(
+    bvh: PackedBVH,
+    points: np.ndarray,
+    /,
+    *,
+    objective_count: int,
+    node_lower_bounds: Callable[
+        [np.ndarray, int, np.ndarray, np.ndarray, np.ndarray], None
+    ],
+    item_values: Callable[[np.ndarray, np.ndarray, np.ndarray], None],
+    visit: Callable[[Literal["node", "item"], int], None],
+    admit_storage: Callable[[int], None],
+    retain_owner: Callable[[object], None],
+) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """Exhaustively reduce admissible objectives over one packed host bank.
+
+    The owner supplies a lower bound for *every* descendant item of each
+    objective, and exact item values, filling the supplied admitted buffers.
+    Bounds may prune only when all objectives are strictly worse; equality is
+    explored so ties resolve by original item index. Callbacks must account
+    for any additional workspace they use before evaluating it.
+
+    Every node/item visit is admitted before its callback. Storage is admitted
+    before host conversion or allocation and retained before evaluation.
+    Resource callback refusal propagates without publishing partial minima.
+    A successful return has exhausted every unpruned branch.
+    """
+    if not isinstance(bvh, PackedBVH) or not isinstance(points, np.ndarray):
+        raise TypeError("Host minima require a PackedBVH and explicit host query points.")
+    if points.ndim != 2 or points.shape[1] != bvh.dimension:
+        raise ValueError("Host query points must have the packed bank dimension.")
+    if (
+        isinstance(objective_count, bool)
+        or not isinstance(objective_count, int)
+        or objective_count <= 0
+    ):
+        raise ValueError("objective_count must be a positive integer.")
+    if not all(
+        callable(callback)
+        for callback in (
+            node_lower_bounds,
+            item_values,
+            visit,
+            admit_storage,
+            retain_owner,
+        )
+    ):
+        raise TypeError(
+            "Host minima require explicit bound, evaluation and admission callbacks."
+        )
+    retain_owner((bvh, points))
+    admit_storage(points.size)
+    if not np.all(np.isfinite(points)):
+        raise ValueError("Host query points must be finite.")
+    bank = _host_arrays(bvh, retain_owner=retain_owner, admit_storage=admit_storage)
+    lower, upper, left, right, leaf, leaf_items = bank[:6]
+    depth = bvh.max_depth + 2
+    shapes = (
+        ((points.shape[0], objective_count), np.float64),
+        ((points.shape[0], objective_count), np.int64),
+        ((depth,), np.int64),
+        ((depth, objective_count), np.float64),
+        ((2, objective_count), np.float64),
+        ((bvh.leaf_size, objective_count), np.float64),
+        ((bvh.leaf_size,), np.int64),
+    )
+    admit_storage(
+        sum(int(np.prod(shape)) * np.dtype(dtype).itemsize for shape, dtype in shapes)
+        + bvh.leaf_size * objective_count
+    )
+    minima, winners, stack, stack_bounds, child_bounds, values, active_items = (
+        np.empty(shape, dtype=dtype) for shape, dtype in shapes
+    )
+    retain_owner(
+        (minima, winners, stack, stack_bounds, child_bounds, values, active_items)
+    )
+    minima.fill(np.inf)
+    winners.fill(-1)
+    node_visits = item_visits = 0
+
+    def bound(point: np.ndarray, node: int, out: np.ndarray) -> None:
+        nonlocal node_visits
+        visit("node", 1)
+        node_visits += 1
+        node_lower_bounds(point, node, lower[node], upper[node], out)
+        if np.any(np.isnan(out)):
+            raise ValueError("A packed objective lower bound cannot contain NaN.")
+
+    for query, point in enumerate(points):
+        stack[0] = 0
+        bound(point, 0, stack_bounds[0])
+        top = 1
+        best, keys = minima[query], winners[query]
+        while top:
+            top -= 1
+            node = int(stack[top])
+            if np.all(stack_bounds[top] > best):
+                continue
+            leaf_id = int(leaf[node])
+            if leaf_id >= 0:
+                count = 0
+                for item in leaf_items[leaf_id]:
+                    if item >= 0:
+                        active_items[count] = item
+                        count += 1
+                items = active_items[:count]
+                visit("item", items.size)
+                item_visits += items.size
+                active = values[: items.size]
+                item_values(point, items, active)
+                if np.any(np.isnan(active)):
+                    raise ValueError("A packed objective item value cannot contain NaN.")
+                for row, item in enumerate(items):
+                    for objective in range(objective_count):
+                        candidate = active[row, objective]
+                        if candidate < best[objective] or (
+                            candidate == best[objective]
+                            and (keys[objective] < 0 or item < keys[objective])
+                        ):
+                            best[objective], keys[objective] = candidate, item
+                continue
+            children = (int(left[node]), int(right[node]))
+            for index, child in enumerate(children):
+                bound(point, child, child_bounds[index])
+            first = (
+                0
+                if (float(np.min(child_bounds[0])), children[0])
+                <= (float(np.min(child_bounds[1])), children[1])
+                else 1
+            )
+            for index in (1 - first, first):
+                if np.all(child_bounds[index] > best):
+                    continue
+                if top == depth:
+                    raise ValueError(
+                        "The packed bank exceeds its declared traversal depth."
+                    )
+                stack[top], stack_bounds[top] = children[index], child_bounds[index]
+                top += 1
+    return minima, winners, node_visits, item_visits
 
 
 def _host_pair_blocks(
@@ -1417,17 +1698,43 @@ def _host_pair_blocks(
     second: tuple[np.ndarray, ...],
     test: Callable[..., np.ndarray],
     /,
+    *,
+    visit: Callable[[int], None] | None = None,
+    maximum_block_pairs: int | None = None,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     first_min, first_max, first_left, first_right, first_leaf, first_items = first[:6]
     second_min, second_max, second_left, second_right, second_leaf, second_items = second[
         :6
     ]
     first_item_min, first_item_max = first[6:]
+    if visit is not None:
+        original_test = test
+
+        def metered_test(
+            first_lower: np.ndarray,
+            first_upper: np.ndarray,
+            second_lower: np.ndarray,
+            second_upper: np.ndarray,
+        ) -> np.ndarray:
+            visit(first_lower.shape[0])
+            return original_test(first_lower, first_upper, second_lower, second_upper)
+
+        test = metered_test
+    node_pair_block = (
+        _HOST_NODE_PAIR_BLOCK
+        if maximum_block_pairs is None
+        else min(_HOST_NODE_PAIR_BLOCK, maximum_block_pairs)
+    )
+    item_pair_block = (
+        _HOST_ITEM_PAIR_BLOCK
+        if maximum_block_pairs is None
+        else min(_HOST_ITEM_PAIR_BLOCK, maximum_block_pairs)
+    )
     second_item_min, second_item_max = second[6:]
     first_size = np.sum(first_max - first_min, axis=-1)
     second_size = np.sum(second_max - second_min, axis=-1)
     leaf_pair_block = max(
-        1, _HOST_ITEM_PAIR_BLOCK // (first_items.shape[1] * second_items.shape[1])
+        1, item_pair_block // (first_items.shape[1] * second_items.shape[1])
     )
     root = np.zeros((1,), dtype=np.int64)
     pending = (
@@ -1439,15 +1746,15 @@ def _host_pair_blocks(
     # tree depth times the block size.
     while pending:
         first_nodes, second_nodes = pending.pop()
-        if first_nodes.shape[0] > _HOST_NODE_PAIR_BLOCK:
+        if first_nodes.shape[0] > node_pair_block:
             pending.append(
                 (
-                    first_nodes[_HOST_NODE_PAIR_BLOCK:],
-                    second_nodes[_HOST_NODE_PAIR_BLOCK:],
+                    first_nodes[node_pair_block:],
+                    second_nodes[node_pair_block:],
                 )
             )
-            first_nodes = first_nodes[:_HOST_NODE_PAIR_BLOCK]
-            second_nodes = second_nodes[:_HOST_NODE_PAIR_BLOCK]
+            first_nodes = first_nodes[:node_pair_block]
+            second_nodes = second_nodes[:node_pair_block]
         first_is_leaf = first_leaf[first_nodes] >= 0
         second_is_leaf = second_leaf[second_nodes] >= 0
         both_leaf = first_is_leaf & second_is_leaf
@@ -1539,17 +1846,38 @@ def bvh_overlap_pair_blocks(
     include_touching: bool = False,
     absolute_tolerance: float = 0.0,
     relative_tolerance: float = 0.0,
+    visit: Callable[[int], None] | None = None,
+    maximum_block_pairs: int | None = None,
+    retain_owner: Callable[[object], None] | None = None,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     """Enumerate exact overlapping item pairs in bounded host blocks.
 
     Blocks arrive in deterministic traversal order and together contain every
     overlapping pair exactly once; consumers may stop early to enforce resource
     limits.  See `bvh_overlap_pairs_host` for the overlap predicate.
+
+    ``visit`` admits each actual node/item AABB-test batch before evaluation.
+    It includes rejected pairs, not only returned overlaps. ``maximum_block_pairs``
+    bounds node batches and leaf-item batches (one leaf product is indivisible).
+    ``retain_owner`` receives the actual owned host-array bank after its caller
+    has admitted construction and traversal scratch.
     """
+    if visit is not None and not callable(visit):
+        raise TypeError("visit must be callable or None.")
+    if retain_owner is not None and not callable(retain_owner):
+        raise TypeError("retain_owner must be callable or None.")
+    if maximum_block_pairs is not None and maximum_block_pairs < 1:
+        raise ValueError("maximum_block_pairs must be positive or None.")
     test = _validate_host_pair_arguments(
         first, second, include_touching, absolute_tolerance, relative_tolerance
     )
-    return _host_pair_blocks(_host_arrays(first), _host_arrays(second), test)
+    return _host_pair_blocks(
+        _host_arrays(first, retain_owner=retain_owner),
+        _host_arrays(second, retain_owner=retain_owner),
+        test,
+        visit=visit,
+        maximum_block_pairs=maximum_block_pairs,
+    )
 
 
 def bvh_overlap_pairs_host(

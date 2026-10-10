@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from itertools import product
 from operator import index
 from typing import Any, NamedTuple
@@ -26,7 +26,11 @@ from phydrax._trainable import NonTrainableState
 from phydrax.sparse import EdgeRelation, RelationExecutionPlan, RelationExecutionState
 
 from ...typing import checked
-from ._morton import morton_encode_integer, MortonAddressPlan
+from ._morton import (
+    morton_decode_integer_host,
+    morton_encode_integer_host,
+    MortonAddressPlan,
+)
 
 
 class AdaptiveOctreeInteractionList(NonTrainableState, StrictModule):
@@ -279,17 +283,16 @@ def _prefix_corners(
 ) -> np.ndarray:
     """Finest-cell integer lower corners of level-``level`` Morton prefixes."""
     shift = np.uint64(address.dimension * (address.maximum_depth - level))
-    return np.asarray(address.decode(jnp.asarray(prefixes << shift)), dtype=np.int64)
+    return morton_decode_integer_host(
+        prefixes << shift, address.dimension, address.maximum_depth
+    )
 
 
 def _corner_prefixes(
     corners: np.ndarray, level: int, address: MortonAddressPlan
 ) -> np.ndarray:
     """Level-``level`` Morton prefixes of cells with finest-cell lower corners."""
-    codes = np.asarray(
-        morton_encode_integer(jnp.asarray(corners), address.maximum_depth),
-        dtype=np.uint64,
-    )
+    codes = morton_encode_integer_host(corners, address.maximum_depth)
     return codes >> np.uint64(address.dimension * (address.maximum_depth - level))
 
 
@@ -379,7 +382,7 @@ def _node_table(
     shifts = (dimension * (depth - levels)).astype(np.uint64)
     code_starts = prefixes << shifts
     code_ends = (prefixes + np.uint64(1)) << shifts
-    corners = np.asarray(address.decode(jnp.asarray(code_starts)), dtype=np.int64)
+    corners = morton_decode_integer_host(code_starts, dimension, depth)
     return _NodeTable(
         prefixes=prefixes,
         levels=levels,
@@ -702,9 +705,51 @@ class AdaptiveOctreePlan(StrictModule):
         )
 
 
+def refined_octree_leaves(
+    address_plan: MortonAddressPlan,
+    refined: Sequence[np.ndarray],
+    /,
+    *,
+    balanced: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Leaves of the complete tree whose refined cells are ``refined[level]``.
+
+    ``refined[level]`` lists level-``level`` Morton prefixes to subdivide; every
+    listed cell's parent must itself be listed one level up. ``balanced=True``
+    applies the 2:1 leaf balance of `AdaptiveOctreePlan`, so leaves that touch
+    through a face, edge, or corner differ by at most one level. Returns the
+    leaf prefixes, levels, and finest-cell integer lower corners in ascending
+    Morton order of their first finest cell.
+    """
+    if not isinstance(address_plan, MortonAddressPlan):
+        raise TypeError("address_plan must be a MortonAddressPlan.")
+    if not isinstance(balanced, bool):
+        raise TypeError("balanced must be a bool.")
+    depth = address_plan.maximum_depth
+    if len(refined) > depth:
+        raise ValueError("refined lists more levels than the address depth.")
+    levels = [np.unique(np.asarray(prefixes, dtype=np.uint64)) for prefixes in refined]
+    levels += [np.zeros((0,), dtype=np.uint64)] * (depth - len(levels))
+    dimension = np.uint64(address_plan.dimension)
+    for level in range(1, depth):
+        if levels[level].size and not np.all(
+            np.isin(levels[level] >> dimension, levels[level - 1])
+        ):
+            raise ValueError("Every refined cell requires a refined parent.")
+    if levels[0].size and not np.array_equal(levels[0], np.zeros((1,), np.uint64)):
+        raise ValueError("Level zero holds only the root prefix.")
+    if balanced:
+        levels = _balanced_prefixes(levels, address_plan)
+    table = _node_table(levels, np.zeros((0,), dtype=np.uint64), address_plan)
+    leaves = np.flatnonzero(table.child_counts == 0)
+    leaves = leaves[np.argsort(table.code_starts[leaves], kind="stable")]
+    return table.prefixes[leaves], table.levels[leaves], table.corners[leaves]
+
+
 __all__ = [
     "AdaptiveOctree",
     "AdaptiveOctreeEvidence",
     "AdaptiveOctreeInteractionList",
     "AdaptiveOctreePlan",
+    "refined_octree_leaves",
 ]

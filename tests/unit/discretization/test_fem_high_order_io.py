@@ -14,7 +14,10 @@ from phydrax.discretization._cell_ordering import meshio_reference_nodes
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
 from phydrax.discretization.fem._boundary import FiniteElementBoundarySet
 from phydrax.discretization.fem._generic import FiniteElementFieldSpec, FiniteElementPlan
-from phydrax.discretization.fem._reference import discontinuous_element
+from phydrax.discretization.fem._reference import (
+    discontinuous_element,
+    FiniteElementSpec,
+)
 from phydrax.discretization.fem._spectral_hp_io import read_finite_element_mesh
 from phydrax.discretization.finite_volume._riemann import RusanovFluxPlan
 from phydrax.equations._conservation import (
@@ -25,6 +28,7 @@ from phydrax.equations._hyperbolic_systems import EulerSystem
 from phydrax.equations.fem._nodal_conservation import (
     NodalDGConservationMethodPlan,
 )
+from phydrax.linalg import ArraySpace
 
 
 def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path: Any) -> None:
@@ -78,13 +82,19 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path: Any) -> N
     assert quality.certificate.all_certified
     assert jnp.all(quality.minimum_jacobian > 0.0)
     assert jnp.all(jnp.isfinite(quality.maximum_condition_number))
+    state_space = discretization.field_spaces[0].vector_space
+    if not isinstance(state_space, ArraySpace):
+        raise TypeError("Nodal DG fixture requires its array vector space.")
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        state_space.shape,
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-9)
-    assert discretization.coordinate_elements[0].degree == 2
+    coordinate = discretization.coordinate_elements[0]
+    if not isinstance(coordinate, FiniteElementSpec):
+        raise TypeError("Quadratic triangle fixture requires a finite element.")
+    assert coordinate.degree == 2
 
 
 def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(
@@ -111,7 +121,6 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(
         ("quad9", np.asarray(((1, 6, 7, 2, 8, 9, 10, 4, 11),), dtype=np.int32)),
     ]
     path = tmp_path / "curved-mixed.vtu"
-    # ty: ignore[invalid-argument-type]
     meshio.write(path, meshio.Mesh(points, cells))
     imported = read_finite_element_mesh(path)
     system = EulerSystem(2)
@@ -145,9 +154,12 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(
     assert mortar.evidence.coordinates_compatible
     # ty: ignore[unresolved-attribute]
     assert float(jnp.max(mortar.physical_coordinates[:, 0])) > 1.05
+    state_space = discretization.field_spaces[0].vector_space
+    if not isinstance(state_space, ArraySpace):
+        raise TypeError("Mixed mortar fixture requires its array vector space.")
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),
-        discretization.field_spaces[0].vector_space.shape,
+        state_space.shape,
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=5.0e-9)

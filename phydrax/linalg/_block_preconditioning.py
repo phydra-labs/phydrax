@@ -8,6 +8,7 @@ from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
+from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
@@ -146,9 +147,42 @@ def _zero_operator(space: AbstractVectorSpace, /) -> AbstractLinearOperator:
     return ScaledLinearOperator(IdentityLinearOperator(space), 0.0)
 
 
+def _zero_block_action(
+    space: AbstractVectorSpace,
+    _vector: PyTree[Array],
+    /,
+) -> PyTree[Array]:
+    return space.zeros()
+
+
+def _zero_block(
+    source: AbstractVectorSpace, target: AbstractVectorSpace, /
+) -> AbstractLinearOperator:
+    # Keep the callable structural and the scientific space leaves dynamic.
+    # Refresh must not create a new static closure-converted Jaxpr each time.
+    action = eqx.Partial(_zero_block_action, target)
+    transpose = eqx.Partial(_zero_block_action, source)
+    return FunctionLinearOperator(
+        action,
+        source=source,
+        target=target,
+        transpose_action=transpose,
+        closure_convert=False,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "structural-zero-block",
+                "source": source.space_id,
+                "target": target.space_id,
+            }
+        ),
+    )
+
+
 def _block_components(
     setup_operator: AbstractLinearOperator,
     /,
+    *,
+    form: BlockFactorizationForm,
 ) -> tuple[
     BlockLinearOperator,
     AbstractLinearOperator,
@@ -169,6 +203,16 @@ def _block_components(
         raise ValueError("Block factorization requires a compatible endomorphism.")
     pivot, upper = setup_operator.blocks[0]
     lower, diagonal = setup_operator.blocks[1]
+    if (
+        form == "diagonal"
+        and setup_operator.properties.certifies("block_diagonal")
+        and upper is None
+        and lower is None
+    ):
+        lower = _zero_block(
+            setup_operator.source.spaces[0], setup_operator.target.spaces[1]
+        )
+        upper = AdjointLinearOperator(lower)
     if pivot is None or upper is None or lower is None:
         raise ValueError(
             "Block factorization requires A00, A01, and A10; only A11 may be zero."
@@ -219,12 +263,22 @@ def _component_properties(
             )
         )
     )
+    # Diagonal composition is a direct sum; paired LDU is a congruence
+    # transformation of the two component actions. Both preserve SPD, but
+    # only with the already-certified fixed/self-adjoint component semantics.
+    # Native factor actions remain conditional on their actual SUCCESS branch;
+    # this transformation neither proves factor success nor bypasses refusal.
+    positive_definite = (
+        self_adjoint
+        and pivot.certifies("positive_definite")
+        and schur.certifies("positive_definite")
+    )
     if supplied is None:
         claims = {
             "linear": linear,
             "stationary": stationary,
             "self_adjoint": self_adjoint,
-            "positive_definite": False,
+            "positive_definite": positive_definite,
         }
         return PreconditionerProperties(
             **claims,
@@ -418,7 +472,9 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
-        block, pivot_setup, upper, lower, diagonal = _block_components(setup_operator)
+        block, pivot_setup, upper, lower, diagonal = _block_components(
+            setup_operator, form=self.form
+        )
         if not block.source.compatible(self.space):
             raise ValueError(
                 "Block action cost requires a setup operator on the prepared space."
@@ -547,6 +603,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         self._builder_id = canonical_fingerprint(
             {
                 "kind": "block-factorization-preconditioner-builder",
+                "component_property_rule": "fixed-self-adjoint-spd-congruence:structural-zero-block",
                 "pivot_solver": pivot_id,
                 "schur_solver": schur_id,
                 "form": form,
@@ -580,10 +637,13 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         materializable: bool,
+        block_diagonal: bool,
     ) -> tuple[AbstractLinearOperator, bool]:
         if self.schur_setup_operator is not None:
             _validate_schur_setup(self.schur_setup_operator, diagonal.source)
             return self.schur_setup_operator, False
+        if self.form == "diagonal" and block_diagonal:
+            return diagonal, False
         properties = _schur_properties(
             diagonal,
             lower,
@@ -624,7 +684,9 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        _, pivot_setup, upper, lower, diagonal = _block_components(setup_operator)
+        block, pivot_setup, upper, lower, diagonal = _block_components(
+            setup_operator, form=self.form
+        )
         pivot_properties = _source_properties(self.pivot_solver, pivot_setup)
         schur_setup, _ = self._planning_schur_setup(
             diagonal,
@@ -632,6 +694,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             upper,
             pivot_properties,
             materializable=True,
+            block_diagonal=block.properties.certifies("block_diagonal"),
         )
         schur_properties = _source_properties(self.schur_solver, schur_setup)
         return _component_properties(
@@ -649,7 +712,9 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
-        block, pivot_setup, upper, lower, diagonal = _block_components(setup_operator)
+        block, pivot_setup, upper, lower, diagonal = _block_components(
+            setup_operator, form=self.form
+        )
         self.properties_for(block)
         pivot_cost = _source_cost(
             self.pivot_solver, pivot_setup, materialization=materialization
@@ -661,6 +726,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             upper,
             pivot_properties,
             materializable=True,
+            block_diagonal=block.properties.certifies("block_diagonal"),
         )
         schur_cost = _source_cost(
             self.schur_solver, schur_setup, materialization=materialization
@@ -673,6 +739,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
                 upper,
                 pivot_properties,
                 materializable=False,
+                block_diagonal=block.properties.certifies("block_diagonal"),
             )
             forward_cost = _source_cost(
                 self.schur_solver,
@@ -723,7 +790,9 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
         previous: BlockFactorizationPreconditioner | None,
     ) -> BlockFactorizationPreconditioner:
-        block, pivot_setup, upper, lower, diagonal = _block_components(setup_operator)
+        block, pivot_setup, upper, lower, diagonal = _block_components(
+            setup_operator, form=self.form
+        )
         if previous is None:
             pivot_action = _prepare_source(
                 self.pivot_solver,
@@ -745,11 +814,12 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             pivot_action,
             upper,
         )
-        schur_setup = (
-            _materializable_schur_setup(schur_operator)
-            if self.schur_setup_operator is None
-            else self.schur_setup_operator
-        )
+        if self.schur_setup_operator is not None:
+            schur_setup = self.schur_setup_operator
+        elif self.form == "diagonal" and block.properties.certifies("block_diagonal"):
+            schur_setup = diagonal
+        else:
+            schur_setup = _materializable_schur_setup(schur_operator)
         _validate_schur_setup(schur_setup, diagonal.source)
         if previous is None:
             schur_action = _prepare_source(

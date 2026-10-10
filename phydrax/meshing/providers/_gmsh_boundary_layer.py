@@ -24,8 +24,12 @@ from scipy.sparse.csgraph import connected_components
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ...discretization import CellBlock, CellGeometrySpec, CellMesh
+from ...geometry._meshing_domain import MeshingDomain
+from ...geometry.brep._model import BRepEntityId, BRepModel
+from ...geometry.brep._projection_contracts import brep_entity_id
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...geometry.surface._model import _repair_orientations
+from .._association import GeometryAssociation, GeometryAssociationKind
 from .._audit import audit_cell_mesh
 from .._boundary_layer import (
     _analyze_wall,
@@ -58,7 +62,6 @@ from .._organization import (
     MeshZone,
     MeshZoneRole,
 )
-from .._quality import evaluate_cell_quality
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (
@@ -75,6 +78,7 @@ from ._gmsh_evidence import (
 )
 from ._gmsh_execute import _prepare_generation
 from ._gmsh_import import _brep_model, _entity_scope, _resolve_entities
+from ._gmsh_inventory import _cad_occurrence_inventory, _cad_scope_set
 
 
 _VOLUME_ORDER = (
@@ -112,6 +116,7 @@ class _Boundary:
     triangles: np.ndarray
     source_faces: np.ndarray
     wall: np.ndarray
+    native_face_entities: tuple[BRepEntityId, ...]
 
 
 def _domain_inward(
@@ -135,6 +140,7 @@ def _surface_boundary(
     gmsh: Any, plan: Any, generation: Any, control: BoundaryLayerControl, /
 ) -> _Boundary:
     source = _brep_model(plan.source)
+    inventory = _cad_occurrence_inventory(source)
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
     order = np.argsort(node_tags, kind="stable")
@@ -143,10 +149,8 @@ def _surface_boundary(
     triangle_type = gmsh.model.mesh.getElementType("Triangle", 1)
     rows = []
     owners = []
-    for face in range(source.report.num_faces):
-        surface = _resolve_entities(
-            gmsh, source, generation.shape, _entity_scope(source, 2, (face,))
-        )[0]
+    for face in range(len(inventory.entities[2])):
+        surface = _resolve_entities(gmsh, source, _entity_scope(source, 2, (face,)))[0]
         element_types, _, node_blocks = gmsh.model.mesh.getElements(2, surface)
         if tuple(int(value) for value in element_types) != (triangle_type,):
             raise MeshingFailure(
@@ -174,7 +178,13 @@ def _surface_boundary(
             stage=MeshingStageKind.SURFACE_MESHING.value,
         )
     wall_faces = np.asarray(control.wall_scope.entity_ids, dtype=np.int64)
-    return _Boundary(points, oriented, source_faces, np.isin(source_faces, wall_faces))
+    return _Boundary(
+        points,
+        oriented,
+        source_faces,
+        np.isin(source_faces, wall_faces),
+        tuple(inventory.entities[2][int(row)] for row in source_faces),
+    )
 
 
 # ---------------------------------------------------------------- core fill
@@ -379,12 +389,130 @@ def _padded(triangles: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
+def _native_layer_control(
+    model: BRepModel, control: BoundaryLayerControl, /
+) -> tuple[MeshingDomain, BoundaryLayerControl]:
+    """Convert an external occurrence scope through exact entity/path identities."""
+    domain = MeshingDomain.from_brep(model)
+    inventory = _cad_occurrence_inventory(model)
+
+    def scope(value: MeshingScope | None, /) -> MeshingScope | None:
+        if value is None:
+            return None
+        dimension = value.entity_dimension
+        if (
+            value.entity_kind is not MeshingEntityKind.GEOMETRY
+            or value.source_id != domain.source_id
+            or value.source_revision != domain.source_revision
+            or value.entity_set_id != _cad_scope_set(model, dimension)
+        ):
+            raise ValueError(
+                "The external layer scope must bind its exact occurrence inventory."
+            )
+        definitions = (
+            domain.region_source_indices
+            if dimension == 3
+            else domain.source_indices[dimension]
+        )
+        paths = (
+            domain.region_source_occurrences
+            if dimension == 3
+            else domain.source_occurrences[dimension]
+        )
+        native = dict(
+            zip(
+                zip(definitions, paths, strict=True),
+                domain.scope_indices(dimension),
+                strict=True,
+            )
+        )
+        entities = inventory.entities[dimension]
+        selected = np.asarray(value.entity_ids, dtype=np.int64)
+        if np.any(selected < 0) or np.any(selected >= len(entities)):
+            raise ValueError(
+                "The external layer scope selects absent occurrence entities."
+            )
+        keys = tuple(
+            (entities[int(index)].index, entities[int(index)].occurrence_path)
+            for index in selected
+        )
+        if any(key not in native for key in keys):
+            raise ValueError(
+                "The external source entity has no exact native domain counterpart."
+            )
+        return MeshingScope(
+            domain.source_id,
+            domain.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            dimension,
+            domain.entity_set_id(dimension),
+            np.asarray([native[key] for key in keys], dtype=np.int64),
+        )
+
+    wall = scope(control.wall_scope)
+    if wall is None:
+        raise RuntimeError("An external layer control has no wall scope.")
+    return domain, BoundaryLayerControl(
+        wall,
+        control.schedule,
+        volume_scope=scope(control.volume_scope),
+        cap_scope=scope(control.cap_scope),
+        route=control.route,
+        collision=control.collision,
+        corner=control.corner,
+        feature_angle=control.feature_angle,
+        minimum_thickness_fraction=control.minimum_thickness_fraction,
+        growth_rate_bounds=control.growth_rate_bounds,
+        maximum_corner_stretch=control.maximum_corner_stretch,
+        smoothing_iterations=control.smoothing_iterations,
+        core_maximum_size=control.core_maximum_size,
+    )
+
+
 def _advancing_layers(
-    gmsh: Any, boundary: _Boundary, control: Any, options: Any, maximum_size: Any, /
+    gmsh: Any,
+    boundary: _Boundary,
+    control: Any,
+    options: Any,
+    maximum_size: Any,
+    model: BRepModel,
+    /,
 ) -> _Layered:
     faces, arity = _padded(boundary.triangles)
+    source_domain, realization_control = _native_layer_control(model, control)
     empty_points = np.empty((0, 3))
     empty_triangles = np.empty((0, 3), dtype=np.int64)
+    source_wall = CellMesh(
+        boundary.points,
+        (CellBlock("boundary", "triangle", boundary.triangles),),
+        numeric_version=control.wall_scope.source_revision,
+    )
+    source_cells = source_wall.entity_set(2)
+    wall_association = GeometryAssociation(
+        GeometryAssociationKind.BREP,
+        control.wall_scope.source_id,
+        control.wall_scope.source_revision,
+        source_cells.entity_set_id,
+        source_cells.entity_ids,
+        tuple(
+            brep_entity_id(
+                entity.source_revision,
+                2,
+                entity.index,
+                occurrence_path=entity.occurrence_path,
+            )
+            for entity in boundary.native_face_entities
+        ),
+        np.zeros(boundary.source_faces.size, dtype=np.float64),
+        source_dimensions=np.full(boundary.source_faces.size, 2, dtype=np.int8),
+        source_indices=np.asarray(
+            [entity.index for entity in boundary.native_face_entities], dtype=np.int64
+        ),
+        source_occurrence_paths=tuple(
+            entity.occurrence_path for entity in boundary.native_face_entities
+        ),
+        exact=False,
+    )
     layers = _grow_boundary_layers(
         boundary.points,
         faces,
@@ -392,8 +520,11 @@ def _advancing_layers(
         boundary.wall,
         empty_points,
         empty_triangles,
-        control,
+        realization_control,
         BoundaryLayerPolicy(),
+        source_wall=source_wall,
+        wall_association=wall_association,
+        source_domain=source_domain,
     )
     return _merge_advancing(gmsh, layers, boundary, options, maximum_size)
 
@@ -797,7 +928,7 @@ def _boundary_size_compliance(specification: Any, layered: _Layered, /) -> Any:
             if bound is None:
                 continue
             requested.append((f"{key}:{name}", float(bound)))
-            tolerance = policy.absolute_tolerance + policy.relative_tolerance * abs(bound)
+            tolerance = policy.tolerance(bound)
             if violated(bound, measured, tolerance):
                 issues.append(f"{name}:{control.control_id}")
     achieved = (
@@ -846,7 +977,6 @@ def _layered_result(
     audit = audit_cell_mesh(
         mesh,
         geometry,
-        evaluate_cell_quality(mesh, mesh.coordinates),
         patches=patches,
         associations=(association,),
         attributes=attributes,
@@ -1008,7 +1138,12 @@ def _execute_layered_volume(
     match control.route:
         case BoundaryLayerRoute.ADVANCING:
             layered = _advancing_layers(
-                gmsh, boundary, control, plan.options, maximum_size
+                gmsh,
+                boundary,
+                control,
+                plan.options,
+                maximum_size,
+                _brep_model(plan.source),
             )
         case BoundaryLayerRoute.PROVIDER:
             layered = _provider_layers(
@@ -1077,7 +1212,6 @@ def _fill_boundary_layer_core(
     audit = audit_cell_mesh(
         mesh,
         geometry,
-        evaluate_cell_quality(mesh, mesh.coordinates),
         patches=patches,
         attributes=(attribute,),
         zones=zones,

@@ -19,6 +19,25 @@ def _mesh(center: Any) -> Any:
     return phx.discretization.CellMesh.from_triangles(coordinates, _CELLS)
 
 
+def test_shape_optimization_resolves_near_conformal_displacement() -> None:
+    mesh = _mesh((0.5 + 8.0e-9, 0.5 - 2.0e-8))
+    plan = meshing.TargetMatrixOptimizationPlan(
+        mesh,
+        objective=meshing.MeshQualityObjective.SHAPE,
+        target_coordinates=_TARGET,
+        fixed_vertices=_BOUNDARY,
+    )
+    result = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
+
+    assert result.initial_objective > 0.0
+    assert result.status is meshing.MeshOptimizationStatus.OPTIMIZED
+    assert result.optimizer_status is phx.optim.OptimizationStatus.SUCCESS
+    assert result.final_objective < result.initial_objective
+    assert result.result is not None
+    np.testing.assert_array_equal(np.asarray(result.coordinates)[:4], _TARGET[:4])
+    np.testing.assert_allclose(np.asarray(result.coordinates)[4], (0.5, 0.5), atol=1e-11)
+
+
 def test_optimization_scenario_1() -> None:
     for objective, method in (
         (meshing.MeshQualityObjective.SHAPE_SIZE, None),

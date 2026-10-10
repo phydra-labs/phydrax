@@ -63,6 +63,8 @@ int orient2d(const double* a, const double* b, const double* c);
 int orient3d(const double* a, const double* b, const double* c, const double* d);
 int incircle(const double* a, const double* b, const double* c, const double* d);
 int insphere(const double* a, const double* b, const double* c, const double* d, const double* e);
+int insphere_expansion(const Expansion* a, const Expansion* b, const Expansion* c,
+                       const Expansion* d, const Expansion* e);
 int power2d(const double* a, const double* b, const double* c, const double* d, double wa,
             double wb, double wc, double wd);
 int power3d(const double* a, const double* b, const double* c, const double* d, const double* e,
@@ -91,5 +93,27 @@ Expansion orient2d_exact(const double* a, const double* b, const double* c);
 Expansion orient3d_exact(const double* a, const double* b, const double* c, const double* d);
 Approx orient2d_approx(const double* a, const double* b, const double* c);
 Approx orient3d_approx(const double* a, const double* b, const double* c, const double* d);
+
+// Exact original-coordinate squared Hadamard comparison. The requested floor
+// is supplied by the owning consumer; `score` is the normalized squared ratio.
+int relative_orient3d_exact(const double* a, const double* b, const double* c, const double* d,
+                            double relative_floor, double* score);
+
+// Whether three 3D points are collinear: (b - a) x (c - a) vanishes iff the
+// orientations of the three coordinate-plane projections vanish, each an exact
+// orient2d.
+inline bool collinear3d(const double* a, const double* b, const double* c) {
+  for (int axis = 0; axis < 3; ++axis) {
+    const int i = (axis + 1) % 3;
+    const int j = (axis + 2) % 3;
+    const double pa[2] = {a[i], a[j]};
+    const double pb[2] = {b[i], b[j]};
+    const double pc[2] = {c[i], c[j]};
+    if (orient2d(pa, pb, pc) != 0) {
+      return false;
+    }
+  }
+  return true;
+}
 
 }  // namespace phx::mc

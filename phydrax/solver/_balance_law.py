@@ -522,7 +522,9 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         stochastic_count = sum(process.requires_realization for process in self.processes)
         original = runtime_state
         source_view = self.transport.source_view(runtime_state.transport_state)
-        original_average = source_view.cell_average
+        # Ownership checks compare components bitwise, so every consumer must see
+        # one bit pattern; XLA may otherwise rematerialize the quotient unevenly.
+        original_average = jax.lax.optimization_barrier(source_view.cell_average)
         average = original_average
         states = list(runtime_state.process_states)
         source_integrals = runtime_state.accepted_budget.source_integrals
@@ -599,7 +601,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         ) - self._integrate_source_view(
             incoming_transport_view.cell_average, incoming_transport_view
         )
-        average = source_view.cell_average
+        average = jax.lax.optimization_barrier(source_view.cell_average)
         second_diagnostics = []
         for reverse_index, process in enumerate(reversed(self.processes)):
             index = len(self.processes) - 1 - reverse_index

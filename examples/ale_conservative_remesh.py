@@ -140,18 +140,27 @@ def remap(
     )
     if not prepared.succeeded:
         raise RuntimeError(f"{label}: common refinement failed: {prepared.reason}.")
+    refinement = prepared.refinement
+    evidence = prepared.evidence
+    if refinement is None or not isinstance(
+        evidence, phx.geometry.CommonRefinementEvidence
+    ):
+        raise RuntimeError(
+            f"{label}: this planar comparison requires an actual common refinement."
+        )
+    plan = prepared.plan
+    if plan is None:
+        raise RuntimeError(f"{label}: successful remap has no conservative plan.")
     limited = D.UnstructuredSecondOrderRemapPlan(
-        # ty: ignore[invalid-argument-type]
-        prepared.plan,
-        prepared.refinement,
+        plan,
+        refinement,
         source,
     ).apply(density)
-    # ty: ignore[unresolved-attribute]
-    first_order = prepared.plan.apply(density)
+    first_order = plan.apply(density)
     projection = D.prepare_l2_projection_transfer(
         dg0(source.mesh),
         D.prepare_l2_projection_target(dg0(target.mesh), field_name="rho"),
-        prepared.refinement,
+        refinement,
         field_name="rho",
     )
     projected = projection.apply(density)
@@ -159,11 +168,10 @@ def remap(
     target_volumes = np.asarray(target.cell_volumes)
     mass = float(np.sum(source_volumes * np.asarray(density)))
     values = np.asarray(limited.values)
-    evidence = prepared.evidence
     record = {
         "source_cells": source.cell_count,
         "target_cells": target.cell_count,
-        "overlap_entries": prepared.refinement.entry_count,
+        "overlap_entries": refinement.entry_count,
         "maximum_relative_coverage_defect": max(
             evidence.maximum_relative_source_defect,
             evidence.maximum_relative_target_defect,

@@ -237,7 +237,6 @@ def qualified_omniphysics_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{capability}.candidate",
             "phydrax",
-            "candidate-2026-09-20",
             (
                 SupportTuple(
                     capability,

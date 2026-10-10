@@ -14,11 +14,11 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
-from ..discretization import (
-    FiniteElementDiscretization,
+from ..discretization.fem._generic import FiniteElementDiscretization
+from ..discretization.finite_volume._unstructured import (
     UnstructuredFiniteVolumeDiscretization,
 )
-from ..sparse import EdgeRelation
+from ..sparse._relation import EdgeRelation
 
 
 def _integer_routes(name: str, value: ArrayLike, /) -> np.ndarray:

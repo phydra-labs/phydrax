@@ -22,7 +22,6 @@ def envelope_propagation_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 "linear-spectral-phase",

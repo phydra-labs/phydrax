@@ -7,6 +7,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -44,6 +46,41 @@ def _scalar_discretization(*, precision_policy: Any = None) -> Any:
         field,
         precision_policy=precision_policy,
     ).prepare()
+
+
+@pytest.mark.parametrize("dimension", (2, 3), ids=("triangle", "tetrahedron"))
+def test_resolved_affine_geometry_preserves_measure_and_linear_gradient(
+    dimension: int,
+) -> None:
+    jacobian = np.eye(dimension, dtype=np.float64)
+    jacobian[0, 1] = 1.0
+    jacobian[1, 1] = 1e-8
+    coordinates = np.concatenate(
+        (np.zeros((1, dimension), dtype=np.float64), jacobian.T), axis=0
+    )
+    mesh = phx.discretization.CellMesh.from_simplices(
+        coordinates,
+        np.arange(dimension + 1, dtype=np.int32)[None, :],
+        dimension=dimension,
+    )
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u",
+        phx.discretization.form_element(
+            f"simplex:{dimension}", 0, 1, family="trimmed", proxy="scalar"
+        ),
+    )
+    space = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    geometry = space.block_geometries[0][0]
+    expected_measure = 1e-8 / (2.0 if dimension == 2 else 6.0)
+    np.testing.assert_allclose(geometry.measure, expected_measure, rtol=1e-12, atol=0.0)
+    dof_map = space.dof_maps[0]
+    nodal_x = np.asarray(dof_map.dof_coordinates)[:, 0]
+    local_x = nodal_x[np.asarray(dof_map.cell_dofs[0])]
+    physical_gradients = np.asarray(geometry.physical_gradients)
+    gradient = np.sum(local_x[:, None, :, None] * physical_gradients, axis=-2)
+    expected_gradient = np.zeros_like(gradient)
+    expected_gradient[..., 0] = 1.0
+    np.testing.assert_allclose(gradient, expected_gradient, rtol=1e-12, atol=1e-12)
 
 
 def test_runtime_geometry_precision_identity_and_projection_are_operational() -> None:

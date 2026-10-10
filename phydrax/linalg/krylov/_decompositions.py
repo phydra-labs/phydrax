@@ -57,6 +57,25 @@ def _norm(vector: Array, inner: InnerProduct, /) -> Array:
     return _norm_from_squared(inner(vector, vector))
 
 
+def _gated_input[ValueT](gate: Array, value: ValueT, valid: ValueT, /) -> ValueT:
+    """Callback input ``value`` on executing lanes, ``valid`` on gated-off lanes.
+
+    A batched predicate turns a gated Krylov step's ``cond`` into a select:
+    every lane runs both branches, and reverse mode differentiates the
+    discarded one (as do explicitly batched lanes masked by ``where``). After
+    convergence or breakdown a gated-off lane's carry may hold zero, unwritten,
+    or nonfinite vectors, so user actions, adjoints, and preconditioners would
+    otherwise run (and be differentiated) on inputs no unbatched execution
+    passes them. ``valid`` is an input the same execution passes that callback
+    (its pre-loop input or the first Krylov vector). Executing lanes are
+    unchanged; the discarded branch's callbacks see valid inputs and the
+    selection gives them exactly zero, finite cotangents.
+    """
+    return jax.tree.map(
+        lambda item, fallback: jnp.where(gate, item, fallback), value, valid
+    )
+
+
 def _breakdown_tolerance(
     value: float | None,
     dtype: Any,
@@ -139,7 +158,7 @@ def arnoldi(
 
         def execute(operand: _ArnoldiState) -> _ArnoldiState:
             basis_i, projected_i, _, _, _, _, matvecs_i = operand
-            candidate = action(basis_i[index])
+            candidate = action(_gated_input(active, basis_i[index], basis_i[0]))
             finite = jnp.all(jnp.isfinite(candidate))
             initial_norm = _norm(candidate, inner)
             coefficients = jax.vmap(lambda q: inner(q, candidate))(basis_i[:-1])
@@ -295,7 +314,7 @@ def block_arnoldi(
                 (0, start),
                 (dimension, block_size),
             )
-            candidate = action(current_block)
+            candidate = action(_gated_input(active_, current_block, first_basis))
             finite = jnp.all(jnp.isfinite(candidate))
             prior = basis_i[:, : blocks * block_size]
             column_indices = jnp.arange(blocks * block_size)
@@ -464,7 +483,7 @@ def lanczos(
         def execute(operand: _LanczosState) -> _LanczosState:
             basis_i, projected_i, previous_i, beta_i, _, _, _, count_i = operand
             q = basis_i[index]
-            candidate = action(q) - beta_i * previous_i
+            candidate = action(_gated_input(active, q, basis_i[0])) - beta_i * previous_i
             alpha = jnp.real(inner(q, candidate))
             residual = candidate - alpha * q
             mask = jnp.arange(dimension) <= index
@@ -636,13 +655,16 @@ def golub_kahan(
                 mat_i,
                 adj_i,
             ) = operand
-            candidate_v = adjoint_action(ub_i[index]) - previous_beta_i * previous_v_i
+            candidate_v = (
+                adjoint_action(_gated_input(active, ub_i[index], ub_i[0]))
+                - previous_beta_i * previous_v_i
+            )
             alpha_i = _norm(candidate_v, right_inner)
             alpha_breakdown = alpha_i <= tolerance * jnp.maximum(
                 _norm(candidate_v, right_inner), 1.0
             )
             v = candidate_v / jnp.where(alpha_breakdown, 1.0, alpha_i)
-            candidate_u = action(v) - alpha_i * ub_i[index]
+            candidate_u = action(_gated_input(active, v, vb_i[0])) - alpha_i * ub_i[index]
             beta_i = _norm(candidate_u, left_inner)
             breakdown = alpha_breakdown | (
                 beta_i <= tolerance * jnp.maximum(_norm(candidate_u, left_inner), 1.0)
@@ -730,9 +752,23 @@ def _orthonormalize_block(
     tolerance: Array,
     /,
 ) -> tuple[Array, Array, Array]:
+    """Rank-revealing orthonormal ``basis`` and ``factor`` with ``block ≈ basis factor``.
+
+    The eigendecomposition of the stopped Gram matrix makes every decision:
+    basis frame, singular values, and the retained rank. Raw ``eigh``
+    differentiation divides by eigenvalue gaps and is undefined for a
+    degenerate Gram, for example an orthonormal start block or an exact
+    breakdown. Derivatives are instead those of the retained subspace at fixed
+    rank. Separated retained eigenpairs rotate exactly as the eigendecomposition
+    does. A degenerate retained cluster is orthonormalized symmetrically
+    (Löwdin) in the current frame, which keeps the basis orthonormal to first
+    order. Retired columns carry no tangent. The tangent-only surrogates are
+    exact zeros, so primal values are those of the executed factorization.
+    """
     gram = _block_inner(block, block, inner)
     gram = 0.5 * (gram + jnp.conj(gram.T))
-    eigenvalues, eigenvectors = jnp.linalg.eigh(gram)
+    fixed_gram = jax.lax.stop_gradient(gram)
+    eigenvalues, eigenvectors = jnp.linalg.eigh(fixed_gram)
     order = jnp.argsort(eigenvalues)[::-1]
     eigenvalues = jnp.maximum(jnp.real(eigenvalues[order]), 0.0)
     eigenvectors = eigenvectors[:, order]
@@ -742,10 +778,30 @@ def _orthonormalize_block(
     threshold = tolerance * jnp.where(valid_scale, largest, 1.0)
     active = valid_scale & jnp.isfinite(singular_values) & (singular_values > threshold)
     safe = jnp.where(active, singular_values, 1.0)
-    transform = eigenvectors / safe[None, :]
+    # Tangent of the frame-coordinate Gram; its value is exactly zero.
+    perturbation = jnp.conj(eigenvectors.T) @ (gram - fixed_gram) @ eigenvectors
+    gap = eigenvalues[None, :] - eigenvalues[:, None]
+    separated = jnp.abs(gap) > tolerance * jnp.where(valid_scale, eigenvalues[0], 1.0)
+    rotation = jnp.where(
+        separated & active[None, :], 1.0 / jnp.where(separated, gap, 1.0), 0.0
+    )
+    symmetric = active[:, None] & active[None, :] & ~separated
+    lowdin = jnp.where(
+        symmetric,
+        1.0 / (safe[:, None] * safe[None, :] * (safe[:, None] + safe[None, :])),
+        0.0,
+    )
+    transform = eigenvectors / safe[None, :] + eigenvectors @ (
+        (rotation * perturbation) / safe[None, :] - lowdin * perturbation
+    )
     basis = block @ transform
     basis = jnp.where(active[None, :], basis, 0)
-    factor = jnp.diag(jnp.where(active, singular_values, 0)) @ jnp.conj(eigenvectors.T)
+    # Retained factor rows are basis* M block = transform* Gram; only their
+    # tangent is added to the executed factor.
+    coefficients = jnp.conj(transform.T) @ gram
+    factor = jnp.diag(jnp.where(active, singular_values, 0)) @ jnp.conj(
+        eigenvectors.T
+    ) + jnp.where(active[:, None], coefficients - jax.lax.stop_gradient(coefficients), 0)
     return basis, factor, jnp.sum(active, dtype=jnp.int32)
 
 

@@ -26,6 +26,44 @@ class LinearCapabilityError(ValueError):
     """Raised when a requested operation lacks a declared operator capability."""
 
 
+class LinearResourceLimitError(LinearCapabilityError):
+    """A resource owner refuses a measured or bounded request before growth."""
+
+    resource: str
+    limit: int
+    requested: int
+    completed: int | None
+    symbolic_work: int | None
+    storage_bytes_upper: int | None
+
+    def __init__(
+        self,
+        message: str,
+        /,
+        *,
+        resource: str,
+        limit: int,
+        requested: int,
+        completed: int | None = None,
+        symbolic_work: int | None = None,
+        storage_bytes_upper: int | None = None,
+    ) -> None:
+        if not resource or any(
+            value is not None and value < 0
+            for value in (limit, requested, completed, symbolic_work, storage_bytes_upper)
+        ):
+            raise ValueError(
+                "Linear resource refusal requires a named nonnegative allowance and evidence."
+            )
+        super().__init__(message)
+        self.resource = resource
+        self.limit = limit
+        self.requested = requested
+        self.completed = completed
+        self.symbolic_work = symbolic_work
+        self.storage_bytes_upper = storage_bytes_upper
+
+
 class OperatorCapabilities(StrictModule):
     """Immutable executable capabilities, separate from mathematical properties."""
 

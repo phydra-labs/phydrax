@@ -16,10 +16,115 @@ import pytest
 from jax import Array
 
 import phydrax.linalg as la
+from phydrax.linalg._dense_pseudoinverse import (
+    apply_connected_pseudoinverse,
+    apply_pseudoinverse,
+    factor_pseudoinverse,
+)
 
 
 _RNG = np.random.default_rng(1001)
 _STEP = 1e-6
+
+
+def test_connected_gram_matches_dense_global_rank_cutoff_and_condition() -> None:
+    # Separate exact components have radically unequal scales. A per-block
+    # relative cutoff would incorrectly retain the small scalar component.
+    matrix = jnp.diag(jnp.asarray((1e6, 2.0, 1e-4, 0.0)))
+    rhs = jnp.asarray((1.0, 2.0, 3.0, 0.0))
+    policy = la.RankPolicy(relative_cutoff=1e-6, absolute_cutoff=0.0)
+    dense = factor_pseudoinverse(matrix, policy, hermitian=True)
+    result = jax.jit(
+        lambda a, b: apply_connected_pseudoinverse(
+            a, b, policy, jnp.asarray((True, True, True, False)), jnp.asarray(1_000_000)
+        )
+    )(matrix, rhs)
+    assert bool(result.finite)
+    assert not bool(result.resource_refused)
+    np.testing.assert_allclose(
+        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-12, atol=0.0
+    )
+    np.testing.assert_array_equal(result.rank, dense.rank)
+    np.testing.assert_allclose(result.rank_cutoff, dense.rank_cutoff, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(
+        result.condition_estimate, dense.condition_estimate, rtol=1e-12, atol=0.0
+    )
+    assert float(result.value[2]) == 0.0
+
+
+def test_connected_gram_preserves_ragged_blocks_and_exact_tiny_links() -> None:
+    matrix = jnp.zeros((32, 32)).at[0, 0].set(2.0)
+    block = jnp.eye(23) + 0.1 * jnp.ones((23, 23))
+    matrix = matrix.at[1:24, 1:24].set(block)
+    rhs = jnp.arange(32, dtype=jnp.float64)
+    rhs = rhs.at[24:].set(0.0)
+    active = jnp.arange(32) < 24
+    policy = la.RankPolicy(relative_cutoff=1e-10, absolute_cutoff=1e-14)
+    result = apply_connected_pseudoinverse(
+        matrix, rhs, policy, active, jnp.asarray(10_000_000)
+    )
+    dense = factor_pseudoinverse(matrix, policy, hermitian=True)
+    assert bool(result.finite)
+    assert int(result.factor_blocks) == 2
+    assert sorted(
+        np.asarray(result.component_sizes)[
+            np.asarray(result.component_sizes) > 0
+        ].tolist()
+    ) == [1, 23]
+    np.testing.assert_allclose(
+        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-10, atol=1e-12
+    )
+    tiny = jnp.asarray(((1.0, 1e-16), (1e-16, 1.0)))
+    linked = apply_connected_pseudoinverse(
+        tiny, jnp.ones(2), policy, jnp.ones(2, dtype=jnp.bool_), jnp.asarray(1_000_000)
+    )
+    assert int(linked.factor_blocks) == 1
+    assert int(linked.component_sizes[0]) == 2
+
+
+@pytest.mark.parametrize("resource", (0, 600))
+def test_connected_gram_resource_refusal_records_only_executed_graph(
+    resource: int,
+) -> None:
+    result = apply_connected_pseudoinverse(
+        jnp.eye(4),
+        jnp.ones(4),
+        la.RankPolicy(),
+        jnp.ones(4, dtype=jnp.bool_),
+        jnp.asarray(resource),
+    )
+    assert bool(result.resource_refused)
+    assert not bool(result.finite)
+    assert int(result.work_units) <= resource
+    np.testing.assert_array_equal(result.value, np.zeros(4))
+
+
+def test_connected_gram_nonfinite_and_true_null_modes_refuse_or_match_dense() -> None:
+    policy = la.RankPolicy(relative_cutoff=1e-10, absolute_cutoff=1e-14)
+    matrix = jnp.asarray(
+        (
+            (1.0, 1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 3.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0),
+        )
+    )
+    rhs = jnp.asarray((1.0, 1.0, 1.0, 0.0))
+    active = jnp.asarray((True, True, True, False))
+    result = apply_connected_pseudoinverse(
+        matrix, rhs, policy, active, jnp.asarray(1_000_000)
+    )
+    dense = factor_pseudoinverse(matrix, policy, hermitian=True)
+    assert bool(result.finite)
+    assert int(result.rank) == 2
+    np.testing.assert_allclose(
+        result.value, apply_pseudoinverse(dense, rhs), rtol=1e-12, atol=1e-14
+    )
+    failed = apply_connected_pseudoinverse(
+        matrix.at[0, 0].set(jnp.nan), rhs, policy, active, jnp.asarray(1_000_000)
+    )
+    assert not bool(failed.finite)
+    assert not bool(failed.resource_refused)
 
 
 def _central_difference(function: Callable[[float], np.ndarray]) -> np.ndarray:

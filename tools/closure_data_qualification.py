@@ -178,7 +178,6 @@ def closure_candidate_profile(
     return CapabilityProfile(
         "closure-data.candidate",
         "phydrax",
-        "candidate",
         (support,),
         dependencies=tuple(dependencies),
         required_gates=("operational", "performance", "scientific", "security"),

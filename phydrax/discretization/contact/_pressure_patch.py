@@ -15,7 +15,6 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...geometry import intersect_tetrahedra
 from ...typing import checked
 from .._cell_mesh import CellMesh
 
@@ -155,6 +154,8 @@ class HydroelasticPatchExtractionPlan(StrictModule, NonTrainableState):
         minus: HydroelasticPressureFieldPlan,
         /,
     ) -> PreparedHydroelasticPatchExtraction:
+        from ...geometry import intersect_tetrahedra
+
         if not isinstance(plus, HydroelasticPressureFieldPlan) or not isinstance(
             minus, HydroelasticPressureFieldPlan
         ):

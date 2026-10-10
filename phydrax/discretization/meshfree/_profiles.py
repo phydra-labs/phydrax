@@ -16,9 +16,7 @@ from ...qualification._registry import CapabilityProfile, SupportTuple
 
 type SupportValue = str | int | bool
 type SupportAttributes = dict[str, SupportValue]
-type ProfileSpecification = tuple[
-    str, str, tuple[SupportAttributes, ...], tuple[str, ...]
-]
+type ProfileSpecification = tuple[str, tuple[SupportAttributes, ...], tuple[str, ...]]
 
 _PROVIDER = "phydrax-native"
 _SEEDED = "deterministic-seeded"
@@ -816,7 +814,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
     return (
         (
             "strong-form",
-            "candidate",
             _strong_form(),
             (
                 "analytic",
@@ -828,7 +825,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "elliptic-solve",
-            "candidate",
             _elliptic(),
             (
                 "analytic",
@@ -840,7 +836,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "multilevel",
-            "candidate",
             _multilevel(),
             (
                 "analytic",
@@ -853,7 +848,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "conservative-exterior",
-            "candidate",
             _conservative_exterior(),
             (
                 "analytic",
@@ -867,13 +861,11 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "surface-operators",
-            "candidate",
             _surface_operators(),
             ("analytic", "convergence", "geometry-admission", "normal-comparison"),
         ),
         (
             "moving-surface",
-            "candidate",
             _moving_surface(),
             (
                 "conservation",
@@ -887,13 +879,11 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "bulk-surface-exchange",
-            "candidate",
             _bulk_surface_exchange(),
             ("analytic", "conservation", "window-lag", "window-status"),
         ),
         (
             "learned-constitutive-flux",
-            "candidate",
             _learned_flux(),
             (
                 "adjoint-status",
@@ -907,7 +897,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "bulk-evolution",
-            "candidate",
             _bulk_evolution(),
             (
                 "ale-gcl-free-stream",
@@ -926,7 +915,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "bulk-transport",
-            "candidate",
             _bulk_transport(),
             (
                 "bound-preservation",
@@ -950,7 +938,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "joint-transfer",
-            "candidate",
             _joint_transfer(),
             (
                 "admission",
@@ -970,7 +957,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "physical-topology",
-            "candidate",
             _physical_topology(),
             (
                 "all-history-remap",
@@ -997,7 +983,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "higher-forms",
-            "candidate",
             _higher_forms(),
             (
                 "abstract-clique-refusal",
@@ -1019,7 +1004,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "abstract-clique-forms",
-            "research",
             _abstract_clique_forms(),
             (
                 "abstract-fidelity",
@@ -1032,7 +1016,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "sensitivities",
-            "candidate",
             _sensitivities(),
             (
                 "contract-identity",
@@ -1045,7 +1028,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "distributed",
-            "candidate",
             _distributed(),
             (
                 "action-parity",
@@ -1062,7 +1044,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "incompressible-flow",
-            "candidate",
             _incompressible_flow(),
             (
                 "analytic",
@@ -1075,13 +1056,11 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "lagrangian-flow",
-            "candidate",
             _lagrangian_flow(),
             ("conservation", "declared-refusal", "divergence", "sph-interoperability"),
         ),
         (
             "elasticity",
-            "candidate",
             _elasticity(),
             (
                 "analytic",
@@ -1094,19 +1073,16 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "surface-stokes",
-            "candidate",
             _surface_stokes(),
             ("analytic", "convergence", "declared-refusal", "killing-modes", "tangency"),
         ),
         (
             "fluid-structure",
-            "candidate",
             _fluid_structure(),
             ("force", "interface-certificate", "work-balance"),
         ),
         (
             "adaptive-refinement",
-            "candidate",
             _adaptive_refinement(),
             (
                 "capacity-refusal",
@@ -1124,7 +1100,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "learned-correction",
-            "candidate",
             _learned_correction(),
             (
                 "accepted-updates",
@@ -1146,7 +1121,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "learned-coupled-law",
-            "candidate",
             _learned_coupled_law(),
             (
                 "independent-reversal",
@@ -1161,7 +1135,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "calibrated-prediction",
-            "candidate",
             _calibrated_prediction(),
             (
                 "cases-accepted",
@@ -1172,7 +1145,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "hybrid-schwarz",
-            "candidate",
             _hybrid_schwarz(),
             (
                 "cloud-order",
@@ -1187,7 +1159,6 @@ def _specifications() -> tuple[ProfileSpecification, ...]:
         ),
         (
             "runtime-restart",
-            "candidate",
             _runtime_restart(),
             (
                 "completed",
@@ -1233,12 +1204,11 @@ def meshfree_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"meshfree.{name}.profile",
             "phydrax",
-            version,
             tuple(SupportTuple(f"meshfree.{name}", values) for values in supports),
             required_gates=tuple(sorted({*gates, *common})),
             released=False,
         )
-        for name, version, supports, gates in _specifications()
+        for name, supports, gates in _specifications()
     )
 
 

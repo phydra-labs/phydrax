@@ -18,7 +18,6 @@ from math import isfinite
 from typing import Any, assert_never, final
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -28,6 +27,7 @@ from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._interpolation import GatherStencil
 from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -46,6 +46,7 @@ from .._side_actions import (
 )
 from .._simplicial_locator import (
     AbstractCellLocator,
+    CellLocationResult,
     CellLocationStatus,
     PreparedSimplicialCellLocator,
     SimplicialLocationPolicy,
@@ -67,7 +68,11 @@ from .._views import (
     transpose_duality_evidence,
 )
 from ._cell_map import PreparedFiniteElementCellMap
-from ._generic import FiniteElementDiscretization, FiniteElementRuntimeData
+from ._generic import (
+    _evaluate_paired_field_basis,
+    FiniteElementDiscretization,
+    FiniteElementRuntimeData,
+)
 from ._reference import FiniteElementSpec
 from ._reference_operator import (
     _facet_corner_parameters,
@@ -79,7 +84,7 @@ from ._reference_operator import (
 _SIMPLICES = ("triangle", "tetrahedron")
 
 
-def _field_element(
+def _point_basis_element(
     discretization: FiniteElementDiscretization,
     field_name: str,
     block_index: int,
@@ -96,6 +101,46 @@ def _field_element(
             "Mapped or twisted FE fields require canonical form-basis metadata."
         )
     return element
+
+
+def _physical_basis_shape(element: FiniteElementSpec, ambient: int, /) -> tuple[int, ...]:
+    scientific = element.value_spec.form_type
+    return FormValueSpec(
+        FormType(
+            scientific.dimension,
+            scientific.degree,
+            twist=scientific.twist,
+            fiber_shape=scientific.fiber_shape,
+            ambient_dimension=ambient,
+        ),
+        proxy=element.value_spec.proxy,
+    ).value_shape
+
+
+def _apply_point_weights(weights: Array, gathered: Array, /) -> Array:
+    """Contract local DOFs, retaining basis-value axes before component axes."""
+    points, local = weights.shape[:2]
+    value_shape = weights.shape[2:]
+    components = gathered.shape[2:]
+    values = contract(
+        "pnv,pnk->pvk",
+        weights.reshape((points, local, int(np.prod(value_shape)))),
+        gathered.reshape((points, local, int(np.prod(components)))),
+    )
+    return values.reshape((points, *value_shape, *components))
+
+
+def _transpose_point_weights(
+    weights: Array, dual: Array, components: tuple[int, ...], /
+) -> Array:
+    points, local = weights.shape[:2]
+    value_count = int(np.prod(weights.shape[2:]))
+    payload = contract(
+        "pnv,pvk->pnk",
+        weights.reshape((points, local, value_count)),
+        dual.reshape((points, value_count, int(np.prod(components)))),
+    )
+    return payload.reshape((points, local, *components))
 
 
 def _field_array_space(
@@ -153,8 +198,19 @@ def finite_element_point_weights(
     if transform is not None:
         flat = weights.reshape((weights.shape[0], weights.shape[1], -1))
         weights = contract("plv,plj->pjv", flat, transform).reshape(weights.shape)
+        return weights
     return weights * orientation.reshape(
         (*orientation.shape, *((1,) * (weights.ndim - orientation.ndim)))
+    )
+
+
+def _nodal_field(discretization: FiniteElementDiscretization, field_name: str, /) -> bool:
+    return all(
+        element.conformity in ("H1", "L2")
+        and element.mapping == "identity"
+        and not element.value_shape
+        and element.representation == "point_value"
+        for element in discretization.elements[discretization._field_index(field_name)]
     )
 
 
@@ -165,18 +221,22 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     Routes evaluate the field (or its physical derivative along
     `derivative_axis`) at fixed cell/reference points of one block, such as the
     element's own quadrature or node points. Fields have coefficient shape
-    `(global_dof_count, *components)`.
+    `(global_dof_count, *components)`. `dof_reference_positions` are actual
+    physical nodal positions for scalar nodal fields; for compatible moment
+    fields they are mapped reference representatives, not displacement nodes.
     """
 
     discretization: FiniteElementDiscretization
     field_name: str = eqx.field(static=True)
     dof_routes: Array
     weights: Array
+    basis_value_shape: tuple[int, ...] = eqx.field(static=True)
     reference_positions: Array
     dof_reference_positions: Array
     derivative_axis: int | None = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
+    nodal_positions: bool = eqx.field(static=True)
 
     @checked
     def __init__(
@@ -210,8 +270,15 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         if routes.ndim != 2 or routes.shape[0] == 0:
             raise ValueError("Interpolation routes must be a nonempty rank-2 array.")
         if weights_.shape[:2] != routes.shape:
+            raise ValueError("Interpolation weights must match fixed route shape.")
+        basis_shape = weights_.shape[2:]
+        supported_shapes = {
+            _physical_basis_shape(element, dimension)
+            for element in discretization.elements[discretization._field_index(name)]
+        }
+        if basis_shape not in supported_shapes:
             raise ValueError(
-                "Interpolation weights must match the fixed point/local axes."
+                "Interpolation weights must retain the FE basis value shape."
             )
         if positions.shape != (routes.shape[0], dimension):
             raise ValueError("Reference points must match interpolation count/dimension.")
@@ -227,17 +294,17 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
             raise ValueError(
                 "Interpolation routes and geometric data must be finite/valid."
             )
-        element = discretization.elements[discretization._field_index(name)][0]
-        if element.form_basis is None:
+        if not isfinite(limit) or limit < 0.0:
+            raise ValueError("Interpolation tolerance must be finite and nonnegative.")
+        # Only scalar nodal bases reproduce constants with all-one coefficients.
+        if _nodal_field(discretization, name):
             target = 1.0 if derivative_axis is None else 0.0
             scale = 1.0 if derivative_axis is None else max(np.max(np.abs(weights_)), 1.0)
-            defect = np.max(np.abs(np.sum(weights_, axis=1) - target)) / scale
-            if not isfinite(limit) or limit < 0.0 or defect > limit:
+            partition_defect = np.max(np.abs(np.sum(weights_, axis=1) - target)) / scale
+            if partition_defect > limit:
                 raise ValueError(
                     "FE interpolation must reproduce constants within tolerance."
                 )
-        elif not isfinite(limit) or limit < 0.0:
-            raise ValueError("Interpolation tolerance must be finite and nonnegative.")
         generated = canonical_fingerprint(
             {
                 "kind": "prepared-finite-element-point-interpolation",
@@ -246,6 +313,7 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
                 "routes": array_tree_fingerprint(routes),
                 "weights": array_tree_fingerprint(weights_),
                 "reference_positions": array_tree_fingerprint(positions),
+                "dof_reference_positions": array_tree_fingerprint(dof_positions),
                 "derivative_axis": derivative_axis,
                 "tolerance": limit.hex(),
             }
@@ -258,6 +326,8 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         self.field_name = name
         self.dof_routes = jnp.asarray(routes)
         self.weights = jnp.asarray(weights_, dtype=dtype)
+        self.basis_value_shape = basis_shape
+        self.nodal_positions = _nodal_field(discretization, name)
         self.reference_positions = jnp.asarray(positions)
         self.dof_reference_positions = jnp.asarray(dof_positions)
         self.derivative_axis = derivative_axis
@@ -278,23 +348,17 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
 
     @property
     def value_shape(self) -> tuple[int, ...]:
-        return self.weights.shape[2:] + self.field_space.shape[1:]
+        return (*self.basis_value_shape, *self.field_space.shape[1:])
 
     def interpolate(self, coefficients: ArrayLike, /) -> Array:
         values = self.field_space.validate(coefficients)
-        if self.weights.ndim == 2:
-            return contract("ai,ai...->a...", self.weights, values[self.dof_routes])
-        return contract("aiv,ai->av", self.weights, values[self.dof_routes])
+        return _apply_point_weights(self.weights, values[self.dof_routes])
 
     def transpose_scatter(self, point_dual: ArrayLike, /) -> Array:
         dual = jnp.asarray(point_dual, dtype=self.weights.dtype)
         if dual.shape != (self.attachment_count, *self.value_shape):
             raise ValueError("Point dual must match attachment count and value shape.")
-        payload = (
-            contract("ai,a...->ai...", self.weights, dual)
-            if self.weights.ndim == 2
-            else contract("aiv,av->ai", self.weights, dual)
-        )
+        payload = _transpose_point_weights(self.weights, dual, self.field_space.shape[1:])
         return (
             jnp.zeros(self.field_space.shape, dtype=payload.dtype)
             .at[self.dof_routes]
@@ -318,6 +382,12 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
         )
 
     def deformed_dof_positions(self, displacement: ArrayLike, /) -> Array:
+        if not self.nodal_positions or self.field_space.shape[1:] != (
+            self.ambient_dimension,
+        ):
+            raise ValueError(
+                "DOF deformation requires nodal scalar-basis ambient displacement components."
+            )
         value = self.field_space.validate(displacement)
         return self.dof_reference_positions + value
 
@@ -364,7 +434,7 @@ def prepare_finite_element_point_interpolation(
     if block not in dof_map.block_names:
         raise KeyError(f"Unknown FE block {block!r} for field {field_name!r}.")
     block_index = dof_map.block_names.index(block)
-    element = _field_element(discretization, field_name, block_index)
+    element = _point_basis_element(discretization, field_name, block_index)
     cells = np.asarray(cell_indices, dtype=np.int32)
     points = np.asarray(reference_points)
     cell_count = discretization.mesh.blocks[block_index].cell_count
@@ -381,42 +451,17 @@ def prepare_finite_element_point_interpolation(
     )
     if not bool(np.all(np.asarray(evaluation.valid))):
         raise ValueError("Interpolation cells have an invalid coordinate map.")
-    orientation = jnp.asarray(dof_map.orientations[block_index])[cells]
-    weights = finite_element_point_weights(
-        element,
-        orientation,
+    weights, valid = _evaluate_paired_field_basis(
+        discretization,
+        field_name,
+        block_index,
+        jnp.asarray(cells),
         jnp.asarray(points),
-        evaluation.inverse_jacobian,
-        derivative_axis,
-        jacobian=evaluation.jacobian,
-        transform=dof_map.cell_transforms[block_index][cells],
+        realized.coordinates,
+        derivative_axis=derivative_axis,
     )
-    if element.form_basis is not None and derivative_axis is not None:
-        value_shape = weights.shape[2:]
-
-        def mapped(reference: Array, cell: Array, /) -> Array:
-            geometry = cell_map.evaluate(
-                realized.coordinates, cell[None], reference[None]
-            )
-            values = map_reference_values(
-                element.tabulate(reference[None])[0],
-                element.value_spec,
-                geometry.jacobian[:, None],
-            )[0]
-            transformed = contract(
-                "iv,ij->jv",
-                values.reshape((element.local_dof_count, -1)),
-                dof_map.cell_transforms[block_index][cell],
-            )
-            return transformed
-
-        gradient = jax.vmap(jax.jacfwd(mapped, argnums=0))(
-            jnp.asarray(points), jnp.asarray(cells)
-        )
-        weights = contract(
-            "plvr,pr->plv", gradient, evaluation.inverse_jacobian[:, :, derivative_axis]
-        )
-        weights = weights.reshape((cells.size, element.local_dof_count, *value_shape))
+    if not bool(np.all(np.asarray(valid))):
+        raise ValueError("Interpolation cells have an invalid mapped field basis.")
     routes = np.asarray(dof_map.cell_dofs[block_index])[cells]
     dof_positions = np.asarray(
         dof_map.evaluate_coordinates(discretization.mesh, realized.coordinates)
@@ -442,7 +487,7 @@ class _FiniteElementRoute(StrictModule):
 class FiniteElementFieldReconstructionKernel(
     AbstractFieldReconstructionKernel, NonTrainableState
 ):
-    """Located evaluation of one scalar-basis FE field on one cell block.
+    """Located evaluation of one mapped scalar or compatible FE field on a block.
 
     Each query point is located by the block's `AbstractCellLocator`; every
     containing cell contributes a candidate route built from native tabulation
@@ -453,8 +498,12 @@ class FiniteElementFieldReconstructionKernel(
 
     locator: AbstractCellLocator
     element: FiniteElementSpec
+    discretization: FiniteElementDiscretization
+    field_name: str = eqx.field(static=True)
+    block_index: int | None = eqx.field(static=True)
+    component_shape: tuple[int, ...] = eqx.field(static=True)
+    basis_value_shape: tuple[int, ...] = eqx.field(static=True)
     cell_dofs: Array
-    orientations: Array
     continuity: int = eqx.field(static=True)
     global_dof_count: int = eqx.field(static=True)
     _kernel_id: str = eqx.field(static=True)
@@ -463,28 +512,39 @@ class FiniteElementFieldReconstructionKernel(
     def __init__(
         self,
         locator: AbstractCellLocator,
-        element: FiniteElementSpec,
-        cell_dofs: ArrayLike,
-        orientations: ArrayLike,
+        discretization: FiniteElementDiscretization,
+        field_name: str,
+        block_index: int | None,
         /,
         *,
-        continuity: int,
-        global_dof_count: int,
         field_space_id: str,
     ) -> None:
-        routes = jnp.asarray(cell_dofs)
-        signs = jnp.asarray(orientations)
+        element = _point_basis_element(
+            discretization, field_name, 0 if block_index is None else block_index
+        )
+        field_index = discretization._field_index(field_name)
+        dof_map = discretization.dof_maps[field_index]
+        routes = (
+            jnp.concatenate(dof_map.cell_dofs, axis=0)
+            if block_index is None
+            else jnp.asarray(dof_map.cell_dofs[block_index])
+        )
         expected = (locator.cell_map.cell_count, element.local_dof_count)
-        if routes.shape != expected or signs.shape != expected:
-            raise ValueError("Cell DOF routes and orientations must be (cells, local).")
-        if continuity not in (-1, 0):
-            raise ValueError("FE field continuity must be -1 (L2) or 0 (H1).")
+        if routes.shape != expected:
+            raise ValueError("Cell DOF routes must be (cells, local).")
+        continuity = 0 if element.conformity == "H1" else -1
         self.locator = locator
         self.element = element
+        self.basis_value_shape = _physical_basis_shape(
+            element, locator.cell_map.ambient_dimension
+        )
+        self.discretization = discretization
+        self.field_name = str(field_name)
+        self.block_index = block_index
+        self.component_shape = _field_array_space(discretization, field_name).shape[1:]
         self.cell_dofs = routes
-        self.orientations = signs
         self.continuity = continuity
-        self.global_dof_count = global_dof_count
+        self.global_dof_count = dof_map.global_dof_count
         self._kernel_id = canonical_fingerprint(
             {
                 "kind": "finite-element-field-reconstruction-kernel",
@@ -514,10 +574,21 @@ class FiniteElementFieldReconstructionKernel(
         side: FieldSideBinding | None,
         /,
     ) -> tuple[_FiniteElementRoute, FieldQueryEvidence]:
-        order = sum(derivative)
-        axis = None if order == 0 else derivative.index(1)
         mask = None if side is None else side.cell_mask
         location = self.locator.locate(points, cell_mask=mask)
+        return self._prepare_located_route(location, derivative, side)
+
+    @eqx.filter_jit
+    def _prepare_located_route(
+        self,
+        location: CellLocationResult,
+        derivative: tuple[int, ...],
+        side: FieldSideBinding | None,
+        /,
+    ) -> tuple[_FiniteElementRoute, FieldQueryEvidence]:
+        """Compile basis/Piola/side preparation with current numerical location."""
+        order = sum(derivative)
+        axis = None if order == 0 else derivative.index(1)
         candidates = location.candidate_cells
         accepted = candidates >= 0
         count = jnp.sum(accepted, axis=1, dtype=jnp.int32)
@@ -526,18 +597,19 @@ class FiniteElementFieldReconstructionKernel(
         reference = location.candidate_reference.reshape(
             (-1, self.locator.cell_map.reference_dimension)
         )
-        inverse_jacobian = None
-        if axis is not None:
-            inverse_jacobian = self.locator.cell_map.evaluate(
-                self.locator.coordinates, flat_cells, reference
-            ).inverse_jacobian
-        weights = finite_element_point_weights(
-            self.element,
-            self.orientations[flat_cells],
+        weights, valid_basis = _evaluate_paired_field_basis(
+            self.discretization,
+            self.field_name,
+            self.block_index,
+            flat_cells,
             reference,
-            inverse_jacobian,
-            axis,
-        ).reshape((*candidates.shape, self.element.local_dof_count))
+            self.locator.coordinates,
+            derivative_axis=axis,
+        )
+        weights = weights.reshape(
+            (*candidates.shape, self.element.local_dof_count, *self.basis_value_shape)
+        )
+        basis_failed = jnp.any(accepted & ~valid_basis.reshape(candidates.shape), axis=1)
         if side is not None and side.side == "average":
             share = accepted / jnp.maximum(count, 1)[:, None]
         else:
@@ -546,9 +618,22 @@ class FiniteElementFieldReconstructionKernel(
                 jnp.arange(candidates.shape[1])[None, :] == first[:, None]
             ) & accepted
         share = share.astype(weights.dtype)
-        route = _FiniteElementRoute(self.cell_dofs[safe], weights * share[:, :, None])
+        route = _FiniteElementRoute(
+            self.cell_dofs[safe],
+            weights * share.reshape(share.shape + (1,) * (weights.ndim - 2)),
+        )
         ambiguous = (count > 1) & (order > self.continuity)
         status = cell_location_status(location.status)
+        status = jnp.where(
+            (status == int(FieldQueryStatus.VALID)) & basis_failed,
+            int(FieldQueryStatus.ILL_CONDITIONED),
+            status,
+        )
+        status = jnp.where(
+            (status == int(FieldQueryStatus.VALID)) & ~location.candidates_complete,
+            int(FieldQueryStatus.LOCATION_FAILED),
+            status,
+        )
         if side is None:
             side_status = FieldQueryStatus.SIDE_REQUIRED
         else:
@@ -565,12 +650,53 @@ class FiniteElementFieldReconstructionKernel(
         return route, evidence
 
     def apply(self, route: _FiniteElementRoute, coefficients: Array, /) -> Array:
-        return contract("pcl,pcl...->p...", route.weights, coefficients[route.dof_routes])
+        local_count = route.dof_routes.shape[1] * route.dof_routes.shape[2]
+        weights = route.weights.reshape(
+            (route.weights.shape[0], local_count, *self.basis_value_shape)
+        )
+        routes = route.dof_routes.reshape((route.dof_routes.shape[0], local_count))
+        return _apply_point_weights(weights, coefficients[routes])
 
     def transpose(self, route: _FiniteElementRoute, cotangent: Array, /) -> Array:
-        payload = contract("pcl,p...->pcl...", route.weights, cotangent)
-        shape = (self.global_dof_count, *cotangent.shape[1:])
-        return jnp.zeros(shape, dtype=payload.dtype).at[route.dof_routes].add(payload)
+        local_count = route.dof_routes.shape[1] * route.dof_routes.shape[2]
+        weights = route.weights.reshape(
+            (route.weights.shape[0], local_count, *self.basis_value_shape)
+        )
+        routes = route.dof_routes.reshape((route.dof_routes.shape[0], local_count))
+        payload = _transpose_point_weights(weights, cotangent, self.component_shape)
+        shape = (self.global_dof_count, *self.component_shape)
+        return jnp.zeros(shape, dtype=payload.dtype).at[routes].add(payload)
+
+    def scalar_query_stencil(self, route: _FiniteElementRoute, /) -> GatherStencil:
+        """Expose the exact fixed query action on flattened scalar coefficients.
+
+        Basis-value axes precede coefficient-component axes, exactly as in
+        ``apply``. This bounded stencil admits sparse distributed support
+        without evaluating a dense query-by-coefficient Jacobian.
+        """
+        components = int(np.prod(self.component_shape))
+        basis = int(np.prod(self.basis_value_shape))
+        points = route.weights.shape[0]
+        local = route.dof_routes.shape[1] * route.dof_routes.shape[2]
+        indices = route.dof_routes.reshape((points, local))
+        weights = route.weights.reshape((points, local, basis))
+        scalar_indices = (
+            indices[:, None, None, :] * components
+            + jnp.arange(components, dtype=jnp.int32)[None, None, :, None]
+        )
+        scalar_indices = jnp.broadcast_to(
+            scalar_indices, (points, basis, components, local)
+        ).reshape((points * basis * components, local))
+        scalar_weights = jnp.broadcast_to(
+            weights.transpose((0, 2, 1))[:, :, None, :],
+            (points, basis, components, local),
+        ).reshape(scalar_indices.shape)
+        return GatherStencil(
+            indices=scalar_indices,
+            weights=scalar_weights,
+            valid=scalar_weights != 0,
+            source_size=self.global_dof_count * components,
+        )
 
     def bind_side(
         self,
@@ -583,6 +709,8 @@ class FiniteElementFieldReconstructionKernel(
         status = np.asarray(location.status)
         if np.any(status != int(CellLocationStatus.LOCATED)):
             raise ValueError("Every trace site must lie in the FE support.")
+        if not np.all(np.asarray(location.candidates_complete)):
+            raise ValueError("Trace binding requires complete containing-cell coverage.")
         containing = np.asarray(location.candidate_cells)
         if side == "average":
             if cell_ids is not None:
@@ -628,13 +756,15 @@ def prepare_finite_element_field_reconstruction(
 ) -> PreparedFieldReconstruction:
     """Prepare an evidenced coordinate reconstruction of one FE field.
 
-    Arbitrary points are located on triangle/tetrahedron blocks by a
-    `PreparedSimplicialCellLocator` (built from `location_policy`); other cell
-    kinds require an explicit `locator` implementing `AbstractCellLocator`.
-    `support_geometry` defaults to the region derived from affine simplicial
-    meshes; an explicit geometry must be covered by the mesh (vertices inside,
-    equal measure). Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial
-    pieces of the element degree on affine cells and smooth pieces otherwise.
+    The locator inverts the actual coordinate map; support describes its whole
+    mapped domain. An explicit block name selects block-local support without
+    changing the field's global coefficient layout. Compatible basis values
+    include the owning Piola/base transformations and separate DOF signs.
+    Full vector values on shared facets require a cell side for Hcurl/Hdiv.
+    Embedded cell supports retain their physical ambient coordinates and
+    manifold charts; first physical derivatives use the chart's tangent map.
+    Dimension-qualified simplices use the same source-proven affine support
+    path as native interval, triangle and tetrahedron cells.
     """
     from ...geometry import CompiledGeometry
 
@@ -649,7 +779,7 @@ def prepare_finite_element_field_reconstruction(
         if block_name not in dof_map.block_names:
             raise KeyError(f"Unknown FE block {block_name!r} for field {field_name!r}.")
         block_index = dof_map.block_names.index(block_name)
-    element = _field_element(discretization, field_name, block_index)
+    element = _point_basis_element(discretization, field_name, block_index)
     realized = _realized_runtime(discretization, runtime)
     if whole_mesh:
         if any(
@@ -662,29 +792,38 @@ def prepare_finite_element_field_reconstruction(
                 "A whole-support reconstruction requires one canonical reference field basis."
             )
         cell_map = PreparedFiniteElementCellMap(discretization, None)
-        cell_dofs = jnp.concatenate(dof_map.cell_dofs, axis=0)
-        cell_transforms = jnp.concatenate(dof_map.cell_transforms, axis=0)
-        orientations = jnp.concatenate(dof_map.orientations, axis=0)
     else:
         cell_map = PreparedFiniteElementCellMap(discretization, block_index)
-        cell_dofs = dof_map.cell_dofs[block_index]
-        cell_transforms = dof_map.cell_transforms[block_index]
-        orientations = dof_map.orientations[block_index]
+    coordinate_kind = cell_map.coordinate_element.cell_kind
+    simplex = coordinate_kind in (*_SIMPLICES, "interval") or coordinate_kind.startswith(
+        "simplex:"
+    )
     if locator is None:
-        kind = cell_map.coordinate_element.cell_kind
         policy = (
             SimplicialLocationPolicy(min(cell_map.cell_count, 16), 16, 1)
             if location_policy is None
             else location_policy
         )
-        if kind in ("quadrilateral", "hexahedron") or kind.startswith("tensor:"):
-            from ._form_reconstruction import _TensorCellLocator
+        from .._cell_geometry import (
+            BarycentricCellGeometryElement,
+            RestrictedCellGeometryElement,
+        )
 
-            locator = _TensorCellLocator(cell_map, realized.coordinates, policy)
-        else:
+        if (
+            simplex
+            and cell_map.ambient_dimension == cell_map.reference_dimension
+            and not isinstance(
+                cell_map.coordinate_element,
+                (BarycentricCellGeometryElement, RestrictedCellGeometryElement),
+            )
+        ):
             locator = PreparedSimplicialCellLocator(
                 cell_map, realized.coordinates, policy
             )
+        else:
+            from .._mapped_locator import PreparedMappedCellLocator
+
+            locator = PreparedMappedCellLocator(cell_map, realized.coordinates, policy)
     elif not isinstance(locator, AbstractCellLocator):
         raise TypeError("locator must be an AbstractCellLocator or None.")
     elif locator.cell_map.cell_map_id != cell_map.cell_map_id or not np.array_equal(
@@ -708,7 +847,12 @@ def prepare_finite_element_field_reconstruction(
         }
     )
     if support_geometry is None:
-        geometry = simplicial_mesh_support_geometry(locator, support_id)
+        if simplex:
+            geometry = simplicial_mesh_support_geometry(locator, support_id)
+        else:
+            from .._view_support import mapped_mesh_support_geometry
+
+            geometry = mapped_mesh_support_geometry(locator, support_id)
     elif isinstance(support_geometry, CompiledGeometry):
         verify_mesh_support_geometry(
             support_geometry, locator, tolerance=support_tolerance
@@ -717,12 +861,12 @@ def prepare_finite_element_field_reconstruction(
     else:
         raise TypeError("support_geometry must be a CompiledGeometry or None.")
     continuity = 0 if element.conformity == "H1" else -1
-    affine = cell_map.coordinate_element.degree == 1
-    if element.degree == 0:
+    affine = simplex and cell_map.coordinate_element.degree == 1
+    if element.degree == 0 and element.mapping == "identity":
         regularity = DerivativeRegularity.piecewise_polynomial(
             continuity=-1, degree_bound=0
         )
-    elif affine:
+    elif affine and element.mapping == "identity":
         regularity = DerivativeRegularity.piecewise_polynomial(
             continuity=continuity, degree_bound=element.degree
         )
@@ -762,27 +906,13 @@ def prepare_finite_element_field_reconstruction(
         raise TypeError("value_port must be a ValuePort or None.")
     if port.event_shape != components:
         raise ValueError("value_port event_shape must equal the FE component shape.")
-    if element.form_basis is not None:
-        from ._form_reconstruction import FormFieldReconstructionKernel
-
-        kernel = FormFieldReconstructionKernel(
-            locator,
-            element,
-            cell_dofs,
-            cell_transforms,
-            global_dof_count=dof_map.global_dof_count,
-            field_space_id=field_space_id,
-        )
-    else:
-        kernel = FiniteElementFieldReconstructionKernel(
-            locator,
-            element,
-            cell_dofs,
-            orientations,
-            continuity=continuity,
-            global_dof_count=dof_map.global_dof_count,
-            field_space_id=field_space_id,
-        )
+    kernel = FiniteElementFieldReconstructionKernel(
+        locator,
+        discretization,
+        field_name,
+        None if whole_mesh else block_index,
+        field_space_id=field_space_id,
+    )
     return PreparedFieldReconstruction(
         kernel,
         support_geometry=geometry,
@@ -791,7 +921,9 @@ def prepare_finite_element_field_reconstruction(
         trace_policy=FieldTracePolicy("cell-sided"),
         coefficient_shape=space.shape,
         physical_dimension=discretization.mesh.ambient_dimension,
-        maximum_derivative_order=min(element.degree, 1),
+        maximum_derivative_order=(
+            min(element.degree, 1) if element.mapping == "identity" else 1
+        ),
         field_space_id=field_space_id,
         support_id=support_id,
     )
@@ -1762,7 +1894,6 @@ __all__ = [
     "FiniteElementFieldReconstructionKernel",
     "FiniteElementSideGradient",
     "PreparedFiniteElementPointInterpolation",
-    "finite_element_point_weights",
     "finite_element_side_revision",
     "prepare_finite_element_field_reconstruction",
     "prepare_finite_element_point_interpolation",

@@ -28,6 +28,7 @@ from ....geometry import (
     BoundaryAtlas,
     CompiledGeometry,
     GeometryCapability,
+    PolygonTrimLoop,
     SignReliability,
     ZeroSetAccuracy,
 )
@@ -172,8 +173,12 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
             if trim is None:
                 vertices = standard_vertices
             else:
-                vertices = np.asarray(trim.outer)
-                if vertices.shape != (3, 2) or trim.holes:
+                if not isinstance(trim.outer, PolygonTrimLoop) or trim.holes:
+                    raise ValueError(
+                        "Surface panelization supports affine triangular trim cells only."
+                    )
+                vertices = trim.outer.vertices
+                if vertices.shape != (3, 2):
                     raise ValueError(
                         "Surface panelization supports affine triangular trim cells only."
                     )

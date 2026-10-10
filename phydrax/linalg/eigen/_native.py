@@ -15,7 +15,12 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._spaces import _coordinate_pairing_matrix
-from ..krylov._decompositions import _block_inner, _orthonormalize_block, InnerProduct
+from ..krylov._decompositions import (
+    _block_inner,
+    _gated_input,
+    _orthonormalize_block,
+    InnerProduct,
+)
 from ._problems import EigenproblemLike, GeneralizedEigenproblem
 from ._results import _NativeEigenResult
 
@@ -103,11 +108,13 @@ def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         problem.operator,
         selected_vectors,
         mode_mask,
+        selected_vectors[:, 0],
     )
     metric_vectors, metric_count = _metric_columns(
         problem,
         selected_vectors,
         mode_mask,
+        selected_vectors[:, 0],
     )
     _, residual_norms, relative_residuals = _residual_evidence(
         problem.operator.source,
@@ -370,7 +377,9 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
         prepared.initial_rank, dtype=jnp.int32
     )
     initial = jnp.where(initial_mask[None, :], prepared.initial_basis, 0)
-    metric_initial, metric_count = _metric_columns(problem, initial, initial_mask)
+    metric_initial, metric_count = _metric_columns(
+        problem, initial, initial_mask, initial[:, 0]
+    )
     initial, metric_initial = _project_constraints(
         space,
         initial,
@@ -386,8 +395,11 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
         rank_tolerance,
         generalized=problem.kind == "generalized",
     )
+    # In-loop column callbacks of gated-off lanes and masked columns apply the
+    # first orthonormal seed vector, which the operator receives here.
+    valid_column = basis[:, 0]
     operator_basis, operator_count = _operator_columns(
-        problem.operator, basis, basis_mask
+        problem.operator, basis, basis_mask, valid_column
     )
     (
         values,
@@ -505,8 +517,11 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
                 residual_i,
                 active,
                 jnp.asarray(iteration, dtype=jnp.int32),
+                valid_column,
             )
-            metric_search, metric_used = _metric_columns(problem, search, active)
+            metric_search, metric_used = _metric_columns(
+                problem, search, active, valid_column
+            )
             search, metric_search = _project_constraints(
                 space,
                 search,
@@ -515,7 +530,7 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
                 prepared.metric_constraint_basis,
             )
             operator_search, operator_used = _operator_columns(
-                problem.operator, search, active
+                problem.operator, search, active, valid_column
             )
             trial = jnp.concatenate((x_i, search, direction_i), axis=1)
             operator_trial = jnp.concatenate(
@@ -554,10 +569,10 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
             candidate_mask = trial_mask[:width]
             refresh_mask = candidate_mask & ~locked_i
             operator_candidate, operator_refresh = _operator_columns(
-                problem.operator, candidate, refresh_mask
+                problem.operator, candidate, refresh_mask, valid_column
             )
             metric_candidate, metric_refresh = _metric_columns(
-                problem, candidate, refresh_mask
+                problem, candidate, refresh_mask, valid_column
             )
             operator_used = operator_used + operator_refresh
             metric_used = metric_used + metric_refresh
@@ -578,10 +593,10 @@ def _solve_lobpcg(prepared: Any, /) -> _NativeEigenResult:
             next_direction = jnp.where(active[None, :], next_x - x_i, jnp.zeros_like(x_i))
             next_direction_mask = active & next_mask
             next_adirection, direction_operator_used = _operator_columns(
-                problem.operator, next_direction, next_direction_mask
+                problem.operator, next_direction, next_direction_mask, valid_column
             )
             next_bdirection, direction_metric_used = _metric_columns(
-                problem, next_direction, next_direction_mask
+                problem, next_direction, next_direction_mask, valid_column
             )
             operator_used = operator_used + direction_operator_used
             metric_used = metric_used + direction_metric_used
@@ -690,7 +705,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         jnp.asarray(prepared.initial_rank, dtype=jnp.int32), kept_seed_width
     )
     seed_mask = jnp.arange(retained, dtype=initial_rank.dtype) < initial_rank
-    metric_seed, metric_count = _metric_columns(problem, seed, seed_mask)
+    metric_seed, metric_count = _metric_columns(problem, seed, seed_mask, seed[:, 0])
     seed, metric_seed = _project_constraints(
         space,
         seed,
@@ -706,7 +721,12 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
         rank_tolerance,
         generalized=problem.kind == "generalized",
     )
-    operator_seed, operator_count = _operator_columns(problem.operator, seed, seed_mask)
+    # In-loop column callbacks of gated-off lanes and masked columns apply the
+    # first orthonormal seed vector, which the operator receives here.
+    valid_column = seed[:, 0]
+    operator_seed, operator_count = _operator_columns(
+        problem.operator, seed, seed_mask, valid_column
+    )
     (
         values,
         seed,
@@ -867,7 +887,9 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                 applied = jnp.asarray(0, dtype=jnp.int32)
                 raw_block = raw[:, None]
                 raw_mask = active[None]
-                metric_raw, metric_used = _metric_columns(problem, raw_block, raw_mask)
+                metric_raw, metric_used = _metric_columns(
+                    problem, raw_block, raw_mask, valid_column
+                )
                 raw_block, metric_raw = _project_constraints(
                     space,
                     raw_block,
@@ -901,7 +923,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                     (candidate, metric_candidate),
                 )
                 metric_candidate, refreshed_count = _projected_metric_image(
-                    problem, candidate, raw_mask
+                    problem, candidate, raw_mask, valid_column
                 )
                 metric_used = metric_used + refreshed_count
                 norm = _paired_norm(space, candidate, metric_candidate)
@@ -927,6 +949,7 @@ def _solve_restarted_lanczos(prepared: Any, /) -> _NativeEigenResult:
                     problem.operator,
                     candidate[:, None],
                     independent[None],
+                    valid_column,
                 )
                 basis_i = basis_i.at[:, index].set(candidate)
                 metric_basis_i = metric_basis_i.at[:, index].set(metric_candidate)
@@ -1069,13 +1092,17 @@ def _coordinate_inner(space: Any) -> InnerProduct:
     return inner
 
 
-def _operator_columns(operator: Any, block: Array, mask: Array, /) -> tuple[Array, Array]:
+def _operator_columns(
+    operator: Any, block: Array, mask: Array, valid: Array, /
+) -> tuple[Array, Array]:
     output = jnp.zeros_like(block)
 
     def apply(index: Array, images: Array) -> Array:
         def active_action(value: Array) -> Array:
-            vector = operator.source.unflatten(block[:, index])
-            image = operator.mv(vector)
+            # A batched mask turns the cond into a select; masked columns may be
+            # zero, so they apply the solve's valid column instead.
+            column = _gated_input(mask[index], block[:, index], valid)
+            image = operator.mv(operator.source.unflatten(column))
             return value.at[:, index].set(operator.target.flatten(image))
 
         return jax.lax.cond(mask[index], active_action, lambda value: value, images)
@@ -1084,10 +1111,12 @@ def _operator_columns(operator: Any, block: Array, mask: Array, /) -> tuple[Arra
     return output, jnp.sum(mask, dtype=jnp.int32)
 
 
-def _metric_columns(problem: Any, block: Array, mask: Array, /) -> tuple[Array, Array]:
+def _metric_columns(
+    problem: Any, block: Array, mask: Array, valid: Array, /
+) -> tuple[Array, Array]:
     if problem.kind == "standard":
         return jnp.where(mask[None, :], block, 0), jnp.asarray(0, dtype=jnp.int32)
-    return _operator_columns(problem.metric_operator, block, mask)
+    return _operator_columns(problem.metric_operator, block, mask, valid)
 
 
 def _precondition_columns(
@@ -1095,6 +1124,7 @@ def _precondition_columns(
     block: Array,
     mask: Array,
     iteration: Array,
+    valid: Array,
     /,
 ) -> tuple[Array, Array]:
     if prepared.preconditioning_state is None:
@@ -1105,8 +1135,8 @@ def _precondition_columns(
 
     def apply(index: Array, images: Array) -> Array:
         def active_action(value: Array) -> Array:
-            vector = space.unflatten(block[:, index])
-            image = action.apply(vector, iteration=iteration)
+            column = _gated_input(mask[index], block[:, index], valid)
+            image = action.apply(space.unflatten(column), iteration=iteration)
             return value.at[:, index].set(space.flatten(image))
 
         return jax.lax.cond(mask[index], active_action, lambda value: value, images)
@@ -1529,10 +1559,11 @@ def _projected_metric_image(
     problem: EigenproblemLike,
     candidate: Array,
     mask: Array,
+    valid: Array,
     /,
 ) -> tuple[Array, Array]:
     """Restore B-image consistency after floating-point subspace projection."""
     if isinstance(problem, GeneralizedEigenproblem):
-        images, count = _metric_columns(problem, candidate[:, None], mask)
+        images, count = _metric_columns(problem, candidate[:, None], mask, valid)
         return images[:, 0], count
     return candidate, jnp.asarray(0, dtype=jnp.int32)

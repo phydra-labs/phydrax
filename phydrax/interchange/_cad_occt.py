@@ -9,55 +9,19 @@ import io
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
-from OCP.BRep import BRep_Tool
-from OCP.BRepAdaptor import (
-    BRepAdaptor_Curve2d,
-    BRepAdaptor_Surface,
-)
-from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
-from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepTools import (
-    BRepTools,
-    BRepTools_WireExplorer,
-)
-from OCP.Geom import Geom_RectangularTrimmedSurface
-from OCP.GeomAbs import (
-    GeomAbs_BSplineSurface,
-    GeomAbs_Cone,
-    GeomAbs_Cylinder,
-    GeomAbs_Plane,
-    GeomAbs_Sphere,
-    GeomAbs_Torus,
-)
-from OCP.GeomConvert import GeomConvert
-from OCP.IFSelect import IFSelect_RetDone
-from OCP.IGESControl import IGESControl_Reader
-from OCP.STEPControl import STEPControl_Reader
-from OCP.TopAbs import (
-    TopAbs_EDGE,
-    TopAbs_FACE,
-    TopAbs_REVERSED,
-    TopAbs_SOLID,
-    TopAbs_VERTEX,
-    TopAbs_WIRE,
-)
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import (
-    TopoDS,
-    TopoDS_Iterator,
-    TopoDS_Shape,
-)
-from OCP.TopTools import TopTools_FormatVersion_VERSION_1
 
-from ..._fingerprint import canonical_fingerprint
-from ..._physical import SpatialCoordinateContract
-from .._atlas import TrimDomain
-from ._model import BRepImportReport, BRepModel, BRepTopology
-from ._patches import (
+
+if TYPE_CHECKING:
+    from OCP.TopoDS import TopoDS_Shape
+
+from .._fingerprint import canonical_fingerprint
+from .._physical import SpatialCoordinateContract
+from ..geometry._atlas import TrimDomain
+from ..geometry.brep._model import BRepImportReport, BRepModel, BRepTopology
+from ..geometry.brep._patches import (
     BSplineSurfacePatch,
     ConePatch,
     CylinderPatch,
@@ -85,6 +49,8 @@ def _frame(position: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
 
 
 def _explore(shape: TopoDS_Shape, kind: Any, caster: Any) -> list[Any]:
+    from OCP.TopExp import TopExp_Explorer
+
     explorer = TopExp_Explorer(shape, kind)
     entities: list[Any] = []
     while explorer.More():
@@ -142,6 +108,19 @@ def _bspline_patch(surface: Any) -> BSplineSurfacePatch:
 
 
 def _surface_patch(face: Any, bounds: np.ndarray) -> Any:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.Geom import Geom_RectangularTrimmedSurface
+    from OCP.GeomAbs import (
+        GeomAbs_BSplineSurface,
+        GeomAbs_Cone,
+        GeomAbs_Cylinder,
+        GeomAbs_Plane,
+        GeomAbs_Sphere,
+        GeomAbs_Torus,
+    )
+    from OCP.GeomConvert import GeomConvert
+
     adaptor = BRepAdaptor_Surface(face, True)
     surface_type = adaptor.GetType()
     if surface_type == GeomAbs_Plane:
@@ -212,10 +191,17 @@ def _surface_patch(face: Any, bounds: np.ndarray) -> Any:
 
 
 def _ordered_wires(face: Any) -> list[Any]:
+    from OCP.TopAbs import TopAbs_WIRE
+    from OCP.TopoDS import TopoDS
+
     return _explore(face, TopAbs_WIRE, TopoDS.Wire)
 
 
 def _wire_edge_indices(wire: Any, face: Any, edges: list[Any]) -> tuple[int, ...]:
+    from OCP.BRepTools import BRepTools_WireExplorer
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopoDS import TopoDS
+
     explorer = BRepTools_WireExplorer(wire, face)
     result: list[int] = []
     while explorer.More():
@@ -228,6 +214,11 @@ def _wire_edge_indices(wire: Any, face: Any, edges: list[Any]) -> tuple[int, ...
 
 
 def _sample_wire(wire: Any, face: Any, samples_per_edge: int) -> np.ndarray | None:
+    from OCP.BRepAdaptor import BRepAdaptor_Curve2d
+    from OCP.BRepTools import BRepTools_WireExplorer
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopoDS import TopoDS
+
     explorer = BRepTools_WireExplorer(wire, face)
     segments: list[np.ndarray] = []
     while explorer.More():
@@ -258,6 +249,8 @@ def _normalized_trim_domain(
     bounds: np.ndarray,
     samples_per_edge: int,
 ) -> TrimDomain | None:
+    from OCP.BRepTools import BRepTools
+
     outer_wire = BRepTools.OuterWire_s(face)
     if outer_wire.IsNull():
         return None
@@ -277,6 +270,9 @@ def _normalized_trim_domain(
 
 
 def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[Any]]:
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SOLID, TopAbs_VERTEX
+    from OCP.TopoDS import TopoDS
+
     edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
     solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
@@ -327,6 +323,11 @@ def _extract_tessellation(
     linear_deflection: float,
     angular_deflection: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.TopLoc import TopLoc_Location
+
     BRepMesh_IncrementalMesh(
         shape,
         linear_deflection,
@@ -398,6 +399,8 @@ def _file_digest(path: Path) -> str:
 
 
 def _write_native_brep(shape: Any, destination: Path) -> None:
+    from OCP.BRepTools import BRepTools
+
     if not BRepTools.Write_s(shape, str(destination)):
         raise RuntimeError("OCCT could not serialize the shape as native BREP.")
     with destination.open("rb") as stream:
@@ -409,6 +412,11 @@ def _shape_digest(shape: Any) -> str:
     # geometry copy without cached query triangulations and with OCCT's mutable
     # Modified/Checked bookkeeping flags (cleared by tessellation) canonicalized,
     # so a shape keeps its digest after `model_from_occt_shape` meshes it.
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+    from OCP.BRepTools import BRepTools
+    from OCP.TopoDS import TopoDS_Iterator
+    from OCP.TopTools import TopTools_FormatVersion_VERSION_1
+
     copy = BRepBuilderAPI_Copy(shape, True, False).Shape()
     pending = [copy]
     while pending:
@@ -442,8 +450,14 @@ def _import_policy_id(source_format: str, /) -> str:
     )
 
 
-def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
-    """Read STEP, IGES, or native BREP and return its raw artifact digest."""
+def read_occt_shape(path: str | Path) -> tuple[TopoDS_Shape, str, str]:
+    """Use the optional OCCT engine to read STEP, IGES, or OCCT BRep text."""
+
+    from OCP.BRepTools import BRepTools
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.IGESControl import IGESControl_Reader
+    from OCP.STEPControl import STEPControl_Reader
+    from OCP.TopoDS import TopoDS_Shape
 
     source = Path(path).expanduser().resolve()
     if not source.is_file():
@@ -478,7 +492,7 @@ def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
 
 
 def model_from_occt_shape(
-    shape: Any,
+    shape: TopoDS_Shape,
     *,
     coordinate_contract: SpatialCoordinateContract,
     source_id: str = "occt-shape",
@@ -488,14 +502,36 @@ def model_from_occt_shape(
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
-    """Extract exact patches, solid incidence, and a reported query tessellation."""
+    """Extract external comparison patches, incidence and query triangulation.
+
+    This OCCT-owned representation deliberately does not claim native exact
+    edge/p-curve authority. For native BRepSource or meshing, decode a published
+    CAD artifact with the native read_cad policy instead.
+    """
+
+    from OCP.BRepTools import BRepTools
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
+    from OCP.TopoDS import TopoDS, TopoDS_Shape
 
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
+    if not isinstance(shape, TopoDS_Shape):
+        raise TypeError("shape must be an OCP.TopoDS.TopoDS_Shape.")
     if shape.IsNull():
         raise ValueError("Cannot import a null OCCT shape.")
-    if linear_deflection <= 0.0 or angular_deflection <= 0.0:
-        raise ValueError("Meshing deflections must be positive.")
+    if (
+        not np.isfinite(linear_deflection)
+        or not np.isfinite(angular_deflection)
+        or linear_deflection <= 0.0
+        or not 0.0 < angular_deflection < np.pi
+    ):
+        raise ValueError(
+            "Meshing deflections must be finite and positive; angle below pi."
+        )
+    if isinstance(trim_samples_per_edge, bool) or not isinstance(
+        trim_samples_per_edge, int
+    ):
+        raise TypeError("trim_samples_per_edge must be an integer.")
     if trim_samples_per_edge < 3:
         raise ValueError("trim_samples_per_edge must be at least three.")
     faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
@@ -559,7 +595,7 @@ def model_from_occt_shape(
     )
 
 
-def import_brep(
+def import_occt_brep(
     path: str | Path,
     *,
     coordinate_contract: SpatialCoordinateContract,
@@ -568,7 +604,7 @@ def import_brep(
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
-    """Import direct CAD topology, geometry, trim charts, and query tessellation."""
+    """Import CAD through the explicit optional OCCT interoperability engine."""
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
 
@@ -593,7 +629,7 @@ def import_brep(
 
 
 def persist_occt_shape(
-    shape: Any,
+    shape: TopoDS_Shape,
     destination: str | Path,
     /,
     *,
@@ -603,10 +639,14 @@ def persist_occt_shape(
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> BRepModel:
-    """Atomically publish a native BREP and import the published artifact."""
+    """Publish OCCT BRep text using the optional OCCT engine and reopen it."""
+
+    from OCP.TopoDS import TopoDS_Shape
 
     if not isinstance(coordinate_contract, SpatialCoordinateContract):
         raise TypeError("coordinate_contract must be a SpatialCoordinateContract.")
+    if not isinstance(shape, TopoDS_Shape):
+        raise TypeError("shape must be an OCP.TopoDS.TopoDS_Shape.")
     if shape.IsNull():
         raise ValueError("Cannot persist a null OCCT shape.")
     if not isinstance(overwrite, bool):
@@ -641,7 +681,7 @@ def persist_occt_shape(
     finally:
         temporary.unlink(missing_ok=True)
 
-    return import_brep(
+    return import_occt_brep(
         target,
         coordinate_contract=coordinate_contract,
         linear_deflection=linear_deflection,
@@ -651,7 +691,7 @@ def persist_occt_shape(
 
 
 __all__ = [
-    "import_brep",
+    "import_occt_brep",
     "model_from_occt_shape",
     "persist_occt_shape",
     "read_occt_shape",

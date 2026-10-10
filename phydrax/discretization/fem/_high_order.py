@@ -651,6 +651,7 @@ def _warp_and_blend_nodes_3d(
     order: int, node_tuples: tuple[tuple[int, ...], ...], /
 ) -> np.ndarray:
     alpha = _ALPHA_OPT_3D[order - 1] if order <= len(_ALPHA_OPT_3D) else 1.0
+    face_alpha = _ALPHA_OPT_2D[order - 1] if order <= len(_ALPHA_OPT_2D) else 5.0 / 3.0
     unit_nodes = (np.asarray(node_tuples, dtype=np.float64) / order * 2.0 - 1.0).T
     barycentric = _unit_to_barycentric(unit_nodes)
     equilateral = _barycentric_to_equilateral(barycentric)
@@ -696,9 +697,12 @@ def _warp_and_blend_nodes_3d(
             | (third_barycentric > tolerance)
             | (fourth_barycentric > tolerance)
         )
+        face_warp_one, face_warp_two = _equilateral_shift_2d(
+            order, face_barycentric[:, on_face], face_alpha
+        )
         shift[:, on_face] = (
-            warp_one[on_face][None, :] * tangent_one[:, None]
-            + warp_two[on_face][None, :] * tangent_two[:, None]
+            face_warp_one[None, :] * tangent_one[:, None]
+            + face_warp_two[None, :] * tangent_two[:, None]
         )
     return _equilateral_to_unit(equilateral + shift)
 
@@ -715,7 +719,12 @@ def _warp_and_blend_nodes(
 
 @final
 class SimplexNodalFamily(StrictModule, NonTrainableState):
-    """Warp-and-blend simplex nodes with an orthonormal modal tabulation."""
+    """Warp-and-blend simplex nodes with one common triangular trace convention.
+
+    Tetrahedral boundaries use the triangle family's warp parameter; interior
+    blending retains the three-dimensional parameter. Modal tabulation remains
+    orthonormal on the owning reference simplex.
+    """
 
     cell_kind: str = eqx.field(static=True)
     order: int = eqx.field(static=True)
@@ -773,7 +782,11 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 "kind": "simplex-warp-blend-nodal-family",
                 "cell": cell,
                 "order": p,
-                "node_source": "phydrax:warburton-warp-blend",
+                "node_source": (
+                    "phydrax:warburton-warp-blend"
+                    if dimension == 2
+                    else "phydrax:warp-blend-common-triangular-traces"
+                ),
                 "nodes": array_tree_fingerprint(nodes),
                 "condition_number": condition,
             }

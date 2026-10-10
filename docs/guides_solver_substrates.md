@@ -278,6 +278,25 @@ restorer, classification=...)` derives it from a published
 composition `structure_id`s and the receipt identity, and refuses refused or
 structure-preserving rebinds.
 
+Mesh topology changes use the same boundary rather than a solver-local remesh
+shortcut. `FiniteElementTopologyTransaction` stages the target
+`CellMeshingResult`, every declared field transfer, material/history state,
+reprepared solver owners, and physical reanalysis as one
+`CompositionRebind`. `refinement_parent_cells(adaptation)` returns a parent row
+only for a genuinely nested preserved/refined lineage; coarsening, created
+cells, and unknown remeshing lineage return `None` and must use their declared
+projection/remap route. `MaterialTopologyTransferResult` retains both the
+transferred `MaterialTransaction` and the exact prepared conservative remap
+owners that produced it. Any failed geometry, transfer, material, solver, or
+physical gate preserves the complete previously accepted state.
+
+`phx.lifecycle.MeshingAcceptedEpoch` is the public immutable record that binds
+one accepted meshing carrier to its complete named physical field banks and
+optional transition. Source-closure archive codecs remain a qualification-owned
+boundary rather than a generic public object serializer. A changed hierarchy
+PyTree or scientific fingerprint therefore creates a new content identity; a
+restart relation never aliases the old representation.
+
 `ProductionRunPlan` declares a positive nominal step, an absolute `end_time`, an
 absolute `maximum_steps` capacity, checkpoint cadence, and compiled segment length.
 `PreparedProductionRun` executes bounded JIT scans while retaining the complete

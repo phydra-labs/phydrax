@@ -5,9 +5,11 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax import Array
 
 import phydrax as phx
 
@@ -21,6 +23,16 @@ def _mesh() -> Any:
         vertex_global_ids=jnp.asarray([1, 2, 3, 4, 5]),
         cell_global_ids=jnp.asarray([10, 20, 30, 40]),
     )
+
+
+def _cell_table(mesh: Any) -> tuple[np.ndarray, np.ndarray]:
+    identifiers = np.concatenate(
+        [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+    )
+    vertices = np.concatenate([np.asarray(block.vertices) for block in mesh.blocks])
+    rows = np.asarray(mesh.vertex_global_ids)[vertices]
+    order = np.argsort(identifiers, kind="stable")
+    return identifiers[order], rows[order]
 
 
 def _bisect(
@@ -54,14 +66,16 @@ def test_fem_local_adaptivity_scenario_1() -> None:
     constant = transfer.apply(jnp.ones((5,)))
     linear = transfer.apply(mesh.coordinates)
     children = np.setdiff1d(
-        np.asarray(refined.target.mesh.blocks[0].global_ids),
+        np.concatenate(
+            [np.asarray(block.global_ids) for block in refined.target.mesh.blocks]
+        ),
         np.asarray(mesh.blocks[0].global_ids),
     )
     restored = _bisect(refined.target, coarsen=children, hierarchy=refined.hierarchy)
 
     assert jnp.array_equal(marked, jnp.asarray([10]))
     assert refined.status is phx.meshing.MeshAdaptationStatus.COMPLETE
-    assert refined.target.mesh.blocks[0].cell_count == 5
+    assert sum(block.cell_count for block in refined.target.mesh.blocks) == 5
     assert jnp.allclose(constant, 1.0)
     assert jnp.allclose(linear, refined.target.mesh.coordinates)
     assert transfer.preserves_constants and transfer.preserves_linear
@@ -69,6 +83,11 @@ def test_fem_local_adaptivity_scenario_1() -> None:
     assert transfer.source_topology_id == mesh.topology_id
     assert transfer.target_topology_id == refined.target.mesh.topology_id
     assert restored.target.mesh.topology_id == mesh.topology_id
+    restored_ids, restored_cells = _cell_table(restored.target.mesh)
+    source_ids, source_cells = _cell_table(mesh)
+    np.testing.assert_array_equal(restored_ids, source_ids)
+    np.testing.assert_array_equal(restored_cells, source_cells)
+    np.testing.assert_array_equal(restored.target.mesh.coordinates, mesh.coordinates)
     mesh = _mesh()
     source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
     refined = _bisect(source, (10,))
@@ -100,7 +119,10 @@ def test_fem_local_adaptivity_scenario_1() -> None:
         "compiled",
     )
     transaction = phx.solver.FiniteElementTopologyTransaction(
-        lambda candidate_mesh, fields, materials, lineage, args: False
+        lambda candidate_mesh, fields, materials, lineage, args: False,
+        fields=phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
     )
     result = transaction.execute(accepted, source.mesh, _bisect(source, (10,)))
 
@@ -109,6 +131,64 @@ def test_fem_local_adaptivity_scenario_1() -> None:
     assert result.state.accepted_id == accepted.accepted_id
     assert result.mesh.topology_id == mesh.topology_id
     assert jnp.array_equal(result.state.fields[0], accepted.fields[0])
+
+
+def test_topology_transaction_moves_each_field_by_its_declared_family() -> None:
+    mesh = _mesh()
+    source = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    fields = (
+        phx.discretization.FiniteElementFieldSpec(
+            "pressure", phx.discretization.lagrange_element("triangle", 2)
+        ),
+        phx.discretization.FiniteElementFieldSpec(
+            "flux",
+            phx.discretization.form_element(
+                "triangle", 1, 1, twist="twisted", proxy="flux"
+            ),
+        ),
+    )
+
+    def pressure(points: Any, args: object) -> Any:
+        del args
+        return 1.0 + points[..., 0] * points[..., 1] - 0.5 * points[..., 1] ** 2
+
+    def flux(points: Any, args: object) -> Any:
+        del args
+        return jnp.stack((1.0 + points[..., 0], -0.5 + points[..., 1]), axis=-1)
+
+    functions = (pressure, flux)
+    discretization = phx.discretization.FiniteElementPlan(mesh, fields).prepare()
+    accepted = phx.solver.FiniteElementAcceptedState(
+        tuple(
+            discretization.project(field.name, function)
+            for field, function in zip(fields, functions, strict=True)
+        ),
+        0.0,
+        0,
+        mesh.topology_id,
+        "prepared",
+        "compiled",
+    )
+    transaction = phx.solver.FiniteElementTopologyTransaction(
+        lambda candidate_mesh, values, materials, lineage, args: True, fields=fields
+    )
+
+    result = transaction.execute(accepted, mesh, _bisect(source, (10, 30)))
+    target = phx.discretization.FiniteElementPlan(result.mesh, fields).prepare()
+
+    assert bool(result.committed) and result.receipt is not None
+    assert result.receipt.remapped == ("field/flux", "field/pressure")
+    assert [transfer.semantics for transfer in result.transfers] == [
+        "nested-interpolation",
+        "contravariant-piola",
+    ]
+    for field, function, value in zip(
+        fields, functions, result.state.fields, strict=True
+    ):
+        np.testing.assert_allclose(
+            value, target.project(field.name, function), atol=1e-13
+        )
+    assert result.state.transition_id == result.receipt.receipt_id
 
 
 def test_vertex_interpolation_transfer_certifies_its_invariant_claims() -> None:
@@ -206,6 +286,14 @@ def test_certified_conservative_transfer_forms_an_accepted_epoch_transition(
         epoch(0, "g", "coarse", "p"),
         epoch(1, "g", "graded", "p"),
     )
+    geometry = phx.discretization.TransferGeometryBinding(
+        "g",
+        "g",
+        "topology-correspondence",
+        source_topology_id="coarse",
+        target_topology_id="graded",
+        coverage_defect=None,
+    )
 
     def space(item: phx.discretization.TopologyEpoch) -> Any:
         return phx.discretization.DiscreteFieldSpace(
@@ -223,6 +311,7 @@ def test_certified_conservative_transfer_forms_an_accepted_epoch_transition(
         target_epoch,
         measures,
         measures,
+        geometry=geometry,
     )
     values = jnp.full((count,), 300.0, dtype=jnp.float64)
     result = transition.apply(values)
@@ -240,4 +329,41 @@ def test_certified_conservative_transfer_forms_an_accepted_epoch_transition(
             target_epoch,
             measures,
             measures * 1.001,
+            geometry=geometry,
         )
+
+
+def test_sparse_cell_operators_use_prepared_routes_under_jit() -> None:
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+        np.asarray(((0, 1, 2),), dtype=np.int32),
+    )
+    prepared = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u",
+            phx.discretization.lagrange_element("triangle", 1),
+            component_shape=(2,),
+        ),
+    ).prepare()
+    values = jnp.asarray(((0.2, -0.3), (0.7, 1.1), (-0.4, 0.8)), dtype=jnp.float64)
+
+    @eqx.filter_jit
+    def actions(
+        discretization: phx.discretization.FiniteElementDiscretization,
+        state: Array,
+    ) -> tuple[Array, Array]:
+        mass, stiffness = discretization.assemble_field_operators(
+            "u", discretization.default_runtime
+        )
+        return mass.mv(state.reshape((-1,))).reshape(state.shape), stiffness.mv(
+            state.reshape((-1,))
+        ).reshape(state.shape)
+
+    mass_image, stiffness_image = actions(prepared, values)
+    local_mass = np.asarray(((2.0, 1.0, 1.0), (1.0, 2.0, 1.0), (1.0, 1.0, 2.0))) / 24
+    gradients = np.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)))
+    np.testing.assert_allclose(mass_image, local_mass @ np.asarray(values), atol=1e-14)
+    np.testing.assert_allclose(
+        stiffness_image, 0.5 * gradients @ gradients.T @ np.asarray(values), atol=1e-14
+    )

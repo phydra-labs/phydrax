@@ -115,7 +115,6 @@ def mace_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     exact = CapabilityProfile(
         "atomistic.mace-inference.native-exact.profile",
         "phydrax",
-        "candidate",
         _native_supports("native-exact"),
         required_gates=(*_COMMON_GATES, "source-checkpoint-fidelity", "capacity-scaling"),
         released=False,
@@ -123,7 +122,6 @@ def mace_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     tabulated = CapabilityProfile(
         "atomistic.mace-inference.native-tabulated.profile",
         "phydrax",
-        "candidate",
         tuple(
             SupportTuple(
                 "atomistic.mace-inference",
@@ -151,7 +149,6 @@ def mace_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     accelerated = CapabilityProfile(
         "atomistic.mace-inference.pallas-cuda.profile",
         "phydrax",
-        "candidate",
         tuple(
             SupportTuple(
                 "atomistic.mace-inference",
@@ -176,7 +173,6 @@ def mace_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     distributed = CapabilityProfile(
         "atomistic.mace-inference.distributed.profile",
         "phydrax",
-        "candidate",
         tuple(
             SupportTuple(
                 "atomistic.mace-inference",

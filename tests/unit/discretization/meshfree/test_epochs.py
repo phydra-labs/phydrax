@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 from jax import Array
 
-from phydrax.discretization import TopologyEpoch, TopologyEpochTransition
+from phydrax.discretization import (
+    TopologyEpoch,
+    TopologyEpochTransition,
+    TransferGeometryBinding,
+)
 from phydrax.discretization.meshfree._capacity import MeshfreeCapacityPolicy
 from phydrax.discretization.meshfree._epochs import (
     commit_meshfree_epoch,
@@ -37,7 +41,13 @@ TARGET = TopologyEpoch(1, "cloud-3", "sheet", "serial")
 OWNER = "meshfree-surface"
 
 
-def _route(old: np.ndarray, new: np.ndarray, /) -> TopologyEpochTransition:
+def _route(
+    old: np.ndarray,
+    new: np.ndarray,
+    /,
+    source: TopologyEpoch = SOURCE,
+    target: TopologyEpoch = TARGET,
+) -> TopologyEpochTransition:
     """Exactly normalized nonnegative allocation: conservative without a solve."""
     x = (np.arange(old.size) + 0.5) / old.size
     y = (np.arange(new.size) + 0.5) / new.size
@@ -52,9 +62,17 @@ def _route(old: np.ndarray, new: np.ndarray, /) -> TopologyEpochTransition:
         source_id=f"support:{old.tolist()}",
         target_id=f"support:{new.tolist()}",
         request=PointTransferRequest("conservative-positive"),
+        geometry=TransferGeometryBinding(
+            source.geometry_id,
+            target.geometry_id,
+            "topology-correspondence",
+            source_topology_id=source.topology_id,
+            target_topology_id=target.topology_id,
+            coverage_defect=None,
+        ),
     ).prepare()
     assert prepared.admitted and prepared.evidence.provider == "none"
-    return prepared.epoch_transition(SOURCE, TARGET)
+    return prepared.epoch_transition(source, target)
 
 
 def _entry(
@@ -272,11 +290,8 @@ def test_live_histories_remap_all_or_report_every_failure() -> None:
     accepted = remap_live_histories([routes[name] for name in names], [jnp.ones(4)] * 4)
     assert accepted.successful and len(accepted.values) == 4
     later = TopologyEpoch(2, "cloud-5", "sheet", "serial")
-    stray = _route(np.full(4, 0.25), np.full(3, 1 / 3))
-    # Same transfer, but crossing the next epoch change instead of this one.
-    crossing = TopologyEpochTransition(
-        TARGET, later, stray.transfer, stray.source_measures, stray.target_measures
-    )
+    # A valid transition, but across the next epoch change instead of this one.
+    crossing = _route(np.full(4, 0.25), np.full(3, 1 / 3), TARGET, later)
     with pytest.raises(ValueError, match="same epoch change"):
         remap_live_histories([routes[names[0]], crossing], [jnp.ones(4)] * 2)
 

@@ -616,6 +616,59 @@ def test_jax_cpu_sparse_lu_is_jittable_and_mathematically_differentiable() -> No
     assert bool(result.successful)
 
 
+@pytest.mark.skipif(jax.default_backend() != "cpu", reason="JAX CPU sparse LU only")
+def test_jax_cpu_sparse_lu_is_batchable_under_vmap() -> None:
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 0, 1, 2, 1, 2], dtype=jnp.int32),
+        jnp.asarray([0, 0, 1, 1, 1, 2, 2], dtype=jnp.int32),
+        source_size=3,
+        target_size=3,
+    )
+    coefficients = jnp.asarray([4.0, 1.0, 2.0, 5.0, 0.5, -1.0, 3.0])
+    template = phx.sparse.SparseLinearMap(relation, coefficients)
+    right_hand_side = jnp.asarray([1.0, -2.0, 0.5])
+    policy = la.LinearSolvePolicy(la.SparseLU(provider="jax-cpu"))
+
+    def solve(values: Any, rhs: Any) -> Any:
+        operator = eqx.tree_at(lambda item: item.coefficients, template, values)
+        return la.solve(la.LinearSystem(operator), rhs, policy=policy).value
+
+    def dense_solve(values: Any, rhs: Any) -> Any:
+        operator = eqx.tree_at(lambda item: item.coefficients, template, values)
+        return jnp.linalg.solve(operator.as_dense(), rhs)
+
+    right_hand_sides = jnp.stack(
+        (right_hand_side, 2.0 * right_hand_side + 1.0, -right_hand_side)
+    )
+    value_sets = jnp.stack((coefficients, 1.5 * coefficients, coefficients + 0.25))
+    shared_matrix = jax.vmap(lambda rhs: solve(coefficients, rhs))(right_hand_sides)
+    lane_matrices = jax.vmap(solve)(value_sets, right_hand_sides)
+    nested = jax.vmap(jax.vmap(lambda rhs: solve(coefficients, rhs)))(
+        jnp.stack((right_hand_sides, 3.0 * right_hand_sides))
+    )
+    tangent_map = jax.jacfwd(lambda values: solve(values, right_hand_side))(coefficients)
+
+    assert jnp.allclose(
+        shared_matrix,
+        jax.vmap(lambda rhs: dense_solve(coefficients, rhs))(right_hand_sides),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert jnp.allclose(
+        lane_matrices,
+        jax.vmap(dense_solve)(value_sets, right_hand_sides),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert jnp.allclose(nested[1], 3.0 * shared_matrix, rtol=1e-12, atol=1e-12)
+    assert jnp.allclose(
+        tangent_map,
+        jax.jacfwd(lambda values: dense_solve(values, right_hand_side))(coefficients),
+        rtol=1e-10,
+        atol=1e-11,
+    )
+
+
 def test_structured_exact_edge_cases_and_matrix_free_tensor_actions() -> None:
     tridiagonal = la.TridiagonalLinearOperator(
         jnp.asarray([1.0]),

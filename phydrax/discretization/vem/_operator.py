@@ -121,7 +121,26 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
         return result
 
     def transpose_mv(self, value: ArrayLike, /) -> Array:
-        return self.mv(value)
+        state = jnp.asarray(value)
+        if state.shape != (self.global_size,):
+            raise ValueError("VEM operator input has incompatible shape.")
+        result = jnp.zeros_like(state)
+        for coefficient, polynomial, stabilization, gather in zip(
+            self.coefficient_maps,
+            self.polynomial_matrices,
+            self.stabilization_matrices,
+            self.gathers,
+            strict=True,
+        ):
+            local = state[gather]
+            projected = ein.contract("cai,ci->ca", coefficient, local)
+            polynomial_action = ein.contract("cba,cb->ca", polynomial, projected)
+            consistent = ein.contract("cai,ca->ci", coefficient, polynomial_action)
+            stabilized = ein.contract("cji,cj->ci", stabilization, local)
+            result = scatter_local(
+                result, gather, consistent + stabilized, self.accumulation
+            )
+        return result
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         dtype = self.coefficient_maps[0].dtype
@@ -133,7 +152,6 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
             transpose_action=self.transpose_mv,
             properties=self.properties,
             operator_id=self.operator_id,
-            closure_convert=False,
         )
 
     def local_tensors(self, /) -> tuple[Array, ...]:

@@ -524,6 +524,7 @@ nav:
         - Logging: "api/logging.md"
         - Differential privacy: "api/privacy.md"
         - Execution worksets: "api/execution.md"
+        - Lifecycle, checkpoints, and restart: "api/lifecycle.md"
         - Physical units: "api/units.md"
         - Typing: "api/typing.md"
         - Nuclear substrate: "api/nuclear.md"

@@ -738,8 +738,8 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         pairs = evaluation.neighborhood.pair_relation
         counts = counts.at[pairs.left_indices].add(increments)
         counts = counts.at[pairs.right_indices].add(increments)
-        density_mean = (
-            compensated_sum(jnp.where(active, density, 0.0)) / self.particles.active_count
+        density_mean = compensated_sum(jnp.where(active, density, 0.0)) / jnp.sum(
+            active, dtype=density.dtype
         )
         reference = jnp.asarray(self.material.reference_density, dtype=density.dtype)
         reference_error = jnp.max(jnp.where(active, jnp.abs(density - reference), 0.0))

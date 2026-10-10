@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "phydrax_meshcore.h"
+#include "bounded_memory.hpp"
 
 namespace phx::mc {
 
@@ -21,9 +22,11 @@ namespace phx::mc {
 template <class Body>
 int32_t guarded(Body&& body) noexcept {
   try {
-    return body();
+    return native_execution_status(body());
+  } catch (const ExecutionRefusal& refusal) {
+    return refusal.status;
   } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
+    return native_execution_status(PHX_MC_CAPACITY_EXCEEDED);
   } catch (const std::invalid_argument&) {
     return PHX_MC_INVALID_ARGUMENT;
   } catch (...) {

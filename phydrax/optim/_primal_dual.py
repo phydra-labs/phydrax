@@ -7,31 +7,43 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from math import isfinite
-from typing import Any, NamedTuple, TYPE_CHECKING
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.flatten_util import ravel_pytree
+from jax.typing import DTypeLike
 from jaxtyping import PyTree
 
 from .._linear_refresh import prepare_refresh_state
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from .._tree_math import (
     tree_allfinite as _tree_allfinite,
 )
 from ..linalg import (
+    AbstractLinearOperator,
     ArraySpace,
+    BlockSpace,
+    DiagonalLinearOperator,
     DifferentiationPolicy,
     FunctionLinearOperator,
+    JacobianLinearOperator,
+    JacobiPreconditionerBuilder,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
     MINRES,
     OperatorProperties,
-    saddle_point_system,
+    prepare_linearization,
+    PreparedSparseFactorization,
     solve as solve_linear,
+    sparse_preconditioner_factorization,
+    SparseFactorizationDiagnostics,
+    SparseFactorizationStatus,
     TolerancePolicy,
 )
 from ._iterative._base import AbstractMinimizationMethod
@@ -187,8 +199,10 @@ class _AbstractPrimalDualInteriorMethod(AbstractMinimizationMethod):
             raise ValueError("sufficient_decrease must lie in (0, 1).")
         if not 0.0 < values[8] < 1.0:
             raise ValueError("line_search_contraction must lie in (0, 1).")
-        if line_steps < 1 or restoration_steps < 1:
-            raise ValueError("Line-search and restoration limits must be positive.")
+        if line_steps < 1 or restoration_steps < 0:
+            raise ValueError(
+                "Line-search steps must be positive and restoration steps nonnegative."
+            )
         self.linear_policy = policy
         (
             self.initial_barrier,
@@ -247,11 +261,79 @@ class _AbstractPrimalDualInteriorMethod(AbstractMinimizationMethod):
         )
 
 
+class PrimalDualKKTSetupResult(NamedTuple):
+    """Executed setup actions and a labeled assembly-work bound, not solve success."""
+
+    operator: AbstractLinearOperator
+    jvp_evaluations: Array
+    work_units_upper: Array
+    status: Array
+
+
+class AbstractPrimalDualKKTSetup(StrictModule, NonTrainableState):
+    """Method-scoped numerical setup derived from the current prepared constraints."""
+
+    def prepare_derivatives(
+        self,
+        problem: MinimizationProblem,
+        layout: _ConstraintLayout,
+        args: Any,
+        primal: Array,
+        equality_multipliers: Array,
+        inequality_multipliers: Array,
+        /,
+    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator] | None:
+        """Optionally bind exact source-backed constraint and Lagrangian derivatives."""
+        return None
+
+    def prepare_kkt_operator(
+        self,
+        derivative: AbstractLinearOperator,
+        hessian: AbstractLinearOperator,
+        barrier_weights: Array,
+        regularization: float,
+        space: BlockSpace,
+        /,
+    ) -> AbstractLinearOperator | None:
+        """Optionally fuse exact current local blocks without changing the saddle system."""
+        return None
+
+    @abc.abstractmethod
+    def prepare(
+        self,
+        derivative: AbstractLinearOperator,
+        barrier_weights: Array,
+        regularization: float,
+        primal: Array,
+        equality: Array,
+        space: BlockSpace,
+        kkt_operator: AbstractLinearOperator,
+        /,
+    ) -> PrimalDualKKTSetupResult:
+        raise NotImplementedError
+
+
 class PrimalDualNewtonKrylov(_AbstractPrimalDualInteriorMethod):
     """Centered matrix-free primal-dual interior Newton method."""
 
-    if TYPE_CHECKING:
-        __init__ = _AbstractPrimalDualInteriorMethod.__init__
+    kkt_setup: AbstractPrimalDualKKTSetup | None
+
+    def __init__(
+        self,
+        *,
+        kkt_setup: AbstractPrimalDualKKTSetup | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if kkt_setup is not None and not isinstance(
+            kkt_setup, AbstractPrimalDualKKTSetup
+        ):
+            raise TypeError("kkt_setup must be an AbstractPrimalDualKKTSetup or None.")
+        super().__init__(**kwargs)
+        if kkt_setup is not None and self.linear_policy.preconditioning is None:
+            raise ValueError(
+                "A method-scoped KKT setup requires a preconditioning policy."
+            )
+        self.kkt_setup = kkt_setup
 
     @property
     def method_id(self) -> str:
@@ -414,6 +496,78 @@ def _restore_feasibility(
     )
 
 
+class PrimalDualEvidence(StrictModule, NonTrainableState):
+    """Actual last KKT solve, or explicitly unavailable before a solve."""
+
+    linear_status: Array
+    linear_rank: Array
+    linear_condition_estimate: Array
+    linear_residual_norm: Array
+    linear_iterations: Array
+    linear_matvec_count: Array
+    setup_jvp_evaluations: Array
+    setup_work_units_upper: Array
+    setup_status: Array
+    factorization_status: Array
+    factorization_diagnostics: SparseFactorizationDiagnostics | None
+
+    def __init__(
+        self,
+        result: LinearSolveResult | None = None,
+        *,
+        dtype: DTypeLike = jnp.float64,
+        setup: PrimalDualKKTSetupResult | None = None,
+        previous: PrimalDualEvidence | None = None,
+        factorization: PreparedSparseFactorization | None = None,
+    ) -> None:
+        self.factorization_status = jnp.asarray(
+            -1 if factorization is None else factorization.status,
+            dtype=jnp.int32,
+        )
+        self.factorization_diagnostics = (
+            None if factorization is None else factorization.diagnostics
+        )
+        self.setup_status = jnp.asarray(
+            -1 if setup is None else setup.status, dtype=jnp.int32
+        )
+        self.setup_jvp_evaluations = jnp.asarray(
+            0 if previous is None else previous.setup_jvp_evaluations, dtype=jnp.int32
+        ) + jnp.asarray(0 if setup is None else setup.jvp_evaluations, dtype=jnp.int32)
+        self.setup_work_units_upper = jnp.asarray(
+            0 if previous is None else previous.setup_work_units_upper, dtype=jnp.int64
+        ) + jnp.asarray(0 if setup is None else setup.work_units_upper, dtype=jnp.int64)
+        if result is None and previous is not None:
+            self.linear_status = previous.linear_status
+            self.linear_rank = previous.linear_rank
+            self.linear_condition_estimate = previous.linear_condition_estimate
+            self.linear_residual_norm = previous.linear_residual_norm
+            self.linear_iterations = previous.linear_iterations
+            self.linear_matvec_count = previous.linear_matvec_count
+            return
+        if result is None:
+            self.linear_status = jnp.asarray(-1, dtype=jnp.int32)
+            self.linear_rank = jnp.asarray(-1, dtype=jnp.int32)
+            self.linear_condition_estimate = jnp.asarray(jnp.nan, dtype=dtype)
+            self.linear_residual_norm = jnp.asarray(jnp.nan, dtype=dtype)
+            self.linear_iterations = jnp.asarray(0, dtype=jnp.int32)
+            self.linear_matvec_count = jnp.asarray(0, dtype=jnp.int32)
+        else:
+            self.linear_status = jnp.asarray(result.status, dtype=jnp.int32)
+            self.linear_rank = jnp.asarray(result.diagnostics.rank, dtype=jnp.int32)
+            self.linear_condition_estimate = jnp.asarray(
+                result.diagnostics.condition_estimate, dtype=dtype
+            )
+            self.linear_residual_norm = jnp.asarray(
+                result.diagnostics.residual_norm, dtype=dtype
+            )
+            self.linear_iterations = jnp.asarray(
+                result.diagnostics.iterations, dtype=jnp.int32
+            )
+            self.linear_matvec_count = jnp.asarray(
+                result.diagnostics.matvec_count, dtype=jnp.int32
+            )
+
+
 class _PrimalDualCounters(NamedTuple):
     accepted_steps: Array
     rejected_steps: Array
@@ -443,6 +597,64 @@ class _PrimalDualState(NamedTuple):
     accepted_rate: Array
     counters: _PrimalDualCounters
     linear_refresh_arrays: Any
+    evidence: PrimalDualEvidence
+
+
+def _barrier_schur_metric(
+    derivative: JacobianLinearOperator,
+    diagonal: Array,
+    regularization: float,
+    primal: Array,
+    equality: Array,
+    space: BlockSpace,
+    problem_id: str,
+    /,
+) -> DiagonalLinearOperator:
+    """Stream the current barrier-Gram diagonal and diagonal Schur approximation."""
+    dimension = primal.size
+
+    def column(
+        index: Array,
+        carry: tuple[Array, Array, Array],
+    ) -> tuple[Array, Array, Array]:
+        primal_diagonal, schur_diagonal, basis = carry
+        # Reuse one basis vector; never collect a Jacobian or form eye(n).
+        basis = basis.at[jnp.maximum(index - 1, 0)].set(0.0).at[index].set(1.0)
+        equality_column, inequality_column = derivative.mv(basis)
+        value = (
+            regularization
+            + jnp.vdot(
+                inequality_column,
+                diagonal * inequality_column,
+            ).real
+        )
+        primal_diagonal = primal_diagonal.at[index].set(value)
+        schur_diagonal = schur_diagonal + equality_column * equality_column / value
+        return primal_diagonal, schur_diagonal, basis
+
+    primal_diagonal, schur_diagonal, _ = jax.lax.fori_loop(
+        0,
+        dimension,
+        column,
+        (jnp.zeros_like(primal), jnp.zeros_like(equality), jnp.zeros_like(primal)),
+    )
+    # Jacobi's canonical preparation owns finite/strict-positive admission.
+    # A zero Schur row is not regularized, omitted or relabeled as full rank.
+    return DiagonalLinearOperator(
+        jnp.concatenate((primal_diagonal, schur_diagonal)),
+        space=space,
+        properties=OperatorProperties(
+            diagonal=True,
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "diagonal": "construction",
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id=f"{problem_id}/primal-dual-barrier-schur-metric",
+    )
 
 
 def _build_kkt_system(
@@ -458,7 +670,7 @@ def _build_kkt_system(
     slacks: Array,
     constraints: _ConstraintFunction,
     /,
-) -> LinearSystem:
+) -> tuple[LinearSystem, AbstractLinearOperator, PrimalDualKKTSetupResult | None]:
     inverse_slack = 1.0 / jnp.maximum(slacks, method.minimum_slack)
     diagonal = inequality_multipliers * inverse_slack
 
@@ -471,68 +683,158 @@ def _build_kkt_system(
             + jnp.vdot(inequality_multipliers, candidate_inequality).real
         )
 
-    def primal_action(tangent: Array) -> Array:
-        hessian_tangent = jax.jvp(
-            jax.grad(lagrangian),
-            (flat_parameters,),
-            (tangent,),
-        )[1]
-        if slacks.size:
-            inequality_tangent = jax.jvp(
-                lambda candidate: constraints(candidate)[1],
-                (flat_parameters,),
-                (tangent,),
-            )[1]
-            _, inequality_pullback = jax.vjp(
-                lambda candidate: constraints(candidate)[1],
-                flat_parameters,
-            )
-            curvature = inequality_pullback(diagonal * inequality_tangent)[0]
-        else:
-            curvature = jnp.zeros_like(tangent)
-        return hessian_tangent + curvature + method.kkt_regularization * tangent
-
-    def equality_action(tangent: Array) -> Array:
-        return jax.jvp(
-            lambda candidate: constraints(candidate)[0],
-            (flat_parameters,),
-            (tangent,),
-        )[1]
-
-    def equality_transpose(cotangent: Array) -> Array:
-        _, pullback = jax.vjp(
-            lambda candidate: constraints(candidate)[0],
-            flat_parameters,
-        )
-        return pullback(cotangent)[0]
-
     primal_space = ArraySpace(flat_parameters.shape, dtype=flat_parameters.dtype)
-    equality_space = ArraySpace(equality.shape, dtype=equality.dtype)
-    primal_operator = FunctionLinearOperator(
-        primal_action,
-        source=primal_space,
-        target=primal_space,
-        transpose_action=primal_action,
-        properties=OperatorProperties(
-            self_adjoint=True,
-            evidence={"self_adjoint": "construction"},
-        ),
-        operator_id="primal-dual-reduced-hessian",
-        closure_convert=False,
+    prepared_derivatives = None
+    if isinstance(method, PrimalDualNewtonKrylov) and method.kkt_setup is not None:
+        prepared_derivatives = method.kkt_setup.prepare_derivatives(
+            problem,
+            layout,
+            args,
+            flat_parameters,
+            equality_multipliers,
+            inequality_multipliers,
+        )
+    if prepared_derivatives is None:
+        constraint_derivative = JacobianLinearOperator(
+            prepare_linearization(
+                constraints,
+                flat_parameters,
+                source=primal_space,
+                linearization_id=f"{problem.problem_id}/primal-dual-constraints",
+            )
+        )
+        hessian = JacobianLinearOperator(
+            prepare_linearization(
+                jax.grad(lagrangian),
+                flat_parameters,
+                source=primal_space,
+                target=primal_space,
+                linearization_id=f"{problem.problem_id}/primal-dual-lagrangian-gradient",
+            )
+        )
+    else:
+        constraint_derivative, hessian = prepared_derivatives
+        expected_target = BlockSpace(
+            (
+                ArraySpace(equality_multipliers.shape, dtype=equality_multipliers.dtype),
+                ArraySpace(
+                    inequality_multipliers.shape, dtype=inequality_multipliers.dtype
+                ),
+            )
+        )
+        if not constraint_derivative.source.compatible(primal_space):
+            raise ValueError("Prepared constraints changed the current primal space.")
+        if not constraint_derivative.target.compatible(expected_target):
+            raise ValueError(
+                "Prepared constraints changed the canonical bound residual space."
+            )
+        if not (
+            hessian.source.compatible(primal_space)
+            and hessian.target.compatible(primal_space)
+        ):
+            raise ValueError(
+                "Prepared Lagrangian Hessian changed the current primal space."
+            )
+
+    # One shared constraint pushforward and pullback apply both blocks.
+    # Splitting the saddle operator would repeat the same prepared actions.
+    def kkt_action(vector: tuple[Array, Array]) -> tuple[Array, Array]:
+        tangent, multiplier = vector
+        equality_tangent, inequality_tangent = constraint_derivative.mv(tangent)
+        curvature = constraint_derivative.adjoint_mv(
+            (
+                multiplier,
+                diagonal * inequality_tangent,
+            )
+        )
+        primal = hessian.mv(tangent) + curvature + method.kkt_regularization * tangent
+        return primal, equality_tangent
+
+    space = BlockSpace(
+        (
+            primal_space,
+            ArraySpace(equality.shape, dtype=equality.dtype),
+        )
     )
-    equality_operator = FunctionLinearOperator(
-        equality_action,
-        source=primal_space,
-        target=equality_space,
-        transpose_action=equality_transpose,
-        operator_id="primal-dual-equality-jacobian",
-        closure_convert=False,
-    )
-    return saddle_point_system(
-        primal_operator,
-        equality_operator,
-        operator_id="primal-dual-kkt",
-        problem_id=f"{problem.problem_id}/primal-dual-kkt",
+    operator = None
+    if isinstance(method, PrimalDualNewtonKrylov) and method.kkt_setup is not None:
+        operator = method.kkt_setup.prepare_kkt_operator(
+            constraint_derivative,
+            hessian,
+            diagonal,
+            method.kkt_regularization,
+            space,
+        )
+    if operator is None:
+        operator = FunctionLinearOperator(
+            kkt_action,
+            source=space,
+            target=space,
+            transpose_action=kkt_action,
+            properties=OperatorProperties(
+                self_adjoint=True,
+                evidence={"self_adjoint": "construction"},
+            ),
+            operator_id=f"{problem.problem_id}/primal-dual-kkt",
+        )
+    elif not operator.source.compatible(space) or not operator.target.compatible(space):
+        raise ValueError("Prepared local KKT action changed the original saddle space.")
+    preconditioning = method.linear_policy.preconditioning
+    setup = None
+    if (
+        preconditioning is not None
+        and preconditioning.builder is not None
+        and preconditioning.setup_operator is None
+    ):
+        if isinstance(method, PrimalDualNewtonKrylov) and method.kkt_setup is not None:
+            setup = method.kkt_setup.prepare(
+                constraint_derivative,
+                diagonal,
+                method.kkt_regularization,
+                flat_parameters,
+                equality,
+                space,
+                operator,
+            )
+            if not isinstance(setup, PrimalDualKKTSetupResult):
+                raise TypeError(
+                    "The owning KKT setup must return PrimalDualKKTSetupResult."
+                )
+            if not setup.operator.source.compatible(
+                space
+            ) or not setup.operator.target.compatible(space):
+                raise ValueError(
+                    "The KKT setup must preserve the original bound BlockSpace."
+                )
+        elif isinstance(preconditioning.builder, JacobiPreconditionerBuilder):
+            if not isinstance(constraint_derivative, JacobianLinearOperator):
+                raise TypeError(
+                    "Jacobi barrier-Schur setup requires its prepared Jacobian operator."
+                )
+            metric = _barrier_schur_metric(
+                constraint_derivative,
+                diagonal,
+                method.kkt_regularization,
+                flat_parameters,
+                equality,
+                space,
+                problem.problem_id,
+            )
+            setup = PrimalDualKKTSetupResult(
+                metric,
+                jnp.asarray(flat_parameters.size, dtype=jnp.int32),
+                jnp.asarray(
+                    flat_parameters.size * (3 * diagonal.size + 3 * equality.size + 4)
+                    + 12 * space.size
+                    + flat_parameters.size,
+                    dtype=jnp.int64,
+                ),
+                jnp.asarray(-1, dtype=jnp.int32),
+            )
+    return (
+        LinearSystem(operator, problem_id=f"{problem.problem_id}/primal-dual-kkt"),
+        constraint_derivative,
+        setup,
     )
 
 
@@ -571,15 +873,11 @@ def _solve_primal_dual_newton_krylov(
     barrier = jnp.asarray(method.initial_barrier, dtype=flat_parameters.dtype)
     constraint_sources = len(problem.constraints) + int(problem.bounds is not None)
     constraint_sources_ = jnp.asarray(constraint_sources, dtype=jnp.int32)
-    equality_action_factor = jnp.asarray(
-        1 + int(equality.size > 0),
-        dtype=jnp.int32,
-    )
 
     def initial_constraints(candidate: Array) -> tuple[Array, Array]:
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
-    initial_kkt = _build_kkt_system(
+    initial_kkt, _, initial_setup = _build_kkt_system(
         method,
         problem,
         layout,
@@ -592,13 +890,19 @@ def _solve_primal_dual_newton_krylov(
         slacks,
         initial_constraints,
     )
-    _, linear_refresh_state = prepare_refresh_state(
+    initial_prepared_kkt, linear_refresh_state = prepare_refresh_state(
         initial_kkt,
         method.linear_policy,
+        setup_operator=None if initial_setup is None else initial_setup.operator,
     )
     linear_refresh_arrays, linear_refresh_static = eqx.partition(
         linear_refresh_state,
         eqx.is_array,
+    )
+    initial_factorization = sparse_preconditioner_factorization(
+        None
+        if initial_prepared_kkt.preconditioning_state is None
+        else initial_prepared_kkt.preconditioning_state.action,
     )
     zero = jnp.asarray(0, dtype=jnp.int32)
     counters = _PrimalDualCounters(
@@ -612,7 +916,10 @@ def _solve_primal_dual_newton_krylov(
         linear_iterations=zero,
         globalization_evaluations=zero,
         direction_fallbacks=zero,
-        jvp_evaluations=zero,
+        jvp_evaluations=jnp.asarray(
+            0 if initial_setup is None else initial_setup.jvp_evaluations,
+            dtype=jnp.int32,
+        ),
         vjp_evaluations=zero,
         hvp_evaluations=zero,
     )
@@ -633,6 +940,17 @@ def _solve_primal_dual_newton_krylov(
             int(OptimizationStatus.ITERATING),
         ),
     ).astype(jnp.int32)
+    if initial_factorization is not None:
+        initial_status = jnp.where(
+            (initial_status == int(OptimizationStatus.ITERATING))
+            & (initial_factorization.status != int(SparseFactorizationStatus.SUCCESS)),
+            jnp.where(
+                initial_factorization.status == int(SparseFactorizationStatus.NONFINITE),
+                int(OptimizationStatus.NONFINITE_EVALUATION),
+                int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+            ),
+            initial_status,
+        ).astype(jnp.int32)
     state = _PrimalDualState(
         iteration=zero,
         parameters=flat_parameters,
@@ -646,6 +964,11 @@ def _solve_primal_dual_newton_krylov(
         accepted_rate=jnp.asarray(0.0, dtype=flat_parameters.dtype),
         counters=counters,
         linear_refresh_arrays=linear_refresh_arrays,
+        evidence=PrimalDualEvidence(
+            dtype=flat_parameters.dtype,
+            setup=initial_setup,
+            factorization=initial_factorization,
+        ),
     )
 
     def outer_condition(current: _PrimalDualState) -> Array:
@@ -740,7 +1063,7 @@ def _solve_primal_dual_newton_krylov(
                 if current_inequality.size
                 else current.slacks
             )
-            kkt_system = _build_kkt_system(
+            kkt_system, constraint_derivative, setup_result = _build_kkt_system(
                 method,
                 problem,
                 layout,
@@ -757,323 +1080,352 @@ def _solve_primal_dual_newton_krylov(
                 current.linear_refresh_arrays,
                 linear_refresh_static,
             )
-            prepared_kkt, next_refresh_state = current_refresh_state.refresh(kkt_system)
+            prepared_kkt, next_refresh_state = current_refresh_state.refresh(
+                kkt_system,
+                setup_operator=None if setup_result is None else setup_result.operator,
+            )
             next_refresh_arrays, _ = eqx.partition(
                 next_refresh_state,
                 eqx.is_array,
             )
+            native_factorization = sparse_preconditioner_factorization(
+                None
+                if prepared_kkt.preconditioning_state is None
+                else prepared_kkt.preconditioning_state.action,
+            )
 
-            def solve_direction(
-                target: Array,
-                correction: Array,
-            ) -> tuple[LinearSolveResult, Array, Array, Array, Array]:
-                if current_inequality.size:
-                    reduced_rhs_part = inverse_slack * (
-                        complementarity_vector
-                        + correction
-                        - target
-                        - current.inequality_multipliers * inequality_slack
-                    )
-                    _, constraint_pullback = jax.vjp(
-                        constraints,
-                        current.parameters,
-                    )
-                    reduced_rhs = (
-                        -stationarity
-                        + constraint_pullback(
+            def admitted_newton(_operand: None) -> _PrimalDualState:
+                def solve_direction(
+                    target: Array,
+                    correction: Array,
+                ) -> tuple[LinearSolveResult, Array, Array, Array, Array]:
+                    if current_inequality.size:
+                        reduced_rhs_part = inverse_slack * (
+                            complementarity_vector
+                            + correction
+                            - target
+                            - current.inequality_multipliers * inequality_slack
+                        )
+                        multiplier_pullback = constraint_derivative.adjoint_mv(
                             (
                                 jnp.zeros_like(current_equality),
                                 reduced_rhs_part,
                             )
-                        )[0]
+                        )
+                        reduced_rhs = -stationarity + multiplier_pullback
+                    else:
+                        reduced_rhs = -stationarity
+                    result = solve_linear(
+                        prepared_kkt,
+                        (reduced_rhs, -current_equality),
                     )
-                else:
-                    reduced_rhs = -stationarity
-                result = solve_linear(
-                    prepared_kkt,
-                    (reduced_rhs, -current_equality),
-                )
-                primal_direction, equality_direction_ = result.value
-                if current_inequality.size:
-                    inequality_direction = jax.jvp(
-                        lambda candidate: constraints(candidate)[1],
-                        (current.parameters,),
-                        (primal_direction,),
-                    )[1]
-                    slack_direction_ = -inequality_slack - inequality_direction
-                    multiplier_direction_ = inverse_slack * (
-                        -complementarity_vector
-                        - correction
-                        + target
-                        + current.inequality_multipliers * inequality_slack
-                        + current.inequality_multipliers * inequality_direction
-                    )
-                else:
-                    slack_direction_ = current.slacks
-                    multiplier_direction_ = current.inequality_multipliers
-                return (
-                    result,
-                    primal_direction,
-                    equality_direction_,
-                    slack_direction_,
-                    multiplier_direction_,
-                )
-
-            zero_correction = jnp.zeros_like(complementarity_vector)
-            if (
-                isinstance(method, PrimalDualPredictorCorrector)
-                and current_inequality.size
-            ):
-                (
-                    affine_result,
-                    _,
-                    _,
-                    affine_slack_direction,
-                    affine_multiplier_direction,
-                ) = solve_direction(
-                    jnp.asarray(0.0, dtype=current.parameters.dtype),
-                    zero_correction,
-                )
-                affine_primal_rate = _fraction_to_boundary(
-                    current.slacks,
-                    affine_slack_direction,
-                    1.0,
-                )
-                affine_dual_rate = _fraction_to_boundary(
-                    current.inequality_multipliers,
-                    affine_multiplier_direction,
-                    1.0,
-                )
-                average_complementarity = jnp.mean(complementarity_vector)
-                affine_complementarity = jnp.mean(
-                    (current.slacks + affine_primal_rate * affine_slack_direction)
-                    * (
-                        current.inequality_multipliers
-                        + affine_dual_rate * affine_multiplier_direction
-                    )
-                )
-                centering_ratio = jnp.clip(
-                    affine_complementarity / jnp.maximum(average_complementarity, 1e-30),
-                    0.0,
-                    1.0,
-                )
-                centering_parameter = centering_ratio**method.centering_power
-                target_barrier = centering_parameter * average_complementarity
-                complementarity_correction = (
-                    affine_slack_direction * affine_multiplier_direction
-                )
-                (
-                    linear_result,
-                    direction,
-                    equality_direction,
-                    slack_direction,
-                    multiplier_direction,
-                ) = solve_direction(
-                    target_barrier,
-                    complementarity_correction,
-                )
-                solve_count = jnp.asarray(2, dtype=jnp.int32)
-                operator_actions = jnp.asarray(
-                    affine_result.diagnostics.matvec_count,
-                    dtype=jnp.int32,
-                ) + jnp.asarray(
-                    linear_result.diagnostics.matvec_count,
-                    dtype=jnp.int32,
-                )
-                linear_iterations = jnp.asarray(
-                    affine_result.diagnostics.iterations,
-                    dtype=jnp.int32,
-                ) + jnp.asarray(
-                    linear_result.diagnostics.iterations,
-                    dtype=jnp.int32,
-                )
-                usable_linear_status = _usable_linear_status(
-                    affine_result.status
-                ) & _usable_linear_status(linear_result.status)
-            else:
-                target_barrier = (
-                    jnp.minimum(
-                        current.barrier,
-                        method.centering * jnp.mean(complementarity_vector),
-                    )
-                    if current_inequality.size
-                    else jnp.asarray(
-                        0.0,
-                        dtype=current.parameters.dtype,
-                    )
-                )
-                (
-                    linear_result,
-                    direction,
-                    equality_direction,
-                    slack_direction,
-                    multiplier_direction,
-                ) = solve_direction(
-                    target_barrier,
-                    zero_correction,
-                )
-                solve_count = jnp.asarray(1, dtype=jnp.int32)
-                operator_actions = jnp.asarray(
-                    linear_result.diagnostics.matvec_count,
-                    dtype=jnp.int32,
-                )
-                linear_iterations = jnp.asarray(
-                    linear_result.diagnostics.iterations,
-                    dtype=jnp.int32,
-                )
-                usable_linear_status = _usable_linear_status(linear_result.status)
-
-            derivative_increment = jnp.where(
-                current_inequality.size > 0,
-                solve_count,
-                jnp.asarray(0, dtype=jnp.int32),
-            )
-            solve_counters = evaluated.counters._replace(
-                linear_solves=(evaluated.counters.linear_solves + solve_count),
-                numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
-                linear_iterations=(
-                    evaluated.counters.linear_iterations + linear_iterations
-                ),
-                hvp_evaluations=(evaluated.counters.hvp_evaluations + operator_actions),
-                jvp_evaluations=(
-                    evaluated.counters.jvp_evaluations
-                    + equality_action_factor * operator_actions
-                    + derivative_increment
-                ),
-                vjp_evaluations=(
-                    evaluated.counters.vjp_evaluations
-                    + equality_action_factor * operator_actions
-                    + derivative_increment
-                ),
-            )
-            usable_direction = (
-                usable_linear_status
-                & jnp.all(jnp.isfinite(direction))
-                & jnp.all(jnp.isfinite(equality_direction))
-                & jnp.all(jnp.isfinite(multiplier_direction))
-                & jnp.all(jnp.isfinite(slack_direction))
-            )
-            current_residual = _residual_norm(
-                stationarity,
-                current_equality,
-                inequality_slack,
-                complementarity_vector - target_barrier,
-            )
-
-            def line_search(_: None) -> _LineSearchCarry:
-                initial_rate = jnp.minimum(
-                    _fraction_to_boundary(
-                        current.slacks,
-                        slack_direction,
-                        method.fraction_to_boundary,
-                    ),
-                    _fraction_to_boundary(
-                        current.inequality_multipliers,
-                        multiplier_direction,
-                        method.fraction_to_boundary,
-                    ),
-                )
-
-                def line_condition(carry: _LineSearchCarry) -> Array:
-                    trial, _, accepted, *_ = carry
-                    return (trial < method.maximum_line_search_steps) & (~accepted)
-
-                def line_body(carry: _LineSearchCarry) -> _LineSearchCarry:
-                    (
-                        trial,
-                        rate,
-                        _,
-                        accepted_parameters,
-                        accepted_equality_multipliers,
-                        accepted_inequality_multipliers,
-                        accepted_slacks,
-                        accepted_step_norm,
-                        accepted_rate,
-                    ) = carry
-                    candidate_parameters = current.parameters + rate * direction
-                    candidate_equality_multipliers = (
-                        current.equality_multipliers + rate * equality_direction
-                    )
-                    candidate_inequality_multipliers = (
-                        current.inequality_multipliers + rate * multiplier_direction
-                    )
-                    candidate_slacks = current.slacks + rate * slack_direction
-                    (
-                        candidate_value,
-                        _,
-                        candidate_equality,
-                        candidate_inequality,
-                        candidate_stationarity,
-                        _,
-                    ) = _point_data(
-                        problem,
-                        layout,
-                        unravel,
-                        candidate_parameters,
-                        args,
-                        (
-                            candidate_equality_multipliers,
-                            candidate_inequality_multipliers,
-                        ),
-                    )
-                    candidate_residual = _residual_norm(
-                        candidate_stationarity,
-                        candidate_equality,
-                        candidate_inequality + candidate_slacks,
-                        (
-                            candidate_slacks * candidate_inequality_multipliers
-                            - target_barrier
-                        ),
-                    )
-                    sufficient = (
-                        candidate_residual
-                        <= (1.0 - method.sufficient_decrease * rate) * current_residual
-                    )
-                    accepted = (
-                        jnp.isfinite(candidate_value)
-                        & jnp.isfinite(candidate_residual)
-                        & jnp.all(candidate_slacks > 0.0)
-                        & jnp.all(candidate_inequality_multipliers > 0.0)
-                        & sufficient
-                    )
+                    primal_direction, equality_direction_ = result.value
+                    if current_inequality.size:
+                        inequality_direction = constraint_derivative.mv(primal_direction)[
+                            1
+                        ]
+                        slack_direction_ = -inequality_slack - inequality_direction
+                        multiplier_direction_ = inverse_slack * (
+                            -complementarity_vector
+                            - correction
+                            + target
+                            + current.inequality_multipliers * inequality_slack
+                            + current.inequality_multipliers * inequality_direction
+                        )
+                    else:
+                        slack_direction_ = current.slacks
+                        multiplier_direction_ = current.inequality_multipliers
                     return (
-                        trial + 1,
-                        rate * method.line_search_contraction,
-                        accepted,
-                        jnp.where(
-                            accepted,
-                            candidate_parameters,
-                            accepted_parameters,
-                        ),
-                        jnp.where(
-                            accepted,
-                            candidate_equality_multipliers,
-                            accepted_equality_multipliers,
-                        ),
-                        jnp.where(
-                            accepted,
-                            candidate_inequality_multipliers,
-                            accepted_inequality_multipliers,
-                        ),
-                        jnp.where(
-                            accepted,
-                            candidate_slacks,
-                            accepted_slacks,
-                        ),
-                        jnp.where(
-                            accepted,
-                            rate * jnp.linalg.norm(direction),
-                            accepted_step_norm,
-                        ),
-                        jnp.where(accepted, rate, accepted_rate),
+                        result,
+                        primal_direction,
+                        equality_direction_,
+                        slack_direction_,
+                        multiplier_direction_,
                     )
 
-                return jax.lax.while_loop(
-                    line_condition,
-                    line_body,
+                zero_correction = jnp.zeros_like(complementarity_vector)
+                if (
+                    isinstance(method, PrimalDualPredictorCorrector)
+                    and current_inequality.size
+                ):
                     (
+                        affine_result,
+                        _,
+                        _,
+                        affine_slack_direction,
+                        affine_multiplier_direction,
+                    ) = solve_direction(
+                        jnp.asarray(0.0, dtype=current.parameters.dtype),
+                        zero_correction,
+                    )
+                    affine_primal_rate = _fraction_to_boundary(
+                        current.slacks,
+                        affine_slack_direction,
+                        1.0,
+                    )
+                    affine_dual_rate = _fraction_to_boundary(
+                        current.inequality_multipliers,
+                        affine_multiplier_direction,
+                        1.0,
+                    )
+                    average_complementarity = jnp.mean(complementarity_vector)
+                    affine_complementarity = jnp.mean(
+                        (current.slacks + affine_primal_rate * affine_slack_direction)
+                        * (
+                            current.inequality_multipliers
+                            + affine_dual_rate * affine_multiplier_direction
+                        )
+                    )
+                    centering_ratio = jnp.clip(
+                        affine_complementarity
+                        / jnp.maximum(average_complementarity, 1e-30),
+                        0.0,
+                        1.0,
+                    )
+                    centering_parameter = centering_ratio**method.centering_power
+                    target_barrier = centering_parameter * average_complementarity
+                    complementarity_correction = (
+                        affine_slack_direction * affine_multiplier_direction
+                    )
+                    (
+                        linear_result,
+                        direction,
+                        equality_direction,
+                        slack_direction,
+                        multiplier_direction,
+                    ) = solve_direction(
+                        target_barrier,
+                        complementarity_correction,
+                    )
+                    solve_count = jnp.asarray(2, dtype=jnp.int32)
+                    operator_actions = jnp.asarray(
+                        affine_result.diagnostics.matvec_count,
+                        dtype=jnp.int32,
+                    ) + jnp.asarray(
+                        linear_result.diagnostics.matvec_count,
+                        dtype=jnp.int32,
+                    )
+                    linear_iterations = jnp.asarray(
+                        affine_result.diagnostics.iterations,
+                        dtype=jnp.int32,
+                    ) + jnp.asarray(
+                        linear_result.diagnostics.iterations,
+                        dtype=jnp.int32,
+                    )
+                    usable_linear_status = _usable_linear_status(
+                        affine_result.status
+                    ) & _usable_linear_status(linear_result.status)
+                else:
+                    target_barrier = (
+                        jnp.minimum(
+                            current.barrier,
+                            method.centering * jnp.mean(complementarity_vector),
+                        )
+                        if current_inequality.size
+                        else jnp.asarray(
+                            0.0,
+                            dtype=current.parameters.dtype,
+                        )
+                    )
+                    (
+                        linear_result,
+                        direction,
+                        equality_direction,
+                        slack_direction,
+                        multiplier_direction,
+                    ) = solve_direction(
+                        target_barrier,
+                        zero_correction,
+                    )
+                    solve_count = jnp.asarray(1, dtype=jnp.int32)
+                    operator_actions = jnp.asarray(
+                        linear_result.diagnostics.matvec_count,
+                        dtype=jnp.int32,
+                    )
+                    linear_iterations = jnp.asarray(
+                        linear_result.diagnostics.iterations,
+                        dtype=jnp.int32,
+                    )
+                    usable_linear_status = _usable_linear_status(linear_result.status)
+
+                derivative_increment = jnp.where(
+                    current_inequality.size > 0,
+                    solve_count,
+                    jnp.asarray(0, dtype=jnp.int32),
+                )
+                solve_counters = evaluated.counters._replace(
+                    linear_solves=(evaluated.counters.linear_solves + solve_count),
+                    numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
+                    linear_iterations=(
+                        evaluated.counters.linear_iterations + linear_iterations
+                    ),
+                    hvp_evaluations=(
+                        evaluated.counters.hvp_evaluations + operator_actions
+                    ),
+                    jvp_evaluations=(
+                        evaluated.counters.jvp_evaluations
+                        + operator_actions
+                        + derivative_increment
+                        + (0 if setup_result is None else setup_result.jvp_evaluations)
+                    ),
+                    vjp_evaluations=(
+                        evaluated.counters.vjp_evaluations
+                        + operator_actions
+                        + derivative_increment
+                    ),
+                )
+                solved = evaluated._replace(
+                    evidence=PrimalDualEvidence(
+                        linear_result,
+                        dtype=current.parameters.dtype,
+                        setup=setup_result,
+                        previous=current.evidence,
+                        factorization=native_factorization,
+                    ),
+                )
+                usable_direction = (
+                    usable_linear_status
+                    & jnp.all(jnp.isfinite(direction))
+                    & jnp.all(jnp.isfinite(equality_direction))
+                    & jnp.all(jnp.isfinite(multiplier_direction))
+                    & jnp.all(jnp.isfinite(slack_direction))
+                )
+                current_residual = _residual_norm(
+                    stationarity,
+                    current_equality,
+                    inequality_slack,
+                    complementarity_vector - target_barrier,
+                )
+
+                def line_search(_: None) -> _LineSearchCarry:
+                    initial_rate = jnp.minimum(
+                        _fraction_to_boundary(
+                            current.slacks,
+                            slack_direction,
+                            method.fraction_to_boundary,
+                        ),
+                        _fraction_to_boundary(
+                            current.inequality_multipliers,
+                            multiplier_direction,
+                            method.fraction_to_boundary,
+                        ),
+                    )
+
+                    def line_condition(carry: _LineSearchCarry) -> Array:
+                        trial, _, accepted, *_ = carry
+                        return (trial < method.maximum_line_search_steps) & (~accepted)
+
+                    def line_body(carry: _LineSearchCarry) -> _LineSearchCarry:
+                        (
+                            trial,
+                            rate,
+                            _,
+                            accepted_parameters,
+                            accepted_equality_multipliers,
+                            accepted_inequality_multipliers,
+                            accepted_slacks,
+                            accepted_step_norm,
+                            accepted_rate,
+                        ) = carry
+                        candidate_parameters = current.parameters + rate * direction
+                        candidate_equality_multipliers = (
+                            current.equality_multipliers + rate * equality_direction
+                        )
+                        candidate_inequality_multipliers = (
+                            current.inequality_multipliers + rate * multiplier_direction
+                        )
+                        candidate_slacks = current.slacks + rate * slack_direction
+                        (
+                            candidate_value,
+                            _,
+                            candidate_equality,
+                            candidate_inequality,
+                            candidate_stationarity,
+                            _,
+                        ) = _point_data(
+                            problem,
+                            layout,
+                            unravel,
+                            candidate_parameters,
+                            args,
+                            (
+                                candidate_equality_multipliers,
+                                candidate_inequality_multipliers,
+                            ),
+                        )
+                        candidate_residual = _residual_norm(
+                            candidate_stationarity,
+                            candidate_equality,
+                            candidate_inequality + candidate_slacks,
+                            (
+                                candidate_slacks * candidate_inequality_multipliers
+                                - target_barrier
+                            ),
+                        )
+                        sufficient = (
+                            candidate_residual
+                            <= (1.0 - method.sufficient_decrease * rate)
+                            * current_residual
+                        )
+                        accepted = (
+                            jnp.isfinite(candidate_value)
+                            & jnp.isfinite(candidate_residual)
+                            & jnp.all(candidate_slacks > 0.0)
+                            & jnp.all(candidate_inequality_multipliers > 0.0)
+                            & sufficient
+                        )
+                        return (
+                            trial + 1,
+                            rate * method.line_search_contraction,
+                            accepted,
+                            jnp.where(
+                                accepted,
+                                candidate_parameters,
+                                accepted_parameters,
+                            ),
+                            jnp.where(
+                                accepted,
+                                candidate_equality_multipliers,
+                                accepted_equality_multipliers,
+                            ),
+                            jnp.where(
+                                accepted,
+                                candidate_inequality_multipliers,
+                                accepted_inequality_multipliers,
+                            ),
+                            jnp.where(
+                                accepted,
+                                candidate_slacks,
+                                accepted_slacks,
+                            ),
+                            jnp.where(
+                                accepted,
+                                rate * jnp.linalg.norm(direction),
+                                accepted_step_norm,
+                            ),
+                            jnp.where(accepted, rate, accepted_rate),
+                        )
+
+                    return jax.lax.while_loop(
+                        line_condition,
+                        line_body,
+                        (
+                            jnp.asarray(0, dtype=jnp.int32),
+                            initial_rate,
+                            jnp.asarray(False),
+                            current.parameters,
+                            current.equality_multipliers,
+                            current.inequality_multipliers,
+                            current.slacks,
+                            current.final_step_norm,
+                            current.accepted_rate,
+                        ),
+                    )
+
+                def unusable_line_search(_: None) -> _LineSearchCarry:
+                    return (
                         jnp.asarray(0, dtype=jnp.int32),
-                        initial_rate,
+                        jnp.asarray(0.0, dtype=current.parameters.dtype),
                         jnp.asarray(False),
                         current.parameters,
                         current.equality_multipliers,
@@ -1081,178 +1433,199 @@ def _solve_primal_dual_newton_krylov(
                         current.slacks,
                         current.final_step_norm,
                         current.accepted_rate,
-                    ),
-                )
-
-            def unusable_line_search(_: None) -> _LineSearchCarry:
-                return (
-                    jnp.asarray(0, dtype=jnp.int32),
-                    jnp.asarray(0.0, dtype=current.parameters.dtype),
-                    jnp.asarray(False),
-                    current.parameters,
-                    current.equality_multipliers,
-                    current.inequality_multipliers,
-                    current.slacks,
-                    current.final_step_norm,
-                    current.accepted_rate,
-                )
-
-            (
-                line_evaluations,
-                _,
-                accepted,
-                candidate_parameters,
-                candidate_equality_multipliers,
-                candidate_inequality_multipliers,
-                candidate_slacks,
-                candidate_step_norm,
-                candidate_rate,
-            ) = jax.lax.cond(
-                usable_direction,
-                line_search,
-                unusable_line_search,
-                None,
-            )
-            trial_counters = solve_counters._replace(
-                objective_evaluations=(
-                    solve_counters.objective_evaluations + line_evaluations
-                ),
-                gradient_evaluations=(
-                    solve_counters.gradient_evaluations + line_evaluations
-                ),
-                constraint_evaluations=(
-                    solve_counters.constraint_evaluations
-                    + 2 * constraint_sources_ * line_evaluations
-                ),
-                globalization_evaluations=(
-                    solve_counters.globalization_evaluations + line_evaluations
-                ),
-                vjp_evaluations=(solve_counters.vjp_evaluations + line_evaluations),
-            )
-
-            def accept_newton_step(_: None) -> _PrimalDualState:
-                stagnated = candidate_step_norm <= termination.step_threshold(
-                    jnp.linalg.norm(candidate_parameters)
-                )
-                next_status = jnp.where(
-                    stagnated,
-                    int(OptimizationStatus.STAGNATION),
-                    int(OptimizationStatus.ITERATING),
-                ).astype(jnp.int32)
-                return evaluated._replace(
-                    iteration=evaluated.iteration + 1,
-                    parameters=candidate_parameters,
-                    equality_multipliers=candidate_equality_multipliers,
-                    inequality_multipliers=candidate_inequality_multipliers,
-                    slacks=candidate_slacks,
-                    barrier=jnp.maximum(
-                        method.minimum_slack,
-                        evaluated.barrier * method.barrier_reduction,
-                    ),
-                    status=next_status,
-                    final_step_norm=candidate_step_norm,
-                    accepted_rate=candidate_rate,
-                    counters=trial_counters._replace(
-                        accepted_steps=trial_counters.accepted_steps + 1,
-                    ),
-                    linear_refresh_arrays=next_refresh_arrays,
-                )
-
-            def restore_step(_operand: None) -> _PrimalDualState:
-                (
-                    restored_parameters,
-                    _,
-                    restored_inequality,
-                    restored,
-                    restoration_evaluations,
-                    restoration_rate,
-                ) = _restore_feasibility(
-                    method,
-                    constraints,
-                    current.parameters,
-                    current_equality,
-                    current_inequality,
-                )
-                restoration_counters = trial_counters._replace(
-                    accepted_steps=(
-                        trial_counters.accepted_steps + restored.astype(jnp.int32)
-                    ),
-                    rejected_steps=trial_counters.rejected_steps + 1,
-                    gradient_evaluations=(trial_counters.gradient_evaluations + 1),
-                    constraint_evaluations=(
-                        trial_counters.constraint_evaluations
-                        + constraint_sources_ * (restoration_evaluations + 1)
-                    ),
-                    globalization_evaluations=(
-                        trial_counters.globalization_evaluations + restoration_evaluations
-                    ),
-                    direction_fallbacks=(trial_counters.direction_fallbacks + 1),
-                    vjp_evaluations=trial_counters.vjp_evaluations + 1,
-                )
-                failed_restoration = evaluated._replace(
-                    iteration=evaluated.iteration + 1,
-                    status=jnp.asarray(
-                        int(OptimizationStatus.RESTORATION_FAILED),
-                        dtype=jnp.int32,
-                    ),
-                    counters=restoration_counters,
-                    linear_refresh_arrays=next_refresh_arrays,
-                )
-
-                def commit_restoration(_: None) -> _PrimalDualState:
-                    return failed_restoration._replace(
-                        parameters=restored_parameters,
-                        inequality_multipliers=jnp.maximum(
-                            current.inequality_multipliers,
-                            method.initial_barrier,
-                        ),
-                        slacks=jnp.maximum(
-                            -restored_inequality,
-                            method.initial_barrier,
-                        ),
-                        status=jnp.asarray(
-                            int(OptimizationStatus.ITERATING),
-                            dtype=jnp.int32,
-                        ),
-                        final_step_norm=jnp.linalg.norm(
-                            restored_parameters - current.parameters
-                        ),
-                        accepted_rate=restoration_rate,
                     )
 
-                return jax.lax.cond(
-                    restored,
-                    commit_restoration,
-                    lambda _: failed_restoration,
+                (
+                    line_evaluations,
+                    _,
+                    accepted,
+                    candidate_parameters,
+                    candidate_equality_multipliers,
+                    candidate_inequality_multipliers,
+                    candidate_slacks,
+                    candidate_step_norm,
+                    candidate_rate,
+                ) = jax.lax.cond(
+                    usable_direction,
+                    line_search,
+                    unusable_line_search,
                     None,
                 )
+                trial_counters = solve_counters._replace(
+                    objective_evaluations=(
+                        solve_counters.objective_evaluations + line_evaluations
+                    ),
+                    gradient_evaluations=(
+                        solve_counters.gradient_evaluations + line_evaluations
+                    ),
+                    constraint_evaluations=(
+                        solve_counters.constraint_evaluations
+                        + 2 * constraint_sources_ * line_evaluations
+                    ),
+                    globalization_evaluations=(
+                        solve_counters.globalization_evaluations + line_evaluations
+                    ),
+                    vjp_evaluations=(solve_counters.vjp_evaluations + line_evaluations),
+                )
 
-            if method.predictor_corrector:
-
-                def reject_predictor_corrector(_: None) -> _PrimalDualState:
-                    return evaluated._replace(
+                def accept_newton_step(_: None) -> _PrimalDualState:
+                    stagnated = candidate_step_norm <= termination.step_threshold(
+                        jnp.linalg.norm(candidate_parameters)
+                    )
+                    next_status = jnp.where(
+                        stagnated,
+                        int(OptimizationStatus.STAGNATION),
+                        int(OptimizationStatus.ITERATING),
+                    ).astype(jnp.int32)
+                    return solved._replace(
                         iteration=evaluated.iteration + 1,
-                        status=jnp.where(
-                            usable_direction,
-                            int(OptimizationStatus.LINE_SEARCH_FAILED),
-                            int(OptimizationStatus.LINEAR_SOLVE_FAILED),
-                        ).astype(jnp.int32),
+                        parameters=candidate_parameters,
+                        equality_multipliers=candidate_equality_multipliers,
+                        inequality_multipliers=candidate_inequality_multipliers,
+                        slacks=candidate_slacks,
+                        barrier=jnp.maximum(
+                            method.minimum_slack,
+                            evaluated.barrier * method.barrier_reduction,
+                        ),
+                        status=next_status,
+                        final_step_norm=candidate_step_norm,
+                        accepted_rate=candidate_rate,
                         counters=trial_counters._replace(
-                            rejected_steps=trial_counters.rejected_steps + 1,
+                            accepted_steps=trial_counters.accepted_steps + 1,
                         ),
                         linear_refresh_arrays=next_refresh_arrays,
                     )
 
+                def restore_step(_operand: None) -> _PrimalDualState:
+                    (
+                        restored_parameters,
+                        _,
+                        restored_inequality,
+                        restored,
+                        restoration_evaluations,
+                        restoration_rate,
+                    ) = _restore_feasibility(
+                        method,
+                        constraints,
+                        current.parameters,
+                        current_equality,
+                        current_inequality,
+                    )
+                    restoration_counters = trial_counters._replace(
+                        accepted_steps=(
+                            trial_counters.accepted_steps + restored.astype(jnp.int32)
+                        ),
+                        rejected_steps=trial_counters.rejected_steps + 1,
+                        gradient_evaluations=(trial_counters.gradient_evaluations + 1),
+                        constraint_evaluations=(
+                            trial_counters.constraint_evaluations
+                            + constraint_sources_ * (restoration_evaluations + 1)
+                        ),
+                        globalization_evaluations=(
+                            trial_counters.globalization_evaluations
+                            + restoration_evaluations
+                        ),
+                        direction_fallbacks=(trial_counters.direction_fallbacks + 1),
+                        vjp_evaluations=trial_counters.vjp_evaluations + 1,
+                    )
+                    failed_restoration = solved._replace(
+                        iteration=evaluated.iteration + 1,
+                        status=jnp.asarray(
+                            int(OptimizationStatus.RESTORATION_FAILED),
+                            dtype=jnp.int32,
+                        ),
+                        counters=restoration_counters,
+                        linear_refresh_arrays=next_refresh_arrays,
+                    )
+
+                    def commit_restoration(_: None) -> _PrimalDualState:
+                        return failed_restoration._replace(
+                            parameters=restored_parameters,
+                            inequality_multipliers=jnp.maximum(
+                                current.inequality_multipliers,
+                                method.initial_barrier,
+                            ),
+                            slacks=jnp.maximum(
+                                -restored_inequality,
+                                method.initial_barrier,
+                            ),
+                            status=jnp.asarray(
+                                int(OptimizationStatus.ITERATING),
+                                dtype=jnp.int32,
+                            ),
+                            final_step_norm=jnp.linalg.norm(
+                                restored_parameters - current.parameters
+                            ),
+                            accepted_rate=restoration_rate,
+                        )
+
+                    return jax.lax.cond(
+                        restored,
+                        commit_restoration,
+                        lambda _: failed_restoration,
+                        None,
+                    )
+
+                if method.predictor_corrector or method.maximum_restoration_steps == 0:
+
+                    def reject_step(_: None) -> _PrimalDualState:
+                        return solved._replace(
+                            iteration=evaluated.iteration + 1,
+                            status=jnp.where(
+                                usable_direction,
+                                int(OptimizationStatus.LINE_SEARCH_FAILED),
+                                int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+                            ).astype(jnp.int32),
+                            counters=trial_counters._replace(
+                                rejected_steps=trial_counters.rejected_steps + 1,
+                            ),
+                            linear_refresh_arrays=next_refresh_arrays,
+                        )
+
+                    return jax.lax.cond(
+                        accepted,
+                        accept_newton_step,
+                        reject_step,
+                        None,
+                    )
                 return jax.lax.cond(
                     accepted,
                     accept_newton_step,
-                    reject_predictor_corrector,
+                    restore_step,
                     None,
                 )
+
+            if native_factorization is None:
+                return admitted_newton(None)
+
+            def failed_factor(_: None) -> _PrimalDualState:
+                return evaluated._replace(
+                    iteration=evaluated.iteration + 1,
+                    status=jnp.where(
+                        native_factorization.status
+                        == int(SparseFactorizationStatus.NONFINITE),
+                        int(OptimizationStatus.NONFINITE_EVALUATION),
+                        int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+                    ).astype(jnp.int32),
+                    evidence=PrimalDualEvidence(
+                        dtype=current.parameters.dtype,
+                        setup=setup_result,
+                        previous=current.evidence,
+                        factorization=native_factorization,
+                    ),
+                    counters=evaluated.counters._replace(
+                        rejected_steps=evaluated.counters.rejected_steps + 1,
+                        numeric_refreshes=evaluated.counters.numeric_refreshes + 1,
+                        jvp_evaluations=evaluated.counters.jvp_evaluations
+                        + (0 if setup_result is None else setup_result.jvp_evaluations),
+                    ),
+                    linear_refresh_arrays=next_refresh_arrays,
+                )
+
             return jax.lax.cond(
-                accepted,
-                accept_newton_step,
-                restore_step,
+                native_factorization.status == int(SparseFactorizationStatus.SUCCESS),
+                admitted_newton,
+                failed_factor,
                 None,
             )
 
@@ -1411,7 +1784,8 @@ def _solve_primal_dual_newton_krylov(
         diagnostics,
         provenance,
         certificate=certificate,
+        method_evidence=state.evidence,
     )
 
 
-__all__ = ["PrimalDualNewtonKrylov", "PrimalDualPredictorCorrector"]
+__all__ = ["PrimalDualEvidence", "PrimalDualNewtonKrylov", "PrimalDualPredictorCorrector"]

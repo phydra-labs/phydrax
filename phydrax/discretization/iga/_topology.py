@@ -98,7 +98,9 @@ class SplineSpanTopology(StrictModule, NonTrainableState):
             topology_id=topology_id,
         )
         routes = tuple(np.ndindex(shape))
-        self.span_indices = tuple(tuple(value) for value in normalized)
+        self.span_indices = tuple(
+            tuple(int(index) for index in value) for value in normalized
+        )
         self.patch_id = patch
         self.span_ids = tuple(BaseSpanId(patch, route) for route in routes)
 

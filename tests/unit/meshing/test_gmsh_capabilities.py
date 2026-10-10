@@ -3,15 +3,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-from OCP.BRep import BRep_Builder
-from OCP.BRepBuilderAPI import (
-    BRepBuilderAPI_MakeEdge,
-    BRepBuilderAPI_MakeFace,
-    BRepBuilderAPI_MakePolygon,
-)
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
-from OCP.gp import gp_Pnt
-from OCP.TopoDS import TopoDS_Compound
 
 import phydrax as phx
 
@@ -24,9 +15,26 @@ pytestmark = [
 ]
 
 _CONTRACT = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+_IMPORT_POLICY = phx.interchange.CadImportPolicy(
+    _CONTRACT,
+    phx.interchange.ResourceLimits(
+        max_bytes=1 << 24,
+        max_depth=64,
+        max_nodes=100_000,
+        max_attributes=2_000_000,
+        max_losses=8,
+    ),
+    tessellation=phx.geometry.BRepTessellationPolicy(
+        linear_deflection=0.01, angular_deflection=0.2
+    ),
+)
 
 
 def _face(points: Any) -> Any:
+    pytest.importorskip("OCP")
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+    from OCP.gp import gp_Pnt
+
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in points:
         polygon.Add(gp_Pnt(float(x), float(y), 0.0))
@@ -35,7 +43,8 @@ def _face(points: Any) -> Any:
 
 
 def _persist(shape: Any, path: Any, *, overwrite: Any = False) -> Any:
-    return phx.geometry.persist_occt_shape(
+    # OCCT constructs the external comparison fixture, never the native source model.
+    phx.interchange.persist_occt_shape(
         shape,
         path,
         coordinate_contract=_CONTRACT,
@@ -43,6 +52,12 @@ def _persist(shape: Any, path: Any, *, overwrite: Any = False) -> Any:
         angular_deflection=0.2,
         overwrite=overwrite,
     )
+    return phx.interchange.read_cad(
+        path,
+        _IMPORT_POLICY,
+        trusted_root=path.parent,
+        source_length_unit=_CONTRACT.length_unit,
+    ).model
 
 
 def _surface_spec(provider: Any, source: Any, size: Any, **kwargs: Any) -> Any:
@@ -133,7 +148,7 @@ def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
     )
 
     result = provider.plan(
-        square, _surface_spec(provider, square, 0.5), background_metric=control
+        square, _surface_spec(provider, square, 0.5, background_metric=control)
     ).execute()
 
     first, second = _mesh_edges(result)
@@ -147,6 +162,9 @@ def test_real_anisotropic_background_metric_stretches_cells_along_the_metric(
 
 
 def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
     cube = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), tmp_path / "cube.brep")
     )
@@ -169,20 +187,22 @@ def test_gmsh_preflight_routes_anisotropic_volume_metrics_away(tmp_path: Any) ->
 
 
 def _channel_walls(provider: Any, source: Any) -> Any:
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopoDS import TopoDS
-
-    from phydrax.geometry.brep._occt import _explore_unique, read_occt_shape
-
-    shape, _, _ = read_occt_shape(source.report.source_id)
+    geometry = source.geometry
+    assert geometry is not None
     walls = {0.45: [], 0.55: []}
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
-        curve = BRepAdaptor_Curve(edge)
-        ends = (curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter()))
+    for index, curve_index in enumerate(geometry.edge_curves):
+        if curve_index < 0:
+            points = np.asarray(geometry.vertex_points)[
+                list(geometry.edge_vertices[index])
+            ]
+        else:
+            interval = np.asarray(geometry.edge_ranges[index], dtype=np.float64)
+            parameters = np.linspace(interval[0], interval[1], 3)
+            points = np.asarray(geometry.curves[curve_index].evaluate(parameters))
         for height, selected in walls.items():
-            if all(abs(point.Y() - height) < 1.0e-9 for point in ends):
+            if np.allclose(points[:, 1], height, atol=1.0e-9, rtol=0.0):
                 selected.append(source.edge_ids[index])
+    assert all(len(selected) == 1 for selected in walls.values())
     return tuple(provider.entity_scope(source, walls[height]) for height in (0.45, 0.55))
 
 
@@ -236,6 +256,12 @@ def test_real_proximity_control_refines_a_narrow_channel(tmp_path: Any) -> None:
 
 
 def test_real_protected_free_curve_is_embedded_as_mesh_edges(tmp_path: Any) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS_Compound
+
     builder = BRep_Builder()
     compound = TopoDS_Compound()
     builder.MakeCompound(compound)
@@ -349,6 +375,9 @@ def _tetrahedron_rule(count: Any) -> Any:
 def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     tmp_path: Any, order: Any
 ) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeCylinder(1.0, 1.0).Shape(), tmp_path / "cylinder.brep")
     )
@@ -389,9 +418,12 @@ def test_real_curved_cylinder_is_certified_by_native_gmsh_quality(
     assert abs(curved_volume - np.pi) < 0.1 * abs(straight_volume - np.pi)
 
 
-def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones(
+def test_real_session_import_cache_is_bound_to_immutable_native_revisions(
     tmp_path: Any,
 ) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
     path = tmp_path / "cube.brep"
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), path)
@@ -407,17 +439,37 @@ def test_real_session_import_cache_reuses_verified_bytes_and_drops_replaced_ones
         )
         assert (session.import_cache_misses, session.import_cache_hits) == (1, 1)
         assert session.cached_source_revisions == (source.report.source_revision,)
-        _persist(BRepPrimAPI_MakeBox(2.0, 1.0, 1.0).Shape(), path, overwrite=True)
-        with pytest.raises(phx.meshing.MeshingFailure) as failure:
-            session.execute(provider.plan(source, _volume_spec(provider, source, 0.5)))
-        assert session.cached_source_revisions == ()
 
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.INVALID_SOURCE
-    assert first.compliance.passed and second.compliance.passed
-    assert first.mesh.mesh_id != second.mesh.mesh_id
+        replaced = phx.geometry.BRepSource(
+            _persist(
+                BRepPrimAPI_MakeBox(2.0, 1.0, 1.0).Shape(),
+                path,
+                overwrite=True,
+            )
+        )
+        assert replaced.report.source_revision != source.report.source_revision
+        third = session.execute(
+            provider.plan(replaced, _volume_spec(provider, replaced, 0.5))
+        )
+        assert (session.import_cache_misses, session.import_cache_hits) == (2, 1)
+        assert session.cached_source_revisions == tuple(
+            sorted((source.report.source_revision, replaced.report.source_revision))
+        )
+
+        fourth = session.execute(
+            provider.plan(source, _volume_spec(provider, source, 0.5))
+        )
+        assert (session.import_cache_misses, session.import_cache_hits) == (2, 2)
+
+    assert all(result.compliance.passed for result in (first, second, third, fourth))
+    assert third.mesh.mesh_id != first.mesh.mesh_id
+    assert fourth.mesh.mesh_id == first.mesh.mesh_id
 
 
 def test_real_hxt_threads_follow_the_explicit_resource_policy(tmp_path: Any) -> None:
+    pytest.importorskip("OCP")
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+
     source = phx.geometry.BRepSource(
         _persist(BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(), tmp_path / "box.brep")
     )

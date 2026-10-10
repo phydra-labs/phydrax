@@ -95,7 +95,6 @@ def test_layer_lane1_scenario_1() -> None:
     topology = phx.operators.BoundaryCornerTopology2D(
         geometry.boundary_atlas.num_charts,
         ((0, "start"), (0, "end")),
-        # ty: ignore[invalid-argument-type]
         interior_angles=(jnp.pi, jnp.pi),
     )
     partition = phx.operators.BoundaryPanelPartition2D(
@@ -390,7 +389,6 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle() -> None:
                     target,
                     source,
                     normal,
-                    # ty: ignore[unresolved-attribute]
                 ) - 1j * potential.eta * potential.kernel.value(target, source)
         elif field_kind == "single":
 

@@ -259,3 +259,147 @@ def _vertex_scope(part: Any, ids: Any = None) -> Any:
         else np.asarray(ids)
     )
     return part.scope(0, np.sort(identifiers))
+
+
+_SQUARE = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+_SQUARE_TRIANGLES = ((0, 1, 2), (0, 2, 3))
+
+
+def _edge_id(part: Any, first: int, second: int) -> int:
+    mesh = part.carrier.mesh
+    edges = np.sort(np.asarray(mesh.connectivity.edges), axis=1)
+    row = np.flatnonzero(np.all(edges == sorted((first, second)), axis=1))[0]
+    return int(np.asarray(mesh.entity_set(1).entity_ids)[row])
+
+
+def test_periodic_coupling_binds_oriented_edge_orbits() -> None:
+    part = _part("square", _SQUARE, _SQUARE_TRIANGLES)
+    # Translating the bottom edge 0->1 upward reverses the stored top edge 2->3
+    # orientation, while the left edge 0->3 maps onto the right edge 1->2.
+    vertical = PeriodicCoupling(
+        part,
+        part,
+        part.scope(1, [_edge_id(part, 0, 1)]),
+        part.scope(1, [_edge_id(part, 2, 3)]),
+        np.eye(2),
+        np.asarray((0.0, 1.0)),
+    )
+    horizontal = PeriodicCoupling(
+        part,
+        part,
+        part.scope(1, [_edge_id(part, 0, 3)]),
+        part.scope(1, [_edge_id(part, 1, 2)]),
+        np.eye(2),
+        np.asarray((1.0, 0.0)),
+    )
+
+    np.testing.assert_array_equal(vertical.orientations, (-1,))
+    np.testing.assert_array_equal(horizontal.orientations, (1,))
+    np.testing.assert_array_equal(
+        vertical.transfer_oriented(jnp.asarray((5.0,))), (-5.0,)
+    )
+    np.testing.assert_array_equal(
+        horizontal.transfer_oriented(jnp.asarray((5.0,))), (5.0,)
+    )
+    with pytest.raises(ValueError, match="do not match"):
+        PeriodicCoupling(
+            part,
+            part,
+            part.scope(1, [_edge_id(part, 0, 1)]),
+            part.scope(1, [_edge_id(part, 2, 3)]),
+            np.eye(2),
+            np.asarray((1.0, 0.0)),
+        )
+
+
+def test_periodic_coupling_transforms_rank_two_tensors() -> None:
+    source = _part("source")
+    rotation = np.asarray(((0.0, -1.0), (1.0, 0.0)))
+    translation = np.asarray((2.0, 1.0))
+    target = _part(
+        "target", np.asarray(source.carrier.mesh.coordinates) @ rotation.T + translation
+    )
+    coupling = PeriodicCoupling(
+        source,
+        target,
+        source.scope(0, [0, 1, 2]),
+        target.scope(0, [0, 1, 2]),
+        rotation,
+        translation,
+    )
+    tensors = np.random.default_rng(3).normal(size=(3, 2, 2))
+
+    expected = np.stack([rotation @ tensor @ rotation.T for tensor in tensors])
+    np.testing.assert_allclose(
+        coupling.transfer_tensors(jnp.asarray(tensors)), expected, atol=1e-14
+    )
+
+
+def test_periodic_coupling_refuses_quotient_orbit_reidentification() -> None:
+    points = np.asarray(_SQUARE)
+    block = phx.discretization.CellBlock(
+        "torus", "triangle", np.asarray(_SQUARE_TRIANGLES, dtype=np.int32)
+    )
+    lifted = phx.discretization.CellMesh(points, (block,))
+    periodic = phx.discretization.PeriodicMeshTopology(
+        lifted,
+        phx.discretization.PeriodicCell(np.eye(2)),
+        np.zeros(4, dtype=np.int64),
+        points.astype(np.int64),
+    )
+    torus = MeshPart(
+        "torus",
+        phx.meshing.certify_cell_mesh(
+            phx.discretization.CellMesh(points, (block,), periodic_topology=periodic),
+            phx.SpatialCoordinateContract.si(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="already identifies"):
+        PeriodicCoupling(
+            torus,
+            torus,
+            torus.scope(0, np.asarray((0,))),
+            torus.scope(0, np.asarray((1,))),
+            np.eye(2),
+            np.asarray((1.0, 0.0)),
+        )
+
+
+def test_periodic_constraint_binds_explicit_entity_orbits() -> None:
+    part = _part("square", _SQUARE, _SQUARE_TRIANGLES)
+    left, right = (
+        part.scope(1, [_edge_id(part, 0, 3)]),
+        part.scope(1, [_edge_id(part, 1, 2)]),
+    )
+    transform = np.eye(3)
+    transform[0, 2] = 1.0
+
+    bound = phx.meshing.PeriodicConstraint(
+        left,
+        right,
+        transform,
+        source_entity_ids=left.entity_ids,
+        orientations=np.asarray((1,)),
+    )
+    unbound = phx.meshing.PeriodicConstraint(left, right, transform)
+
+    np.testing.assert_array_equal(bound.source_entity_ids, left.entity_ids)
+    assert bound.orientation_preserving
+    assert bound.constraint_id != unbound.constraint_id
+    with pytest.raises(ValueError, match="orientation witnesses"):
+        phx.meshing.PeriodicConstraint(
+            left, right, transform, source_entity_ids=left.entity_ids
+        )
+    with pytest.raises(ValueError, match="bijectively"):
+        phx.meshing.PeriodicConstraint(
+            left,
+            right,
+            transform,
+            source_entity_ids=right.entity_ids,
+            orientations=np.asarray((1,)),
+        )
+    scaled = transform.copy()
+    scaled[0, 0] = 2.0
+    with pytest.raises(ValueError, match="isometry"):
+        phx.meshing.PeriodicConstraint(left, right, scaled)

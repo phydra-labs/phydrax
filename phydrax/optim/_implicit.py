@@ -267,6 +267,10 @@ def implicit_least_squares(
         if isinstance(problem_or_residual, NonlinearLeastSquaresProblem)
         else NonlinearLeastSquaresProblem(problem_or_residual, has_aux=has_aux)
     )
+    if problem.trial_policy is not None:
+        raise ValueError(
+            "Implicit least-squares derivatives require a regular smooth residual model."
+        )
     method_ = GaussNewton() if method is None else method
     termination_ = OptimizationTermination() if termination is None else termination
     policy = _default_implicit_linear_policy() if linear_policy is None else linear_policy

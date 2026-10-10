@@ -151,10 +151,15 @@ def interval_connectivity(
     vertex_count: int,
     /,
 ) -> IntervalConnectivity:
+    """Build vertex incidence for an interval chain or curve network.
+
+    Valence-one vertices are boundary vertices; valence-two vertices continue a
+    chain and higher-valence vertices are network junctions. Consumers that need
+    a manifold chain refuse junctions at their own facet-pairing boundary.
+    """
+
     cells = _validated_cells("intervals", intervals, 2, int(vertex_count))
     counts = np.bincount(cells.reshape((-1,)), minlength=int(vertex_count))
-    if np.any(counts > 2):
-        raise ValueError("Interval cells must form a vertex-manifold mesh.")
     return IntervalConnectivity(
         jnp.asarray(cells),
         jnp.asarray(counts, dtype=jnp.int32),

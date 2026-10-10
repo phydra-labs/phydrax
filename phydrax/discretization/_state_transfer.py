@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
-from ..linalg import ArraySpace, FunctionLinearOperator
+from ..linalg import ArraySpace, FunctionLinearOperator, transpose
 from ..typing import parse
 from ._spaces import DiscreteFieldSpace
 from ._transfer import FieldTransfer, TransferProperties
@@ -165,7 +165,12 @@ class AbstractRefinementTransfer(StrictModule):
         *,
         properties: TransferProperties | None = None,
     ) -> FieldTransfer:
-        """Bind this refinement recipe to exact source and target field spaces."""
+        """Bind this refinement's restriction to exact source and target field spaces.
+
+        The primal map is the restriction, its dual pullback the algebraic
+        transpose. Prolongation is a separate interpolation, not the Hilbert
+        adjoint of the restriction, so no adjoint is claimed.
+        """
         if not isinstance(fine_space, DiscreteFieldSpace) or not isinstance(
             coarse_space,
             DiscreteFieldSpace,
@@ -185,19 +190,15 @@ class AbstractRefinementTransfer(StrictModule):
             target=coarse_space.vector_space,
             operator_id=f"{self.transfer_id}:field-restriction",
         )
-        prolongation = FunctionLinearOperator(
-            self.prolong,
-            source=coarse_space.vector_space,
-            target=fine_space.vector_space,
-            operator_id=f"{self.transfer_id}:field-prolongation",
-        )
         return FieldTransfer(
             fine_space,
             coarse_space,
             restriction,
-            hilbert_adjoint_operator=prolongation,
+            dual_pullback_operator=transpose(restriction),
             properties=(
-                TransferProperties(nested=True) if properties is None else properties
+                TransferProperties(nested=True, semantics="restriction")
+                if properties is None
+                else properties
             ),
             transfer_id=self.transfer_id,
         )

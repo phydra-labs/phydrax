@@ -5,9 +5,13 @@ import numpy as np
 import pytest
 
 from phydrax import SpatialCoordinateContract
-from phydrax.geometry.surface import SurfaceMetadata, SurfaceModel
+from phydrax.geometry.surface import (
+    SurfaceBooleanOperation,
+    SurfaceMetadata,
+    SurfaceModel,
+)
 from phydrax.meshing import MeshingFailure
-from phydrax.meshing.providers._manifold import ManifoldProvider, SurfaceBooleanOperation
+from phydrax.meshing.providers import ManifoldProvider
 
 
 pytestmark = [

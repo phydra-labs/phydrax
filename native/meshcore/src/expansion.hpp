@@ -24,6 +24,8 @@
 #include <memory>
 #include <utility>
 
+#include "bounded_memory.hpp"
+
 namespace phx::mc {
 
 inline void fast_two_sum(double a, double b, double& x, double& y) {
@@ -97,7 +99,7 @@ class Expansion {
   }
   Expansion& operator=(Expansion&& other) noexcept {
     if (this != &other) {
-      heap_.reset();
+      heap_ = DoubleBuffer();
       capacity_ = kInline;
       size_ = 0;
       move_from(std::move(other));
@@ -230,7 +232,7 @@ class Expansion {
     if (count <= capacity_) {
       return;
     }
-    std::unique_ptr<double[]> grown(new double[static_cast<std::size_t>(count)]);
+    DoubleBuffer grown = allocate_double_buffer(static_cast<std::size_t>(count));
     if (size_ > 0) {
       std::memcpy(grown.get(), data(), static_cast<std::size_t>(size_) * sizeof(double));
     }
@@ -245,9 +247,12 @@ class Expansion {
   }
 
   void assign(const double* values, int count) {
-    size_ = 0;
-    reserve(count);
-    if (count > 0) {
+    if (count > capacity_) {
+      DoubleBuffer grown = allocate_double_buffer(static_cast<std::size_t>(count));
+      std::memcpy(grown.get(), values, static_cast<std::size_t>(count) * sizeof(double));
+      heap_ = std::move(grown);
+      capacity_ = count;
+    } else if (count > 0) {
       std::memcpy(data(), values, static_cast<std::size_t>(count) * sizeof(double));
     }
     size_ = count;
@@ -346,7 +351,7 @@ class Expansion {
   }
 
   double inline_[kInline];
-  std::unique_ptr<double[]> heap_;
+  DoubleBuffer heap_;
   int size_ = 0;
   int capacity_ = kInline;
 };

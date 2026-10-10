@@ -17,7 +17,6 @@ from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunctio
 from ..._doc import DOC_KEY0
 from ..._sampling import materialize_design
 from ...typing import PRNGKey
-from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _derivative_metadata, _factor_and_dim, _resolve_var, grad
 
 
@@ -77,6 +76,8 @@ def fractional_laplacian(
     A `DomainFunction` representing the (truncated, unnormalized) fractional Laplacian.
     """
     del angular_points
+    from ..integral._local_ops import _uniform_ball_rule
+
     a = float(alpha)
     if not (0.0 < a < 2.0):
         raise ValueError("alpha must be in (0,2).")

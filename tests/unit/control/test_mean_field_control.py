@@ -189,7 +189,10 @@ def test_mean_field_control_scenario_1() -> None:
             terminal_id="terminal",
         )
 
-    with pytest.raises(TypeError, match="externality must be an explicit"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'externality': expected MeanFieldExternality; got NoneType",
+    ):
         paths = _paths()
         MeanFieldControlProblem(
             _base_problem(

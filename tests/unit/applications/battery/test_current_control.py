@@ -159,7 +159,6 @@ def _support() -> Any:
     profile = CapabilityProfile(
         "battery.analytic-current",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     )

@@ -15,8 +15,6 @@ from jax import Array
 
 from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
-from ...discretization._cell_mesh import CellMesh
-from ...discretization._support import DiscreteSupport
 from ...typing import checked
 from .._atlas import BoundaryAtlas, BoundaryMap
 from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureMapEvaluation
@@ -24,6 +22,8 @@ from ._topology import TriangleTopology
 
 
 if TYPE_CHECKING:
+    from ...discretization._cell_mesh import CellMesh
+    from ...discretization._support import DiscreteSupport
     from ._bvh import TriangleBVH
 
 
@@ -123,6 +123,8 @@ class TriangleMesh(StrictModule):
 
     def discrete_support(self, /) -> DiscreteSupport:
         """Return canonical topology bound to this immutable embedding."""
+        from ...discretization._support import DiscreteSupport
+
         return DiscreteSupport(
             self.topology.cell_complex_topology(),
             3,
@@ -131,6 +133,8 @@ class TriangleMesh(StrictModule):
 
     def as_cell_mesh(self, /) -> CellMesh:
         """Return the shared computational realization of this surface mesh."""
+        from ...discretization._cell_mesh import CellMesh
+
         return CellMesh.from_triangles(
             self.vertices,
             self.faces,
@@ -278,13 +282,27 @@ class _TriangleCubatureMap(AbstractCubatureMap):
 
 
 def _closest_segment(point: Array, start: Array, end: Array) -> Array:
-    direction = end - start
-    parameter = jnp.sum((point - start) * direction, axis=-1) / jnp.sum(
+    # An edge shared by adjacent faces appears with opposite orientations. Orient
+    # each segment lexicographically and return clamped endpoints exactly so
+    # both faces produce bitwise-identical closest points; exact distance ties
+    # then resolve by face index on every evaluation route.
+    axis = jnp.argmax(start != end, axis=-1)[..., None]
+    swap = jnp.take_along_axis(end, axis, axis=-1) < jnp.take_along_axis(
+        start, axis, axis=-1
+    )
+    first = jnp.where(swap, end, start)
+    second = jnp.where(swap, start, end)
+    direction = second - first
+    parameter = jnp.sum((point - first) * direction, axis=-1) / jnp.sum(
         direction * direction,
         axis=-1,
     )
-    parameter = jnp.clip(parameter, 0.0, 1.0)
-    return start + parameter[..., None] * direction
+    parameter = jnp.clip(parameter, 0.0, 1.0)[..., None]
+    return jnp.where(
+        parameter <= 0.0,
+        first,
+        jnp.where(parameter >= 1.0, second, first + parameter * direction),
+    )
 
 
 def _closest_points_on_triangles(point: Array, triangles: Array) -> Array:

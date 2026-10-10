@@ -130,7 +130,6 @@ def membranes_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"formulation": formulation}),),
             required_gates=("mass-conservation", "analytic-control", "public-workflow"),
         )

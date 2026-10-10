@@ -127,8 +127,13 @@ def test_signed_spectral_coordinates_scenario_1() -> None:
         assert state.shape == space.modal_shape + (2,)
         assert state.dtype == jnp.dtype(coefficient_dtype)
         assert coordinates.coordinate_space.dtype == np.dtype(coordinate_dtype)
+        # Paired modes pass through the irrational isometry scale sqrt(2) once
+        # in each direction: two roundings in the prepared coordinate precision.
         np.testing.assert_allclose(
-            np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
+            np.asarray(coordinates.to_real_coordinates(state)),
+            np.asarray(real),
+            rtol=2 * np.finfo(coordinate_dtype).eps,
+            atol=0.0,
         )
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     coordinates = space.real_coordinates(component_shape=(2,))

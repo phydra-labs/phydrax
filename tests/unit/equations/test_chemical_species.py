@@ -40,7 +40,7 @@ def test_chemical_species_scenario_1() -> None:
     )
     assert schema.phase_species_indices(phx.equations.ChemicalPhaseKind.SOLID) == (2,)
     assert schema.phase_count == 2
-    with pytest.raises(ValueError, match="integer"):
+    with pytest.raises(TypeError, match="charges: expected HostInteger"):
         phx.equations.ChemicalSpeciesSchema.from_unique_species(
             ("A",),
             (phx.equations.ChemicalPhaseKind.GAS,),

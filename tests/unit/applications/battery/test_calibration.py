@@ -69,7 +69,6 @@ def _candidate() -> Any:
     return CapabilityProfile(
         "battery.linear-calibration-candidate",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     ), support

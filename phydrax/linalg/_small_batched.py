@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from fractions import Fraction
+from typing import Literal, TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +20,10 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
 
 
 class SmallLinearSolvePlan(StrictModule, NonTrainableState):
@@ -338,10 +346,185 @@ def inverse_small_linear(
     return solve_small_linear(plan, value, identity)
 
 
+@dataclass(frozen=True, slots=True)
+class ExactSmallLinearActions:
+    """Host exact coefficient actions, not an approximate inverse certificate.
+
+    The requested right-hand-side columns are solved in rational arithmetic
+    from their original binary64 coefficients. A singular preparation retains
+    rank/status and has no actions; no zero solution or rounded surrogate is
+    published. Runtime floating evaluation remains separately rounded.
+    """
+
+    actions: tuple[tuple[Fraction, ...], ...] | None
+    determinant: Fraction
+    rank: int
+    status: Literal["exact", "singular"]
+    operation_count: int
+    input_id: str
+
+    @property
+    def successful(self) -> bool:
+        return self.status == "exact"
+
+
+def prepare_exact_small_linear_actions(
+    matrix: tuple[tuple[Fraction, ...], ...],
+    right: tuple[tuple[Fraction, ...], ...],
+    /,
+    *,
+    coordinate_budget: CoordinateEnclosureBudget | None = None,
+) -> ExactSmallLinearActions:
+    """Prepare exact requested coefficient actions for one 1–4 dimensional system.
+
+    This host preparation owns the elimination; geometry consumers request
+    concrete projective coefficient columns. A dimension-by-zero right bank
+    requests only determinant/rank evidence, without a discarded coefficient
+    solve or a generic inverse.
+    """
+    dimension = len(matrix)
+    if dimension not in (1, 2, 3, 4) or any(len(row) != dimension for row in matrix):
+        raise ValueError(
+            "Exact small actions require a square dimension-one-through-four matrix."
+        )
+    if len(right) != dimension or any(len(row) != len(right[0]) for row in right):
+        raise ValueError(
+            "Exact small right-hand-side columns must align with the matrix."
+        )
+    if any(not isinstance(value, Fraction) for row in (*matrix, *right) for value in row):
+        raise TypeError(
+            "Exact coefficient preparation requires original Fraction coefficients."
+        )
+    count = len(right[0])
+    if coordinate_budget is not None:
+        import math
+
+        from ..discretization._coordinate_enclosure import CoordinateEnclosureBudget
+        from ._hermitian_spectral import _fraction_matrix_profile, _reserve_fraction_work
+
+        if not isinstance(coordinate_budget, CoordinateEnclosureBudget):
+            raise TypeError(
+                "Exact small actions require the supplied original coordinate ledger."
+            )
+        # Elimination visits at most T lower entries, twice sum(k**2)
+        # trailing entries, and 2*T*C RHS terms. Back substitution adds
+        # 2*T*C+n*C; the original-system check adds 2*n*n*C.
+        triangular = dimension * (dimension - 1) // 2
+        work_upper = (
+            triangular
+            + dimension * (dimension - 1) * (2 * dimension - 1) // 3
+            + count * (4 * triangular + dimension + 2 * dimension * dimension)
+        )
+        terms = dimension * (dimension + count)
+        coordinate_budget.admit_work_bound(work_upper + 2 * terms)
+        numerator_bits, denominator_bits = _fraction_matrix_profile(
+            (matrix, right), coordinate_budget
+        )
+        _reserve_fraction_work(coordinate_budget, 0, 4, terms * denominator_bits + 1)
+        coordinate_budget.reserve(terms)
+        common = 1
+        for bank in (matrix, right):
+            for row in bank:
+                for value in row:
+                    common = math.lcm(common, value.denominator)
+        height = numerator_bits + common.bit_length() + 1
+        # Clearing this ACTUAL common denominator bounds every integer input.
+        # Gaussian entries are ratios of minors of order <= n. Products and
+        # the <= n remainder additions therefore fit 16*n*height+64 bits.
+        # Eight copies cover factors/RHS/actions, arithmetic temporaries,
+        # identity serialization and all mutable/immutable row containers.
+        _reserve_fraction_work(
+            coordinate_budget,
+            0,
+            8 * dimension * (dimension + count) + 16,
+            16 * dimension * height + 64,
+        )
+    identity = canonical_fingerprint(
+        {
+            "kind": "exact-small-linear-actions",
+            "matrix": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in matrix
+            ),
+            "right": tuple(
+                tuple((value.numerator, value.denominator) for value in row)
+                for row in right
+            ),
+        }
+    )
+    factors = [list(row) for row in matrix]
+    rhs = [list(row) for row in right]
+    determinant, parity, rank, work = Fraction(1), 1, 0, 0
+    for column in range(dimension):
+        pivot = next(
+            (row for row in range(rank, dimension) if factors[row][column]), None
+        )
+        if pivot is None:
+            continue
+        if pivot != rank:
+            factors[pivot], factors[rank] = factors[rank], factors[pivot]
+            rhs[pivot], rhs[rank] = rhs[rank], rhs[pivot]
+            parity = -parity
+        diagonal = factors[rank][column]
+        determinant *= diagonal
+        for row in range(rank + 1, dimension):
+            if not factors[row][column]:
+                continue
+            multiplier = factors[row][column] / diagonal
+            work += 1
+            factors[row][column] = Fraction(0)
+            for trailing in range(column + 1, dimension):
+                factors[row][trailing] -= multiplier * factors[rank][trailing]
+                work += 2
+            for action in range(count):
+                rhs[row][action] -= multiplier * rhs[rank][action]
+                work += 2
+        rank += 1
+    if rank != dimension:
+        if coordinate_budget is not None:
+            coordinate_budget.reserve(work)
+        return ExactSmallLinearActions(
+            None, Fraction(0), rank, "singular", work, identity
+        )
+    values = [[Fraction(0) for _ in range(count)] for _ in range(dimension)]
+    for row in range(dimension - 1, -1, -1):
+        for action in range(count):
+            remainder = rhs[row][action]
+            for column in range(row + 1, dimension):
+                remainder -= factors[row][column] * values[column][action]
+                work += 2
+            values[row][action] = remainder / factors[row][row]
+            work += 1
+    actions = tuple(tuple(row) for row in values)
+    for row in range(dimension):
+        for action in range(count):
+            if (
+                sum(
+                    (
+                        matrix[row][column] * actions[column][action]
+                        for column in range(dimension)
+                    ),
+                    Fraction(0),
+                )
+                != right[row][action]
+            ):
+                raise RuntimeError(
+                    "Exact small coefficient actions failed their original system."
+                )
+            work += 2 * dimension
+    if coordinate_budget is not None:
+        coordinate_budget.reserve(work)
+    return ExactSmallLinearActions(
+        actions, determinant * parity, rank, "exact", work, identity
+    )
+
+
 __all__ = [
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
     "determinant_small_linear",
     "inverse_small_linear",
     "solve_small_linear",
+    "ExactSmallLinearActions",
+    "prepare_exact_small_linear_actions",
 ]

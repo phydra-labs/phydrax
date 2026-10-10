@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import isfinite
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
@@ -20,7 +21,7 @@ from ._basis import TensorSplineBasisSpec
 
 
 class NURBSGeometryState(StrictModule):
-    """Differentiable NURBS values with a unique mean-one positive weight gauge."""
+    """Differentiable NURBS values retaining the authored positive weight bank."""
 
     control_points: Array
     weights: Array
@@ -53,9 +54,8 @@ class NURBSGeometryState(StrictModule):
             jnp.any(~jnp.isfinite(weights_)) | jnp.any(weights_ <= 0.0),
             "NURBS weights must be finite and strictly positive.",
         )
-        gauge = jnp.mean(weights_)
         self.control_points = points
-        self.weights = weights_ / gauge
+        self.weights = weights_
 
     @property
     def ambient_dimension(self) -> int:
@@ -64,6 +64,29 @@ class NURBSGeometryState(StrictModule):
     @property
     def control_shape(self) -> tuple[int, ...]:
         return tuple(self.weights.shape)
+
+
+def _require_nurbs_geometry_integrity(state: NURBSGeometryState, /) -> None:
+    """Validate the retained source bank without changing its weight scale."""
+    if type(state) is not NURBSGeometryState:
+        raise TypeError("NURBS integrity requires its exact owning geometry state.")
+    points, weights = state.control_points, state.weights
+    if points.ndim < 2 or points.shape[-1] <= 0 or weights.size == 0:
+        raise ValueError("Retained NURBS geometry requires nonempty tensor controls.")
+    if weights.shape != points.shape[:-1]:
+        raise ValueError("Retained NURBS weights must match their control tensor.")
+    if not jnp.issubdtype(points.dtype, jnp.floating) or not jnp.issubdtype(
+        weights.dtype,
+        jnp.floating,
+    ):
+        raise TypeError("Retained NURBS geometry requires real inexact banks.")
+    invalid = (
+        jnp.any(~jnp.isfinite(points))
+        | jnp.any(~jnp.isfinite(weights))
+        | jnp.any(weights <= 0.0)
+    )
+    if bool(jax.device_get(invalid)):
+        raise ValueError("Retained NURBS weights must be finite and strictly positive.")
 
 
 class IsogeometricRuntimeData(StrictModule):

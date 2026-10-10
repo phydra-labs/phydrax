@@ -144,7 +144,6 @@ def test_adaptive_splitting_reports_tied_population_extinction() -> None:
         event,
         plan,
         initial_sampler=initial_sampler,
-        # ty: ignore[invalid-argument-type]
         branch_sampler=unreachable_branch,
         key=jr.key(53),
     )

@@ -435,3 +435,97 @@ def test_volume_spec_rejects_boundary_layer_outside_top_level_volume_scope() -> 
             size_controls=(phx.meshing.UniformSizeControl(boundary_scope, 0.2),),
             layer_controls=(control,),
         )
+
+
+def _curve_target() -> Any:
+    return phx.meshing.CellMeshingTarget(
+        1, 2, phx.meshing.CellFamilyPolicy(required=("interval",))
+    )
+
+
+def test_curve_meshing_spec_validates_junctions_and_fingerprints_canonically() -> None:
+    scope = _scope(1, (0, 1, 2))
+    sizes = (phx.meshing.UniformSizeControl(scope, 0.1),)
+    first = phx.meshing.CurveJunction("a", ((1, "start"), (0, "end")))
+    second = phx.meshing.CurveJunction("b", ((2, "start"), (1, "end")))
+    forward = phx.meshing.CurveMeshingSpec(
+        _curve_target(), scope, size_controls=sizes, junctions=(first, second)
+    )
+    reverse = phx.meshing.CurveMeshingSpec(
+        _curve_target(), scope, size_controls=sizes, junctions=(second, first)
+    )
+    assert forward.specification_id == reverse.specification_id
+    assert first.endpoints == ((0, "end"), (1, "start"))
+    with pytest.raises(ValueError):
+        phx.meshing.CurveJunction("bad", ((0, "middle"), (1, "start")))  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="at most one junction"):
+        phx.meshing.CurveMeshingSpec(
+            _curve_target(),
+            scope,
+            size_controls=sizes,
+            junctions=(first, phx.meshing.CurveJunction("c", ((0, "end"), (2, "end")))),
+        )
+    with pytest.raises(ValueError, match="curves of the meshing scope"):
+        phx.meshing.CurveMeshingSpec(
+            _curve_target(),
+            scope,
+            size_controls=sizes,
+            junctions=(phx.meshing.CurveJunction("d", ((0, "end"), (9, "start"))),),
+        )
+    with pytest.raises(ValueError, match="interval"):
+        phx.meshing.CurveMeshingSpec(
+            phx.meshing.CellMeshingTarget(
+                1, 2, phx.meshing.CellFamilyPolicy(required=("triangle",))
+            ),
+            scope,
+            size_controls=sizes,
+        )
+
+
+def test_meshing_limits_validate_and_fingerprint_native_budgets() -> None:
+    base = phx.meshing.MeshingLimits()
+    assert base.limits_id == phx.meshing.MeshingLimits().limits_id
+    assert phx.meshing.MeshingLimits(maximum_cavity_cells=10).limits_id != base.limits_id
+    with pytest.raises(TypeError):
+        phx.meshing.MeshingLimits(maximum_work_units=True)
+    with pytest.raises(TypeError):
+        phx.meshing.MeshingLimits(maximum_geometry_queries=1.5)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError):
+        phx.meshing.MeshingLimits(maximum_scratch_bytes=0)
+
+
+def test_meshing_failure_carries_canonical_typed_evidence() -> None:
+    failure = phx.meshing.MeshingFailure(
+        phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        "budget",
+        stage="curve_meshing",
+        entity_ids=(3, 1),
+        requested=(("b", 2.0), ("a", 1.0)),
+        achieved=(("a", 5.0),),
+        checkpoint_id="checkpoint-7",
+    )
+    again = phx.meshing.MeshingFailure(
+        phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        "budget",
+        stage="curve_meshing",
+        entity_ids=(3, 1),
+        requested=(("a", 1.0), ("b", 2.0)),
+        achieved=(("a", 5.0),),
+        checkpoint_id="checkpoint-7",
+    )
+    assert failure.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
+    assert failure.evidence.requested == (("a", 1.0), ("b", 2.0))
+    assert failure.evidence.evidence_id == again.evidence.evidence_id
+    assert failure.entity_ids == (3, 1)
+    with pytest.raises(ValueError):
+        phx.meshing.MeshingFailure(
+            phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "nan",
+            achieved=(("a", float("nan")),),
+        )
+    with pytest.raises(ValueError):
+        phx.meshing.MeshingFailure(
+            phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "empty checkpoint",
+            checkpoint_id=" ",
+        )

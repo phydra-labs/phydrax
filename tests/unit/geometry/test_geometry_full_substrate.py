@@ -3,36 +3,86 @@
 #
 
 import hashlib
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-import build123d as bd
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import OCP.BOPAlgo as _ocp_bop_algo
-import OCP.BRepAdaptor as _ocp_brep_adaptor
-import OCP.BRepPrimAPI as _ocp_brep_prim_api
-import OCP.gp as _ocp_gp
 import pytest
 from scipy.interpolate import BSpline as SciPyBSpline
 
-
-_brep_adaptor: Any = _ocp_brep_adaptor
-_bop_algo: Any = _ocp_bop_algo
-_brep_prim_api: Any = _ocp_brep_prim_api
-_gp: Any = _ocp_gp
-BOPAlgo_Splitter = _bop_algo.BOPAlgo_Splitter
-BRepPrimAPI_MakeBox = _brep_prim_api.BRepPrimAPI_MakeBox
-BRepAdaptor_Surface = _brep_adaptor.BRepAdaptor_Surface
-gp_Pnt = _gp.gp_Pnt
-gp_Vec = _gp.gp_Vec
-
 import phydrax as phx
-from phydrax.geometry.brep import BRepBoundaryMap
+from phydrax.geometry.brep import (
+    brep_box,
+    brep_sphere,
+    BRepBoundaryMap,
+    BRepTessellationPolicy,
+)
 
 
 _SI_COORDINATES = phx.SpatialCoordinateContract.si()
+_CAD_LIMITS = phx.interchange.ResourceLimits(
+    max_bytes=1 << 22,
+    max_depth=32,
+    max_nodes=20_000,
+    max_attributes=2_000_000,
+    max_losses=8,
+)
+
+
+@pytest.fixture
+def occt() -> Any:
+    """Load external providers only for explicit interoperability comparisons."""
+    bd = pytest.importorskip("build123d")
+    bop_algo = pytest.importorskip("OCP.BOPAlgo")
+    brep_adaptor = pytest.importorskip("OCP.BRepAdaptor")
+    brep_prim_api = pytest.importorskip("OCP.BRepPrimAPI")
+    gp = pytest.importorskip("OCP.gp")
+    return SimpleNamespace(
+        bd=bd,
+        BOPAlgo_Splitter=bop_algo.BOPAlgo_Splitter,
+        BRepPrimAPI_MakeBox=brep_prim_api.BRepPrimAPI_MakeBox,
+        BRepAdaptor_Surface=brep_adaptor.BRepAdaptor_Surface,
+        gp_Pnt=gp.gp_Pnt,
+        gp_Vec=gp.gp_Vec,
+    )
+
+
+def _read_native_occt_fixture(
+    shape: Any,
+    path: Path,
+    *,
+    linear_deflection: float,
+    angular_deflection: float,
+    relative_geometric_tolerance: float,
+) -> Any:
+    # The optional bridge only produces the external file. Its live-shape
+    # model is not authoritative geometry for either native source.
+    phx.interchange.persist_occt_shape(
+        shape,
+        path,
+        coordinate_contract=_SI_COORDINATES,
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
+    )
+    policy = phx.interchange.CadImportPolicy(
+        _SI_COORDINATES,
+        _CAD_LIMITS,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=linear_deflection,
+            angular_deflection=angular_deflection,
+        ),
+        relative_geometric_tolerance=relative_geometric_tolerance,
+    )
+    return phx.interchange.read_cad(
+        path,
+        policy,
+        trusted_root=path.parent,
+        source_length_unit=phx.units.METER,
+    )
 
 
 def _tetrahedron() -> Any:
@@ -43,13 +93,13 @@ def _tetrahedron() -> Any:
     return vertices, faces
 
 
-def _conformal_two_box_partition() -> Any:
-    splitter = BOPAlgo_Splitter()
+def _conformal_two_box_partition(occt: Any) -> Any:
+    splitter = occt.BOPAlgo_Splitter()
     splitter.AddArgument(
-        BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+        occt.BRepPrimAPI_MakeBox(occt.gp_Pnt(0.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
     )
     splitter.AddArgument(
-        BRepPrimAPI_MakeBox(gp_Pnt(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
+        occt.BRepPrimAPI_MakeBox(occt.gp_Pnt(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
     )
     splitter.Perform()
     if splitter.HasErrors():
@@ -159,13 +209,17 @@ def test_matrix_free_ddg_linear_precision() -> None:
     assert np.all(np.asarray(operators.vertex_mass) > 0.0)
 
 
-def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> None:
-    model = phx.geometry.model_from_occt_shape(
-        BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
+def test_native_brep_preserves_topology_patches_and_boundary_identity() -> None:
+    model = brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 2.0, 3.0),
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.1,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.1,
+            angular_deflection=0.3,
+        ),
     )
+    assert model.geometry is not None
     assert model.topology.num_faces == 6
     assert model.topology.num_edges == 12
     assert len(model.patches) == model.topology.num_faces
@@ -185,7 +239,7 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
     selected = geometry.boundary_atlas.select(entity_ids=(0,))
     assert selected.source_id == model.source_id
     assert np.array_equal(np.asarray(selected.source_entity_ids), [0])
-    face_point = jnp.asarray([0.5, 0.0, 0.0])
+    face_point = jnp.asarray([0.5, 0.0, 1.5])
     direct_gradient = jax.grad(geometry.boundary_field)(face_point)
     assert np.all(np.isfinite(np.asarray(direct_gradient)))
     assert float(jnp.linalg.norm(direct_gradient)) == pytest.approx(1.0)
@@ -203,33 +257,35 @@ def test_occt_brep_import_preserves_topology_patches_and_boundary_identity() -> 
     )
 
 
-def test_brep_identity_separates_physical_source_from_query_representation() -> None:
+def test_brep_identity_separates_physical_source_from_query_representation(
+    occt: Any,
+) -> None:
     source_digest = hashlib.sha256(b"physical-equivalent-cad").hexdigest()
-    baseline = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    baseline = phx.interchange.model_from_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_id="first-location",
         source_digest=source_digest,
         linear_deflection=0.1,
         angular_deflection=0.3,
     )
-    relocated = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    relocated = phx.interchange.model_from_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_id="second-location",
         source_digest=source_digest,
         linear_deflection=0.1,
         angular_deflection=0.3,
     )
-    refined = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    refined = phx.interchange.model_from_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=_SI_COORDINATES,
         source_digest=source_digest,
         linear_deflection=0.05,
         angular_deflection=0.3,
     )
-    reframed = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    reframed = phx.interchange.model_from_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=phx.SpatialCoordinateContract(
             phx.units.METER,
             reference_frame="body",
@@ -238,8 +294,8 @@ def test_brep_identity_separates_physical_source_from_query_representation() -> 
         linear_deflection=0.1,
         angular_deflection=0.3,
     )
-    rescaled = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    rescaled = phx.interchange.model_from_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
         source_digest=source_digest,
         linear_deflection=0.1,
@@ -248,14 +304,14 @@ def test_brep_identity_separates_physical_source_from_query_representation() -> 
 
     assert baseline.source_digest == source_digest
     assert baseline.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
-    assert (
-        phx.geometry.BRepSource(baseline).coordinate_contract.spatial_id
-        == _SI_COORDINATES.spatial_id
-    )
+    assert baseline.geometry is None
     assert baseline.source_id != relocated.source_id
     assert baseline.source_revision == relocated.source_revision
     assert baseline.source_revision == refined.source_revision
-    assert baseline.model_id != refined.model_id
+    # Query tessellation resolution is derived data: it changes the
+    # tessellation identity, never the exact model identity.
+    assert baseline.model_id == refined.model_id
+    assert baseline.tessellation_id != refined.tessellation_id
     assert baseline.import_policy_id == refined.import_policy_id
     assert reframed.source_revision != baseline.source_revision
     assert rescaled.source_revision != baseline.source_revision
@@ -270,9 +326,9 @@ def test_brep_entity_ids_reject_ambiguous_identity_components() -> None:
         phx.geometry.BRepEntityId("revision", "face", -1)
 
 
-def test_occt_conformal_partition_preserves_shared_face_incidence() -> None:
-    model = phx.geometry.model_from_occt_shape(
-        _conformal_two_box_partition(),
+def test_occt_conformal_partition_preserves_shared_face_incidence(occt: Any) -> None:
+    model = phx.interchange.model_from_occt_shape(
+        _conformal_two_box_partition(occt),
         coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
         angular_deflection=0.3,
@@ -307,11 +363,12 @@ def test_occt_conformal_partition_preserves_shared_face_incidence() -> None:
 
 
 def test_persist_occt_shape_publishes_native_identity_without_clobbering(
-    tmp_path: Any,
+    tmp_path: Path,
+    occt: Any,
 ) -> None:
     destination = tmp_path / "shape.brep"
-    model = phx.geometry.persist_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+    model = phx.interchange.persist_occt_shape(
+        occt.bd.Box(1.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
@@ -325,7 +382,7 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     assert model.source_digest == published_digest
     assert model.coordinate_contract.spatial_id == _SI_COORDINATES.spatial_id
     assert model.report.source_format == "brep"
-    reopened = phx.geometry.import_brep(
+    reopened = phx.interchange.import_occt_brep(
         destination,
         coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
@@ -336,15 +393,15 @@ def test_persist_occt_shape_publishes_native_identity_without_clobbering(
     assert reopened.model_id == model.model_id
 
     with pytest.raises(FileExistsError):
-        phx.geometry.persist_occt_shape(
-            bd.Box(2.0, 2.0, 3.0).wrapped,
+        phx.interchange.persist_occt_shape(
+            occt.bd.Box(2.0, 2.0, 3.0).wrapped,
             destination,
             coordinate_contract=_SI_COORDINATES,
         )
     assert destination.read_bytes() == published_bytes
 
-    replacement = phx.geometry.persist_occt_shape(
-        bd.Box(2.0, 2.0, 3.0).wrapped,
+    replacement = phx.interchange.persist_occt_shape(
+        occt.bd.Box(2.0, 2.0, 3.0).wrapped,
         destination,
         coordinate_contract=_SI_COORDINATES,
         overwrite=True,
@@ -601,11 +658,8 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
     )
 
     singular = phx.geometry.BSplineCurve(
-        # ty: ignore[invalid-argument-type]
         [[0.0, 0.0], [1.0, 0.0]],
-        # ty: ignore[invalid-argument-type]
         [1.0, -1.0],
-        # ty: ignore[invalid-argument-type]
         [0.0, 0.0, 1.0, 1.0],
         1,
     )
@@ -613,9 +667,12 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative() -> None:
         jax.block_until_ready(eqx.filter_jit(singular.evaluate)(jnp.asarray(0.5)))
 
 
-def test_occt_bspline_import_matches_native_surface_differential() -> None:
+def test_occt_bspline_import_matches_native_surface_differential(
+    tmp_path: Path,
+    occt: Any,
+) -> None:
     coordinates = np.linspace(0.0, 1.0, 5)
-    face = bd.Face.make_surface_from_array_of_points(
+    face = occt.bd.Face.make_surface_from_array_of_points(
         [
             [
                 (
@@ -633,12 +690,18 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
         min_deg=2,
         max_deg=3,
     )
-    model = phx.geometry.model_from_occt_shape(
+    imported = _read_native_occt_fixture(
         face.wrapped,
-        coordinate_contract=_SI_COORDINATES,
+        tmp_path / "spline-face.brep",
         linear_deflection=0.05,
         angular_deflection=0.2,
+        # Permit the fixture's micron-scale source coedge correspondence
+        # error, not approximate p-curves or an implicit OCCT tolerance lift.
+        relative_geometric_tolerance=2e-6,
     )
+    model = imported.model
+    assert model.geometry is not None
+    assert imported.coverage.pcurves_fitted == 0
     assert len(model.patches) == 1
     assert isinstance(model.patches[0], phx.geometry.BSplineSurfacePatch)
     assert model.report.converted_surface_count == 0
@@ -648,21 +711,23 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
     assert model.topology.face_solids == ((),)
     assert model.report.num_solids == 0
     assert model.solid_ids == ()
-    with pytest.raises(ValueError, match="watertight query tessellation"):
+    # Exact surface charts do not define an enclosed region, independently
+    # of any derived query mesh's watertightness.
+    with pytest.raises(ValueError):
         phx.geometry.BRepSource(model)
-    with pytest.raises(ValueError, match="watertight query tessellation"):
+    with pytest.raises(ValueError):
         phx.geometry.FixedTopologyBRepSource(model)
 
     normalized = np.asarray([[0.0, 0.0], [0.2, 0.3], [0.5, 0.5], [1.0, 0.6], [0.4, 1.0]])
     bounds = np.asarray(model.parameter_bounds[0])
     parameters = bounds[0] + normalized * (bounds[1] - bounds[0])
-    native_surface = BRepAdaptor_Surface(face.wrapped, True).BSpline()
+    native_surface = occt.BRepAdaptor_Surface(face.wrapped, True).BSpline()
     expected_values = []
     expected_differentials = []
     for u, v in parameters:
-        point = gp_Pnt()
-        u_tangent = gp_Vec()
-        v_tangent = gp_Vec()
+        point = occt.gp_Pnt()
+        u_tangent = occt.gp_Vec()
+        v_tangent = occt.gp_Vec()
         native_surface.D1(
             float(u),
             float(v),
@@ -703,37 +768,48 @@ def test_occt_bspline_import_matches_native_surface_differential() -> None:
     assert np.all(np.asarray(frame.jacobian) > 0.0)
 
 
-def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch() -> None:
+def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch(
+    tmp_path: Path,
+    occt: Any,
+) -> None:
     wires = [
-        bd.Wire.make_circle(
+        occt.bd.Wire.make_circle(
             1.0,
-            plane=bd.Plane(origin=(0.0, 0.0, 0.0)),
+            plane=occt.bd.Plane(origin=(0.0, 0.0, 0.0)),
         ),
-        bd.Wire.make_circle(
+        occt.bd.Wire.make_circle(
             1.25,
-            plane=bd.Plane(origin=(0.15, -0.05, 0.8)),
+            plane=occt.bd.Plane(origin=(0.15, -0.05, 0.8)),
         ),
-        bd.Wire.make_circle(
+        occt.bd.Wire.make_circle(
             0.9,
-            plane=bd.Plane(origin=(-0.1, 0.1, 1.7)),
+            plane=occt.bd.Plane(origin=(-0.1, 0.1, 1.7)),
         ),
     ]
-    model = phx.geometry.model_from_occt_shape(
-        bd.Solid.make_loft(wires).wrapped,
-        coordinate_contract=_SI_COORDINATES,
+    imported = _read_native_occt_fixture(
+        occt.bd.Solid.make_loft(wires).wrapped,
+        tmp_path / "spline-loft.brep",
         linear_deflection=0.1,
         angular_deflection=0.25,
+        # This explicit source correspondence allowance is independent of
+        # tessellation deflection; represented carriers remain exact.
+        relative_geometric_tolerance=2e-6,
     )
-    assert tuple(type(patch).__name__ for patch in model.patches) == (
-        "BSplineSurfacePatch",
-        "PlanePatch",
-        "PlanePatch",
+    model = imported.model
+    assert model.geometry is not None
+    assert imported.coverage.pcurves_fitted == 0
+    spline_faces = tuple(
+        index
+        for index, patch in enumerate(model.patches)
+        if isinstance(patch, phx.geometry.BSplineSurfacePatch)
     )
+    assert len(spline_faces) == 1
+    assert sum(isinstance(patch, phx.geometry.PlanePatch) for patch in model.patches) == 2
 
     geometry = phx.geometry.BRepSource(model).compile()
     assert float(geometry.measure) > 0.0
     references = jnp.asarray([[0.0, 0.0], [0.5, 0.5], [1.0, 0.4], [0.3, 1.0]])
-    indices = jnp.zeros((references.shape[0],), dtype=jnp.int32)
+    indices = jnp.full((references.shape[0],), spline_faces[0], dtype=jnp.int32)
     frame = geometry.boundary_atlas.frame(indices, references)
     assert np.all(np.isfinite(np.asarray(frame.normal)))
     assert np.all(np.asarray(frame.jacobian) > 0.0)
@@ -781,12 +857,15 @@ def test_level_set_domain_ansatz_factor_has_unit_boundary_jet() -> None:
 
 
 def test_fixed_topology_brep_preserves_connectivity_and_shape_gradients() -> None:
-    model = phx.geometry.model_from_occt_shape(
-        bd.Sphere(1.0).wrapped,
+    model = brep_sphere(
+        1.0,
         coordinate_contract=_SI_COORDINATES,
-        linear_deflection=0.15,
-        angular_deflection=0.3,
+        tessellation=BRepTessellationPolicy(
+            linear_deflection=0.15,
+            angular_deflection=0.3,
+        ),
     )
+    assert model.geometry is not None
     geometry = phx.geometry.FixedTopologyBRepSource(model).compile()
     radius_index = next(
         index

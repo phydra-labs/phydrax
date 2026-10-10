@@ -32,15 +32,15 @@ For a local process set, `LocalProcessLaunchPlan` and
 `launch_local_processes` start one shell-free argument vector per rank and
 inject the same explicit rendezvous identity.
 
-::: phydrax.execution.RuntimeBootstrap
+`phydrax.execution.RuntimeBootstrap`
 
 ---
 
-::: phydrax.execution.RuntimeInfo
+`phydrax.execution.RuntimeInfo`
 
 ---
 
-::: phydrax.execution.ExecutionRuntime
+`phydrax.execution.ExecutionRuntime`
 
 ## Policy, requirements, and resolved plans
 
@@ -65,15 +65,15 @@ This is a clean ownership cutover: use `phx.execution.ExecutionPlan` rather
 than `phx.lifecycle.ExecutionPlan`, and `phx.execution.ResourceRequest` rather
 than `phx.service.ResourceRequest`.
 
-::: phydrax.execution.ExecutionPolicy
+`phydrax.execution.ExecutionPolicy`
 
 ---
 
-::: phydrax.execution.ExecutionPlan
+`phydrax.execution.ExecutionPlan`
 
 ---
 
-::: phydrax.execution.ExecutionGroup
+`phydrax.execution.ExecutionGroup`
 
 ## Memory measurement and certified envelopes
 
@@ -125,27 +125,27 @@ this estimate into `ExecutionResourceEvidence` with
 outside XLA's analysis. See
 [Streamed nonlinear relations](../guides_sparse_spatial_hierarchies.md#streamed-nonlinear-relations).
 
-::: phydrax.execution.PhaseMemorySampler
+`phydrax.execution.PhaseMemorySampler`
 
 ---
 
-::: phydrax.execution.PhaseMemoryEvidence
+`phydrax.execution.PhaseMemoryEvidence`
 
 ---
 
-::: phydrax.execution.MemoryMeasurement
+`phydrax.execution.MemoryMeasurement`
 
 ---
 
-::: phydrax.execution.HostMemorySample
+`phydrax.execution.HostMemorySample`
 
 ---
 
-::: phydrax.execution.DeviceMemorySample
+`phydrax.execution.DeviceMemorySample`
 
 ---
 
-::: phydrax.execution.CompiledMemoryEstimate
+`phydrax.execution.CompiledMemoryEstimate`
 
 ## Native global arrays and rank-local providers
 
@@ -204,11 +204,11 @@ Forced CPU devices (`--xla_force_host_platform_device_count`) demonstrate
 functional distributed parity only; accelerator and multi-host performance need
 real hardware campaigns.
 
-::: phydrax.execution.shard_array_axis
+`phydrax.execution.shard_array_axis`
 
 ---
 
-::: phydrax.execution.global_weighted_mean
+`phydrax.execution.global_weighted_mean`
 
 ## Deterministic worksets and child groups
 
@@ -280,35 +280,35 @@ evaluation = evaluate_execution_worksets_filter_vmap(
 assert evaluation.values.shape == (3, 2)
 ```
 
-::: phydrax.execution.ExecutionWorksetPlan
+`phydrax.execution.ExecutionWorksetPlan`
 
 ---
 
-::: phydrax.execution.PreparedExecutionWorksets
+`phydrax.execution.PreparedExecutionWorksets`
 
 ---
 
-::: phydrax.execution.evaluate_execution_worksets_serial
+`phydrax.execution.evaluate_execution_worksets_serial`
 
 ---
 
-::: phydrax.execution.evaluate_execution_worksets_vmap
+`phydrax.execution.evaluate_execution_worksets_vmap`
 
 ---
 
-::: phydrax.execution.evaluate_execution_worksets_filter_vmap
+`phydrax.execution.evaluate_execution_worksets_filter_vmap`
 
 ---
 
-::: phydrax.execution.evaluate_execution_worksets_grouped
+`phydrax.execution.evaluate_execution_worksets_grouped`
 
 ---
 
-::: phydrax.execution.ExecutionWorksetCheckpoint
+`phydrax.execution.ExecutionWorksetCheckpoint`
 
 ---
 
-::: phydrax.execution.restore_execution_workset_checkpoint
+`phydrax.execution.restore_execution_workset_checkpoint`
 
 ## Process-local ingress and distributed checkpointing
 
@@ -441,35 +441,35 @@ Nested scientific events remain separate from iteration records: residuals,
 vector fields, hybrid zero crossings, branch monitors, and backend residual or
 Jacobian functions are model semantics rather than lifecycle callbacks.
 
-::: phydrax.execution.IterationPlan
+`phydrax.execution.IterationPlan`
 
 ---
 
-::: phydrax.execution.IterationTraceObserver
+`phydrax.execution.IterationTraceObserver`
 
 ---
 
-::: phydrax.execution.IterationMomentObserver
+`phydrax.execution.IterationMomentObserver`
 
 ---
 
-::: phydrax.execution.CallableIterationStopRule
+`phydrax.execution.CallableIterationStopRule`
 
 ---
 
-::: phydrax.execution.IterationEvidence
+`phydrax.execution.IterationEvidence`
 
 ---
 
-::: phydrax.execution.IterationSession
+`phydrax.execution.IterationSession`
 
 ---
 
-::: phydrax.execution.CallableIterationSink
+`phydrax.execution.CallableIterationSink`
 
 ---
 
-::: phydrax.execution.CallableIterationHostControl
+`phydrax.execution.CallableIterationHostControl`
 
 `python -m tools.iteration_execution_benchmarks --smoke` compares the disabled,
 constant-memory count, and bounded-trace paths with synchronized timing and

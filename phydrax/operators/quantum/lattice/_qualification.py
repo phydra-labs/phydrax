@@ -195,7 +195,6 @@ def quantum_lattice_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             capability,
             "phydrax",
-            "candidate",
             tuple(grouped[capability]),
             required_gates=gates[capability],
             released=False,

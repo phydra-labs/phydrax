@@ -14,6 +14,7 @@ from jax import Array
 from jax._src import ad_util, core, effects, source_info_util
 from jax._src.ad_checkpoint import transpose_jaxpr
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
+from jax._src.util import partition_list
 from jax.typing import ArrayLike
 
 
@@ -157,6 +158,65 @@ def _partial_eval(
     ]
 
 
+def _partial_eval_custom(
+    saveable: Callable[..., Any],
+    unknown_inputs: Sequence[bool],
+    instantiated_inputs: Sequence[bool],
+    eqn: core.JaxprEqn,
+) -> tuple[core.JaxprEqn, core.JaxprEqn, list[bool], list[bool], list[core.Var]]:
+    """Split one call for rematerialization without staging its known outputs.
+
+    Without this rule, any unknown operand stages the whole call, so the primal
+    outputs of a differentiated call become unknown and downstream primal
+    values reach transposition as linear inputs. Both halves remain domain calls.
+    """
+    known, staged, unknown_outputs, instantiated_outputs, residual_count = (
+        pe.partial_eval_jaxpr_custom(
+            eqn.params["call"].jaxpr,
+            unknown_inputs,
+            instantiated_inputs,
+            False,
+            False,
+            saveable,
+        )
+    )
+    known_inputs, _ = partition_list(unknown_inputs, eqn.invars)
+    known_binders, _ = partition_list(unknown_outputs, eqn.outvars)
+    _, staged_inputs = partition_list(instantiated_inputs, eqn.invars)
+    _, staged_binders = partition_list(instantiated_outputs, eqn.outvars)
+    residuals = [core.Var(variable.aval) for variable in staged.invars[:residual_count]]
+    known_eqn = pe.new_jaxpr_eqn(
+        known_inputs,
+        [*known_binders, *residuals],
+        _domain_call,
+        dict(call=core.ClosedJaxpr(known, ())),
+        core.eqn_effects(known, known_inputs),
+        eqn.source_info,
+        eqn.ctx,
+    )
+    staged_eqn = pe.new_jaxpr_eqn(
+        [*residuals, *staged_inputs],
+        staged_binders,
+        _domain_call,
+        dict(call=core.ClosedJaxpr(staged, ())),
+        core.eqn_effects(staged, [*residuals, *staged_inputs]),
+        eqn.source_info,
+        eqn.ctx,
+    )
+    forwarded = [
+        variable
+        for variable, instantiated in zip(eqn.invars, instantiated_inputs, strict=True)
+        if isinstance(variable, core.Var) and not instantiated
+    ]
+    return (
+        known_eqn,
+        staged_eqn,
+        unknown_outputs,
+        instantiated_outputs,
+        forwarded + residuals,
+    )
+
+
 def _transpose(
     cotangents: Sequence[Any], *arguments: Any, call: core.ClosedJaxpr
 ) -> list[Any]:
@@ -188,6 +248,7 @@ batching.primitive_batchers[_domain_call] = _batch
 ad.primitive_jvps[_domain_call] = _jvp
 ad.primitive_transposes[_domain_call] = _transpose
 pe.custom_partial_eval_rules[_domain_call] = _partial_eval
+pe.partial_eval_jaxpr_custom_rules[_domain_call] = _partial_eval_custom
 mlir.register_lowering(
     _domain_call, mlir.lower_fun(_implementation, multiple_results=True)
 )

@@ -205,8 +205,8 @@ class CoupledWaterHeatPlan(StrictModule):
         conduction = jnp.where(diffusion.valid, conduction, 0.0)
         face = diffusion.cell_faces
         owner, neighbor = (
-            self.discretization.owner_cells,
-            self.discretization.neighbor_cells,
+            diffusion.owner_cells,
+            diffusion.neighbor_cells,
         )
         cells = jnp.arange(diffusion.cell_count)[:, None]
         opposite = jnp.where(cells == owner[face], neighbor[face], owner[face])

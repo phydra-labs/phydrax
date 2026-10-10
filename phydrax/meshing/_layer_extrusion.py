@@ -15,33 +15,48 @@ the source boundary so the sweep never meets the core through a quad curtain.
 
 from __future__ import annotations
 
+import os
+import tempfile
+from collections.abc import Iterable
+from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
-from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from OCP.BOPAlgo import BOPAlgo_Splitter
-from OCP.BRepAdaptor import BRepAdaptor_Surface
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-from OCP.BRepGProp import BRepGProp
-from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCP.GeomAbs import GeomAbs_Plane
-from OCP.gp import gp_Vec
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import (
-    TopAbs_FACE,
-    TopAbs_REVERSED,
-    TopAbs_SOLID,
-)
-from OCP.TopoDS import TopoDS
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..geometry.brep import BRepModel, persist_occt_shape, read_occt_shape
-from ..geometry.brep._occt import _explore_unique
+from ..geometry._cad_revision import CADSelectionSet
+from ..geometry._meshing_domain import MeshingDomain
+from ..geometry.brep import BRepModel
+from ..geometry.brep._boolean import boolean_brep, BRepBooleanPolicy
+from ..geometry.brep._constructors import (
+    brep_extrusion,
+    BRepTessellationPolicy,
+    PlanarProfile,
+    ProfileArc,
+    ProfileLine,
+    ProfileLoop,
+    ProfilePlane,
+    ProfileSegment,
+)
+from ..geometry.brep._partition import (
+    _native_arrangement,
+    _native_roundtrip_maps,
+    _NativePartition,
+    _publish_staged,
+    BRepPartitionOperand,
+    BRepPartitionPlan,
+    BRepPartitionPolicy,
+    BRepPartitionRole,
+    cad_revision_from_brep_model,
+)
+from ..geometry.brep._patches import CircleCurve, LineCurve, PlanePatch
 from ..typing import checked
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._controls import BoundaryLayerControl, BoundaryLayerRoute
@@ -58,36 +73,122 @@ def _unsupported(message: str, /) -> MeshingFailure:
     )
 
 
-def _volume(shape: Any, /) -> tuple[float, np.ndarray]:
-    properties = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, properties)
-    center = properties.CentreOfMass()
-    return properties.Mass(), np.asarray((center.X(), center.Y(), center.Z()))
-
-
-def _plane(face: Any, /) -> tuple[np.ndarray, float] | None:
-    """Outward unit normal and offset of a planar face, or ``None`` when curved."""
-    adaptor = BRepAdaptor_Surface(face)
-    if adaptor.GetType() != GeomAbs_Plane:
+def _plane(model: BRepModel, face: int, /) -> tuple[np.ndarray, float] | None:
+    """Native outward unit normal and signed plane offset."""
+    patch = model.patches[face]
+    if not isinstance(patch, PlanePatch):
         return None
-    plane = adaptor.Plane()
-    axis = plane.Axis().Direction()
-    origin = plane.Location()
-    normal = np.asarray((axis.X(), axis.Y(), axis.Z()), dtype=np.float64)
-    if face.Orientation() == TopAbs_REVERSED:
-        normal = -normal
-    return normal, float(normal @ np.asarray((origin.X(), origin.Y(), origin.Z())))
+    normal = np.cross(np.asarray(patch.first_axis), np.asarray(patch.second_axis))
+    norm = float(np.linalg.norm(normal))
+    if norm == 0.0:
+        raise ValueError("An extrusion wall has a singular native plane chart.")
+    orientation = float(np.asarray(model.orientation)[face])
+    incident = model.topology.face_solids[face]
+    if len(incident) == 1:
+        owner = incident[0]
+        position = model.topology.solid_faces[owner].index(face)
+        orientation *= model.topology.solid_face_orientations[owner][position]
+    normal *= orientation / norm
+    return normal, float(normal @ np.asarray(patch.origin))
 
 
-def _scope(model: BRepModel, dimension: int, identifiers: Any, /) -> MeshingScope:
-    revision = model.report.source_revision
+def _wall_profile(model: BRepModel, face: int, /) -> PlanarProfile:
+    geometry = model.geometry
+    patch = model.patches[face]
+    if geometry is None:
+        raise _unsupported(
+            "CAD_EXTRUSION requires authoritative native curves, p-curves, and oriented loops."
+        )
+    if not isinstance(patch, PlanePatch):
+        raise _unsupported("CAD_EXTRUSION extrudes planar wall faces only.")
+    first_axis = np.asarray(patch.first_axis, dtype=np.float64)
+    first_axis = first_axis / np.linalg.norm(first_axis)
+    normal = np.cross(first_axis, np.asarray(patch.second_axis))
+    normal /= np.linalg.norm(normal)
+    second_axis = np.cross(normal, first_axis)
+    origin = np.asarray(patch.origin)
+    frame = np.stack((first_axis, second_axis))
+    plane = ProfilePlane(
+        (float(origin[0]), float(origin[1]), float(origin[2])),
+        (float(first_axis[0]), float(first_axis[1]), float(first_axis[2])),
+        (float(second_axis[0]), float(second_axis[1]), float(second_axis[2])),
+    )
+    loops = []
+    ranges = np.asarray(geometry.edge_ranges)
+    points = np.asarray(geometry.vertex_points)
+    for loop in geometry.face_loops[face]:
+        vertices = []
+        segments: list[ProfileSegment] = []
+        for coedge in loop:
+            edge = geometry.coedge_edges[coedge]
+            sense = geometry.coedge_senses[coedge]
+            start, end = geometry.edge_vertices[edge]
+            point = points[start if sense > 0 else end]
+            planar = frame @ (point - origin)
+            vertices.append((float(planar[0]), float(planar[1])))
+            curve_index = geometry.edge_curves[edge]
+            if curve_index < 0:
+                raise _unsupported(
+                    "A planar extrusion wall cannot contain a collapsed trim edge."
+                )
+            curve = geometry.curves[curve_index]
+            if isinstance(curve, LineCurve):
+                segments.append(ProfileLine())
+            elif isinstance(curve, CircleCurve):
+                if ranges[edge, 1] - ranges[edge, 0] > 2.0 * np.pi:
+                    raise _unsupported(
+                        "A planar wall arc cannot traverse its circle more than once."
+                    )
+                center = frame @ (np.asarray(curve.center) - origin)
+                counterclockwise = (
+                    sense
+                    * float(
+                        np.cross(
+                            np.asarray(curve.first_axis), np.asarray(curve.second_axis)
+                        )
+                        @ normal
+                    )
+                    > 0.0
+                )
+                segments.append(
+                    ProfileArc((float(center[0]), float(center[1])), counterclockwise)
+                )
+            else:
+                raise _unsupported(
+                    "Native wall sweep construction requires exact ellipse/rational profile translation; "
+                    f"the wall trim carrier {type(curve).__name__} is not yet admitted by PlanarProfile."
+                )
+        loops.append(ProfileLoop(tuple(vertices), tuple(segments)))
+    return PlanarProfile(plane, loops[0], tuple(loops[1:]))
+
+
+def _scope(
+    model: BRepModel, dimension: int, identifiers: Iterable[int], /
+) -> MeshingScope:
+    domain = MeshingDomain.from_brep(model)
+    definitions = (
+        domain.region_source_indices
+        if dimension == 3
+        else domain.source_indices[dimension]
+    )
+    requested = set(identifiers)
+    if not requested <= set(definitions):
+        raise ValueError(
+            "Extrusion scope definitions must belong to its native geometry inventory."
+        )
+    slots = domain.scope_indices(dimension)
+    selected = tuple(
+        slots[row]
+        for row, definition in enumerate(definitions)
+        if definition in requested
+    )
     return MeshingScope(
-        model.report.source_id,
-        revision,
+        domain.source_id,
+        domain.source_revision,
         MeshingEntityKind.GEOMETRY,
         dimension,
-        f"{revision}:brep:{dimension}",
-        np.asarray(sorted(identifiers), dtype=np.int64),
+        domain.entity_set_id(dimension),
+        np.asarray(sorted(selected), dtype=np.int64),
     )
 
 
@@ -109,7 +210,7 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         control: BoundaryLayerControl,
         layer_solid_ids: tuple[int, ...],
         core_solid_ids: tuple[int, ...],
-        slab_volumes: Any,
+        slab_volumes: ArrayLike,
         maximum_relative_volume_residual: float,
         /,
     ) -> None:
@@ -122,7 +223,7 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         self.control = control
         self.layer_solid_ids = tuple(int(value) for value in layer_solid_ids)
         self.core_solid_ids = tuple(int(value) for value in core_solid_ids)
-        self.slab_volumes = jnp.asarray(volumes)
+        self.slab_volumes = jnp.asarray(volumes, dtype=jnp.float64)
         self.maximum_relative_volume_residual = float(maximum_relative_volume_residual)
         self.extrusion_id = canonical_fingerprint(
             {
@@ -136,9 +237,47 @@ class BoundaryLayerExtrusion(StrictModule, NonTrainableState):
         )
 
 
+def _definition_domain(model: BRepModel, /) -> MeshingDomain:
+    """Admit precisely the physical graphs the definition arrangement realizes."""
+    geometry = model.geometry
+    if geometry is None:
+        raise _unsupported(
+            "Native extrusion requires authoritative qualified source incidence."
+        )
+    if geometry.occurrences:
+        if sorted(occurrence.solid for occurrence in geometry.occurrences) != list(
+            range(model.topology.num_solids)
+        ):
+            raise _unsupported(
+                "Native solid partition requires a physical occurrence-to-definition bijection; "
+                "repeated or uninstantiated solid definitions require qualified physical realization."
+            )
+        if any(
+            occurrence.rotation != ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+            or occurrence.translation != (0.0, 0.0, 0.0)
+            for occurrence in geometry.occurrences
+        ):
+            raise _unsupported(
+                "Native solid partition does not yet realize authored occurrence placements; "
+                "physical scope slots cannot be substituted with definition indices."
+            )
+        paths_by_definition: dict[tuple[str, int], set[tuple[str, ...]]] = {}
+        for record in geometry.qualified_entity_incidence(model.source_revision):
+            member = record.member
+            paths_by_definition.setdefault((member.kind, member.index), set()).add(
+                member.occurrence_path
+            )
+        if any(len(paths) != 1 for paths in paths_by_definition.values()):
+            raise _unsupported(
+                "Native solid partition cannot erase distinct authored entity incidences; "
+                "qualified graph fragmentation is required."
+            )
+    return MeshingDomain.from_brep(model)
+
+
 def _validated_request(
     model: BRepModel, control: BoundaryLayerControl, /
-) -> tuple[tuple[int, ...], list[int], MeshingScope]:
+) -> tuple[tuple[int, ...], list[int], tuple[int, ...]]:
     if not isinstance(model, BRepModel):
         raise TypeError("source must be BRepModel.")
     if not isinstance(control, BoundaryLayerControl):
@@ -152,97 +291,214 @@ def _validated_request(
         raise ValueError(
             "CAD_EXTRUSION requires a wall face scope, a volume scope, and no cap."
         )
-    revision = model.report.source_revision
+    domain = _definition_domain(model)
     for scope, dimension in ((control.wall_scope, 2), (volume_scope, 3)):
         if (
-            scope.source_id != model.report.source_id
-            or scope.source_revision != revision
-            or scope.entity_set_id != f"{revision}:brep:{dimension}"
+            scope.source_id != domain.source_id
+            or scope.source_revision != domain.source_revision
+            or scope.entity_kind is not MeshingEntityKind.GEOMETRY
+            or scope.entity_dimension != dimension
+            or scope.entity_set_id != domain.entity_set_id(dimension)
         ):
-            raise ValueError("The control scopes must bind this BRep source revision.")
-    walls = tuple(int(value) for value in np.asarray(control.wall_scope.entity_ids))
-    solids = {int(value) for value in np.asarray(volume_scope.entity_ids)}
-    owners = []
-    for wall in walls:
-        incident = set(model.topology.face_solids[wall]) & solids
-        if len(incident) != 1 or len(model.topology.face_solids[wall]) != 1:
-            raise _unsupported(
-                "Every extruded wall must be a boundary face of one controlled solid."
+            raise ValueError(
+                "The control scopes must bind this exact native qualified geometry inventory."
             )
-        owners.append(incident.pop())
-    return walls, owners, volume_scope
+    wall_rows = domain.resolve_indices(
+        2, np.asarray(control.wall_scope.entity_ids, dtype=np.int64)
+    )
+    region_rows = domain.resolve_indices(
+        3, np.asarray(volume_scope.entity_ids, dtype=np.int64)
+    )
+    selected_regions = set(int(row) for row in region_rows)
+    walls = tuple(domain.source_indices[2][row] for row in wall_rows)
+    owners = []
+    adjacency = np.asarray(domain.patch_regions, dtype=np.int64)
+    for row in wall_rows:
+        incident = {int(region) for region in adjacency[row] if region >= 0}
+        selected = incident & selected_regions
+        if len(selected) != 1 or len(incident) != 1:
+            raise _unsupported(
+                "Every extruded wall must be a qualified boundary face of one controlled physical solid."
+            )
+        owners.append(domain.region_source_indices[selected.pop()])
+    solids = tuple(domain.region_source_indices[row] for row in region_rows)
+    return walls, owners, solids
 
 
-def _extrusion_prisms(shape: Any, walls: Any, owners: Any, total: float, /) -> Any:
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
+def _extrusion_prisms(
+    model: BRepModel,
+    walls: tuple[int, ...],
+    total: float,
+    tessellation: BRepTessellationPolicy,
+    /,
+) -> tuple[tuple[BRepModel, ...], tuple[tuple[np.ndarray, float], ...]]:
     prisms = []
     planes = []
-    for wall, owner in zip(walls, owners, strict=True):
-        plane = _plane(faces[wall])
+    for wall in walls:
+        plane = _plane(model, wall)
         if plane is None:
             raise _unsupported("CAD_EXTRUSION extrudes planar wall faces only.")
+        profile = _wall_profile(model, wall)
         normal, _ = plane
-        inward = -normal * total
-        prism = BRepPrimAPI_MakePrism(faces[wall], gp_Vec(*inward.tolist())).Shape()
-        prism_volume, _ = _volume(prism)
-        inside, _ = _volume(BRepAlgoAPI_Common(solids[owner], prism).Shape())
-        if abs(inside - prism_volume) > 1.0e-9 * prism_volume:
-            raise _unsupported(
-                "The extruded wall prism leaves its solid; the extrusion topology is not exact."
+        prisms.append(
+            brep_extrusion(
+                profile,
+                -total * normal,
+                coordinate_contract=model.coordinate_contract,
+                tessellation=tessellation,
+                source_id=f"native-layer-slab:{model.source_revision}:face:{wall}",
             )
-        prisms.append(prism)
+        )
         planes.append(plane)
-    for first in range(len(prisms)):
-        for second in range(first + 1, len(prisms)):
-            shared, _ = _volume(BRepAlgoAPI_Common(prisms[first], prisms[second]).Shape())
-            if shared > 1.0e-12 * _volume(prisms[first])[0]:
+    return tuple(prisms), tuple(planes)
+
+
+def _partition_plan(
+    source: BRepModel, prisms: tuple[BRepModel, ...], overwrite: bool, /
+) -> BRepPartitionPlan:
+    revision = cad_revision_from_brep_model(source)
+    operands = tuple(
+        BRepPartitionOperand(
+            f"source-solid:{solid}",
+            source,
+            BRepPartitionRole.REGION,
+            CADSelectionSet.from_revision(revision, (f"solid:{solid}",)),
+        )
+        for solid in range(source.topology.num_solids)
+    ) + tuple(
+        BRepPartitionOperand(f"layer:{index}", prism, BRepPartitionRole.REGION)
+        for index, prism in enumerate(prisms)
+    )
+    return BRepPartitionPlan(
+        source.coordinate_contract,
+        operands,
+        BRepPartitionPolicy(
+            tuple(f"layer:{index}" for index in range(len(prisms)))
+            + tuple(
+                f"source-solid:{solid}" for solid in range(source.topology.num_solids)
+            ),
+            overwrite=overwrite,
+        ),
+    )
+
+
+def _check_arrangement(
+    plan: BRepPartitionPlan, owners: list[int], tessellation: BRepTessellationPolicy, /
+) -> _NativePartition:
+    policy = BRepBooleanPolicy(
+        maximum_cells=plan.policy.maximum_cells,
+        maximum_faces=plan.policy.maximum_faces,
+        sewing=plan.policy.sewing,
+        tessellation=tessellation,
+    )
+    operands = {operand.operand_id: operand for operand in plan.operands}
+    controlled: dict[int, BRepModel] = {}
+    slabs = tuple(operands[f"layer:{index}"].model for index in range(len(owners)))
+    for index, owner in enumerate(owners):
+        if owner not in controlled:
+            operand = operands[f"source-solid:{owner}"]
+            owner_plan = BRepPartitionPlan(
+                plan.coordinate_contract,
+                (operand,),
+                BRepPartitionPolicy(
+                    (operand.operand_id,),
+                    maximum_cells=plan.policy.maximum_cells,
+                    maximum_faces=plan.policy.maximum_faces,
+                    sewing=plan.policy.sewing,
+                ),
+            )
+            controlled[owner] = _native_arrangement(owner_plan, policy).model
+        outside = boolean_brep(
+            slabs[index], controlled[owner], "difference", policy=policy
+        )
+        if not outside.empty:
+            raise _unsupported(
+                "The extruded wall prism leaves its controlled solid; the extrusion topology is not exact."
+            )
+        for previous in slabs[:index]:
+            overlap = boolean_brep(previous, slabs[index], "intersection", policy=policy)
+            if not overlap.empty:
                 raise _unsupported(
                     "Extruded slabs of different walls overlap; use ADVANCING layers."
                 )
-    return prisms, planes
+    native = _native_arrangement(plan, policy)
+    return native
 
 
-def _split(shape: Any, prisms: Any, /) -> Any:
-    splitter = BOPAlgo_Splitter()
-    splitter.AddArgument(shape)
-    for prism in prisms:
-        splitter.AddTool(prism)
-    splitter.Perform()
-    if splitter.HasErrors():
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
-            "OCCT failed to split the source by the extruded boundary-layer slabs.",
-            stage=_STAGE,
+def _solid_volume(model: BRepModel, solid: int, /) -> float:
+    """Exact-coordinate divergence volume of planar native face loops."""
+    geometry = model.geometry
+    if geometry is None:
+        raise _unsupported(
+            "Slab volume verification requires authoritative native topology."
         )
-    return splitter.Shape()
+    points = tuple(
+        tuple(Fraction(float(value)) for value in point)
+        for point in np.asarray(geometry.vertex_points)
+    )
+    volume = Fraction()
+    for face in model.topology.solid_faces[solid]:
+        if not isinstance(model.patches[face], PlanePatch):
+            raise _unsupported(
+                "Exact-coordinate slab measure requires a native curved-face measure certificate."
+            )
+        shell_signs = tuple(
+            sense
+            for shell in geometry.solid_shells[solid]
+            for candidate, sense in zip(
+                geometry.shell_faces[shell],
+                geometry.shell_orientations[shell],
+                strict=True,
+            )
+            if candidate == face
+        )
+        if len(shell_signs) != 1:
+            raise ValueError(
+                "A slab face must have exactly one oriented shell occurrence."
+            )
+        orientation = shell_signs[0] * int(np.asarray(model.orientation)[face])
+        for loop in geometry.face_loops[face]:
+            vertices = []
+            for coedge in loop:
+                edge = geometry.coedge_edges[coedge]
+                start, end = geometry.edge_vertices[edge]
+                vertices.append(
+                    points[start if geometry.coedge_senses[coedge] > 0 else end]
+                )
+            first = vertices[0]
+            for second, third in zip(vertices[1:-1], vertices[2:], strict=True):
+                determinant = (
+                    first[0] * (second[1] * third[2] - second[2] * third[1])
+                    - first[1] * (second[0] * third[2] - second[2] * third[0])
+                    + first[2] * (second[0] * third[1] - second[1] * third[0])
+                )
+                volume += orientation * determinant / 6
+    return abs(float(volume))
 
 
 def _classify_slabs(
-    model: BRepModel, prisms: Any, planes: Any, total: float, scale: float, /
-) -> Any:
-    shape, _, _ = read_occt_shape(model.report.source_id)
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
-    measures = [_volume(solid) for solid in solids]
+    model: BRepModel,
+    slab_ids: tuple[int, ...],
+    planes: tuple[tuple[np.ndarray, float], ...],
+    expected_volumes: np.ndarray,
+    total: float,
+    scale: float,
+    /,
+) -> tuple[list[int], list[int], np.ndarray, float]:
     tolerance = 1.0e-9 * scale
-    slabs, bottoms, tops, volumes, residuals = [], [], [], [], []
-    for prism, (normal, offset) in zip(prisms, planes, strict=True):
-        volume, center = _volume(prism)
-        matches = [
-            index
-            for index, (candidate, centroid) in enumerate(measures)
-            if abs(candidate - volume) <= 1.0e-9 * volume
-            and np.linalg.norm(centroid - center) <= tolerance
-        ]
-        if len(matches) != 1:
+    bottoms, tops, volumes, residuals = [], [], [], []
+    for slab, (normal, offset), expected in zip(
+        slab_ids, planes, expected_volumes, strict=True
+    ):
+        volume = _solid_volume(model, slab)
+        residual = abs(volume - float(expected)) / float(expected)
+        if residual > 1.0e-9:
             raise _unsupported(
-                "The published partition lost the exact extruded slab solid."
+                "The published native partition lost the exact extruded slab volume."
             )
-        slab = matches[0]
         bottom, top = [], []
         for face in model.topology.solid_faces[slab]:
-            plane = _plane(faces[face])
+            plane = _plane(model, face)
             if plane is None or abs(abs(float(plane[0] @ normal)) - 1.0) > 1.0e-12:
                 continue
             level = float(normal @ (plane[0] * plane[1]))
@@ -259,12 +515,11 @@ def _classify_slabs(
             raise _unsupported(
                 "Extruded slab lateral faces must lie on the source boundary (full-width walls)."
             )
-        slabs.append(slab)
         bottoms.append(bottom[0])
         tops.append(top[0])
-        volumes.append(measures[slab][0])
-        residuals.append(abs(measures[slab][0] - volume) / volume)
-    return slabs, bottoms, tops, np.asarray(volumes), max(residuals)
+        volumes.append(volume)
+        residuals.append(residual)
+    return bottoms, tops, np.asarray(volumes, dtype=np.float64), max(residuals)
 
 
 def prepare_boundary_layer_extrusion(
@@ -283,64 +538,148 @@ def prepare_boundary_layer_extrusion(
     ``result.control`` (straight SWEEP fill) and region controls naming
     ``layer_solid_ids`` and ``core_solid_ids``.
     """
-    walls, owners, volume_scope = _validated_request(source, control)
-    shape, source_format, digest = read_occt_shape(source.report.source_id)
-    if (
-        source_format != source.report.source_format
-        or digest != source.report.source_digest
-    ):
-        raise ValueError("The extrusion source bytes changed after import.")
+    from .._external_resource import ResourceLimits
+    from ..interchange._cad import CadImportPolicy
+    from ..interchange._cad_archive import load_brep_archive, save_brep_archive
+    from ..interchange._cad_brep_text import read_brep_text, write_brep_text
+
+    if not isinstance(overwrite, bool):
+        raise TypeError("overwrite must be a bool.")
+    target = Path(destination).expanduser().resolve()
+    if target.suffix.lower() not in (".brep", ".brp", ".phx"):
+        raise ValueError("Native extrusion publication requires .brep, .brp, or .phx.")
+    if target.exists() and not overwrite:
+        raise FileExistsError(target)
+    walls, owners, controlled_solids = _validated_request(source, control)
+    tessellation = BRepTessellationPolicy(
+        linear_deflection=linear_deflection, angular_deflection=angular_deflection
+    )
     total = control.schedule.total_thickness
-    prisms, planes = _extrusion_prisms(shape, walls, owners, total)
-    partitioned = persist_occt_shape(
-        _split(shape, prisms),
-        destination,
-        coordinate_contract=source.coordinate_contract,
-        overwrite=overwrite,
-        linear_deflection=linear_deflection,
-        angular_deflection=angular_deflection,
+    prisms, planes = _extrusion_prisms(source, walls, total, tessellation)
+    plan = _partition_plan(source, prisms, overwrite)
+    # Exact arrangement occupancy decides containment and front collision;
+    # sampled point location and centroid equality cannot establish either.
+    native = _check_arrangement(plan, owners, tessellation)
+    expected_volumes = np.asarray(
+        [_solid_volume(prism, 0) for prism in prisms], dtype=np.float64
     )
-    scale = max(1.0, float(np.max(np.abs(np.asarray(source.mesh_vertices)), initial=0.0)))
-    slabs, bottoms, tops, volumes, residual = _classify_slabs(
-        partitioned, prisms, planes, total, scale
-    )
-    controlled = {int(value) for value in np.asarray(volume_scope.entity_ids)}
-    original = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
-    published = _explore_unique(
-        read_occt_shape(partitioned.report.source_id)[0],
-        TopAbs_SOLID,
-        TopoDS.Solid,
-    )
-    core = []
-    for index, solid in enumerate(published):
-        if index in slabs:
-            continue
-        _, center = _volume(solid)
-        inside = any(
-            _volume(BRepAlgoAPI_Common(original[owner], solid).Shape())[0]
-            > (1.0 - 1.0e-9) * _volume(solid)[0]
-            for owner in controlled
+    native_slabs = []
+    for index in range(len(prisms)):
+        matches = tuple(
+            solid
+            for solid, owner in enumerate(native.solid_regions)
+            if owner == f"layer:{index}"
         )
-        del center
-        if inside:
-            core.append(index)
-    sweep = BoundaryLayerControl(
-        _scope(partitioned, 2, bottoms),
-        control.schedule,
-        route=BoundaryLayerRoute.EXACT_SWEEP,
-        volume_scope=_scope(partitioned, 3, slabs),
-        cap_scope=_scope(partitioned, 2, tops),
-        corner=control.corner,
-        feature_angle=control.feature_angle,
-        minimum_thickness_fraction=control.minimum_thickness_fraction,
-        growth_rate_bounds=control.growth_rate_bounds,
-        maximum_corner_stretch=control.maximum_corner_stretch,
-        smoothing_iterations=control.smoothing_iterations,
-        core_maximum_size=control.core_maximum_size,
+        if len(matches) != 1:
+            raise _unsupported(
+                "A native extruded slab must remain one exact connected solid."
+            )
+        native_slabs.append(matches[0])
+    scale = max(1.0, float(np.max(np.abs(np.asarray(source.mesh_vertices)), initial=0.0)))
+    _classify_slabs(
+        native.model, tuple(native_slabs), planes, expected_volumes, total, scale
     )
-    return BoundaryLayerExtrusion(
-        partitioned, sweep, tuple(sorted(slabs)), tuple(sorted(core)), volumes, residual
+    controlled = set(controlled_solids)
+    controlled_owners = {f"source-solid:{value}" for value in controlled}
+    native_core = tuple(
+        solid
+        for solid, owner in enumerate(native.solid_regions)
+        if owner in controlled_owners
     )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{target.name}.extrusion-", suffix=target.suffix, dir=target.parent
+    )
+    os.close(descriptor)
+    staging = Path(name)
+    staging.unlink()
+    try:
+        if target.suffix.lower() == ".phx":
+            save_brep_archive(native.model, staging)
+            partitioned = load_brep_archive(staging)
+            exported_provenance = imported_provenance = None
+        else:
+            # External text is a new source revision; entities are mapped by
+            # the codec's exact entity-reference provenance, not model identity.
+            exported_provenance = write_brep_text(native.model, staging).provenance
+            decoded = read_brep_text(
+                staging,
+                CadImportPolicy(
+                    source.coordinate_contract,
+                    ResourceLimits(64 * 1024 * 1024, 128, 1_000_000, 10_000_000, 0),
+                    tessellation=tessellation,
+                ),
+                trusted_root=target.parent,
+                source_length_unit=source.coordinate_contract.length_unit,
+            )
+            restored = decoded.model
+            imported_provenance = decoded.provenance
+            partitioned = BRepModel(
+                patches=restored.patches,
+                parameter_bounds=restored.parameter_bounds,
+                orientation=restored.orientation,
+                trim_domains=restored.trim_domains,
+                topology=restored.topology,
+                coordinate_contract=restored.coordinate_contract,
+                mesh_vertices=restored.mesh_vertices,
+                mesh_faces=restored.mesh_faces,
+                triangle_face_ids=restored.triangle_face_ids,
+                triangle_parameters=restored.triangle_parameters,
+                tessellation_deviation_bounds=restored.tessellation_deviation_bounds,
+                tessellation_normal_bounds=restored.tessellation_normal_bounds,
+                mesh_vertex_source_dimensions=restored.mesh_vertex_source_dimensions,
+                mesh_vertex_source_indices=restored.mesh_vertex_source_indices,
+                mesh_vertex_parameters=restored.mesh_vertex_parameters,
+                mesh_chart_restriction_vertices=restored.mesh_chart_restriction_vertices,
+                mesh_chart_restriction_edges=restored.mesh_chart_restriction_edges,
+                mesh_chart_restriction_endpoint_parameters=(
+                    restored.mesh_chart_restriction_endpoint_parameters
+                ),
+                mesh_chart_restriction_parameters=(
+                    restored.mesh_chart_restriction_parameters
+                ),
+                coedge_deviation_bounds=restored.coedge_deviation_bounds,
+                triangle_occurrence_ids=restored.triangle_occurrence_ids,
+                vertex_occurrence_ids=restored.vertex_occurrence_ids,
+                physical_tags=restored.physical_tags,
+                report=replace(restored.report, source_id=str(target)),
+                geometry=restored.geometry,
+            )
+        solid_map, _ = _native_roundtrip_maps(
+            native.model, partitioned, exported_provenance, imported_provenance
+        )
+        slabs = tuple(solid_map[solid] for solid in native_slabs)
+        core = tuple(solid_map[solid] for solid in native_core)
+        bottoms, tops, volumes, residual = _classify_slabs(
+            partitioned, slabs, planes, expected_volumes, total, scale
+        )
+        sweep = BoundaryLayerControl(
+            _scope(partitioned, 2, bottoms),
+            control.schedule,
+            route=BoundaryLayerRoute.EXACT_SWEEP,
+            volume_scope=_scope(partitioned, 3, slabs),
+            cap_scope=_scope(partitioned, 2, tops),
+            corner=control.corner,
+            feature_angle=control.feature_angle,
+            minimum_thickness_fraction=control.minimum_thickness_fraction,
+            growth_rate_bounds=control.growth_rate_bounds,
+            maximum_corner_stretch=control.maximum_corner_stretch,
+            smoothing_iterations=control.smoothing_iterations,
+            core_maximum_size=control.core_maximum_size,
+        )
+        order = np.argsort(np.asarray(slabs, dtype=np.int64))
+        result = BoundaryLayerExtrusion(
+            partitioned,
+            sweep,
+            tuple(slabs[index] for index in order),
+            tuple(sorted(core)),
+            volumes[order],
+            residual,
+        )
+        _publish_staged(staging, target, overwrite)
+        return result
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 __all__ = ["BoundaryLayerExtrusion", "prepare_boundary_layer_extrusion"]

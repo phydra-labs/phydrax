@@ -37,6 +37,8 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import linear_apply, linear_transpose_apply
 from ...typing import checked, parse
+from .._cell_geometry import CellGeometrySpec
+from .._field_query import PreparedFieldQuery
 from .._simplicial_locator import (
     AbstractCellLocator,
     CellLocationStatus,
@@ -380,6 +382,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
 
     locator: AbstractCellLocator
     reconstruction: UnstructuredCellReconstruction
+    discretization: _MeshDiscretization
     owner_cells: Array
     neighbor_cells: Array
     _cell_count: int = eqx.field(static=True)
@@ -395,14 +398,6 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
         *,
         field_space_id: str,
     ) -> None:
-        if not isinstance(
-            discretization,
-            (UnstructuredFiniteVolumeDiscretization, TriangleFiniteVolumeDiscretization),
-        ):
-            raise TypeError(
-                "discretization must be UnstructuredFiniteVolumeDiscretization or "
-                "TriangleFiniteVolumeDiscretization."
-            )
         match reconstruction:
             case (
                 PiecewiseConstantReconstruction()
@@ -425,6 +420,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                 )
         self.locator = locator
         self.reconstruction = reconstruction
+        self.discretization = discretization
         self.owner_cells = discretization.owner_cells
         self.neighbor_cells = discretization.neighbor_cells
         self._cell_count = discretization.cell_count
@@ -449,6 +445,121 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
     @property
     def support_coverage(self) -> str:
         return "complete"
+
+    def prepare_packet_query(
+        self,
+        owner: PreparedFieldReconstruction,
+        locator: AbstractCellLocator,
+        points: Array,
+        admissible: Array,
+        /,
+    ) -> PreparedFieldQuery:
+        """Rebind only the chart; retain this owner's actual reconstruction policy.
+
+        A donor's complete coefficient-read stencil must be active. In particular,
+        filtering the containing cell alone cannot authorize a k-exact neighbor
+        stencil to read a hole or fringe coefficient.
+        """
+        if owner.kernel is not self:
+            raise ValueError("Packet queries require the owning FV reconstruction.")
+        located = _checked_locator(self.discretization, locator)
+        kernel = UnstructuredFiniteVolumeFieldReconstructionKernel(
+            located,
+            self.reconstruction,
+            self.discretization,
+            field_space_id=owner.field_space_id,
+        )
+        rebound = PreparedFieldReconstruction(
+            kernel,
+            support_geometry=owner.support_geometry,
+            value_port=owner.value_port,
+            regularity=owner.regularity,
+            trace_policy=owner.trace_policy,
+            coefficient_shape=owner.coefficient_shape,
+            physical_dimension=owner.physical_dimension,
+            maximum_derivative_order=owner.maximum_derivative_order,
+            field_space_id=owner.field_space_id,
+            support_id=owner.support_id,
+            coefficient_linear=owner.coefficient_linear,
+            approximation=owner.approximation,
+            coefficient_dtype=owner.coefficient_dtype,
+        )
+        query = PreparedFieldQuery(rebound, points)
+        support = self.query_support_rows(query)
+        if not np.all(np.asarray(admissible, dtype=np.bool_)[support]):
+            raise ValueError(
+                "FV donor reconstruction reads an inactive hole/fringe source cell; "
+                "its full reconstruction stencil must be eligible."
+            )
+        return query
+
+    def query_support_rows(self, query: PreparedFieldQuery, /) -> np.ndarray:
+        """Actual coefficient-read cell scope, including nonlinear global reads."""
+        kernel = query.reconstruction.kernel
+        if (
+            not isinstance(kernel, UnstructuredFiniteVolumeFieldReconstructionKernel)
+            or kernel.reconstruction is not self.reconstruction
+            or kernel.discretization is not self.discretization
+        ):
+            raise ValueError(
+                "Query support must come from this actual FV reconstruction owner."
+            )
+        if isinstance(query.route, GatherStencil):
+            return np.unique(
+                np.asarray(query.route.indices)[np.asarray(query.route.valid)]
+            )
+        # WENO/MUSCL coefficients are computed by the owning global operator.
+        return np.arange(self.cell_count, dtype=np.int32)
+
+    def require_source_geometry(self, geometry: CellGeometrySpec | None, /) -> None:
+        """Bind real vertex descriptors; refuse mapped-source corner erasure.
+
+        A CellVertexGeometryElement is the actual polygon/polyhedron vertex
+        source, not a degree-one FE element. Its kind, arity, coordinates and
+        routes must match. Mapped/restricted sources require owning cell_geometry.
+        """
+        from .._cell_geometry import (
+            CellVertexGeometryElement,
+        )
+        from .._cell_geometry_validity import cell_geometry_id
+        from ..fem._reference import FiniteElementSpec
+
+        owning = getattr(self.discretization, "cell_geometry", None)
+        if owning is not None:
+            if geometry is None or cell_geometry_id(owning) != cell_geometry_id(geometry):
+                raise ValueError("FV fields are bound to another source coordinate map.")
+            return
+        if geometry is None:
+            return
+        if not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("Source geometry must be CellGeometrySpec or None.")
+        if (
+            geometry.exact_source is not None
+            or any(
+                (
+                    element.cell_kind != block.cell_kind
+                    or element.local_dof_count != block.vertices.shape[1]
+                )
+                if isinstance(element, CellVertexGeometryElement)
+                else (not isinstance(element, FiniteElementSpec) or element.degree != 1)
+                for element, block in zip(
+                    geometry.elements, self.discretization.mesh.blocks, strict=True
+                )
+            )
+            or not np.array_equal(
+                np.asarray(geometry.coordinates), np.asarray(self.discretization.vertices)
+            )
+            or any(
+                not np.array_equal(np.asarray(route), np.asarray(block.vertices))
+                for route, block in zip(
+                    geometry.geometry_dofs, self.discretization.mesh.blocks, strict=True
+                )
+            )
+        ):
+            raise ValueError(
+                "FV fields on mapped/restricted donors require the actual owning "
+                "cell_geometry; a corner-only field is not that source coordinate map."
+            )
 
     def locate(
         self,
@@ -770,6 +881,7 @@ def _default_locator(
         FiniteElementFieldSpec(
             "cell_average", discontinuous_element(blocks[0].cell_kind, 0)
         ),
+        coordinate_spec=getattr(discretization, "cell_geometry", None),
     ).prepare()
     cell_map = PreparedFiniteElementCellMap(geometry, 0)
     # Candidate capacity must cover every BVH leaf box around a query point.
@@ -792,13 +904,16 @@ def _checked_locator(
 ) -> AbstractCellLocator:
     if not isinstance(locator, AbstractCellLocator):
         raise TypeError("locator must be an AbstractCellLocator or None.")
+    geometry = getattr(discretization, "cell_geometry", None)
+    coordinates = discretization.vertices if geometry is None else geometry.coordinates
     if (
-        len(discretization.mesh.blocks) != 1
-        or locator.cell_map.topology_id != discretization.mesh.topology_id
+        locator.cell_map.topology_id != discretization.mesh.topology_id
         or locator.cell_map.cell_count != discretization.cell_count
-        or not np.array_equal(
-            np.asarray(locator.coordinates), np.asarray(discretization.vertices)
+        or (
+            geometry is not None
+            and locator.cell_map.geometry_layout_id != geometry.geometry_layout_id
         )
+        or not np.array_equal(np.asarray(locator.coordinates), np.asarray(coordinates))
     ):
         raise ValueError("The locator does not invert this finite-volume mesh.")
     return locator
@@ -931,12 +1046,15 @@ def prepare_finite_volume_field_reconstruction(
     (closed intervals within `location_tolerance` of each axis extent) and
     cover the grid box. Unstructured and triangular meshes need an inverse cell
     map: single-block triangle/tetrahedron meshes build a
-    `PreparedSimplicialCellLocator` from `location_policy`; other meshes need an
-    explicit `locator` over the same topology and vertices. The support is the
-    mesh region (an explicit geometry must be covered by the mesh). Coefficients
-    are cell averages with the discretization's `state_shape`; `layout="scalar"`
-    reconstructs a one-component structured field from its cell coordinates
-    (`finite_volume_scalar_space`) as a scalar-valued field.
+    `PreparedSimplicialCellLocator` from `location_policy`, retaining the owning
+    `cell_geometry` when present. Other meshes need an explicit `locator` over
+    the same topology and actual coordinate source, not an affine corner
+    replacement. Polyhedral Cartesian locators retain their complete PLC
+    support. An explicit support geometry must be covered by the mesh.
+    Coefficients are cell averages in the discretization's `state_shape`;
+    packet rebinding preserves that reconstruction/operator and full layout.
+    `layout="scalar"` reconstructs a one-component structured field from its
+    cell coordinates (`finite_volume_scalar_space`) as a scalar-valued field.
     """
     from ...geometry import CompiledGeometry
 

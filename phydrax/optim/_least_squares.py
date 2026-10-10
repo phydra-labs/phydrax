@@ -63,6 +63,7 @@ from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
     IterativeStepMetrics,
     LeastSquaresResult,
+    LeastSquaresTrialResult,
     NonlinearLeastSquaresProblem,
     OptimizationCapabilities,
     OptimizationDiagnostics,
@@ -96,6 +97,14 @@ class LeastSquaresState(StrictModule):
     direction_fallbacks: Array
     setup_refreshes: Array
     numeric_refreshes: Array
+    trial_policy_evaluations: Array
+    trial_policy_refusals: Array
+    trial_policy_jvp_actions: Array
+    trial_policy_vjp_actions: Array
+    trial_policy_model_work_units: Array
+    trial_policy_model_visits: Array
+    trial_policy_resource_refused: Array
+    trial_policy_receipts_valid: Array
     linear_refresh_state: LinearRefreshState | None
     metrics: IterativeStepMetrics
 
@@ -118,6 +127,14 @@ class LeastSquaresState(StrictModule):
         direction_fallbacks: Any = 0,
         setup_refreshes: Any = 0,
         numeric_refreshes: Any = 0,
+        trial_policy_evaluations: Any = 0,
+        trial_policy_refusals: Any = 0,
+        trial_policy_jvp_actions: Any = 0,
+        trial_policy_vjp_actions: Any = 0,
+        trial_policy_model_work_units: Any = 0,
+        trial_policy_model_visits: Any = 0,
+        trial_policy_resource_refused: Any = False,
+        trial_policy_receipts_valid: Any = True,
         linear_refresh_state: LinearRefreshState | None = None,
         metrics: IterativeStepMetrics | None = None,
     ) -> None:
@@ -138,6 +155,28 @@ class LeastSquaresState(StrictModule):
         self.linear_solves = jnp.asarray(linear_solves, dtype=jnp.int32)
         self.setup_refreshes = jnp.asarray(setup_refreshes, dtype=jnp.int32)
         self.numeric_refreshes = jnp.asarray(numeric_refreshes, dtype=jnp.int32)
+        self.trial_policy_evaluations = jnp.asarray(
+            trial_policy_evaluations, dtype=jnp.int32
+        )
+        self.trial_policy_refusals = jnp.asarray(trial_policy_refusals, dtype=jnp.int32)
+        self.trial_policy_jvp_actions = jnp.asarray(
+            trial_policy_jvp_actions, dtype=jnp.int64
+        )
+        self.trial_policy_vjp_actions = jnp.asarray(
+            trial_policy_vjp_actions, dtype=jnp.int64
+        )
+        self.trial_policy_model_work_units = jnp.asarray(
+            trial_policy_model_work_units, dtype=jnp.int64
+        )
+        self.trial_policy_model_visits = jnp.asarray(
+            trial_policy_model_visits, dtype=jnp.int64
+        )
+        self.trial_policy_resource_refused = jnp.asarray(
+            trial_policy_resource_refused, dtype=jnp.bool_
+        )
+        self.trial_policy_receipts_valid = jnp.asarray(
+            trial_policy_receipts_valid, dtype=jnp.bool_
+        )
         if linear_refresh_state is not None and not isinstance(
             linear_refresh_state, LinearRefreshState
         ):
@@ -147,12 +186,35 @@ class LeastSquaresState(StrictModule):
         self.metrics = IterativeStepMetrics() if metrics is None else metrics
 
 
+class _PolicyResidual(StrictModule):
+    """Dynamically bound residual data and explicitly identified trial policy."""
+
+    problem: NonlinearLeastSquaresProblem
+    args: Any
+
+    def __init__(self, problem: NonlinearLeastSquaresProblem, args: Any) -> None:
+        self.problem = problem
+        self.args = args
+
+    def __call__(self, parameters: PyTree[Any]) -> PyTree[Array]:
+        return self.problem.value(parameters, self.args)[0]
+
+    def termination_valid(self, residual: PyTree[Any]) -> Array:
+        policy = self.problem.trial_policy
+        return (
+            jnp.asarray(True)
+            if policy is None
+            else jnp.asarray(policy.termination_valid(residual, self.args))
+        )
+
+
 class _ResidualModel(StrictModule):
     residual: PyTree[Array]
     jacobian: JacobianLinearOperator
     gradient: PyTree[Array]
     objective: Array
     optimality_norm: Array
+    termination_valid: Array
 
     def __init__(
         self,
@@ -162,12 +224,14 @@ class _ResidualModel(StrictModule):
         gradient: PyTree[Array],
         objective: Array,
         optimality_norm: Array,
+        termination_valid: Array,
     ) -> None:
         self.residual = residual
         self.jacobian = jacobian
         self.gradient = gradient
         self.objective = jnp.asarray(objective)
         self.optimality_norm = jnp.asarray(optimality_norm)
+        self.termination_valid = jnp.asarray(termination_valid)
 
 
 # Levenberg–Marquardt trial loop carry: trial, damping, accepted, candidate
@@ -189,12 +253,39 @@ _LMTrialCarry: TypeAlias = tuple[
     Array,
     Array,
     Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
     LinearRefreshState,
 ]
 # One Levenberg–Marquardt trial outcome: damping, accepted, parameters,
 # objective, step norm, ratio, residual/JVP increments, and finite flag.
 _LMTrialOutcome: TypeAlias = tuple[
-    Array, Array, PyTree[Array], Array, Array, Array, Array, Array, Array
+    Array,
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
 ]
 
 
@@ -236,6 +327,11 @@ def _prepare_residual_model(
         gradient=gradient,
         objective=objective,
         optimality_norm=_tree_norm(gradient),
+        termination_valid=(
+            residual_function.termination_valid(residual)
+            if isinstance(residual_function, _PolicyResidual)
+            else jnp.asarray(True)
+        ),
     )
 
 
@@ -734,14 +830,18 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         def terminal_step(_: None) -> tuple[PyTree[Array], LeastSquaresState, Array]:
             status = jnp.where(
                 finite_model,
-                int(OptimizationStatus.SUCCESS),
+                jnp.where(
+                    model.termination_valid,
+                    int(OptimizationStatus.SUCCESS),
+                    int(OptimizationStatus.STAGNATION),
+                ),
                 int(OptimizationStatus.NONFINITE_EVALUATION),
             )
             metrics = IterativeStepMetrics(
                 objective=model.objective,
                 optimality_norm=model.optimality_norm,
                 damping=state.damping,
-                accepted=finite_model,
+                accepted=finite_model & model.termination_valid,
                 status=status,
             )
             updated = LeastSquaresState(
@@ -755,6 +855,14 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                 vjp_evaluations=state.vjp_evaluations + 1,
                 linear_iterations=state.linear_iterations,
                 linear_solves=state.linear_solves,
+                trial_policy_evaluations=state.trial_policy_evaluations,
+                trial_policy_refusals=state.trial_policy_refusals,
+                trial_policy_jvp_actions=state.trial_policy_jvp_actions,
+                trial_policy_vjp_actions=state.trial_policy_vjp_actions,
+                trial_policy_model_work_units=state.trial_policy_model_work_units,
+                trial_policy_model_visits=state.trial_policy_model_visits,
+                trial_policy_resource_refused=state.trial_policy_resource_refused,
+                trial_policy_receipts_valid=state.trial_policy_receipts_valid,
                 setup_refreshes=state.setup_refreshes + setup_increment,
                 numeric_refreshes=state.numeric_refreshes + bind_increment,
                 linear_refresh_state=refresh_state,
@@ -772,7 +880,9 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
 
             def trial_condition(carry: _LMTrialCarry) -> Array:
                 trial, _, accepted, *_ = carry
-                return (trial < self.maximum_trials) & (~accepted)
+                return (
+                    (trial < self.maximum_trials) & (~accepted) & carry[-2] & (~carry[-3])
+                )
 
             def trial_body(carry: _LMTrialCarry) -> _LMTrialCarry:
                 (
@@ -790,6 +900,15 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                     _,
                     usable_linear_step_seen,
                     finite_trial_seen,
+                    accepted_scale,
+                    policy_evaluations,
+                    policy_refusals,
+                    policy_jvp_actions,
+                    policy_vjp_actions,
+                    policy_model_work,
+                    policy_model_visits,
+                    policy_resource_refused,
+                    policy_receipts_valid,
                     dynamic_refresh_state_for_trial,
                 ) = carry
                 refresh_state_for_trial = eqx.combine(
@@ -813,71 +932,225 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                 )
 
                 def evaluate_trial(_: None) -> _LMTrialOutcome:
-                    linearized_residual = jax.tree.map(
-                        lambda residual, change: residual + change,
-                        model.residual,
-                        model.jacobian.mv(direction),
+                    scale = jnp.asarray(1.0, dtype=model.objective.dtype)
+                    policy_valid = jnp.asarray(True)
+                    selected_direction = direction
+                    policy_residual = (
+                        residual_function
+                        if isinstance(residual_function, _PolicyResidual)
+                        else None
                     )
-                    predicted = model.objective - 0.5 * _tree_inner(
-                        linearized_residual,
-                        linearized_residual,
+                    policy = (
+                        None
+                        if policy_residual is None
+                        else policy_residual.problem.trial_policy
                     )
-                    proposed = _tree_add_scaled(parameters, direction, 1.0)
-                    proposed_residual = residual_function(proposed)
-                    proposed_objective = 0.5 * _tree_inner(
-                        proposed_residual,
-                        proposed_residual,
+                    policy_jvp_count = jnp.asarray(0, dtype=jnp.int64)
+                    policy_vjp_count = jnp.asarray(0, dtype=jnp.int64)
+                    model_work = jnp.asarray(0, dtype=jnp.int64)
+                    model_visits = jnp.asarray(0, dtype=jnp.int64)
+                    receipts_valid = jnp.asarray(True)
+                    resource_refused = jnp.asarray(False)
+                    if policy_residual is not None and policy is not None:
+                        model_limit = policy_residual.problem.trial_model_work_limit
+                        if model_limit is None:
+                            raise ValueError(
+                                "An identified policy requires a dynamic model-work limit."
+                            )
+                        remaining_model_work = (
+                            model_limit
+                            - state.trial_policy_model_work_units
+                            - policy_model_work
+                        )
+                        proposal = policy(
+                            parameters,
+                            direction,
+                            model.residual,
+                            model.jacobian,
+                            remaining_model_work,
+                            policy_residual.args,
+                        )
+                        if not isinstance(proposal, LeastSquaresTrialResult):
+                            raise TypeError(
+                                "A trial policy must return LeastSquaresTrialResult."
+                            )
+                        selected_direction = model.jacobian.source.validate(
+                            proposal.direction
+                        )
+                        image = model.jacobian.target.validate(proposal.model_image)
+                        scale, policy_valid = proposal.scale, proposal.valid
+                        policy_jvp_count = jnp.asarray(
+                            proposal.jvp_actions, dtype=jnp.int64
+                        )
+                        policy_vjp_count = jnp.asarray(
+                            proposal.vjp_actions, dtype=jnp.int64
+                        )
+                        model_work = jnp.asarray(
+                            proposal.model_work_units, dtype=jnp.int64
+                        )
+                        model_visits = jnp.asarray(proposal.model_visits, dtype=jnp.int64)
+                        receipts_valid = proposal.receipts_valid()
+                        resource_refused = proposal.resource_refused | (
+                            model_work > remaining_model_work
+                        )
+                        scale = jnp.asarray(scale, dtype=model.objective.dtype).reshape(
+                            ()
+                        )
+                        policy_valid = (
+                            jnp.asarray(policy_valid).reshape(())
+                            & receipts_valid
+                            & (~resource_refused)
+                            & jnp.isfinite(scale)
+                            & (scale > 0.0)
+                            & (scale <= 1.0)
+                            & _tree_allfinite(selected_direction)
+                            & _tree_allfinite(image)
+                        )
+                        scale = jnp.where(policy_valid, scale, 0.0)
+                        jvp_count = policy_jvp_count
+                    else:
+                        image = model.jacobian.mv(direction)
+                        jvp_count = 1
+                    proposed = _tree_add_scaled(parameters, selected_direction, scale)
+                    if policy is not None:
+                        changed = jnp.any(
+                            jnp.stack(
+                                [
+                                    jnp.any(new != old)
+                                    for new, old in zip(
+                                        jax.tree.leaves(proposed),
+                                        jax.tree.leaves(parameters),
+                                        strict=True,
+                                    )
+                                ]
+                            )
+                        )
+                        trial_model_slope = _tree_inner(model.residual, image)
+                        policy_valid = (
+                            policy_valid
+                            & changed
+                            & jnp.isfinite(trial_model_slope)
+                            & (trial_model_slope < 0.0)
+                        )
+                    else:
+                        trial_model_slope = directional
+                    # The model belongs to the returned direction, not the
+                    # original linear trial. It never replaces the Krylov J.
+                    predicted = -scale * trial_model_slope - 0.5 * scale**2 * _tree_inner(
+                        image, image
                     )
-                    actual = model.objective - proposed_objective
-                    finite_trial = (
-                        _tree_allfinite(proposed)
-                        & _tree_allfinite(proposed_residual)
-                        & jnp.isfinite(proposed_objective)
-                        & jnp.isfinite(predicted)
-                    )
-                    trial_ratio = jnp.where(
-                        finite_trial & (predicted > 0.0),
-                        actual / predicted,
-                        -jnp.inf,
-                    )
+                    if policy is not None:
+                        policy_valid = (
+                            policy_valid & jnp.isfinite(predicted) & (predicted > 0.0)
+                        )
+
+                    def actual_trial(
+                        _: None,
+                    ) -> tuple[PyTree[Array], Array, Array, Array, Array]:
+                        proposed_residual = residual_function(proposed)
+                        proposed_objective = 0.5 * _tree_inner(
+                            proposed_residual, proposed_residual
+                        )
+                        difference = jax.tree.map(
+                            lambda current, candidate: current - candidate,
+                            model.residual,
+                            proposed_residual,
+                        )
+                        total = jax.tree.map(
+                            lambda current, candidate: current + candidate,
+                            model.residual,
+                            proposed_residual,
+                        )
+                        actual = 0.5 * _tree_inner(difference, total)
+                        finite_trial = (
+                            _tree_allfinite(proposed)
+                            & _tree_allfinite(proposed_residual)
+                            & jnp.isfinite(proposed_objective)
+                            & jnp.isfinite(predicted)
+                        )
+                        trial_ratio = jnp.where(
+                            finite_trial & (predicted > 0.0), actual / predicted, -jnp.inf
+                        )
+                        return (
+                            proposed,
+                            proposed_objective,
+                            finite_trial,
+                            trial_ratio,
+                            jnp.asarray(1, dtype=jnp.int32),
+                        )
+
+                    def refused_policy(
+                        _: None,
+                    ) -> tuple[PyTree[Array], Array, Array, Array, Array]:
+                        return (
+                            candidate_parameters,
+                            candidate_objective,
+                            jnp.asarray(False),
+                            jnp.full_like(model.objective, -jnp.inf),
+                            jnp.asarray(0, dtype=jnp.int32),
+                        )
+
+                    if policy is None:
+                        (
+                            trial_parameters,
+                            trial_objective,
+                            finite_trial,
+                            trial_ratio,
+                            residual_increment,
+                        ) = actual_trial(None)
+                    else:
+                        (
+                            trial_parameters,
+                            trial_objective,
+                            finite_trial,
+                            trial_ratio,
+                            residual_increment,
+                        ) = jax.lax.cond(policy_valid, actual_trial, refused_policy, None)
                     next_damping = jnp.where(
                         trial_ratio > self.decrease_ratio,
                         jnp.maximum(
-                            self.minimum_damping,
-                            damping * self.damping_decrease,
+                            self.minimum_damping, damping * self.damping_decrease
                         ),
                         jnp.where(
                             trial_ratio < self.increase_ratio,
                             jnp.minimum(
-                                self.maximum_damping,
-                                damping * self.damping_increase,
+                                self.maximum_damping, damping * self.damping_increase
                             ),
                             damping,
                         ),
                     )
-                    trial_accepted = finite_trial & (trial_ratio >= self.acceptance_ratio)
+                    trial_accepted = (
+                        finite_trial
+                        & policy_valid
+                        & (trial_ratio >= self.acceptance_ratio)
+                    )
                     return (
                         next_damping,
                         trial_accepted,
                         _tree_where(
-                            trial_accepted,
-                            proposed,
-                            candidate_parameters,
+                            trial_accepted, trial_parameters, candidate_parameters
                         ),
+                        jnp.where(trial_accepted, trial_objective, candidate_objective),
                         jnp.where(
                             trial_accepted,
-                            proposed_objective,
-                            candidate_objective,
-                        ),
-                        jnp.where(
-                            trial_accepted,
-                            _tree_norm(direction),
+                            scale * _tree_norm(selected_direction),
                             accepted_step_norm,
                         ),
                         trial_ratio,
-                        jnp.asarray(1, dtype=jnp.int32),
-                        jnp.asarray(1, dtype=jnp.int32),
+                        residual_increment,
+                        jnp.asarray(jvp_count, dtype=jnp.int32),
                         finite_trial,
+                        jnp.where(trial_accepted, scale, accepted_scale),
+                        jnp.asarray(policy is not None, dtype=jnp.int32),
+                        jnp.asarray(policy is not None, dtype=jnp.int32)
+                        * (~policy_valid).astype(jnp.int32),
+                        jnp.asarray(policy_vjp_count, dtype=jnp.int32),
+                        policy_jvp_count,
+                        policy_vjp_count,
+                        model_work,
+                        model_visits,
+                        resource_refused,
+                        receipts_valid,
                     )
 
                 def reject_linear_step(_: None) -> _LMTrialOutcome:
@@ -894,6 +1167,16 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                         jnp.asarray(0, dtype=jnp.int32),
                         jnp.asarray(0, dtype=jnp.int32),
                         jnp.asarray(False),
+                        accepted_scale,
+                        jnp.asarray(0, dtype=jnp.int32),
+                        jnp.asarray(0, dtype=jnp.int32),
+                        jnp.asarray(0, dtype=jnp.int32),
+                        jnp.asarray(0, dtype=jnp.int64),
+                        jnp.asarray(0, dtype=jnp.int64),
+                        jnp.asarray(0, dtype=jnp.int64),
+                        jnp.asarray(0, dtype=jnp.int64),
+                        jnp.asarray(False),
+                        jnp.asarray(True),
                     )
 
                 (
@@ -906,6 +1189,16 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                     residual_increment,
                     jvp_increment,
                     finite_trial,
+                    next_accepted_scale,
+                    policy_increment,
+                    refusal_increment,
+                    policy_vjp_increment,
+                    policy_jvp_increment,
+                    policy_vjp_action_increment,
+                    model_work_increment,
+                    model_visit_increment,
+                    resource_refused,
+                    receipts_valid,
                 ) = jax.lax.cond(
                     usable,
                     evaluate_trial,
@@ -939,11 +1232,21 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                     + jnp.asarray(
                         linear_result.diagnostics.adjoint_matvec_count,
                         dtype=jnp.int32,
-                    ),
+                    )
+                    + policy_vjp_increment,
                     total_linear_iterations + linear_iterations,
                     jnp.asarray(linear_result.status, dtype=jnp.int32),
                     usable_linear_step_seen | usable,
                     finite_trial_seen | finite_trial,
+                    next_accepted_scale,
+                    policy_evaluations + policy_increment,
+                    policy_refusals + refusal_increment,
+                    policy_jvp_actions + policy_jvp_increment,
+                    policy_vjp_actions + policy_vjp_action_increment,
+                    policy_model_work + model_work_increment,
+                    policy_model_visits + model_visit_increment,
+                    policy_resource_refused | resource_refused,
+                    policy_receipts_valid & receipts_valid,
                     dynamic_current_refresh_state,
                 )
 
@@ -962,6 +1265,15 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                 jnp.asarray(-1, dtype=jnp.int32),
                 jnp.asarray(False),
                 jnp.asarray(False),
+                jnp.zeros_like(model.objective),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int64),
+                jnp.asarray(0, dtype=jnp.int64),
+                state.trial_policy_resource_refused,
+                state.trial_policy_receipts_valid,
                 dynamic_refresh_state,
             )
             (
@@ -979,6 +1291,15 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                 last_linear_status,
                 usable_linear_step_seen,
                 finite_trial_seen,
+                accepted_scale,
+                policy_evaluations,
+                policy_refusals,
+                policy_jvp_actions,
+                policy_vjp_actions,
+                policy_model_work,
+                policy_model_visits,
+                policy_resource_refused,
+                policy_receipts_valid,
                 final_refresh_state,
             ) = jax.lax.while_loop(
                 trial_condition,
@@ -1011,11 +1332,40 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                     ),
                 ),
             )
+            if (
+                isinstance(residual_function, _PolicyResidual)
+                and residual_function.problem.trial_policy is not None
+            ):
+                refused_all = (policy_evaluations > 0) & (
+                    policy_refusals == policy_evaluations
+                )
+                invalid_linear_direction = (
+                    policy_evaluations == 0
+                ) & _usable_inexact_linear_status(last_linear_status)
+                status = jnp.where(
+                    (~accepted) & refused_all,
+                    int(OptimizationStatus.STAGNATION),
+                    jnp.where(
+                        (~accepted) & invalid_linear_direction,
+                        int(OptimizationStatus.INVALID_DIRECTION),
+                        status,
+                    ),
+                )
+                status = jnp.where(
+                    ~policy_receipts_valid,
+                    int(OptimizationStatus.INVALID_DIRECTION),
+                    status,
+                )
+                status = jnp.where(
+                    policy_resource_refused,
+                    int(OptimizationStatus.RESOURCE_LIMIT),
+                    status,
+                )
             metrics = IterativeStepMetrics(
                 objective=candidate_objective,
                 optimality_norm=model.optimality_norm,
                 step_norm=accepted_step_norm,
-                accepted_step_size=accepted.astype(candidate_objective.dtype),
+                accepted_step_size=accepted_scale,
                 globalization_evaluations=trial_residual_evaluations,
                 accepted=accepted,
                 linear_iterations=trial_linear_iterations,
@@ -1037,6 +1387,21 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
                 vjp_evaluations=(state.vjp_evaluations + 1 + trial_vjp_evaluations),
                 linear_iterations=(state.linear_iterations + trial_linear_iterations),
                 linear_solves=state.linear_solves + trials,
+                trial_policy_evaluations=state.trial_policy_evaluations
+                + policy_evaluations,
+                trial_policy_refusals=state.trial_policy_refusals + policy_refusals,
+                trial_policy_jvp_actions=state.trial_policy_jvp_actions
+                + policy_jvp_actions,
+                trial_policy_vjp_actions=state.trial_policy_vjp_actions
+                + policy_vjp_actions,
+                trial_policy_model_work_units=state.trial_policy_model_work_units
+                + policy_model_work,
+                trial_policy_model_visits=state.trial_policy_model_visits
+                + policy_model_visits,
+                trial_policy_resource_refused=state.trial_policy_resource_refused
+                | policy_resource_refused,
+                trial_policy_receipts_valid=state.trial_policy_receipts_valid
+                & policy_receipts_valid,
                 setup_refreshes=state.setup_refreshes + setup_increment,
                 numeric_refreshes=(state.numeric_refreshes + bind_increment + trials),
                 linear_refresh_state=final_refresh_state,
@@ -1410,6 +1775,10 @@ def _solve_bounded_least_squares(
 ) -> LeastSquaresResult:
     if not isinstance(problem, NonlinearLeastSquaresProblem):
         raise TypeError("problem must be NonlinearLeastSquaresProblem.")
+    if problem.trial_policy is not None:
+        raise ValueError(
+            "An identified trial policy requires native unconstrained LevenbergMarquardt."
+        )
     if problem.bounds is None:
         raise ValueError("A bounded least-squares method requires problem.bounds.")
     if not isinstance(termination, OptimizationTermination):
@@ -1959,8 +2328,13 @@ def _package_least_squares_result(
             ~finite_final,
             int(OptimizationStatus.NONFINITE_EVALUATION),
             jnp.where(
-                final_model.optimality_norm
-                <= termination.optimality_threshold(state.initial_optimality_norm),
+                (
+                    final_model.optimality_norm
+                    <= termination.optimality_threshold(state.initial_optimality_norm)
+                )
+                & final_model.termination_valid
+                & state.trial_policy_receipts_valid
+                & (~state.trial_policy_resource_refused),
                 int(OptimizationStatus.SUCCESS),
                 status,
             ),
@@ -2001,7 +2375,25 @@ def _package_least_squares_result(
             backend="phydrax-native",
             globalization=method.globalization_id,
             matrix_free=True,
-            implicit_differentiation=method.capabilities.implicit_differentiation,
+            implicit_differentiation=(
+                method.capabilities.implicit_differentiation
+                and problem.trial_policy is None
+            ),
+        ),
+        method_evidence=(
+            None
+            if problem.trial_policy is None
+            else {
+                "trial_policy_id": problem.trial_policy_id,
+                "trial_policy_evaluations": state.trial_policy_evaluations,
+                "trial_policy_refusals": state.trial_policy_refusals,
+                "trial_policy_jvp_actions": state.trial_policy_jvp_actions,
+                "trial_policy_vjp_actions": state.trial_policy_vjp_actions,
+                "trial_policy_model_work_units": state.trial_policy_model_work_units,
+                "trial_policy_model_visits": state.trial_policy_model_visits,
+                "trial_policy_resource_refused": state.trial_policy_resource_refused,
+                "trial_policy_receipts_valid": state.trial_policy_receipts_valid,
+            }
         ),
     )
 
@@ -2027,9 +2419,9 @@ def _solve_least_squares(
         termination,
     )
 
-    def residual_function(candidate: PyTree[Array]) -> PyTree[Array]:
-        residual, _ = problem.value(candidate, args)
-        return residual
+    residual_function = _PolicyResidual(problem, args)
+    if problem.trial_policy is not None and not isinstance(method, LevenbergMarquardt):
+        raise ValueError("An identified trial policy requires native LevenbergMarquardt.")
 
     (
         run,
@@ -2099,6 +2491,8 @@ def least_squares(
     )
     method_ = GaussNewton() if method is None else method
     termination_ = OptimizationTermination() if termination is None else termination
+    if problem.trial_policy is not None and not isinstance(method_, LevenbergMarquardt):
+        raise ValueError("An identified trial policy requires native LevenbergMarquardt.")
     if not isinstance(method_, AbstractLeastSquaresMethod):
         raise TypeError("method must be an AbstractLeastSquaresMethod or None.")
     if iteration is not None and not isinstance(iteration, IterationPlan):

@@ -28,7 +28,6 @@ def fuzzy_space_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=(
                 "su2-transform-orthonormality",

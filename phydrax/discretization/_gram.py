@@ -76,13 +76,12 @@ def sparse_gram_space(
     if coefficients.ndim != 1 or jnp.issubdtype(coefficients.dtype, jnp.complexfloating):
         raise ValueError("Gram route values must be one real vector.")
     coefficients = coefficients.astype(jnp.float64)
-    relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
-    if storage_plan is None:
-        with jax.ensure_compile_time_eval():
-            admitted_relation = EdgeRelation(
-                sources, targets, source_size=size, target_size=size
-            )
-            storage_plan = _SparseStoragePlan(admitted_relation)
+    # Routes are host structure: a traced relation would drop the prepared
+    # row-gather layouts and change the operator pytree inside jit or scan.
+    with jax.ensure_compile_time_eval():
+        relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
+        if storage_plan is None:
+            storage_plan = _SparseStoragePlan(relation)
     if coefficients.shape != relation.source_indices.shape:
         raise ValueError("Gram values must match the static route vector.")
     selected = (

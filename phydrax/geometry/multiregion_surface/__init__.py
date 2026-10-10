@@ -43,6 +43,7 @@ from ._label_extraction import (
     LabelFieldSurfaceExtractionRoute,
     LabelFieldSurfaceExtractionStatus,
     LabelFieldSurfaceLineage,
+    LabelFieldVolumeBinding,
     PreparedLabelFieldSurfaceExtraction,
 )
 from ._profiles import multiregion_surface_candidate_profiles
@@ -99,6 +100,7 @@ from ._views import (
 
 
 __all__ = [
+    "LabelFieldVolumeBinding",
     "DRY_FOAM_EDGE_VALENCE",
     "DRY_FOAM_VERTEX_REGIONS",
     "BoundedFieldReconstruction",

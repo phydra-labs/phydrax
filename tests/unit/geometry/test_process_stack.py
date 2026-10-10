@@ -8,11 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
 
 from phydrax import SpatialCoordinateContract
-from phydrax.geometry.brep import read_occt_shape
+from phydrax._external_resource import ResourceLimits
+from phydrax.geometry.brep._query import prepare_brep_query
 from phydrax.geometry.process import (
     lower_process_stack,
     ProcessStack,
@@ -21,6 +20,8 @@ from phydrax.geometry.process import (
     ZInterval,
 )
 from phydrax.geometry.simplicial import PlanarMeshRegion
+from phydrax.interchange._cad import CadImportPolicy
+from phydrax.interchange._cad_brep_text import read_brep_text
 from phydrax.units import MILLIMETER
 
 
@@ -45,11 +46,17 @@ def _rectangle(
     )
 
 
-def _volume(path: Path) -> float:
-    shape, _, _ = read_occt_shape(path)
-    properties = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape, properties)
-    return float(properties.Mass())
+def _volume(path: Path, contract: SpatialCoordinateContract) -> float:
+    """Native oracle: decode the published B-Rep text and integrate its exact solids."""
+    policy = CadImportPolicy(
+        contract, ResourceLimits(64 * 1024 * 1024, 128, 1_000_000, 10_000_000, 0)
+    )
+    decoded = read_brep_text(
+        path, policy, trusted_root=path.parent, source_length_unit=contract.length_unit
+    )
+    return float(
+        np.sum(np.asarray(prepare_brep_query(decoded.model).measures.solid_volumes))
+    )
 
 
 def test_process_stack_requires_total_precedence_and_explicit_void_targets() -> None:
@@ -121,7 +128,7 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
 
     assert stack.region_precedence == ("high", "low")
     assert destination.is_file()
-    assert _volume(destination) == pytest.approx(5.5)
+    assert _volume(destination, contract) == pytest.approx(5.5)
     assert result.model.report.num_solids == 2
     assert result.model.coordinate_contract.spatial_id == contract.spatial_id
     assert result.revision.revision_id == result.model.source_revision
@@ -153,7 +160,6 @@ def test_vertical_stack_lowers_to_persisted_exact_partition_history(
         "opening",
     )
     assert all(
-        Path(model.source_id).is_file()
-        and model.coordinate_contract.spatial_id == contract.spatial_id
+        model.coordinate_contract.spatial_id == contract.spatial_id
         for _, model in result.operand_models
     )

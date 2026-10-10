@@ -62,10 +62,6 @@ class Trade(StrictModule, NonTrainableState):
     ) -> None:
         identifier = _identifier(trade_id, "trade_id")
         quantity_ = _quantity(quantity, "quantity", nonzero=True)
-        if transaction_price is not None and not isinstance(
-            transaction_price, CurrencyAmount
-        ):
-            raise TypeError("transaction_price must be CurrencyAmount or None.")
         if (
             transaction_price is not None
             and transaction_price.currency.currency_id != settlement.currency.currency_id

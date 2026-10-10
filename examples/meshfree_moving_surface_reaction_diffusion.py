@@ -24,7 +24,11 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from phydrax.discretization import CochainDiscretization, TopologyEpoch
+from phydrax.discretization import (
+    CochainDiscretization,
+    TopologyEpoch,
+    TransferGeometryBinding,
+)
 from phydrax.discretization.meshfree import (
     ChartMotion,
     ImplicitSurfaceGeometry,
@@ -237,7 +241,11 @@ def prepare_workflow(
 
 
 def _cross_transfer(
-    old_points: Array, old_measures: Array, target: MovingGeometryRefresh
+    old_points: Array,
+    old_measures: Array,
+    target: MovingGeometryRefresh,
+    source_epoch: TopologyEpoch,
+    target_epoch: TopologyEpoch,
 ) -> PreparedPointTransfer:
     new_points, new_measures = target.points, target.measures
     neighborhood = MeshfreeNeighborhoodPlan(
@@ -260,6 +268,14 @@ def _cross_transfer(
         new_measures,
         target_normals=target.normals,
         request=PointTransferRequest("conservative-signed"),
+        geometry=TransferGeometryBinding(
+            source_epoch.geometry_id,
+            target_epoch.geometry_id,
+            "topology-correspondence",
+            source_topology_id=source_epoch.topology_id,
+            target_topology_id=target_epoch.topology_id,
+            coverage_defect=None,
+        ),
     ).prepare()
     if not prepared.admitted:
         raise ValueError(f"Cross-epoch transfer refused: {prepared.evidence.status}.")
@@ -412,7 +428,9 @@ def prepare_epoch_transition(
     if not isinstance(chart, ChartMotion):
         raise TypeError("The growing-sphere workflow uses its authoritative chart.")
     current = target_plan.geometry(chart.positions(state.time), state.time, None)
-    transfer = _cross_transfer(state.points, state.measures, current)
+    transfer = _cross_transfer(
+        state.points, state.measures, current, state.epoch, target_plan.epoch
+    )
     histories: list[PreparedPointTransfer] = []
     history_points: list[Array] = []
     for slot in state.live_slots():
@@ -421,7 +439,11 @@ def prepare_epoch_transition(
         )
         histories.append(
             _cross_transfer(
-                state.history_points[slot], state.history_measures[slot], historical
+                state.history_points[slot],
+                state.history_measures[slot],
+                historical,
+                state.epoch,
+                target_plan.epoch,
             )
         )
         history_points.append(historical.points)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from fractions import Fraction
 from itertools import combinations
 from typing import final, NoReturn
 
@@ -16,8 +17,14 @@ from jax import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._coordinate_enclosure import coordinate_polynomials, evaluate
 from ...discretization._reference_cell import reference_cell_topology
-from ...discretization._simplicial_locator import AbstractCellLocator, CellLocationStatus
+from ...discretization._simplicial_locator import (
+    _cell_map_vertices,
+    AbstractCellLocator,
+    CellLocationStatus,
+)
+from ...discretization.fem._cell_map import PreparedFiniteElementCellMap
 from ...typing import Dim, Float64, PRNGKey
 from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
@@ -225,6 +232,51 @@ def _boundary_faces(cells: np.ndarray, cell_kind: str, /) -> np.ndarray:
     return boundary
 
 
+def _affine_support_coordinates(
+    cell_map: PreparedFiniteElementCellMap,
+    source_coordinates: np.ndarray,
+    cells: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Prove affine maps and realize their target corners, retaining source DOFs."""
+    topology = reference_cell_topology(cell_map.coordinate_element.cell_kind)
+    corners = tuple(
+        tuple(Fraction(value) for value in point) for point in topology.vertices
+    )
+    exact_points: dict[int, tuple[Fraction, ...]] = {}
+    routes = np.asarray(cell_map.coordinate_dofs, dtype=np.int32)
+    source_bank = cell_map.source_coordinates(source_coordinates)
+    for row in range(cells.shape[0]):
+        polynomials = coordinate_polynomials(
+            cell_map.coordinate_element,
+            tuple(source_bank[routes[row, column]] for column in range(routes.shape[1])),
+        )
+        if (
+            polynomials is None
+            or len(polynomials) != topology.dimension
+            or any(sum(index) > 1 for polynomial in polynomials for index in polynomial)
+        ):
+            raise ValueError(
+                "Simplicial support geometry requires proven affine simplex coordinate maps."
+            )
+        for column, corner in enumerate(corners):
+            image = tuple(evaluate(polynomial, corner) for polynomial in polynomials)
+            identifier = int(cells[row, column])
+            previous = exact_points.setdefault(identifier, image)
+            if previous != image:
+                raise ValueError(
+                    "Simplicial support coordinate maps disagree at a shared mesh corner."
+                )
+    coordinates = np.zeros(
+        (cell_map.mesh.coordinates.shape[0], topology.dimension), dtype=np.float64
+    )
+    for vertex, image in exact_points.items():
+        coordinates[vertex] = tuple(float(value) for value in image)
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError("Simplicial support target corners must be finite.")
+    return coordinates
+
+
 def _projection_worksets(
     coordinates: np.ndarray,
     faces: np.ndarray,
@@ -275,7 +327,13 @@ def compile_simplicial_support(
     maximum_face_entries: int = 1 << 20,
     maximum_retained_bytes: int = 256 << 20,
 ) -> CompiledGeometry:
-    """Compile exact containment and exterior-distance queries in any dimension."""
+    """Compile affine simplex support in any dimension from its actual source map.
+
+    Retained coefficient routes are not target corners. Exact coordinate source
+    expressions prove affinity and supply target-reference corner images; mesh
+    vertex identities alone define shared facets. Non-affine or unrepresented
+    maps need their owning mapped-support geometry rather than this affine path.
+    """
     if not isinstance(locator, AbstractCellLocator):
         raise TypeError("Simplicial support requires an AbstractCellLocator.")
     if not isinstance(support_id, str):
@@ -287,18 +345,22 @@ def compile_simplicial_support(
             raise TypeError("Support preparation budgets must be integers.")
         if budget < 1:
             raise ValueError("Support preparation budgets must be positive.")
+    cell_map = locator.cell_map
+    if not isinstance(cell_map, PreparedFiniteElementCellMap):
+        raise TypeError(
+            "Simplicial support requires a canonical finite-element cell map."
+        )
     dimension = locator.cell_map.reference_dimension
     if locator.cell_map.ambient_dimension != dimension:
         raise ValueError(
             "A region support must be full-dimensional, not an embedded manifold."
         )
-    cells = np.asarray(locator.cell_map.coordinate_dofs, dtype=np.int32)
-    coordinates = np.asarray(locator.coordinates, dtype=np.float64)
+    cells = _cell_map_vertices(cell_map)
     if cells.shape[1:] != (dimension + 1,):
         raise ValueError(
             "Simplicial support geometry requires affine simplex vertex coordinates."
         )
-    faces = _boundary_faces(cells, locator.cell_map.coordinate_element.cell_kind)
+    faces = _boundary_faces(cells, cell_map.coordinate_element.cell_kind)
     if maximum_face_entries < 1 or dimension > maximum_face_entries.bit_length():
         raise ValueError("Simplicial support face entries exceed the preparation budget.")
     if faces.shape[0] * (2**dimension - 1) > maximum_face_entries:
@@ -309,6 +371,9 @@ def compile_simplicial_support(
         raise ValueError(
             "Simplicial support projection maps exceed maximum_retained_bytes."
         )
+    coordinates = _affine_support_coordinates(
+        cell_map, np.asarray(locator.coordinates, dtype=np.float64), cells
+    )
     used = coordinates[np.unique(cells)]
     kernel = _SimplicialSupportKernel(
         locator,

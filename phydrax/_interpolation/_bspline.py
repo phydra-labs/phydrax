@@ -4,13 +4,17 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
+from fractions import Fraction
 from functools import partial
 from math import factorial
 from numbers import Integral
+from typing import overload
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -504,8 +508,296 @@ def bspline_batched_evaluate(
     )
 
 
+def _insert_knot(
+    values: np.ndarray, knots: np.ndarray, degree: int, knot: float | Fraction, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Boehm insertion of one interior knot along the leading control axis."""
+    multiplicity = int(np.count_nonzero(knots == knot))
+    span = bisect_right(knots, knot) - 1
+    inserted = np.empty((values.shape[0] + 1, *values.shape[1:]), dtype=values.dtype)
+    inserted[: span - degree + 1] = values[: span - degree + 1]
+    inserted[span - multiplicity + 1 :] = values[span - multiplicity :]
+    for index in range(span - degree + 1, span - multiplicity + 1):
+        alpha = (knot - knots[index]) / (knots[index + degree] - knots[index])
+        inserted[index] = alpha * values[index] + (1 - alpha) * values[index - 1]
+    inserted_knots = np.empty((knots.shape[0] + 1,), dtype=knots.dtype)
+    inserted_knots[: span + 1] = knots[: span + 1]
+    inserted_knots[span + 1] = knot
+    inserted_knots[span + 2 :] = knots[span + 1 :]
+    return inserted, inserted_knots
+
+
+def _insert_knot_bounds(
+    lower: np.ndarray, upper: np.ndarray, knots: np.ndarray, degree: int, knot: float, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Outward-rounded Boehm insertion, including its knot-ratio arithmetic."""
+    multiplicity = int(np.count_nonzero(knots == knot))
+    span = int(np.searchsorted(knots, knot, side="right") - 1)
+    shape = (lower.shape[0] + 1, *lower.shape[1:])
+    inserted_lower, inserted_upper = np.empty(shape), np.empty(shape)
+    for source, destination in ((lower, inserted_lower), (upper, inserted_upper)):
+        destination[: span - degree + 1] = source[: span - degree + 1]
+        destination[span - multiplicity + 1 :] = source[span - multiplicity :]
+    for index in range(span - degree + 1, span - multiplicity + 1):
+        numerator = knot - knots[index]
+        denominator = knots[index + degree] - knots[index]
+        denominator_lower = np.nextafter(denominator, -np.inf)
+        if denominator_lower <= 0.0:
+            raise ValueError("Knot insertion denominator cannot be bounded positive.")
+        alpha_lower = np.nextafter(
+            np.nextafter(numerator, -np.inf) / np.nextafter(denominator, np.inf), -np.inf
+        )
+        alpha_upper = np.nextafter(
+            np.nextafter(numerator, np.inf) / denominator_lower, np.inf
+        )
+        # Interpolation coefficients are nonnegative in Boehm insertion.
+        alpha_lower, alpha_upper = max(0.0, alpha_lower), min(1.0, alpha_upper)
+        other_lower = max(0.0, np.nextafter(1.0 - alpha_upper, -np.inf))
+        other_upper = min(1.0, np.nextafter(1.0 - alpha_lower, np.inf))
+        first = np.stack(
+            (
+                alpha_lower * lower[index],
+                alpha_upper * lower[index],
+                alpha_lower * upper[index],
+                alpha_upper * upper[index],
+            )
+        )
+        second = np.stack(
+            (
+                other_lower * lower[index - 1],
+                other_upper * lower[index - 1],
+                other_lower * upper[index - 1],
+                other_upper * upper[index - 1],
+            )
+        )
+        first_lower = np.nextafter(np.min(first, axis=0), -np.inf)
+        first_upper = np.nextafter(np.max(first, axis=0), np.inf)
+        second_lower = np.nextafter(np.min(second, axis=0), -np.inf)
+        second_upper = np.nextafter(np.max(second, axis=0), np.inf)
+        inserted_lower[index] = np.nextafter(first_lower + second_lower, -np.inf)
+        inserted_upper[index] = np.nextafter(first_upper + second_upper, np.inf)
+    return inserted_lower, inserted_upper, np.insert(knots, span + 1, knot)
+
+
+@overload
+def bezier_refinement(
+    controls: np.ndarray,
+    knots: np.ndarray,
+    degree: int,
+    axis: int,
+    /,
+    *,
+    control_upper: None = None,
+    exact: bool = False,
+) -> tuple[np.ndarray, np.ndarray]: ...
+
+
+@overload
+def bezier_refinement(
+    controls: np.ndarray,
+    knots: np.ndarray,
+    degree: int,
+    axis: int,
+    /,
+    *,
+    control_upper: np.ndarray,
+    exact: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+
+
+def bezier_refinement(
+    controls: np.ndarray,
+    knots: np.ndarray,
+    degree: int,
+    axis: int,
+    /,
+    *,
+    control_upper: np.ndarray | None = None,
+    exact: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Host Bezier extraction with optional source coefficient enclosures.
+
+    Without ``control_upper`` return numerical controls and span bounds.
+    With it, ``controls`` is the lower coefficient bound; return lower and
+    upper Bernstein coefficient bounds plus span bounds. Every knot insertion
+    encloses its arithmetic, so extraction error remains part of the evidence.
+    Returns ``(pieces, span_bounds)``: ``pieces`` stacks the ``degree + 1``
+    Bernstein controls of each nonempty span along a new leading axis (the
+    refined axis keeps its position), and ``span_bounds`` holds each span's
+    ``(lower, upper)`` parameters.
+    """
+    degree_ = int(degree)
+    if exact and control_upper is not None:
+        raise ValueError(
+            "Exact rational extraction cannot also take interval coefficients."
+        )
+    if exact:
+        source = np.asarray(controls, dtype=object)
+        values = np.moveaxis(
+            np.asarray(
+                [
+                    item if isinstance(item, Fraction) else Fraction(float(item))
+                    for item in source.reshape(-1)
+                ],
+                dtype=object,
+            ).reshape(source.shape),
+            axis,
+            0,
+        )
+        knots_ = np.asarray(
+            [
+                item if isinstance(item, Fraction) else Fraction(float(item))
+                for item in np.asarray(knots).reshape(-1)
+            ],
+            dtype=object,
+        )
+    else:
+        values = np.moveaxis(np.asarray(controls, dtype=np.float64), axis, 0)
+        knots_ = np.asarray(knots, dtype=np.float64).reshape(-1)
+    upper_values = None
+    if control_upper is not None:
+        upper_values = np.moveaxis(np.asarray(control_upper, dtype=np.float64), axis, 0)
+        if upper_values.shape != values.shape or np.any(values > upper_values):
+            raise ValueError("Bezier coefficient bounds are inconsistent.")
+        if not np.all(np.isfinite(values)) or not np.all(np.isfinite(upper_values)):
+            raise ValueError("Bezier coefficient bounds must be finite.")
+    if degree_ < 1:
+        raise ValueError("Bezier extraction requires a positive degree.")
+    if knots_.size != values.shape[0] + degree_ + 1:
+        raise ValueError("Knot vector length is inconsistent with the control net.")
+    if not np.all(np.isfinite(np.asarray(knots_, dtype=np.float64))) or np.any(
+        np.diff(knots_) < 0
+    ):
+        raise ValueError("B-spline knots must be finite and nondecreasing.")
+    # Restrict the finite source domain [U[p], U[n+1]], not the exterior ghost
+    # knots of a periodic/non-clamped representation. Boehm insertion in the
+    # owning arithmetic preserves the same homogeneous rational function.
+    lower, upper = knots_[degree_], knots_[-degree_ - 1]
+    if not lower < upper:
+        raise ValueError("A spline source domain must have positive extent.")
+    for endpoint in (lower, upper):
+        while int(np.count_nonzero(knots_ == endpoint)) < degree_ + 1:
+            if upper_values is None:
+                values, knots_ = _insert_knot(values, knots_, degree_, endpoint)
+            else:
+                values, upper_values, knots_ = _insert_knot_bounds(
+                    values, upper_values, knots_, degree_, float(endpoint)
+                )
+    begin = int(np.searchsorted(knots_, lower, side="left"))
+    end = int(np.searchsorted(knots_, upper, side="right"))
+    control_count = end - begin - degree_ - 1
+    values = values[begin : begin + control_count]
+    if upper_values is not None:
+        upper_values = upper_values[begin : begin + control_count]
+    knots_ = knots_[begin:end]
+    for knot in np.unique(knots_[(knots_ > lower) & (knots_ < upper)]):
+        while int(np.count_nonzero(knots_ == knot)) < degree_:
+            if upper_values is None:
+                values, knots_ = _insert_knot(values, knots_, degree_, knot)
+            else:
+                values, upper_values, knots_ = _insert_knot_bounds(
+                    values, upper_values, knots_, degree_, float(knot)
+                )
+    breaks = np.unique(knots_)
+    count = breaks.size - 1
+    if values.shape[0] != count * degree_ + 1:
+        raise ValueError("B-spline knots exceed the admissible interior multiplicity.")
+    pieces = np.stack(
+        [
+            values[index * degree_ : index * degree_ + degree_ + 1]
+            for index in range(count)
+        ]
+    )
+    bounds = np.stack((breaks[:-1], breaks[1:]), axis=1)
+    pieces = np.moveaxis(pieces, 1, axis + 1)
+    if upper_values is None:
+        return pieces, bounds
+    upper_pieces = np.stack(
+        [
+            upper_values[index * degree_ : index * degree_ + degree_ + 1]
+            for index in range(count)
+        ]
+    )
+    return pieces, np.moveaxis(upper_pieces, 1, axis + 1), bounds
+
+
+def exact_bezier_refinement(
+    controls: np.ndarray, knots: np.ndarray, degree: int, axis: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Canonical Boehm extraction over Fraction coefficients and knot values.
+
+    Input floats denote their exact binary rational values. Homogeneous products
+    must be formed as Fractions by the caller, not rounded before this function.
+    This is a host construction route, not an exactness claim for device jets.
+    """
+    return bezier_refinement(controls, knots, degree, axis, exact=True)
+
+
+def restrict_bernstein_bounds(
+    lower: np.ndarray, upper: np.ndarray, first: float, last: float, axis: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """De Casteljau restriction of coefficient enclosures to a subinterval."""
+    if not 0.0 <= first <= last <= 1.0:
+        raise ValueError("Bernstein restriction must lie in [0, 1].")
+    lower_ = np.moveaxis(np.asarray(lower, dtype=np.float64), axis, 0).copy()
+    upper_ = np.moveaxis(np.asarray(upper, dtype=np.float64), axis, 0).copy()
+    if lower_.shape != upper_.shape or np.any(lower_ > upper_):
+        raise ValueError("Bernstein coefficient bounds are inconsistent.")
+
+    def split(
+        lo: np.ndarray, hi: np.ndarray, parameter: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        left_lo, left_hi, right_lo, right_hi = [], [], [], []
+        complement_lo = max(0.0, np.nextafter(1.0 - parameter, -np.inf))
+        complement_hi = min(1.0, np.nextafter(1.0 - parameter, np.inf))
+        while True:
+            left_lo.append(lo[0])
+            left_hi.append(hi[0])
+            right_lo.append(lo[-1])
+            right_hi.append(hi[-1])
+            if lo.shape[0] == 1:
+                break
+            products = np.stack(
+                (
+                    complement_lo * lo[:-1],
+                    complement_hi * lo[:-1],
+                    complement_lo * hi[:-1],
+                    complement_hi * hi[:-1],
+                )
+            )
+            first_lo = np.nextafter(np.min(products, axis=0), -np.inf)
+            first_hi = np.nextafter(np.max(products, axis=0), np.inf)
+            second_lo = np.nextafter(parameter * lo[1:], -np.inf)
+            second_hi = np.nextafter(parameter * hi[1:], np.inf)
+            lo = np.nextafter(first_lo + second_lo, -np.inf)
+            hi = np.nextafter(first_hi + second_hi, np.inf)
+        return (
+            np.asarray(left_lo),
+            np.asarray(left_hi),
+            np.asarray(right_lo[::-1]),
+            np.asarray(right_hi[::-1]),
+        )
+
+    if first == 1.0:
+        lower_ = np.broadcast_to(lower_[-1], lower_.shape).copy()
+        upper_ = np.broadcast_to(upper_[-1], upper_.shape).copy()
+    else:
+        if first > 0.0:
+            _, _, lower_, upper_ = split(lower_, upper_, first)
+        if last < 1.0:
+            # Choose an outer endpoint after rescaling. Fractions here only
+            # establish a rounding direction for this one host parameter ratio.
+            ratio = (Fraction(last) - Fraction(first)) / (1 - Fraction(first))
+            parameter = min(1.0, np.nextafter(float(ratio), np.inf))
+            lower_, upper_, _, _ = split(lower_, upper_, parameter)
+    return np.moveaxis(lower_, 0, axis), np.moveaxis(upper_, 0, axis)
+
+
 __all__ = [
     "BSplineJetStencil",
+    "bezier_refinement",
+    "exact_bezier_refinement",
+    "restrict_bernstein_bounds",
     "bspline_batched_evaluate",
     "bspline_evaluate",
     "bspline_jet_stencil",

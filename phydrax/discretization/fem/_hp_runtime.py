@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -38,6 +38,11 @@ from ._hp import (
     FiniteElementHPWorksetPlan,
 )
 from ._reference import FiniteElementSpec
+
+
+if TYPE_CHECKING:
+    from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
+    from ._hp_solver import FiniteElementHPSolverRefreshPlan
 
 
 _HP_RELATIONS = {"conforming": 0, "mortar": 1, "exterior": 2, "periodic": 3}
@@ -501,6 +506,10 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
     lineage: FiniteElementHPLineage
     p_transfers: tuple[FiniteElementHPTransferPlan, ...]
     h_transfers: tuple[FiniteElementHPTransferPlan, ...]
+    hp_decision: FiniteElementHPDecision | None
+    reanalysis: PhysicalErrorEvidence | None
+    solver_refresh: FiniteElementHPSolverRefreshPlan | None
+    compiled_layout_id: str | None = eqx.field(static=True)
     state_payload: object
     temporal_payload: object
     robustness_payload: object
@@ -511,6 +520,7 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
     conservation_tolerance: float = eqx.field(static=True)
     diagnostics: tuple[str, ...] = eqx.field(static=True)
     transaction_id: str = eqx.field(static=True)
+    admission_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -530,6 +540,9 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
         admissible: ArrayLike = True,
         geometry_valid: ArrayLike = True,
         conservation_tolerance: float = 1.0e-10,
+        hp_decision: FiniteElementHPDecision | None = None,
+        reanalysis: PhysicalErrorEvidence | None = None,
+        compiled_layout_id: str | None = None,
     ) -> None:
         if (
             not isinstance(accepted, FiniteElementHPEpoch)
@@ -565,6 +578,43 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
                 or transfer.target_plan_id != target.plan_id
             ):
                 raise ValueError("hp transaction transfer identities disagree.")
+        solver_refresh = None
+        if hp_decision is not None:
+            from ...meshing._decision import AdaptationAction, PhysicalErrorEvidence
+            from ._hp_solver import FiniteElementHPSolverRefreshPlan
+
+            if not isinstance(hp_decision, FiniteElementHPDecision):
+                raise TypeError("hp_decision must be FiniteElementHPDecision or None.")
+            hp_decision.require_candidate(accepted, candidate, lineage)
+            decision = hp_decision.solver_decision
+            if decision is None:
+                raise ValueError("hp transaction requires bound solver admission.")
+            selected = decision.require_selected(
+                accepted.epoch_id, hp_decision.decision_id, candidate.epoch_id
+            )
+            if (
+                not compiled_layout_id
+                or compiled_layout_id != selected.feasibility.compiled_layout_id
+            ):
+                raise ValueError(
+                    "hp transaction requires the actual admitted compiled layout."
+                )
+            solver_refresh = FiniteElementHPSolverRefreshPlan(accepted, candidate)
+            solver_refresh.require_feasibility(
+                selected.feasibility, compiled_layout_id=compiled_layout_id
+            )
+            if selected.action == AdaptationAction.P and not p_transfers_:
+                raise ValueError("hp p admission requires prepared field transfer.")
+            if selected.action == AdaptationAction.H and not h_transfers_:
+                raise ValueError("hp h admission requires prepared field transfer.")
+            if reanalysis is not None and not isinstance(
+                reanalysis, PhysicalErrorEvidence
+            ):
+                raise TypeError(
+                    "hp independent reanalysis must be PhysicalErrorEvidence."
+                )
+        elif reanalysis is not None or compiled_layout_id is not None:
+            raise ValueError("hp solver evidence requires an admitted hp decision.")
         diagnostics_ = tuple(str(value) for value in diagnostics)
         conservation = jnp.asarray(conservation_error)
         admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
@@ -583,6 +633,10 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
         self.lineage = lineage
         self.p_transfers = p_transfers_
         self.h_transfers = h_transfers_
+        self.hp_decision = hp_decision
+        self.reanalysis = reanalysis
+        self.compiled_layout_id = compiled_layout_id
+        self.solver_refresh = solver_refresh
         self.diagnostics = diagnostics_
         self.state_payload = state_payload
         self.temporal_payload = temporal_payload
@@ -608,6 +662,27 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
                 "conservation_tolerance": tolerance,
             }
         )
+        # The staged route identity is independent of admission: its transports
+        # are inputs to solver-decision certification, not a hash fixed point.
+        self.admission_id = (
+            None
+            if hp_decision is None
+            else canonical_fingerprint(
+                {
+                    "kind": "finite-element-hp-admission",
+                    "transaction": self.transaction_id,
+                    "hp_decision": hp_decision.decision_id,
+                    "solver_decision": None
+                    if hp_decision.solver_decision is None
+                    else hp_decision.solver_decision.decision_id,
+                    "reanalysis": None if reanalysis is None else reanalysis.evidence_id,
+                    "compiled_layout": compiled_layout_id,
+                    "solver_refresh": None
+                    if solver_refresh is None
+                    else solver_refresh.plan_id,
+                }
+            )
+        )
 
     def rollback(self, /) -> FiniteElementHPEpoch:
         return self.accepted
@@ -623,6 +698,18 @@ class FiniteElementHPTransaction(StrictModule, NonTrainableState):
                 <= self.conservation_tolerance
             )
         )
+        if (
+            bool(candidate_accepted)
+            and evidence_accepted
+            and self.hp_decision is not None
+        ):
+            decision = self.hp_decision.solver_decision
+            if decision is None or self.reanalysis is None:
+                raise ValueError(
+                    "hp publication requires independent physical reanalysis."
+                )
+            if decision.reanalysis_issues(self.reanalysis):
+                return self.accepted
         return (
             self.candidate
             if bool(candidate_accepted) and evidence_accepted
@@ -2037,7 +2124,7 @@ class FiniteElementHPStateTransferPolicy(StrictModule, NonTrainableState):
                 raise ValueError(f"Unknown hp state-transfer role {self.role!r}.")
 
 
-class FiniteElementHPResidualJumpLedger(StrictModule):
+class FiniteElementHPResidualJumpLedger(StrictModule, NonTrainableState):
     """Exactly-once cell residual and interface jump evidence."""
 
     cell_residual: Array
@@ -2071,12 +2158,32 @@ class FiniteElementHPResidualJumpLedger(StrictModule):
             raise ValueError("hp residual/jump ledger arrays have incompatible shapes.")
         valid_cells = topology.active
         valid_facets = interfaces.valid
-        contributions = jnp.where(valid_cells, cells * residual**2, 0.0)
-        facet_contributions = jnp.where(valid_facets, facets * jumps**2, 0.0)
+        contributions = jnp.where(
+            valid_cells,
+            jnp.where(
+                jnp.isfinite(cells) & (cells >= 0.0) & jnp.isfinite(residual),
+                cells * residual**2,
+                jnp.nan,
+            ),
+            0.0,
+        )
+        facet_contributions = jnp.where(
+            valid_facets,
+            jnp.where(
+                jnp.isfinite(facets) & (facets >= 0.0) & jnp.isfinite(jumps),
+                facets * jumps**2,
+                jnp.nan,
+            ),
+            0.0,
+        )
         owner = jnp.maximum(interfaces.owner_slots, 0)
         neighbor = jnp.maximum(interfaces.neighbor_slots, 0)
-        contributions = contributions.at[owner].add(0.5 * facet_contributions)
         has_neighbor = valid_facets & (interfaces.neighbor_slots >= 0)
+        # Interior jumps are shared; an exterior boundary residual belongs in
+        # full to its only incident cell. Every facet contributes exactly once.
+        contributions = contributions.at[owner].add(
+            jnp.where(has_neighbor, 0.5 * facet_contributions, facet_contributions)
+        )
         contributions = contributions.at[neighbor].add(
             jnp.where(has_neighbor, 0.5 * facet_contributions, 0.0)
         )
@@ -2093,7 +2200,7 @@ class FiniteElementHPResidualJumpLedger(StrictModule):
         self.interface_plan_id = interfaces.plan_id
 
 
-class FiniteElementHPErrorEstimate(StrictModule):
+class FiniteElementHPErrorEstimate(StrictModule, NonTrainableState):
     cell_tree_ids: Array
     cell_indicators: Array
     smoothness: Array
@@ -2127,12 +2234,61 @@ class FiniteElementHPErrorEstimate(StrictModule):
             raise ValueError("estimator_id must be non-empty.")
         valid = topology.active
         self.cell_tree_ids = topology.stable_tree_ids()
-        self.cell_indicators = jnp.where(valid, indicators, 0.0)
+        self.cell_indicators = jnp.where(
+            valid,
+            jnp.where(
+                jnp.isfinite(indicators) & (indicators >= 0.0),
+                indicators,
+                jnp.nan,
+            ),
+            0.0,
+        )
         self.smoothness = jnp.where(valid[:, None], smooth, 0.0)
         self.valid = valid
         self.global_estimate = jnp.linalg.norm(self.cell_indicators)
         self.topology_id = topology.topology_id
         self.estimator_id = identifier
+
+    def physical_evidence(
+        self,
+        revision_id: str,
+        objective_id: str,
+        independent_contributions: PhysicalErrorEvidence,
+        /,
+    ) -> PhysicalErrorEvidence:
+        """Combine the owned field estimator with independent contribution evidence.
+
+        The caller declares the scientific objective and matching units. Geometry,
+        algebraic, and transfer contributions are never inferred from field p,
+        modal decay, or the residual ledger; certified QoI contributions must
+        identify their owning objective certificate.
+        """
+        from ...meshing._decision import PhysicalErrorEvidence
+
+        if not isinstance(independent_contributions, PhysicalErrorEvidence):
+            raise TypeError(
+                "hp physical evidence requires independent contribution evidence."
+            )
+        if (
+            independent_contributions.revision_id != revision_id
+            or independent_contributions.objective_id != objective_id
+            or independent_contributions.estimator_id == self.estimator_id
+            or independent_contributions.field_error != 0.0
+        ):
+            raise ValueError(
+                "hp independent contributions have incompatible scientific identity."
+            )
+        return PhysicalErrorEvidence(
+            revision_id,
+            objective_id,
+            self.estimator_id,
+            field_error=float(np.asarray(self.global_estimate)),
+            geometry_error=independent_contributions.geometry_error,
+            algebraic_error=independent_contributions.algebraic_error,
+            transfer_error=independent_contributions.transfer_error,
+            quantity=independent_contributions.quantity,
+            qoi_certificate_id=independent_contributions.qoi_certificate_id,
+        )
 
 
 def tensor_modal_decay_estimate(
@@ -2177,6 +2333,36 @@ def tensor_modal_decay_estimate(
     return jnp.asarray(ratios)
 
 
+def _require_hp_field_only_epoch(
+    accepted: FiniteElementHPEpoch,
+    candidate: FiniteElementHPEpoch,
+    /,
+) -> None:
+    source = accepted.topology
+    target = candidate.topology
+    structure = (
+        (source.cell_global_ids, target.cell_global_ids),
+        (source.allocated, target.allocated),
+        (source.active, target.active),
+        (source.root_cell_ids, target.root_cell_ids),
+        (source.path_codes, target.path_codes),
+        (source.levels, target.levels),
+        (source.parent_slots, target.parent_slots),
+        (source.child_slots, target.child_slots),
+        (source.child_valid, target.child_valid),
+        (accepted.geometry.cell_vertices, candidate.geometry.cell_vertices),
+        (accepted.geometry.reference_lower, candidate.geometry.reference_lower),
+        (accepted.geometry.reference_upper, candidate.geometry.reference_upper),
+    )
+    if any(
+        not np.array_equal(np.asarray(left), np.asarray(right))
+        for left, right in structure
+    ):
+        raise ValueError(
+            "Field-p admission cannot change topology or the coordinate map."
+        )
+
+
 class FiniteElementHPDecision(StrictModule, NonTrainableState):
     target_degrees: Array
     refine: Array
@@ -2184,6 +2370,10 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
     requested_refine: Array
     balance_added: Array
     coarsen_history: Array
+    solver_decision: SolverAwareDecision | None
+    source_revision_id: str | None = eqx.field(static=True)
+    target_revision_id: str | None = eqx.field(static=True)
+    source_topology_plan_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
 
@@ -2198,6 +2388,9 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
         requested_refine: ArrayLike | None = None,
         balance_added: ArrayLike | None = None,
         coarsen_history: ArrayLike | None = None,
+        solver_decision: SolverAwareDecision | None = None,
+        source_revision_id: str | None = None,
+        target_revision_id: str | None = None,
     ) -> None:
         degrees = np.asarray(target_degrees, dtype=np.int32)
         refine_ = np.asarray(refine, dtype=np.bool_)
@@ -2238,7 +2431,7 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
         self.balance_added = jnp.asarray(added)
         self.coarsen_history = jnp.asarray(history)
         self.topology_id = topology.topology_id
-        self.decision_id = canonical_fingerprint(
+        decision_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-decision",
                 "topology": topology.plan_id,
@@ -2250,6 +2443,170 @@ class FiniteElementHPDecision(StrictModule, NonTrainableState):
                 "coarsen_history": array_tree_fingerprint(history),
             }
         )
+        if solver_decision is not None:
+            from ...meshing._decision import AdaptationAction, SolverAwareDecision
+
+            if not isinstance(solver_decision, SolverAwareDecision):
+                raise TypeError("solver_decision must be SolverAwareDecision or None.")
+            if not source_revision_id or not target_revision_id:
+                raise ValueError(
+                    "hp solver admission requires both prepared epoch identities."
+                )
+            selected = solver_decision.require_selected(
+                source_revision_id, decision_id, target_revision_id
+            )
+            h_changed = bool(np.any(refine_ | coarsen_))
+            p_changed = not np.array_equal(degrees, np.asarray(topology.cell_degrees))
+            expected_action = AdaptationAction.H if h_changed else AdaptationAction.P
+            if (
+                selected.action != expected_action
+                or (h_changed and p_changed)
+                or not (h_changed or p_changed)
+            ):
+                raise ValueError(
+                    "hp selected action must match one distinct h or p plan."
+                )
+            if np.any(requested & added) or not np.array_equal(
+                refine_, requested | added
+            ):
+                raise ValueError("hp selected closure provenance is inconsistent.")
+            required = np.count_nonzero(refine_) * topology.child_capacity
+            if required > np.count_nonzero(~np.asarray(topology.allocated)):
+                raise ValueError("hp selected closure exceeds fixed forest capacity.")
+        elif source_revision_id is not None or target_revision_id is not None:
+            raise ValueError("hp epoch identities require solver decision evidence.")
+        self.decision_id = decision_id
+        self.solver_decision = solver_decision
+        self.source_revision_id = source_revision_id
+        self.target_revision_id = target_revision_id
+        self.source_topology_plan_id = topology.plan_id
+
+    def require_candidate(
+        self,
+        accepted: FiniteElementHPEpoch,
+        candidate: FiniteElementHPEpoch,
+        lineage: FiniteElementHPLineage,
+        /,
+    ) -> None:
+        """Verify the prepared owner route realizes this exact admitted plan."""
+        if self.solver_decision is None:
+            raise ValueError("hp candidate requires an admitted solver decision.")
+        source = accepted.topology
+        target = candidate.topology
+        if (
+            self.source_topology_plan_id != source.plan_id
+            or self.source_revision_id != accepted.epoch_id
+            or self.target_revision_id != candidate.epoch_id
+            or source.capacity != target.capacity
+            or source.cell_kind != target.cell_kind
+            or lineage.source_topology_id != source.topology_id
+            or lineage.target_topology_id != target.topology_id
+            or lineage.source_capacity != source.capacity
+            or lineage.target_capacity != target.capacity
+        ):
+            raise ValueError(
+                "hp admitted candidate has stale epoch, topology, or lineage."
+            )
+        selected = self.solver_decision.require_selected(
+            accepted.epoch_id, self.decision_id, candidate.epoch_id
+        )
+        discretization = candidate.discretization
+        if discretization is None:
+            raise ValueError("hp solver admission requires a prepared field layout.")
+        field_layouts = tuple(
+            sorted(
+                (space.name, space.layout.layout_id)
+                for space in discretization.field_spaces
+            )
+        )
+        if (
+            selected.feasibility.cell_families != (target.cell_kind,)
+            or selected.feasibility.geometry_layout_id != candidate.geometry.geometry_id
+            or selected.feasibility.field_layouts != field_layouts
+        ):
+            raise ValueError(
+                "hp admitted geometry, family, or field layout differs from the prepared route."
+            )
+        if not np.any(np.asarray(self.refine) | np.asarray(self.coarsen)):
+            _require_hp_field_only_epoch(accepted, candidate)
+        valid = np.asarray(lineage.valid)
+        source_slots = np.asarray(lineage.source_slots)[valid]
+        target_slots = np.asarray(lineage.target_slots)[valid]
+        relations = np.asarray(lineage.relation_codes)[valid]
+        source_active = np.asarray(source.active)
+        target_active = np.asarray(target.active)
+        if set(source_slots.tolist()) != set(
+            np.flatnonzero(source_active).tolist()
+        ) or set(target_slots.tolist()) != set(np.flatnonzero(target_active).tolist()):
+            raise ValueError(
+                "hp admitted lineage must cover every active source and target."
+            )
+        source_tree = np.asarray(source.stable_tree_ids())
+        target_tree = np.asarray(target.stable_tree_ids())
+        refine = np.asarray(self.refine)
+        coarsen = np.asarray(self.coarsen)
+        degrees = np.asarray(self.target_degrees)
+        target_degrees = np.asarray(target.cell_degrees)
+        for slot in np.flatnonzero(source_active):
+            rows = source_slots == slot
+            targets = target_slots[rows]
+            codes = relations[rows]
+            if refine[slot]:
+                expected_tree = np.asarray(
+                    [
+                        (
+                            source_tree[slot, 0],
+                            source_tree[slot, 1] * source.child_capacity + ordinal + 1,
+                        )
+                        for ordinal in range(source.child_capacity)
+                    ],
+                    dtype=np.int64,
+                )
+                actual_tree = target_tree[targets]
+                if (
+                    targets.size != source.child_capacity
+                    or np.any(codes != _HP_LINEAGE_RELATIONS["refinement"])
+                    or set(map(tuple, actual_tree.tolist()))
+                    != set(map(tuple, expected_tree.tolist()))
+                    or np.any(target_degrees[targets] != degrees[slot])
+                ):
+                    raise ValueError(
+                        "hp candidate does not realize the exact refinement plan."
+                    )
+            elif coarsen[slot]:
+                parent = int(np.asarray(source.parent_slots)[slot])
+                if parent < 0 or targets.size != 1:
+                    raise ValueError(
+                        "hp candidate coarsening requires an immediate parent."
+                    )
+                siblings = np.asarray(source.child_slots)[parent][
+                    np.asarray(source.child_valid)[parent]
+                ]
+                if (
+                    siblings.size != source.child_capacity
+                    or np.any(~coarsen[siblings])
+                    or np.any(codes != _HP_LINEAGE_RELATIONS["coarsening"])
+                    or not np.array_equal(target_tree[targets[0]], source_tree[parent])
+                    or not np.array_equal(
+                        target_degrees[targets[0]], np.min(degrees[siblings], axis=0)
+                    )
+                ):
+                    raise ValueError(
+                        "hp candidate does not realize a complete coarsening family."
+                    )
+            elif (
+                targets.size != 1
+                or np.any(codes != _HP_LINEAGE_RELATIONS["unchanged"])
+                or not np.array_equal(source_tree[slot], target_tree[targets[0]])
+                or not np.array_equal(degrees[slot], target_degrees[targets[0]])
+            ):
+                raise ValueError(
+                    "hp candidate changed an unselected cell or field degree."
+                )
+        if finite_element_hp_balance_error(target, candidate.geometry) > 1:
+            raise ValueError(
+                "hp admitted candidate violates deterministic balance closure."
+            )
 
 
 def finite_element_hp_decision(
@@ -2267,6 +2624,9 @@ def finite_element_hp_decision(
     maximum_estimated_dofs: int | None = None,
     coarsen_history: ArrayLike | None = None,
     coarsen_epochs: int = 2,
+    solver_decision: SolverAwareDecision | None = None,
+    source_revision_id: str | None = None,
+    target_revision_id: str | None = None,
 ) -> FiniteElementHPDecision:
     if estimate.topology_id != topology.topology_id:
         raise ValueError("hp estimate belongs to a different topology.")
@@ -2362,6 +2722,9 @@ def finite_element_hp_decision(
         refine,
         coarsen,
         coarsen_history=history,
+        solver_decision=solver_decision,
+        source_revision_id=source_revision_id,
+        target_revision_id=target_revision_id,
     )
 
 
@@ -2370,15 +2733,31 @@ def close_finite_element_hp_decision(
     interfaces: FiniteElementHPInterfacePlan,
     decision: FiniteElementHPDecision,
     /,
+    *,
+    solver_decision: SolverAwareDecision | None = None,
+    source_revision_id: str | None = None,
+    target_revision_id: str | None = None,
 ) -> FiniteElementHPDecision:
     """Add deterministic 2:1 closure cells to one requested hp decision."""
 
     if decision.topology_id != topology.topology_id:
         raise ValueError("hp decision belongs to a different topology.")
+    if decision.source_topology_plan_id != topology.plan_id:
+        raise ValueError("hp closure source layout is stale.")
+    if decision.solver_decision is not None:
+        if (
+            solver_decision is not None
+            or source_revision_id is not None
+            or target_revision_id is not None
+        ):
+            raise ValueError("hp closure cannot replace an admitted solver decision.")
+        solver_decision = decision.solver_decision
+        source_revision_id = decision.source_revision_id
+        target_revision_id = decision.target_revision_id
     identifiers = np.asarray(topology.cell_global_ids)
     requested_slots = np.flatnonzero(np.asarray(decision.refine))
     requested_ids = identifiers[requested_slots]
-    closed_ids, added_slots = balanced_hp_refinement_ids(
+    closed_ids, _ = balanced_hp_refinement_ids(
         topology,
         interfaces,
         requested_ids,
@@ -2389,10 +2768,8 @@ def close_finite_element_hp_decision(
     }
     refine = np.zeros((topology.capacity,), dtype=np.bool_)
     refine[[slot_by_id[int(value)] for value in np.asarray(closed_ids)]] = True
-    added = np.zeros_like(refine)
-    added[np.asarray(added_slots, dtype=np.int32)] = True
-    requested = np.zeros_like(refine)
-    requested[requested_slots] = True
+    requested = np.asarray(decision.requested_refine, dtype=np.bool_)
+    added = refine & ~requested
     return FiniteElementHPDecision(
         topology,
         decision.target_degrees,
@@ -2401,6 +2778,9 @@ def close_finite_element_hp_decision(
         requested_refine=requested,
         balance_added=added,
         coarsen_history=decision.coarsen_history,
+        solver_decision=solver_decision,
+        source_revision_id=source_revision_id,
+        target_revision_id=target_revision_id,
     )
 
 

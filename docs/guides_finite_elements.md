@@ -38,9 +38,55 @@ tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
 numbering is executable for polygonal and hexahedral H1 fields; discontinuous
 fields remain cell-local. `FiniteElementSpec.value_spec` declares canonical form
 degree, twist and proxy; conformity/mapping are derived, with continuity declared
-separately. `form_element` supplies trimmed/full simplex and tensor-trimmed
-families in canonical n-D references. Physical flux/density requires explicit
-twist, and ambiguous degree1 2-D maps require circulation or flux explicitly.
+separately. `form_element` supplies trimmed/full simplex, tensor-trimmed,
+prism-trimmed, and rational pyramid-trimmed families. Prism and pyramid cells
+select their canonical compatible family when `family="trimmed"` is requested.
+Physical flux/density requires explicit twist, and ambiguous degree1 2-D maps
+require circulation or flux explicitly.
+
+Prism spaces are the triangle–interval FEEC product, not replicated scalar
+nodal functions. Pyramid spaces use the trace-constrained generalized Whitney
+complex of the five rational vertex coordinates: triangular traces are
+P_r^-Λk, the quadrilateral trace is Q_r^-Λk, and the terminal space is the exact
+exterior image of the flux space. This is a declared enriched rational
+complex, not a claim of the minimal pyramid family: its degree-wise dimensions
+are `(5, 8, 7, 3)` at order one and `(14, 31, 30, 12)` at order two.
+It contains scalar polynomials through degree r and k-form polynomials through
+degree r−1. Entity moments are independently owned; a shared entity explicitly
+converts its scientific test basis and full orientation action. Equal numbers
+of moments do not establish compatible coefficient identities.
+Mixed prism/tetrahedron plans admit these canonical H(curl)/H(div) form
+elements as well as nodal H1 and supported cell-local DG fields. Admission
+checks the owning cell family, approximation order, degree/twist, declared
+proxy and actual tabulator/basis source identity before shared moments are
+numbered. A raw vector tabulator or merely attached form metadata is not a
+replacement for that canonical contract.
+
+Body moment tests form a descending exterior-closed complex. The top scalar
+constant owns total flux; the remaining scalar tests are boundary-vanishing
+bubbles. Each lower-degree test space includes their exact exterior
+derivatives and is completed by zero-trace bubble forms. Stokes' identity
+therefore makes canonical interpolation commute with exterior differentiation
+on smooth fields, not only on represented polynomials. Body labels identify
+these actual stored test-source rows; they are not guessed monomial modes.
+
+`FormBasis.entity_kind` and `entity_basis` identify each native entity chart.
+`functional_weights_at` takes cubature in that chart, including actual physical
+reference coordinates for prism/pyramid bodies. `component_expressions` and
+`functional_density_expressions` expose the exact owning physical-reference
+polynomial/rational source for certified integration. Pyramid generator source
+fractions and body-test fractions are immutable preparation; numerical
+generators, moment-test coefficients, dual coefficients, rank, condition, and
+native solve-error/status diagnostics remain dynamic array leaves. Prepared
+hybrid duals refuse deficient rank, condition above 1e12, or the 24,000,000
+coefficient-entry work preparation bound before publication. This entry-work
+bound is not a claim about elapsed time or dense-factorization flop counts.
+Exact source extraction combines generator polynomials with the actual dual
+dyadics before applying the collapsed rational chart. Each final DOF owns one
+temporary preparation lifetime; its returned numerator/denominator source is
+charged as retained data. Repeated identical collapse denominators therefore
+do not consume the caller's storage allowance merely because there are many
+generators.
 
 `FiniteElementFieldSpec` supports replicated component shapes and multiple named
 fields. One `CompiledFiniteElementProblem` owns the ordered product space and
@@ -49,12 +95,27 @@ scatters every coupled term directly to its output residual block.
 `phydrax.discretization.CellGeometrySpec` assigns an independent coordinate element and
 geometry DOF map to every block. This permits curved P2 geometry with a lower-
 or higher-order field element.
+Shared H1 edge nodes are ordered from their actual reference-node corner
+weights, not their storage positions. The equispaced coordinate lattice and
+solution-node families can therefore reuse this same DOF-lowering owner.
+
+For a `CellMesh` carrying `PeriodicMeshTopology`, high-order H1 nodes and
+compatible H(div)/H(curl) moments are numbered on the authored quotient entity
+orbits. Relative image shifts retain distinct winding entities even when their
+representative vertices coincide. Compatible seam maps compose the owning
+`FormBasis` canonical entity charts with the declared corner permutation;
+oriented face loops are not themselves moment-coordinate charts. Proper
+rotations and commuting axial translations therefore transform physical
+vector traces rather than equating their Cartesian components. Invalid
+transformation cycles, nonfinite lifted coordinates, and image shifts outside
+the persistent integer representation are refused without mutating the mesh.
 
 `FiniteElementDeRhamComplex` provides exact sparse degree maps, metric-only Gram
 Hodges, reconstruction/traces and commuting `ComplexMap` transfers. Full-family
 complex order is its top polynomial order, so degree k uses P_(order+n−k)Λk;
-trimmed/tensor-trimmed complexes keep the same order in each degree. Material
-weights are separate coordinate forms, not part of an SPD metric Hodge.
+trimmed complexes keep the same order in each degree and select the compatible
+family of every block, including mixed simplex/tensor/prism/pyramid meshes.
+Material weights are separate coordinate forms, not part of an SPD metric Hodge.
 `hodge_solve` accepts a native `LinearSolvePolicy`, never a string selector.
 Hiptmair–Xu uses native vector/potential corrections; high-order preparation
 composes the low-order auxiliary plan instead of another private solver.
@@ -62,9 +123,24 @@ composes the low-order auxiliary plan instead of another private solver.
 
 ## Geometry
 
-Physical points, metric determinants, normals, physical gradients, and Piola-
-mapped compatible bases are computed in pure JAX. `prepare_runtime` creates a
-fixed-topology numeric realization:
+`CellGeometrySpec` is the coordinate owner; a field element never supplies
+geometry implicitly. Physical points, tangent metrics, measures, normals where
+defined, physical gradients, and Piola-mapped compatible bases are evaluated in
+pure JAX. For a square Jacobian J, the runtime factors J itself, reports
+`abs(det(J))`, and derives the inverse metric without first conditioning the
+squared Gram matrix. For an embedded cell it instead retains
+`G = J.T @ J`, the physical density `sqrt(det(G))`, and the tangent gradient
+map `J @ inverse(G)`. The native small/dense solve result owns rank,
+conditioning, determinant, and success evidence. A finite coordinate array or
+positive corner area cannot override a failed tangent metric.
+
+This is the metric used by embedded interval, triangle, and quadrilateral FEM
+mass, diffusion, functionals, and transfer content. It is not an ambient-volume
+surrogate and does not imply a unique exterior normal for arbitrary codimension.
+Side traces that require a unique normal therefore retain their separate
+full-dimensional/codimension contract.
+
+`prepare_runtime` creates a fixed-topology numeric realization:
 
 ```text
 runtime = discretization.prepare_runtime(new_coordinates, numeric_version="moved")
@@ -73,7 +149,8 @@ residual = compiled.residual(state, context)
 ```
 
 Coordinates flow through residuals, sparse refresh, functionals, DAE mass
-operators, and shape derivatives. Connectivity changes require a new plan.
+operators, and shape derivatives. Connectivity, coordinate-element structure,
+or DOF-count changes require a new plan.
 
 ## Domains, coefficients, and weak forms
 
@@ -199,11 +276,82 @@ triangle or quadrilateral block.
 
 `dorfler_mark`/`maximum_mark`, residual/jump and local DWR indicators select
 cells; `phydrax.meshing.prepare_mesh_adaptation` with the `NATIVE_BISECTION`
-route refines them conformingly and coarsens complete bisection patches. The
-`MeshAdaptationResult` carries the sparse P1 `FiniteElementTopologyTransfer` and
-lineage that `FiniteElementTopologyTransaction.execute(accepted, mesh,
-adaptation)` consumes as a single-device accepted topology transaction. Failed
-material transfer or certification preserves the accepted state.
+route refines them conformingly and coarsens complete bisection patches.
+`FiniteElementTopologyTransaction(certify, fields=...)` declares the
+finite-element space of every accepted field and `execute(accepted, mesh,
+adaptation)` moves each field by its own family, never by array width: on a
+nesting adaptation (`phydrax.solver.refinement_parent_cells`) through
+`prepare_nested_field_transfer`, otherwise every field through the Galerkin L2
+projection on a certified common refinement
+(`prepare_projection_field_transfer`), compatible fields through their Piola
+maps. `MaterialTopologyTransferResult` retains the transferred
+`MaterialTransaction` together with every prepared conservative remap owner; a
+material array with a plausible shape is not transfer evidence.
+
+The mesh, reprepared discretization, fields, materials, history, and solver
+state are staged as one `phydrax.lifecycle.CompositionRebind`; failed transfer
+evidence, material transfer, certification, or independent physical reanalysis
+returns the complete accepted state with the refused receipt. A published
+rebind's receipt ID becomes the promoted state's `transition_id`, which
+checkpoints and restart records carry.
+
+`prepare_nested_field_transfer(source, target, parent_cells, field_name=...)`
+reconstructs the parent basis in every child with the target Piola-mapped basis
+(identity for H1/L2 Lagrange, covariant for planar and tetrahedral Nedelec,
+contravariant for tetrahedral and planar RT/BDM), which equals applying the target DOF functionals
+(nodal values, edge circulations, face flux moments) where the target space
+contains the source space. `FiniteElementTransferEvidence` certifies witness
+containment, space reproduction, shared-DOF continuity (trace continuity and
+orientation), and curl/divergence commutation; a failed certificate claims
+nothing and its epoch transition refuses the rebind.
+Tetrahedral H(curl) fields use
+`form_element("tetrahedron", 1, order, family="trimmed", proxy="circulation")`.
+The canonical form basis owns edge/face moments and their full orientation
+transformations; meshing does not introduce a separate lowest-order space.
+
+Mapped simplex and tensor form fields also accept `geometry_transition` or
+`coarsening_witnesses` naming an exact complete reference partition. Refinement
+applies the child's circulation/flux functionals to the pulled-back source form.
+Coarsening integrates coarse entity functionals over their actual fine entity
+partitions, retaining independent coordinate and field coefficient supports.
+Its compatible projection preserves boundary moments and, when needed, solves
+for cell-interior moments against the descending exterior-derivative complex.
+This is neither an interpolation transpose nor an orthonormal restriction.
+Full entity transformation matrices are solved
+with prepared native factors; degree, twist, physical proxy, and scientific
+source/quotient identities cannot be replaced by matching array dimensions or
+nearby points. The certificate checks every source column of exterior-derivative
+commutation and shared-entity agreement. `maximum_work` and
+`maximum_storage_bytes` bound cumulative compatible preparation, with charged
+work/storage estimates, local rank, condition, and solve defects in its evidence.
+Nonlinear or rational root coordinate maps remain exact source restrictions.
+Source-authored bilinear quad reference charts additionally retain their full
+coefficient action, whole-chart Jacobian bound, source bank and scientific roots;
+corner proximity does not supply a witness. Prism/pyramid compatible
+source components retain their actual product/rational form identity through
+the same moment and Piola owners; a rational source integral requires exact
+denominator cancellation or an owning certified integration error bound.
+Pyramid body integrals compose the source components and actual functional
+density factors into the owning collapsed cube chart before expanding their
+contraction, then apply its Jacobian once. This retains the same physical
+moment while avoiding needless rational coefficient expansion within the
+original preparation work and storage limits.
+Common-piece moment integration keeps the source and target reference maps
+independent. On an owning simplex integration entity it pulls back the actual
+source form and the target complementary test form, including a genuinely
+rational projective target map. Exact entity inclusion and sign-definite
+Jacobian bounds establish orientation; an affine map through the same corners
+is not a replacement. Rational remainder uncertainty is retained in the moment
+matrix and must fit the unchanged consumer error and resource policy.
+Twisted common-piece fluxes and their top-density companions also retain the
+full-cell orientation bundle: the relative multiplier is the product of the
+source and target full-chart Jacobian signs, each proved nonzero over the
+whole simplex. Entity orientation alone does not establish this bundle; a
+reversed source chart uses the physical absolute-determinant flux law.
+`FiniteElementFieldTransfer.epoch_transition(...)` returns a
+content-ledger `TopologyEpochTransition` for conservative transfers with positive
+DOF measures and a `FieldEpochTransition` otherwise; both expose the
+`composition_transport` physical-remap transport.
 
 `FiniteElementTopologyTransfer` stores the primal coefficient map (target DOFs by
 source DOFs) either as one `SparseLinearMap` with O(targets x stencil width)
@@ -212,8 +360,9 @@ primal transfer, `pullback` is its algebraic transpose for residual and load
 duals, and an optional `hilbert_adjoint` carries the inner-product adjoint;
 trailing payload axes pass through both. Constant, linear, positivity, and
 conservation claims are certified when the transfer is constructed (positivity
-only from sparse coefficients); `vertex_interpolation_transfer` builds the
-fixed-width row-stencil form used by local refinement.
+only from sparse coefficients) and `semantics` declares its checked meaning;
+`vertex_interpolation_transfer` builds the fixed-width row-stencil form used by
+local refinement.
 
 Tensor hp adaptation uses `FiniteElementHPTopology` as an allocated refinement
 forest and `FiniteElementHPEpoch` as the immutable prepared snapshot. Isotropic
@@ -231,8 +380,9 @@ phase-field fracture, and fixed-crack XFEM classification/enrichment.
 ### L2 projection between non-matching meshes
 
 Galerkin L2 projection of a scalar Lagrange field (continuous or discontinuous,
-any degree, on affine triangles or tetrahedra) onto a second FE space on a
-different mesh separates the target from the source:
+any degree) or a Piola-mapped H(curl)/H(div) field (Nedelec, RT, BDM) on affine
+triangles or tetrahedra onto a second FE space on a different mesh separates the
+target from the source:
 
 - `prepare_l2_projection_target(target, field_name=...)` is the sole constructor
   of `PreparedL2ProjectionTarget`: the exact target mass `M_T`, its reverse
@@ -247,7 +397,13 @@ different mesh separates the target from the source:
   target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`. The
   primal is the `FiniteElementL2Projection` `M_T^{-1} B` and the pullback is
   `B^T M_T^{-1}`; trailing payload axes are solved as one multi-right-hand-side
-  block.
+  block. Compatible fields pair covariant/contravariant Piola values of both
+  owning cells on every overlap simplex. `prepare_projection_field_transfer`
+  certifies their `reproduction` of constants plus `x` (H(div)) or rotations
+  (H(curl)) and the conserved total vector `content`, and reports the target
+  `solve-residual`, the sampled cellwise `commuting` defect, and the
+  `divergence-content`/`curl-content` (net boundary flux or circulation) as
+  `FiniteElementTransferEvidence.estimates`.
 - `refresh_l2_projection_target(prepared_target, moved_target)` refactors the
   numeric mass of the same field on moved geometry with an unchanged DOF
   structure (equal `dof_map_id`), reusing the symbolic plan and the compiled

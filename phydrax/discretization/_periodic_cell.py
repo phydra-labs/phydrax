@@ -222,6 +222,8 @@ class PeriodicCell(StrictModule, NonTrainableState):
     condition_number: float = eqx.field(static=True)
     certified_condition_number: float = eqx.field(static=True)
     image_extent: int = eqx.field(static=True)
+    maximum_condition_number: float | None = eqx.field(static=True)
+    maximum_image_count: int = eqx.field(static=True)
     cell_id: str = eqx.field(static=True)
 
     def __init__(
@@ -280,6 +282,10 @@ class PeriodicCell(StrictModule, NonTrainableState):
             )
         extent = max(1, ceil(0.5 + certified_condition * sqrt(rank)))
         limit = int(maximum_image_count)
+        if isinstance(maximum_image_count, (bool, np.bool_)) or not isinstance(
+            maximum_image_count, (int, np.integer)
+        ):
+            raise TypeError("maximum_image_count must be an integer.")
         if limit <= 0:
             raise ValueError("maximum_image_count must be positive.")
         # Admit the scalar stencil size before enumerating condition-sized shifts.
@@ -319,6 +325,10 @@ class PeriodicCell(StrictModule, NonTrainableState):
         self.condition_number = condition
         self.certified_condition_number = certified_condition
         self.image_extent = extent
+        self.maximum_condition_number = (
+            None if maximum_condition_number is None else float(maximum_condition_number)
+        )
+        self.maximum_image_count = limit
         self.cell_id = canonical_fingerprint(
             {
                 "kind": "periodic-cell",
@@ -332,8 +342,47 @@ class PeriodicCell(StrictModule, NonTrainableState):
                 "image_extent": extent,
                 "maximum_image_count": limit,
                 "certified_condition_number": certified_condition,
+                "maximum_condition_number": self.maximum_condition_number,
             }
         )
+
+    def validate_restored(self) -> None:
+        """Authenticate original controls and every derived lattice field."""
+        replay = PeriodicCell(
+            self.vectors,
+            origin=self.origin,
+            periodic_axes=self.periodic_axes,
+            maximum_condition_number=self.maximum_condition_number,
+            maximum_image_count=self.maximum_image_count,
+        )
+        for name in (
+            "origin",
+            "vectors",
+            "inverse_vectors",
+            "reciprocal_vectors",
+            "periodic_mask",
+            "image_shifts",
+        ):
+            if array_tree_fingerprint(getattr(self, name)) != array_tree_fingerprint(
+                getattr(replay, name)
+            ):
+                raise ValueError(
+                    f"Restored PeriodicCell {name} violates its original lattice law."
+                )
+        for name in (
+            "periodic_axes",
+            "cell_measure",
+            "volume",
+            "unique_image_radius",
+            "condition_number",
+            "certified_condition_number",
+            "image_extent",
+            "maximum_condition_number",
+            "maximum_image_count",
+            "cell_id",
+        ):
+            if getattr(self, name) != getattr(replay, name):
+                raise ValueError(f"Restored PeriodicCell {name} is not authenticated.")
 
     @property
     def rank(self) -> int:

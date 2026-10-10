@@ -17,7 +17,7 @@ tuple. `claims` is a local finite vocabulary for that envelope. Every
 empty IDs, duplicate entries, and unbounded collections are rejected. The canonical
 `envelope_id` includes unsupported declarations and stop-ship conditions.
 
-::: phydrax.operators.BoundarySupportEnvelope
+::: phydrax.operators.integral.layer_potential.BoundarySupportEnvelope
 
 ## Qualification evidence
 
@@ -30,7 +30,7 @@ Unsupported evidence is explicit: it has `supported=False`, a reason, and no num
 error. It therefore cannot be confused with a supported zero error. Provenance,
 operational, and artifact IDs are mandatory inputs to its `evidence_id`.
 
-::: phydrax.operators.BoundaryQualificationEvidence
+::: phydrax.operators.integral.layer_potential.BoundaryQualificationEvidence
 
 ## Product provenance
 
@@ -39,7 +39,7 @@ clean-room record, provider, producer, and product/plan/result lineage. A clean-
 record ID identifies evidence; it is not a claim of legal approval. Parent collections
 are canonicalized and self-parent product lineage is rejected.
 
-::: phydrax.operators.BoundaryProductProvenance
+::: phydrax.operators.integral.layer_potential.BoundaryProductProvenance
 
 ## Operational evidence
 
@@ -49,7 +49,7 @@ Both preflights must pass before a result can be recorded. Observed bytes requir
 result; a resource-limit violation requires an explicit stop-ship reason. Failed
 preflights never become implicit fallback dispatches.
 
-::: phydrax.operators.BoundaryOperationalEvidence
+::: phydrax.operators.integral.layer_potential.BoundaryOperationalEvidence
 
 ## Surface geometry
 
@@ -73,11 +73,11 @@ preflights never become implicit fallback dispatches.
 
 ## Scalar boundary calculus
 
-::: phydrax.operators.prepare_scalar_calderon_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_scalar_calderon_dp0_3d
 
 ---
 
-::: phydrax.operators.prepare_scalar_screen_single_layer_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_scalar_screen_single_layer_dp0_3d
 
 ---
 
@@ -85,15 +85,15 @@ preflights never become implicit fallback dispatches.
 
 ## Periodic operators
 
-::: phydrax.operators.prepare_periodic_modified_helmholtz_single_layer_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_periodic_modified_helmholtz_single_layer_dp0_3d
 
 ---
 
-::: phydrax.operators.prepare_periodic_helmholtz_single_layer_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_periodic_helmholtz_single_layer_dp0_3d
 
 ---
 
-::: phydrax.operators.prepare_periodic_maxwell_electric_field_action_3d
+::: phydrax.operators.integral.layer_potential.prepare_periodic_maxwell_electric_field_action_3d
 
 ## Coupled and vector physics
 
@@ -132,19 +132,19 @@ under `rhs-only` only. Geometry, kernel, and quadrature derivatives are refused.
 
 ---
 
-::: phydrax.operators.prepare_elasticity_single_layer_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_elasticity_single_layer_dp0_3d
 
 ---
 
-::: phydrax.operators.prepare_stokes_single_layer_dp0_3d
+::: phydrax.operators.integral.layer_potential.prepare_stokes_single_layer_dp0_3d
 
 ---
 
-::: phydrax.operators.prepare_maxwell_efie_3d
+::: phydrax.operators.integral.layer_potential.prepare_maxwell_efie_3d
 
 ## Hydrodynamics and time
 
-::: phydrax.operators.prepare_free_surface_hydrodynamics_3d
+::: phydrax.operators.integral.layer_potential.prepare_free_surface_hydrodynamics_3d
 
 ---
 
@@ -160,11 +160,11 @@ under `rhs-only` only. Geometry, kernel, and quadrature derivatives are refused.
 
 ## Execution, adaptation, and persistence
 
-::: phydrax.operators.BEMExecutionEnvelope
+::: phydrax.operators.integral.layer_potential.BEMExecutionEnvelope
 
 ---
 
-::: phydrax.operators.BoundaryMeshEpoch
+::: phydrax.operators.integral.layer_potential.BoundaryMeshEpoch
 
 ---
 

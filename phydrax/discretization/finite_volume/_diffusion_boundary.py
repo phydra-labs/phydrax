@@ -77,9 +77,10 @@ class HybridDiffusionBoundary(StrictModule):
                 raise ValueError("Boundary targets must be finite.")
             kind[face_index], value[face_index] = 3, target
             conductance[face_index] = transfer
-        self.kind = jnp.asarray(kind)
-        self.value = jnp.asarray(value)
-        self.conductance = jnp.asarray(conductance)
+        active = np.asarray(discretization.face_block.active_mask)
+        self.kind = jnp.asarray(kind[active])
+        self.value = jnp.asarray(value[active])
+        self.conductance = jnp.asarray(conductance[active])
         self.geometry_id = discretization.geometry_id
 
     def face_residual(self, face_values: Array, outward_sum: Array) -> Array:

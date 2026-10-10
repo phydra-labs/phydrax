@@ -24,7 +24,7 @@ from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import ExplicitFreeze, NonTrainableState
 from ...linalg import (
     ArraySpace,
     GMRES,
@@ -531,13 +531,18 @@ def _runtime_metric_weights(
 
 
 @final
-class MeshfreeConservationProblem(StrictModule, NonTrainableState):
+class MeshfreeConservationProblem(StrictModule, ExplicitFreeze):
     """Integrated steady equations ``B.T a law(Bu) = volumes * source``.
 
     The equation mask names solved rows. Every other row is prescribed by
     ``boundary_values``; no zero-volume padding or guessed natural boundary is
     introduced. Even/odd constitutive context is immutable *external* data,
     independent of the unknown state, so the monotonicity proof is global.
+
+    ``law`` is the prepared reference law: its traits are fixed by
+    preparation and its numeric values are the default runtime law. The
+    problem freezes it on purpose (`ExplicitFreeze`); a learned law trains
+    through a ``law`` parameter binding or the ``law=`` runtime refresh.
     """
 
     exterior: PreparedMeshfreeExteriorCalculus
@@ -637,15 +642,15 @@ class MeshfreeConservationProblem(StrictModule, NonTrainableState):
 
 
 @final
-class MeshfreeCoupledConservationProblem(StrictModule, NonTrainableState):
+class MeshfreeCoupledConservationProblem(StrictModule, ExplicitFreeze):
     """Block equations ``(B.T kron I) a F(B u) = volumes * source`` for a coupled law.
 
     ``u`` holds one packed O(3) component vector per node and ``F`` is an
     ``AbstractCoupledEdgeConstitutiveLaw`` acting on endpoint differences in the
     oriented 3-D edge frame. Masks, boundary prescription, immutable external
-    context and parameter semantics match ``MeshfreeConservationProblem``;
-    source and boundary values are scalar, one packed vector, or one vector per
-    node.
+    context, parameter semantics and the deliberately frozen reference law
+    (`ExplicitFreeze`) match ``MeshfreeConservationProblem``; source and
+    boundary values are scalar, one packed vector, or one vector per node.
     """
 
     exterior: PreparedMeshfreeExteriorCalculus
@@ -880,7 +885,13 @@ def _prepared_edges(
 
 
 @final
-class _ConservationResidual(StrictModule, NonTrainableState):
+class _ConservationResidual(StrictModule, ExplicitFreeze):
+    """Reduced residual; ``law_reference`` is a trait template, frozen on purpose.
+
+    ``bound_law`` replaces every numeric leaf of the template with the runtime
+    law parameters, so the template's own values never enter the residual.
+    """
+
     __strict_contract__ = True
     exterior: PreparedMeshfreeExteriorCalculus
     features: EdgeFrameFeatures
@@ -928,8 +939,11 @@ class _ConservationResidual(StrictModule, NonTrainableState):
 
 
 @final
-class _CoupledConservationResidual(StrictModule, NonTrainableState):
-    """Flattened block residual over free nodes, component index fastest."""
+class _CoupledConservationResidual(StrictModule, ExplicitFreeze):
+    """Flattened block residual over free nodes, component index fastest.
+
+    ``law_reference`` is a frozen trait template, as in ``_ConservationResidual``.
+    """
 
     __strict_contract__ = True
     exterior: PreparedMeshfreeExteriorCalculus

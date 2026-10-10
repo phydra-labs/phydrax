@@ -17,6 +17,12 @@
 #ifndef PHX_MC_BUILD_HASH
 #error "PHX_MC_BUILD_HASH must be defined by the build."
 #endif
+#ifndef PHX_MC_BUILD_CONFIGURATION
+#error "PHX_MC_BUILD_CONFIGURATION must be defined by the build."
+#endif
+#ifndef PHX_MC_ABI_CONTRACT
+#error "PHX_MC_ABI_CONTRACT must be defined by the build."
+#endif
 
 namespace {
 
@@ -27,6 +33,7 @@ using phx::mc::guarded;
 int32_t validate_coordinates(int64_t count, int width, const double* const* arrays, int arity) {
   for (int k = 0; k < arity; ++k) {
     for (int64_t index = 0; index < count * width; ++index) {
+      phx::mc::native_execution_charge(0);
       if (!std::isfinite(arrays[k][index])) {
         return PHX_MC_NONFINITE_INPUT;
       }
@@ -34,6 +41,7 @@ int32_t validate_coordinates(int64_t count, int width, const double* const* arra
   }
   for (int k = 0; k < arity; ++k) {
     for (int64_t index = 0; index < count * width; ++index) {
+      phx::mc::native_execution_charge(0);
       if (!coordinate_in_domain(arrays[k][index])) {
         return PHX_MC_RANGE_ERROR;
       }
@@ -61,6 +69,7 @@ int32_t validate_ids(int64_t count, int arity, const int64_t* ids) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   for (int64_t row = 0; row < count; ++row) {
+    phx::mc::native_execution_charge(0);
     const int64_t* r = ids + row * arity;
     for (int i = 0; i < arity; ++i) {
       for (int j = i + 1; j < arity; ++j) {
@@ -79,7 +88,10 @@ extern "C" {
 
 const char* phx_mc_version(void) { return PHX_MC_VERSION; }
 
+const char* phx_mc_abi_contract(void) { return PHX_MC_ABI_CONTRACT; }
+
 const char* phx_mc_build_hash(void) { return PHX_MC_BUILD_HASH; }
+const char* phx_mc_build_configuration(void) { return PHX_MC_BUILD_CONFIGURATION; }
 
 void phx_mc_exact_domain(int32_t* min_exponent, int32_t* max_exponent) {
   if (min_exponent != nullptr) {
@@ -257,14 +269,22 @@ void phx_mc_mesh_copy_vertex_map(const phx_mc_mesh* mesh, int32_t* vertex_map) {
   std::copy(mesh->vertex_map.begin(), mesh->vertex_map.end(), vertex_map);
 }
 
-void phx_mc_mesh_copy_cell_segments(const phx_mc_mesh* mesh, int32_t* cell_segments) {
-  if (mesh->cell_segments.empty()) {
-    std::fill_n(cell_segments, mesh->cell_count() * 3, -1);
+void phx_mc_mesh_copy_cell_constraints(const phx_mc_mesh* mesh, int32_t* cell_constraints) {
+  if (mesh->cell_constraints.empty()) {
+    std::fill_n(cell_constraints, mesh->cell_count() * (mesh->dimension + 1), -1);
   } else {
-    std::copy(mesh->cell_segments.begin(), mesh->cell_segments.end(), cell_segments);
+    std::copy(mesh->cell_constraints.begin(), mesh->cell_constraints.end(), cell_constraints);
   }
 }
 
-void phx_mc_mesh_free(phx_mc_mesh* mesh) { delete mesh; }
+void phx_mc_mesh_copy_cell_regions(const phx_mc_mesh* mesh, int32_t* cell_regions) {
+  if (mesh->cell_regions.empty()) {
+    std::fill_n(cell_regions, mesh->cell_count(), -1);
+  } else {
+    std::copy(mesh->cell_regions.begin(), mesh->cell_regions.end(), cell_regions);
+  }
+}
+
+void phx_mc_mesh_free(phx_mc_mesh* mesh) { phx::mc::destroy_native_object(mesh); }
 
 }  // extern "C"

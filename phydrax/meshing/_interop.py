@@ -10,7 +10,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
-import meshio
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -53,6 +52,8 @@ from ._scope import MeshingEntityKind, MeshingScope
 
 
 if TYPE_CHECKING:
+    import meshio
+
     from ..interchange._report import _AdapterDirection, _AdapterLossCategory
 
 
@@ -234,6 +235,8 @@ def read_mesh_array_artifact(
     path: str | Path, policy: MeshInteropPolicy, /
 ) -> tuple[MeshArrayArtifact, AdapterReport]:
     """Decode numeric meshio arrays; unsupported external semantics are explicit losses."""
+    import meshio
+
     if not isinstance(policy, MeshInteropPolicy):
         raise TypeError("policy must be MeshInteropPolicy.")
     source_path = Path(path).expanduser().absolute()
@@ -1006,6 +1009,8 @@ def export_cell_mesh(
     point_global_ids: ArrayLike | None = None,
 ) -> CellMeshExportResult:
     """Write meshio arrays with explicit accounting for native semantic losses."""
+    import meshio
+
     artifact, native_report = export_mesh_array_artifact(
         mesh,
         geometry,

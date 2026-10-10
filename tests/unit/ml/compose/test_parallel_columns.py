@@ -335,10 +335,14 @@ def test_keyed_parallel_dense_and_randomized_subspaces_preserve_branch_values(
         feature_schema=phx.ml.FeatureSchema(("a", "b", "c", "d", "e", "f", "g")),
     )
     dense_recipe = PCA(1)
+    # A bare rank-one sketch nearly orthogonal to the leading right singular
+    # vector is correctly refused, so admissibility would hinge on the draw. One
+    # power iteration contracts that contamination by (0.6 / 16)**2, while branch
+    # keys still move the transform far beyond the comparison tolerance.
     random_recipe = PCA(
         1,
         differentiate="none",
-        method=RandomizedSVD(oversampling=0, power_iterations=0),
+        method=RandomizedSVD(oversampling=0, power_iterations=1),
         tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
     )
     if composition == "union":

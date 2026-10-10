@@ -54,13 +54,21 @@ def register_artifact_value(value_id: str, value: Any, /) -> Any:
     return _register_artifact_identity(value_id, value)
 
 
+def registered_artifact_value_id(value: Any, /) -> str | None:
+    """Inspect canonical registration without admitting an unregistered value."""
+    existing = _ARTIFACT_IDS_BY_VALUE.get(id(value))
+    return existing[1] if existing is not None and existing[0] is value else None
+
+
 def artifact_value_id(value: Any, /) -> str:
     """Return one explicitly registered path-independent artifact identity."""
-    existing = _ARTIFACT_IDS_BY_VALUE.get(id(value))
-    if existing is not None and existing[0] is value:
-        return existing[1]
+    identity = registered_artifact_value_id(value)
+    if identity is not None:
+        return identity
+    owner = value if isinstance(value, type) else type(value)
     raise TypeError(
-        "Portable artifact values require an explicit canonical registration."
+        "Portable artifact values require an explicit canonical registration: "
+        f"{owner.__module__}.{owner.__qualname__}."
     )
 
 
@@ -71,6 +79,92 @@ def artifact_value(value_id: str, /) -> Any:
     if registered is None:
         raise ValueError(f"Unknown artifact value ID {identity!r}.")
     return registered
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactValueCodec:
+    """Constructor codec for an exact registered, array-free immutable value.
+
+    Encoders declare a closed canonical mapping, rather than capturing instance
+    attributes. Decoders must validate that mapping through the value's public
+    constructor; recipe loading additionally checks the exact returned type and
+    canonical re-encoding.
+    """
+
+    value_id: str
+    value_type: type
+    encode: Callable[[Any], Mapping[str, Any]]
+    decode: Callable[[Mapping[str, Any]], Any]
+
+    def __post_init__(self) -> None:
+        identity = self.value_id.strip()
+        if not identity:
+            raise ValueError("Artifact value codec IDs must be non-empty.")
+        if not isinstance(self.value_type, type):
+            raise TypeError("Artifact value codec value_type must be a type.")
+        if not callable(self.encode) or not callable(self.decode):
+            raise TypeError("Artifact value codecs require callable encode and decode.")
+        object.__setattr__(self, "value_id", identity)
+
+    def encode_value(self, value: Any, /) -> Mapping[str, Any]:
+        if type(value) is not self.value_type:
+            raise TypeError("Artifact value encoding requires its exact registered type.")
+        payload = self.encode(value)
+        if not isinstance(payload, Mapping) or any(
+            not isinstance(key, str) for key in payload
+        ):
+            raise TypeError("Artifact value encoders must return a text-keyed mapping.")
+        return payload
+
+    def decode_value(self, payload: Mapping[str, Any], /) -> Any:
+        if not isinstance(payload, Mapping) or any(
+            not isinstance(key, str) for key in payload
+        ):
+            raise TypeError("Artifact value decoders require a text-keyed mapping.")
+        value = self.decode(payload)
+        if type(value) is not self.value_type:
+            raise TypeError(
+                "Artifact value decoder did not return its exact registered type."
+            )
+        return value
+
+
+_VALUE_CODECS_BY_ID: dict[str, ArtifactValueCodec] = {}
+_VALUE_CODECS_BY_TYPE: dict[type, ArtifactValueCodec] = {}
+
+
+def register_artifact_value_codec(codec: ArtifactValueCodec, /) -> ArtifactValueCodec:
+    """Register a constructor codec under the value's canonical artifact identity."""
+    if not isinstance(codec, ArtifactValueCodec):
+        raise TypeError("codec must be an ArtifactValueCodec.")
+    existing_id = _VALUE_CODECS_BY_ID.get(codec.value_id)
+    if existing_id is not None and existing_id != codec:
+        raise ValueError(
+            f"Artifact value codec ID {codec.value_id!r} is already registered."
+        )
+    existing_type = _VALUE_CODECS_BY_TYPE.get(codec.value_type)
+    if existing_type is not None and existing_type != codec:
+        raise ValueError(
+            f"Artifact value type {codec.value_type.__name__} already has codec ID "
+            f"{existing_type.value_id!r}."
+        )
+    _register_artifact_identity(codec.value_id, codec.value_type)
+    _VALUE_CODECS_BY_ID[codec.value_id] = codec
+    _VALUE_CODECS_BY_TYPE[codec.value_type] = codec
+    return codec
+
+
+def artifact_value_codec(value_id: str, /) -> ArtifactValueCodec:
+    """Resolve only an explicitly registered immutable-value constructor codec."""
+    codec = _VALUE_CODECS_BY_ID.get(value_id)
+    if codec is None:
+        raise ValueError(f"Unknown artifact value codec ID {value_id!r}.")
+    return codec
+
+
+def artifact_value_codec_for(value: Any, /) -> ArtifactValueCodec | None:
+    """Inspect the constructor codec registered for a value's exact type."""
+    return _VALUE_CODECS_BY_TYPE.get(type(value))
 
 
 register_artifact_value("jax.artifact:tanh", jax.nn.tanh)
@@ -156,11 +250,16 @@ def operator_architecture_codec_for(model: Any, /) -> OperatorArchitectureCodec:
 __all__ = [
     "artifact_value",
     "artifact_value_id",
+    "ArtifactValueCodec",
+    "artifact_value_codec",
+    "artifact_value_codec_for",
     "ArchitectureDecoder",
     "ArchitectureEncoder",
     "OperatorArchitectureCodec",
     "operator_architecture_codec",
     "operator_architecture_codec_for",
     "register_artifact_value",
+    "register_artifact_value_codec",
+    "registered_artifact_value_id",
     "register_operator_architecture_codec",
 ]

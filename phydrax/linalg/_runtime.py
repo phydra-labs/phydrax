@@ -1192,7 +1192,10 @@ def _audit_minimum_norm(
     operator = problem.operator
     source, target = operator.source, operator.target
     positive = residual_norm > 0.0
-    residual_witness = residual / jnp.where(positive, residual_norm, 1.0)[..., None, :]
+    residual_witness = (
+        residual
+        / jnp.where(positive, residual_norm, 1.0).astype(residual.dtype)[..., None, :]
+    )
     normal_residual = jnp.where(
         positive,
         residual_norm
@@ -1210,7 +1213,12 @@ def _audit_minimum_norm(
         direction, confirmed = left_null_candidate
         direction_norm = _coordinate_norm(target, direction)
         witness_valid = direction_norm > 0.0
-        witness = direction / jnp.where(witness_valid, direction_norm, 1.0)[..., None, :]
+        witness = (
+            direction
+            / jnp.where(witness_valid, direction_norm, 1.0).astype(direction.dtype)[
+                ..., None, :
+            ]
+        )
         least_squares_stationary = _rhs_broadcast(confirmed, residual_norm.shape)
     left_null = jnp.where(
         witness_valid,
@@ -2564,7 +2572,9 @@ def _implicit_minimum_norm_value(
     def solve_cotangent(_: Callable[[Array], Array], right: Array) -> Array:
         # Coordinate transpose of `solve_tangent`: G^T c = conj(G^H conj(c)), with
         # G^H (c_x, c_y) = (c_x - M A* v, N v),
-        # v = (A*)^+ (M^-1 c_x + A^+ (N^-1 c_y)) for source/target pairings M, N.
+        # v = (A*)^+ A^+ (A M^-1 c_x + N^-1 c_y) for source/target pairings M, N,
+        # using (A*)^+ = (A*)^+ A^+ A so that (A*)^+ acts only on A^+ images, as in
+        # the tangent.
         conjugated = jnp.conj(right)
         primal, constraint = (
             conjugated[..., :source_size, :],
@@ -2572,14 +2582,15 @@ def _implicit_minimum_norm_value(
         )
         lifted = _pseudoinverse_columns(
             fixed,
-            _inverse_riesz_coordinates(target, constraint),
+            fixed.mv_block(_inverse_riesz_coordinates(source, primal))
+            + _inverse_riesz_coordinates(target, constraint),
             plan,
             spectrum,
             adjoint=False,
         )
         direction = _pseudoinverse_columns(
             fixed,
-            _inverse_riesz_coordinates(source, primal) + lifted,
+            lifted,
             plan,
             spectrum,
             adjoint=True,

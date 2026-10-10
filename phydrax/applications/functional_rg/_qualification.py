@@ -20,7 +20,6 @@ FERMION_PATCH_FRG_SUPPORT = SupportTuple(
 FERMION_PATCH_FRG_CANDIDATE = CapabilityProfile(
     "functional-rg.fermionic-fermi-surface-patch.candidate",
     "phydrax",
-    "candidate",
     (FERMION_PATCH_FRG_SUPPORT,),
     required_gates=("crossing", "regulator", "locked-small-control", "resource-envelope"),
     released=False,

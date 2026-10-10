@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze, NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import (
     AbstractParticleNeighborhoodPlan,
@@ -300,7 +300,7 @@ def _evaluate_native(
     return _native_evaluation(provider, request)
 
 
-class NativeAtomisticProviderPlan(StrictModule, NonTrainableState):
+class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
     """Recipe preparing one learned model as a native provider for any system.
 
     Periodic systems prepare an image-aware Verlet cache over a cell-list image
@@ -309,6 +309,10 @@ class NativeAtomisticProviderPlan(StrictModule, NonTrainableState):
     over ``finite_neighborhood``. ``deformation_margin`` bounds cell motion
     within one prepared image stencil before a fresh preparation is required.
     ``model_revision_id`` is the model's numeric revision at construction.
+
+    The plan is a deployment recipe bound to that revision, so it freezes the
+    model on purpose (`ExplicitFreeze`): its arrays are FIXED wherever the plan
+    is held. Train the potential itself and build a new plan from the result.
     """
 
     model: AbstractAtomisticPotential

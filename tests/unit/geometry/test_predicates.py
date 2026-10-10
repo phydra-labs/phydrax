@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
-from phydrax._meshcore import meshcore_available
+from phydrax._meshcore import meshcore_available, MeshcoreStatus, point_triangle_locations
 from phydrax.geometry import (
     incircle,
     insphere,
@@ -248,3 +248,53 @@ def test_geometry_precision_policy_predicate_mode() -> None:
     with pytest.raises(TypeError):
         # ty: ignore[invalid-argument-type]
         GeometryPrecisionPolicy(predicate_mode="exact")
+
+
+@pytest.mark.meshcore
+@pytest.mark.skipif(
+    not meshcore_available(), reason="native phydrax-meshcore library is not available"
+)
+def test_point_triangle_locations_match_rational_reference() -> None:
+    rng = np.random.default_rng(8)
+    triangles = rng.integers(-2, 3, size=(600, 3, 3)).astype(np.float64)
+    points = rng.integers(-2, 3, size=(600, 3)).astype(np.float64)
+    # Half of the queries lie in their triangle's plane: barycentric lattice
+    # combinations hit vertices, edges, the interior and the outside exactly.
+    partial = rng.integers(-1, 4, size=(300, 2))
+    weights = np.concatenate((partial, 4 - partial.sum(axis=1, keepdims=True)), axis=1)
+    points[:300] = np.sum(weights[:, :, None] * triangles[:300], axis=1) / 4.0
+    sides, features, status = point_triangle_locations(points, triangles)
+    located = set()
+    for index in range(points.shape[0]):
+        a, b, c = triangles[index]
+        normal = np.cross(b - a, c - a)
+        if not np.any(normal):
+            assert status[index] == MeshcoreStatus.DEGENERATE_INPUT, index
+            continue
+        side = reference_orient3d(a, b, c, points[index])
+        assert status[index] == MeshcoreStatus.OK, index
+        assert sides[index] == side, index
+        if side != 0:
+            assert features[index] == -1, index
+            continue
+        axis = int(np.argmax(np.abs(normal)))
+        keep = [k for k in range(3) if k != axis]
+        corners = triangles[index][:, keep]
+        x = points[index, keep]
+        turn = reference_orient2d(*corners)
+        edge_sides = [
+            turn * reference_orient2d(corners[(k + 1) % 3], corners[(k + 2) % 3], x)
+            for k in range(3)
+        ]
+        zeros = [k for k in range(3) if edge_sides[k] == 0]
+        if min(edge_sides) < 0:
+            expected = -1
+        elif not zeros:
+            expected = 6
+        elif len(zeros) == 1:
+            expected = 3 + zeros[0]
+        else:
+            expected = next(k for k in range(3) if k not in zeros)
+        assert features[index] == expected, index
+        located.add(expected if expected < 3 or expected == 6 else 3)
+    assert located == {-1, 0, 1, 2, 3, 6}

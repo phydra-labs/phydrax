@@ -10,6 +10,7 @@ from phydrax.geometry.multiregion_surface import (
     EdgeCollapseProposal,
     EdgeFlipProposal,
     EdgeSplitProposal,
+    multiregion_topology_epoch,
     MultiRegionRemeshPlan,
     MultiRegionSurfaceSeed,
     MultiRegionSurfaceState,
@@ -138,6 +139,27 @@ def test_split_preserves_geometry_uniform_thickness_and_content(
     assert transition is not None
     moved = transition.apply(state.sheet_fields[..., 0].reshape(-1))
     assert bool(moved.successful) and not bool(moved.differentiation_available)
+    transfer = result.sheet_transfer
+    geometry = transition.transfer.geometry
+    assert transfer is not None and geometry is not None
+    accepted_content = np.asarray(result.state.sheet_fields).copy()
+    shifted_source = multiregion_topology_epoch(topology, state.positions + 0.25)
+    shifted_target = multiregion_topology_epoch(split, result.state.positions + 0.25)
+    for source_epoch, target_epoch in (
+        (shifted_source, transition.target),
+        (transition.source, shifted_target),
+    ):
+        with pytest.raises(ValueError, match="geometry"):
+            transfer.epoch_transition(
+                source_epoch,
+                target_epoch,
+                field_name="sheet-slot-content",
+                geometry=geometry,
+            )
+    np.testing.assert_array_equal(result.state.sheet_fields, accepted_content)
+    repeated = transition.apply(state.sheet_fields[..., 0].reshape(-1))
+    assert repeated.successful
+    np.testing.assert_array_equal(repeated.values, moved.values)
 
 
 def test_junction_split_keeps_the_plateau_border() -> None:

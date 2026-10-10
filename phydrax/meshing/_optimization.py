@@ -144,6 +144,22 @@ def _augmented(centroids: _StarCentroids | None, coordinates: Array, /) -> Array
     return coordinates if centroids is None else centroids(coordinates)
 
 
+def _shape_distortion(transform: Array, determinant: Array, /) -> Array:
+    dimension = transform.shape[-1]
+    if dimension == 2:
+        # ||T||_F² - 2 det(T) is a sum of squares. Subtracting one from
+        # ||T||_F² / (2 det(T)) loses the objective near a conformal optimum
+        # while its derivative stays nonzero, breaking the line search.
+        diagonal = transform[..., 0, 0] - transform[..., 1, 1]
+        off_diagonal = transform[..., 0, 1] + transform[..., 1, 0]
+        return (diagonal**2 + off_diagonal**2) / (2.0 * determinant)
+    frobenius = jnp.sum(transform**2, axis=(-2, -1))
+    return (
+        frobenius ** (0.5 * dimension) / (dimension ** (0.5 * dimension) * determinant)
+        - 1.0
+    )
+
+
 class _TargetMatrixEnergy(StrictModule):
     """Target-matrix energy with an inversion guard or Escobar regularization."""
 
@@ -193,17 +209,9 @@ class _TargetMatrixEnergy(StrictModule):
         safe = jnp.where(determinant > 0.0, determinant, 1.0)
         match self.objective:
             case MeshQualityObjective.SHAPE:
-                return (
-                    frobenius ** (0.5 * dimension)
-                    / (dimension ** (0.5 * dimension) * safe)
-                    - 1.0
-                )
+                return _shape_distortion(transform, safe)
             case MeshQualityObjective.SHAPE_SIZE | MeshQualityObjective.METRIC_ALIGNMENT:
-                shape = (
-                    frobenius ** (0.5 * dimension)
-                    / (dimension ** (0.5 * dimension) * safe)
-                    - 1.0
-                )
+                shape = _shape_distortion(transform, safe)
                 return shape + 0.5 * (safe - 1.0 / safe) ** 2
             case MeshQualityObjective.GRAM_DETERMINANT:
                 gram = jnp.swapaxes(transform, -1, -2) @ transform
@@ -838,10 +846,10 @@ def _audit_passed(
     plan: TargetMatrixOptimizationPlan, coordinates: Array, numeric_version: str, /
 ) -> tuple[bool, CellMesh]:
     candidate = plan.mesh.with_coordinates(coordinates, numeric_version=numeric_version)
+    geometry = CellGeometrySpec.affine(candidate)
     audit = audit_cell_mesh(
         candidate,
-        CellGeometrySpec.affine(candidate),
-        evaluate_cell_quality(candidate),
+        geometry,
         policy=plan.audit_policy,
     )
     return audit.passed, candidate

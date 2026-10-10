@@ -148,6 +148,7 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
     support_matrix: MPMSupportMatrix
     standards: MPMStandardsTraceabilityMatrix
     capability_profile: CapabilityProfile
+    profile_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -191,10 +192,18 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
         self.capability_profile = CapabilityProfile(
             name_,
             "phydrax",
-            kind_.name.lower().replace("_", "-"),
             supported,
             required_gates=tuple(gate.name for gate in required),
             released=False,
+        )
+        self.profile_id = canonical_fingerprint(
+            {
+                "kind": "mpm-commercial-profile",
+                "qualification_kind": kind_.name,
+                "capability_profile": self.capability_profile.profile_id,
+                "support_matrix": support_matrix.matrix_id,
+                "standards_matrix": standards.matrix_id,
+            }
         )
 
     @property
@@ -206,10 +215,6 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
         return tuple(
             MPMReleaseGate[name] for name in self.capability_profile.required_gates
         )
-
-    @property
-    def profile_id(self) -> str:
-        return self.capability_profile.profile_id
 
 
 class MPMReleaseAssessment(StrictModule, NonTrainableState):
@@ -296,7 +301,6 @@ def assess_release(
     release_profile = CapabilityProfile(
         f"{profile.name}.{claim.claim_id}",
         profile.capability_profile.provider,
-        profile.capability_profile.version,
         (claim.support_tuple,),
         dependencies=profile.capability_profile.dependencies,
         required_gates=profile.capability_profile.required_gates,
@@ -317,6 +321,7 @@ def assess_release(
             {
                 "kind": "mpm-release-assessment",
                 "profile": release_profile.profile_id,
+                "commercial_profile": profile.profile_id,
                 "bundle": evidence_bundle_id,
                 "review": review.review_record_id,
                 "standards": profile.standards.matrix_id,

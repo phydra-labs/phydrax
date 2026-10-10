@@ -258,7 +258,6 @@ def _entry_profile(
     return CapabilityProfile(
         "battery.series-pack.entry",
         "phydrax",
-        "eligible",
         (SERIES_PACK_ENTRY_SUPPORT,),
         dependencies=(
             SupportDependency(

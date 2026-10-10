@@ -207,7 +207,7 @@ def test_particle_grid_splat_scenario_3() -> None:
     state = first.build(jnp.asarray([[0.25], [0.75]]))
     with pytest.raises(ValueError, match="different prepared transfer"):
         second.deposit_content(state, jnp.ones((2,)))
-    public = vars(phx.discretization)
+    public = set(dir(phx.discretization))
     expected = {
         "AbstractStructuredSplatAssignment",
         "MultilinearSplatAssignment",
@@ -217,7 +217,7 @@ def test_particle_grid_splat_scenario_3() -> None:
         "TensorBSplineSplatAssignment",
     }
 
-    assert expected <= public.keys()
+    assert expected <= public
     assert "ConservativeParticleGridTransferPlan" not in public
     assert "ParticleGridRelation" not in public
     assert "PreparedParticleGridTransfer" not in public

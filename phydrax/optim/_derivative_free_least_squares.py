@@ -473,6 +473,10 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> LeastSquaresResult:
+        if problem.trial_policy is not None:
+            raise ValueError(
+                "FiniteDifferenceGaussNewton does not implement an identified trial policy."
+            )
         if problem.bounds is not None:
             raise ValueError(
                 "FiniteDifferenceGaussNewton does not silently ignore bounds; use a bounded least-squares method."

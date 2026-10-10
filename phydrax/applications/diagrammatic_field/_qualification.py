@@ -18,7 +18,6 @@ def _candidate(
     profile = CapabilityProfile(
         f"{name}.candidate",
         "phydrax",
-        "candidate",
         (support,),
         required_gates=gates,
         released=False,

@@ -35,6 +35,7 @@ FieldRepresentation: TypeAlias = Literal[
     "flux_moment",
     "circulation_moment",
     "polynomial_moment",
+    "rational_moment",
     "modal_coefficient",
     "particle_value",
     "cochain",

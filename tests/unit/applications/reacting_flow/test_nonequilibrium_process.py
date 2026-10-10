@@ -12,6 +12,21 @@ from phydrax.applications.reacting_flow import (
 )
 
 
+# The balance runtime refuses any bit change to a component a process does not
+# own, and transport of this spatially uniform periodic state is flux-free, so
+# every SSPRK3 stage returns its base.  Unowned components therefore move only
+# by the rounding of the content/average conversions and stage combinations
+# applied to one value: 4 content products (initialization, two source-view
+# writes, transport acceptance) at one rounding each; 4 average quotients (two
+# source views, the transport read, the read-out) at up to two roundings each,
+# because XLA may lower division by a broadcast volume as a reciprocal product;
+# and at most 5 roundings on any path of the stage combinations 3/4 u + 1/4 u
+# and fl(1/3) u + fl(2/3) v.  With n = 17 roundings and unit roundoff 2**-53,
+# |change| <= gamma_n |value|.
+_UNIT_ROUNDOFF = 2.0**-53
+_FLUX_FREE_RTOL = 17 * _UNIT_ROUNDOFF / (1.0 - 17 * _UNIT_ROUNDOFF)
+
+
 def _problem(*, chemistry: Any = False) -> Any:
     schema = phx.equations.ChemicalSpeciesSchema.from_unique_species(
         ("A2", "A"),
@@ -112,12 +127,18 @@ def _advance(*, chemistry: Any = False) -> Any:
 def test_nonequilibrium_process_scenario_1() -> None:
     system, before, result, after = _advance()
     assert bool(result.accepted)
-    np.testing.assert_array_equal(
-        after[..., : system.species_count], before[..., : system.species_count]
+    np.testing.assert_allclose(
+        after[..., : system.species_count],
+        before[..., : system.species_count],
+        rtol=_FLUX_FREE_RTOL,
+        atol=0.0,
     )
     assert jnp.all(after[..., system.mode_slice] > before[..., system.mode_slice])
-    np.testing.assert_array_equal(
-        after[..., system.energy_index], before[..., system.energy_index]
+    np.testing.assert_allclose(
+        after[..., system.energy_index],
+        before[..., system.energy_index],
+        rtol=_FLUX_FREE_RTOL,
+        atol=0.0,
     )
     assert jnp.all(system.mode_temperatures(after) > system.mode_temperatures(before))
     system, before, result, after = _advance(chemistry=True)
@@ -131,8 +152,11 @@ def test_nonequilibrium_process_scenario_1() -> None:
         rtol=2.0e-6,
         atol=2.0e-6,
     )
-    np.testing.assert_array_equal(
-        after[..., system.energy_index], before[..., system.energy_index]
+    np.testing.assert_allclose(
+        after[..., system.energy_index],
+        before[..., system.energy_index],
+        rtol=_FLUX_FREE_RTOL,
+        atol=0.0,
     )
 
 

@@ -67,6 +67,7 @@ def field_storage(representation: FieldRepresentation, /) -> _FieldStorage:
             return "extensive"
         case (
             "polynomial_moment"
+            | "rational_moment"
             | "modal_coefficient"
             | "particle_value"
             | "functional"

@@ -41,7 +41,6 @@ def periodic_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             _profile_name(support),
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_REQUIRED_GATES,
             released=False,

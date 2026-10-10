@@ -61,7 +61,7 @@ bytes, and operation rates are observations and never release gates.
 ## S1 migration boundary
 
 The former S1 workflow is retained as a migration fixture: a regular untrimmed
-2D single patch, equal clamped axis grids, positive mean-one-gauge NURBS weights,
+2D single patch, equal clamped axis grids, strictly positive authored NURBS weights,
 one isoparametric scalar H1 field, explicit Gauss quadrature, homogeneous strong
 trace constraints, and matrix-free sum-factorized diffusion/source execution.
 The fixture must preserve its coefficient layout, exact quadratic Poisson result,

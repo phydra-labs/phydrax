@@ -12,7 +12,7 @@ import math
 import os
 import struct
 import zipfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +23,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._host_io import open_regular_file
-from ._publication import publish_file
+from ._publication import PublicationMode, publish_file
+from .typing import parse
 
 
 _DEFAULT_MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -299,9 +300,15 @@ def write_array_archive(
     manifest: Mapping[str, Any],
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
     arrays: Mapping[str, Any],
+    mode: PublicationMode = "atomic_replace",
 ) -> Path:
-    """Atomically write finite JSON metadata and pickle-free NumPy arrays."""
+    """Atomically publish JSON metadata and NumPy arrays under the requested mode.
 
+    The default replaces checkpoint destinations as before. ``exclusive``
+    atomically refuses an existing destination, including a competing writer.
+    """
+
+    mode = parse(mode, PublicationMode, "mode")
     policy = _resolved_archive_limits(limits)
     if len(arrays) + 1 > policy.max_members:
         raise ValueError("Archive exceeds the member count limit.")
@@ -375,7 +382,7 @@ def write_array_archive(
         path,
         writer,
         maximum_bytes=policy.max_container_bytes,
-        mode="atomic_replace",
+        mode=mode,
         validator=validator,
     )
     return destination
@@ -692,43 +699,61 @@ def _member_sha256(
     return digest.hexdigest()
 
 
+type ArchiveInventory = Mapping[str, tuple[tuple[int, ...], Any | None]]
+
+
+def _expected_archive_inventory(
+    expected_inventory: Any,
+    /,
+) -> dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]]:
+    if not isinstance(expected_inventory, Mapping):
+        raise TypeError("expected_inventory must be a mapping or None.")
+    expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] = {}
+    for name, specification in expected_inventory.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(specification, tuple)
+            or len(specification) != 2
+        ):
+            raise TypeError("Expected archive inventory is invalid.")
+        shape, dtype = specification
+        if not isinstance(shape, tuple) or any(
+            type(extent) is not int or extent < 0 for extent in shape
+        ):
+            raise TypeError("Expected archive shapes must be integer tuples.")
+        expected[name] = (
+            shape,
+            None if dtype is None else np.dtype(dtype),
+        )
+    return expected
+
+
 def read_array_archive(
     path: str | os.PathLike[str],
     /,
     *,
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
-    expected_inventory: Mapping[str, tuple[tuple[int, ...], Any | None]] | None = None,
+    expected_inventory: ArchiveInventory | None = None,
+    admit_manifest: Callable[[Mapping[str, Any]], ArchiveInventory] | None = None,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Read one archive after bounded preflight and checksum validation.
 
     The default limits admit untrusted archives conservatively. Pass ``None``
     explicitly only for a trusted local archive that must retain legacy,
-    effectively unbounded size limits.
+    effectively unbounded size limits. ``admit_manifest`` validates the parsed
+    manifest and returns the exact expected inventory before any member is
+    checksummed or loaded.
     """
     source = Path(os.fspath(path))
     policy = _resolved_archive_limits(limits)
-    expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] | None = None
-    if expected_inventory is not None:
-        if not isinstance(expected_inventory, Mapping):
-            raise TypeError("expected_inventory must be a mapping or None.")
-        expected = {}
-        for name, specification in expected_inventory.items():
-            if (
-                not isinstance(name, str)
-                or not name
-                or not isinstance(specification, tuple)
-                or len(specification) != 2
-            ):
-                raise TypeError("Expected archive inventory is invalid.")
-            shape, dtype = specification
-            if not isinstance(shape, tuple) or any(
-                type(extent) is not int or extent < 0 for extent in shape
-            ):
-                raise TypeError("Expected archive shapes must be integer tuples.")
-            expected[name] = (
-                shape,
-                None if dtype is None else np.dtype(dtype),
-            )
+    if expected_inventory is not None and admit_manifest is not None:
+        raise TypeError("Use either expected_inventory or admit_manifest, not both.")
+    expected = (
+        None
+        if expected_inventory is None
+        else _expected_archive_inventory(expected_inventory)
+    )
     try:
         with (
             _preflight_zip_container(path, policy) as container,
@@ -762,6 +787,8 @@ def read_array_archive(
                 raise ArrayArchiveCorruptionError(
                     "Archive array inventory ordering is noncanonical."
                 )
+            if admit_manifest is not None:
+                expected = _expected_archive_inventory(admit_manifest(manifest))
             if expected is not None and set(inventory) != set(expected):
                 raise ArrayArchiveCorruptionError(
                     "Archive inventory does not match the exact runtime template."

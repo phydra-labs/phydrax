@@ -440,7 +440,9 @@ def _svd(
             resources=SVDResourcePolicy(
                 preparation_bytes=policy.maximum_svd_bytes,
                 workspace_bytes=policy.maximum_svd_bytes,
-                operator_matvecs=max(rows * columns, 1),
+                # The exact dense spectrum probes every column once and verifies
+                # each retained pair with one forward and one adjoint action.
+                operator_matvecs=columns + 2 * count,
             ),
         ),
     )

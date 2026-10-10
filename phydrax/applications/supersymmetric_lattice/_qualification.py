@@ -54,7 +54,6 @@ def supersymmetric_lattice_candidate_profiles() -> tuple[CapabilityProfile, ...]
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "candidate",
             (support,),
             required_gates=gates[support.capability],
             released=False,

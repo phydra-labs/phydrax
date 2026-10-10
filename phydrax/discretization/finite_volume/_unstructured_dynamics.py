@@ -8,19 +8,23 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.sharding import PartitionSpec
 from jaxtyping import PyTree
 
 import phydrax.ein as ein
 import phydrax.linalg as la
 
+from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...ein import contract
 from ...typing import checked
 from .._conservation_boundary import (
     AbstractConservationBoundary,
@@ -34,6 +38,7 @@ from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
+from .._distributed_field import DistributedHaloPlan, make_owner_local_field_array
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._closure import AbstractFaceClosurePlan, FaceFluxContext
 from ._contact_angle import reconstruct_wall_interface_normal
@@ -48,6 +53,7 @@ from ._embedded_dynamics import (
 )
 from ._geometry_protocol import (
     FiniteVolumeGeometryStatus,
+    FiniteVolumeStageFaceLayout,
     FiniteVolumeStageMetrics,
     lower_static_unstructured_stage_metrics,
 )
@@ -139,19 +145,6 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule):
         *,
         closure: AbstractFaceClosurePlan | None = None,
     ) -> None:
-        if not isinstance(
-            reconstruction,
-            (
-                PiecewiseConstantReconstruction,
-                PreparedCellPolynomialReconstruction,
-                PreparedUnstructuredWENOZReconstruction,
-            ),
-        ):
-            raise TypeError(
-                "Unstructured FV reconstruction must be piecewise constant or prepared cell-polynomial."
-            )
-        if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
-            raise TypeError("closure must be an AbstractFaceClosurePlan or None.")
         reconstruction_id = (
             reconstruction.plan_id
             if isinstance(reconstruction, PiecewiseConstantReconstruction)
@@ -205,6 +198,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     boundary_face_indices: tuple[Array, ...] = fixed_field()
     stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = fixed_field()
     stage_boundary_face_indices: tuple[tuple[Array, ...], ...] = fixed_field()
+    neighbor_state_action: Array | None = fixed_field()
     source_cell_indices: Array = fixed_field()
     overset_rate_block_template: ConservationStageFluxRateBlock | None = fixed_field()
     overset_active_cell_mask: Array = fixed_field()
@@ -232,13 +226,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
     ) -> None:
-        if not isinstance(
-            discretization,
-            (UnstructuredFiniteVolumeDiscretization, DyadicFiniteVolumeDiscretization),
-        ):
-            raise TypeError(
-                "discretization must be explicit-face finite-volume geometry."
-            )
         if boundaries.patch_names != discretization.boundary_patch_names:
             raise ValueError("Boundary patch names must match prepared mesh patches.")
         if (
@@ -248,6 +235,33 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             raise ValueError(
                 "Unstructured FV system dimension/components do not match geometry."
             )
+        state_action = None
+        state_action_id = "identity"
+        if (
+            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+            and discretization.mesh.periodic_topology is not None
+        ):
+            dimension = discretization.cell_dimension
+            state_action = system.proper_isometry_state_matrix(
+                discretization.neighbor_frame_maps[:, :dimension, :dimension]
+            )
+            state_action_id = canonical_fingerprint(
+                {
+                    "system": system.system_id,
+                    "periodic": discretization.mesh.periodic_topology.periodic_topology_id,
+                }
+            )
+        self.neighbor_state_action = state_action
+        if (
+            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+            and discretization.partition_count > 1
+        ):
+            if type(method.reconstruction) is not PiecewiseConstantReconstruction:
+                raise ValueError(
+                    "Owner-local FV requires certified piecewise-constant neighborhoods."
+                )
+            if coupling is not None:
+                raise ValueError("Owner-local FV requires stationary uncoupled geometry.")
         if method.closure is not None:
             method.closure.admit_system(system)
         reconstruction = method.reconstruction
@@ -267,10 +281,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             if coupling is None
             else coupling
         )
-        if not isinstance(coupling_, PreparedUnstructuredFiniteVolumeCoupling):
-            raise TypeError(
-                "coupling must be PreparedUnstructuredFiniteVolumeCoupling or None."
-            )
         if (
             coupling_.topology_id != discretization.topology_id
             or coupling_.geometry_id != discretization.geometry_id
@@ -307,8 +317,6 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
                 f"flux={type(method.interface_solver).__name__})."
             )
-        if source is not None and not callable(source):
-            raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
         if (source is None) != (source_identifier is None) or source_identifier == "":
             raise ValueError(
@@ -471,6 +479,29 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 time=0.0,
             )
             stage_layouts = tuple(block.layout for block in embedded_stage.face_blocks)
+        elif (
+            isinstance(discretization, UnstructuredFiniteVolumeDiscretization)
+            and discretization.partition_count > 1
+        ):
+            # Owner-local execution consumes the certified face routes directly;
+            # it never lowers ghost closure measures into serial stage metrics.
+            stage_layouts = tuple(
+                FiniteVolumeStageFaceLayout(
+                    face_ids=block.face_ids,
+                    owner_cells=block.owner_cells,
+                    neighbor_cells=block.neighbor_cells,
+                    boundary_policy_ids=block.boundary_patch_ids,
+                    boundary_policy_count=len(discretization.boundary_patch_names),
+                    active_mask=block.active_mask,
+                    block_kind="physical",
+                    spatial_shape=tuple(block.face_centers.shape),
+                    quadrature_shape=tuple(
+                        discretization.face_quadrature_weights[block.face_ids].shape
+                    ),
+                    block_id=block.block_id,
+                )
+                for block in discretization.face_blocks
+            )
         else:
             static_stage = lower_static_unstructured_stage_metrics(discretization)
             stage_layouts = tuple(block.layout for block in static_stage.face_blocks)
@@ -504,6 +535,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 ),
                 layout.block_id,
                 layout.block_kind,
+                neighbor_state_action=None
+                if state_action is None
+                else state_action[layout.face_ids],
+                state_action_id=state_action_id,
             )
             for layout in stage_layouts
         )
@@ -784,6 +819,24 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             safe_neighbor = jnp.maximum(neighbor, 0)
             route_active = self._stage_route_active(layout, metrics.active_cell_mask)
             points = self.precision.reconstruction(geometry_block.quadrature_points)
+            neighbor_points = points
+            if self.neighbor_state_action is not None:
+                if not isinstance(
+                    self.discretization, UnstructuredFiniteVolumeDiscretization
+                ):
+                    raise TypeError(
+                        "Periodic frame actions require unstructured finite-volume geometry."
+                    )
+                maps = self.discretization.neighbor_frame_maps[layout.face_ids]
+                dimension = self.discretization.cell_dimension
+                neighbor_points = (
+                    contract(
+                        "fij,fqj->fqi",
+                        maps[:, :dimension, :dimension],
+                        points,
+                    )
+                    + maps[:, None, :dimension, dimension]
+                )
             if isinstance(reconstruction, PiecewiseConstantReconstruction):
                 quadrature_count = layout.quadrature_count
                 left = jnp.broadcast_to(
@@ -813,7 +866,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         reconstruction_state,
                         coefficients,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 else:
                     left = reconstruction.evaluate_stage_coefficients(
@@ -830,7 +883,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         stage_lengths,
                         metrics,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
             elif isinstance(reconstruction, PreparedUnstructuredWENOZReconstruction):
                 if coefficients is None:
@@ -850,7 +903,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         reconstruction_state,
                         coefficients,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 else:
                     left = reconstruction.optimal.evaluate_stage_coefficients(
@@ -867,7 +920,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         stage_lengths,
                         metrics,
                         safe_neighbor,
-                        points,
+                        neighbor_points,
                     )
                 left = reconstruction._limit(reconstruction_state, left, owner)
                 right = reconstruction._limit(
@@ -877,6 +930,10 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 )
             else:
                 raise TypeError("Unsupported prepared unstructured reconstruction.")
+            if self.neighbor_state_action is not None:
+                right = contract(
+                    "fji,fqj->fqi", self.neighbor_state_action[layout.face_ids], right
+                )
 
             safe_measures = jnp.where(
                 route_active,
@@ -1384,6 +1441,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         redistribution: ConservativeSmallCellRedistributionPlan | None = None,
     ) -> UnstructuredFiniteVolumeStageEvaluation:
         """Evaluate one certified quadrature-integrated ALE content rate."""
+        self._require_serial_entrypoint()
 
         cfl_ = float(cfl)
         if not np.isfinite(cfl_) or cfl_ <= 0.0:
@@ -1863,6 +1921,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         safe_neighbor = jnp.maximum(neighbor, 0)
         left = self.precision.reconstruction(state[owner])
         right = self.precision.reconstruction(state[safe_neighbor])
+        if self.neighbor_state_action is not None:
+            right = contract("fji,fj->fi", self.neighbor_state_action, right)
         normal = (
             self.discretization.area_vectors / self.discretization.face_measures[:, None]
         )
@@ -1918,7 +1978,14 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         return left, right, normal
 
     def _static_normal_flux(
-        self, left: Array, right: Array, normal: Array, args: Any, /
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any,
+        /,
+        *,
+        face_indices: Array | None = None,
     ) -> tuple[Array, Array]:
         """Stationary normal flux with the closure applied at every face site."""
         left_ = self.precision.flux(left)
@@ -1930,6 +1997,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         normal_flux = result.normal_flux
         if self.method.closure is not None:
             measures = self.discretization.face_measures
+            if face_indices is not None:
+                measures = measures[face_indices]
             context = FaceFluxContext(
                 normal_,
                 self.precision.flux(
@@ -1948,6 +2017,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     def face_fluxes(
         self, time: Array, state: Array, args: Any = None, /
     ) -> tuple[Array, Array]:
+        self._require_serial_entrypoint()
         value = jnp.asarray(state)
         if value.shape != self.discretization.state_shape:
             raise ValueError(
@@ -1980,9 +2050,12 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         normal_flux, max_speed = self._static_normal_flux(left, right, normal, args)
         return self.precision.flux(normal_flux), self.precision.decision(max_speed)
 
-    def residual_from_fluxes(self, normal_flux: Array, /) -> Array:
+    def _content_rate_from_fluxes(self, normal_flux: Array, /) -> Array:
         integrated = self.precision.reduction(normal_flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
+        )
+        integrated = jnp.where(
+            self.discretization.face_block.active_mask[:, None], integrated, 0.0
         )
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells
@@ -1993,11 +2066,163 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
         residual = residual.at[owner].add(-integrated)
         residual = residual.at[safe_neighbor].add(
-            jnp.where((neighbor >= 0)[:, None], integrated, 0.0)
+            jnp.where(
+                (neighbor >= 0)[:, None],
+                integrated
+                if self.neighbor_state_action is None
+                else contract("fij,fj->fi", self.neighbor_state_action, integrated),
+                0.0,
+            )
+        )
+        return residual
+
+    def residual_from_fluxes(self, normal_flux: Array, /) -> Array:
+        self._require_serial_entrypoint()
+        return self.precision.storage(
+            self._content_rate_from_fluxes(normal_flux)
+            / self.precision.reduction(self.discretization.cell_volumes[:, None])
+        )
+
+    def _require_serial_entrypoint(self) -> None:
+        if (
+            isinstance(self.discretization, UnstructuredFiniteVolumeDiscretization)
+            and self.discretization.partition_count > 1
+        ):
+            raise ValueError(
+                "Owner-local FV requires owner_local_residual/owner_local_advance "
+                "with certified named-axis halo communication."
+            )
+
+    def owner_local_residual(
+        self,
+        time: Array,
+        state: Array,
+        halo: DistributedHaloPlan,
+        /,
+        *,
+        axis_name: str,
+        args: Any = None,
+    ) -> Array:
+        """Exactly-once owned-facet solve and conservative owned-cell rate.
+
+        Call inside a real named-axis map. Halo values are refreshed from
+        their owners, and equal/opposite ghost contributions are returned
+        through the halo transpose; no global field is materialized.
+        """
+        geometry = self.discretization
+        if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError("Owner-local FV requires canonical CellMesh geometry.")
+        if not isinstance(halo, DistributedHaloPlan) or halo.local_global_ids.ndim != 1:
+            raise TypeError("Owner-local FV requires an owner-local DistributedHaloPlan.")
+        if (
+            halo.entity_count != geometry.global_entity_counts[geometry.cell_dimension]
+            or halo.part_count != geometry.partition_count
+            or halo.local_global_ids.shape != geometry.cell_global_ids.shape
+            or halo.evidence_id != geometry.closure_evidence_id
+        ):
+            raise ValueError("Owner-local FV halo disagrees with logical cell storage.")
+        value = jnp.asarray(state)
+        if value.shape != geometry.state_shape:
+            raise ValueError("Owner-local FV state must match the local closure.")
+        self.precision.validate_state(value)
+        route_valid = halo.partition_index == geometry.partition_index
+        owners = geometry.cell_owner
+        for phase, permutation in enumerate(halo.permutations):
+            receive = halo.phase_receive_indices[phase]
+            expected = jnp.asarray(-1, dtype=jnp.int32)
+            for source, target in permutation:
+                expected = jnp.where(geometry.partition_index == target, source, expected)
+            route_valid = route_valid & jnp.all(
+                ~halo.phase_receive_valid[phase] | (owners[receive] == expected)
+            )
+        value = eqx.error_if(
+            value,
+            jnp.any(halo.local_global_ids != geometry.cell_global_ids)
+            | jnp.any(halo.local_owned != geometry.cell_owned)
+            | ~route_valid
+            | ~halo.collective_certificate(axis_name=axis_name),
+            "Owner-local FV halo ownership, stable IDs, or collective coverage is invalid.",
+        )
+        part = jnp.asarray(geometry.partition_index, dtype=jnp.int32)
+        exchanged = halo.exchange(value, part, axis_name=axis_name)
+        left, right, normal = self._centroid_face_states(time, exchanged, args)
+        faces = geometry.owned_face_indices
+        if geometry.owned_face_buffered:
+
+            def solve_slot(slot: tuple[Array, Array]) -> Array:
+                face, active = slot
+
+                def solve(index: Array) -> Array:
+                    selected = index[None]
+                    flux_, _ = self._static_normal_flux(
+                        left[selected],
+                        right[selected],
+                        normal[selected],
+                        args,
+                        face_indices=selected,
+                    )
+                    return self.precision.flux(flux_[0])
+
+                return jax.lax.cond(
+                    active,
+                    solve,
+                    lambda _: jnp.zeros(
+                        (geometry.component_count,),
+                        dtype=jnp.dtype(self.precision.flux_dtype),
+                    ),
+                    face,
+                )
+
+            flux = jax.lax.map(solve_slot, (faces, geometry.owned_face_valid))
+        else:
+            flux, _ = self._static_normal_flux(
+                left[faces], right[faces], normal[faces], args, face_indices=faces
+            )
+        face_flux = (
+            jnp.zeros(
+                (geometry.face_measures.size, geometry.component_count),
+                dtype=flux.dtype,
+            )
+            .at[faces]
+            .add(
+                jnp.where(
+                    geometry.owned_face_valid[:, None],
+                    flux,
+                    jnp.zeros((), dtype=flux.dtype),
+                )
+            )
+        )
+        content_rate = self._content_rate_from_fluxes(face_flux)
+        accumulated = halo.accumulate_halo(content_rate, part, axis_name=axis_name)
+        residual = accumulated / self.precision.reduction(geometry.cell_volumes[:, None])
+        residual = residual + self.precision.reduction(
+            self.source_value(time, exchanged, args)
         )
         return self.precision.storage(
-            residual / self.precision.reduction(self.discretization.cell_volumes[:, None])
+            jnp.where(
+                geometry.cell_owned[:, None],
+                residual,
+                jnp.zeros((), dtype=residual.dtype),
+            )
         )
+
+    def owner_local_advance(
+        self,
+        time: Array,
+        state: Array,
+        step: Array,
+        halo: DistributedHaloPlan,
+        /,
+        *,
+        axis_name: str,
+        args: Any = None,
+    ) -> Array:
+        """Advance owned cell averages; closure ghosts remain read-only."""
+        value = jnp.asarray(state)
+        rate = self.owner_local_residual(
+            time, value, halo, axis_name=axis_name, args=args
+        )
+        return self.precision.storage(value + jnp.asarray(step, dtype=value.dtype) * rate)
 
     def source_value(self, time: Array, state: Array, args: Any, /) -> Array:
         if self.source is None:
@@ -2103,8 +2328,280 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         )
 
 
+class OwnerLocalFiniteVolumeAdvance(StrictModule):
+    """Actual owner-local advance with globally reduced owned content.
+
+    Byte counts describe the supplied arrays, not a measured allocator peak.
+    Admissibility is meaningful only when ``admissibility_checked`` is true.
+    """
+
+    state: Array
+    inventory_before: Array
+    inventory_after: Array
+    inventory_change: Array
+    finite: Array
+    admissible: Array
+    admissibility_checked: bool = eqx.field(static=True)
+    process_execution_bytes: int = eqx.field(static=True)
+    logical_state_bytes: int = eqx.field(static=True)
+
+
+def _owner_local_execution_data(
+    dynamics: PreparedUnstructuredFiniteVolumeDynamics,
+    halo: DistributedHaloPlan,
+    /,
+) -> tuple[Any, ...]:
+    geometry = dynamics.discretization
+    if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
+        raise TypeError("Owner-local FV programs require canonical CellMesh geometry.")
+    return (
+        dynamics.system,
+        dynamics.method,
+        dynamics.boundaries,
+        dynamics.precision,
+        geometry.cell_volumes,
+        geometry.cell_centers,
+        geometry.face_centers,
+        geometry.area_vectors,
+        geometry.face_measures,
+        geometry.owner_cells,
+        geometry.neighbor_cells,
+        geometry.boundary_patch_ids,
+        geometry.cell_owned,
+        geometry.cell_owner,
+        geometry.cell_global_ids,
+        geometry.owned_face_indices,
+        geometry.owned_face_valid,
+        geometry.partition_index,
+        halo,
+    )
+
+
+def execute_owner_local_finite_volume_advance(
+    programs: tuple[
+        tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan], ...
+    ],
+    state: Array,
+    time: Array,
+    step: Array,
+    execution_group: ExecutionGroup,
+    /,
+    *,
+    axis_name: str,
+    args: Any = None,
+) -> OwnerLocalFiniteVolumeAdvance:
+    """Execute process-addressable owner programs on their real group placement.
+
+    ``state`` is a global JAX closure-layout array ``(parts, local_cells,
+    components)`` whose first axis is the persisted semantic partition index.
+    This boundary does not infer stable IDs as global slots or repartition a
+    changed partition count. Supply the separately certified lowering for that
+    operation. Only local numerical execution leaves enter the mapped program;
+    canonical mesh and logical checkpoint arrays never become map arguments.
+    """
+    if not isinstance(execution_group, ExecutionGroup):
+        raise TypeError("Owner-local FV execution requires an ExecutionGroup.")
+    mesh = execution_group.mesh
+    if tuple(mesh.axis_names) != (axis_name,):
+        raise ValueError("Owner-local FV execution requires one explicit partition axis.")
+    if not programs:
+        raise ValueError("Owner-local FV execution requires addressable owner programs.")
+    by_part: dict[
+        int, tuple[PreparedUnstructuredFiniteVolumeDynamics, DistributedHaloPlan]
+    ] = {}
+    for dynamics, halo in programs:
+        if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
+            raise TypeError(
+                "Owner-local FV programs require prepared finite-volume dynamics."
+            )
+        geometry = dynamics.discretization
+        if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError(
+                "Owner-local FV programs require canonical CellMesh geometry."
+            )
+        if not isinstance(halo, DistributedHaloPlan) or not halo.owner_local:
+            raise TypeError("Owner-local FV programs require owner-local sparse halos.")
+        rank = int(np.asarray(geometry.partition_index))
+        if rank in by_part:
+            raise ValueError("Owner-local FV semantic partition programs must be unique.")
+        by_part[rank] = (dynamics, halo)
+    local_parts = tuple(
+        index
+        for index, device in enumerate(execution_group.devices)
+        if device.process_index == jax.process_index()
+    )
+    if set(by_part) != set(local_parts):
+        raise ValueError(
+            "Owner-local FV programs must cover exactly the addressable group ranks."
+        )
+    ordered = tuple(by_part[rank] for rank in local_parts)
+    prototype, prototype_halo = ordered[0]
+    geometry = prototype.discretization
+    if not isinstance(geometry, UnstructuredFiniteVolumeDiscretization):
+        raise TypeError("Owner-local FV programs require canonical CellMesh geometry.")
+    parts = mesh.shape[axis_name]
+    if geometry.partition_count != parts:
+        raise ValueError(
+            "Owner-local FV execution cannot change the certified partition count."
+        )
+    if not isinstance(state, Array) or state.shape != (parts, *geometry.state_shape):
+        raise ValueError(
+            "Owner-local FV state must use the certified global closure layout."
+        )
+    execution = _owner_local_execution_data(prototype, prototype_halo)
+    static = eqx.filter(execution, lambda value: not eqx.is_array(value))
+    first_leaves, structure = jax.tree_util.tree_flatten(
+        eqx.filter(execution, eqx.is_array)
+    )
+    signature = tuple((leaf.shape, leaf.dtype) for leaf in first_leaves)
+    local_leaves = []
+    for dynamics, halo in ordered:
+        other = dynamics.discretization
+        if not isinstance(other, UnstructuredFiniteVolumeDiscretization):
+            raise TypeError(
+                "Owner-local FV programs require canonical CellMesh geometry."
+            )
+        if (
+            other.partition_count != parts
+            or other.state_shape != geometry.state_shape
+            or other.component_names != geometry.component_names
+            or other.boundary_patch_names != geometry.boundary_patch_names
+            or other.owned_face_buffered != geometry.owned_face_buffered
+            or type(dynamics.system) is not type(prototype.system)
+            or type(dynamics.method.interface_solver)
+            is not type(prototype.method.interface_solver)
+            or dynamics.source_id != prototype.source_id
+        ):
+            raise ValueError(
+                "Owner-local FV programs require one compatible execution family."
+            )
+        leaves = jax.tree_util.tree_leaves(
+            eqx.filter(_owner_local_execution_data(dynamics, halo), eqx.is_array)
+        )
+        if tuple((leaf.shape, leaf.dtype) for leaf in leaves) != signature:
+            raise ValueError(
+                "Owner-local FV buffers must have agreed local capacities and dtypes."
+            )
+        if any(not leaf.is_fully_addressable for leaf in leaves):
+            raise ValueError(
+                "Owner-local FV execution leaves must be process-addressable."
+            )
+        local_leaves.append(leaves)
+    numeric = tuple(
+        make_owner_local_field_array(
+            tuple(leaves[index] for leaves in local_leaves),
+            local_parts,
+            execution_group.devices,
+            axis_name=axis_name,
+        )
+        for index in range(len(first_leaves))
+    )
+    specifications = tuple(
+        PartitionSpec(axis_name, *(None for _ in leaf.shape)) for leaf in first_leaves
+    )
+    state_spec = PartitionSpec(axis_name, None, None)
+    placed_state = jax.device_put(state, execution_group.named_sharding(state_spec))
+    checked = callable(getattr(prototype.system, "admissible", None))
+
+    def advance(
+        local_numeric: tuple[Array, ...], local_state: Array
+    ) -> tuple[Array, ...]:
+        data = eqx.combine(
+            jax.tree_util.tree_unflatten(
+                structure, tuple(value[0] for value in local_numeric)
+            ),
+            static,
+        )
+        system, method, boundaries, precision, *values, halo = data
+        local_geometry = eqx.tree_at(
+            lambda value: (
+                value.cell_volumes,
+                value.cell_centers,
+                value.face_centers,
+                value.area_vectors,
+                value.face_measures,
+                value.owner_cells,
+                value.neighbor_cells,
+                value.boundary_patch_ids,
+                value.cell_owned,
+                value.cell_owner,
+                value.cell_global_ids,
+                value.owned_face_indices,
+                value.owned_face_valid,
+                value.partition_index,
+            ),
+            geometry,
+            tuple(values),
+        )
+        dynamics = eqx.tree_at(
+            lambda value: (
+                value.system,
+                value.method,
+                value.boundaries,
+                value.precision,
+                value.discretization,
+            ),
+            prototype,
+            (system, method, boundaries, precision, local_geometry),
+        )
+        before = local_state[0]
+        after = dynamics.owner_local_advance(
+            time, before, step, halo, axis_name=axis_name, args=args
+        )
+        owned = local_geometry.cell_owned[:, None]
+        volumes = precision.reduction(local_geometry.cell_volumes[:, None])
+
+        def inventory(value: Array) -> Array:
+            local_content = compensated_sum(
+                jnp.where(owned, volumes * precision.reduction(value), 0.0), axis=0
+            )
+            return jax.lax.psum(local_content, axis_name)
+
+        finite = jax.lax.pmin(
+            jnp.all(jnp.isfinite(after)).astype(jnp.int32), axis_name
+        ).astype(jnp.bool_)
+        admissible = (
+            jnp.all(jnp.where(local_geometry.cell_owned, system.admissible(after), True))
+            if checked
+            else jnp.asarray(False, dtype=jnp.bool_)
+        )
+        admissible = jax.lax.pmin(admissible.astype(jnp.int32), axis_name).astype(
+            jnp.bool_
+        )
+        return after[None, ...], inventory(before), inventory(after), finite, admissible
+
+    advanced, before, after, finite, admissible = jax.shard_map(
+        advance,
+        mesh=mesh,
+        in_specs=(specifications, state_spec),
+        out_specs=(
+            state_spec,
+            PartitionSpec(None),
+            PartitionSpec(None),
+            PartitionSpec(),
+            PartitionSpec(),
+        ),
+        check_vma=False,
+    )(numeric, placed_state)
+    return OwnerLocalFiniteVolumeAdvance(
+        state=advanced,
+        inventory_before=before,
+        inventory_after=after,
+        inventory_change=after - before,
+        finite=finite,
+        admissible=admissible,
+        admissibility_checked=checked,
+        process_execution_bytes=sum(
+            leaf.size * leaf.dtype.itemsize for leaves in local_leaves for leaf in leaves
+        ),
+        logical_state_bytes=state.size * state.dtype.itemsize,
+    )
+
+
 __all__ = [
     "PreparedUnstructuredFiniteVolumeDynamics",
+    "OwnerLocalFiniteVolumeAdvance",
+    "execute_owner_local_finite_volume_advance",
     "UnstructuredFiniteVolumeBoundarySet",
     "UnstructuredFiniteVolumeDiagnostics",
     "UnstructuredFiniteVolumeMethodPlan",

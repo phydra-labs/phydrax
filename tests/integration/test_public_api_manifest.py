@@ -7,6 +7,7 @@ from collections import deque
 from pathlib import Path
 
 import phydrax
+from phydrax.interchange import AdapterError, AdapterStatus
 from tools.check_public_api_manifest import public_api_manifest_errors
 from tools.generate_public_api_manifest import public_api_record
 
@@ -34,6 +35,10 @@ def test_public_api_manifest_scenario_1() -> None:
         for name in module.__all__:
             try:
                 value = getattr(module, name)
+            except AdapterError as error:
+                if error.status is not AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE:
+                    raise
+                continue
             except ImportError:
                 continue
             if isinstance(value, types.ModuleType) and value.__name__.startswith(

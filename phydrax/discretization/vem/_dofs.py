@@ -56,6 +56,19 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         vertex_width = element.vertex_dofs_per_entity
         edge_width = element.edge_dofs_per_entity
         cell_width = element.cell_dofs_per_entity
+        periodic = mesh.periodic_topology
+        if periodic is not None and element.family != "ConformingH1":
+            raise ValueError("Periodic VEM currently supports scalar conforming H1 only.")
+        vertex_route = np.arange(topology_vertex_count, dtype=np.int32)
+        edge_route = np.arange(edge_count, dtype=np.int32)
+        edge_orientations = np.ones(edge_count, dtype=np.int32)
+        if periodic is not None:
+            vertex_route = np.asarray(periodic.orbits(0)[0], dtype=np.int32)
+            edge_route, edge_orientations, _ = (
+                np.asarray(value) for value in periodic.orbits(1)
+            )
+            topology_vertex_count = len(periodic.orbit_representatives(0))
+            edge_count = len(periodic.orbit_representatives(1))
         vertex_dof_count = topology_vertex_count * vertex_width
         edge_dof_count = edge_count * edge_width
         cell_dof_count = cell_count * cell_width
@@ -73,7 +86,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             cursor = 0
             if vertex_width:
                 vertices = np.asarray(block.vertices, dtype=np.int32)
-                local[:, : block.arity] = vertices
+                local[:, : block.arity] = vertex_route[vertices]
                 cursor = block.arity
             if edge_width:
                 positions = np.arange(edge_width, dtype=np.int32)
@@ -85,6 +98,8 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                     signs = cell_signs[
                         cell_offset : cell_offset + block.cell_count, local_edge
                     ]
+                    signs = signs * edge_orientations[edges]
+                    edges = edge_route[edges]
                     if element.family == "ConformingH1":
                         oriented = np.where(
                             signs[:, None] > 0.0,
@@ -123,11 +138,20 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         boundary = np.zeros((global_count,), dtype=np.bool_)
         if vertex_width:
             boundary[:vertex_dof_count] = np.asarray(
-                connectivity.boundary_vertices, dtype=np.bool_
+                connectivity.boundary_vertices
+                if periodic is None
+                else periodic.quotient.entities(0).subset("boundary").mask,
+                dtype=np.bool_,
             )
         if edge_width:
             boundary[vertex_dof_count : vertex_dof_count + edge_dof_count] = np.repeat(
-                np.asarray(connectivity.boundary_edges, dtype=np.bool_), edge_width
+                np.asarray(
+                    connectivity.boundary_edges
+                    if periodic is None
+                    else periodic.quotient.entities(1).subset("boundary").mask,
+                    dtype=np.bool_,
+                ),
+                edge_width,
             )
         point_valid = np.zeros((global_count,), dtype=np.bool_)
         if element.family == "ConformingH1":
@@ -149,6 +173,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             "kind": "virtual-element-dof-map",
             "mesh": mesh.topology_id,
             "element": element.element_id,
+            "periodic": None if periodic is None else periodic.periodic_topology_id,
             "routes": [array_tree_fingerprint(value) for value in block_dofs],
             "boundary": array_tree_fingerprint(boundary),
             "point_valid": array_tree_fingerprint(point_valid),
@@ -172,11 +197,21 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             )
         result = jnp.zeros((self.global_dof_count, points.shape[1]), dtype=points.dtype)
         if self.family == "ConformingH1":
-            result = result.at[: self.vertex_dof_count].set(points)
+            vertices = (
+                points
+                if mesh.periodic_topology is None
+                else points[mesh.periodic_topology.orbit_representatives(0)]
+            )
+            result = result.at[: self.vertex_dof_count].set(vertices)
         # Edge DOFs exist only for the PolygonalConnectivity mesh this map was built on.
         connectivity = cast(PolygonalConnectivity, mesh.connectivity)
         edge_width = (
-            self.edge_dof_count // connectivity.edges.shape[0]
+            self.edge_dof_count
+            // (
+                connectivity.edges.shape[0]
+                if mesh.periodic_topology is None
+                else len(mesh.periodic_topology.orbit_representatives(1))
+            )
             if self.edge_dof_count
             else 0
         )
@@ -192,6 +227,8 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             else:
                 nodes = jnp.full((edge_width,), 0.5, dtype=points.dtype)
             edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
+            if mesh.periodic_topology is not None:
+                edges = edges[mesh.periodic_topology.orbit_representatives(1)]
             start = points[edges[:, 0]]
             stop = points[edges[:, 1]]
             edge_points = (1.0 - nodes[None, :, None]) * start[:, None, :] + nodes[

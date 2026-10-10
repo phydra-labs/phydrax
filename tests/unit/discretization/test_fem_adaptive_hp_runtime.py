@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -543,11 +544,10 @@ def test_residual_jump_ledger_budgets_hysteresis_and_balance_are_deterministic()
         jnp.ones((interfaces.capacity,)),
         jnp.ones((interfaces.capacity,)),
     )
-    # ty: ignore[unresolved-attribute]
+    assert ledger.estimate is not None
     assert ledger.estimate.global_estimate > 0.0
     rough = FiniteElementHPErrorEstimate(
         topology,
-        # ty: ignore[unresolved-attribute]
         ledger.estimate.cell_indicators,
         smoothness=jnp.ones((topology.capacity, topology.dimension)),
     )
@@ -622,3 +622,89 @@ def _bilinear_measure(vertices: Any, points: Any) -> Any:
         (d_first @ vertices, d_second @ vertices), axis=-1
     )  # (points, space, reference)
     return np.abs(np.linalg.det(jacobian))
+
+
+@pytest.mark.parametrize("kind", ["exterior", "interior"])
+def test_residual_jump_ledger_accounts_each_physical_facet_once(kind: str) -> None:
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    valid = np.asarray(interfaces.valid)
+    neighbors = np.asarray(interfaces.neighbor_slots)
+    selected = valid & ((neighbors < 0) if kind == "exterior" else (neighbors >= 0))
+    assert np.any(selected)
+    jumps = np.where(selected, 2.0, 0.0)
+    ledger = FiniteElementHPResidualJumpLedger(
+        topology,
+        interfaces,
+        jnp.zeros(topology.capacity),
+        jnp.ones(topology.capacity),
+        jumps,
+        jnp.ones(interfaces.capacity),
+    )
+    assert ledger.estimate is not None
+    expected = 4.0 * np.count_nonzero(selected)
+    np.testing.assert_allclose(ledger.estimate.global_estimate**2, expected, rtol=1.0e-14)
+
+
+def test_prepared_residual_estimator_keeps_physics_dynamic_and_nontrainable() -> None:
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+
+    def prepare(scale: float) -> FiniteElementHPResidualJumpLedger:
+        return FiniteElementHPResidualJumpLedger(
+            topology,
+            interfaces,
+            jnp.full(topology.capacity, scale),
+            jnp.ones(topology.capacity),
+            jnp.zeros(interfaces.capacity),
+            jnp.ones(interfaces.capacity),
+        )
+
+    ledger = prepare(1.0)
+    parameters, state, fixed = phx.partition_parameters(ledger)
+    assert not jax.tree.leaves(parameters)
+    restored = phx.combine_parameters(parameters, state, fixed)
+    np.testing.assert_array_equal(restored.cell_residual, ledger.cell_residual)
+    doubled = prepare(2.0)
+    assert doubled.estimate is not None and ledger.estimate is not None
+    np.testing.assert_allclose(
+        doubled.estimate.global_estimate,
+        2.0 * ledger.estimate.global_estimate,
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_owner", ["cell-measure", "facet-measure", "cell-indicator"]
+)
+def test_invalid_active_estimator_data_cannot_become_admissible_physical_error(
+    invalid_owner: str,
+) -> None:
+    topology, geometry = initial_finite_element_hp_topology(_quad_mesh(), 2, 16)
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    if invalid_owner == "cell-indicator":
+        estimate = FiniteElementHPErrorEstimate(topology, -jnp.ones(topology.capacity))
+    else:
+        ledger = FiniteElementHPResidualJumpLedger(
+            topology,
+            interfaces,
+            jnp.ones(topology.capacity),
+            jnp.full(topology.capacity, -1.0 if invalid_owner == "cell-measure" else 1.0),
+            jnp.ones(interfaces.capacity),
+            jnp.full(
+                interfaces.capacity, -1.0 if invalid_owner == "facet-measure" else 1.0
+            ),
+        )
+        estimate = ledger.estimate
+        if estimate is None:
+            raise RuntimeError("Residual estimator fixture lost its estimate.")
+    contributions = phx.meshing.PhysicalErrorEvidence(
+        "physical-epoch",
+        "energy-error",
+        "independent-geometry-and-transfer",
+        field_error=0.0,
+        geometry_error=0.0,
+        algebraic_error=0.0,
+        transfer_error=0.0,
+    )
+    with pytest.raises(ValueError):
+        estimate.physical_evidence("physical-epoch", "energy-error", contributions)

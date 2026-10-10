@@ -775,6 +775,8 @@ class PreparedUnstructuredAMRRuntime(StrictModule):
                     reference.active_mask,
                     reference.block_id,
                     reference.block_kind,
+                    neighbor_state_action=reference.neighbor_state_action,
+                    _validated_route_id=reference.route_id,
                 )
             )
         source = jnp.zeros_like(first.source_integral)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import fields
 from enum import StrEnum
 
 import equinox as eqx
@@ -31,22 +32,38 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
+    CellGeometrySpec,
     CellMesh,
     CellValidityCertificate,
     CellValidityPolicy,
     certify_cell_geometry_validity,
 )
+from ..discretization._cell_geometry_transfer import (
+    transition_displaced_cell_geometry,
+)
 from ..optim import OptimizationTermination
 from ..typing import checked
 from ._adaptation import (
+    _region_boundary_transition,
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
     MeshAdaptationResult,
     MetricMeshAdaptation,
     prepare_mesh_adaptation,
 )
+from ._association import (
+    _retain_association_scopes,
+    BRepAssociationTransfer,
+    MappedReferenceAssociationTransfer,
+    PlcAssociationTransfer,
+    SurfaceAssociationTransfer,
+)
+from ._association_composition import ComposedAssociationTransfer
+from ._audit import CellMeshAuditDisposition, CellMeshAuditPolicy
 from ._canonical import certify_cell_mesh
-from ._lineage import CellMeshTransition
+from ._contracts import MeshingLimits
+from ._implicit_association_transfer import ImplicitAssociationTransfer
+from ._lineage import CellMeshTransition, identity_lineage, inherit_mesh_organization
 from ._metric import MeshMetricField
 from ._optimization import (
     MeshOptimizationResult,
@@ -58,6 +75,7 @@ from ._optimization import (
 from ._quality import evaluate_cell_quality
 from ._result import CellMeshingResult
 from ._scope import MeshingEntityKind, MeshingScope
+from .providers._native_periodic import PeriodicAssociationTransfer
 
 
 class MeshMotionDecision(StrEnum):
@@ -522,6 +540,152 @@ def _boundary_mask(mesh: CellMesh, /) -> np.ndarray:
     return np.asarray(mesh.topology.entities(0).subset("boundary").mask, dtype=np.bool_)
 
 
+def _carried(
+    source: CellMeshingResult,
+    moved: CellMesh,
+    transfer: BRepAssociationTransfer
+    | PlcAssociationTransfer
+    | ComposedAssociationTransfer
+    | SurfaceAssociationTransfer
+    | MappedReferenceAssociationTransfer
+    | ImplicitAssociationTransfer
+    | PeriodicAssociationTransfer
+    | None,
+    /,
+    *,
+    limits: MeshingLimits | None = None,
+    audit_policy: CellMeshAuditPolicy | None = None,
+) -> CellMeshingResult:
+    """Certify moved coordinates with the source's region evidence and geometry.
+
+    Patches, zones, and labels are rebound through the identity lineage;
+    B-Rep or PLC associations are re-derived for the moved coordinates by their
+    owning ``transfer``. Classification evidence is never copied. A curved
+    coordinate map moves with its vertices. Anything that cannot be carried
+    refuses the motion instead of being dropped.
+    """
+
+    if source.attributes or (
+        source.boundary is not None
+        and not isinstance(transfer, ImplicitAssociationTransfer)
+    ):
+        raise ValueError(
+            "Mesh attributes and boundary models require their explicit owning remap."
+        )
+    if source.associations and transfer is None:
+        raise ValueError(
+            "Moving a mesh with geometry associations requires the adaptation "
+            "policy's association_transfer to revalidate them."
+        )
+    lineage = identity_lineage(source.mesh, moved)
+    patches, zones, labels = inherit_mesh_organization(source, moved, lineage)
+    geometry = (
+        CellGeometrySpec.affine(moved)
+        if (
+            source.geometry.exact_source is None
+            and source.geometry.periodic_source is None
+            and source.geometry.restriction_source is None
+            and source.geometry.storage is None
+            and source.geometry.geometry_layout_id
+            == CellGeometrySpec.affine(source.mesh).geometry_layout_id
+            and np.array_equal(
+                np.asarray(source.geometry.coordinates),
+                np.asarray(source.mesh.coordinates),
+            )
+        )
+        else transition_displaced_cell_geometry(
+            source.mesh, source.geometry, moved
+        ).geometry
+    )
+    boundary = (
+        transfer.remap_boundary(source, lineage, moved, geometry=geometry)
+        if isinstance(transfer, ImplicitAssociationTransfer)
+        else None
+    )
+    certification_inputs = (
+        None if source.certification is None else source.certification.request
+    )
+    policy = CellMeshAuditPolicy() if audit_policy is None else audit_policy
+    if (
+        certification_inputs is not None
+        and "open_boundary" in certification_inputs.schedule.required_audit_checks
+        and policy.watertight_boundary is CellMeshAuditDisposition.SKIP
+    ):
+        inputs = {
+            member.name: getattr(policy, member.name)
+            for member in fields(policy)
+            if member.name != "policy_id"
+        }
+        inputs["watertight_boundary"] = CellMeshAuditDisposition.REJECT
+        policy = CellMeshAuditPolicy(**inputs)
+    region_boundary_evidence = _region_boundary_transition(
+        source,
+        moved,
+        lineage,
+        patches,
+        zones,
+        labels,
+    )
+    region_evidence = None
+    if source.region_evidence is not None:
+        from ._compartments import revalidate_region_evidence
+
+        if limits is None:
+            raise ValueError(
+                "Material-bearing motion requires its actual adaptation work limits."
+            )
+        renewal = revalidate_region_evidence(
+            source,
+            moved,
+            geometry,
+            zones,
+            patches,
+            lineage=lineage,
+            certificate_limits=None
+            if certification_inputs is None
+            else certification_inputs.limits,
+            limits=limits,
+        )
+        zones, patches, region_evidence = (
+            renewal.zones,
+            renewal.patches,
+            renewal.region_evidence,
+        )
+    if transfer is None or not source.associations:
+        associations = ()
+    elif isinstance(
+        transfer,
+        (
+            PlcAssociationTransfer,
+            ComposedAssociationTransfer,
+            MappedReferenceAssociationTransfer,
+            ImplicitAssociationTransfer,
+            PeriodicAssociationTransfer,
+        ),
+    ):
+        associations = transfer.propagate(source, lineage, moved, geometry=geometry)
+    elif isinstance(transfer, SurfaceAssociationTransfer):
+        associations = transfer.propagate(source, lineage, moved, geometry=geometry)
+    else:
+        associations = transfer.propagate(source, lineage, moved)
+    associations = _retain_association_scopes(source.associations, associations)
+    return certify_cell_mesh(
+        moved,
+        source.coordinate_contract,
+        geometry=geometry,
+        audit_policy=policy,
+        boundary=boundary,
+        patches=patches,
+        zones=zones,
+        labels=labels,
+        associations=associations,
+        region_evidence=region_evidence,
+        region_boundary_evidence=region_boundary_evidence,
+        certification_inputs=certification_inputs,
+        lineage=None if certification_inputs is None else lineage,
+    )
+
+
 def _relocate(
     monitor: MeshMotionMonitor,
     source: CellMeshingResult,
@@ -575,6 +739,10 @@ def advance_mesh_motion(
     isotropic metric of the reference cell sizes) on the best valid
     same-topology candidate and executes through ``adaptation_policy``'s explicit
     route; without a policy the remesh is returned as an unexecuted request.
+    Every published result keeps the source's patches, zones, and labels, its
+    B-Rep associations revalidated by ``adaptation_policy.association_transfer``
+    (required when the source has associations), and a curved coordinate map
+    moved with its vertices; evidence that cannot be carried refuses the advance.
     """
 
     if not isinstance(monitor, MeshMotionMonitor):
@@ -595,6 +763,11 @@ def advance_mesh_motion(
     )
     if fixed.shape != (source.mesh.coordinates.shape[0],):
         raise ValueError("fixed_vertices must mark every mesh vertex.")
+    transfer = (
+        None if adaptation_policy is None else adaptation_policy.association_transfer
+    )
+    limits = None if adaptation_policy is None else adaptation_policy.limits
+    audit_policy = None if adaptation_policy is None else adaptation_policy.audit_policy
     assessment = monitor.assess(coordinates, boundary_residual=boundary_residual)
     assessments = [assessment]
     match assessment.decision:
@@ -604,8 +777,12 @@ def advance_mesh_motion(
             return MeshMotionAdvance(
                 MeshMotionDecision.ACCEPT_MOTION,
                 tuple(assessments),
-                result=certify_cell_mesh(
-                    monitor.moved_mesh(coordinates), source.coordinate_contract
+                result=_carried(
+                    source,
+                    monitor.moved_mesh(coordinates),
+                    transfer,
+                    limits=limits,
+                    audit_policy=audit_policy,
                 ),
             )
         case MeshMotionDecision.RELOCATE | MeshMotionDecision.REMESH:
@@ -618,6 +795,9 @@ def advance_mesh_motion(
     moved = monitor.moved_mesh(coordinates)
     relocation = _relocate(monitor, source, moved, fixed, version)
     if relocation.accepted:
+        relocated_result = relocation.result
+        if relocated_result is None:
+            raise RuntimeError("An accepted relocation must carry its certified result.")
         relocated = monitor.assess(
             relocation.coordinates, boundary_residual=boundary_residual
         )
@@ -626,23 +806,35 @@ def advance_mesh_motion(
             return MeshMotionAdvance(
                 MeshMotionDecision.RELOCATE,
                 tuple(assessments),
-                result=relocation.result,
+                result=_carried(
+                    source,
+                    relocated_result.mesh,
+                    transfer,
+                    limits=limits,
+                    audit_policy=audit_policy,
+                ),
                 relocation=relocation,
             )
-        candidate = relocation.result
+        candidate = _carried(
+            source,
+            relocated_result.mesh,
+            transfer,
+            limits=limits,
+            audit_policy=audit_policy,
+        )
     # ty: ignore[unresolved-attribute]
     elif assessment.certificate.all_certified:
-        candidate = certify_cell_mesh(moved, source.coordinate_contract)
+        candidate = _carried(
+            source, moved, transfer, limits=limits, audit_policy=audit_policy
+        )
     else:
         # Untangling failed: an uncertified mesh cannot seed a remesh.
         return MeshMotionAdvance(
             MeshMotionDecision.REJECT, tuple(assessments), relocation=relocation
         )
     metric = (
-        # ty: ignore[invalid-argument-type]
         _reference_size_metric(monitor.reference, candidate)
         if remesh_metric is None
-        # ty: ignore[invalid-argument-type]
         else remesh_metric(candidate)
     )
     if not isinstance(metric, MeshMetricField):
@@ -655,7 +847,6 @@ def advance_mesh_motion(
             relocation=relocation,
             remesh_metric=metric,
         )
-    # ty: ignore[invalid-argument-type]
     adaptation = _remesh(candidate, metric, adaptation_policy)
     return MeshMotionAdvance(
         MeshMotionDecision.REMESH,

@@ -219,7 +219,6 @@ def test_hep_foundation_closure_scenario_1() -> None:
         support_attributes={"model": "binned-poisson", "bins": 2},
         profile_name="hep.statistical-model.reference",
         provider="phydrax",
-        provider_version="current",
         release_evidence=(evidence,),
         released=True,
         campaign_id="campaign",

@@ -2741,13 +2741,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             policy=linear_policy,
         )
 
-    def _structural_affine_operator(
+    def _structural_full_affine_operator(
         self, args: object = None, /
     ) -> AbstractLinearOperator | None:
         if (
             self.execution_policy.realization != "sparse"
             or len(self.form.field_names) != 1
-            or self.constraint is not None
         ):
             return None
         # Sparse realization is offered only by finite-element local providers.
@@ -2791,6 +2790,53 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         for operator in operators[1:]:
             result = result + operator
         return result
+
+    def _constrain_structural_operator(
+        self, full: AbstractLinearOperator, /
+    ) -> AbstractLinearOperator:
+        constraint = self.constraint
+        if constraint is None:
+            return full
+        return FunctionLinearOperator(
+            lambda reduced: constraint.pullback_dual(
+                full.mv(constraint.homogeneous_correction(reduced))
+            ),
+            source=constraint.reduced_space,
+            target=DualSpace(constraint.reduced_space),
+            transpose_action=lambda reduced_dual: constraint.prolongation.transpose_mv(
+                full.transpose_mv(constraint.prolongation.mv(reduced_dual))
+            ),
+            properties=OperatorProperties(),
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "constrained-finite-element-operator",
+                    "operator": full.operator_id,
+                    "constraint": constraint.constraint_id,
+                }
+            ),
+        )
+
+    def _structural_affine_operator(
+        self, args: object = None, /
+    ) -> AbstractLinearOperator | None:
+        full = self._structural_full_affine_operator(args)
+        return None if full is None else self._constrain_structural_operator(full)
+
+    def _structural_right_hand_side(
+        self, full: AbstractLinearOperator, args: object = None, /
+    ) -> object | None:
+        if any(
+            isinstance(action, (SourceAction, BoundaryLoadAction))
+            for action in self.form.actions
+        ):
+            return None
+        constraint = self.constraint
+        if constraint is None:
+            return full.target.zeros()
+        context = self._execution_context(args)
+        lift = self.lift if context.lift is None else context.lift
+        residual = full.mv(self.full_space.validate(lift))
+        return constraint.pullback_dual(jax.tree.map(lambda value: -value, residual))
 
     def affine_operator(self, args: object = None, /) -> AbstractLinearOperator:
         """Return exact structural storage or linearize the authoritative program."""
@@ -2951,7 +2997,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         *,
         nullspace_policy: NullspacePolicy | None = None,
     ) -> tuple[LinearSystem, object]:
-        raw_operator = self.affine_operator(args)
+        full_structural = self._structural_full_affine_operator(args)
+        raw_operator = (
+            self.affine_operator(args)
+            if full_structural is None
+            else self._constrain_structural_operator(full_structural)
+        )
         properties = self.form.declared_properties
         primal_operator = FunctionLinearOperator(
             lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
@@ -3006,9 +3057,17 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     compatibility="error",
                     gauge="minimum-norm",
                 )
-        zero = self.state_space.zeros()
+        structural_rhs = (
+            None
+            if full_structural is None
+            else self._structural_right_hand_side(full_structural, args)
+        )
         right_hand_side = self.state_space.inverse_riesz(
-            jax.tree.map(lambda value: -value, self.residual(zero, args))
+            jax.tree.map(
+                lambda value: -value, self.residual(self.state_space.zeros(), args)
+            )
+            if structural_rhs is None
+            else structural_rhs
         )
         return (
             LinearSystem(

@@ -60,11 +60,14 @@ def test_additional_entropy_systems_scenario_1() -> None:
             phx.discretization.RusanovFluxPlan()
         ),
     )
+    space = discretization.field_spaces[0].vector_space
+    if not isinstance(space, phx.linalg.ArraySpace):
+        raise TypeError("Entropy DG fixture requires an array vector space.")
     state = jnp.broadcast_to(
         system.primitive_to_conserved(
             jnp.asarray((1.0, 0.1, 0.0, 0.0, 1.0, 0.2, 0.0, 0.0))
         ),
-        discretization.field_spaces[0].vector_space.shape,
+        space.shape,
     )
     # ty: ignore[invalid-argument-type]
     np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)

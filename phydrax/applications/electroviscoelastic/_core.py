@@ -100,7 +100,6 @@ def electroviscoelastic_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"electroviscoelastic.two-phase-{regime}.profile",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     f"electroviscoelastic.two-phase-{regime}",

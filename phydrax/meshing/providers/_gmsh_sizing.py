@@ -170,7 +170,7 @@ def _uniform_size_fields(
                 tags = (
                     tuple(tag for _, tag in gmsh.model.getEntities(dimension))
                     if control.scope.scope_id == top_scope.scope_id
-                    else _resolve_entities(gmsh, source, shape, control.scope)
+                    else _resolve_entities(gmsh, source, control.scope)
                 )
                 groups.append((control.target_size, tags, dimension))
     fields = []
@@ -262,8 +262,8 @@ def _proximity_field(
     """Local gap width is the sum of distances to both walls; size is gap / count."""
     dimension = control.source_scope.entity_dimension
     scale = _source_scale(source)
-    sources = _resolve_entities(gmsh, source, shape, control.source_scope)
-    targets = _resolve_entities(gmsh, source, shape, control.target_scope)
+    sources = _resolve_entities(gmsh, source, control.source_scope)
+    targets = _resolve_entities(gmsh, source, control.target_scope)
     gap = _proximity_gap(
         gmsh,
         dimension,
@@ -430,21 +430,15 @@ def _edge_size_evidence(
     if control.strength is SizeControlStrength.HARD:
         policy = specification.size_compliance
         if control.minimum_size is not None:
-            tolerance = policy.absolute_tolerance + (
-                policy.relative_tolerance * abs(control.minimum_size)
-            )
+            tolerance = policy.tolerance(control.minimum_size)
             if local_minimum < control.minimum_size - tolerance:
                 issues.append(f"minimum_size:{control.control_id}")
         if control.maximum_size is not None:
-            tolerance = policy.absolute_tolerance + (
-                policy.relative_tolerance * abs(control.maximum_size)
-            )
+            tolerance = policy.tolerance(control.maximum_size)
             if local_maximum > control.maximum_size + tolerance:
                 issues.append(f"maximum_size:{control.control_id}")
         if control.maximum_growth_rate is not None:
-            tolerance = policy.absolute_tolerance + (
-                policy.relative_tolerance * abs(control.maximum_growth_rate)
-            )
+            tolerance = policy.tolerance(control.maximum_growth_rate)
             if growth > control.maximum_growth_rate + tolerance:
                 issues.append(f"maximum_growth_rate:{control.control_id}")
     return issues, tuple(requested), tuple(achieved)

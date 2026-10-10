@@ -18,6 +18,31 @@ Rational pyramids are certified through the collapsed coordinates
 determinant pulled back to the unit cube is the numerator of the rational
 determinant divided by ``(1 - w)^2`` and is a tensor polynomial of degree
 ``(3k - 1, 3k - 1, 3k - 3)`` whose homogeneous Bernstein coefficients are bounded.
+
+Supported coordinate maps are H1 Lagrange families of every degree ``k >= 1`` on
+intervals, triangles, tetrahedra, quadrilaterals, hexahedra, prisms and
+(rational) pyramids, plus embedded intervals, triangles and quadrilaterals via
+the Gram determinant. Admission uses the exact simplified coordinate
+expressions: their actual Bernstein tables must fit
+``CellValidityPolicy.maximum_bernstein_nodes`` or the block remains UNRESOLVED
+with reason ``bernstein_node_budget``.
+
+Source rounding enclosure. Canonical coordinate basis expressions and their
+stored binary64 coefficients are converted to exact rational power coefficients.
+Their determinant is formed by exact polynomial algebra, including exact
+cancellation of the pyramid collapse factor. Exact power-to-Bernstein conversion
+and dyadic subdivision give coefficient bounds without interpolating tabulated
+values. Only the published float bounds are rounded, outward by one ULP.
+An arbitrary tabulator claiming a supported family is not a source expression
+and remains UNRESOLVED; partition-of-unity identities cannot establish a
+pointwise basis error.
+
+Exact coordinate sources. An exact PLC source certifies its degree-one
+tetrahedra on the exact rational source points ``S`` of
+``CellGeometrySpec.source_coordinates()``, never on their correctly rounded
+binary64 carrier: the same polynomial route, canonical chart and relative floor
+apply, so a carrier that is positively oriented while ``S`` is not is INVALID.
+Exact power sources certify their source star decomposition.
 """
 
 from __future__ import annotations
@@ -25,16 +50,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import IntEnum
-from functools import cache
+from fractions import Fraction
 from itertools import product
-from typing import Any
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-
-import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._geometry_predicates import (
@@ -46,9 +69,24 @@ from .._geometry_predicates import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._cell_complex import PolyhedralConnectivity
-from ._cell_geometry import CellGeometrySpec, CellVertexGeometryElement
+from ._cell_geometry import (
+    CellGeometrySpec,
+    CellVertexGeometryElement,
+    LayerColumnCellGeometryElement,
+)
 from ._cell_mesh import CellMesh
+from ._coordinate_enclosure import CoordinateSourceBank
+from ._exact_plc_geometry import (
+    ExactPlcCellGeometryConvexSource,
+    ExactPlcCellGeometrySource,
+)
+from ._exact_power_geometry import (
+    ExactPowerCellGeometryLinearActionSource,
+    ExactPowerCellGeometryRestrictionSource,
+    ExactPowerCellGeometrySource,
+)
 
 
 class CellValidityStatus(IntEnum):
@@ -69,12 +107,15 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
     it or the depth leaves the undecided cells UNRESOLVED.
     ``relative_planarity_tolerance`` bounds the distance of embedded polygon
     vertices from their Newell plane relative to the polygon diameter.
+    ``maximum_bernstein_nodes`` bounds the interpolation table of one
+    determinant degree (and therefore the admitted polynomial degree).
     """
 
     maximum_subdivision_depth: int = eqx.field(static=True)
     maximum_piece_count: int = eqx.field(static=True)
     relative_determinant_floor: float = eqx.field(static=True)
     relative_planarity_tolerance: float = eqx.field(static=True)
+    maximum_bernstein_nodes: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -84,11 +125,13 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
         maximum_piece_count: int = 1_000_000,
         relative_determinant_floor: float = 1.0e-12,
         relative_planarity_tolerance: float = 1.0e-10,
+        maximum_bernstein_nodes: int = 4096,
     ) -> None:
         depth = int(maximum_subdivision_depth)
         pieces = int(maximum_piece_count)
         floor = float(relative_determinant_floor)
         planarity = float(relative_planarity_tolerance)
+        nodes = int(maximum_bernstein_nodes)
         if depth < 0:
             raise ValueError("maximum_subdivision_depth must be non-negative.")
         if pieces <= 0:
@@ -97,10 +140,13 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
             raise ValueError("relative_determinant_floor must lie in [0, 1).")
         if not math.isfinite(planarity) or planarity < 0.0 or planarity >= 1.0:
             raise ValueError("relative_planarity_tolerance must lie in [0, 1).")
+        if nodes <= 0:
+            raise ValueError("maximum_bernstein_nodes must be positive.")
         self.maximum_subdivision_depth = depth
         self.maximum_piece_count = pieces
         self.relative_determinant_floor = floor
         self.relative_planarity_tolerance = planarity
+        self.maximum_bernstein_nodes = nodes
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "cell-validity-policy",
@@ -108,8 +154,74 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
                 "maximum_piece_count": pieces,
                 "relative_determinant_floor": floor,
                 "relative_planarity_tolerance": planarity,
+                "maximum_bernstein_nodes": nodes,
             }
         )
+
+
+CellValidityUnresolvedReason: TypeAlias = Literal[
+    "unsupported_element",
+    "subdivision_depth",
+    "piece_budget",
+    "bernstein_node_budget",
+    "rounding_enclosure",
+    "undecided_geometry",
+]
+
+
+def cell_geometry_id(geometry: CellGeometrySpec, /) -> str:
+    """Identity of the coordinate element layout and the actual coordinate array."""
+
+    from ._cell_geometry import _require_storage_geometry
+    from ._coordinate_enclosure import coordinate_source_signature
+
+    storage = geometry.storage
+    if storage is not None:
+        if (
+            geometry.storage_id != storage.storage_id
+            or geometry.logical_geometry_id != storage.logical_coordinate_geometry_id
+        ):
+            raise ValueError(
+                "Owner-local coordinate source has a different logical storage identity."
+            )
+        _require_storage_geometry(
+            storage,
+            geometry.block_names,
+            geometry.elements,
+            dict(zip(geometry.block_names, geometry.geometry_dofs, strict=True)),
+            geometry.coordinates,
+            geometry.restriction_source,
+            geometry.exact_source,
+            geometry.periodic_source,
+        )
+        return storage.logical_coordinate_geometry_id
+    if geometry.storage_id is not None or geometry.logical_geometry_id is not None:
+        raise ValueError(
+            "Logical coordinate identity requires its checked storage source."
+        )
+    return canonical_fingerprint(
+        {
+            "layout": geometry.geometry_layout_id,
+            "source_definitions": [
+                coordinate_source_signature(element) for element in geometry.elements
+            ],
+            "source_arrays": array_tree_fingerprint(geometry.elements),
+            "exact_source": None
+            if geometry.exact_source is None
+            else geometry.exact_source.source_id,
+            **(
+                {}
+                if geometry.periodic_source is None
+                else {
+                    "periodic_coefficient_source": geometry.periodic_source.source_id,
+                }
+            ),
+            "coordinate_routes": array_tree_fingerprint(geometry.geometry_dofs),
+            "coordinates": array_tree_fingerprint(
+                np.asarray(geometry.coordinates, dtype=np.float64)
+            ),
+        }
+    )
 
 
 class CellValidityCertificate(StrictModule, NonTrainableState):
@@ -122,6 +234,12 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     final subdivision; ``depth`` is the deepest subdivision level evaluated.
     Cells of ``unsupported_block_names`` are UNRESOLVED with NaN bounds because
     their coordinate element has no polynomial degree contract.
+
+    The certificate is bound to the certified coordinate arrays and element
+    layout (``geometry_id``) and, when a mesh was supplied, to its topology
+    (``topology_id``). ``unresolved_reasons`` lists ``(block, reason)`` for every
+    block holding UNRESOLVED cells. Bernstein coefficients are computed exactly;
+    published determinant bounds alone carry outward binary64 rounding.
     """
 
     status: Array
@@ -131,10 +249,15 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     block_names: tuple[str, ...] = eqx.field(static=True)
     block_offsets: tuple[int, ...] = eqx.field(static=True)
     unsupported_block_names: tuple[str, ...] = eqx.field(static=True)
+    unresolved_reasons: tuple[tuple[str, CellValidityUnresolvedReason], ...] = eqx.field(
+        static=True
+    )
     certified_valid_count: int = eqx.field(static=True)
     invalid_count: int = eqx.field(static=True)
     unresolved_count: int = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
+    topology_id: str | None = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
@@ -149,8 +272,10 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         block_names: tuple[str, ...],
         block_offsets: tuple[int, ...],
         unsupported_block_names: tuple[str, ...],
+        unresolved_reasons: tuple[tuple[str, str], ...],
         geometry_id: str,
         geometry_layout_id: str,
+        topology_id: str | None,
         policy_id: str,
     ) -> None:
         status_ = np.asarray(status, dtype=np.int32)
@@ -160,6 +285,13 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         names = tuple(str(value) for value in block_names)
         offsets = tuple(int(value) for value in block_offsets)
         unsupported = tuple(str(value) for value in unsupported_block_names)
+        reasons = tuple(
+            (
+                str(block),
+                parse(reason, CellValidityUnresolvedReason, "unresolved_reasons"),
+            )
+            for block, reason in unresolved_reasons
+        )
         if status_.ndim != 1 or any(
             value.shape != status_.shape for value in (lower, upper, depth_)
         ):
@@ -175,8 +307,10 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
             or any(stop < start for start, stop in zip(offsets[:-1], offsets[1:]))
         ):
             raise ValueError("Validity block offsets must partition the cells.")
-        if not set(unsupported) <= set(names):
-            raise ValueError("Unsupported validity blocks must be certificate blocks.")
+        if not set(unsupported) <= set(names) or not {
+            block for block, _ in reasons
+        } <= set(names):
+            raise ValueError("Unresolved validity blocks must be certificate blocks.")
         self.status = jnp.asarray(status_)
         self.determinant_lower = jnp.asarray(lower)
         self.determinant_upper = jnp.asarray(upper)
@@ -184,6 +318,7 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.block_names = names
         self.block_offsets = offsets
         self.unsupported_block_names = unsupported
+        self.unresolved_reasons = reasons
         self.certified_valid_count = int(
             np.count_nonzero(status_ == CellValidityStatus.CERTIFIED_VALID)
         )
@@ -191,17 +326,21 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
         self.unresolved_count = int(
             np.count_nonzero(status_ == CellValidityStatus.UNRESOLVED)
         )
+        self.geometry_id = str(geometry_id)
         self.geometry_layout_id = str(geometry_layout_id)
+        self.topology_id = None if topology_id is None else str(topology_id)
         self.policy_id = str(policy_id)
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "cell-validity-certificate",
-                "geometry": str(geometry_id),
+                "geometry": self.geometry_id,
                 "geometry_layout": self.geometry_layout_id,
+                "topology": self.topology_id,
                 "policy": self.policy_id,
                 "blocks": names,
                 "block_offsets": offsets,
                 "unsupported": unsupported,
+                "unresolved_reasons": reasons,
                 "status": array_tree_fingerprint(status_),
                 "depth": array_tree_fingerprint(depth_),
             }
@@ -211,77 +350,25 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
     def all_certified(self) -> bool:
         return self.certified_valid_count == self.status.shape[0]
 
+    def require_bound(
+        self, geometry: CellGeometrySpec, /, *, mesh: CellMesh | None = None
+    ) -> None:
+        """Refuse use of this certificate for other coordinates, layout or topology."""
 
-_POLYNOMIAL_FAMILIES = frozenset(
-    ("Lagrange", "SimplexLagrange", "TensorProductLagrange", "HybridLagrange")
-)
-_EVALUATION_ENTRY_BUDGET = 1 << 23
+        if not isinstance(geometry, CellGeometrySpec):
+            raise TypeError("geometry must be CellGeometrySpec.")
+        if cell_geometry_id(geometry) != self.geometry_id:
+            raise ValueError(
+                "Validity certificate is not bound to these coordinate arrays."
+            )
+        if mesh is not None and self.topology_id != mesh.topology_id:
+            raise ValueError("Validity certificate is not bound to this mesh topology.")
+
+
 _EPSILON = float(np.finfo(np.float64).eps)
 
 
 # Bernstein parameter domains ------------------------------------------------
-
-
-def _bernstein_1d(degree: int, points: np.ndarray, /) -> np.ndarray:
-    powers = np.arange(degree + 1)
-    binomial = np.asarray([math.comb(degree, value) for value in powers], np.float64)
-    t = points[..., None]
-    return binomial * t**powers * (1.0 - t) ** (degree - powers)
-
-
-def _simplex_indices(degree: int, dimension: int, /) -> np.ndarray:
-    return np.asarray(
-        [
-            index
-            for index in product(range(degree + 1), repeat=dimension + 1)
-            if sum(index) == degree
-        ],
-        dtype=np.int64,
-    ).reshape(-1, dimension + 1)
-
-
-def _bernstein_simplex(degree: int, dimension: int, points: np.ndarray, /) -> np.ndarray:
-    indices = _simplex_indices(degree, dimension)
-    barycentric = np.concatenate(
-        (1.0 - np.sum(points, axis=-1, keepdims=True), points), axis=-1
-    )
-    multinomial = np.asarray(
-        [
-            math.factorial(degree) / math.prod(math.factorial(value) for value in row)
-            for row in indices
-        ],
-        dtype=np.float64,
-    )
-    return multinomial * np.prod(
-        barycentric[..., None, :] ** indices[None, :, :], axis=-1
-    )
-
-
-def _chebyshev_nodes(degree: int, /) -> np.ndarray:
-    index = np.arange(degree + 1, dtype=np.float64)
-    return 0.5 * (1.0 - np.cos((2.0 * index + 1.0) * np.pi / (2.0 * degree + 2.0)))
-
-
-def _simplex_nodes(degree: int, dimension: int, /) -> np.ndarray:
-    if degree == 0:
-        return np.full((1, dimension), 1.0 / (dimension + 1.0))
-    return _simplex_indices(degree, dimension)[:, 1:].astype(np.float64) / degree
-
-
-def _tensor(values: tuple[np.ndarray, ...], /) -> np.ndarray:
-    """Tensor product of per-axis basis tables sharing the leading point axis."""
-
-    result = values[0]
-    for value in values[1:]:
-        result = (result[..., :, None] * value[..., None, :]).reshape(
-            value.shape[:-1] + (-1,)
-        )
-    return result
-
-
-def _grid(axes: tuple[np.ndarray, ...], /) -> np.ndarray:
-    mesh = np.meshgrid(*axes, indexing="ij")
-    return np.stack([value.reshape(-1) for value in mesh], axis=-1)
 
 
 _INTERVAL_CHILDREN = ((0.0, 0.5), (0.5, 0.5))
@@ -359,92 +446,25 @@ def _prism_child_maps() -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(origins), np.asarray(matrices)
 
 
-@dataclass(frozen=True)
-class _BernsteinPlan:
-    """Host-only interpolation and subdivision tables of one parameter domain."""
-
-    domain: str
-    nodes: np.ndarray
-    coefficients_from_values: np.ndarray
-    conversion_norm: float
-    vertex_indices: np.ndarray
-    child_origins: np.ndarray
-    child_matrices: np.ndarray
-
-
-@cache
-def _bernstein_plan(domain: str, degrees: tuple[int, ...], /) -> _BernsteinPlan:
+def _bernstein_node_count(domain: str, degrees: tuple[int, ...], /) -> int:
+    """Conservative table size used by plans before exact expressions exist."""
     match domain:
         case "box":
-            axes = tuple(_chebyshev_nodes(degree) for degree in degrees)
-            nodes = _grid(axes)
-            basis = _tensor(
-                tuple(
-                    _bernstein_1d(degree, nodes[:, axis])
-                    for axis, degree in enumerate(degrees)
-                )
-            )
-            vertex_indices = np.ravel_multi_index(
-                tuple(
-                    np.asarray(values)
-                    for values in zip(*product(*((0, degree) for degree in degrees)))
-                ),
-                tuple(degree + 1 for degree in degrees),
-            )
-            origins, matrices = _box_child_maps(len(degrees))
+            return math.prod(degree + 1 for degree in degrees)
         case "simplex":
             degree, dimension = degrees
-            nodes = _simplex_nodes(degree, dimension)
-            basis = _bernstein_simplex(degree, dimension, nodes)
-            indices = _simplex_indices(degree, dimension)
-            vertex_indices = np.flatnonzero(np.max(indices, axis=1) == degree)
-            origins, matrices = _simplex_child_maps(dimension)
+            return math.comb(degree + dimension, dimension)
         case "prism":
             triangle_degree, axial_degree = degrees
-            triangle_nodes = _simplex_nodes(triangle_degree, 2)
-            axial_nodes = _chebyshev_nodes(axial_degree)
-            nodes = np.concatenate(
-                (
-                    np.repeat(triangle_nodes, axial_nodes.size, axis=0),
-                    np.tile(axial_nodes, triangle_nodes.shape[0])[:, None],
-                ),
-                axis=1,
-            )
-            basis = _tensor(
-                (
-                    _bernstein_simplex(triangle_degree, 2, nodes[:, :2]),
-                    _bernstein_1d(axial_degree, nodes[:, 2]),
-                )
-            )
-            triangle_vertices = np.flatnonzero(
-                np.max(_simplex_indices(triangle_degree, 2), axis=1) == triangle_degree
-            )
-            axial_vertices = np.unique(np.asarray((0, axial_degree)))
-            vertex_indices = (
-                triangle_vertices[:, None] * (axial_degree + 1) + axial_vertices[None, :]
-            ).reshape(-1)
-            origins, matrices = _prism_child_maps()
+            return math.comb(triangle_degree + 2, 2) * (axial_degree + 1)
         case _:
             raise ValueError(f"Unknown Bernstein parameter domain {domain!r}.")
-    # The conversion operator is applied to every piece of every level; it is
-    # prepared once per (domain, degree) like other reference-element tables.
-    conversion = np.linalg.solve(basis, np.eye(basis.shape[0]))
-    return _BernsteinPlan(
-        domain,
-        nodes,
-        conversion,
-        float(np.max(np.sum(np.abs(conversion), axis=1))),
-        np.unique(vertex_indices),
-        origins,
-        matrices,
-    )
 
 
 def _determinant_route(
     cell_kind: str, degree: int, embedded: bool, /
 ) -> tuple[str, tuple[int, ...]]:
-    """Return the Bernstein domain and exact degree bound of the determinant."""
-
+    """Return the reference domain and conservative unsimplified degree bound."""
     scale = 2 if embedded else 1
     match cell_kind:
         case "interval":
@@ -463,20 +483,6 @@ def _determinant_route(
             return "box", (3 * degree - 1, 3 * degree - 1, 3 * degree - 3)
         case _:
             raise ValueError(f"No polynomial determinant route for {cell_kind!r}.")
-
-
-def _reference_points(cell_kind: str, parameters: np.ndarray, /) -> np.ndarray:
-    if cell_kind != "pyramid":
-        return parameters
-    height = parameters[..., 2:3]
-    scale = 1.0 - height
-    return np.concatenate(
-        (
-            parameters[..., :2] * scale + 0.5 * height,
-            height,
-        ),
-        axis=-1,
-    )
 
 
 # Determinants ------------------------------------------------------------------
@@ -500,18 +506,6 @@ def _square_determinant(matrix: np.ndarray, /) -> np.ndarray:
     )
 
 
-def _jacobian_determinant(
-    jacobian: np.ndarray, magnitude: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the determinant and its Hadamard scale for (..., ambient, reference)."""
-
-    column_scale = np.prod(np.linalg.norm(magnitude, axis=-2), axis=-1)
-    if jacobian.shape[-2] == jacobian.shape[-1]:
-        return _square_determinant(jacobian), column_scale
-    gram = np.swapaxes(jacobian, -1, -2) @ jacobian
-    return _square_determinant(gram), column_scale * column_scale
-
-
 # Adaptive certification ----------------------------------------------------------
 
 
@@ -521,139 +515,407 @@ class _BlockCertificate:
     lower: np.ndarray
     upper: np.ndarray
     depth: np.ndarray
+    reasons: tuple[CellValidityUnresolvedReason, ...] = ()
 
 
-def _evaluate_pieces(
-    element: Any,
-    cell_kind: str,
-    plan: _BernsteinPlan,
-    local: np.ndarray,
-    cells: np.ndarray,
-    origins: np.ndarray,
-    matrices: np.ndarray,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return Bernstein coefficients and rounding margins for every piece."""
-
-    node_count = plan.nodes.shape[0]
-    dof_count = local.shape[1]
-    entries_per_piece = node_count * dof_count * local.shape[2] * plan.nodes.shape[1]
-    # Pieces are processed in bounded chunks so the tabulated gradients respect a
-    # fixed host-memory budget independent of the subdivision state.
-    chunk = max(1, _EVALUATION_ENTRY_BUDGET // max(entries_per_piece, 1))
-    coefficients = []
-    margins = []
-    for start in range(0, cells.size, chunk):
-        stop = min(start + chunk, cells.size)
-        parameters = origins[start:stop, None, :] + ein.contract(
-            "pij,mj->pmi", matrices[start:stop], plan.nodes
-        )
-        reference = _reference_points(cell_kind, parameters)
-        _, gradients = element.tabulate(reference.reshape(-1, reference.shape[-1]))
-        gradients = np.asarray(gradients, dtype=np.float64).reshape(
-            (stop - start, node_count, dof_count, reference.shape[-1])
-        )
-        points = local[cells[start:stop]]
-        jacobian = ein.contract("pmnk,pna->pmak", gradients, points)
-        magnitude = ein.contract("pmnk,pna->pmak", np.abs(gradients), np.abs(points))
-        values, scale = _jacobian_determinant(jacobian, magnitude)
-        coefficient = ein.contract("rm,pm->pr", plan.coefficients_from_values, values)
-        # Forward error of the determinant evaluation plus the conversion rounding.
-        evaluation_error = 8.0 * (dof_count + reference.shape[-1] + 1) * _EPSILON
-        margin = (
-            2.0
-            * plan.conversion_norm
-            * (
-                evaluation_error * np.max(scale, axis=1)
-                + node_count * _EPSILON * np.max(np.abs(values), axis=1)
-            )
-        )
-        coefficients.append(coefficient)
-        margins.append(margin)
-    return np.concatenate(coefficients), np.concatenate(margins)
+def _unresolved_block(
+    count: int, reason: CellValidityUnresolvedReason, /
+) -> _BlockCertificate:
+    return _BlockCertificate(
+        np.full((count,), CellValidityStatus.UNRESOLVED, np.int32),
+        np.full((count,), np.nan),
+        np.full((count,), np.nan),
+        np.zeros((count,), dtype=np.int32),
+        (reason,),
+    )
 
 
-def _root_scale(
-    element: Any, cell_kind: str, plan: _BernsteinPlan, local: np.ndarray, /
-) -> np.ndarray:
-    reference = _reference_points(cell_kind, plan.nodes)
-    _, gradients = element.tabulate(reference)
-    gradients = np.asarray(gradients, dtype=np.float64)
-    magnitude = ein.contract("mnk,cna->cmak", np.abs(gradients), np.abs(local))
-    column_scale = np.prod(np.linalg.norm(magnitude, axis=-2), axis=-1)
-    embedded = local.shape[-1] != reference.shape[-1]
-    return np.max(column_scale * column_scale if embedded else column_scale, axis=1)
+def _unresolved_geometry(block: _BlockCertificate, /) -> _BlockCertificate:
+    """Attach the generic reason to star/polygon blocks with undecided cells."""
+
+    if not np.any(block.status == CellValidityStatus.UNRESOLVED):
+        return block
+    return _BlockCertificate(
+        block.status, block.lower, block.upper, block.depth, ("undecided_geometry",)
+    )
 
 
 def _certify_polynomial_block(
     element: Any,
     cell_kind: str,
-    local: np.ndarray,
+    local: np.ndarray | tuple[CoordinateSourceBank, ...],
     policy: CellValidityPolicy,
     /,
 ) -> _BlockCertificate:
-    embedded = local.shape[-1] != element.topological_dimension
-    if embedded and cell_kind not in ("interval", "triangle", "quadrilateral"):
-        raise ValueError(f"Embedded {cell_kind} cells have no validity contract.")
-    domain, degrees = _determinant_route(cell_kind, element.degree, embedded)
-    plan = _bernstein_plan(domain, degrees)
-    cell_count = local.shape[0]
-    threshold = policy.relative_determinant_floor * _root_scale(
-        element, cell_kind, plan, local
+    from contextlib import nullcontext
+
+    from ._coordinate_enclosure import (
+        _COORDINATE_BUDGET,
+        affine_arguments,
+        coordinate_expressions,
+        coordinate_polynomials,
+        Expression,
+        expression_bernstein_coefficients as bernstein_coefficients,
+        expression_compose as compose,
+        expression_determinant,
+        expression_evaluate as evaluate,
+        expression_multiply,
+        expression_node_count,
+        expression_physical_jacobian,
+        expression_sum,
+        outward,
+        physical_jacobian,
+        RationalEnclosureError,
     )
-    lower = np.full((cell_count,), np.inf)
-    upper = np.full((cell_count,), -np.inf)
+
+    dimension = element.topological_dimension
+    cell_count = len(local)
+    embedded = cell_count > 0 and len(local[0][0]) != dimension
+    if cell_kind.startswith(("simplex:", "tensor:")):
+        native = {
+            ("simplex", 1): "interval",
+            ("simplex", 2): "triangle",
+            ("simplex", 3): "tetrahedron",
+            ("tensor", 1): "interval",
+            ("tensor", 2): "quadrilateral",
+            ("tensor", 3): "hexahedron",
+        }
+        cell_kind = native.get((cell_kind.partition(":")[0], dimension), cell_kind)
+    if cell_kind not in (
+        "interval",
+        "triangle",
+        "tetrahedron",
+        "quadrilateral",
+        "hexahedron",
+        "prism",
+        "pyramid",
+    ):
+        return _unresolved_block(cell_count, "unsupported_element")
+    if embedded and cell_kind not in ("interval", "triangle", "quadrilateral"):
+        return _unresolved_block(cell_count, "unsupported_element")
+    domain, _ = _determinant_route(cell_kind, element.degree, embedded)
+    if domain == "simplex":
+        child_origins, child_matrices = _simplex_child_maps(dimension)
+        vertices = tuple(
+            (Fraction(0),) * dimension
+            if i == 0
+            else tuple(Fraction(int(j == i - 1)) for j in range(dimension))
+            for i in range(dimension + 1)
+        )
+    elif domain == "prism":
+        child_origins, child_matrices = _prism_child_maps()
+        vertices = tuple(
+            (*point, Fraction(height))
+            for point in (
+                (Fraction(0), Fraction(0)),
+                (Fraction(1), Fraction(0)),
+                (Fraction(0), Fraction(1)),
+            )
+            for height in (0, 1)
+        )
+    else:
+        child_origins, child_matrices = _box_child_maps(dimension)
+        vertices = tuple(
+            tuple(Fraction(value) for value in point)
+            for point in product((0, 1), repeat=dimension)
+        )
+    status = np.full((cell_count,), CellValidityStatus.CERTIFIED_VALID, dtype=np.int32)
+    lower = np.full((cell_count,), np.inf, dtype=np.float64)
+    upper = np.full((cell_count,), -np.inf, dtype=np.float64)
     depth = np.zeros((cell_count,), dtype=np.int32)
-    invalid = np.zeros((cell_count,), dtype=np.bool_)
-    unresolved = np.zeros((cell_count,), dtype=np.bool_)
-    dimension = plan.nodes.shape[1]
-    cells = np.arange(cell_count, dtype=np.int64)
-    origins = np.zeros((cell_count, dimension))
-    matrices = np.broadcast_to(np.eye(dimension), (cell_count, dimension, dimension))
-    child_count = plan.child_origins.shape[0]
-    for level in range(policy.maximum_subdivision_depth + 1):
-        coefficients, margins = _evaluate_pieces(
-            element, cell_kind, plan, local, cells, origins, matrices
+    reasons: list[CellValidityUnresolvedReason] = []
+    ledger = _COORDINATE_BUDGET.get()
+    for cell in range(cell_count):
+        with ledger.temporary_scope() if ledger is not None else nullcontext():
+            coordinates = coordinate_polynomials(element, local[cell])
+            polynomial: Expression | None = None
+            jacobian: tuple[tuple[Expression, ...], ...] | None = (
+                None
+                if coordinates is None
+                else physical_jacobian(coordinates, cell_kind, dimension)
+            )
+            if coordinates is None:
+                expressions = coordinate_expressions(element, local[cell])
+                if expressions is not None:
+                    jacobian = expression_physical_jacobian(
+                        expressions, cell_kind, dimension
+                    )
+            if jacobian is not None:
+                # The determinant and policy scale consume the same full physical
+                # differential, including the exact removable pyramid collapse.
+                metric = (
+                    tuple(
+                        tuple(
+                            expression_sum(
+                                tuple(
+                                    expression_multiply(row[i], row[j])
+                                    for row in jacobian
+                                )
+                            )
+                            for j in range(dimension)
+                        )
+                        for i in range(dimension)
+                    )
+                    if embedded
+                    else jacobian
+                )
+                polynomial = expression_determinant(metric)
+            if polynomial is None or jacobian is None:
+                status[cell] = CellValidityStatus.UNRESOLVED
+                lower[cell] = upper[cell] = math.nan
+                reasons.append("unsupported_element")
+                continue
+            if (
+                max(
+                    expression_node_count(value, domain, dimension)
+                    for row in jacobian
+                    for value in row
+                )
+                > policy.maximum_bernstein_nodes
+                or expression_node_count(polynomial, domain, dimension)
+                > policy.maximum_bernstein_nodes
+            ):
+                status[cell] = CellValidityStatus.UNRESOLVED
+                lower[cell] = upper[cell] = math.nan
+                reasons.append("bernstein_node_budget")
+                continue
+            try:
+                magnitude = tuple(
+                    tuple(
+                        max(
+                            abs(value)
+                            for value in bernstein_coefficients(entry, domain, dimension)
+                        )
+                        for entry in row
+                    )
+                    for row in jacobian
+                )
+            except RationalEnclosureError:
+                status[cell] = CellValidityStatus.UNRESOLVED
+                lower[cell] = upper[cell] = math.nan
+                reasons.append("rounding_enclosure")
+                continue
+            squared_scale = Fraction(
+                math.prod(
+                    sum((row[axis] * row[axis] for row in magnitude), Fraction(0))
+                    for axis in range(dimension)
+                )
+            )
+            floor = Fraction(policy.relative_determinant_floor)
+            squared_threshold = (
+                (floor * squared_scale) ** 2
+                if embedded
+                else floor * floor * squared_scale
+            )
+            active = [
+                (
+                    np.zeros((dimension,), dtype=np.float64),
+                    np.eye(dimension, dtype=np.float64),
+                )
+            ]
+            for level in range(policy.maximum_subdivision_depth + 1):
+                following = []
+                for origin, matrix in active:
+                    piece = compose(polynomial, affine_arguments(origin, matrix))
+                    try:
+                        coefficients = bernstein_coefficients(piece, domain, dimension)
+                    except RationalEnclosureError:
+                        status[cell] = CellValidityStatus.UNRESOLVED
+                        reasons.append("rounding_enclosure")
+                        lower[cell] = upper[cell] = math.nan
+                        following = []
+                        break
+                    if len(coefficients) > policy.maximum_bernstein_nodes:
+                        status[cell] = CellValidityStatus.UNRESOLVED
+                        reasons.append("bernstein_node_budget")
+                        lower[cell] = upper[cell] = math.nan
+                        following = []
+                        break
+                    lo, hi = min(coefficients), max(coefficients)
+                    depth[cell] = level
+                    try:
+                        corner_values = tuple(
+                            evaluate(piece, vertex) for vertex in vertices
+                        )
+                    except RationalEnclosureError:
+                        status[cell] = CellValidityStatus.UNRESOLVED
+                        reasons.append("rounding_enclosure")
+                        lower[cell] = upper[cell] = math.nan
+                        following = []
+                        break
+                    if any(
+                        value <= 0 or value * value < squared_threshold
+                        for value in corner_values
+                    ):
+                        status[cell] = CellValidityStatus.INVALID
+                        lower[cell] = min(lower[cell], outward(lo, -math.inf))
+                        upper[cell] = max(upper[cell], outward(hi, math.inf))
+                        following = []
+                        break
+                    if lo > 0 and lo * lo > squared_threshold:
+                        lower[cell] = min(lower[cell], outward(lo, -math.inf))
+                        upper[cell] = max(upper[cell], outward(hi, math.inf))
+                        continue
+                    if level == policy.maximum_subdivision_depth:
+                        status[cell] = CellValidityStatus.UNRESOLVED
+                        reasons.append("subdivision_depth")
+                        lower[cell] = min(lower[cell], outward(lo, -math.inf))
+                        upper[cell] = max(upper[cell], outward(hi, math.inf))
+                        continue
+                    following.extend(
+                        (origin + matrix @ start, matrix @ child)
+                        for start, child in zip(
+                            child_origins, child_matrices, strict=True
+                        )
+                    )
+                if status[cell] == CellValidityStatus.INVALID or not following:
+                    break
+                if len(following) > policy.maximum_piece_count:
+                    status[cell] = CellValidityStatus.UNRESOLVED
+                    reasons.append("piece_budget")
+                    root_coefficients = bernstein_coefficients(
+                        polynomial, domain, dimension
+                    )
+                    lower[cell] = outward(min(root_coefficients), -math.inf)
+                    upper[cell] = outward(max(root_coefficients), math.inf)
+                    break
+                active = following
+    return _BlockCertificate(status, lower, upper, depth, tuple(reasons))
+
+
+def _certify_pyramid_restriction(
+    element: Any,
+    local: np.ndarray | tuple[CoordinateSourceBank, ...],
+    policy: CellValidityPolicy,
+) -> _BlockCertificate:
+    """Use the source pyramid theorem before restricting its rational chart.
+
+    The affine target reference image is convex and must lie in the source
+    pyramid, including its removable apex. The derivative is exactly
+    ``J_source(A xi + b) A``; a source-wide determinant/derivative enclosure
+    therefore encloses the whole restriction without pretending it polynomial.
+    """
+    from ._coordinate_enclosure import (
+        affine_arguments,
+        bernstein_coefficients,
+        coordinate_polynomials,
+        determinant,
+        evaluate,
+        outward,
+        physical_jacobian,
+    )
+    from ._reference_cell import reference_cell_topology
+
+    source = element.source_element
+    dimension = element.topological_dimension
+    arguments = affine_arguments(np.asarray(element.offset), np.asarray(element.matrix))
+    for vertex in reference_cell_topology(element.cell_kind).vertices:
+        point = tuple(Fraction(float(value)) for value in vertex)
+        mapped = tuple(evaluate(value, point) for value in arguments)
+        x, y, z = mapped
+        if not (0 <= z <= 1 and z / 2 <= x <= 1 - z / 2 and z / 2 <= y <= 1 - z / 2):
+            return _unresolved_block(len(local), "unsupported_element")
+    matrix = tuple(
+        tuple({(0,) * dimension: Fraction(float(value))} for value in row)
+        for row in np.asarray(element.matrix)
+    )
+    determinant_a = evaluate(determinant(matrix), (Fraction(0),) * dimension)
+    embedded = len(local) > 0 and len(local[0][0]) != dimension
+    factor = determinant_a * determinant_a if embedded else determinant_a
+    if factor <= 0:
+        return _BlockCertificate(
+            np.full((len(local),), CellValidityStatus.INVALID, dtype=np.int32),
+            np.full((len(local),), -math.inf, dtype=np.float64),
+            np.zeros((len(local),), dtype=np.float64),
+            np.zeros((len(local),), dtype=np.int32),
         )
-        piece_threshold = threshold[cells]
-        piece_lower = np.min(coefficients, axis=1) - margins
-        piece_upper = np.max(coefficients, axis=1) + margins
-        corner = np.min(coefficients[:, plan.vertex_indices], axis=1)
-        piece_valid = piece_lower > piece_threshold
-        piece_invalid = corner + margins < piece_threshold
-        np.logical_or.at(invalid, cells[piece_invalid], True)
-        np.maximum.at(depth, cells, level)
-        refine = ~piece_valid & ~piece_invalid & ~invalid[cells]
-        exhausted = (
-            level == policy.maximum_subdivision_depth
-            or np.count_nonzero(refine) * child_count > policy.maximum_piece_count
+    source_policy = CellValidityPolicy(
+        maximum_subdivision_depth=policy.maximum_subdivision_depth,
+        maximum_piece_count=policy.maximum_piece_count,
+        relative_determinant_floor=0.0,
+        relative_planarity_tolerance=policy.relative_planarity_tolerance,
+        maximum_bernstein_nodes=policy.maximum_bernstein_nodes,
+    )
+    source_block = _certify_polynomial_block(source, "pyramid", local, source_policy)
+    lower = np.asarray(
+        [
+            outward(Fraction(float(value)) * factor, -math.inf)
+            if math.isfinite(float(value))
+            else float(value)
+            for value in source_block.lower
+        ],
+        dtype=np.float64,
+    )
+    upper = np.asarray(
+        [
+            outward(Fraction(float(value)) * factor, math.inf)
+            if math.isfinite(float(value))
+            else float(value)
+            for value in source_block.upper
+        ],
+        dtype=np.float64,
+    )
+    status = np.full((len(local),), CellValidityStatus.UNRESOLVED, dtype=np.int32)
+    reasons = list(source_block.reasons)
+    for cell, points in enumerate(local):
+        coordinates = coordinate_polynomials(source, points)
+        jacobian = (
+            None
+            if coordinates is None
+            else physical_jacobian(coordinates, "pyramid", dimension)
         )
-        if exhausted:
-            unresolved[cells[refine]] = True
-            refine = np.zeros_like(refine)
-        leaf = ~refine
-        np.minimum.at(lower, cells[leaf], piece_lower[leaf])
-        np.maximum.at(upper, cells[leaf], piece_upper[leaf])
-        if not np.any(refine):
-            break
-        parent_origins = origins[refine]
-        parent_matrices = matrices[refine]
-        origins = (
-            parent_origins[:, None, :]
-            + ein.contract("pij,kj->pki", parent_matrices, plan.child_origins)
-        ).reshape(-1, dimension)
-        matrices = ein.contract(
-            "pij,kjl->pkil", parent_matrices, plan.child_matrices
-        ).reshape(-1, dimension, dimension)
-        cells = np.repeat(cells[refine], child_count)
-    status = np.where(
-        invalid,
-        CellValidityStatus.INVALID,
-        np.where(
-            unresolved, CellValidityStatus.UNRESOLVED, CellValidityStatus.CERTIFIED_VALID
-        ),
-    ).astype(np.int32)
-    return _BlockCertificate(status, lower, upper, depth)
+        if (
+            jacobian is None
+            or source_block.status[cell] != CellValidityStatus.CERTIFIED_VALID
+        ):
+            reasons.append("unsupported_element")
+            continue
+        source_magnitude = tuple(
+            tuple(
+                max(
+                    abs(value)
+                    for value in bernstein_coefficients(entry, "box", dimension)
+                )
+                for entry in row
+            )
+            for row in jacobian
+        )
+        matrix_magnitude = tuple(
+            tuple(abs(Fraction(float(value))) for value in row)
+            for row in np.asarray(element.matrix)
+        )
+        magnitude = tuple(
+            tuple(
+                sum(
+                    (
+                        source_magnitude[i][k] * matrix_magnitude[k][j]
+                        for k in range(dimension)
+                    ),
+                    Fraction(0),
+                )
+                for j in range(dimension)
+            )
+            for i in range(len(jacobian))
+        )
+        squared_scale = Fraction(
+            math.prod(
+                sum((row[axis] * row[axis] for row in magnitude), Fraction(0))
+                for axis in range(dimension)
+            )
+        )
+        floor = Fraction(policy.relative_determinant_floor)
+        squared_threshold = (
+            (floor * squared_scale) ** 2 if embedded else floor * floor * squared_scale
+        )
+        if (
+            math.isfinite(float(lower[cell]))
+            and lower[cell] > 0
+            and Fraction(float(lower[cell])) ** 2 > squared_threshold
+        ):
+            status[cell] = CellValidityStatus.CERTIFIED_VALID
+        else:
+            reasons.append("rounding_enclosure")
+    return _BlockCertificate(status, lower, upper, source_block.depth, tuple(reasons))
 
 
 # Star-decomposed variable-topology cells --------------------------------------------
@@ -980,6 +1242,13 @@ def certify_cell_geometry_validity(
     """
 
     # The FE reference owner imports this package; resolve it lazily.
+    from ._cell_geometry import (
+        BarycentricCellGeometryElement,
+        PolynomialComposedCellGeometryElement,
+        RationalComposedCellGeometryElement,
+        RestrictedCellGeometryElement,
+        SplineCellGeometryElement,
+    )
     from .fem._reference import FiniteElementSpec
 
     policy_ = CellValidityPolicy() if policy is None else policy
@@ -1008,6 +1277,47 @@ def certify_cell_geometry_validity(
         routes = tuple(np.asarray(value, dtype=np.int64) for value in resolved_routes)
         names = tuple(block.name for block in mesh_.blocks)
         kinds = tuple(block.cell_kind for block in mesh_.blocks)
+    exact_stars = None
+    exact_piece_limit = False
+    source_values: CoordinateSourceBank = ()
+    match spec.exact_source:
+        case (
+            ExactPowerCellGeometryLinearActionSource()
+            | ExactPowerCellGeometryRestrictionSource()
+        ) if all(element.cell_kind == "hexahedron" for element in elements):
+            source_values = spec.source_coordinates()
+        case None | ExactPlcCellGeometrySource() | ExactPlcCellGeometryConvexSource():
+            # The owning PLC bank defines the actual polynomial/rational map.
+            source_values = spec.source_coordinates()
+        case (
+            ExactPowerCellGeometrySource()
+            | ExactPowerCellGeometryRestrictionSource()
+            | ExactPowerCellGeometryLinearActionSource()
+        ):
+            if mesh_ is None:
+                raise ValueError("Exact power validity requires its bound mesh carrier.")
+            from ..geometry._exact_polyhedral_geometry import (
+                exact_vertices,
+                star_tetrahedra,
+            )
+
+            connectivity = mesh_.connectivity
+            if not isinstance(connectivity, PolyhedralConnectivity):
+                raise TypeError(
+                    "Exact power validity requires packed polyhedral connectivity."
+                )
+            face_sizes = np.diff(np.asarray(connectivity.face_vertex_offsets))
+            expected_pieces = sum(
+                int(face_sizes[face]) - 2
+                for face in np.asarray(connectivity.cell_face_values)
+            )
+            exact_piece_limit = expected_pieces > policy_.maximum_piece_count
+            if not exact_piece_limit:
+                exact_stars = star_tetrahedra(
+                    mesh_, exact_vertices(mesh_, spec), require_positive=False
+                )
+        case invalid:
+            assert_never(invalid)
     values = np.asarray(spec.coordinates, dtype=np.float64)
     tables = None
     polyhedral_points = None
@@ -1017,8 +1327,56 @@ def certify_cell_geometry_validity(
     blocks = []
     for name, kind, element, route in zip(names, kinds, elements, routes, strict=True):
         cell_count = route.shape[0]
-        if isinstance(element, CellVertexGeometryElement) and kind == "polygon":
-            blocks.append(_certify_polygon_block(values[route], policy_))
+        if exact_piece_limit:
+            blocks.append(_unresolved_block(cell_count, "piece_budget"))
+        elif exact_stars is not None:
+            from ..geometry._exact_polyhedral_geometry import determinant3
+            from ._coordinate_enclosure import outward
+
+            lower, upper, statuses = [], [], []
+            floor_squared = Fraction(policy_.relative_determinant_floor) ** 2
+            for star in exact_stars[cursor : cursor + cell_count]:
+                determinants, admitted = [], True
+                for tetrahedron in star:
+                    columns = tuple(
+                        tuple(
+                            value - base
+                            for value, base in zip(point, tetrahedron[0], strict=True)
+                        )
+                        for point in tetrahedron[1:]
+                    )
+                    determinant = determinant3(*columns)
+                    squared_scale = math.prod(
+                        sum((value * value for value in column), Fraction(0))
+                        for column in columns
+                    )
+                    determinants.append(determinant)
+                    admitted &= (
+                        determinant > 0 and determinant**2 > floor_squared * squared_scale
+                    )
+                lower.append(outward(min(determinants), -math.inf))
+                upper.append(outward(max(determinants), math.inf))
+                statuses.append(
+                    CellValidityStatus.CERTIFIED_VALID
+                    if admitted
+                    else CellValidityStatus.INVALID
+                    if sum(determinants) <= 0
+                    else CellValidityStatus.UNRESOLVED
+                )
+            blocks.append(
+                _unresolved_geometry(
+                    _BlockCertificate(
+                        np.asarray(statuses, dtype=np.int32),
+                        np.asarray(lower, dtype=np.float64),
+                        np.asarray(upper, dtype=np.float64),
+                        np.zeros(cell_count, dtype=np.int32),
+                    )
+                )
+            )
+        elif isinstance(element, CellVertexGeometryElement) and kind == "polygon":
+            blocks.append(
+                _unresolved_geometry(_certify_polygon_block(values[route], policy_))
+            )
         elif isinstance(element, CellVertexGeometryElement):
             if mesh_ is None:
                 raise ValueError("Polyhedral validity certification requires the mesh.")
@@ -1035,50 +1393,68 @@ def certify_cell_geometry_validity(
                     "Polyhedral coordinate preparation did not produce coordinates."
                 )
             blocks.append(
-                _certify_polyhedral_cells(
-                    tables,
-                    polyhedral_points,
-                    np.arange(cursor, cursor + cell_count),
-                    policy_,
+                _unresolved_geometry(
+                    _certify_polyhedral_cells(
+                        tables,
+                        polyhedral_points,
+                        np.arange(cursor, cursor + cell_count),
+                        policy_,
+                    )
                 )
             )
         elif (
-            isinstance(element, FiniteElementSpec)
-            and element.family in _POLYNOMIAL_FAMILIES
+            isinstance(element, RestrictedCellGeometryElement)
+            and element.source_element.cell_kind == "pyramid"
+        ):
+            local = tuple(tuple(source_values[index] for index in row) for row in route)
+            blocks.append(_certify_pyramid_restriction(element, local, policy_))
+        elif (
+            isinstance(
+                element,
+                (
+                    FiniteElementSpec,
+                    BarycentricCellGeometryElement,
+                    RestrictedCellGeometryElement,
+                    PolynomialComposedCellGeometryElement,
+                    RationalComposedCellGeometryElement,
+                    SplineCellGeometryElement,
+                    LayerColumnCellGeometryElement,
+                ),
+            )
             and element.conformity == "H1"
             and element.degree >= 1
         ):
-            local = values[route]
-            blocks.append(
-                _certify_polynomial_block(element, kind, local - local[:, :1], policy_)
-            )
+            local = tuple(tuple(source_values[index] for index in row) for row in route)
+            blocks.append(_certify_polynomial_block(element, kind, local, policy_))
         else:
             unsupported.append(name)
-            blocks.append(
-                _BlockCertificate(
-                    np.full((cell_count,), CellValidityStatus.UNRESOLVED, np.int32),
-                    np.full((cell_count,), np.nan),
-                    np.full((cell_count,), np.nan),
-                    np.zeros((cell_count,), dtype=np.int32),
-                )
-            )
+            blocks.append(_unresolved_block(cell_count, "unsupported_element"))
         cursor += cell_count
         offsets.append(cursor)
     return CellValidityCertificate(
-        np.concatenate([block.status for block in blocks]),
-        np.concatenate([block.lower for block in blocks]),
-        np.concatenate([block.upper for block in blocks]),
-        np.concatenate([block.depth for block in blocks]),
+        np.concatenate([block.status for block in blocks])
+        if blocks
+        else np.empty((0,), dtype=np.int32),
+        np.concatenate([block.lower for block in blocks])
+        if blocks
+        else np.empty((0,), dtype=np.float64),
+        np.concatenate([block.upper for block in blocks])
+        if blocks
+        else np.empty((0,), dtype=np.float64),
+        np.concatenate([block.depth for block in blocks])
+        if blocks
+        else np.empty((0,), dtype=np.int32),
         block_names=names,
         block_offsets=tuple(offsets),
         unsupported_block_names=tuple(unsupported),
-        geometry_id=canonical_fingerprint(
-            {
-                "layout": spec.geometry_layout_id,
-                "coordinates": array_tree_fingerprint(values),
-            }
+        unresolved_reasons=tuple(
+            (name, reason)
+            for name, block in zip(names, blocks, strict=True)
+            for reason in dict.fromkeys(block.reasons)
         ),
+        geometry_id=cell_geometry_id(spec),
         geometry_layout_id=spec.geometry_layout_id,
+        topology_id=None if mesh_ is None else mesh_.topology_id,
         policy_id=policy_.policy_id,
     )
 

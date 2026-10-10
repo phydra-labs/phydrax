@@ -52,6 +52,7 @@ from ._gmsh_boundary_layer import (
 )
 from ._gmsh_execute import _execute_brep
 from ._gmsh_import import _brep_model, _BRepMeshingSource, _CadImportCache
+from ._gmsh_inventory import _cad_occurrence_inventory, _cad_scope_set
 from ._gmsh_options import GmshOptions
 from ._gmsh_preflight import _brep_support_issues, _remeshing_support_issues
 from ._gmsh_remesh import _execute_remesh, _surface_source
@@ -65,6 +66,25 @@ def _optional_background(value: Any, /) -> BackgroundMetricControl | None:
     if value is not None and not isinstance(value, BackgroundMetricControl):
         raise TypeError("background_metric must be BackgroundMetricControl or None.")
     return value
+
+
+def _background_for_specification(
+    specification: SurfaceMeshingSpec | SurfaceRemeshingSpec | VolumeMeshingSpec,
+    provider_metric: BackgroundMetricControl | None,
+    /,
+) -> BackgroundMetricControl | None:
+    match specification:
+        case SurfaceMeshingSpec():
+            if provider_metric is not None:
+                raise TypeError(
+                    "Surface background metrics belong to SurfaceMeshingSpec.background_metric, "
+                    "not the provider argument."
+                )
+            return specification.background_metric
+        case SurfaceRemeshingSpec() | VolumeMeshingSpec():
+            return _optional_background(provider_metric)
+        case _:
+            raise TypeError("specification must be a Gmsh meshing specification.")
 
 
 class GmshMeshingPlan(StrictModule, NonTrainableState):
@@ -90,7 +110,7 @@ class GmshMeshingPlan(StrictModule, NonTrainableState):
         model = _brep_model(source)
         if not isinstance(specification, (SurfaceMeshingSpec, VolumeMeshingSpec)):
             raise TypeError("specification must be surface or volume meshing.")
-        background = _optional_background(background_metric)
+        background = _background_for_specification(specification, background_metric)
         support.require_supported()
         planar_bands = source if isinstance(source, PlanarBandResult) else None
         self.source = model
@@ -371,6 +391,11 @@ class GmshProvider:
         entity_ids: Sequence[BRepEntityId] | BRepEntityId,
         /,
     ) -> MeshingScope:
+        """Select exact authored occurrence rows, or all members of a definition.
+
+        An empty ``occurrence_path`` explicitly selects every authored occurrence
+        of that definition. A nonempty path selects only that exact occurrence.
+        """
         model = _brep_model(source)
         entities = (
             (entity_ids,) if isinstance(entity_ids, BRepEntityId) else tuple(entity_ids)
@@ -387,32 +412,19 @@ class GmshProvider:
             )
         kind = kinds.pop()
         dimensions = {"vertex": 0, "edge": 1, "face": 2, "solid": 3}
-        counts = {
-            "vertex": model.report.num_vertices,
-            "edge": model.report.num_edges,
-            "face": model.report.num_faces,
-            "solid": model.topology.num_solids,
-        }
+        inventory = _cad_occurrence_inventory(model)
         if kind not in dimensions:
             raise ValueError(
                 "Gmsh BRep scopes support vertices, edges, faces, and solids."
             )
-        identifiers = np.asarray(
-            tuple(entity.index for entity in entities), dtype=np.int64
-        )
-        if (
-            np.any(identifiers < 0)
-            or np.any(identifiers >= counts[kind])
-            or np.unique(identifiers).size != identifiers.size
-        ):
-            raise ValueError("BRep entity scope contains an out-of-range or repeated ID.")
         dimension = dimensions[kind]
+        identifiers = np.asarray(inventory.select(entities, dimension), dtype=np.int64)
         return MeshingScope(
             model.report.source_id,
             model.report.source_revision,
             MeshingEntityKind.GEOMETRY,
             dimension,
-            f"{model.report.source_revision}:brep:{dimension}",
+            _cad_scope_set(model, dimension),
             identifiers,
         )
 
@@ -422,6 +434,7 @@ class GmshProvider:
         dimension: int,
         /,
     ) -> MeshingScope:
+        """Select every physical CAD occurrence, or discrete surface mesh cells."""
         target = int(dimension)
         if isinstance(source, (SurfaceModel, CellMesh)):
             mesh = source.mesh if isinstance(source, SurfaceModel) else source
@@ -437,18 +450,24 @@ class GmshProvider:
                 cells.entity_ids,
             )
         model = _brep_model(source)
-        entities = {
-            1: model.edge_ids,
-            2: model.face_ids,
-            3: model.solid_ids,
-        }
-        if target not in entities:
-            raise ValueError("Gmsh BRep scope dimension must be one, two, or three.")
-        if not entities[target]:
+        if target not in (0, 1, 2, 3):
+            raise ValueError(
+                "Gmsh BRep scope dimension must be zero, one, two, or three."
+            )
+        inventory = _cad_occurrence_inventory(model)
+        count = len(inventory.entities[target])
+        if not count:
             raise ValueError(
                 f"The BRep source contains no dimension-{target} entities to scope."
             )
-        return self.entity_scope(model, entities[target])
+        return MeshingScope(
+            model.report.source_id,
+            model.report.source_revision,
+            MeshingEntityKind.GEOMETRY,
+            target,
+            _cad_scope_set(model, target),
+            np.arange(count, dtype=np.int64),
+        )
 
     def inspect_source(
         self, source: _BRepMeshingSource | SurfaceModel | CellMesh, /
@@ -467,7 +486,7 @@ class GmshProvider:
                 closed=not bool(np.any(np.asarray(mesh.connectivity.boundary_edges))),
             )
         model = _brep_model(source)
-        closed = model.topology.num_solids > 0
+        closed = bool(_cad_occurrence_inventory(model).entities[3])
         return MeshingSourceDescriptor(
             model.report.source_id,
             model.report.source_revision,
@@ -487,7 +506,7 @@ class GmshProvider:
         reconstruction: SurfaceReconstructionControl | None = None,
         coordinate_contract: SpatialCoordinateContract | None = None,
     ) -> ProviderSupportReport:
-        background = _optional_background(background_metric)
+        background = _background_for_specification(specification, background_metric)
         if reconstruction is not None and not isinstance(
             reconstruction, SurfaceReconstructionControl
         ):

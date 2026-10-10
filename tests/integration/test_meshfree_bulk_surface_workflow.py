@@ -23,6 +23,7 @@ from phydrax.discretization import (
     PreparedPointCloudDiscretization,
     TopologyEpoch,
     TopologyEpochTransition,
+    TransferGeometryBinding,
 )
 from phydrax.discretization.meshfree._capacity import MeshfreeCapacityPolicy
 from phydrax.discretization.meshfree._epochs import MeshfreeEpochChange
@@ -562,6 +563,14 @@ def ring_epoch() -> RingEpoch:
         source_id=surface.owner_id,
         target_id=target.owner_id,
         request=PointTransferRequest("conservative-positive"),
+        geometry=TransferGeometryBinding(
+            source_epoch.geometry_id,
+            target_epoch.geometry_id,
+            "topology-correspondence",
+            source_topology_id=source_epoch.topology_id,
+            target_topology_id=target_epoch.topology_id,
+            coverage_defect=None,
+        ),
     ).prepare()
     assert transfer.admitted
     return RingEpoch(

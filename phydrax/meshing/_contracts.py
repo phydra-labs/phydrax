@@ -5,17 +5,22 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_fingerprint, logical_array_value_collection_digest
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..geometry.brep import PlanarEmbedding
-from ..typing import checked
+from ..geometry._planar_embedding import PlanarEmbedding
+from ..typing import checked, parse
 from ._controls import (
+    BackgroundMetricControl,
     BoundaryLayerControl,
+    FeatureKind,
     HoleSeed,
     PatchControl,
     PeriodicConstraint,
@@ -23,7 +28,7 @@ from ._controls import (
     RegionControl,
     RegionSeed,
 )
-from ._scope import MeshingScope
+from ._scope import _contains_ids, MeshingEntityKind, MeshingScope
 from ._sizing import (
     ProximitySizeControl,
     SizeCombinationPolicy,
@@ -34,6 +39,7 @@ from ._sizing import (
 
 class MeshingOperation(StrEnum):
     FACET_GEOMETRY = "facet_geometry"
+    MESH_CURVE = "mesh_curve"
     MESH_SURFACE = "mesh_surface"
     REMESH_SURFACE = "remesh_surface"
     REMESH_SURFACE_LOCALLY = "remesh_surface_locally"
@@ -58,6 +64,9 @@ class MeshingSourceKind(StrEnum):
     IMAGE = "image"
     TENSOR_GRID = "tensor_grid"
     MESH_ASSEMBLY = "mesh_assembly"
+    PIECEWISE_LINEAR = "piecewise_linear"
+    MAPPED_REFERENCE = "mapped_reference"
+    CURVE = "curve"
 
 
 class MeshingCapability(StrEnum):
@@ -125,12 +134,27 @@ class MeshingFailureCategory(StrEnum):
 
 
 class MeshingLimits(StrictModule, NonTrainableState):
+    """Hard resource budgets of one meshing request.
+
+    Entity, connectivity, and data limits bound the published result.
+    ``maximum_work_units`` bounds native construction steps (inserted Steiner or
+    refinement vertices and root solves), ``maximum_cavity_cells`` the cells of
+    one local cavity edit, ``maximum_geometry_queries`` the source-geometry
+    evaluations, and ``maximum_scratch_bytes`` the temporary working memory of
+    preparation and construction. Routes refuse before allocating beyond a
+    budget and report every budget they cannot enforce.
+    """
+
     maximum_vertices: int = eqx.field(static=True)
     maximum_edges: int = eqx.field(static=True)
     maximum_faces: int = eqx.field(static=True)
     maximum_cells: int = eqx.field(static=True)
     maximum_connectivity_entries: int = eqx.field(static=True)
     maximum_data_bytes: int = eqx.field(static=True)
+    maximum_work_units: int = eqx.field(static=True)
+    maximum_cavity_cells: int = eqx.field(static=True)
+    maximum_geometry_queries: int = eqx.field(static=True)
+    maximum_scratch_bytes: int = eqx.field(static=True)
     maximum_wall_seconds: float = eqx.field(static=True)
     limits_id: str = eqx.field(static=True)
 
@@ -143,34 +167,51 @@ class MeshingLimits(StrictModule, NonTrainableState):
         maximum_cells: int = 20_000_000,
         maximum_connectivity_entries: int = 500_000_000,
         maximum_data_bytes: int = 4_000_000_000,
+        maximum_work_units: int = 1_000_000_000,
+        maximum_cavity_cells: int = 1_000_000,
+        maximum_geometry_queries: int = 1_000_000_000,
+        maximum_scratch_bytes: int = 8_000_000_000,
         maximum_wall_seconds: float = 3600.0,
     ) -> None:
-        counts = (
-            int(maximum_vertices),
-            int(maximum_edges),
-            int(maximum_faces),
-            int(maximum_cells),
-            int(maximum_connectivity_entries),
-            int(maximum_data_bytes),
-        )
+        counts = {
+            "maximum_vertices": maximum_vertices,
+            "maximum_edges": maximum_edges,
+            "maximum_faces": maximum_faces,
+            "maximum_cells": maximum_cells,
+            "maximum_connectivity_entries": maximum_connectivity_entries,
+            "maximum_data_bytes": maximum_data_bytes,
+            "maximum_work_units": maximum_work_units,
+            "maximum_cavity_cells": maximum_cavity_cells,
+            "maximum_geometry_queries": maximum_geometry_queries,
+            "maximum_scratch_bytes": maximum_scratch_bytes,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in counts.values()
+        ):
+            raise TypeError("Meshing entity, work, and byte limits must be integers.")
+        counts = {name: int(value) for name, value in counts.items()}
         seconds = float(maximum_wall_seconds)
-        if any(value <= 0 for value in counts):
-            raise ValueError("Meshing entity and data limits must be positive.")
+        if any(value <= 0 for value in counts.values()):
+            raise ValueError("Meshing entity, work, and byte limits must be positive.")
         if not np.isfinite(seconds) or seconds <= 0.0:
             raise ValueError("maximum_wall_seconds must be positive and finite.")
-        (
-            self.maximum_vertices,
-            self.maximum_edges,
-            self.maximum_faces,
-            self.maximum_cells,
-            self.maximum_connectivity_entries,
-            self.maximum_data_bytes,
-        ) = counts
+        self.maximum_vertices = counts["maximum_vertices"]
+        self.maximum_edges = counts["maximum_edges"]
+        self.maximum_faces = counts["maximum_faces"]
+        self.maximum_cells = counts["maximum_cells"]
+        self.maximum_connectivity_entries = counts["maximum_connectivity_entries"]
+        self.maximum_data_bytes = counts["maximum_data_bytes"]
+        self.maximum_work_units = counts["maximum_work_units"]
+        self.maximum_cavity_cells = counts["maximum_cavity_cells"]
+        self.maximum_geometry_queries = counts["maximum_geometry_queries"]
+        self.maximum_scratch_bytes = counts["maximum_scratch_bytes"]
         self.maximum_wall_seconds = seconds
         self.limits_id = canonical_fingerprint(
             {
                 "kind": "meshing-limits",
-                "counts": counts,
+                "counts": [[name, counts[name]] for name in sorted(counts)],
                 "maximum_wall_seconds": seconds,
             }
         )
@@ -277,6 +318,31 @@ class CellMeshingTarget(StrictModule, NonTrainableState):
         )
 
 
+class MeshQualityTarget(StrictModule, NonTrainableState):
+    """Requested per-cell shape quality of generated simplices.
+
+    ``minimum_angle`` is the smallest admissible interior corner angle in
+    radians. A hard target is a failed request when unmet; a soft target is
+    recorded as requested versus achieved evidence.
+    """
+
+    minimum_angle: float = eqx.field(static=True)
+    hard: bool = eqx.field(static=True)
+    target_id: str = eqx.field(static=True)
+
+    def __init__(self, *, minimum_angle: float, hard: bool = True) -> None:
+        angle = float(minimum_angle)
+        if not np.isfinite(angle) or angle <= 0.0 or angle >= np.pi / 3.0:
+            raise ValueError("minimum_angle must lie strictly between zero and pi/3.")
+        if not isinstance(hard, (bool, np.bool_)):
+            raise TypeError("hard must be a bool.")
+        self.minimum_angle = angle
+        self.hard = bool(hard)
+        self.target_id = canonical_fingerprint(
+            {"kind": "mesh-quality-target", "minimum_angle": angle, "hard": self.hard}
+        )
+
+
 def _size_control_scopes(control: SizeControl, /) -> tuple[MeshingScope, ...]:
     if isinstance(control, ProximitySizeControl):
         return control.source_scope, control.target_scope
@@ -294,6 +360,9 @@ def _validated_semantic_controls(
     size_combination: SizeCombinationPolicy,
     size_compliance: SizeCompliancePolicy | None,
     /,
+    *,
+    volume_boundary: bool = False,
+    surface_volume_boundaries: bool = False,
 ) -> tuple[
     tuple[SizeControl, ...],
     tuple[ProtectedFeature, ...],
@@ -357,34 +426,92 @@ def _validated_semantic_controls(
     ):
         raise ValueError("Meshing controls must share the top-level source binding.")
     dimension = target.topological_dimension
-    if regions and scope.entity_dimension != dimension:
+    boundary_scoped_regions = volume_boundary and scope.entity_dimension == dimension - 1
+    if regions and scope.entity_dimension != dimension and not boundary_scoped_regions:
         raise ValueError("Region controls require a top-dimensional source scope.")
     if any(
-        control.scope.entity_dimension != dimension
-        or control.scope.entity_set_id != scope.entity_set_id
-        or np.setdiff1d(control.scope.entity_ids, scope.entity_ids).size
+        not (
+            (
+                control.scope.entity_dimension == dimension
+                and (
+                    boundary_scoped_regions
+                    or (
+                        control.scope.entity_set_id == scope.entity_set_id
+                        and bool(
+                            jnp.all(
+                                _contains_ids(
+                                    scope.global_entity_ids,
+                                    control.scope.global_entity_ids,
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            or (
+                surface_volume_boundaries
+                and scope.entity_kind is MeshingEntityKind.GEOMETRY
+                and control.scope.entity_dimension == dimension + 1
+            )
+        )
         for control in regions
     ):
         raise ValueError(
             "Region controls must select contained top-dimensional entities."
         )
-    if any(control.scope.entity_dimension != dimension - 1 for control in patches):
+    source_volume_regions = (
+        surface_volume_boundaries
+        and scope.entity_kind is MeshingEntityKind.GEOMETRY
+        and any(control.scope.entity_dimension == dimension + 1 for control in regions)
+    )
+    if any(
+        control.scope.entity_dimension != dimension - 1
+        and not (
+            source_volume_regions
+            and control.scope.entity_dimension == dimension
+            and control.scope.entity_set_id == scope.entity_set_id
+            and bool(
+                jnp.all(
+                    _contains_ids(
+                        scope.global_entity_ids,
+                        control.scope.global_entity_ids,
+                    )
+                )
+            )
+        )
+        for control in patches
+    ):
+        if source_volume_regions:
+            raise ValueError(
+                "Patch controls must select codimension-one entities or declared source-volume boundary faces."
+            )
         raise ValueError("Patch controls must select codimension-one entities.")
     region_names = tuple(control.region_name for control in regions)
     if len(set(region_names)) != len(region_names):
         raise ValueError("Region control names must be unique.")
     for index, first in enumerate(regions):
         for second in regions[index + 1 :]:
-            if np.intersect1d(first.scope.entity_ids, second.scope.entity_ids).size:
+            if first.scope.entity_set_id == second.scope.entity_set_id and bool(
+                jnp.any(
+                    _contains_ids(
+                        first.scope.global_entity_ids,
+                        second.scope.global_entity_ids,
+                    )
+                )
+            ):
                 raise ValueError("Region control scopes must be disjoint.")
     patch_names = tuple(control.name for control in patches)
     if len(set(patch_names)) != len(patch_names):
         raise ValueError("Patch control names must be unique.")
     for index, first in enumerate(patches):
         for second in patches[index + 1 :]:
-            if (
-                first.scope.entity_set_id == second.scope.entity_set_id
-                and np.intersect1d(first.scope.entity_ids, second.scope.entity_ids).size
+            if first.scope.entity_set_id == second.scope.entity_set_id and bool(
+                jnp.any(
+                    _contains_ids(
+                        first.scope.global_entity_ids,
+                        second.scope.global_entity_ids,
+                    )
+                )
             ):
                 raise ValueError("Patch control scopes must be disjoint.")
     declared = set(region_names)
@@ -394,6 +521,14 @@ def _validated_semantic_controls(
 
 
 class SurfaceMeshingSpec(StrictModule, NonTrainableState):
+    """Physical surface request with explicit source-region boundary semantics.
+
+    Geometry-scoped dimension-three region controls select adjacent authoritative
+    source volumes, not volume cells in the dimension-two result. Their boundary
+    labels and oriented patches require source-incidence validation by the compiler.
+    Dimension-two region controls retain ordinary contained surface-region semantics.
+    """
+
     target: CellMeshingTarget
     planar_embedding: PlanarEmbedding | None = eqx.field(static=True)
     scope: MeshingScope
@@ -406,6 +541,8 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
     size_combination: SizeCombinationPolicy = eqx.field(static=True)
     size_compliance: SizeCompliancePolicy
     limits: MeshingLimits
+    quality_target: MeshQualityTarget | None
+    background_metric: BackgroundMetricControl | None
     deterministic: bool = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
@@ -425,6 +562,8 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
         size_compliance: SizeCompliancePolicy | None = None,
         limits: MeshingLimits | None = None,
+        quality_target: MeshQualityTarget | None = None,
+        background_metric: BackgroundMetricControl | None = None,
         deterministic: bool = True,
     ) -> None:
         if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 2:
@@ -456,6 +595,7 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
             periodic_constraints,
             size_combination,
             size_compliance,
+            surface_volume_boundaries=True,
         )
         layers = tuple(layer_controls)
         if not all(isinstance(control, BoundaryLayerControl) for control in layers):
@@ -478,6 +618,23 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         limit = MeshingLimits() if limits is None else limits
         if not isinstance(limit, MeshingLimits):
             raise TypeError("limits must be MeshingLimits or None.")
+        if quality_target is not None and not isinstance(
+            quality_target, MeshQualityTarget
+        ):
+            raise TypeError("quality_target must be MeshQualityTarget or None.")
+        if background_metric is not None:
+            if not isinstance(background_metric, BackgroundMetricControl):
+                raise TypeError(
+                    "background_metric must be BackgroundMetricControl or None."
+                )
+            if (
+                background_metric.mesh.ambient_dimension != target.ambient_dimension
+                or background_metric.metric.values.shape[1:]
+                != (target.ambient_dimension, target.ambient_dimension)
+            ):
+                raise ValueError(
+                    "Background metric tensors must use the surface's physical ambient space."
+                )
         self.target = target
         self.planar_embedding = planar_embedding
         self.scope = scope
@@ -490,6 +647,8 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
         self.size_combination = size_combination
         self.size_compliance = compliance
         self.limits = limit
+        self.quality_target = quality_target
+        self.background_metric = background_metric
         self.deterministic = bool(deterministic)
         self.specification_id = canonical_fingerprint(
             {
@@ -508,6 +667,12 @@ class SurfaceMeshingSpec(StrictModule, NonTrainableState):
                 "periodic": [value.constraint_id for value in periodic],
                 "layers": [value.control_id for value in layers],
                 "limits": limit.limits_id,
+                "quality_target": (
+                    None if quality_target is None else quality_target.target_id
+                ),
+                "background_metric": (
+                    None if background_metric is None else background_metric.control_id
+                ),
                 "deterministic": bool(deterministic),
             }
         )
@@ -537,6 +702,13 @@ class SurfaceRemeshingSpec(StrictModule, NonTrainableState):
 
 
 class VolumeMeshingSpec(StrictModule, NonTrainableState):
+    """Physical volume request with separately declared boundary and region scopes.
+
+    A codimension-one boundary scope does not contain volume-region entities.
+    Region controls select top-dimensional entities of the same authoritative
+    source revision; the provider resolves their scientific region identities.
+    """
+
     target: CellMeshingTarget
     boundary_scope: MeshingScope
     fill_strategy: VolumeFillStrategy = eqx.field(static=True)
@@ -597,6 +769,7 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             periodic_constraints,
             size_combination,
             size_compliance,
+            volume_boundary=True,
         )
         region_seeds_ = tuple(region_seeds)
         hole_seeds_ = tuple(hole_seeds)
@@ -613,15 +786,11 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             )
         if any(
             control.volume_scope is None
-            or control.volume_scope.entity_set_id != boundary_scope.entity_set_id
-            or np.setdiff1d(
-                np.asarray(control.volume_scope.entity_ids),
-                np.asarray(boundary_scope.entity_ids),
-            ).size
+            or control.volume_scope.entity_dimension != target.topological_dimension
             for control in layer_controls_
         ):
             raise ValueError(
-                "Boundary-layer volume scopes must be contained in the top-level volume scope."
+                "Boundary-layer volume scopes must select top-dimensional source region entities."
             )
         layer_scopes = tuple(
             scope
@@ -643,6 +812,45 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
             for scope in additional_scopes
         ):
             raise ValueError("Volume meshing controls must share one source binding.")
+        if boundary_scope.entity_dimension == target.topological_dimension and any(
+            scope.entity_dimension == target.topological_dimension
+            and (
+                scope.entity_set_id != boundary_scope.entity_set_id
+                or not bool(
+                    jnp.all(
+                        _contains_ids(
+                            boundary_scope.global_entity_ids,
+                            scope.global_entity_ids,
+                        )
+                    )
+                )
+            )
+            for scope in layer_scopes
+        ):
+            raise ValueError(
+                "Boundary-layer volume scopes must select contained top-dimensional source entities."
+            )
+        if any(
+            control.wall_scope.entity_dimension != target.topological_dimension - 1
+            or (
+                boundary_scope.entity_dimension == target.topological_dimension - 1
+                and (
+                    control.wall_scope.entity_set_id != boundary_scope.entity_set_id
+                    or not bool(
+                        jnp.all(
+                            _contains_ids(
+                                boundary_scope.global_entity_ids,
+                                control.wall_scope.global_entity_ids,
+                            )
+                        )
+                    )
+                )
+            )
+            for control in layer_controls_
+        ):
+            raise ValueError(
+                "Boundary-layer wall scopes must select contained boundary entities."
+            )
         limit = MeshingLimits() if limits is None else limits
         if not isinstance(limit, MeshingLimits):
             raise TypeError("limits must be MeshingLimits or None.")
@@ -683,7 +891,160 @@ class VolumeMeshingSpec(StrictModule, NonTrainableState):
         )
 
 
-MeshingSpecification = SurfaceMeshingSpec | SurfaceRemeshingSpec | VolumeMeshingSpec
+CurveEnd: TypeAlias = Literal["start", "end"]
+
+
+class CurveJunction(StrictModule, NonTrainableState):
+    """One declared junction joining curve endpoints into one mesh vertex.
+
+    ``endpoints`` name ``(curve entity ID, end)`` pairs of the meshed source.
+    A junction joining the start and end of one curve closes that curve; three
+    or more endpoints declare a network junction. Endpoints are never joined
+    by proximity: an undeclared endpoint remains a free end.
+    """
+
+    name: str = eqx.field(static=True)
+    endpoints: tuple[tuple[int, CurveEnd], ...] = eqx.field(static=True)
+    junction_id: str = eqx.field(static=True)
+
+    def __init__(self, name: str, endpoints: tuple[tuple[int, CurveEnd], ...], /) -> None:
+        value = str(name).strip()
+        if not value:
+            raise ValueError("Curve junction names must be non-empty.")
+        entries = tuple(endpoints)
+        if len(entries) < 2:
+            raise ValueError("A curve junction joins at least two curve endpoints.")
+        normalized = []
+        for entry in entries:
+            if len(entry) != 2:
+                raise ValueError("Curve junction endpoints are (curve ID, end) pairs.")
+            curve, end = entry
+            if isinstance(curve, (bool, np.bool_)) or not isinstance(
+                curve, (int, np.integer)
+            ):
+                raise TypeError("Curve junction curve IDs must be integers.")
+            if curve < 0:
+                raise ValueError("Curve junction curve IDs must be non-negative.")
+            normalized.append((int(curve), parse(end, CurveEnd, "end")))
+        ordered = tuple(sorted(normalized))
+        if len(set(ordered)) != len(ordered):
+            raise ValueError("Curve junction endpoints must be unique.")
+        self.name = value
+        self.endpoints = ordered
+        self.junction_id = canonical_fingerprint(
+            {
+                "kind": "curve-junction",
+                "name": value,
+                "endpoints": [[curve, end] for curve, end in ordered],
+            }
+        )
+
+
+class CurveMeshingSpec(StrictModule, NonTrainableState):
+    """Standalone interval meshing of selected source curves and their network.
+
+    ``scope`` selects dimension-one source curves; ``junctions`` declare which
+    curve endpoints share a mesh vertex. Size controls bound interval lengths,
+    and a protected ``FeatureKind.CURVE`` feature bounds the chord deviation of
+    its curves by ``maximum_deviation``.
+    """
+
+    target: CellMeshingTarget
+    scope: MeshingScope
+    size_controls: tuple[SizeControl, ...]
+    protected_features: tuple[ProtectedFeature, ...]
+    junctions: tuple[CurveJunction, ...]
+    size_combination: SizeCombinationPolicy = eqx.field(static=True)
+    size_compliance: SizeCompliancePolicy
+    limits: MeshingLimits
+    deterministic: bool = eqx.field(static=True)
+    specification_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        target: CellMeshingTarget,
+        scope: MeshingScope,
+        /,
+        *,
+        size_controls: tuple[SizeControl, ...],
+        protected_features: tuple[ProtectedFeature, ...] = (),
+        junctions: tuple[CurveJunction, ...] = (),
+        size_combination: SizeCombinationPolicy = SizeCombinationPolicy.REJECT_HARD_CONFLICTS,
+        size_compliance: SizeCompliancePolicy | None = None,
+        limits: MeshingLimits | None = None,
+        deterministic: bool = True,
+    ) -> None:
+        if not isinstance(target, CellMeshingTarget) or target.topological_dimension != 1:
+            raise ValueError("Curve meshing target must have topological dimension one.")
+        families = target.cell_families
+        if set((*families.required, *families.preferred)) != {"interval"}:
+            raise ValueError("Curve meshing targets the interval cell family only.")
+        (
+            sizes,
+            features,
+            _,
+            _,
+            _,
+            compliance,
+        ) = _validated_semantic_controls(
+            target,
+            scope,
+            size_controls,
+            protected_features,
+            (),
+            (),
+            (),
+            size_combination,
+            size_compliance,
+        )
+        if any(feature.feature_kind is FeatureKind.SURFACE for feature in features):
+            raise ValueError("Curve meshing cannot protect surface features.")
+        junctions_ = tuple(junctions)
+        if not all(isinstance(junction, CurveJunction) for junction in junctions_):
+            raise TypeError("junctions must contain CurveJunction values.")
+        names = tuple(junction.name for junction in junctions_)
+        if len(set(names)) != len(names):
+            raise ValueError("Curve junction names must be unique.")
+        endpoints = tuple(
+            endpoint for junction in junctions_ for endpoint in junction.endpoints
+        )
+        if len(set(endpoints)) != len(endpoints):
+            raise ValueError("A curve endpoint belongs to at most one junction.")
+        curves = jnp.asarray(tuple(curve for curve, _ in endpoints), dtype=jnp.int64)
+        if not bool(jnp.all(_contains_ids(scope.global_entity_ids, curves))):
+            raise ValueError("Curve junctions must join curves of the meshing scope.")
+        ordered = tuple(sorted(junctions_, key=lambda junction: junction.endpoints))
+        limit = MeshingLimits() if limits is None else limits
+        if not isinstance(limit, MeshingLimits):
+            raise TypeError("limits must be MeshingLimits or None.")
+        self.target = target
+        self.scope = scope
+        self.size_controls = sizes
+        self.protected_features = features
+        self.junctions = ordered
+        self.size_combination = size_combination
+        self.size_compliance = compliance
+        self.limits = limit
+        self.deterministic = bool(deterministic)
+        self.specification_id = canonical_fingerprint(
+            {
+                "kind": "curve-meshing-spec",
+                "target": target.target_id,
+                "scope": scope.scope_id,
+                "size_controls": [control.control_id for control in sizes],
+                "size_combination": size_combination.value,
+                "size_compliance": compliance.policy_id,
+                "protected_features": [value.feature_id for value in features],
+                "junctions": [value.junction_id for value in ordered],
+                "limits": limit.limits_id,
+                "deterministic": bool(deterministic),
+            }
+        )
+
+
+MeshingSpecification = (
+    CurveMeshingSpec | SurfaceMeshingSpec | SurfaceRemeshingSpec | VolumeMeshingSpec
+)
 
 
 class MeshingProviderInfo(StrictModule, NonTrainableState):
@@ -818,7 +1179,12 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(
             specification,
-            (SurfaceMeshingSpec, SurfaceRemeshingSpec, VolumeMeshingSpec),
+            (
+                CurveMeshingSpec,
+                SurfaceMeshingSpec,
+                SurfaceRemeshingSpec,
+                VolumeMeshingSpec,
+            ),
         ):
             raise TypeError("specification must be a meshing specification.")
         unsupported_ = tuple(str(value) for value in unsupported)
@@ -849,7 +1215,50 @@ class ProviderSupportReport(StrictModule, NonTrainableState):
             )
 
 
-class MeshingFailure(RuntimeError):
+def _quantities(
+    values: tuple[tuple[str, float], ...], name: str, /
+) -> tuple[tuple[str, float], ...]:
+    entries = tuple((str(key).strip(), float(value)) for key, value in values)
+    keys = tuple(key for key, _ in entries)
+    if any(not key for key in keys) or len(set(keys)) != len(keys):
+        raise ValueError(f"{name} quantities require unique non-empty names.")
+    if any(np.isnan(value) for _, value in entries):
+        raise ValueError(f"{name} quantities must not be NaN.")
+    return tuple(sorted(entries))
+
+
+def _quantity_payload(
+    entries: tuple[tuple[str, float], ...], /
+) -> list[list[str | float]]:
+    """Canonical identity form; an unbounded quantity is an explicit token."""
+    return [
+        [key, value if np.isfinite(value) else ("+inf" if value > 0 else "-inf")]
+        for key, value in entries
+    ]
+
+
+class MeshingFailureEvidence(StrictModule, NonTrainableState):
+    """Structured evidence of one failed meshing request.
+
+    ``stage`` names the failing stage (a ``MeshingStageKind`` value on native
+    routes), ``entity_ids`` the failing or unresolved entities, and
+    ``requested``/``achieved`` the named quantities in the convention of
+    ``MeshingComplianceReport``. ``checkpoint_id`` references the lifecycle
+    checkpoint of the last accepted state when the failing operation has one.
+    """
+
+    category: MeshingFailureCategory = eqx.field(static=True)
+    message: str = eqx.field(static=True)
+    provider_code: str = eqx.field(static=True)
+    stage: str = eqx.field(static=True)
+    entity_ids: tuple[int, ...] = eqx.field(static=True)
+    locations: tuple[tuple[float, ...], ...] = eqx.field(static=True)
+    requested: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    achieved: tuple[tuple[str, float], ...] = eqx.field(static=True)
+    checkpoint_id: str | None = eqx.field(static=True)
+    logical_findings: tuple[tuple[str, Array], ...]
+    evidence_id: str = eqx.field(static=True)
+
     def __init__(
         self,
         category: MeshingFailureCategory,
@@ -860,30 +1269,144 @@ class MeshingFailure(RuntimeError):
         stage: str = "",
         entity_ids: tuple[int, ...] = (),
         locations: tuple[tuple[float, ...], ...] = (),
+        requested: tuple[tuple[str, float], ...] = (),
+        achieved: tuple[tuple[str, float], ...] = (),
+        checkpoint_id: str | None = None,
+        logical_findings: tuple[tuple[str, Array], ...] = (),
     ) -> None:
         if not isinstance(category, MeshingFailureCategory):
             raise TypeError("category must be MeshingFailureCategory.")
         text = str(message).strip()
         if not text:
             raise ValueError("Meshing failures require a message.")
-        self.category = category
-        self.provider_code = str(provider_code)
-        self.stage = str(stage)
-        self.entity_ids = tuple(entity_ids)
-        self.locations = tuple(
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in entity_ids
+        ):
+            raise TypeError("Failing entity IDs must be integers.")
+        points = tuple(
             tuple(float(component) for component in point) for point in locations
         )
-        super().__init__(text)
+        if any(not np.all(np.isfinite(point)) for point in points):
+            raise ValueError("Failure locations must be finite.")
+        checkpoint = None if checkpoint_id is None else str(checkpoint_id).strip()
+        if checkpoint == "":
+            raise ValueError("checkpoint_id must be non-empty when supplied.")
+        findings = tuple(logical_findings)
+        names = tuple(name for name, _ in findings)
+        if names != tuple(sorted(names)) or len(set(names)) != len(names):
+            raise ValueError("Failure numerical findings require unique canonical names.")
+        if any(not isinstance(value, Array) for _, value in findings):
+            raise TypeError(
+                "Failure numerical findings must remain actual logical JAX arrays."
+            )
+        self.category = category
+        self.message = text
+        self.provider_code = str(provider_code)
+        self.stage = str(stage)
+        self.entity_ids = tuple(int(value) for value in entity_ids)
+        self.locations = points
+        self.requested = _quantities(requested, "requested")
+        self.achieved = _quantities(achieved, "achieved")
+        self.checkpoint_id = checkpoint
+        self.logical_findings = findings
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "meshing-failure-evidence",
+                "category": category.value,
+                "message": text,
+                "provider_code": self.provider_code,
+                "stage": self.stage,
+                "entity_ids": list(self.entity_ids),
+                "locations": [list(point) for point in points],
+                "requested": _quantity_payload(self.requested),
+                "achieved": _quantity_payload(self.achieved),
+                "checkpoint_id": checkpoint,
+                "logical_findings": None
+                if not findings
+                else logical_array_value_collection_digest(dict(findings)),
+            }
+        )
+
+
+class MeshingFailure(RuntimeError):
+    """Failed meshing request carrying its structured ``evidence``."""
+
+    cut_failure_prefix: tuple[Any, ...] | None
+
+    def __init__(
+        self,
+        category: MeshingFailureCategory,
+        message: str,
+        /,
+        *,
+        provider_code: str = "",
+        stage: str = "",
+        entity_ids: tuple[int, ...] = (),
+        locations: tuple[tuple[float, ...], ...] = (),
+        requested: tuple[tuple[str, float], ...] = (),
+        achieved: tuple[tuple[str, float], ...] = (),
+        checkpoint_id: str | None = None,
+        logical_findings: tuple[tuple[str, Array], ...] = (),
+    ) -> None:
+        self.evidence = MeshingFailureEvidence(
+            category,
+            message,
+            provider_code=provider_code,
+            stage=stage,
+            entity_ids=entity_ids,
+            locations=locations,
+            requested=requested,
+            achieved=achieved,
+            checkpoint_id=checkpoint_id,
+            logical_findings=logical_findings,
+        )
+        self.cut_failure_prefix = None
+        super().__init__(self.evidence.message)
+
+    @property
+    def category(self) -> MeshingFailureCategory:
+        return self.evidence.category
+
+    @property
+    def provider_code(self) -> str:
+        return self.evidence.provider_code
+
+    @property
+    def stage(self) -> str:
+        return self.evidence.stage
+
+    @property
+    def entity_ids(self) -> tuple[int, ...]:
+        return self.evidence.entity_ids
+
+    @property
+    def locations(self) -> tuple[tuple[float, ...], ...]:
+        return self.evidence.locations
+
+    @property
+    def requested(self) -> tuple[tuple[str, float], ...]:
+        return self.evidence.requested
+
+    @property
+    def achieved(self) -> tuple[tuple[str, float], ...]:
+        return self.evidence.achieved
 
 
 __all__ = [
     "CellFamilyPolicy",
     "CellMeshingTarget",
+    "CurveEnd",
+    "CurveJunction",
+    "CurveMeshingSpec",
+    "MeshQualityTarget",
     "MeshingCapability",
     "MeshingDerivativeMode",
     "MeshingExecutionMode",
     "MeshingFailure",
     "MeshingFailureCategory",
+    "MeshingFailureEvidence",
     "MeshingLimits",
     "MeshingOperation",
     "MeshingProviderInfo",

@@ -594,6 +594,56 @@ def test_structural_dynamic_slice_clamps_resolved_starts() -> None:
     assert jnp.array_equal(plan.operator(point).as_dense(), expected)
 
 
+def test_structural_uninitialized_buffer_contributes_no_dependencies() -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((5,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4])
+
+    def overwritten(value: Any, _: Any) -> Any:
+        buffer = jnp.empty((2,), dtype=jnp.float64).at[:].set(value[1:] ** 2)
+        return jnp.concatenate((value, buffer))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        overwritten,
+        point,
+        source=source,
+        target=target,
+        compiler="auto",
+    )
+
+    expected = jax.jacfwd(overwritten)(point, None)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
+
+
+def test_structural_scan_threads_consts_carries_and_reversed_slices() -> None:
+    source = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((7,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
+
+    def scanned(value: Any, _: Any) -> Any:
+        weight = value[3]
+
+        def step(carry: Any, entry: Any) -> Any:
+            total, last = carry
+            return (total + weight * entry, entry), total * entry
+
+        (total, last), history = jax.lax.scan(
+            step, (jnp.zeros(()), value[0]), value[:3], reverse=True
+        )
+        return jnp.concatenate((jnp.stack((total, last)), history, value[1:3]))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        scanned,
+        point,
+        source=source,
+        target=target,
+        compiler="auto",
+    )
+
+    expected = jax.jacfwd(scanned)(point, None)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
+
+
 def test_matrix_free_verification_detects_missing_structure() -> None:
     space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4])

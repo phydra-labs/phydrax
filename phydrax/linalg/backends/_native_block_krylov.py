@@ -20,6 +20,7 @@ from .._policies import BlockCG, BlockGMRES, RankPolicy
 from .._preconditioners import AbstractPreconditioner
 from .._results import LinearSolveStatus
 from .._spaces import AbstractVectorSpace
+from ..krylov._decompositions import _gated_input
 from ._native_krylov import (
     _action_coordinates,
     _iteration_stop,
@@ -312,7 +313,7 @@ def _block_gmres_raw(
     residual_norms = _column_norms(residual, block_gram)
     converged = residual_norms <= thresholds
     iterations = jnp.zeros((rhs_count,), dtype=jnp.int32)
-    _, _, _, initial_rank = _rank_revealing_factor(residual, block_gram)
+    initial_basis, _, _, initial_rank = _rank_revealing_factor(residual, block_gram)
     breakdown = jnp.zeros((rhs_count,), dtype=jnp.bool_)
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
     cycles = (max_steps + restart - 1) // restart
@@ -347,6 +348,12 @@ def _block_gmres_raw(
             if global_index >= max_steps:
                 continue
 
+            should_execute = (
+                (~jnp.all(converged | breakdown))
+                & jnp.any(active_block)
+                & ~_iteration_stop(iteration_state)
+            )
+
             def execute(operand: _BlockGMRESCarry) -> _BlockGMRESCarry:
                 (
                     basis_,
@@ -366,10 +373,14 @@ def _block_gmres_raw(
                 column_stop = column_start + block_width
                 current_basis = basis_[:, column_start:column_stop]
                 z = precondition(
-                    current_basis,
+                    _gated_input(should_execute, current_basis, initial_basis),
                     jnp.asarray(global_index, dtype=jnp.int32),
                 )
-                candidate_block = action(z)
+                # The action is column-wise: the leading initial-guess columns of
+                # its pre-loop call are valid inputs of the block width.
+                candidate_block = action(
+                    _gated_input(should_execute, z, initial[:, :block_width])
+                )
                 hessenberg_column = jnp.zeros(
                     ((restart + 1) * block_width, block_width),
                     dtype=rhs.dtype,
@@ -432,7 +443,9 @@ def _block_gmres_raw(
                 candidate_x = (
                     cycle_base + preconditioned_basis_[:, :reduced_columns] @ coefficients
                 )
-                true_residual = rhs - action(candidate_x)
+                true_residual = rhs - action(
+                    _gated_input(should_execute, candidate_x, initial)
+                )
                 next_residual_norms = _column_norms(true_residual, block_gram)
                 next_converged = next_residual_norms <= thresholds
                 newly_converged = ~converged_ & next_converged
@@ -489,11 +502,6 @@ def _block_gmres_raw(
                 active_block,
                 last_executed_iteration,
                 iteration_state,
-            )
-            should_execute = (
-                (~jnp.all(converged | breakdown))
-                & jnp.any(active_block)
-                & ~_iteration_stop(iteration_state)
             )
             (
                 basis,
@@ -553,6 +561,12 @@ def _block_cg_raw(
     last_executed_iteration = jnp.asarray(0, dtype=jnp.int32)
 
     def iteration_body(index: Array, operand: _BlockCGCarry) -> _BlockCGCarry:
+        should_execute = (
+            (~jnp.all(operand[5] | operand[8]))
+            & jnp.any(active)
+            & ~_iteration_stop(operand[10])
+        )
+
         def execute(selected: _BlockCGCarry) -> _BlockCGCarry:
             (
                 correction_,
@@ -567,7 +581,13 @@ def _block_cg_raw(
                 last_executed_iteration_,
                 observed_,
             ) = selected
-            action_direction = action(direction_)
+            # The action is column-wise, so the leading initial-guess columns of
+            # its pre-loop call are valid inputs of the reduced block width.
+            action_direction = action(
+                _gated_input(
+                    should_execute, direction_, initial[:, : direction_.shape[1]]
+                )
+            )
             curvature = _hermitian_gram(
                 block_gram,
                 direction_,
@@ -594,7 +614,7 @@ def _block_cg_raw(
                 iterations_,
             )
             next_transformed = precondition(
-                next_residual,
+                _gated_input(should_execute, next_residual, reduced_rhs),
                 jnp.asarray(index + 1, dtype=jnp.int32),
             )
             next_gram = _hermitian_gram(
@@ -634,11 +654,6 @@ def _block_cg_raw(
                 next_iteration,
             )
 
-        should_execute = (
-            (~jnp.all(operand[5] | operand[8]))
-            & jnp.any(active)
-            & ~_iteration_stop(operand[10])
-        )
         return jax.lax.cond(
             should_execute,
             execute,

@@ -641,14 +641,6 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
         inverse_temperature: float,
         potential_id: str | None = None,
     ) -> None:
-        if (
-            not isinstance(action, NormalizedStochasticPathAction)
-            or not action.normalized
-        ):
-            raise ValueError(
-                "Reduced path potentials require a normalized stochastic path action; "
-                "deterministic and surrogate actions are unsupported."
-            )
         beta = float(inverse_temperature)
         if not isfinite(beta) or beta <= 0.0:
             raise ValueError("inverse_temperature must be finite and positive.")

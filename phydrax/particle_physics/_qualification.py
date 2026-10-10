@@ -82,7 +82,6 @@ def build_hep_qualification_bundle(
     support_attributes: Mapping[str, str | int | bool],
     profile_name: str,
     provider: str,
-    provider_version: str,
     release_evidence: Sequence[ReleaseGateEvidence],
     dependencies: Sequence[str | SupportDependency] = (),
     released: bool,
@@ -111,7 +110,6 @@ def build_hep_qualification_bundle(
     capability = CapabilityProfile(
         profile_name,
         provider,
-        provider_version,
         (support,),
         dependencies=dependencies,
         required_gates=gates,

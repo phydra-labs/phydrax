@@ -77,7 +77,6 @@ def lattice_material_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_REQUIRED_GATES,
             released=False,

@@ -51,6 +51,7 @@ from phydrax.discretization import (
     PointCollocationStability,
     PreparedPointCloudDiscretization,
     TopologyEpoch,
+    TransferGeometryBinding,
 )
 from phydrax.discretization.meshfree import (
     adaptation_acceptance,
@@ -360,7 +361,18 @@ def adaptation_transaction(
         degree=proposal.target_degree,
         neighbors=proposal.target_neighbors,
     )
-    transfer = prepare_adaptation_transfer(cloud, proposal)
+    transfer = prepare_adaptation_transfer(
+        cloud,
+        proposal,
+        geometry=TransferGeometryBinding(
+            epoch.geometry_id,
+            target_epoch.geometry_id,
+            "topology-correspondence",
+            source_topology_id=epoch.topology_id,
+            target_topology_id=target_epoch.topology_id,
+            coverage_defect=None,
+        ),
+    )
     if candidate.report.refused_rows == 0:
         values, successful, stability, seconds = solve_layer(candidate)
         after = probe_residual_indicator(candidate, values, layer_residual)

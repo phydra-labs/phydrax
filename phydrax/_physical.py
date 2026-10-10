@@ -79,6 +79,15 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def is_orthonormal_cartesian(self) -> bool:
+        """Recognize declared Cartesian system identities, not frame-name guesses."""
+        match self.coordinate_system:
+            case "cartesian" | "cartesian-lps" | "cartesian-ras":
+                return True
+            case _:
+                return False
+
     @classmethod
     def si(cls) -> SpatialCoordinateContract:
         return cls(METER)

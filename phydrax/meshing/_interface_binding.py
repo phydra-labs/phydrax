@@ -39,6 +39,7 @@ from ._association import (
     _ordered_vertices,
     GeometryAssociation,
 )
+from ._lineage import inherit_scope, MeshLineage
 from ._organization import MeshLabel, MeshPatch, MeshZone
 from ._result import CellMeshingResult
 from ._scope import MeshingScope
@@ -407,4 +408,74 @@ class MeshInterfaceAttachment(StrictModule, NonTrainableState):
         return rows, corners, witness[:, None].astype(np.float64) * normal
 
 
-__all__ = ["MeshInterfaceAttachment"]
+def transition_interface_attachment(
+    attachment: MeshInterfaceAttachment,
+    source: MeshPart,
+    target: MeshPart,
+    lineage: MeshLineage,
+    /,
+) -> MeshInterfaceAttachment:
+    """Rebind one attachment to the successor revision of its part.
+
+    ``source`` must be the exact revision the attachment binds and ``lineage``
+    the topology transition from its carrier to ``target``'s. The attached and
+    sided scopes are remapped through the lineage, the successor carrier's one
+    association of the same geometry source revision witnesses them again, and
+    the side relation must survive unchanged. Mixed membership, a missing or
+    ambiguous successor association, or a changed side refuses the rebind; a
+    stale attachment is never copied.
+    """
+
+    if not isinstance(attachment, MeshInterfaceAttachment):
+        raise TypeError("attachment must be MeshInterfaceAttachment.")
+    if not isinstance(lineage, MeshLineage):
+        raise TypeError("lineage must be MeshLineage.")
+    attachment.require_current(source)
+    carrier = _carrier(target)
+    if target.name != source.name:
+        raise ValueError("An attachment transition keeps its part name.")
+    if (
+        lineage.source_topology_id != _carrier(source).mesh.topology_id
+        or lineage.target_topology_id != carrier.mesh.topology_id
+    ):
+        raise ValueError("The lineage must join the source and target carriers.")
+    mesh = carrier.mesh
+    remapped = inherit_scope(attachment.scope, lineage, mesh, "attachment scope")
+    scope = target.scope(remapped.entity_dimension, remapped.entity_ids)
+    region = None
+    if attachment.region is not None:
+        side = inherit_scope(attachment.region, lineage, mesh, "attachment region")
+        region = target.scope(side.entity_dimension, side.entity_ids)
+    associations = tuple(
+        value
+        for value in carrier.associations
+        if value.source_id == attachment.geometry_source_id
+        and value.source_revision == attachment.geometry_source_revision
+        and value.target_entity_set_id == remapped.entity_set_id
+    )
+    if len(associations) != 1:
+        raise ValueError(
+            "The successor carrier needs exactly one association of the attached "
+            f"geometry revision and entities; found {len(associations)}."
+        )
+    sides: tuple[InterfaceSide | None, ...] = (
+        (None,)
+        if attachment.orientation == 0 or region is not None
+        else (InterfaceSide.MINUS, InterfaceSide.PLUS)
+    )
+    for side in sides:
+        candidate = MeshInterfaceAttachment(
+            target,
+            scope,
+            associations[0],
+            attachment.geometry_entity_ids,
+            tolerance=attachment.tolerance,
+            region=region,
+            carrier_side=side,
+        )
+        if candidate.orientation == attachment.orientation:
+            return candidate
+    raise ValueError("The successor attachment changed its side relation.")
+
+
+__all__ = ["MeshInterfaceAttachment", "transition_interface_attachment"]

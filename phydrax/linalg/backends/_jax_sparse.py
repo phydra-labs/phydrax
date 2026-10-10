@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -195,6 +196,101 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
     raise ValueError(f"Unsupported sparse backend {plan.backend!r}.")
 
 
+type _ColumnSolver = Callable[[Array, Array, Array, Array], Array]
+
+
+def _spsolve_columns(tolerance: float, reorder: int, /) -> _ColumnSolver:
+    """JAX's sparse direct solve over canonical ``(n, k)`` right-hand-side columns.
+
+    ``spsolve`` accepts one vector and defines no batching rule. Under ``vmap``,
+    lanes sharing one CSR matrix become additional right-hand-side columns of that
+    matrix; lanes carrying their own matrix are solved sequentially.
+    """
+    from jax.experimental.sparse.linalg import spsolve
+
+    @jax.custom_batching.custom_vmap
+    def solve_columns(values: Array, indices: Array, indptr: Array, rhs: Array) -> Array:
+        def solve_column(column: Array) -> Array:
+            return spsolve(
+                values, indices, indptr, column, tol=tolerance, reorder=reorder
+            )
+
+        return jax.lax.map(solve_column, rhs.T).T
+
+    @solve_columns.def_vmap
+    def solve_lanes(
+        axis_size: int,
+        in_batched: Sequence[bool],
+        values: Array,
+        indices: Array,
+        indptr: Array,
+        rhs: Array,
+    ) -> tuple[Array, bool]:
+        arguments = (values, indices, indptr, rhs)
+        if not any(in_batched[:3]):
+            size, count = rhs.shape[1:]
+            columns = jnp.moveaxis(rhs, 0, 1).reshape((size, axis_size * count))
+            solved = solve_columns(values, indices, indptr, columns)
+            return jnp.moveaxis(solved.reshape((size, axis_size, count)), 1, 0), True
+
+        def solve_lane(lane: Array) -> Array:
+            return solve_columns(
+                *(
+                    argument[lane] if batched else argument
+                    for argument, batched in zip(arguments, in_batched, strict=True)
+                )
+            )
+
+        return jax.lax.map(solve_lane, jnp.arange(axis_size)), True
+
+    return solve_columns
+
+
+def _device_sparse_solve(
+    values: Array,
+    storage: SparseStorage,
+    rhs: Array,
+    solve_columns: _ColumnSolver,
+    /,
+) -> Array:
+    """Solve ``A X = B`` for one CSR value set as a transposable linear solve.
+
+    The operator derivative is ``-A^{-1} dA X`` and the transpose solves with the
+    CSR transpose of the shared pattern, so forward, reverse, and batched
+    transformations all reuse the direct solve.
+    """
+    size = storage.shape[0]
+    positions = jnp.arange(storage.nnz, dtype=storage.indptr.dtype)
+    rows = jnp.searchsorted(storage.indptr[1:], positions, side="right")
+
+    def matvec(columns: Array) -> Array:
+        return jax.ops.segment_sum(
+            values[:, None] * columns[storage.indices],
+            rows,
+            num_segments=size,
+            indices_are_sorted=True,
+        )
+
+    def solve(_: Callable[[Array], Array], right: Array) -> Array:
+        return solve_columns(values, storage.indices, storage.indptr, right)
+
+    def transpose_solve(_: Callable[[Array], Array], right: Array) -> Array:
+        # Row-major CSR entries in stable column order are the CSR of A^T.
+        order = jnp.argsort(storage.indices, stable=True)
+        counts = jnp.bincount(storage.indices, length=size)
+        transposed_indptr = jnp.concatenate(
+            (jnp.zeros((1,), dtype=counts.dtype), jnp.cumsum(counts))
+        ).astype(storage.indptr.dtype)
+        return solve_columns(
+            values[order],
+            rows[order].astype(storage.indices.dtype),
+            transposed_indptr,
+            right,
+        )
+
+    return jax.lax.custom_linear_solve(matvec, rhs, solve, transpose_solve)
+
+
 def solve_sparse(
     state: DeviceSparseState | HostSparseState,
     rhs: Array,
@@ -212,26 +308,18 @@ def solve_sparse(
     count = rhs.shape[-1]
     flattened_rhs = rhs.reshape((batch_count, size, count))
     if isinstance(state, DeviceSparseState):
-        from jax.experimental.sparse.linalg import spsolve
-
         method = plan.policy.method
-        reorder = method.reorder if isinstance(method, SparseQR) else 1
+        solve_columns = _spsolve_columns(
+            plan.policy.tolerance.relative,
+            method.reorder if isinstance(method, SparseQR) else 1,
+        )
         flattened_values = state.storage.values.reshape((batch_count, state.storage.nnz))
 
         def solve_one(inputs: tuple[Array, Array]) -> Array:
             values, right_hand_side = inputs
-            columns = tuple(
-                spsolve(
-                    values,
-                    state.storage.indices,
-                    state.storage.indptr,
-                    right_hand_side[:, column],
-                    tol=plan.policy.tolerance.relative,
-                    reorder=reorder,
-                )
-                for column in range(count)
+            return _device_sparse_solve(
+                values, state.storage, right_hand_side, solve_columns
             )
-            return jnp.stack(columns, axis=1)
 
         value = jax.lax.map(solve_one, (flattened_values, flattened_rhs))
     elif isinstance(state, HostSparseState):

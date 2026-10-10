@@ -2012,10 +2012,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             successful,
             reasons,
         )
-        work = (
-            neighborhood.candidate_pair_count
-            + self.bodies.particles.active_count * len(self.barriers)
-        )
+        work = neighborhood.candidate_pair_count + jnp.sum(
+            self.bodies.particles.active_mask, dtype=jnp.int32
+        ) * len(self.barriers)
         result = DEMEvaluation(
             neighborhood=neighborhood,
             neighborhood_cache=neighborhood_cache,

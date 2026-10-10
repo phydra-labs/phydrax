@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import threading
+from dataclasses import fields
 from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
@@ -231,7 +232,12 @@ def test_strict_integration_scenario_1() -> None:
     np.testing.assert_array_equal(restored.molar_masses, catalog.molar_masses)
 
     tampered_recipe = copy.deepcopy(recipe)
-    tampered_recipe["fields"]["molar_masses"]["shape"] = [3]
+    molar_masses = next(
+        index
+        for index, field in enumerate(fields(type(catalog)))
+        if field.name == "molar_masses"
+    )
+    tampered_recipe["items"][molar_masses]["shape"] = [3]
     tampered_arrays = dict(arrays)
     tampered_arrays["model/000000"] = np.ones((3,), dtype=np.float64)
     with pytest.raises(ValueError, match="molar_masses"):

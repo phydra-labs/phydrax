@@ -1,9 +1,9 @@
-from importlib import import_module
-from typing import Any
-
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from importlib import import_module
+from typing import Any
+
 from ._abelian import __all__ as _abelian_all
 from ._abelian_core import __all__ as _abelian_core_all
 from ._abelian_evolution import __all__ as _abelian_evolution_all
@@ -15,7 +15,7 @@ from ._canonical import __all__ as _canonical_all
 from ._causal_process import __all__ as _causal_process_all
 from ._compression import __all__ as _compression_all
 from ._contraction import __all__ as _contraction_all
-from ._core import __all__ as _core_all
+from ._core import __all__ as _core_all, MatrixProductState as MatrixProductState
 from ._ctmrg import __all__ as _ctmrg_all
 from ._environments import __all__ as _environments_all
 from ._evolution import __all__ as _evolution_all
@@ -48,7 +48,11 @@ from ._schedule import __all__ as _schedule_all
 from ._slicing import __all__ as _slicing_all
 from ._split import __all__ as _split_all
 from ._stinespring_process import __all__ as _stinespring_process_all
-from ._su2 import __all__ as _su2_all
+from ._su2 import (
+    __all__ as _su2_all,
+    su2_clebsch_gordan as su2_clebsch_gordan,
+    su2_fusion as su2_fusion,
+)
 from ._tebd import __all__ as _tebd_all
 from ._tensor_renormalization import __all__ as _tensor_renormalization_all
 from ._thermal import __all__ as _thermal_all

@@ -1297,6 +1297,14 @@ preparation: moments use each target's tangent coordinates from its
 authoritative normal, and
 `normal_departure` reports how far the routes leave those tangent planes. The
 coordinate dual is the transpose; the Hilbert adjoint includes both measures.
+A transfer becomes a `TopologyEpochTransition` only through
+`epoch_transition(source, target)` and only when it was prepared with
+`geometry=TransferGeometryBinding(...)` naming exactly those epochs' geometry and
+topology identities. Point transfers admit only the `"topology-correspondence"`
+relation, since the audit certifies discrete measure conservation, not common
+physical coverage; an unbound transfer, or one bound to other epochs, is
+refused. `surface_event_epoch` declares this binding from the epochs it is
+prepared between; `prepare_adaptation_transfer(..., geometry=...)` accepts it.
 Values are differentiable through a frozen transfer:
 `TopologyEpochTransition.pullback` is the VJP of `apply`, `adjoint` its Hilbert
 adjoint, and `value_derivative_available` is set while

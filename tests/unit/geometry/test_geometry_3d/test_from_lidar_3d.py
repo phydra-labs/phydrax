@@ -4,7 +4,6 @@
 
 import jax
 import numpy as np
-import pytest
 
 import phydrax as phx
 
@@ -20,9 +19,6 @@ def _fibonacci_sphere(n: int) -> np.ndarray:
 
 
 def test_geometry3d_from_lidar_scene_basic() -> None:
-    pytest.importorskip(
-        "pyvista", reason="requires the optional PyVista geometry provider"
-    )
     # Two clusters; crop ROI to keep the first
     obj1 = _fibonacci_sphere(600)
     obj2 = _fibonacci_sphere(400) * 0.5 + np.array([2.0, 0.0, 0.0])

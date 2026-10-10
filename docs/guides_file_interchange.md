@@ -101,12 +101,84 @@ The catalog is introspection only. It is deliberately not a plugin registry or a
 `load(path)` dispatcher. Ambiguous formats require an explicit profile. In particular,
 `.msh`, `.xml`, `.h5`, and `.json` do not identify one scientific contract.
 
+## Native CAD and explicit external interoperability
+
+`read_cad(path, policy, trusted_root=...)` performs native suffix admission for
+STEP (`.step`/`.stp`), IGES (`.iges`/`.igs`) and the supported externally defined
+OCCT BRep text profiles (`.brep`/`.brp`). The selected reader owns its entity
+graph, malformed/reference/depth/byte budgets, units, placements and coverage
+report. The extension is a routing hint, not validation.
+
+```python
+policy = phx.interchange.CadImportPolicy(
+    phx.SpatialCoordinateContract.si(),
+    phx.interchange.ResourceLimits(
+        max_bytes=16 * 1024 * 1024,
+        max_depth=64,
+        max_nodes=100_000,
+        max_attributes=1_000_000,
+        max_losses=1024,
+    ),
+)
+imported = phx.interchange.read_cad(
+    "part.step", policy, trusted_root="/trusted/cad"
+)
+model = imported.model
+print(imported.coverage, imported.report)
+```
+
+STEP and IGES units come from their format graphs; `read_cad` refuses a source
+unit override. BRep text has no embedded length unit and requires the caller's
+`source_length_unit`. A native file decoder does not invoke OCCT algorithms.
+`BRepModel` retains exact source identity separately from derived tessellation
+identity, and `MeshingDomain.from_brep(model)` consumes exact native carriers,
+not the query triangulation.
+
+`save_brep_archive`/`load_brep_archive` own canonical native CAD lifecycle
+persistence. Do not use an external `.brep` extension to imply that archive
+format. Format-specific `read_step`, `read_iges`, `read_brep_text` and their
+writers remain explicit entry points when the format profile is already known.
+
+Optional live OCCT shapes and independent engine comparisons use only
+`phx.interchange.model_from_occt_shape`, `import_occt_brep`,
+`persist_occt_shape`, `read_occt_shape`, and
+`prepare_occt_projection`/`PreparedOcctProjection`. Install
+`phydrax[cad-occt-interop]` deliberately for these external operations. They are
+not native decoding/query fallbacks and are not exported by the geometry facade.
+
+The live-shape comparison representation does not supply native exact edge and
+p-curve authority. Before creating `BRepSource`, explicitly decode its published
+artifact with `read_cad` and a unitful native import policy. The optional Gmsh
+adapter exports that native model through the native BRep text writer in the
+declared source coordinate unit. It binds external tags to native source rows
+by geometry and boundary-incidence verification, recording model/revision and
+original/export digests; equal entity counts or exploration order are not IDs.
+
+`tools/check_native_dependency_isolation.py` installs the Phydrax wheel and its
+required in-house `phydrax-meshcore` wheel into a fresh environment with ordinary
+dependency resolution. Its isolated consumer rejects installed external engines
+and meshio, round-trips native CAD codecs and persistence, checks native exact
+box queries, and measures a CAD-derived native cell mesh. This is evidence for
+the named executed workflows, not proof that every native numerical route or
+every external CAD entity has been implemented.
+
+SciPy remains permitted numerical infrastructure. Its statistics/distance
+imports can load the bundled Qhull module, so the consumer blocks Qhull geometry
+constructors rather than misclassifying a numerical module import as geometry
+execution.
+
 ## Mesh and visualization files
 
 Meshio-backed routes use explicit `MeshFileProfile` values. The declared matrix covers
 provider-supported Abaqus, ANSYS, AVS-UCD, CGNS, DOLFIN XML, Exodus, FLAC3D, Gmsh,
 H5M, HMF, Kratos MDPA, MED, Medit, Nastran, Netgen, Neuroglancer, OBJ, OFF, PERMAS,
 PLY, STL, SU2, SVG, Tecplot, TetGen, UGRID, legacy VTK, VTU, WKT, and XDMF profiles.
+
+Install `phydrax[mesh-file-interop]` for these optional file-codec routes.
+Meshio is loaded only when an explicit codec boundary is executed; native
+arrays, CAD decoding, geometry queries and mesh generation do not require it.
+Retained meshio codec execution is external interoperability, not an in-house
+numerical meshing implementation.
 
 Single-file mesh exports are written to staging, decoded again through the declared
 codec, compared against coordinates, connectivity, and fields, and then published.

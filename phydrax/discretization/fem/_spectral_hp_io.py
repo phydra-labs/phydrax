@@ -11,7 +11,6 @@ from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import jax.numpy as jnp
-import meshio
 import numpy as np
 import numpy.typing as npt
 from jax import Array
@@ -190,6 +189,7 @@ def write_adaptive_vtk(
     point_values: ArrayLike | None = None,
     /,
 ) -> None:
+    import meshio
 
     mesh = epoch.mesh
     points = np.asarray(mesh.coordinates)
@@ -558,6 +558,8 @@ def read_finite_element_mesh(
     maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
     file_profile: str | None = None,
 ) -> FiniteElementMeshImport:
+    import meshio
+
     source_path = Path(path).expanduser().absolute()
     root = source_path.parent if trusted_root is None else Path(trusted_root)
     profile = resolve_mesh_file_profile(

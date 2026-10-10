@@ -182,7 +182,6 @@ def _profile_parts(
     use = CardiovascularUsePolicy("Local, non-PHI engineering research and evaluation.")
     profile = CardiovascularCommercialSupportProfile(
         "cardiovascular.local-non-phi",
-        "qualification-1",
         support,
         claims,
         resources,
@@ -418,7 +417,6 @@ def test_cardiovascular_commercial_scenario_1() -> None:
         with pytest.raises(ValueError, match="local, non-PHI, non-regulated"):
             CardiovascularCommercialSupportProfile(
                 "cardiovascular.unsupported",
-                "1",
                 unsupported,
                 unsupported_claims,
                 profile.resource_policy,
@@ -852,7 +850,6 @@ def test_cardiovascular_commercial_scenario_4() -> None:
     dependency = CapabilityProfile(
         "cardiovascular.solver-native",
         "phydrax",
-        "1",
         (dependency_support,),
         required_gates=("solver-qualified",),
         release_evidence=(dependency_evidence,),
@@ -901,7 +898,6 @@ def test_dependency_profiles_resolve_nested_support_dependencies() -> None:
         return CapabilityProfile(
             profile_id,
             "phydrax",
-            "1",
             (support,),
             dependencies=dependencies,
             required_gates=(evidence.gate,),

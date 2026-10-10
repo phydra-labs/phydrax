@@ -21,6 +21,7 @@ from ..._strict import StrictModule
 from ...linalg import LinearSolvePolicy
 from ...optim import ConvexSolvePolicy
 from ...sparse import EdgeRelation, RowRelation
+from .._transfer import TransferGeometryBinding
 from ...typing import checked, Dim, Float64
 from ._stencils import PreparedLocalStencils
 from ._transfer import (
@@ -101,6 +102,7 @@ class SurfaceTransferPlan(StrictModule):
         linear_policy: LinearSolvePolicy | None = None,
         conic_policy: ConvexSolvePolicy | None = None,
         lebesgue_bound: float | None = None,
+        geometry: TransferGeometryBinding | None = None,
     ) -> None:
         normals = np.asarray(target_normals, dtype=np.float64)
         shift = np.asarray(offsets, dtype=np.float64)
@@ -130,6 +132,7 @@ class SurfaceTransferPlan(StrictModule):
             linear_policy=linear_policy,
             conic_policy=conic_policy,
             lebesgue_bound=lebesgue_bound,
+            geometry=geometry,
         )
         rows = np.asarray(plan.routes.rows)
         edge = (
@@ -162,6 +165,7 @@ class SurfaceTransferPlan(StrictModule):
         linear_policy: LinearSolvePolicy | None = None,
         conic_policy: ConvexSolvePolicy | None = None,
         lebesgue_bound: float | None = None,
+        geometry: TransferGeometryBinding | None = None,
     ) -> SurfaceTransferPlan:
         """Base coefficients and offsets from admitted cross-target stencils."""
         relation, weights, offsets = stencil_routes(stencils, functional_index)
@@ -179,6 +183,7 @@ class SurfaceTransferPlan(StrictModule):
             linear_policy=linear_policy,
             conic_policy=conic_policy,
             lebesgue_bound=lebesgue_bound,
+            geometry=geometry,
         )
 
     def prepare(self) -> PreparedPointTransfer:

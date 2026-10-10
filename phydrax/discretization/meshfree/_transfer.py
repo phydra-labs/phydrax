@@ -40,6 +40,7 @@ from ..._strict import StrictModule
 from ...ein import contract
 from ...linalg import (
     ArraySpace,
+    certify_rectangular_rank,
     DifferentiationPolicy,
     FactorizationPolicy,
     FailurePolicy,
@@ -53,6 +54,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...linalg.svd import DenseSVD, SVDSolvePolicy
 from ...optim import (
     ConicProgram,
     ConvexProgramStatus,
@@ -69,7 +71,7 @@ from ...typing import Dim, Float64, Int32, parse
 from .._gram import diagonal_gram_space
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
-from .._transfer import FieldTransfer, TransferProperties
+from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
 from ._stencils import _basis_exponents, PreparedLocalStencils
 
 
@@ -411,7 +413,11 @@ class PointTransferPlan(StrictModule):
     amplification ``max_r sum_e |t_e|``; an audited transfer above it is refused
     with ``AMPLIFICATION_EXCEEDED``, since its accuracy order is then unbounded.
     Preparation is bounded sparse host work and never forms a dense transfer
-    matrix.
+    matrix. ``geometry`` declares the source/target topology-epoch identities the
+    routes were prepared between; only a ``topology-correspondence`` binding is
+    admissible, because the audit certifies discrete measure conservation, not
+    common physical coverage. A transfer without a binding cannot form an
+    epoch transition.
     """
 
     __strict_contract__ = True
@@ -421,6 +427,7 @@ class PointTransferPlan(StrictModule):
     request: PointTransferRequest
     linear_policy: LinearSolvePolicy | None
     conic_policy: ConvexSolvePolicy | None
+    geometry: TransferGeometryBinding | None
     tolerance: float = eqx.field(static=True)
     lebesgue_bound: float | None = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
@@ -443,6 +450,7 @@ class PointTransferPlan(StrictModule):
         linear_policy: LinearSolvePolicy | None = None,
         conic_policy: ConvexSolvePolicy | None = None,
         lebesgue_bound: float | None = None,
+        geometry: TransferGeometryBinding | None = None,
     ) -> None:
         if not isinstance(request, PointTransferRequest):
             raise TypeError("request must be a PointTransferRequest.")
@@ -495,6 +503,14 @@ class PointTransferPlan(StrictModule):
                 "lebesgue_bound must be finite and at least one (constant rows force "
                 "row sums of at least one)."
             )
+        if geometry is not None:
+            if not isinstance(geometry, TransferGeometryBinding):
+                raise TypeError("geometry must be a TransferGeometryBinding.")
+            if geometry.relation != "topology-correspondence":
+                raise ValueError(
+                    "A point transfer binds only a topology-correspondence between "
+                    "its declared source and target epochs."
+                )
         self.routes = _Routes(
             jnp.asarray(rows, dtype=jnp.int32),
             jnp.asarray(columns, dtype=jnp.int32),
@@ -504,6 +520,7 @@ class PointTransferPlan(StrictModule):
         self.source_measures, self.target_measures = jnp.asarray(old), jnp.asarray(new)
         self.request = request
         self.linear_policy, self.conic_policy = linear_policy, conic_policy
+        self.geometry = geometry
         self.tolerance = float(tolerance)
         self.lebesgue_bound = None if lebesgue_bound is None else float(lebesgue_bound)
         self.source_id, self.target_id = source_id, target_id
@@ -522,6 +539,7 @@ class PointTransferPlan(StrictModule):
         linear_policy: LinearSolvePolicy | None = None,
         conic_policy: ConvexSolvePolicy | None = None,
         lebesgue_bound: float | None = None,
+        geometry: TransferGeometryBinding | None = None,
     ) -> PointTransferPlan:
         """Base coefficients and offsets from admitted cross-target stencils."""
         relation, weights, offsets = stencil_routes(stencils, functional_index)
@@ -538,6 +556,7 @@ class PointTransferPlan(StrictModule):
             linear_policy=linear_policy,
             conic_policy=conic_policy,
             lebesgue_bound=lebesgue_bound,
+            geometry=geometry,
         )
 
     def prepare(self) -> PreparedPointTransfer:
@@ -696,12 +715,24 @@ class PointTransferPlan(StrictModule):
             if self.linear_policy is None
             else self.linear_policy
         )
-        result = solve(
-            MinimumNormProblem(operator),
-            jnp.asarray(row_scale * elimination.rhs),
-            policy=policy,
-        )
+        rhs = jnp.asarray(row_scale * elimination.rhs)
+        result = solve(MinimumNormProblem(operator), rhs, policy=policy)
         status = int(np.asarray(result.status))
+        if status not in (
+            int(LinearSolveStatus.SUCCESS),
+            int(LinearSolveStatus.INCOMPATIBLE_RHS),
+        ):
+            # An iterative stop certifies an out-of-range right side only
+            # against independent rank and retained-spectrum evidence of the
+            # reduced rows; the bounded dense certificate runs on this
+            # unresolved path alone and is refused beyond its SVD budget.
+            certificate = certify_rectangular_rank(operator, _REDUCED_ROWS_RANK)
+            result = solve(
+                MinimumNormProblem(operator, rank_certificate=certificate),
+                rhs,
+                policy=policy,
+            )
+            status = int(np.asarray(result.status))
         evidence = result.minimum_norm
         if status == int(LinearSolveStatus.SUCCESS):
             correction = elimination.particular + np.asarray(result.value)
@@ -866,6 +897,12 @@ _LOCAL_ROWS_PSEUDOINVERSE = FactorizationPolicy(
     "svd",
     rank=RankPolicy(relative_cutoff=1e-12),
     failure=FailurePolicy("status"),
+)
+
+# Rank evidence of the equilibrated reduced conservation rows, on the same
+# relative cutoff as the local-row pseudoinverse.
+_REDUCED_ROWS_RANK = SVDSolvePolicy(
+    DenseSVD(algorithm="qr"), rank=RankPolicy(relative_cutoff=1e-12)
 )
 
 
@@ -1239,6 +1276,7 @@ def _field_transfer(
             differentiable_geometry=False,
             exact_on=exact,
         ),
+        geometry=plan.geometry,
     )
 
 

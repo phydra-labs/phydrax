@@ -10,7 +10,6 @@ def test_nuclear_tokamak_and_reactor_profiles_remain_unreleased_and_scoped() -> 
 
     assert len({profile.profile_id for profile in profiles}) == len(profiles)
     assert all(not profile.released for profile in profiles)
-    assert all(profile.version == "candidate" for profile in profiles)
     assert all(profile.required_gates for profile in profiles)
     assert {profile.capability for profile in profiles} >= {
         "nuclear.activation",

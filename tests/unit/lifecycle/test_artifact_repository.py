@@ -181,6 +181,55 @@ def test_posix_reader_detects_chunk_and_commit_marker_corruption(
         repository.get_manifest("checkpoint-a")
 
 
+@pytest.mark.parametrize("member", ("manifest.json", "COMMIT"))
+def test_repeated_manifest_reads_revalidate_durable_content(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    root = tmp_path / "repository"
+    repository = POSIXArtifactRepository(root, _posix_policy())
+    transaction, chunk = _stage(
+        repository,
+        "checkpoint-a",
+        "attempt-a",
+        b"accepted-state",
+        started_at=10,
+    )
+    committed = repository.commit(transaction, (chunk,), committed_at=20)
+    for _ in range(3):
+        admitted = repository.get_manifest("checkpoint-a")
+        assert admitted.manifest_id == committed.manifest_id
+        assert repository.read_chunk(admitted, chunk) == b"accepted-state"
+    (root / "roots" / transaction.attempt_id / member).write_bytes(b"{}\n")
+    with pytest.raises(RepositoryCorruptionError):
+        repository.get_manifest("checkpoint-a")
+
+
+def test_repeated_manifest_reads_follow_replacement_pointer(tmp_path: Path) -> None:
+    repository = POSIXArtifactRepository(tmp_path / "repository", _posix_policy())
+    first, first_chunk = _stage(
+        repository,
+        "checkpoint-a",
+        "attempt-first",
+        b"first-state",
+        started_at=10,
+    )
+    committed = repository.commit(first, (first_chunk,), committed_at=20)
+    assert repository.get_manifest("checkpoint-a").manifest_id == committed.manifest_id
+    replacement, replacement_chunk = _stage(
+        repository,
+        "checkpoint-a",
+        "attempt-replacement",
+        b"replacement-state",
+        started_at=30,
+    )
+    replaced = repository.commit(replacement, (replacement_chunk,), committed_at=40)
+    current = repository.get_manifest("checkpoint-a")
+    assert current.manifest_id == replaced.manifest_id
+    assert current.manifest_id != committed.manifest_id
+    assert repository.read_chunk(current, replacement_chunk) == b"replacement-state"
+
+
 def test_duplicate_chunk_and_stale_writer_conflicts_are_fail_closed(
     tmp_path: Path,
 ) -> None:

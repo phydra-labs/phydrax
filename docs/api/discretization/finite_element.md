@@ -104,7 +104,54 @@ Lowest-order scalar vertices and circulation incidence remain canonical.
 
 ## Fields, geometry, and preparation
 
+For full-dimensional cells, host admission computes the metric determinant as
+`det(J) ** 2` directly from J; forming a rounded `J.T @ J` first can falsely
+erase a resolved direction. Runtime execution factors J itself, uses
+`abs(det(J))` as the measure density, and retains native rank/condition/status
+evidence. Embedded cells instead retain the tangent metric `G = J.T @ J`, use
+`sqrt(det(G))` as their physical density, and map scalar gradients by
+`J @ inverse(G)`. Singular, nonfinite, or nonpositive metric evidence refuses
+execution. A positive sampled measure does not bypass the native solve status,
+and no ambient-volume metric or unique-normal claim is inferred.
+
 ::: phydrax.discretization.CellGeometrySpec
+
+---
+
+`coordinate_lagrange_element(cell_kind, degree)` is the canonical equispaced
+coordinate basis used by geometry source/enclosure, curving, and nested
+transition owners. It is intentionally distinct from solution nodal families
+whose interpolation sites may be warped or Lobatto.
+
+::: phydrax.discretization.coordinate_lagrange_element
+
+---
+
+`CellGeometrySpec.exact_source` owns the exact construction behind a numerical
+carrier. PLC sources bind original source rows, scientific entity IDs, domain
+identity/revision, and per-vertex construction witnesses. Power sources retain
+their exact polyhedral construction. Layout admission rejects a source from
+the wrong cell family; exact source coordinates, not rounded carrier
+coordinates, govern host certification and measure preparation.
+
+::: phydrax.discretization.ExactPlcCellGeometrySource
+
+---
+
+::: phydrax.discretization.ExactPowerCellGeometrySource
+
+---
+
+::: phydrax.discretization.ExactPowerCellGeometryRestrictionSource
+
+---
+
+`LayerColumnCellGeometryElement` composes bottom/top polynomial profiles with
+authored physical corner corrections. Positive and negative corner banks stay
+separate; preparation does not replace them with a rounded coefficient
+difference.
+
+::: phydrax.discretization.LayerColumnCellGeometryElement
 
 ---
 
@@ -808,3 +855,76 @@ differentiates it by the implicit function theorem.
 covariant mapping and native sparse metric/coordinate operators. The exact
 sequence and relative PEC restriction use the same exterior protocol as other
 form elements; material weights are separate from the metric pairing.
+
+Generic `FiniteElementDiscretization` uses `form_element` for compatible fields.
+Nested and non-nested meshing transfers retain the declared form degree, twist,
+proxy, entity orientation, and coordinate map rather than selecting a separate
+lowest-order tetrahedral element.
+
+## Geometry, periodic, ownership, and transition records
+
+These records preserve coordinate-source, quotient-topology, owner-local DOF,
+field-transfer, and accepted-epoch meaning across native mesh changes. A
+transition record is evidence for its exact route only; matching shapes do not
+authorize reuse, and an unavailable nesting witness requires the declared
+projection/remap path.
+
+::: phydrax.discretization
+    options:
+      members:
+        - SurfaceChartWitness
+        - PreparedSurfaceChartOccurrence
+        - PreparedSurfaceChartDeformation
+        - prepare_surface_chart_deformation
+        - PreparedSphereChartPiece
+        - PreparedSphereChartOccurrence
+        - PreparedSphereChartDeformation
+        - SphereGeometryReconstruction
+        - prepare_sphere_chart_deformation
+        - reconstruct_sphere_material_cell_geometry
+        - PeriodicIsometryGroup
+        - PeriodicMeasureReport
+        - PeriodicMeshTopology
+        - periodic_orbit_measures
+        - ExactCellGeometrySource
+        - RationalComposedCellGeometryElement
+        - ExactPlcCellGeometryConvexSource
+        - ExactPowerCellGeometryLinearActionSource
+        - PreparedExactPlcGeometry
+        - PreparedExactPowerGeometry
+        - CellGeometryTransition
+        - CellGeometryTransitionError
+        - CellGeometryTransitionEvidence
+        - CellGeometryTransitionPolicy
+        - SourceGeometryRealization
+        - SourceRealizationFieldSemantics
+        - prepare_source_geometry_realization
+        - FiniteElementDofOwnershipPlan
+        - FiniteElementDofSourceProjection
+        - FiniteElementGlobalDofOwnership
+        - FiniteElementClosurePreparation
+        - FiniteElementExecutionLimits
+        - finite_element_dof_identity_keys
+        - OwnerLocalFiniteElementTransfer
+        - owner_local_finite_element_transfer_support
+        - prepare_owner_local_finite_element_transfer
+        - execute_owner_local_finite_element_transfer
+        - FiniteElementFieldTransfer
+        - FiniteElementTransferEvidence
+        - prepare_nested_field_transfer
+        - prepare_source_realization_field_transfer
+        - prepare_projection_field_transfer
+        - NestedReferenceWitnesses
+        - transition_displaced_cell_geometry
+        - transition_nested_cell_geometry
+        - FieldEpochTransition
+        - FieldEpochTransitionResult
+        - TransferGeometryBinding
+        - TransferGeometryRelation
+        - TransferSemantics
+
+::: phydrax.solver.MaterialTopologyTransferResult
+
+---
+
+::: phydrax.solver.refinement_parent_cells

@@ -341,7 +341,6 @@ def bubbly_medium_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             "acoustics.bubbly-medium.profile",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     "acoustics.bubbly-medium",

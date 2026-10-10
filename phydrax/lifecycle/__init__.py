@@ -2,168 +2,215 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from ._archive import (
-    CanonicalLogicalArrays,
-    collection_digest,
-    ConfigurationLineageArtifact,
-    create,
-    decode_logical_arrays,
-    encode_logical_arrays,
-    export,
-    LifecycleArchive,
-    LifecycleQuery,
-    LifecycleRecord,
-    list_fields,
-    migrate_configuration,
-    open,
-    payload_byte_count,
-    payload_digest,
-    query,
-    register_exporter,
-    rollback_configuration,
-    SampledExporter,
-    SampledField,
-    support_bundle,
-    SupportBundleAuthorization,
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
+
+
+_FACADE_EXPORT_MODULES = (
+    "._archive",
+    "._array_artifact",
+    "._chunk_repository",
+    "._composition_rebind",
+    "._coupled_training",
+    "._distributed_checkpoint",
+    "._event_graph_repository",
+    "._migration",
+    "._models",
+    "._provenance",
+    "._repository",
+    "._resolved_run",
+    "._restart_topology",
+    "._transaction",
 )
-from ._array_artifact import (
-    ArrayArtifactProvenance,
-    ArrayArtifactReceipt,
-    read_typed_array_artifact,
-    write_typed_array_artifact,
-)
-from ._chunk_repository import (
-    ArtifactManifest,
-    ArtifactRepository,
-    CheckpointResourcePolicy,
-    ChunkEncoding,
-    ChunkRecord,
-    GarbageCollectionReport,
-    LeaseRecord,
-    LegalHoldRecord,
-    RepositoryConflictError,
-    RepositoryCorruptionError,
-    RepositoryError,
-    RepositoryTransaction,
-    RetentionPolicy,
-    TombstoneRecord,
-    UnsupportedRepositoryProfileError,
-)
-from ._composition_rebind import (
-    commit_composition_rebind,
-    Composition,
-    CompositionDependency,
-    CompositionEntry,
-    CompositionFacet,
-    CompositionRebind,
-    CompositionRebindReceipt,
-    CompositionRole,
-    CompositionTransport,
-    CompositionTransportKind,
-)
-from ._coupled_training import (
-    coupled_training_step,
-    CoupledTrainingEvidence,
-    CoupledTrainingPolicy,
-    CoupledTrainingResult,
-)
-from ._distributed_checkpoint import (
-    AddressableCheckpointShard,
-    assemble_distributed_checkpoint_from_repository,
-    assemble_distributed_checkpoint_manifest,
-    ProcessCheckpointPublication,
-    publish_process_checkpoint,
-    restore_global_array_from_checkpoint,
-    snapshot_addressable_arrays,
-)
-from ._event_graph_repository import (
-    checkpoint_content_id,
-    ConservationStatus,
-    deterministic_commit_owner,
-    EpochCommitReceipt,
-    EventGraphEpochManifest,
-    EventGraphGarbageCollectionReport,
-    EventGraphRepository,
-    GlobalEntity,
-    GlobalEvent,
-    GlobalEventEdge,
-    GlobalWorkItem,
-    PersistedEventGraphEpoch,
-    RunTip,
-    WorkLease,
-)
-from ._migration import (
-    AmbiguousMigrationError,
-    CompatibilityRegistry,
-    CyclicMigrationError,
-    load_and_resolve_migration,
-    LossyMigrationError,
-    MigrationEdge,
-    MigrationError,
-    MigrationPurityError,
-    MigrationReport,
-    resolve_migration,
-    UnsupportedMigrationError,
-)
-from ._models import (
-    AnalysisPlan,
-    CheckpointManifest,
-    CheckpointShard,
-    MetadataRecord,
-    ModelManifest,
-    PayloadRecord,
-    ResultFieldRecord,
-    ResultManifest,
-    ResultRevision,
-    RevisionLineage,
-    RunRecord,
-    RunStatus,
-)
-from ._provenance import (
-    build_provenance_from_paths,
-    BuildProvenance,
-    create_build_provenance,
-    digest_paths,
-    DistributionLike,
-    generate_spdx_sbom,
-    installed_packages,
-    InstalledPackage,
-    spdx_json,
-)
-from ._repository import (
-    ArtifactGuardRecoveryAuthorization,
-    ConditionalObjectClient,
-    HPCFilesystemProfile,
-    InMemoryConditionalObjectClient,
-    ObjectMetadata,
-    ObjectNotFoundError,
-    ObjectPreconditionError,
-    ObjectStoreProfile,
-    ObjectValue,
-    POSIXArtifactRepository,
-    POSIXRepositoryPolicy,
-    S3ArtifactRepository,
-)
-from ._resolved_run import load_resolved_run_spec, resolve_run_spec, ResolvedRunSpec
-from ._restart_topology import (
-    admit_topology_restart,
-    canonical_chunk_mapping,
-    CanonicalRestartChunk,
-    ChunkRangeReader,
-    DestinationShard,
-    DestinationShardWriter,
-    DirectRestorePlan,
-    execute_direct_restore,
-    PayloadClass,
-    prepare_direct_restore,
-    RestartAdmission,
-    RestartChunkMapping,
-    RestartClass,
-    RestartExecutionReport,
-    TopologyRestartPolicy,
-    TopologyRestartRelation,
-)
-from ._transaction import commit_candidate, TransactionalCandidate, TransactionalCommit
+
+
+if TYPE_CHECKING:
+    from ._archive import (
+        CanonicalLogicalArrays,
+        collection_digest,
+        ConfigurationLineageArtifact,
+        create,
+        decode_logical_arrays,
+        encode_logical_arrays,
+        export,
+        LifecycleArchive,
+        LifecycleQuery,
+        LifecycleRecord,
+        list_fields,
+        migrate_configuration,
+        open,
+        payload_byte_count,
+        payload_digest,
+        query,
+        register_exporter,
+        rollback_configuration,
+        SampledExporter,
+        SampledField,
+        support_bundle,
+        SupportBundleAuthorization,
+    )
+    from ._array_artifact import (
+        ArrayArtifactProvenance,
+        ArrayArtifactReceipt,
+        read_typed_array_artifact,
+        write_typed_array_artifact,
+    )
+    from ._chunk_repository import (
+        ArtifactManifest,
+        ArtifactRepository,
+        CheckpointResourcePolicy,
+        ChunkEncoding,
+        ChunkRecord,
+        GarbageCollectionReport,
+        LeaseRecord,
+        LegalHoldRecord,
+        RepositoryConflictError,
+        RepositoryCorruptionError,
+        RepositoryError,
+        RepositoryTransaction,
+        RetentionPolicy,
+        TombstoneRecord,
+        UnsupportedRepositoryProfileError,
+    )
+    from ._composition_rebind import (
+        commit_composition_rebind,
+        Composition,
+        CompositionDependency,
+        CompositionEntry,
+        CompositionFacet,
+        CompositionRebind,
+        CompositionRebindReceipt,
+        CompositionRole,
+        CompositionTransport,
+        CompositionTransportKind,
+    )
+    from ._coupled_training import (
+        coupled_training_step,
+        CoupledTrainingEvidence,
+        CoupledTrainingPolicy,
+        CoupledTrainingResult,
+    )
+    from ._distributed_checkpoint import (
+        AddressableCheckpointShard,
+        assemble_distributed_checkpoint_from_repository,
+        assemble_distributed_checkpoint_manifest,
+        ProcessCheckpointPublication,
+        publish_process_checkpoint,
+        restore_global_array_from_checkpoint,
+        snapshot_addressable_arrays,
+    )
+    from ._event_graph_repository import (
+        checkpoint_content_id,
+        ConservationStatus,
+        deterministic_commit_owner,
+        EpochCommitReceipt,
+        EventGraphEpochManifest,
+        EventGraphGarbageCollectionReport,
+        EventGraphRepository,
+        GlobalEntity,
+        GlobalEvent,
+        GlobalEventEdge,
+        GlobalWorkItem,
+        PersistedEventGraphEpoch,
+        RunTip,
+        WorkLease,
+    )
+    from ._meshing_field_records import MeshingAcceptedEpoch
+    from ._migration import (
+        AmbiguousMigrationError,
+        CompatibilityRegistry,
+        CyclicMigrationError,
+        load_and_resolve_migration,
+        LossyMigrationError,
+        MigrationEdge,
+        MigrationError,
+        MigrationPurityError,
+        MigrationReport,
+        resolve_migration,
+        UnsupportedMigrationError,
+    )
+    from ._models import (
+        AnalysisPlan,
+        CheckpointManifest,
+        CheckpointShard,
+        MetadataRecord,
+        ModelManifest,
+        PayloadRecord,
+        ResultFieldRecord,
+        ResultManifest,
+        ResultRevision,
+        RevisionLineage,
+        RunRecord,
+        RunStatus,
+    )
+    from ._provenance import (
+        build_provenance_from_paths,
+        BuildProvenance,
+        create_build_provenance,
+        digest_paths,
+        DistributionLike,
+        generate_spdx_sbom,
+        installed_packages,
+        InstalledPackage,
+        spdx_json,
+    )
+    from ._repository import (
+        ArtifactGuardRecoveryAuthorization,
+        ConditionalObjectClient,
+        HPCFilesystemProfile,
+        InMemoryConditionalObjectClient,
+        ObjectMetadata,
+        ObjectNotFoundError,
+        ObjectPreconditionError,
+        ObjectStoreProfile,
+        ObjectValue,
+        POSIXArtifactRepository,
+        POSIXRepositoryPolicy,
+        S3ArtifactRepository,
+    )
+    from ._resolved_run import load_resolved_run_spec, resolve_run_spec, ResolvedRunSpec
+    from ._restart_topology import (
+        admit_topology_restart,
+        canonical_chunk_mapping,
+        CanonicalRestartChunk,
+        ChunkRangeReader,
+        DestinationShard,
+        DestinationShardWriter,
+        DirectRestorePlan,
+        execute_direct_restore,
+        PayloadClass,
+        prepare_direct_restore,
+        RestartAdmission,
+        RestartChunkMapping,
+        RestartClass,
+        RestartExecutionReport,
+        TopologyRestartPolicy,
+        TopologyRestartRelation,
+    )
+    from ._transaction import (
+        commit_candidate,
+        TransactionalCandidate,
+        TransactionalCommit,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    if name == "MeshingAcceptedEpoch":
+        value = import_module("._meshing_field_records", __package__).MeshingAcceptedEpoch
+        globals()[name] = value
+        return value
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        exported = getattr(module, "__all__", ())
+        if name in exported or name in vars(module):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -214,6 +261,7 @@ __all__ = [
     "LifecycleQuery",
     "LifecycleRecord",
     "LossyMigrationError",
+    "MeshingAcceptedEpoch",
     "MetadataRecord",
     "MigrationEdge",
     "MigrationError",

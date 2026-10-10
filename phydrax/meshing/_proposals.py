@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 import time
 from abc import abstractmethod
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -31,12 +31,19 @@ from .._model._ports import require_port_shapes
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
+from ..discretization import (
+    CellGeometrySpec,
+    CellMesh,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ..optim import OptimizationTermination
-from ..typing import checked, parse
+from ..typing import checked, Dim, Float64, Identifier, Identifiers, parse
 from ._adaptation import (
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
+    MeshAdaptationHierarchy,
     MeshAdaptationPolicy,
     MeshAdaptationResult,
     MeshAdaptationRoute,
@@ -45,6 +52,7 @@ from ._adaptation import (
 )
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
 from ._contracts import MeshingLimits
+from ._measurements import measure_phase, NativeMeshingPhaseRecorder
 from ._metric import (
     _grade_scalar_sizes,
     MeshMetricField,
@@ -55,6 +63,7 @@ from ._metric import (
     MetricNormalizationPolicy,
     normalize_mesh_metric,
 )
+from ._mixed_adaptation import MixedLayerColumns
 from ._optimization import (
     MeshOptimizationResult,
     optimize_cell_mesh,
@@ -264,7 +273,73 @@ MeshProposal = (
     MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal | MeshCoordinateProposal
 )
 
-MeshProposerKind: TypeAlias = Literal["marking", "size", "metric"]
+MeshProposerKind: TypeAlias = Literal["marking", "size", "metric", "coordinate"]
+
+
+class _ProposalEntityDim(Dim):
+    """Entities of the exact proposal feature scope."""
+
+
+class _ProposalFeatureDim(Dim, minimum=1):
+    """Independently identified scientific feature columns."""
+
+
+@final
+class MeshProposalFeatures(StrictModule, NonTrainableState):
+    """Owner-identified feature columns bound to the exact result and entity scope."""
+
+    __strict_contract__ = True
+
+    values: Float64[_ProposalEntityDim, _ProposalFeatureDim]
+    scope: MeshingScope
+    source_result_id: Identifier = eqx.field(static=True)
+    feature_ids: Identifiers[_ProposalFeatureDim] = eqx.field(static=True)
+    feature_owner_id: Identifier = eqx.field(static=True)
+    feature_id: Identifier = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: CellMeshingResult,
+        scope: MeshingScope,
+        values: ArrayLike,
+        /,
+        *,
+        feature_ids: tuple[str, ...],
+        feature_owner_id: str,
+    ) -> None:
+        if not isinstance(source, CellMeshingResult):
+            raise TypeError("source must be CellMeshingResult.")
+        _scope_rows(source, scope)
+        data = np.asarray(values, dtype=np.float64)
+        identifiers = tuple(feature_ids)
+        if (
+            data.ndim != 2
+            or data.shape != (scope.entity_ids.size, len(identifiers))
+            or not identifiers
+            or len(set(identifiers)) != len(identifiers)
+            or any(not isinstance(value, str) or not value for value in identifiers)
+            or not np.all(np.isfinite(data))
+        ):
+            raise ValueError(
+                "Features require finite scoped rows and unique scientific column IDs."
+            )
+        if not isinstance(feature_owner_id, str) or not feature_owner_id:
+            raise ValueError(
+                "feature_owner_id must identify the producing scientific owner."
+            )
+        self.values, self.scope = jnp.asarray(data, dtype=jnp.float64), scope
+        self.source_result_id, self.feature_ids = source.result_id, identifiers
+        self.feature_owner_id = feature_owner_id
+        self.feature_id = canonical_fingerprint(
+            {
+                "kind": "mesh-proposal-features",
+                "source": source.result_id,
+                "scope": scope.scope_id,
+                "columns": identifiers,
+                "owner": feature_owner_id,
+                "values": array_tree_fingerprint(data),
+            }
+        )
 
 
 class AbstractMeshProposer(AbstractComponentSlot):
@@ -273,7 +348,7 @@ class AbstractMeshProposer(AbstractComponentSlot):
     The base is the neutral `DECISION` slot of mesh adaptation: a proposer
     decides where and how a certified mesh should adapt, but it never produces
     a mesh. `propose(source, features, scope=...)` returns one typed marking,
-    size, or metric proposal bound to the exact source revision; only
+    size, metric or coordinate proposal bound to the exact source revision; only
     `project_mesh_proposal` and `prepare_mesh_proposal` turn it into a trusted
     candidate, under a `MeshProposalSafetyPolicy` and native adaptation.
     `features` hold one row per scope entity in sorted global-ID order.
@@ -288,11 +363,11 @@ class AbstractMeshProposer(AbstractComponentSlot):
     def propose(
         self,
         source: CellMeshingResult,
-        features: ArrayLike,
+        features: MeshProposalFeatures,
         /,
         *,
         scope: MeshingScope | None = None,
-    ) -> MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal:
+    ) -> MeshProposal:
         raise NotImplementedError
 
 
@@ -305,14 +380,15 @@ def _model_value_shape(size: Any, /) -> tuple[int, ...]:
 
 
 class LearnedMeshProposer(AbstractMeshProposer):
-    """Pointwise learned marking, size, or metric proposer.
+    """Pointwise learned marking, size, metric or coordinate proposer.
 
     The model maps one feature row to one proposal value: a marking score per
-    cell (`kind="marking"`), a size per vertex (`"size"`), or a
-    `(spatial_dimension, spatial_dimension)` metric tensor per vertex
-    (`"metric"`). Sizes are exact: `in_size` is the feature width and `out_size`
-    produces the value shape; the model must use a pointwise flat binding and
-    is evaluated without a key. `evaluate(features)` is the differentiable
+    cell (`kind="marking"`), a size per vertex (`"size"`), a square coordinate-axis
+    metric tensor (`"metric"`), or a source-contract coordinate vector
+    (`"coordinate"`). Sizes are exact: `in_size` is the feature width and `out_size`
+    produces the value shape; the model must use a pointwise flat binding.
+    Deterministic evaluation uses no key; stochastic proposals use explicit,
+    scientific entity addresses rather than batch positions. `evaluate(features)` is the differentiable
     per-entity map used for supervised training, for example against marking
     targets derived from `FiniteElementDWRIndicators.absolute` or
     `HighEnthalpyAMREvidence.refine_mask` reordered to the scope's global IDs.
@@ -325,7 +401,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
 
     `ports` declare the scientific identity of the proposer's values: one
     feature-row port (event shape `(in_size,)`) as the input and the proposal
-    value port (event shape `()` or `(spatial_dimension, spatial_dimension)`)
+    value port (scalar, coordinate vector, or square metric tensor event shape)
     as the output. A model declaring ports requires `ports` and an explicit
     `port_mapping` binding its ordered ports to exactly that owner order; a
     model without ports keeps the size checks alone.
@@ -351,24 +427,33 @@ class LearnedMeshProposer(AbstractMeshProposer):
         port_mapping: PortMapping | None = None,
     ) -> None:
         kind = parse(kind, MeshProposerKind, "kind")
-        if (kind == "metric") != (spatial_dimension is not None):
-            raise ValueError(
-                "spatial_dimension is required exactly for metric proposers."
-            )
-        if spatial_dimension is not None and (
-            isinstance(spatial_dimension, bool)
-            or not isinstance(spatial_dimension, int)
-            or spatial_dimension <= 0
-        ):
-            raise ValueError("spatial_dimension must be a positive int.")
+        value_shape: tuple[int, ...]
+        match kind:
+            case "marking" | "size":
+                if spatial_dimension is not None:
+                    raise ValueError("Scalar proposers do not take spatial_dimension.")
+                value_shape = ()
+            case "metric" | "coordinate":
+                if (
+                    isinstance(spatial_dimension, bool)
+                    or not isinstance(spatial_dimension, int)
+                    or spatial_dimension <= 0
+                ):
+                    raise ValueError(
+                        "Metric/coordinate proposers require positive spatial_dimension."
+                    )
+                value_shape = (
+                    (spatial_dimension, spatial_dimension)
+                    if kind == "metric"
+                    else (spatial_dimension,)
+                )
+            case _:
+                raise ValueError(f"Unknown mesh proposer kind {kind!r}.")
         binding = model.input_binding()
         if binding.batch_mode != "pointwise" or binding.input_mode != "flat":
             raise ValueError("Learned mesh proposers require a pointwise flat binding.")
         if isinstance(model.in_size, bool) or not isinstance(model.in_size, int):
             raise ValueError("Learned mesh proposer in_size must be the feature width.")
-        value_shape = (
-            () if spatial_dimension is None else (spatial_dimension, spatial_dimension)
-        )
         if _model_value_shape(model.out_size) != value_shape:
             raise ValueError(
                 f"Learned {kind} proposer out_size must produce shape {value_shape}; "
@@ -400,6 +485,23 @@ class LearnedMeshProposer(AbstractMeshProposer):
             port_mapping=self.port_mapping,
         ).contract()
 
+    @property
+    def model_id(self) -> str:
+        """Bind current numerical state to the authored proposer specification."""
+        return canonical_fingerprint(
+            {
+                "kind": "learned-mesh-proposer-model",
+                "proposer": self.proposer_id,
+                "model_type": f"{type(self.model).__module__}.{type(self.model).__qualname__}",
+                "kind_of_proposal": self.kind,
+                "spatial_dimension": self.spatial_dimension,
+                "input_size": self.model.in_size,
+                "output_shape": _model_value_shape(self.model.out_size),
+                "component_contract": self.component_contract().bound_semantic_id,
+                "parameters_and_state": array_tree_fingerprint(self.model),
+            }
+        )
+
     def evaluate(self, features: ArrayLike, /) -> Array:
         """Return one proposal value per feature row, shape `(rows,) + value shape`."""
         rows = jnp.asarray(features)
@@ -413,42 +515,131 @@ class LearnedMeshProposer(AbstractMeshProposer):
             lambda row: binding.call(self.model, row, key=None, iter_=None, kwargs={})
         )(rows)
 
+    def evaluate_addressed(
+        self,
+        features: ArrayLike,
+        entity_ids: ArrayLike,
+        key: Array,
+        /,
+        *,
+        address_id: str,
+    ) -> Array:
+        """Evaluate with reproducible keys independent of partition and row order.
+
+        Both halves of each signed 64-bit scientific ID are folded in, avoiding
+        collisions between IDs that differ only in their high bits. The authored
+        address binds the source revision and feature owner, not the local batch.
+        """
+        rows = jnp.asarray(features)
+        identifiers = jnp.asarray(entity_ids)
+        if rows.ndim != 2 or rows.shape[1] != self.model.in_size:
+            raise ValueError("Addressed features must match the model feature width.")
+        if identifiers.ndim != 1 or identifiers.shape[0] != rows.shape[0]:
+            raise ValueError("Scientific entity IDs must align with feature rows.")
+        if identifiers.dtype != jnp.dtype("int64"):
+            raise ValueError("Scientific entity IDs require signed 64-bit storage.")
+        if not isinstance(address_id, str) or not address_id:
+            raise ValueError("address_id must identify the scientific evaluation.")
+        digest = canonical_fingerprint(
+            {"kind": "mesh-proposal-random-address", "address": address_id}
+        )
+        addressed = key
+        for offset in range(0, len(digest), 8):
+            addressed = jax.random.fold_in(
+                addressed, int(digest[offset : offset + 8], 16)
+            )
+        unsigned = identifiers.astype(jnp.uint64)
+        low = unsigned.astype(jnp.uint32)
+        high = (unsigned >> jnp.uint64(32)).astype(jnp.uint32)
+        binding = self.model.input_binding()
+
+        def evaluate_row(row: Array, low_id: Array, high_id: Array) -> Array:
+            entity_key = jax.random.fold_in(
+                jax.random.fold_in(addressed, high_id), low_id
+            )
+            return binding.call(self.model, row, key=entity_key, iter_=None, kwargs={})
+
+        return jax.vmap(evaluate_row)(rows, low, high)
+
     @checked
     def propose(
         self,
         source: CellMeshingResult,
-        features: ArrayLike,
+        features: MeshProposalFeatures,
         /,
         *,
         scope: MeshingScope | None = None,
-    ) -> MeshMarkingProposal | MeshSizeProposal | MeshMetricProposal:
-        if self.kind == "metric" and (
-            self.spatial_dimension != source.mesh.ambient_dimension
+        key: Array | None = None,
+    ) -> MeshProposal:
+        if features.source_result_id != source.result_id:
+            raise ValueError("Learned features have a stale source result revision.")
+        if (
+            self.spatial_dimension is not None
+            and self.spatial_dimension != source.mesh.ambient_dimension
         ):
             raise ValueError(
-                "Metric proposer spatial_dimension must match the source mesh."
+                "Proposer coordinate axes must match the source coordinate contract."
             )
         dimension = source.mesh.topological_dimension if self.kind == "marking" else 0
-        scope_ = mesh_proposal_scope(source, dimension) if scope is None else scope
-        rows = jnp.asarray(features)
+        scope_ = features.scope if scope is None else scope
+        _scope_rows(source, scope_)
+        if (
+            scope_.scope_id != features.scope.scope_id
+            or scope_.entity_dimension != dimension
+        ):
+            raise ValueError(
+                "Learned feature scope does not match the requested proposal entities."
+            )
+        rows = features.values
         if rows.ndim != 2 or rows.shape[0] != scope_.entity_ids.size:
             raise ValueError(
                 "Proposer features must hold one row per scope entity in sorted "
                 "global-ID order."
             )
-        values = np.asarray(self.evaluate(rows))
+        model_id = self.model_id
+        address = canonical_fingerprint(
+            {
+                "kind": "learned-mesh-proposal-evaluation",
+                "source": source.result_id,
+                "feature_owner": features.feature_owner_id,
+                "columns": features.feature_ids,
+                "proposer": model_id,
+            }
+        )
+        values = np.asarray(
+            self.evaluate(rows)
+            if key is None
+            else self.evaluate_addressed(rows, scope_.entity_ids, key, address_id=address)
+        )
+        evaluation_id = canonical_fingerprint(
+            {
+                "kind": "learned-mesh-proposal",
+                "model": model_id,
+                "features": features.feature_id,
+                "address": address,
+                "realization": None
+                if key is None
+                else array_tree_fingerprint(jax.random.key_data(key)),
+            }
+        )
         match self.kind:
             case "marking":
                 return MeshMarkingProposal(
-                    source, scope_, values, proposer_id=self.proposer_id
+                    source, scope_, values, proposer_id=evaluation_id
                 )
             case "size":
-                return MeshSizeProposal(
-                    source, scope_, values, proposer_id=self.proposer_id
-                )
+                return MeshSizeProposal(source, scope_, values, proposer_id=evaluation_id)
             case "metric":
                 return MeshMetricProposal(
-                    source, scope_, values, proposer_id=self.proposer_id
+                    source, scope_, values, proposer_id=evaluation_id
+                )
+            case "coordinate":
+                return MeshCoordinateProposal(
+                    source,
+                    scope_,
+                    values,
+                    source.coordinate_contract,
+                    proposer_id=evaluation_id,
                 )
             case _:
                 raise ValueError(f"Unknown mesh proposer kind {self.kind!r}.")
@@ -738,31 +929,41 @@ def _optimization_bounds(source: Any, policy: Any) -> tuple[np.ndarray, np.ndarr
     return np.where(empty, points, lower), np.where(empty, points, upper)
 
 
-def _safe_marks(source: Any, scores: Any, policy: Any) -> Any:
-    """Highest positive scores within the declared capacity, then by global ID.
-
-    Protection is enforced exactly by native bisection, which rejects every mark
-    whose conformity closure would split a protected entity and reports it.
-    """
-    cells = np.asarray(source.mesh.blocks[0].global_ids)
+def _safe_marks(
+    source: CellMeshingResult, scores: np.ndarray, policy: MeshProposalSafetyPolicy
+) -> np.ndarray:
+    """Highest positive scores, then global ID; exact closure belongs to the route."""
+    cells = np.concatenate([np.asarray(block.global_ids) for block in source.mesh.blocks])
     order = np.lexsort((cells, -scores))
-    counts = source.audit.entity_counts
+    eligible = scores > 0.0
+    for scope in policy.protected_scopes:
+        if scope.entity_dimension == source.mesh.topological_dimension:
+            eligible[_scope_rows(source, scope)] = False
     capacity = min(
         policy.maximum_marked_cells,
-        max(0, policy.limits.maximum_vertices - counts[0]),
-        max(0, (policy.limits.maximum_cells - counts[2]) // 2),
-        max(0, (policy.limits.maximum_faces - counts[2]) // 2),
-        max(0, (policy.limits.maximum_edges - counts[1]) // 3),
-        max(
-            0,
-            (
-                policy.limits.maximum_connectivity_entries
-                - source.audit.connectivity_entries
-            )
-            // 18,
-        ),
+        max(0, policy.limits.maximum_cells - source.audit.entity_counts[-1]),
     )
-    selected = order[scores[order] > 0][:capacity]
+    # Preserve the planar projection's established allocation bound. In 3D,
+    # conformity closure and connectivity admission are owned by native bisection;
+    # planar edge/face growth constants are not tetrahedral resource evidence.
+    if source.mesh.topological_dimension == 2:
+        counts = source.audit.entity_counts
+        capacity = min(
+            capacity,
+            max(0, policy.limits.maximum_vertices - counts[0]),
+            max(0, (policy.limits.maximum_cells - counts[2]) // 2),
+            max(0, (policy.limits.maximum_faces - counts[2]) // 2),
+            max(0, (policy.limits.maximum_edges - counts[1]) // 3),
+            max(
+                0,
+                (
+                    policy.limits.maximum_connectivity_entries
+                    - source.audit.connectivity_entries
+                )
+                // 18,
+            ),
+        )
+    selected = order[eligible[order]][:capacity]
     return np.sort(cells[selected]).astype(np.int64, copy=False)
 
 
@@ -822,10 +1023,10 @@ def project_mesh_proposal(
 ) -> MeshProposalProjection:
     """Deterministically project untrusted values without generating a mesh.
 
-    Marking proposals project onto capacity-bounded marks executed by native
-    bisection. Size and metric proposals project onto a graded size field or a
-    normalized metric executed by native planar anisotropic metric adaptation
-    (split, collapse, flip, relocation) toward the unit-mesh criterion.
+    Marking scores project onto protected, capacity-bounded cell IDs; the selected
+    native family route owns connectivity and conformity closure. Simplex size
+    and metric proposals project onto a graded field or normalized tensors for
+    the admitted planar or tetrahedral unit-mesh route.
     """
     _check_binding(source, proposal, policy)
     mesh = source.mesh
@@ -844,18 +1045,16 @@ def project_mesh_proposal(
         else:
             raise ValueError("Coordinate proposal has no certifiable projected target.")
     else:
-        if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind != "triangle":
-            raise ValueError(
-                "Native marking, size and metric proposals require one T3 block."
-            )
-        connectivity = mesh.connectivity
-        if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError("Native T3 proposals require polygonal connectivity.")
         if isinstance(proposal, MeshMarkingProposal):
-            scores = np.zeros(mesh.blocks[0].global_ids.size)
+            scores = np.zeros(source.audit.entity_counts[-1], dtype=np.float64)
             scores[rows] = np.asarray(proposal.values)
             marks = _safe_marks(source, scores, policy)
         else:
+            kinds = {block.cell_kind for block in mesh.blocks}
+            if kinds != {"triangle"} and kinds != {"tetrahedron"}:
+                raise ValueError(
+                    "Native size/metric proposal projection requires simplex blocks."
+                )
             if rows.size != mesh.coordinates.shape[0]:
                 raise ValueError(
                     "Size and metric proposals must cover every source vertex."
@@ -863,6 +1062,12 @@ def project_mesh_proposal(
             # Field arrays are scope ordered; connectivity and points are mesh ordered.
             inverse = np.empty(rows.size, dtype=np.int64)
             inverse[rows] = np.arange(rows.size)
+            connectivity = mesh.connectivity
+            if not isinstance(
+                connectivity,
+                (PolygonalConnectivity, TetrahedralConnectivity, PolyhedralConnectivity),
+            ):
+                raise TypeError("Simplex proposals require canonical edge connectivity.")
             field_edges = inverse[np.asarray(connectivity.edges)]
             field_points = np.asarray(mesh.coordinates)[rows]
             if isinstance(proposal, MeshSizeProposal):
@@ -1134,26 +1339,61 @@ def _adaptation_metric(
 
 
 def _execute_adaptation(
-    source: CellMeshingResult, projection: MeshProposalProjection, /
+    source: CellMeshingResult,
+    projection: MeshProposalProjection,
+    native_policy: MeshAdaptationPolicy | None,
+    hierarchy: MeshAdaptationHierarchy,
+    layer_columns: MixedLayerColumns | None,
+    /,
 ) -> MeshAdaptationResult:
     policy = projection.policy
     protected = tuple(_mesh_scope(source, scope) for scope in policy.protected_scopes)
     if isinstance(projection.proposal, MeshMarkingProposal):
-        request = MarkedMeshAdaptation(projection.marked_cell_ids)
-        route = MeshAdaptationRoute.NATIVE_BISECTION
+        request = MarkedMeshAdaptation(
+            projection.marked_cell_ids, hierarchy=hierarchy, layer_columns=layer_columns
+        )
+        kinds = {block.cell_kind for block in source.mesh.blocks}
+        if kinds == {"triangle"} or kinds == {"tetrahedron"}:
+            route = MeshAdaptationRoute.NATIVE_BISECTION
+        elif native_policy is not None:
+            route = native_policy.route
+        else:
+            raise ValueError(
+                "This marked family requires an explicit qualified native policy."
+            )
     else:
         request = MetricMeshAdaptation(_adaptation_metric(source, projection))
-        route = MeshAdaptationRoute.NATIVE_METRIC_2D
-    return execute_mesh_adaptation(
-        prepare_mesh_adaptation(
-            source,
-            request,
-            policy=MeshAdaptationPolicy(
-                route,
-                protected_scopes=protected,
-                limits=policy.limits,
-            ),
+        match (source.mesh.topological_dimension, source.mesh.ambient_dimension):
+            case (3, 3):
+                route = MeshAdaptationRoute.NATIVE_METRIC_3D
+            case (2, 2):
+                route = MeshAdaptationRoute.NATIVE_METRIC_2D
+            case _:
+                if native_policy is None:
+                    raise ValueError(
+                        "This metric proposal requires an explicit qualified native route."
+                    )
+                route = native_policy.route
+    if native_policy is None:
+        # Native publication owns geometric validity; the stricter proposal
+        # policy is evaluated below without turning rejection into execution failure.
+        native_policy = MeshAdaptationPolicy(
+            route,
+            protected_scopes=protected,
+            limits=policy.limits,
         )
+    if native_policy.route in (MeshAdaptationRoute.MMG, MeshAdaptationRoute.OMEGA_H):
+        raise ValueError("Learned proposal execution requires an explicit native route.")
+    if native_policy.limits.limits_id != policy.limits.limits_id:
+        raise ValueError(
+            "Native execution must use the proposal's exact resource limits."
+        )
+    if not {scope.scope_id for scope in protected}.issubset(
+        scope.scope_id for scope in native_policy.protected_scopes
+    ):
+        raise ValueError("Native execution must preserve every proposal-protected scope.")
+    return execute_mesh_adaptation(
+        prepare_mesh_adaptation(source, request, policy=native_policy)
     )
 
 
@@ -1162,37 +1402,58 @@ def prepare_mesh_proposal(
     proposal: MeshProposal,
     policy: MeshProposalSafetyPolicy,
     /,
+    *,
+    native_policy: MeshAdaptationPolicy | None = None,
+    hierarchy: MeshAdaptationHierarchy = None,
+    layer_columns: MixedLayerColumns | None = None,
+    record_phase: NativeMeshingPhaseRecorder | None = None,
 ) -> MeshProposalTransaction:
     """Project, execute a native trusted path, audit and prepare atomic promotion.
 
-    No caller-supplied mesh or audit is accepted as proposal evidence. Native
-    adaptation and optimization currently operate on affine, unassociated
-    meshes: metadata requiring remapping is rejected rather than discarded.
-    An empty projected marking is an explicit unchanged-source transaction.
+    Curved nested simplex refinement, material organization and B-Rep associations
+    use the native adaptation owner's coordinate/lineage/association transfer.
+    A metric route for a new dimension/family must be supplied explicitly and
+    pass that owner's admission. Relocation's affine optimization route cannot
+    silently flatten a curved map or discard metadata.
     """
-    started = time.monotonic()
-    projection = project_mesh_proposal(source, proposal, policy)
-    affine = CellGeometrySpec.affine(source.mesh)
-    if (
-        source.geometry.geometry_layout_id != affine.geometry_layout_id
-        or not np.array_equal(source.geometry.coordinates, affine.coordinates)
-    ):
-        raise ValueError("Native proposal execution requires affine mesh geometry.")
-    if source.boundary is not None or any(
-        (
-            source.patches,
-            source.zones,
-            source.labels,
-            source.attributes,
-            source.associations,
-        )
+    if native_policy is not None and not isinstance(native_policy, MeshAdaptationPolicy):
+        raise TypeError("native_policy must be MeshAdaptationPolicy or None.")
+    if (hierarchy is not None or layer_columns is not None) and not isinstance(
+        proposal, MeshMarkingProposal
     ):
         raise ValueError(
-            "Native proposal execution cannot discard revision-bound mesh metadata."
+            "Refinement hierarchy/layer context belongs only to marking proposals."
         )
+    started = time.monotonic()
+    with measure_phase(record_phase, "native_preparation"):
+        projection = project_mesh_proposal(source, proposal, policy)
+        if record_phase is not None:
+            jax.block_until_ready(projection)
     adaptation, optimization = None, None
     candidate = source
     if isinstance(proposal, MeshCoordinateProposal):
+        if native_policy is not None:
+            raise ValueError(
+                "Coordinate optimization does not consume an adaptation policy."
+            )
+        affine = CellGeometrySpec.affine(source.mesh)
+        if (
+            source.geometry.geometry_layout_id != affine.geometry_layout_id
+            or not np.array_equal(source.geometry.coordinates, affine.coordinates)
+        ):
+            raise ValueError("Coordinate optimization requires affine mesh geometry.")
+        if source.boundary is not None or any(
+            (
+                source.patches,
+                source.zones,
+                source.labels,
+                source.attributes,
+                source.associations,
+            )
+        ):
+            raise ValueError(
+                "Coordinate optimization cannot discard revision-bound metadata."
+            )
         fixed, _ = _coordinate_projector(source, proposal, policy)
         plan = TargetMatrixOptimizationPlan(
             source.mesh,
@@ -1203,27 +1464,34 @@ def prepare_mesh_proposal(
                 maximum_steps=policy.maximum_optimization_iterations
             ),
         )
-        optimization = optimize_cell_mesh(
-            plan,
-            source.coordinate_contract,
-            numeric_version=f"proposal:{projection.projection_id}",
-        )
+        with measure_phase(record_phase, "improvement"):
+            optimization = optimize_cell_mesh(
+                plan,
+                source.coordinate_contract,
+                numeric_version=f"proposal:{projection.projection_id}",
+            )
+            if record_phase is not None:
+                jax.block_until_ready(optimization)
         if optimization.accepted:
             candidate = optimization.result
     elif projection.marked_cell_ids.size or not isinstance(proposal, MeshMarkingProposal):
-        adaptation = _execute_adaptation(source, projection)
+        with measure_phase(record_phase, "topology_adaptation"):
+            adaptation = _execute_adaptation(
+                source, projection, native_policy, hierarchy, layer_columns
+            )
+            if record_phase is not None:
+                jax.block_until_ready(adaptation)
         candidate = adaptation.target
-    # ty: ignore[unresolved-attribute]
-    quality = evaluate_cell_quality(candidate.mesh, candidate.geometry.coordinates)
-    audit = audit_cell_mesh(
-        # ty: ignore[unresolved-attribute]
-        candidate.mesh,
-        # ty: ignore[unresolved-attribute]
-        candidate.geometry,
-        quality,
-        policy=policy.audit_policy,
-    )
-    # ty: ignore[invalid-argument-type]
+    if not isinstance(candidate, CellMeshingResult):
+        raise TypeError("Native proposal execution must return CellMeshingResult.")
+    with measure_phase(record_phase, "audit"):
+        audit = audit_cell_mesh(
+            candidate.mesh,
+            candidate.geometry,
+            policy=policy.audit_policy,
+        )
+        if record_phase is not None:
+            jax.block_until_ready(audit)
     issues = _limit_issues(candidate, policy.limits) + _preservation_issues(
         source, candidate, projection
     )
@@ -1233,6 +1501,8 @@ def prepare_mesh_proposal(
         issues += ("mesh_optimization",)
     if adaptation is not None:
         issues += adaptation.compliance.issues
+        if not adaptation.status.converged:
+            issues += ("native_admission",)
     if (
         _payload_bytes(candidate)
         + _payload_bytes(None if adaptation is None else adaptation.transfer)
@@ -1250,9 +1520,7 @@ def prepare_mesh_proposal(
             ("maximum_vertices", policy.limits.maximum_vertices),
         ),
         achieved=(
-            # ty: ignore[unresolved-attribute]
             ("cells", candidate.audit.entity_counts[-1]),
-            # ty: ignore[unresolved-attribute]
             ("vertices", candidate.audit.vertex_count),
         ),
     )
@@ -1273,6 +1541,7 @@ __all__ = [
     "MeshCoordinateProposal",
     "MeshMarkingProposal",
     "MeshMetricProposal",
+    "MeshProposalFeatures",
     "MeshProposal",
     "MeshProposalProjection",
     "MeshProposalSafetyPolicy",

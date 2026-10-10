@@ -145,7 +145,6 @@ def _candidate(*, dae: Any = False) -> Any:
     return CapabilityProfile(
         f"battery.test-{'dae' if dae else 'ramp'}.candidate",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     ), support

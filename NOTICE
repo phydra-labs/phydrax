@@ -44,16 +44,29 @@ arXiv:2501.06933v3), distributed under CC BY 4.0. The external repository's
 source code, datasets, model weights, checkpoints, constants, and benchmark
 outputs are not redistributed or adapted here.
 
-The native meshing core (`native/meshcore`, distributed as `phydrax-meshcore`)
-is an independent implementation of published algorithms: the adaptive
-floating-point expansion arithmetic and robust predicates of J. R. Shewchuk
-(Discrete & Computational Geometry 18:305-363, 1997), Simulation of Simplicity
-(Edelsbrunner and Muecke, ACM Transactions on Graphics 9:66-104, 1990) with
-lifted-coordinate perturbations for Delaunay and regular triangulations
-(Devillers and Teillaud), half-space polytope clipping informed by r3d (Powell
-and Abel, Journal of Computational Physics 297:340-357, 2015), and Delaunay
-refinement after Ruppert, Chew, and Shewchuk. No upstream source code,
-including the public-domain `predicates.c`, is redistributed.
+The native meshing core (`native/meshcore`, distributed separately as
+`phydrax-meshcore`) is an independently authored C++20 implementation informed
+by published algorithms: the adaptive floating-point expansion arithmetic and
+robust predicates of J. R. Shewchuk (Discrete & Computational Geometry
+18:305-363, 1997); Simulation of Simplicity (Edelsbrunner and Muecke, ACM
+Transactions on Graphics 9:66-104, 1990) and lifted-coordinate perturbations
+for Delaunay and regular triangulations (Devillers and Teillaud); half-space
+polytope clipping informed by r3d (Powell and Abel, Journal of Computational
+Physics 297:340-357, 2015); triangle-contact classification by orientation
+predicates informed by Guigue and Devillers (Journal of Graphics Tools
+8(1):25-32, 2003); and Delaunay refinement after Ruppert, Chew, and Shewchuk.
+No upstream source code, including the public-domain `predicates.c`, is copied,
+translated, or redistributed.
+
+Gmsh, Mmg, fTetWild/wildmeshing, Manifold, Open3D Poisson reconstruction,
+OpenVDB, VoroCrust, Omega_h, TIOGA, METIS, SciPy/Qhull, and OCCT/OCP are
+independent optional comparison, provider, or interchange boundaries. Their
+success is not native-meshing evidence. Phydrax does not bundle their source,
+binaries, meshes, fixtures, or generated outputs; users install and license
+those projects separately. The main `phydrax` distribution does not rename or
+embed the meshcore shared library: the `meshcore` extra pins the separately
+packaged `phydrax-meshcore` release, and the loader verifies release, public C
+header ABI digest, source digest, binary digest, and build configuration.
 
 The streamed equivariant atomistic substrate and native standard MACE models
 implement published algorithms and source-compatible mathematical contracts
@@ -587,10 +600,11 @@ Copyleft and unclear-license projects remain design references only.
 
 Atomistic interoperability
 OpenMM, OpenFF Interchange, ParmEd, MDAnalysis, h5py/HDF5, i-PI, and PACKMOL are
-independent external projects. PhydraX's optional adapters use their documented public
-file, object, or socket interfaces. No source, force-field data, executable, or runtime
-artifact from those projects is copied or redistributed by PhydraX; users install and
-license optional dependencies and external executables separately.
+independent external projects. Phydrax's optional adapters use their documented
+public file, object, or socket interfaces. No source, force-field data,
+executable, or runtime artifact from those projects is copied or redistributed
+by Phydrax; users install and license optional dependencies and external
+executables separately.
 Differentiable electromagnetic and circuit design study
 The compatible-Maxwell execution and circuit-composition design study considered
 spinsphotonics/fdtdz at commit ef4ea7a8ca4c, beamzorg/beamz at commit
@@ -609,7 +623,7 @@ particles” (CPC 2012), Weinhart, Luding, and Thornton, “From discrete partic
 to continuum fields in mixtures” (AIP 2013), and Bagheri et al., “Approximate
 Expressions for the Capillary Force and the Surface Area of a Liquid Bridge
 between Identical Spheres” (2024) and its SoftwareX implementation paper.
-PhydraX independently implements immutable multilevel routes, balance-audited
+Phydrax independently implements immutable multilevel routes, balance-audited
 particle and segment transfer, analytic capillary energy, fit certification,
 transactional liquid inventory, periodic-cell control, tests, and benchmarks.
 No upstream source, tests, fixtures, generated data, runtime types, or

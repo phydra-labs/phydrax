@@ -179,8 +179,11 @@ at every design.
 `FiniteElementAcceptedStepSchedule` promotes fields and material trials exactly
 once after acceptance. Rejected attempts preserve the previous fields,
 material version, schedule cursor, and topology identity. Local mesh changes use
-`FiniteElementTopologyTransaction`; candidate transfer or certification failure
-retains the accepted mesh and state.
+`FiniteElementTopologyTransaction`, which stages the mesh, discretization,
+field-family transfers, and materials as one `CompositionRebind`; candidate
+transfer or certification failure retains the accepted mesh and state. The
+published receipt ID is the accepted state's `transition_id`, bound into
+checkpoints and restart records.
 
 ## Design-dependent fixed-topology geometry
 

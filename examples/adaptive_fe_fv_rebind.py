@@ -226,7 +226,7 @@ def fluid_owner(nx: int, ny: int, index: int, /) -> FluidOwner:
     ).prepare()
     epoch = D.TopologyEpoch(
         index,
-        discretization.mesh.geometry_id,
+        discretization.geometry_id,
         discretization.topology_id,
         "fluid-serial",
     )
@@ -944,6 +944,15 @@ def stage_solid_refinement(
         fine.epoch,
         coarse.measures,
         fine.measures,
+        # Uniform refinement of the same affine square: an exact restriction.
+        geometry=D.TransferGeometryBinding(
+            coarse.epoch.geometry_id,
+            fine.epoch.geometry_id,
+            "exact-restriction",
+            source_topology_id=coarse.epoch.topology_id,
+            target_topology_id=fine.epoch.topology_id,
+            coverage_defect=0.0,
+        ),
     )
     checkpoint = participant(state, "solid-fe")
     factorization = solid_factorization(fine, model.window_size / SOLID_SUBSTEPS)

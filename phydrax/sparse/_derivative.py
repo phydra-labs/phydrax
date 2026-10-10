@@ -157,6 +157,7 @@ class SparseDerivativePlan(StrictModule):
     hessian_contract: SparseHessianContract | None
     precision: SparseDerivativePrecisionPolicy = eqx.field(static=True)
     coefficient_scale: Array
+    operator_template: SparseCoordinateOperator
     argument_structure: Any = eqx.field(static=True)
     argument_specs: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(static=True)
     derivative_kind: SparseDerivativeKind = eqx.field(static=True)
@@ -224,6 +225,25 @@ class SparseDerivativePlan(StrictModule):
         self.derivative_kind = derivative_kind
         self.chunk_size = chunk
         self.plan_id = identifier
+        # Routes are host-prepared once here; evaluated operators replace only the
+        # coefficients, so traced refreshes keep the canonical storage count and
+        # row-gather layouts of the plan's topology.
+        self.operator_template = SparseCoordinateOperator(
+            coloring.pattern.relation,
+            jnp.zeros(
+                coloring.pattern.relation.route_shape,
+                dtype=(
+                    _coordinate_dtype(target)
+                    if precision.coefficient is None
+                    else jnp.dtype(precision.coefficient)
+                ),
+            ),
+            source=source,
+            target=target,
+            properties=properties,
+            operator_id=f"{identifier}:operator",
+            accumulation_dtype=precision.accumulation,
+        )
 
     @property
     def pattern(self) -> SparsePattern:
@@ -279,14 +299,10 @@ class SparseDerivativePlan(StrictModule):
     ) -> SparseCoordinateOperator:
         """Evaluate this derivative as a structured sparse linear operator."""
 
-        return SparseCoordinateOperator(
-            self.pattern.relation,
+        return eqx.tree_at(
+            lambda operator: operator.coefficients,
+            self.operator_template,
             self.coefficients(point, args),
-            source=self.source,
-            target=self.target,
-            properties=self.properties,
-            operator_id=f"{self.plan_id}:operator",
-            accumulation_dtype=self.precision.accumulation,
         )
 
 

@@ -147,8 +147,13 @@ def test_cosmology_sidm_gravothermal_scenario_1() -> None:
         jnp.sum(result.diagnostics.thermal_energy_before),
         rtol=3.0e-13,
     )
+    # The telescoping conductive update balances exactly in real arithmetic; the
+    # summed shell energies carry a few ulps of their total in floating point.
+    energy_scale = float(jnp.sum(jnp.abs(result.diagnostics.thermal_energy_before)))
     np.testing.assert_allclose(
-        result.diagnostics.energy_balance_defect, 0.0, atol=3.0e-13
+        result.diagnostics.energy_balance_defect,
+        0.0,
+        atol=8.0 * np.finfo(np.float64).eps * energy_scale,
     )
     assert bool(result.diagnostics.total_energy_valid)
     assert abs(float(result.diagnostics.total_energy_defect)) <= (

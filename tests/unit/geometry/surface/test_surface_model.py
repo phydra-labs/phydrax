@@ -225,7 +225,6 @@ def test_bounded_surface_interop_preserves_source_identity_and_noop_repair(
     points = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)))
     faces = np.asarray(((0, 1, 2),), dtype=np.int32)
     source = tmp_path / "source.vtu"
-    # ty: ignore[invalid-argument-type]
     meshio.write(source, meshio.Mesh(points, (("triangle", faces),)))
     imported = import_surface(
         source,

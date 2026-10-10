@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import LinearSolveStatus
@@ -22,6 +23,10 @@ from ...optim import OptimizationStatus
 from ...typing import checked
 from ._topology import TopologyMechanicsProblem, TopologyOptimizationResult
 from ._topology_state import certify_state_adjoint, StateAdjointEvidence
+
+
+if TYPE_CHECKING:
+    from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
 
 
 class DensityTransferCandidate(StrictModule):
@@ -275,10 +280,123 @@ class TopologyReanalysisReport(StrictModule):
     reference_state: PyTree[Array]
     reference_adjoint: PyTree[Array]
     plan_id: str = eqx.field(static=True)
+    source_revision_id: str | None = eqx.field(static=True, default=None)
+    target_revision_id: str | None = eqx.field(static=True, default=None)
+    objective_id: str | None = eqx.field(static=True, default=None)
 
     @property
     def accepted(self) -> Array:
         return self.evidence.accepted
+
+    def _require_physical_reanalysis(self) -> None:
+        """Synchronize only at the host-side decision admission boundary."""
+        if (
+            self.source_revision_id is None
+            or self.target_revision_id is None
+            or self.objective_id is None
+        ):
+            raise ValueError(
+                "Physical admission requires revision/objective-bound FE reanalysis."
+            )
+        if not (
+            bool(self.evidence.accepted)
+            and bool(self.evidence.source_optimization_accepted)
+            and bool(self.evidence.transfer.accepted)
+            and bool(self.evidence.mechanics.accepted)
+            and bool(self.evidence.final_fe_reanalysis)
+        ):
+            raise ValueError(
+                "Decision evidence requires passed independent FE and transfer reanalysis."
+            )
+
+    @property
+    def physical_estimator_id(self) -> str:
+        """Bind decision error bounds to this executed, independently audited report."""
+        self._require_physical_reanalysis()
+        return canonical_fingerprint(
+            {
+                "kind": "topology-reference-fe-physical-evidence",
+                "source_revision": self.source_revision_id,
+                "target_revision": self.target_revision_id,
+                "objective": self.objective_id,
+                "plan": self.plan_id,
+                "solver": self.evidence.solver_id,
+                "execution": array_tree_fingerprint(
+                    (
+                        self.optimized_objective,
+                        self.reference_objective,
+                        self.reference_load_values,
+                        self.evidence,
+                        self.reference_state,
+                        self.reference_adjoint,
+                    )
+                ),
+            }
+        )
+
+    def physical_error_evidence(
+        self,
+        revision_id: str,
+        objective_id: str,
+        /,
+        *,
+        field_error: float,
+        geometry_error: float,
+        algebraic_error: float,
+        transfer_error: float,
+    ) -> PhysicalErrorEvidence:
+        """Expose owner-supplied physical bounds only after reference-FE acceptance.
+
+        The objective ratio, equation residuals, and relative material-measure
+        error are different quantities, not interchangeable error bounds.
+        Their owners must supply bounds in the declared physical objective's
+        units. Neither a learned proposal nor this adapter certifies them.
+        """
+        from ...meshing._decision import PhysicalErrorEvidence
+
+        if revision_id != self.target_revision_id or objective_id != self.objective_id:
+            raise ValueError("Physical evidence does not match this reference-FE report.")
+        return PhysicalErrorEvidence(
+            revision_id,
+            objective_id,
+            self.physical_estimator_id,
+            field_error=field_error,
+            geometry_error=geometry_error,
+            algebraic_error=algebraic_error,
+            transfer_error=transfer_error,
+        )
+
+    def admit_decision(
+        self,
+        decision: SolverAwareDecision,
+        source_revision_id: str,
+        candidate_id: str,
+        actual: PhysicalErrorEvidence,
+        /,
+    ) -> None:
+        """Require both scientific acceptance and the exact selected route.
+
+        This is an admission check, not a mesh/state publication or a replacement
+        for the caller's existing atomic topology transaction.
+        """
+        from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
+
+        if not isinstance(decision, SolverAwareDecision):
+            raise TypeError("decision must be SolverAwareDecision.")
+        if not isinstance(actual, PhysicalErrorEvidence):
+            raise TypeError("actual must be PhysicalErrorEvidence.")
+        if (
+            actual.estimator_id != self.physical_estimator_id
+            or actual.quantity != "physical-error"
+            or source_revision_id != self.source_revision_id
+            or actual.revision_id != self.target_revision_id
+            or actual.objective_id != self.objective_id
+        ):
+            raise ValueError(
+                "Topology decision evidence must come from this passed FE reanalysis."
+            )
+        decision.require_selected(source_revision_id, candidate_id, actual.revision_id)
+        decision.require_reanalysis(actual)
 
 
 def reanalyze_topology_design(
@@ -288,6 +406,9 @@ def reanalyze_topology_design(
     /,
     *,
     args: Any = None,
+    source_revision_id: str | None = None,
+    target_revision_id: str | None = None,
+    objective_id: str | None = None,
 ) -> TopologyReanalysisReport:
     """Transfer and recertify a design using mandatory final FE primal/adjoint roots."""
 
@@ -295,6 +416,12 @@ def reanalyze_topology_design(
         raise TypeError("result must be TopologyOptimizationResult.")
     if not isinstance(plan, TopologyReanalysisPlan):
         raise TypeError("plan must be TopologyReanalysisPlan.")
+    bindings = (source_revision_id, target_revision_id, objective_id)
+    if any(value is not None for value in bindings):
+        if not all(isinstance(value, str) and bool(value) for value in bindings):
+            raise ValueError(
+                "Decision reanalysis requires all source/target/objective identities."
+            )
     transfer = plan.transfer(result.physical_density, result.material_measure)
     selected_initial = (
         initial_reference_state
@@ -370,6 +497,9 @@ def reanalyze_topology_design(
         candidate.state,
         candidate.adjoint,
         plan.plan_id,
+        source_revision_id,
+        target_revision_id,
+        objective_id,
     )
 
 

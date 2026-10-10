@@ -21,38 +21,56 @@ def test_shared_library_without_the_meshcore_abi_is_unavailable(monkeypatch: Any
     monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", numpy_extension.__file__)
 
     assert not meshcore_available()
-    with pytest.raises(
-        MeshcoreUnavailableError, match="lacks C ABI symbols phx_mc_version"
-    ):
+    with pytest.raises(MeshcoreUnavailableError, match="exports no phx_mc_abi_contract"):
         load_meshcore()
 
 
+class _Function:
+    restype = None
+    argtypes = None
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __call__(self) -> Any:
+        self.calls += 1
+        return self.value
+
+
+class _Library:
+    def __init__(self, contract: bytes, version: bytes | None) -> None:
+        self.functions = {name: _Function(b"0" * 64) for name in meshcore._SIGNATURES}
+        self.functions["phx_mc_abi_contract"] = _Function(contract)
+        self.functions["phx_mc_version"] = _Function(version)
+
+    def __getitem__(self, name: Any) -> Any:
+        return self.functions[name]
+
+
 def test_null_meshcore_identity_is_reported_as_unavailable() -> None:
-    class Function:
-        restype = None
-        argtypes = None
-
-        def __init__(self, value: Any) -> None:
-            self.value = value
-
-        def __call__(self) -> Any:
-            return self.value
-
-    class Library:
-        def __init__(self) -> None:
-            self.functions = {
-                name: Function(None if name == "phx_mc_version" else b"0" * 64)
-                for name in meshcore._SIGNATURES
-            }
-
-        def __getitem__(self, name: Any) -> Any:
-            return self.functions[name]
+    library = _Library(meshcore._ABI_CONTRACT.encode("ascii"), None)
 
     # ty: ignore[invalid-argument-type]
-    unavailable = meshcore._bind(Library(), Path("malformed-meshcore"))
+    unavailable = meshcore._bind(library, Path("malformed-meshcore"), "0" * 64)
 
     assert isinstance(unavailable, str)
     assert "returned null from phx_mc_version" in unavailable
+
+
+def test_another_c_abi_contract_is_refused_before_binding() -> None:
+    library = _Library(b"f" * 64, b"0.0.0")
+
+    # ty: ignore[invalid-argument-type]
+    unavailable = meshcore._bind(library, Path("other-abi-meshcore"), "0" * 64)
+
+    assert isinstance(unavailable, str)
+    assert f"implements C ABI contract {'f' * 64}" in unavailable
+    assert all(
+        function.calls == 0 and function.argtypes is None
+        for name, function in library.functions.items()
+        if name != "phx_mc_abi_contract"
+    )
 
 
 @pytest.mark.meshcore

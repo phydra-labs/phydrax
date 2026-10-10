@@ -201,6 +201,8 @@ class POUNDERS(AbstractLeastSquaresMethod):
         termination: OptimizationTermination,
         args: Any,
     ) -> LeastSquaresResult:
+        if problem.trial_policy is not None:
+            raise ValueError("POUNDERS does not implement an identified trial policy.")
         self.precision.validate_tolerance(termination.absolute_optimality)
         parameters = self.precision.state(
             validate_real_inexact_tree(

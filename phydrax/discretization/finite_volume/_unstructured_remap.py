@@ -37,7 +37,7 @@ from ...sparse import (
 from .._cell_mesh import CellMesh
 from .._spaces import DiscreteFieldSpace
 from .._topology_epoch import TopologyEpoch, TopologyEpochTransition
-from .._transfer import FieldTransfer, TransferProperties
+from .._transfer import FieldTransfer, TransferGeometryBinding, TransferProperties
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
@@ -46,7 +46,12 @@ if TYPE_CHECKING:
 
 
 class UnstructuredRemapReport(StrictModule):
-    """Host-certified coverage evidence for one common-refinement map."""
+    """Certified source-content coverage and physical endpoint diagnostics.
+
+    For ``source-physical-chart-content``, target measure defects report bounded
+    physical area deformation, not a UV coverage gap. Complete target coverage
+    is carried by the actual native chart certificate retained on the plan.
+    """
 
     maximum_target_coverage_defect: Array
     maximum_source_coverage_defect: Array
@@ -57,6 +62,11 @@ class UnstructuredRemapReport(StrictModule):
     target_measure: Array
     coverage_complete: Array
     tolerance: Array
+    maximum_target_coverage_error_bound: Array
+    maximum_source_coverage_error_bound: Array
+    total_target_coverage_error_bound: Array
+    total_source_coverage_error_bound: Array
+    measure_semantics: str = eqx.field(static=True)
 
 
 def _active_mask(value: ArrayLike | None, count: int, name: str, /) -> Array:
@@ -95,6 +105,10 @@ def _coverage_ledger(
     target_volumes: np.ndarray,
     tolerance: float,
     /,
+    *,
+    intersection_error_bounds: np.ndarray | None = None,
+    source_error_bounds: np.ndarray | None = None,
+    target_error_bounds: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Signed covered-minus-cell measures and their admissible magnitudes.
 
@@ -112,21 +126,37 @@ def _coverage_ledger(
     )
     target_scale = np.maximum(target_volumes, np.max(target_volumes) * 1e-14)
     source_scale = np.maximum(source_volumes, np.max(source_volumes) * 1e-14)
+    errors = (
+        np.zeros_like(measures)
+        if intersection_error_bounds is None
+        else intersection_error_bounds
+    )
+    target_error = np.bincount(
+        target_routes, weights=errors, minlength=target_volumes.size
+    )
+    source_error = np.bincount(
+        source_indices, weights=errors, minlength=source_volumes.size
+    )
+    if target_error_bounds is not None:
+        target_error += target_error_bounds
+    if source_error_bounds is not None:
+        source_error += source_error_bounds
     return (
         target_defect,
         source_defect,
-        tolerance * target_scale,
-        tolerance * source_scale,
+        tolerance * target_scale + target_error,
+        tolerance * source_scale + source_error,
     )
 
 
 class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
-    """Explicit CSR common-refinement artifact between two immutable mesh epochs.
+    """Canonical CSR conservative content transport between immutable epochs.
 
-    The CSR measures describe overlap of *geometric* cells.  ``apply`` consumes
-    cell averages, while ``apply_content`` consumes extensive conserved content
-    and never divides by a source or target measure.  The latter is the path
-    used by AMR transfer of runtime conservative state and fluid volume.
+    ``physical-cell-overlap`` uses geometric intersections or exact nested cells.
+    ``source-physical-chart-content`` uses old physical density integrals over
+    actual native UV overlap pieces and divides by actual new physical cell
+    areas. It conserves content, not constants under area-changing deformation.
+    ``apply`` consumes cell averages; ``apply_content`` consumes extensive content.
     """
 
     source_topology_id: str = eqx.field(static=True)
@@ -139,8 +169,14 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
     source_indices: Array
     target_routes: Array
     intersection_measures: Array
+    intersection_error_bounds: Array
     source_volumes: Array
     target_volumes: Array
+    source_volume_error_bounds: Array
+    target_volume_error_bounds: Array
+    surface_chart_deformation: Any | None
+    surface_chart_contents: Any | None
+    measure_semantics: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
     require_complete: bool = eqx.field(static=True)
@@ -165,6 +201,9 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         require_complete: bool = True,
         route_id: str | None = None,
         layout_id: str | None = None,
+        intersection_error_bounds: ArrayLike | None = None,
+        surface_chart_deformation: Any | None = None,
+        surface_chart_contents: Any | None = None,
     ) -> None:
         if not isinstance(
             source, UnstructuredFiniteVolumeDiscretization
@@ -215,6 +254,20 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         )
         source_volumes = np.asarray(source.cell_volumes)
         target_volumes = np.asarray(target.cell_volumes)
+        errors = (
+            np.zeros_like(measures)
+            if intersection_error_bounds is None
+            else np.asarray(intersection_error_bounds, dtype=np.float64)
+        )
+        if (
+            errors.shape != measures.shape
+            or np.any(~np.isfinite(errors))
+            or np.any(errors < 0)
+            or np.any(errors >= measures)
+        ):
+            raise ValueError(
+                "Remap measure error bounds must certify strictly positive overlaps."
+            )
         target_defect, source_defect, target_limit, source_limit = _coverage_ledger(
             target_routes,
             indices,
@@ -222,14 +275,104 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             source_volumes,
             target_volumes,
             tolerance_,
+            intersection_error_bounds=errors,
+            source_error_bounds=np.asarray(source.cell_volume_error_bounds),
+            target_error_bounds=np.asarray(target.cell_volume_error_bounds),
         )
-        complete = np.all(np.abs(target_defect) <= target_limit) and np.all(
-            np.abs(source_defect) <= source_limit
+        if (surface_chart_deformation is None) != (surface_chart_contents is None):
+            raise ValueError(
+                "Chart deformation and its actual physical contents are required together."
+            )
+        if surface_chart_deformation is not None:
+            from .._sphere_chart_deformation import PreparedSphereChartDeformation
+            from .._surface_chart_deformation import PreparedSurfaceChartDeformation
+            from ..fem._surface_chart_transfer import (
+                PreparedSurfaceChartFiniteVolumeContents,
+            )
+
+            if not isinstance(
+                surface_chart_deformation,
+                (PreparedSurfaceChartDeformation, PreparedSphereChartDeformation),
+            ) or not isinstance(
+                surface_chart_contents, PreparedSurfaceChartFiniteVolumeContents
+            ):
+                raise TypeError(
+                    "Chart remap requires the actual prepared deformation and physical contents."
+                )
+            if source.cell_geometry is None or target.cell_geometry is None:
+                raise ValueError("Chart remap needs the actual prepared coordinate maps.")
+            surface_chart_deformation.require_bound(
+                source.mesh, source.cell_geometry, target.mesh, target.cell_geometry
+            )
+            if (
+                surface_chart_contents.deformation_id
+                != surface_chart_deformation.deformation_id
+            ):
+                raise ValueError(
+                    "Chart physical contents belong to a different deformation."
+                )
+            if not np.array_equal(
+                surface_chart_contents.source_volumes, source_volumes
+            ) or not np.array_equal(
+                surface_chart_contents.target_volumes, target_volumes
+            ):
+                raise ValueError(
+                    "Chart contents must use authoritative prepared FV physical areas."
+                )
+            order = np.lexsort(
+                (
+                    np.asarray(surface_chart_contents.source_rows),
+                    np.asarray(surface_chart_contents.target_rows),
+                )
+            )
+            if not (
+                np.array_equal(
+                    indices, np.asarray(surface_chart_contents.source_rows)[order]
+                )
+                and np.array_equal(
+                    target_routes, np.asarray(surface_chart_contents.target_rows)[order]
+                )
+                and np.array_equal(
+                    measures, np.asarray(surface_chart_contents.source_contents)[order]
+                )
+                and np.array_equal(
+                    errors,
+                    np.asarray(surface_chart_contents.source_content_errors)[order],
+                )
+            ):
+                raise ValueError(
+                    "Chart CSR does not realize its physical-content certificate."
+                )
+            source_limit = np.asarray(
+                surface_chart_contents.source_content_defect_bounds, dtype=np.float64
+            )
+            if (
+                source_limit.shape != source_volumes.shape
+                or np.any(~np.isfinite(source_limit))
+                or np.any(source_limit < 0)
+            ):
+                raise ValueError(
+                    "Chart source-content defect bounds must be finite per-cell absolute bounds."
+                )
+        source_complete = np.all(np.abs(source_defect) <= source_limit)
+        # Target coverage is a native UV tiling for chart deformation, not the
+        # false assertion that old physical piece areas equal new physical areas.
+        complete = source_complete and (
+            surface_chart_deformation is not None
+            or np.all(np.abs(target_defect) <= target_limit)
         )
         if require_complete and not complete:
             raise ValueError(
                 "Conservative remap does not completely cover source and target."
             )
+        target_errors = np.bincount(
+            target_routes, weights=errors, minlength=target_volumes.size
+        ) + np.asarray(target.cell_volume_error_bounds)
+        source_errors = np.bincount(
+            indices, weights=errors, minlength=source_volumes.size
+        ) + np.asarray(source.cell_volume_error_bounds)
+        if surface_chart_deformation is not None:
+            source_errors = np.maximum(source_errors, source_limit)
         report = UnstructuredRemapReport(
             maximum_target_coverage_defect=jnp.asarray(np.max(np.abs(target_defect))),
             maximum_source_coverage_defect=jnp.asarray(np.max(np.abs(source_defect))),
@@ -240,6 +383,13 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             target_measure=jnp.asarray(np.sum(target_volumes)),
             coverage_complete=jnp.asarray(complete),
             tolerance=jnp.asarray(tolerance_),
+            maximum_target_coverage_error_bound=jnp.asarray(np.max(target_errors)),
+            maximum_source_coverage_error_bound=jnp.asarray(np.max(source_errors)),
+            total_target_coverage_error_bound=jnp.asarray(np.sum(target_errors)),
+            total_source_coverage_error_bound=jnp.asarray(np.sum(source_errors)),
+            measure_semantics="source-physical-chart-content"
+            if surface_chart_deformation is not None
+            else "physical-cell-overlap",
         )
         route_ = (
             str(route_id)
@@ -286,8 +436,18 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         self.source_indices = jnp.asarray(indices)
         self.target_routes = jnp.asarray(target_routes)
         self.intersection_measures = jnp.asarray(measures)
+        self.intersection_error_bounds = jnp.asarray(errors)
         self.source_volumes = source.cell_volumes
         self.target_volumes = target.cell_volumes
+        self.source_volume_error_bounds = source.cell_volume_error_bounds
+        self.target_volume_error_bounds = target.cell_volume_error_bounds
+        self.surface_chart_deformation = surface_chart_deformation
+        self.surface_chart_contents = surface_chart_contents
+        self.measure_semantics = (
+            "source-physical-chart-content"
+            if surface_chart_deformation is not None
+            else "physical-cell-overlap"
+        )
         self.method = method_
         self.provenance = provenance_
         self.require_complete = bool(require_complete)
@@ -302,11 +462,24 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
                 "source_geometry": source.geometry_id,
                 "target_topology": target.topology_id,
                 "target_geometry": target.geometry_id,
+                "surface_chart_deformation": None
+                if surface_chart_deformation is None
+                else surface_chart_deformation.deformation_id,
+                "surface_chart_contents": None
+                if surface_chart_contents is None
+                else surface_chart_contents.contents_id,
                 "source_cell_global_ids": array_tree_fingerprint(source.cell_global_ids),
                 "target_cell_global_ids": array_tree_fingerprint(target.cell_global_ids),
                 "target_offsets": array_tree_fingerprint(offsets),
                 "source_indices": array_tree_fingerprint(indices),
                 "intersection_measures": array_tree_fingerprint(measures),
+                "intersection_error_bounds": array_tree_fingerprint(errors),
+                "source_volume_error_bounds": array_tree_fingerprint(
+                    source.cell_volume_error_bounds
+                ),
+                "target_volume_error_bounds": array_tree_fingerprint(
+                    target.cell_volume_error_bounds
+                ),
                 "method": method_,
                 "provenance": provenance_,
                 "require_complete": bool(require_complete),
@@ -341,13 +514,6 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         )
         value = _mask_values(value, source_active, "Remap values")
         trailing = (1,) * (value.ndim - 1)
-        weighted = value[self.source_indices] * self.intersection_measures.astype(
-            value.dtype
-        ).reshape((-1,) + trailing)
-        target = jnp.zeros(
-            (self.target_volumes.size,) + value.shape[1:], dtype=value.dtype
-        )
-        target = target.at[self.target_routes].add(weighted)
         denominator = _volume_array(
             target_volumes,
             self.target_volumes,
@@ -364,8 +530,18 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             denominator,
             jnp.ones_like(denominator),
         )
-        denominator = denominator.astype(value.dtype).reshape((-1,) + trailing)
-        target = target / denominator
+        # Each route carries its normalized overlap fraction m_e / V_t, so a
+        # route covering its whole target cell has weight exactly one and the
+        # identity common refinement reproduces the averages bit for bit.
+        weights = (
+            self.intersection_measures.astype(value.dtype)
+            / denominator.astype(value.dtype)[self.target_routes]
+        )
+        weighted = value[self.source_indices] * weights.reshape((-1,) + trailing)
+        target = jnp.zeros(
+            (self.target_volumes.size,) + value.shape[1:], dtype=value.dtype
+        )
+        target = target.at[self.target_routes].add(weighted)
         return jnp.where(
             target_active.reshape(target_active.shape + trailing),
             target,
@@ -436,6 +612,10 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         target_active_mask: ArrayLike | None = None,
     ) -> Array:
         """Transfer a bounded scalar, failing for invalid source fractions."""
+        if self.surface_chart_deformation is not None:
+            raise ValueError(
+                "Conservative chart density transfer does not preserve density bounds under area change."
+            )
         lower_ = float(lower)
         upper_ = float(upper)
         if not np.isfinite(lower_) or not np.isfinite(upper_) or lower_ > upper_:
@@ -571,10 +751,11 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         """Algebraic transpose of `apply` for fully active cells."""
         value = jnp.asarray(target_cotangent)
         trailing = (1,) * (value.ndim - 1)
-        scaled = value / self.target_volumes.astype(value.dtype).reshape((-1,) + trailing)
-        weighted = scaled[self.target_routes] * self.intersection_measures.astype(
-            value.dtype
-        ).reshape((-1,) + trailing)
+        weights = (
+            self.intersection_measures.astype(value.dtype)
+            / self.target_volumes.astype(value.dtype)[self.target_routes]
+        )
+        weighted = value[self.target_routes] * weights.reshape((-1,) + trailing)
         source = jnp.zeros(
             (self.source_volumes.size,) + value.shape[1:], dtype=value.dtype
         )
@@ -590,14 +771,11 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
     ) -> TopologyEpochTransition:
         """Bind this complete cell remap as an explicit topology-epoch transition.
 
-        The epochs must realize this plan's source and target topologies. A
-        complete first-order common-refinement remap preserves constants,
-        positivity, and the volume integral of cell averages; its transpose is the
-        exact CSR transpose and its Hilbert adjoint is taken under the field-space
-        pairings. Content is reported against cell volumes (one per component).
-        The content of a field changes by exactly its source-cell coverage
-        defects, so the plan's certified per-cell coverage limits are the
-        transition's measure-defect bound.
+        The epochs must realize both actual topology and geometry identities.
+        Positivity and conservative content have the certified source-piece
+        bounds; constant preservation is claimed only for geometric-overlap
+        routes, not an area-changing chart deformation. Transpose is exact CSR
+        algebra and Hilbert adjoint uses the actual FV physical-area pairings.
         """
 
         if not isinstance(source_epoch, TopologyEpoch) or not isinstance(
@@ -607,8 +785,12 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
         if (
             source_epoch.topology_id != self.source_topology_id
             or target_epoch.topology_id != self.target_topology_id
+            or source_epoch.geometry_id != self.source_geometry_id
+            or target_epoch.geometry_id != self.target_geometry_id
         ):
-            raise ValueError("Topology epochs do not realize this remap's topologies.")
+            raise ValueError(
+                "Topology epochs do not realize this remap's topologies and geometry."
+            )
         if not self.require_complete:
             raise ValueError(
                 "Only a complete-coverage remap is conservative enough for a "
@@ -621,19 +803,54 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             transpose_action=self._transpose_averages,
             operator_id=f"{self.plan_id}:cell-averages",
         )
+        exact_restriction = (
+            self.method == "mapped-nested" and self.surface_chart_deformation is None
+        )
+        geometry_defect = 0.0
+        if not exact_restriction:
+            covered = np.bincount(
+                np.asarray(self.target_routes),
+                weights=np.asarray(self.intersection_measures),
+                minlength=self.target_volumes.size,
+            )
+            uncertainty = np.bincount(
+                np.asarray(self.target_routes),
+                weights=np.asarray(self.intersection_error_bounds),
+                minlength=self.target_volumes.size,
+            ) + np.asarray(self.target_volume_error_bounds)
+            lower_measure = np.asarray(self.target_volumes) - np.asarray(
+                self.target_volume_error_bounds
+            )
+            geometry_defect = float(
+                np.nextafter(
+                    np.max(
+                        (np.abs(covered - np.asarray(self.target_volumes)) + uncertainty)
+                        / lower_measure,
+                    ),
+                    np.inf,
+                )
+            )
         transfer = FieldTransfer(
             source_field,
             target_field,
             primal,
             dual_pullback_operator=transpose(primal),
             hilbert_adjoint_operator=adjoint(primal),
+            geometry=TransferGeometryBinding(
+                self.source_geometry_id,
+                self.target_geometry_id,
+                "exact-restriction" if exact_restriction else "bounded-reconstruction",
+                source_topology_id=self.source_topology_id,
+                target_topology_id=self.target_topology_id,
+                coverage_defect=geometry_defect,
+            ),
             properties=TransferProperties(
-                constant_preserving=True,
+                constant_preserving=self.surface_chart_deformation is None,
                 conservative=True,
                 positivity_preserving=True,
                 adjoint_paired=True,
                 differentiable_geometry=False,
-                exact_on=("constants",),
+                exact_on=("constants",) if self.surface_chart_deformation is None else (),
             ),
         )
         source_volumes = np.asarray(self.source_volumes, dtype=np.float64)
@@ -646,7 +863,14 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             source_volumes,
             target_volumes,
             float(np.asarray(self.report.tolerance)),
+            intersection_error_bounds=np.asarray(self.intersection_error_bounds),
+            source_error_bounds=np.asarray(self.source_volume_error_bounds),
+            target_error_bounds=np.asarray(self.target_volume_error_bounds),
         )
+        if self.surface_chart_contents is not None:
+            source_limit = np.asarray(
+                self.surface_chart_contents.source_content_defect_bounds, dtype=np.float64
+            )
         return TopologyEpochTransition(
             source_epoch,
             target_epoch,

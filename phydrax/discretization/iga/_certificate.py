@@ -12,6 +12,7 @@ from math import comb, isfinite
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._interpolation._bspline import bezier_refinement
 from ._geometry import NURBSGeometryState
 from ._volume import (
     aabbs_strictly_separated,
@@ -388,36 +389,6 @@ def _determinant(
     return result
 
 
-def _insert_knot_axis(
-    controls: np.ndarray,
-    knots: np.ndarray,
-    degree: int,
-    knot: float,
-    axis: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    values = np.moveaxis(controls, axis, 0)
-    control_count = values.shape[0]
-    control_count - 1
-    multiplicity = int(np.count_nonzero(knots == knot))
-    if multiplicity >= degree:
-        return controls, knots
-    span_candidates = np.flatnonzero((knots[:-1] <= knot) & (knot < knots[1:]))
-    if span_candidates.size != 1:
-        raise ValueError("Interior knot insertion requires one active containing span.")
-    span = int(span_candidates[0])
-    inserted = np.empty((control_count + 1, *values.shape[1:]), dtype=np.float64)
-    inserted[: span - degree + 1] = values[: span - degree + 1]
-    inserted[span - multiplicity + 1 :] = values[span - multiplicity :]
-    for index in range(span - degree + 1, span - multiplicity + 1):
-        denominator = knots[index + degree] - knots[index]
-        if not denominator > 0.0:
-            raise ValueError("Knot insertion encountered a zero active denominator.")
-        alpha = (knot - knots[index]) / denominator
-        inserted[index] = alpha * values[index] + (1.0 - alpha) * values[index - 1]
-    new_knots = np.insert(knots, span + 1, knot)
-    return np.moveaxis(inserted, 0, axis), new_knots
-
-
 def _float_pair(values: np.ndarray, /) -> tuple[float, float]:
     lower, upper = values
     return float(lower), float(upper)
@@ -434,32 +405,29 @@ def _bezier_homogeneous_cells(
         (points * weights[..., None], weights[..., None]), axis=-1
     )
     refined = homogeneous
-    refined_knots: list[np.ndarray] = []
+    extracted_bounds: list[np.ndarray] = []
     for axis_index, axis in enumerate(volume.basis.axes):
-        knots = np.asarray(axis.knots, dtype=np.float64).copy()
-        lower, upper = axis.parameter_interval
-        interiors = np.unique(knots[(knots > lower) & (knots < upper)])
-        for knot in interiors:
-            while int(np.count_nonzero(knots == knot)) < axis.degree:
-                refined, knots = _insert_knot_axis(
-                    refined, knots, axis.degree, float(knot), axis_index
-                )
-        refined_knots.append(knots)
+        pieces, span_bounds = bezier_refinement(
+            refined,
+            np.asarray(axis.knots, dtype=np.float64),
+            axis.degree,
+            2 * axis_index,
+        )
+        refined = np.moveaxis(pieces, 0, axis_index)
+        if span_bounds.shape != (volume.basis.span_shape[axis_index], 2):
+            raise RuntimeError("Bezier extraction produced inconsistent knot spans.")
+        extracted_bounds.append(span_bounds)
     cells: list[tuple[np.ndarray, tuple[tuple[float, float], ...], tuple[int, ...]]] = []
     for span_index in np.ndindex(volume.basis.span_shape):
-        selector = tuple(
-            slice(index * axis.degree, index * axis.degree + axis.degree + 1)
-            for index, axis in zip(span_index, volume.basis.axes, strict=True)
-        )
-        controls = refined[selector]
+        controls = refined[span_index]
         expected = tuple(axis.degree + 1 for axis in volume.basis.axes)
         if controls.shape[:-1] != expected:
             raise RuntimeError(
                 "Bezier extraction produced an inconsistent cell control net."
             )
         bounds = tuple(
-            _float_pair(np.asarray(axis.span_bounds[index]))
-            for index, axis in zip(span_index, volume.basis.axes, strict=True)
+            _float_pair(axis_bounds[index])
+            for index, axis_bounds in zip(span_index, extracted_bounds, strict=True)
         )
         cells.append((controls, bounds, tuple(span_index)))
     return tuple(cells)

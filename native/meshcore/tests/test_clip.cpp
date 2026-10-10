@@ -6,8 +6,11 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
+#include <numeric>
 #include <vector>
 
+#include "bounded_memory.hpp"
 #include "check.hpp"
 #include "phydrax_meshcore.h"
 #include "spatial_sort.hpp"
@@ -924,6 +927,70 @@ void test_intersection_simplices() {
   PHX_CHECK(status == PHX_MC_CAPACITY_EXCEEDED && triangle_count == 0 && area == 0.0);
 }
 
+void test_exact_reference_halfplanes() {
+  // A positive rational strip whose two x boundaries round to the SAME
+  // binary64 value. The scientific intersection must not become edge contact.
+  std::array<std::vector<std::uint32_t>, 18> magnitudes = {{
+      {1}, {}, {}, {}, {1}, {}, {1}, {1}, {1},
+      {0, 0, 1u << 17}, {}, {0xffffffffu, 0xffffffffu, 0xffffu},
+      {0, 0, 1u << 17}, {}, {0, 0, 1u << 16}, {}, {4}, {1},
+  }};
+  const std::array<std::int8_t, 18> signs = {
+      -1, 0, 0, 0, -1, 0, 1, 1, 1, -1, 0, -1, 1, 0, 1, 0, 1, 1};
+  std::vector<std::uint32_t> words;
+  std::array<std::int64_t, 19> offsets{};
+  auto pack = [&]() {
+    words.clear();
+    offsets[0] = 0;
+    for (std::size_t index = 0; index < magnitudes.size(); ++index) {
+      words.insert(words.end(), magnitudes[index].begin(), magnitudes[index].end());
+      offsets[index + 1] = static_cast<std::int64_t>(words.size());
+    }
+  };
+  std::array<std::int32_t, 12> supports{};
+  std::array<std::int32_t, 6> labels{};
+  std::int32_t count = -1;
+  std::int64_t work = -1;
+  auto run = [&](std::int64_t memory_limit, std::int64_t work_limit) {
+    pack();
+    return phx_mc_clip_reference_triangle_exact(
+        words.data(), static_cast<std::int64_t>(words.size()), offsets.data(),
+        signs.data(), memory_limit, work_limit, 6, supports.data(), labels.data(),
+        &count, &work);
+  };
+  PHX_CHECK(run(1 << 20, 10000) == PHX_MC_OK && count == 4);
+  std::array<bool, 4> seen{};
+  for (int vertex = 0; vertex < count; ++vertex) {
+    const int first = std::min(supports[2 * vertex], supports[2 * vertex + 1]);
+    const int second = std::max(supports[2 * vertex], supports[2 * vertex + 1]);
+    if (first == 1 && second == 3) seen[0] = true;
+    if (first == 1 && second == 4) seen[1] = true;
+    if (first == 3 && second == 5) seen[2] = true;
+    if (first == 4 && second == 5) seen[3] = true;
+    PHX_CHECK(labels[vertex] == 1 || labels[vertex] == 3 ||
+              labels[vertex] == 4 || labels[vertex] == 5);
+  }
+  PHX_CHECK(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
+  // Exact zero-width contact and disjointness are distinct from that strip.
+  magnitudes[11] = {0, 0, 1u << 16};
+  PHX_CHECK(run(1 << 20, 10000) == PHX_MC_OK && count == 0);
+  magnitudes[11] = {1, 0, 1u << 16};
+  PHX_CHECK(run(1 << 20, 10000) == PHX_MC_OK && count == 0);
+  // Resource refusal publishes no partial polygon or fake work success.
+  magnitudes[11] = {0xffffffffu, 0xffffffffu, 0xffffu};
+  PHX_CHECK(run(16384, 10000) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
+  PHX_CHECK(run(1 << 20, 1) == PHX_MC_CAPACITY_EXCEEDED && count == 0 && work == 0);
+  {
+    phx::mc::MemoryBudgetWindow parent_memory(16);
+    phx::mc::MemoryScope scope(parent_memory.owner());
+    PHX_CHECK(run(1 << 20, 10000) == PHX_MC_CAPACITY_EXCEEDED && count == 0);
+    PHX_CHECK(parent_memory.evidence()[5] > 0);
+    PHX_CHECK(parent_memory.evidence()[1] == 0);
+  }
+}
+
+#include "reference_tetrahedron_clip_cases.inc"
+
 }  // namespace
 
 int main() {
@@ -933,6 +1000,8 @@ int main() {
   test_polygon_invariance();
   test_polygon_call_status();
   test_box_halfplanes();
+  test_exact_reference_halfplanes();
+  test_exact_reference_tetrahedron_and_corner_closure();
   test_box_halfplanes_voronoi();
   test_tetrahedron_overlaps();
   test_tetrahedron_contacts();

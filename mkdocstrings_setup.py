@@ -4,6 +4,7 @@
 
 import ast
 import typing
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,66 @@ class RuntimeTypeAliases(griffe.Extension):
     only for type checking cannot be evaluated; inspection would fail and drop its
     whole module, so its value is documented from the source statement instead.
     """
+
+    def on_module_instance(
+        self,
+        *,
+        node: ast.AST | griffe.ObjectNode,
+        mod: griffe.Module,
+        agent: griffe.Visitor | griffe.Inspector,
+        **kwargs: Any,
+    ) -> None:
+        """Materialize lazy public exports before runtime member inspection."""
+        del kwargs
+        if not isinstance(node, griffe.ObjectNode) or not isinstance(
+            agent, griffe.Inspector
+        ):
+            return
+        runtime_module = node.obj
+        symbol_modules = getattr(runtime_module, "_SYMBOL_MODULES", {})
+        for name, (module_name, symbol) in symbol_modules.items():
+            try:
+                owner = import_module(module_name, runtime_module.__package__)
+            except ImportError:
+                continue
+            target = owner.__name__ if symbol is None else f"{owner.__name__}.{symbol}"
+            mod.set_member(
+                name,
+                griffe.Alias(name, target, parent=mod, analysis="dynamic"),
+            )
+        for module_name in getattr(runtime_module, "_FACADE_EXPORT_MODULES", ()):
+            try:
+                owner = import_module(module_name, runtime_module.__package__)
+            except ImportError:
+                continue
+            for name in getattr(owner, "__all__", ()):
+                if name not in mod.members and name not in runtime_module.__dict__:
+                    mod.set_member(
+                        name,
+                        griffe.Alias(
+                            name,
+                            f"{owner.__name__}.{name}",
+                            parent=mod,
+                            analysis="dynamic",
+                        ),
+                    )
+        if runtime_module.__name__ == "phydrax.operators":
+            mod.set_member(
+                "graph_degree",
+                griffe.Alias(
+                    "graph_degree",
+                    "phydrax.operators.graph.degree",
+                    parent=mod,
+                    analysis="dynamic",
+                ),
+            )
+        exported = getattr(runtime_module, "__all__", ())
+        for name in exported:
+            try:
+                getattr(runtime_module, name)
+            except (AttributeError, ImportError):
+                # Optional providers remain documented at their owner boundary.
+                continue
 
     def on_alias_instance(
         self,

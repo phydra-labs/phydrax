@@ -63,6 +63,7 @@ from .._topology_epoch import (
 )
 from ._adaptivity import MeshfreeAdaptationProposal
 from ._resampling import SurfaceResamplingResult
+from .._transfer import TransferGeometryBinding
 from ._transfer import PointTransferPlan, PointTransferRequest, PreparedPointTransfer
 
 
@@ -716,6 +717,14 @@ def surface_event_epoch(
         target_id=target.support_id,
         request=PointTransferRequest("conservative-positive"),
         tolerance=tolerance,
+        geometry=TransferGeometryBinding(
+            source.epoch.geometry_id,
+            target.epoch.geometry_id,
+            "topology-correspondence",
+            source_topology_id=source.epoch.topology_id,
+            target_topology_id=target.epoch.topology_id,
+            coverage_defect=None,
+        ),
     ).prepare()
     change = MeshfreeEpochChange(
         lineage.source_epoch, lineage.target_epoch, cause="surface-event", lineage=lineage

@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -262,24 +260,29 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         element = plan.field.element
         layouts = []
         names = []
+        topology = (
+            mesh.topology
+            if mesh.periodic_topology is None
+            else mesh.periodic_topology.quotient
+        )
         vertex_width = element.vertex_dofs_per_entity
         if vertex_width:
             layouts.append(
                 EntityDofLayout(
-                    mesh.topology.entity_sets[0].entity_set_id,
-                    mesh.coordinates.shape[0],
+                    topology.entity_sets[0].entity_set_id,
+                    topology.entities(0).count,
                     dof_map.vertex_dof_count,
                     dofs_per_entity=vertex_width,
                 )
             )
             names.append("vertices")
         # VirtualElementPlan rejects meshes without PolygonalConnectivity.
-        edge_count = cast(PolygonalConnectivity, mesh.connectivity).edges.shape[0]
+        edge_count = topology.entities(1).count
         edge_width = element.edge_dofs_per_entity
         if edge_width:
             layouts.append(
                 EntityDofLayout(
-                    mesh.topology.entity_sets[1].entity_set_id,
+                    topology.entity_sets[1].entity_set_id,
                     edge_count,
                     dof_map.edge_dof_count,
                     dofs_per_entity=edge_width,
@@ -291,7 +294,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
         if cell_width:
             layouts.append(
                 EntityDofLayout(
-                    mesh.topology.entity_sets[2].entity_set_id,
+                    topology.entity_sets[2].entity_set_id,
                     cell_count,
                     dof_map.cell_dof_count,
                     dofs_per_entity=cell_width,
@@ -495,11 +498,19 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                 endpoints = jnp.asarray(
                     polygonal_connectivity_of(self.mesh).edges, dtype=jnp.int32
                 )[edges_]
-                interior = (
-                    offset
-                    + edges_[:, None] * (degree - 1)
-                    + jnp.arange(degree - 1, dtype=jnp.int32)[None, :]
+                edge_orbits = edges_
+                positions = jnp.broadcast_to(
+                    jnp.arange(degree - 1, dtype=jnp.int32), (edges_.shape[0], degree - 1)
                 )
+                if self.mesh.periodic_topology is not None:
+                    periodic = self.mesh.periodic_topology
+                    endpoints = periodic.orbits(0)[0][endpoints]
+                    edge_orbits = periodic.orbits(1)[0][edges_]
+                    signs = periodic.orbits(1)[1][edges_]
+                    positions = jnp.where(
+                        signs[:, None] > 0, positions, positions[:, ::-1]
+                    )
+                interior = offset + edge_orbits[:, None] * (degree - 1) + positions
                 return jnp.concatenate(
                     (endpoints[:, :1], interior, endpoints[:, 1:]), axis=1
                 )

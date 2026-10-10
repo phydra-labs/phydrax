@@ -6,11 +6,11 @@
 from types import SimpleNamespace
 from typing import Any
 
+import meshio
 import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.discretization.fem import _spectral_hp_io as spectral_hp_io
 
 
 def _cell_block(cell_type: Any, data: Any) -> Any:
@@ -57,13 +57,9 @@ def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
         ],
     )
     # The reader admits the on-disk bytes through the bounded-resource boundary,
-    # then decodes the staged copy with the module's meshio binding.
+    # then decodes the staged copy through the lazily imported meshio codec.
     (tmp_path / "case.msh").write_bytes(b"deterministic-fixture")
-    monkeypatch.setattr(
-        spectral_hp_io,
-        "meshio",
-        SimpleNamespace(read=lambda path, file_format: source),
-    )
+    monkeypatch.setattr(meshio, "read", lambda path, file_format: source)
 
     imported = phx.discretization.read_finite_element_mesh(tmp_path / "case.msh")
 

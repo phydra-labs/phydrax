@@ -21,7 +21,7 @@ def test_expansion_gates_scenario_1() -> None:
     attributes["model_id"] = "battery:ecm:circuit-connected-unqualified"
     substituted = SupportTuple("battery.simulation", attributes)
     profile = CapabilityProfile(
-        "battery.circuit-ecm.candidate", "phydrax", "candidate", (substituted,)
+        "battery.circuit-ecm.candidate", "phydrax", (substituted,)
     )
     with pytest.raises(ValueError):
         qualification.validate_battery_candidate_profile(profile, substituted)
@@ -39,7 +39,6 @@ def test_expansion_gates_scenario_1() -> None:
     profile = CapabilityProfile(
         "battery.circuit-ecm",
         "phydrax",
-        "numerical-qualified",
         (qualification.CIRCUIT_ECM_SUPPORT,),
         required_gates=qualification.SERIES_PACK_REQUIRED_GATES,
         release_evidence=gates,

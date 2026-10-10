@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from fractions import Fraction
 from itertools import product
-from typing import final, Literal
+from typing import final, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,6 +31,7 @@ from ...linalg import (
 )
 from .._reference_cell import reference_cell_topology
 from ._high_order import (
+    _simplex_node_tuples,
     lagrange_1d_tabulation,
     SimplexNodalFamily,
 )
@@ -46,6 +48,10 @@ from ._hp_runtime import (
     tensor_trace_interpolation,
 )
 from ._reference import FiniteElementSpec
+
+
+if TYPE_CHECKING:
+    from ...meshing._decision import PhysicalErrorEvidence, SolverAwareDecision
 
 
 class AnisotropicHPattern(StrictModule, NonTrainableState):
@@ -403,11 +409,18 @@ def compact_hp_forest(
 
 
 class GeometryOrderAdaptation(StrictModule, NonTrainableState):
+    """Reinterpolate the existing coordinate map, not improve source fidelity."""
+
     source_order: tuple[int, ...] = eqx.field(static=True)
     target_order: tuple[int, ...] = eqx.field(static=True)
     interpolation: Array
     curvature_indicator: Array
     plan_id: str = eqx.field(static=True)
+    candidate_id: str = eqx.field(static=True)
+    solver_decision: SolverAwareDecision | None
+    source_revision_id: str | None = eqx.field(static=True)
+    target_revision_id: str | None = eqx.field(static=True)
+    source_coordinates_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -417,6 +430,10 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         target_order: Sequence[int],
         coordinate_values: ArrayLike,
         /,
+        *,
+        solver_decision: SolverAwareDecision | None = None,
+        source_revision_id: str | None = None,
+        target_revision_id: str | None = None,
     ) -> None:
         source = np.asarray(source_nodes)
         target = np.asarray(target_nodes)
@@ -439,7 +456,7 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         self.target_order = target_order_
         self.interpolation = jnp.asarray(interpolation)
         self.curvature_indicator = jnp.asarray(indicator)
-        self.plan_id = canonical_fingerprint(
+        plan_id = canonical_fingerprint(
             {
                 "kind": "geometry-order-adaptation",
                 "source_order": source_order_,
@@ -448,8 +465,90 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
                 "curvature": float(indicator),
             }
         )
+        source_coordinates = array_tree_fingerprint(values)
+        source_coordinates_id = canonical_fingerprint(source_coordinates)
+        candidate_id = canonical_fingerprint(
+            {
+                "kind": "geometry-order-candidate",
+                "plan": plan_id,
+                "source_nodes": array_tree_fingerprint(source),
+                "target_nodes": array_tree_fingerprint(target),
+                "source_coordinates": source_coordinates,
+            }
+        )
+        if solver_decision is not None:
+            from ...meshing._decision import AdaptationAction, SolverAwareDecision
 
-    def apply(self, coordinate_values: ArrayLike, /) -> Array:
+            if not isinstance(solver_decision, SolverAwareDecision):
+                raise TypeError("solver_decision must be SolverAwareDecision or None.")
+            if not source_revision_id or not target_revision_id:
+                raise ValueError(
+                    "Geometry-order admission requires prepared revision identities."
+                )
+            selected = solver_decision.require_selected(
+                source_revision_id, candidate_id, target_revision_id
+            )
+            if selected.action != AdaptationAction.GEOMETRY_ORDER:
+                raise ValueError(
+                    "Geometry interpolation cannot realize a field-p or h action."
+                )
+            if selected.error.geometry_error < solver_decision.baseline.geometry_error:
+                raise ValueError(
+                    "Map interpolation cannot claim improved source-geometry fidelity."
+                )
+            if (
+                len(source_order_) != source.shape[1]
+                or len(target_order_) != target.shape[1]
+                or any(order < 1 for order in source_order_ + target_order_)
+                or source.shape[0] != np.prod(np.asarray(source_order_) + 1)
+                or target.shape[0] != np.prod(np.asarray(target_order_) + 1)
+                or any(
+                    new < old
+                    for old, new in zip(source_order_, target_order_, strict=True)
+                )
+            ):
+                raise ValueError(
+                    "Admitted geometry elevation requires compatible tensor orders."
+                )
+        elif source_revision_id is not None or target_revision_id is not None:
+            raise ValueError(
+                "Geometry revision identities require solver admission evidence."
+            )
+        self.plan_id = plan_id
+        self.candidate_id = candidate_id
+        self.solver_decision = solver_decision
+        self.source_revision_id = source_revision_id
+        self.target_revision_id = target_revision_id
+        self.source_coordinates_id = source_coordinates_id
+
+    def apply(
+        self,
+        coordinate_values: ArrayLike,
+        /,
+        *,
+        reanalysis: PhysicalErrorEvidence | None = None,
+    ) -> Array:
+        if self.solver_decision is not None:
+            if (
+                canonical_fingerprint(
+                    array_tree_fingerprint(np.asarray(coordinate_values))
+                )
+                != self.source_coordinates_id
+            ):
+                raise ValueError(
+                    "Admitted geometry interpolation has stale source coordinates."
+                )
+            if reanalysis is None:
+                raise ValueError(
+                    "Geometry-order publication requires independent physical reanalysis."
+                )
+            self.solver_decision.require_reanalysis(reanalysis)
+            if reanalysis.geometry_error < self.solver_decision.baseline.geometry_error:
+                raise ValueError(
+                    "Interpolated geometry does not certify source-fidelity improvement."
+                )
+        elif reanalysis is not None:
+            raise ValueError("Geometry reanalysis requires a solver-aware decision.")
         values = jnp.asarray(coordinate_values)
         return ein.contract("qi,...id->...qd", self.interpolation, values)
 
@@ -569,9 +668,96 @@ def _pyramid_modal_tabulation(
     )
 
 
+def _pyramid_modal_tabulation_jax(
+    points: Array,
+    indices: tuple[tuple[int, int, int], ...],
+) -> tuple[Array, Array]:
+    """Execute the same prepared Bergot modes without host conversion."""
+    from .._coordinate_enclosure import _jacobi_derivative_jax, _jacobi_jax
+
+    height = points[:, 2]
+    collapse = 1.0 - height
+    interior = collapse != 0.0
+    denominator = jnp.where(interior, collapse, 1.0)
+    first = jnp.where(interior, (points[:, 0] - 0.5 * height) / denominator, 0.5)
+    second = jnp.where(interior, (points[:, 1] - 0.5 * height) / denominator, 0.5)
+    first_height = jnp.where(interior, (first - 0.5) / denominator, 0.0)
+    second_height = jnp.where(interior, (second - 0.5) / denominator, 0.0)
+    values, gradients = [], []
+    for i, j, k in indices:
+        maximum = max(i, j)
+        a, da = _jacobi_jax(i, 0, 0, first), _jacobi_derivative_jax(i, 0, 0, first)
+        b, db = _jacobi_jax(j, 0, 0, second), _jacobi_derivative_jax(j, 0, 0, second)
+        c = _jacobi_jax(k, 2 * maximum + 2, 0, height)
+        dc = _jacobi_derivative_jax(k, 2 * maximum + 2, 0, height)
+        power = collapse**maximum
+        horizontal = collapse ** max(maximum - 1, 0)
+        derivative = jnp.zeros_like(collapse) if maximum == 0 else -maximum * horizontal
+        values.append(a * b * power * c)
+        gradients.append(
+            jnp.stack(
+                (
+                    da * b * horizontal * c,
+                    a * db * horizontal * c,
+                    (da * first_height * b + a * db * second_height) * power * c
+                    + a * b * derivative * c
+                    + a * b * power * dc,
+                ),
+                axis=-1,
+            )
+        )
+    return jnp.stack(values, axis=-1), jnp.stack(gradients, axis=1)
+
+
+def _conforming_pyramid_boundary_nodes(nodes: np.ndarray, degree: int, /) -> np.ndarray:
+    """Use the same triangular trace nodes as tetrahedra and prisms.
+
+    Base quadrilateral and edge Lobatto nodes, and interior collapsed nodes,
+    remain unchanged. Only triangular face-interior dual points are relocated;
+    the complete rational modal space is preserved by the owning nodal solve.
+    """
+    if degree < 3:
+        return nodes
+    triangle = np.asarray(SimplexNodalFamily("triangle", degree).nodes, dtype=np.float64)
+    barycentric = np.column_stack((1.0 - np.sum(triangle, axis=1), triangle))
+    interior = barycentric[np.all(barycentric > 2.0e-10, axis=1)]
+    height = nodes[:, 2]
+    collapse = 1.0 - height
+    regular = collapse > 2.0e-10
+    first = np.full(nodes.shape[0], 0.5, dtype=np.float64)
+    second = first.copy()
+    first[regular] = (nodes[regular, 0] - 0.5 * height[regular]) / collapse[regular]
+    second[regular] = (nodes[regular, 1] - 0.5 * height[regular]) / collapse[regular]
+    weights = np.column_stack(
+        (
+            collapse * (1.0 - first) * (1.0 - second),
+            collapse * first * (1.0 - second),
+            collapse * first * second,
+            collapse * (1.0 - first) * second,
+            height,
+        )
+    )
+    support = weights > 2.0e-10
+    topology = reference_cell_topology("pyramid")
+    vertices = np.asarray(topology.vertices, dtype=np.float64)
+    result = nodes.copy()
+    for face in topology.entities[2]:
+        if len(face) != 3:
+            continue
+        rows = np.flatnonzero(
+            np.all(support[:, list(face)], axis=1) & (np.sum(support, axis=1) == 3)
+        )
+        if rows.size != interior.shape[0]:
+            raise ValueError(
+                "Pyramid triangular trace dimension must match its simplex trace."
+            )
+        result[rows] = interior @ vertices[list(face)]
+    return result
+
+
 @final
 class HybridReferenceFamily(StrictModule, NonTrainableState):
-    """Anisotropic prism and arbitrary-order rational pyramid family."""
+    """Anisotropic prism/rational pyramid with common simplex/tensor nodal traces."""
 
     cell_kind: Literal["prism", "pyramid"] = eqx.field(static=True)
     degree: int = eqx.field(static=True)
@@ -581,6 +767,8 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
     modal_indices: tuple[tuple[int, int, int], ...] = eqx.field(static=True)
     coefficients: Array
     condition_number: float = eqx.field(static=True)
+    triangle_family: SimplexNodalFamily | None
+    axial_nodes: Array
     family_id: str = eqx.field(static=True)
 
     def __init__(
@@ -604,6 +792,8 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
             raise ValueError("Hybrid references require prism/pyramid and degree >= 1.")
         if kind == "pyramid" and p != q:
             raise ValueError("Pyramid orders must be isotropic.")
+        triangle = None
+        z_nodes = np.zeros(0, dtype=np.float64)
 
         if kind == "prism":
             triangle = SimplexNodalFamily("triangle", p)
@@ -658,6 +848,7 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
                 if p == 1
                 else np.asarray(pyramid_nodes)
             )
+            nodes = _conforming_pyramid_boundary_nodes(nodes, p)
             permutation = tuple(range(nodes.shape[0]))
             modal_indices = tuple(
                 (first, second, height)
@@ -679,6 +870,8 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
         self.modal_indices = modal_indices
         self.coefficients = jnp.asarray(coefficients)
         self.condition_number = condition_number
+        self.triangle_family = triangle
+        self.axial_nodes = jnp.asarray(z_nodes)
         self.family_id = canonical_fingerprint(
             {
                 "kind": "hybrid-reference-family",
@@ -695,28 +888,112 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
             }
         )
 
+    def nodal_reference_labels(self) -> tuple[tuple[Fraction, ...], ...]:
+        """Exact logical dual labels in the existing basis/node ordering.
+
+        Lobatto and warp-and-blend coordinates remain dynamic numerical leaves;
+        labels identify their owning integer reference nodes, not rounded points.
+        """
+        p, q = self.orders
+        if self.cell_kind == "prism":
+            triangle = self.triangle_family
+            if triangle is None:
+                raise RuntimeError(
+                    "A prism reference is missing its prepared triangle family."
+                )
+            labels = tuple(
+                (Fraction(alpha[1], p), Fraction(alpha[2], p), Fraction(axial, q))
+                for alpha in triangle.multiindices
+                for axial in range(q + 1)
+            )
+            return tuple(labels[index] for index in self.basis_permutation)
+        topology = reference_cell_topology("pyramid")
+        vertices = tuple(
+            tuple(Fraction(float(value)) for value in point)
+            for point in topology.vertices
+        )
+        if p == 1:
+            return tuple(vertices[index] for index in self.basis_permutation)
+        labels: list[tuple[Fraction, ...]] = []
+        face_rows: dict[frozenset[int], list[int]] = {
+            frozenset(face): [] for face in topology.entities[2] if len(face) == 3
+        }
+        for height in range(p + 1):
+            cross = p - height
+            for first in range(cross + 1):
+                for second in range(cross + 1):
+                    row = len(labels)
+                    labels.append(
+                        (
+                            Fraction(2 * first + height, 2 * p),
+                            Fraction(2 * second + height, 2 * p),
+                            Fraction(height, p),
+                        )
+                    )
+                    if 0 < height < p:
+                        support = frozenset(
+                            vertex
+                            for vertex, active in enumerate(
+                                (
+                                    first < cross and second < cross,
+                                    first > 0 and second < cross,
+                                    first > 0 and second > 0,
+                                    first < cross and second > 0,
+                                    True,
+                                )
+                            )
+                            if active
+                        )
+                        if support in face_rows:
+                            face_rows[support].append(row)
+        if p >= 3:
+            interior = tuple(
+                (p - sum(index), *index)
+                for index in _simplex_node_tuples(p, 2)
+                if all(value > 0 for value in (p - sum(index), *index))
+            )
+            # The constructor relocates each triangular interior in precisely
+            # this simplex-owner order, without changing the rational space.
+            for face in topology.entities[2]:
+                if len(face) != 3:
+                    continue
+                rows = face_rows[frozenset(face)]
+                if len(rows) != len(interior):
+                    raise RuntimeError(
+                        "Pyramid labels lack their complete owning simplex trace."
+                    )
+                for row, alpha in zip(rows, interior, strict=True):
+                    labels[row] = tuple(
+                        sum(
+                            (
+                                Fraction(weight, p) * vertices[vertex][axis]
+                                for weight, vertex in zip(alpha, face, strict=True)
+                            ),
+                            Fraction(0),
+                        )
+                        for axis in range(3)
+                    )
+        return tuple(labels[index] for index in self.basis_permutation)
+
     def tabulate_with_gradients(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points)
         if points_.ndim != 2 or points_.shape[-1] != 3:
             raise ValueError("Hybrid reference points must have shape (n, 3).")
         if self.cell_kind == "pyramid":
-            modal, modal_gradients = _pyramid_modal_tabulation(
-                np.asarray(points_), self.modal_indices
+            modal, modal_gradients = _pyramid_modal_tabulation_jax(
+                points_, self.modal_indices
             )
-            coefficients = np.asarray(self.coefficients)
-            values = modal @ coefficients
-            gradients = np.stack(
-                tuple(modal_gradients[..., axis] @ coefficients for axis in range(3)),
-                axis=-1,
-            )
-            return jnp.asarray(values), jnp.asarray(gradients)
+            values = modal @ self.coefficients
+            gradients = ein.contract("qim,ij->qjm", modal_gradients, self.coefficients)
+            return values, gradients
 
-        triangle_degree, axial_degree = self.orders
-        triangle = SimplexNodalFamily("triangle", triangle_degree)
+        triangle = self.triangle_family
+        if triangle is None:
+            raise RuntimeError(
+                "A prism reference is missing its prepared triangle family."
+            )
         triangle_values, triangle_gradients = triangle.tabulate(points_[..., :2])
-        rule = legendre_rule_data(axial_degree + 1, "lobatto")
-        z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
-        z_values, z_gradients = lagrange_1d_tabulation(z_nodes, points_[..., 2])
+        z_values, z_gradients = lagrange_1d_tabulation(self.axial_nodes, points_[..., 2])
         values = ein.contract(
             "qi,qj->qij", triangle_values, z_values, backend="jax"
         ).reshape((points_.shape[0], -1))

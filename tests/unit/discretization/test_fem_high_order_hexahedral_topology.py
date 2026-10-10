@@ -16,6 +16,7 @@ from phydrax.discretization._hexahedral import (
     _quadrilateral_tensor_permutation,
     hexahedral_connectivity,
 )
+from phydrax.discretization._spaces import BlockDofLayout
 
 
 def _two_hex_mesh(*, cells: Any = None, global_ids: Any = (17, 41)) -> Any:
@@ -101,7 +102,10 @@ def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
         assert dof_map.global_dof_count == global_count
         assert dof_map.entity_dof_counts == entity_counts
         assert np.count_nonzero(dof_map.boundary_dof_mask) == boundary_count
-        assert prepared.field_spaces[0].layout.names == (
+        layout = prepared.field_spaces[0].layout
+        if not isinstance(layout, BlockDofLayout):
+            raise TypeError("High-order topology fixture requires a block layout.")
+        assert layout.names == (
             "vertices",
             "edges",
             "faces",
@@ -115,7 +119,8 @@ def test_fem_high_order_hexahedral_topology_scenario_1() -> None:
     reordered_map = phx.discretization.FiniteElementDofMap(reordered, (element,))
 
     assert mesh.topology_id == reordered.topology_id
-    assert original_map.dof_map_id == reordered_map.dof_map_id
+    # DOF-map identity now binds the exact cell-row coordinate-layout routes.
+    assert original_map.dof_map_id != reordered_map.dof_map_id
     assert np.array_equal(original_map.cell_dofs[0], reordered_map.cell_dofs[0][::-1])
     assert np.array_equal(
         original_map.boundary_dof_mask,

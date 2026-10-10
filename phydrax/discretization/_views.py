@@ -342,8 +342,9 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
     smooth for spectral synthesis, `C^{-1}` degree zero for finite-volume cell
     averages). Coordinate derivatives are evaluated exactly up to
     `maximum_derivative_order`; higher orders raise `ValueError`.
-    `support_geometry` is the explicit region the reconstruction covers; views
-    bind only to an equivalent `GeometryDomain`. `approximation` states whether
+    `support_geometry` is the explicit region or embedded manifold the
+    reconstruction covers; views bind only to an equivalent `GeometryDomain`.
+    `approximation` states whether
     the reconstruction evaluates the discrete field itself (`"exact"`) or a
     labeled polynomial projection of it (for example the virtual-element
     `"h1-projection"` and `"l2-projection"` interior channels).
@@ -411,8 +412,8 @@ class PreparedFieldReconstruction(StrictModule, NonTrainableState):
         )
         if not shape:
             raise ValueError("coefficient_shape must have at least one axis.")
-        if support_geometry.kind is not GeometryKind.REGION:
-            raise ValueError("support_geometry must be a region geometry.")
+        if support_geometry.kind not in (GeometryKind.REGION, GeometryKind.MANIFOLD):
+            raise ValueError("support_geometry must be a region or manifold geometry.")
         if support_geometry.ambient_dimension != dimension:
             raise ValueError(
                 "support_geometry ambient dimension must equal physical_dimension."

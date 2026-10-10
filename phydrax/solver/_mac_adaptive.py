@@ -364,12 +364,6 @@ class MACAdaptiveRolloutPlan(StrictModule):
         final_time: float,
         initial_step_size: float,
     ) -> None:
-        from ._mac_viscous import MACSBDF2Method
-
-        if isinstance(method, MACSBDF2Method):
-            raise ValueError(
-                "MAC SBDF2 is fixed-step and cannot be used by adaptive rollout."
-            )
         if controller.dynamics.compilation_id != dynamics.compilation_id:
             raise ValueError("MAC controller and rollout dynamics differ.")
         target = float(final_time)

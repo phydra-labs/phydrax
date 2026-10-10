@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax.discretization import TopologyEpoch
+from phydrax.discretization import TopologyEpoch, TransferGeometryBinding
 from phydrax.discretization.meshfree._surface_transfer import SurfaceTransferPlan
 from phydrax.discretization.meshfree._transfer import (
     PointTransferPlan,
@@ -299,7 +299,13 @@ def test_quadratic_exactness_needs_quadratures_that_agree_on_quadratics() -> Non
     assert linear.admitted and linear.evidence.moments_exact
 
 
-def _signed_quadratic(sources: int, targets: int, /) -> PreparedPointTransfer:
+def _signed_quadratic(
+    sources: int,
+    targets: int,
+    /,
+    *,
+    geometry: TransferGeometryBinding | None = None,
+) -> PreparedPointTransfer:
     x, old = _simpson(sources)
     y, new = _simpson(targets)
     relation, offsets = _nearest_routes(x, y, 6)
@@ -312,6 +318,7 @@ def _signed_quadratic(sources: int, targets: int, /) -> PreparedPointTransfer:
         target_id=f"simpson-{targets}",
         request=PointTransferRequest("joint", moment_degree=2),
         offsets=offsets,
+        geometry=geometry,
     ).prepare()
 
 
@@ -455,7 +462,20 @@ def test_repeated_remap_conserves_content_with_bounded_measured_error() -> None:
 
 
 def test_values_differentiate_through_the_frozen_transfer() -> None:
-    route = _signed_quadratic(12, 10)
+    source_epoch = TopologyEpoch(0, "simpson-12", "line", "serial")
+    target_epoch = TopologyEpoch(1, "simpson-10", "line", "serial")
+    route = _signed_quadratic(
+        12,
+        10,
+        geometry=TransferGeometryBinding(
+            source_epoch.geometry_id,
+            target_epoch.geometry_id,
+            "topology-correspondence",
+            source_topology_id=source_epoch.topology_id,
+            target_topology_id=target_epoch.topology_id,
+            coverage_defect=None,
+        ),
+    )
     assert route.transfer is not None
     rng = np.random.default_rng(3)
     values = jnp.asarray(rng.normal(size=13))
@@ -467,10 +487,7 @@ def test_values_differentiate_through_the_frozen_transfer() -> None:
     dual = route.transfer.dual_pullback_operator
     assert dual is not None
     np.testing.assert_allclose(pullback(cotangent)[0], dual.mv(cotangent), atol=1e-12)
-    transition = route.epoch_transition(
-        TopologyEpoch(0, "simpson-12", "line", "serial"),
-        TopologyEpoch(1, "simpson-10", "line", "serial"),
-    )
+    transition = route.epoch_transition(source_epoch, target_epoch)
     result = transition.apply(values)
     assert bool(result.successful) and bool(result.value_derivative_available)
     assert not bool(result.differentiation_available)

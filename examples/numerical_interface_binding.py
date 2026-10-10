@@ -52,10 +52,10 @@ def grid(x0: float, x1: float, count: int) -> phx.discretization.CellMesh:
 
 
 shape = BRepAlgoAPI_Fuse(rectangle(-1.0, 0.0), rectangle(0.0, 1.0)).Shape()
-model = phx.geometry.model_from_occt_shape(
+model = phx.interchange.model_from_occt_shape(
     shape, coordinate_contract=CONTRACT, linear_deflection=0.05, angular_deflection=0.2
 )
-projection = phx.geometry.prepare_brep_projection(
+projection = phx.interchange.prepare_occt_projection(
     model,
     shape,
     embedding=phx.geometry.PlanarEmbedding((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)),

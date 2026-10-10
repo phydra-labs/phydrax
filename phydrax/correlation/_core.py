@@ -123,7 +123,6 @@ def correlation_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"formulation": formulation}),),
             required_gates=("analytic-control", "conditioning", "public-workflow"),
         )

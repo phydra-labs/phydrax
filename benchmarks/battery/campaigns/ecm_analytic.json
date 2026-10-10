@@ -2,12 +2,12 @@
   "backend_id": "cpu",
   "build_id": "a6952e64e8c28fb622567408cd7b7fb8cbb62fc0e257839a957b9c108eb1da65",
   "campaign_kind": "ecm-analytic",
-  "campaign_spec_id": "901f7e83c481b558e95ad39129da8c5e6f8054c91ee412cb249c1eba51ca2f75",
+  "campaign_spec_id": "3d321b11ea20dec16e3573461a8555c4801aeadb4ad2bf7788cd8a312a0d896f",
   "candidate_profile": {
     "dependencies": [],
     "kind": "capability-profile",
     "name": "battery.thermal-ecm.candidate",
-    "profile_id": "f436b841f6104d061a5c0fc1ef54c32157c06c3c1462632f6f555181897cf6f2",
+    "profile_id": "e1c91447c642d4d5e823356bc62d1891711541c178475330cbf719c50f3c6e11",
     "provider": "phydrax",
     "release_evidence": [],
     "released": false,
@@ -24,8 +24,7 @@
         "kind": "capability-support-tuple",
         "support_tuple_id": "fbd8af48206f98f78cb3d6d8785937b092e4231315f58266b2fba0cf00a2f528"
       }
-    ],
-    "version": "candidate"
+    ]
   },
   "candidate_support": {
     "attributes": {
@@ -61,7 +60,8 @@
   },
   "precision_id": "float64",
   "preprocessing_id": "preprocessing:none",
-  "replay_id": "f71ba2cc4411640cb5d62f870593e21431e17ccd4d1c86de2e9bae4f564e06c8",
+  "registry_entry_id": "d6690935eb5a6402424b0abe11760350cb9966fc380c5f85c272265996ad3808",
+  "replay_id": "55f922a5fdbc9bcd5aec300f4f04f4d9bc600fc31aa237ca7b8fad634162ff75",
   "resolved_run_spec": {
     "auth_policy_id": "auth-policy:user-requested-qualification",
     "checkpoint_policy_id": "checkpoint-policy:none",
@@ -71,7 +71,7 @@
     "precision_policy_id": "precision-policy:float64",
     "prepared_configuration_id": "8517d6ee394264470e393480913e23f1fb392635ecde5b5a8ecdbac1e39de96e",
     "profile_ids": [
-      "f436b841f6104d061a5c0fc1ef54c32157c06c3c1462632f6f555181897cf6f2"
+      "e1c91447c642d4d5e823356bc62d1891711541c178475330cbf719c50f3c6e11"
     ],
     "release_index_id": "release-index:battery-pre-release",
     "repository_id": "repository:a6952e64e8c28fb622567408cd7b7fb8cbb62fc0e257839a957b9c108eb1da65",
@@ -79,13 +79,13 @@
     "scheduler_id": "scheduler:local-process",
     "scientific_dependencies": [
       {
-        "dependency_id": "90cae3b120fafef05806bda046bc02348ccc1ee40f27347eca572a3fed4c93a4",
+        "dependency_id": "216e8309f2d256a10edf318264fa76a69132a80fbd509441d1894a68cbd214c9",
         "kind": "exact-support-dependency",
-        "profile_id": "f436b841f6104d061a5c0fc1ef54c32157c06c3c1462632f6f555181897cf6f2",
+        "profile_id": "e1c91447c642d4d5e823356bc62d1891711541c178475330cbf719c50f3c6e11",
         "support_tuple_id": "fbd8af48206f98f78cb3d6d8785937b092e4231315f58266b2fba0cf00a2f528"
       }
     ],
-    "spec_id": "979aaade163f71651080e35a77c2e85644408a13bda401f1b757e15e0358edb3",
+    "spec_id": "4c9f5b1486b85f069b1913bbaf85aedd26a2f500196a1655a9f4350dfd43a80b",
     "trust_policy_id": "trust-policy:battery-release-review",
     "valid_at": 1788534412269236000,
     "valid_from": 1788534412269236000,

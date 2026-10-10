@@ -179,8 +179,8 @@ class RichardsPlan(StrictModule):
                 face_temperature_K, self.diffusion.face_count, "face_temperature_K"
             )
         owner, neighbor = (
-            self.discretization.owner_cells,
-            self.discretization.neighbor_cells,
+            self.diffusion.owner_cells,
+            self.diffusion.neighbor_cells,
         )
         return jnp.where(
             neighbor >= 0,
@@ -260,8 +260,8 @@ class RichardsPlan(StrictModule):
         local = jnp.where(self.diffusion.valid, local * mobility[:, None], 0.0)
         face = self.diffusion.cell_faces
         owner, neighbor = (
-            self.discretization.owner_cells,
-            self.discretization.neighbor_cells,
+            self.diffusion.owner_cells,
+            self.diffusion.neighbor_cells,
         )
         cells = jnp.arange(self.diffusion.cell_count)[:, None]
         opposite = jnp.where(cells == owner[face], neighbor[face], owner[face])

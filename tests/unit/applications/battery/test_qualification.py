@@ -17,7 +17,6 @@ def test_qualification_scenario_1() -> None:
     candidate = CapabilityProfile(
         "battery.test-candidate",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     )
@@ -33,7 +32,6 @@ def test_qualification_scenario_1() -> None:
     released = CapabilityProfile(
         "battery.test-release",
         "phydrax-tests",
-        "release",
         (support,),
         released=True,
     )

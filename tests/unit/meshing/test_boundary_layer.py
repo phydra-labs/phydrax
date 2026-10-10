@@ -1,459 +1,109 @@
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-import phydrax as phx
 from phydrax._meshcore import meshcore_available
+from tools.meshing_qualification import (
+    _hybrid_qualification_original_layer_sweep_profile,
+    _hybrid_qualification_original_wall_profile,
+)
 
 
 pytestmark = pytest.mark.skipif(
     not meshcore_available(), reason="exact layer certification requires meshcore"
 )
 
-SCHEDULE = phx.meshing.LayerSchedule.geometric(3, 0.01, growth_rate=1.2)
-
-
-def _wall(points: Any, triangles: Any) -> Any:
-    return phx.discretization.CellMesh(
-        np.asarray(points, dtype=np.float64),
-        (
-            phx.discretization.CellBlock(
-                "triangles",
-                "triangle",
-                np.asarray(triangles, dtype=np.int64),
-                global_ids=np.arange(len(triangles), dtype=np.int64),
-            ),
-        ),
-    )
-
-
-def _whole(mesh: Any) -> Any:
-    cells = mesh.entity_set(2)
-    return phx.meshing.MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        phx.meshing.MeshingEntityKind.MESH,
-        2,
-        cells.entity_set_id,
-        cells.entity_ids,
-    )
-
-
-def _control(mesh: Any, **options: Any) -> Any:
-    return phx.meshing.BoundaryLayerControl(
-        _whole(mesh),
-        SCHEDULE,
-        route=phx.meshing.BoundaryLayerRoute.ADVANCING,
-        **options,
-    )
-
-
-def _plate(count: Any, height: Any = 0.0, *, flip: Any = False) -> Any:
-    values = np.linspace(0.0, 1.0, count + 1)
-    x, y = np.meshgrid(values, values, indexing="ij")
-    points = np.stack((x.ravel(), y.ravel(), np.full(x.size, height)), axis=1)
-    index = np.arange(points.shape[0]).reshape(count + 1, count + 1)
-    triangles = []
-    for i in range(count):
-        for j in range(count):
-            a, b, c, d = (
-                index[i, j],
-                index[i + 1, j],
-                index[i + 1, j + 1],
-                index[i, j + 1],
-            )
-            triangles.extend(((a, b, c), (a, c, d)))
-    triangles = np.asarray(triangles)
-    return points, triangles[:, ::-1] if flip else triangles
-
-
-def _oriented(points: Any, triangles: Any, center: Any, outward: Any) -> Any:
-    corners = points[triangles]
-    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
-    away = np.sum(normals * (corners.mean(axis=1) - center), axis=1) > 0.0
-    flip = away != outward
-    triangles = triangles.copy()
-    triangles[flip] = triangles[flip][:, ::-1]
-    return triangles
-
-
-def _icosphere(radius: Any, subdivisions: Any) -> Any:
-    t = (1.0 + 5.0**0.5) / 2.0
-    points = [
-        np.asarray(value, dtype=np.float64)
-        for value in (
-            (-1, t, 0),
-            (1, t, 0),
-            (-1, -t, 0),
-            (1, -t, 0),
-            (0, -1, t),
-            (0, 1, t),
-            (0, -1, -t),
-            (0, 1, -t),
-            (t, 0, -1),
-            (t, 0, 1),
-            (-t, 0, -1),
-            (-t, 0, 1),
-        )
-    ]
-    points = [value / np.linalg.norm(value) for value in points]
-    faces = [
-        (0, 11, 5),
-        (0, 5, 1),
-        (0, 1, 7),
-        (0, 7, 10),
-        (0, 10, 11),
-        (1, 5, 9),
-        (5, 11, 4),
-        (11, 10, 2),
-        (10, 7, 6),
-        (7, 1, 8),
-        (3, 9, 4),
-        (3, 4, 2),
-        (3, 2, 6),
-        (3, 6, 8),
-        (3, 8, 9),
-        (4, 9, 5),
-        (2, 4, 11),
-        (6, 2, 10),
-        (8, 6, 7),
-        (9, 8, 1),
-    ]
-    for _ in range(subdivisions):
-        middle = {}
-
-        def split(first: Any, second: Any, *, middle: Any = middle) -> Any:
-            key = (min(first, second), max(first, second))
-            if key not in middle:
-                value = points[first] + points[second]
-                points.append(value / np.linalg.norm(value))
-                middle[key] = len(points) - 1
-            return middle[key]
-
-        refined = []
-        for a, b, c in faces:
-            ab, bc, ca = split(a, b), split(b, c), split(c, a)
-            refined.extend(((a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)))
-        faces = refined
-    points = radius * np.asarray(points)
-    return points, _oriented(points, np.asarray(faces), np.zeros(3), True)
-
-
-def _box(lower: Any, upper: Any, count: Any, *, outward: Any) -> Any:
-    lower = np.asarray(lower, dtype=np.float64)
-    upper = np.asarray(upper, dtype=np.float64)
-    index: dict[tuple[float, ...], int] = {}
-    points = []
-    triangles = []
-    grid = np.linspace(0.0, 1.0, count + 1)
-
-    def vertex(value: Any) -> Any:
-        key = tuple(np.round(value, 12))
-        if key not in index:
-            index[key] = len(points)
-            points.append(value)
-        return index[key]
-
-    for axis in range(3):
-        u, v = (value for value in range(3) if value != axis)
-        for bound in (lower[axis], upper[axis]):
-            for i in range(count):
-                for j in range(count):
-                    quad = []
-                    for di, dj in ((0, 0), (1, 0), (1, 1), (0, 1)):
-                        value = np.zeros(3)
-                        value[axis] = bound
-                        value[u] = lower[u] + (upper[u] - lower[u]) * grid[i + di]
-                        value[v] = lower[v] + (upper[v] - lower[v]) * grid[j + dj]
-                        quad.append(vertex(value))
-                    a, b, c, d = quad
-                    triangles.extend(((a, b, c), (a, c, d)))
-    points = np.asarray(points)
-    return points, _oriented(
-        points, np.asarray(triangles), 0.5 * (lower + upper), outward
-    )
-
-
-def _cell_counts(result: Any) -> Any:
-    return dict(result.evidence.cell_counts)
-
-
-def _assert_certified(result: Any) -> None:
-    cells = sum(block.cell_count for block in result.mesh.blocks)
-    assert result.validity.certified_valid_count == cells
-    assert result.evidence.certified_valid_count == cells
-
 
 def test_boundary_layer_scenario_1() -> None:
-    points, triangles = _plate(5)
-    wall = _wall(points, triangles)
-
-    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    np.testing.assert_allclose(
-        result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
-    )
-    np.testing.assert_allclose(result.evidence.achieved_growth_rates, 1.2, rtol=1e-12)
-    active = np.asarray(result.evidence.layer_active)
-    assert active.dtype == np.bool_
-    np.testing.assert_array_equal(active, (True, True, True))
-    evidence_values = {
-        name: getattr(result.evidence, name)
-        for name in result.evidence.__dataclass_fields__
-        if name != "evidence_id"
-    }
-    with pytest.raises(ValueError, match="invalid shapes"):
-        phx.meshing.BoundaryLayerEvidence(
-            **{
-                **evidence_values,
-                "achieved_thicknesses": np.ones((2,), dtype=np.float64),
-            }
-        )
-    assert _cell_counts(result) == {"prism": 3 * triangles.shape[0]}
-    heights = np.unique(np.round(np.asarray(result.mesh.coordinates)[:, 2], 12))
-    np.testing.assert_allclose(heights, (0.0, 0.01, 0.022, 0.0364))
-    _assert_certified(result)
-    assert not result.closed_cap
-    values = np.linspace(0.0, 1.0, 4)
-    x, y = np.meshgrid(values, values, indexing="ij")
-    points = np.stack((x.ravel(), y.ravel(), np.zeros(x.size)), axis=1)
-    index = np.arange(points.shape[0]).reshape(4, 4)
-    quads = np.asarray(
-        [
-            (index[i, j], index[i + 1, j], index[i + 1, j + 1], index[i, j + 1])
-            for i in range(3)
-            for j in range(3)
-        ]
-    )
-    wall = phx.discretization.CellMesh(
-        points,
-        (
-            phx.discretization.CellBlock(
-                "quadrilaterals", "quadrilateral", quads, global_ids=np.arange(9)
-            ),
-        ),
-    )
-
-    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    assert _cell_counts(result) == {"pyramid": 9, "hexahedron": 27}
-    np.testing.assert_allclose(
-        result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
-    )
-    # ty: ignore[unresolved-attribute]
-    assert {block.cell_kind for block in result.cap.blocks} == {"triangle"}
-    layer_index = np.asarray(result.layer_index)
-    pyramids = result.mesh.block("pyramids")
-    np.testing.assert_array_equal(layer_index[np.asarray(pyramids.global_ids)], 3)
-    _assert_certified(result)
-    lower, lower_triangles = _plate(4)
-    upper, upper_triangles = _plate(4, flip=True)
-    upper[:, 2] = 0.03 + 0.17 * upper[:, 0]
-    wall = _wall(
-        np.concatenate((lower, upper)),
-        np.concatenate((lower_triangles, upper_triangles + lower.shape[0])),
-    )
-
-    result = phx.meshing.prepare_boundary_layers(
-        wall,
-        _control(
-            wall, collision=phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY
-        ),
-    )
-
-    evidence = result.evidence
-    assert 0 < evidence.terminated_vertex_count < 50
-    counts = _cell_counts(result)
-    assert counts["pyramid"] > 0 and counts["tetrahedron"] > 0
-    assert evidence.achieved_thicknesses[0] == pytest.approx(0.01)
-    _assert_certified(result)
+    for profile in ("plate5", "quadrilateral_plate3", "opposing_sloped_plates4"):
+        _hybrid_qualification_original_wall_profile(profile)
 
 
 def test_boundary_layer_scenario_2() -> None:
-    points, triangles = _icosphere(0.4, 2)
-    wall = _wall(points, triangles)
-
-    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    evidence = result.evidence
-    np.testing.assert_allclose(
-        evidence.minimum_thicknesses, SCHEDULE.thicknesses, rtol=1e-6
-    )
-    np.testing.assert_allclose(
-        evidence.maximum_thicknesses, SCHEDULE.thicknesses, rtol=1e-6
-    )
-    np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-6)
-    assert evidence.fan_column_count == 0
-    assert result.closed_cap
-    # ty: ignore[unresolved-attribute]
-    radii = np.linalg.norm(np.asarray(result.cap.coordinates), axis=1)
-    assert np.all(radii > 0.4)
-    _assert_certified(result)
-    points, triangles = _box((-0.3, -0.3, -0.3), (0.3, 0.3, 0.3), 3, outward=True)
-    wall = _wall(points, triangles)
-
-    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    evidence = result.evidence
-    assert evidence.convex_ridge_count == 12 * 3
-    assert evidence.corner_patch_count == 8
-    assert evidence.fan_column_count > 0
-    counts = _cell_counts(result)
-    assert (
-        counts["hexahedron"] > 0 and counts["tetrahedron"] > 0 and counts["pyramid"] > 0
-    )
-    np.testing.assert_allclose(
-        evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-9
-    )
-    assert result.closed_cap
-    # ty: ignore[unresolved-attribute]
-    assert {block.cell_kind for block in result.cap.blocks} == {"triangle"}
-    _assert_certified(result)
-    points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 3, outward=False)
-    wall = _wall(points, triangles)
-
-    result = phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    evidence = result.evidence
-    assert evidence.concave_ridge_count == 12 * 3
-    assert evidence.fan_column_count == 0
-    assert evidence.maximum_stretch == pytest.approx(np.sqrt(3.0), rel=1e-6)
-    np.testing.assert_allclose(
-        evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-9
-    )
-    _assert_certified(result)
+    for profile in (
+        "sphere_radius04_subdivision2",
+        "outward_box_count3",
+        "concave_box_count3",
+    ):
+        _hybrid_qualification_original_wall_profile(profile)
 
 
 def test_boundary_layer_scenario_3() -> None:
-    count = 3
-    values = np.linspace(0.0, 1.0, count + 1)
-    angle = np.deg2rad(30.0)
-    floor = [(r, w, 0.0) for r in values for w in values]
-    slope = [
-        (r * np.cos(angle), w, r * np.sin(angle)) for r in values[1:] for w in values
-    ]
-    points = np.asarray(floor + slope)
-    first = np.arange((count + 1) ** 2).reshape(count + 1, count + 1)
-    second = np.vstack(
-        (first[:1], first.size + np.arange(count * (count + 1)).reshape(count, -1))
-    )
-    triangles = []
-    for grid in (first, second):
-        for i in range(count):
-            for j in range(count):
-                a, b, c, d = (
-                    grid[i, j],
-                    grid[i + 1, j],
-                    grid[i + 1, j + 1],
-                    grid[i, j + 1],
-                )
-                triangles.extend(((a, b, c), (a, c, d)))
-    triangles = np.asarray(triangles)
-    # Both sheets face into the 30-degree wedge between them.
-    inside = np.asarray((0.5 * np.cos(0.5 * angle), 0.5, 0.5 * np.sin(0.5 * angle)))
-    corners = points[triangles]
-    normals = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
-    flip = np.sum(normals * (inside - corners.mean(axis=1)), axis=1) < 0.0
-    triangles[flip] = triangles[flip][:, ::-1]
-    wall = _wall(points, triangles)
-
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    assert (
-        failure.value.category
-        is phx.meshing.MeshingFailureCategory.UNSUPPORTED_COMBINATION
-    )
-    crease = np.flatnonzero(np.isclose(points[:, 0], 0.0) & np.isclose(points[:, 2], 0.0))
-    assert set(failure.value.entity_ids) == {int(value) for value in crease}
-    np.testing.assert_allclose(failure.value.locations, points[crease])
-    points, triangles = _box((0.0, 0.0, 0.0), (1.0, 1.0, 0.5), 4, outward=False)
-    heights = points[triangles][:, :, 2]
-    open_box = triangles[~np.all(np.isclose(heights, 0.5), axis=1)]
-    wall = _wall(points, open_box)
-    cells = wall.entity_set(2)
-    floor = np.flatnonzero(np.all(np.isclose(points[open_box][:, :, 2], 0.0), axis=1))
-    scope = phx.meshing.MeshingScope(
-        wall.mesh_id,
-        wall.numeric_version,
-        phx.meshing.MeshingEntityKind.MESH,
-        2,
-        cells.entity_set_id,
-        np.asarray(cells.entity_ids)[floor],
-    )
-    control = phx.meshing.BoundaryLayerControl(
-        scope, SCHEDULE, route=phx.meshing.BoundaryLayerRoute.ADVANCING
-    )
-
-    result = phx.meshing.prepare_boundary_layers(wall, control)
-
-    assert result.evidence.rim_vertex_count == 16
-    coordinates = np.asarray(result.mesh.coordinates)
-    assert np.all((coordinates[:, :2] >= 0.0) & (coordinates[:, :2] <= 1.0))
-    # Rim columns stay exactly on their side planes (bitwise), five per side level.
-    on_side = np.count_nonzero(coordinates[:, 0] == 0.0)
-    assert on_side == 5 * 4
-    np.testing.assert_allclose(
-        result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
-    )
-    assert not result.closed_cap
-    _assert_certified(result)
-    wall = _channel(0.05)
-
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        phx.meshing.prepare_boundary_layers(wall, _control(wall))
-
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.CONTROL_CONFLICT
-    assert len(failure.value.entity_ids) == 50
-    assert len(failure.value.locations) == 50
-    for collision in (
-        phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS,
-        phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY,
-        phx.meshing.BoundaryLayerCollisionPolicy.MERGE,
+    for profile in (
+        "wedge30_rejection",
+        "open_box_floor_count4",
+        "channel_gap005_rejection",
+        "channel_gap005_policies",
     ):
-        gap = 0.05
-        wall = _channel(gap)
-
-        result = phx.meshing.prepare_boundary_layers(
-            wall, _control(wall, collision=collision, minimum_thickness_fraction=0.2)
-        )
-
-        evidence = result.evidence
-        assert evidence.collision_policy is collision
-        assert evidence.predicted_collision_vertex_count == 50
-        heights = np.asarray(result.mesh.coordinates)[:, 2]
-        match collision:
-            case phx.meshing.BoundaryLayerCollisionPolicy.REDUCE_THICKNESS:
-                assert 0.2 <= evidence.minimum_scale < 1.0
-                assert evidence.reduced_vertex_count == 50
-                assert np.max(heights[heights < 0.5 * gap]) < 0.5 * gap
-                np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-9)
-                assert np.all(np.asarray(evidence.layer_active))
-            case phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
-                assert evidence.terminated_vertex_count == 50
-                assert _cell_counts(result) == {"prism": 2 * 32}
-                achieved = np.asarray(evidence.achieved_thicknesses)
-                active = np.asarray(evidence.layer_active)
-                assert achieved[0] == pytest.approx(0.01)
-                np.testing.assert_array_equal(active, (True, False, False))
-                np.testing.assert_array_equal(np.isnan(achieved), ~active)
-                assert np.all(np.isnan(evidence.achieved_growth_rates))
-            case phx.meshing.BoundaryLayerCollisionPolicy.MERGE:
-                assert evidence.merged_vertex_count == 50
-                assert evidence.minimum_scale == pytest.approx(
-                    0.5 * gap / SCHEDULE.total_thickness
-                )
-                assert np.any(np.isclose(heights, 0.5 * gap))
-                # Merged fronts share their midsurface, so no free front remains.
-                assert result.cap is None
-        _assert_certified(result)
+        _hybrid_qualification_original_wall_profile(profile)
 
 
-def _channel(gap: Any) -> Any:
-    lower, lower_triangles = _plate(4)
-    upper, upper_triangles = _plate(4, gap, flip=True)
-    return _wall(
-        np.concatenate((lower, upper)),
-        np.concatenate((lower_triangles, upper_triangles + lower.shape[0])),
+@pytest.mark.parametrize(
+    ("thicknesses", "remaining_core"),
+    (
+        ((0.05, 0.10), True),
+        ((0.25, 0.75), False),
+    ),
+    ids=("slab-and-core", "entire-solid-slab"),
+)
+def test_native_cad_extrusion_preserves_physical_wall_cap_and_volume(
+    tmp_path: Any, thicknesses: tuple[float, ...], remaining_core: bool
+) -> None:
+    profile = "cad-slab-and-core" if remaining_core else "cad-entire-solid-slab"
+    owners = _hybrid_qualification_original_layer_sweep_profile(
+        profile, destination=tmp_path / "native-extrusion.brep"
+    )
+    np.testing.assert_array_equal(owners["control"].schedule.thicknesses, thicknesses)
+
+
+@pytest.mark.parametrize(
+    ("thickness", "opposite_walls", "reason"),
+    (
+        (1.25, False, "leaves its controlled solid"),
+        (0.75, True, "slabs of different walls overlap"),
+    ),
+    ids=("outside-controlled-solid", "overlapping-wall-slabs"),
+)
+def test_native_cad_extrusion_refuses_invalid_slabs_atomically(
+    tmp_path: Path,
+    thickness: float,
+    opposite_walls: bool,
+    reason: str,
+) -> None:
+    profile = (
+        "cad-overlapping-wall-slabs" if opposite_walls else "cad-outside-controlled-solid"
+    )
+    owners = _hybrid_qualification_original_layer_sweep_profile(
+        profile, destination=tmp_path / "protected.brep"
+    )
+    assert reason in owners["rejection"]
+    np.testing.assert_array_equal(owners["control"].schedule.thicknesses, (thickness,))
+
+
+@pytest.mark.parametrize("periodicity", ("translation", "partial", "rotation"))
+@pytest.mark.parametrize("quadrilateral", (False, True))
+def test_periodic_layers_preserve_winding_cap_and_physical_schedule(
+    periodicity: str,
+    quadrilateral: bool,
+) -> None:
+    kind = "quadrilateral" if quadrilateral else "triangle"
+    _hybrid_qualification_original_layer_sweep_profile(f"periodic-{periodicity}-{kind}")
+
+
+def test_periodic_layers_preserve_a_convex_ridge_crossing_the_seam() -> None:
+    _hybrid_qualification_original_layer_sweep_profile("periodic-convex-ridge")
+
+
+@pytest.mark.parametrize("periodic", (False, True))
+@pytest.mark.parametrize("perturb_cap", (False, True))
+def test_exact_sweep_authors_independent_measured_reference_stations(
+    periodic: bool,
+    perturb_cap: bool,
+) -> None:
+    periodicity = "periodic" if periodic else "nonperiodic"
+    outcome = "perturbed-cap" if perturb_cap else "accepted"
+    _hybrid_qualification_original_layer_sweep_profile(
+        f"exact-sweep-{periodicity}-{outcome}"
     )

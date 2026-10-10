@@ -10,9 +10,8 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import (
-    directional_derivative,
-    dt,
+from ..operators.differential._domain_ops import directional_derivative, dt
+from ..operators.differential._level_set import (
     level_set_curvature,
     level_set_gradient_norm,
     level_set_normal,

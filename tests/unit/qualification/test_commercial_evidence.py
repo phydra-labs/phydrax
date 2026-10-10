@@ -91,7 +91,6 @@ def test_commercial_evidence_scenario_1() -> None:
     dependency_profile = CapabilityProfile(
         "dependency.core",
         "phydrax",
-        "release",
         (dependency_support,),
         released=True,
     )
@@ -99,7 +98,6 @@ def test_commercial_evidence_scenario_1() -> None:
     dependent_profile = CapabilityProfile(
         "application.solver",
         "phydrax",
-        "release",
         (requested_support,),
         dependencies=(
             SupportDependency(
@@ -131,7 +129,6 @@ def test_commercial_evidence_scenario_1() -> None:
     admitted_profile = CapabilityProfile(
         "application.solver",
         "phydrax",
-        "release-exact",
         (requested_support,),
         dependencies=(
             SupportDependency(
@@ -398,7 +395,6 @@ def test_candidate_profiles_keep_legacy_profile_dependencies_and_round_trip() ->
     candidate = CapabilityProfile(
         "candidate.profile",
         "phydrax",
-        "pr-246-candidate",
         (support,),
         dependencies=("legacy-profile-id",),
         released=False,

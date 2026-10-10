@@ -30,6 +30,35 @@ ScalarFlux = Callable[[Array, int, Any], ArrayLike]
 ScalarWaveSpeed = Callable[[Array, Array, int, Any], ArrayLike]
 
 
+def _proper_isometry_representation(
+    rotation: Array, dimension: int, components: int, vector_slices: tuple[slice, ...]
+) -> Array:
+    """Build only explicitly declared scalar/vector physical representations."""
+    rotation = jnp.asarray(rotation, dtype=jnp.result_type(rotation, 1.0))
+    if rotation.shape[-2:] != (dimension, dimension):
+        raise ValueError(
+            "Proper isometry rotation must match the owning system dimension."
+        )
+    tolerance = 256 * jnp.finfo(rotation.dtype).eps
+    rotation = eqx.error_if(
+        rotation,
+        jnp.any(~jnp.isfinite(rotation))
+        | jnp.any(
+            jnp.abs(jnp.swapaxes(rotation, -1, -2) @ rotation - jnp.eye(dimension))
+            > tolerance
+        )
+        | jnp.any(jnp.abs(jnp.linalg.det(rotation) - 1) > tolerance),
+        "State transport requires a finite proper orthogonal isometry.",
+    )
+    result = jnp.broadcast_to(
+        jnp.eye(components, dtype=rotation.dtype),
+        rotation.shape[:-2] + (components, components),
+    )
+    for indices in vector_slices:
+        result = result.at[..., indices, indices].set(rotation)
+    return result
+
+
 class AbstractConservationSystem(StrictModule):
     """Physical conservation system independent of a numerical method."""
 
@@ -117,6 +146,12 @@ class AbstractConservationSystem(StrictModule):
     @property
     def component_count(self) -> int:
         return len(self.component_names)
+
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        """Owning linear representation carrying conserved states between frames."""
+        raise TypeError(
+            f"{type(self).__name__} has no declared proper-isometry state representation."
+        )
 
     @abc.abstractmethod
     def admissible(self, state: Array, /) -> Array:
@@ -370,6 +405,9 @@ class ScalarConservationSystem(
         self.flux = flux
         self.wave_speed = wave_speed
 
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        return _proper_isometry_representation(rotation, self.dimension, 1, ())
+
     def admissible(self, state: Array, /) -> Array:
         return jnp.all(jnp.isfinite(jnp.asarray(state)), axis=-1)
 
@@ -467,6 +505,11 @@ class EulerSystem(
                 "dimension": dimension_,
                 "material": material_.material_id,
             }
+        )
+
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        return _proper_isometry_representation(
+            rotation, self.dimension, self.component_count, (self.momentum_slice,)
         )
 
     @property
@@ -851,6 +894,9 @@ class CompressibleNavierStokesSystem(
     def pressure(self, state: ArrayLike, /) -> Array:
         return self.inviscid.pressure(state)
 
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        return self.inviscid.proper_isometry_state_matrix(rotation)
+
     @property
     def momentum_slice(self) -> slice:
         return self.inviscid.momentum_slice
@@ -1167,6 +1213,15 @@ class IdealMHDSystem(
             }
         )
 
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        if self.dimension != 3:
+            raise TypeError(
+                "Proper MHD frame transport requires the owning three-dimensional vector representation."
+            )
+        return _proper_isometry_representation(
+            rotation, 3, self.component_count, (slice(1, 4), slice(5, 8))
+        )
+
     @property
     def gamma(self) -> float:
         return self.material.gamma
@@ -1383,6 +1438,14 @@ class ShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
                 "gravity": gravity_,
                 "dry_state": "zero-depth-zero-discharge",
             }
+        )
+
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        return _proper_isometry_representation(
+            rotation,
+            self.dimension,
+            self.component_count,
+            (slice(1, 1 + self.dimension),),
         )
 
     def velocity(self, state: Array, /) -> Array:

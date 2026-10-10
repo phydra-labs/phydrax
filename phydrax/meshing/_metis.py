@@ -2,12 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Multilevel k-way graph partitioning through a dynamically loaded METIS library.
+"""METIS multilevel k-way partitioning as an explicit external comparison route.
 
-METIS is an optional native plugin reached through its plain C ABI with ctypes.
-The library is resolved from ``PHYDRAX_METIS_LIBRARY`` and then the platform
-loader search path; absence is reported with :class:`MetisUnavailableError`
-rather than substituting another partitioner.
+``MeshPartitionKind.METIS`` selects this route by name; the canonical GRAPH
+route is the native partitioner of :mod:`phydrax.graph` and never falls back to
+METIS. METIS is reached through its plain C ABI with ctypes. The library is
+resolved from ``PHYDRAX_METIS_LIBRARY`` and then the platform loader search
+path; absence is reported with :class:`MetisUnavailableError`.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ _WEIGHT_BUDGET = float(1 << 30)
 
 
 class MetisUnavailableError(ImportError):
-    """No loadable METIS shared library was found for the GRAPH partition route."""
+    """No loadable METIS shared library was found for the METIS comparison route."""
 
 
 class MetisPartitionError(RuntimeError):
@@ -54,7 +55,7 @@ def _library_path() -> str:
     located = ctypes.util.find_library("metis")
     if located is None:
         raise MetisUnavailableError(
-            "GRAPH partitioning requires METIS; set "
+            "The METIS partition route requires METIS; set "
             f"{_ENVIRONMENT} to the libmetis shared library path."
         )
     return located

@@ -263,7 +263,6 @@ def pic_radiation_reaction_candidate_profiles() -> tuple[CapabilityProfile, ...]
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_RADIATION_REACTION_GATES,
             released=False,
@@ -365,7 +364,6 @@ def pic_spectral_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=gates[support.capability],
             released=False,
@@ -418,7 +416,6 @@ def pic_qed_cascade_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_QED_CASCADE_GATES,
             released=False,
@@ -467,7 +464,6 @@ def pic_polarized_qed_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_POLARIZED_QED_GATES,
             released=False,
@@ -516,7 +512,6 @@ def pic_distributed_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_DISTRIBUTED_GATES,
             released=False,
@@ -562,7 +557,6 @@ def pic_dispersive_self_consistent_candidate_profiles() -> tuple[CapabilityProfi
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_DISPERSIVE_SELF_CONSISTENT_GATES,
             released=False,
@@ -610,7 +604,6 @@ def pic_boosted_frame_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{support.capability}.profile",
             "phydrax",
-            "candidate",
             (support,),
             required_gates=_BOOSTED_FRAME_GATES,
             released=False,

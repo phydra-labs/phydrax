@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.meshing.providers._native_publication import uniform_size_compliance
 
 
 def _scope(dimension: Any, ids: Any = (1,)) -> Any:
@@ -184,3 +185,50 @@ def test_sizing_scenario_2() -> None:
     assert evidence.anisotropy_clamped_count == 1
     # ty: ignore[unresolved-attribute]
     assert evidence.passed and evidence.gradation.maximum_violation <= 1.0e-12
+
+
+@pytest.mark.parametrize(
+    "absolute_ulps,relative_ulps,measured_ulps,passed",
+    [
+        (0, 0, 1, False),
+        (0, 0, -1, False),
+        (1, 0, 1, True),
+        (0, 1, 1, True),
+        (1, 0, 2, False),
+    ],
+    ids=[
+        "exact-upper-refusal",
+        "exact-lower-refusal",
+        "absolute-boundary",
+        "relative-boundary",
+        "beyond-authored-bound",
+    ],
+)
+def test_hard_size_statistics_use_only_authored_tolerance(
+    absolute_ulps: int,
+    relative_ulps: int,
+    measured_ulps: int,
+    passed: bool,
+) -> None:
+    resolution = np.finfo(np.float64).eps
+    control = phx.meshing.UniformSizeControl(
+        _scope(2),
+        1.0,
+        strength=phx.meshing.SizeControlStrength.HARD,
+    )
+    policy = phx.meshing.SizeCompliancePolicy(
+        absolute_tolerance=absolute_ulps * resolution,
+        relative_tolerance=relative_ulps * resolution,
+        target_statistics=("p50", "p95"),
+    )
+    lengths = np.asarray([1.0 + measured_ulps * resolution], dtype=np.float64)
+    _, _, issues = uniform_size_compliance(control, policy, lengths, 1.0)
+    expected = (
+        []
+        if passed
+        else [
+            f"target_size_p50:{control.control_id}",
+            f"target_size_p95:{control.control_id}",
+        ]
+    )
+    assert issues == expected

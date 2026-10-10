@@ -3,32 +3,26 @@
 #
 
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_FACE
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopoDS import TopoDS
 
 from phydrax._physical import SpatialCoordinateContract
+from phydrax.geometry import PlanarEmbedding
 from phydrax.geometry._cad_revision import AssociationStatus, CADSelectionSet
 from phydrax.geometry.brep import (
-    _planar as planar_module,
-    BRepPartitionHistoryError,
     BRepPartitionPolicy,
+    BRepPartitionResult,
     BRepPartitionRole,
     partition_planar,
-    PlanarEmbedding,
     PlanarPartitionOperand,
     PlanarPartitionPlan,
-    read_occt_shape,
+    prepare_brep_query,
 )
-from phydrax.geometry.brep._model import BRepEntityId
+from phydrax.geometry.brep._model import BRepEntityId, BRepModel
 from phydrax.geometry.simplicial import PlanarMeshRegion
 from phydrax.units import METER, MILLIMETER
 
@@ -66,7 +60,7 @@ def _rectangle(
 
 def _operand(
     operand_id: str,
-    source: Any,
+    source: PlanarMeshRegion | BRepModel,
     role: BRepPartitionRole = BRepPartitionRole.REGION,
     *,
     targets: tuple[str, ...] = (),
@@ -80,7 +74,7 @@ def _operand(
 
 
 def _plan(
-    operands: Any,
+    operands: Sequence[PlanarPartitionOperand],
     precedence: tuple[str, ...],
     *,
     embedding: PlanarEmbedding = _EMBEDDING,
@@ -93,7 +87,7 @@ def _plan(
     )
 
 
-def _execute(plan: PlanarPartitionPlan, destination: Path) -> Any:
+def _execute(plan: PlanarPartitionPlan, destination: Path) -> BRepPartitionResult:
     return partition_planar(
         plan,
         destination=destination,
@@ -102,26 +96,15 @@ def _execute(plan: PlanarPartitionPlan, destination: Path) -> Any:
     )
 
 
-def _face_areas(result: Any) -> dict[BRepEntityId, float]:
-    shape, source_format, source_digest = read_occt_shape(result.model.source_id)
-    assert source_format == "brep"
-    assert source_digest == result.model.source_digest
-    explorer = TopExp_Explorer(shape, TopAbs_FACE)
-    faces = []
-    while explorer.More():
-        candidate = TopoDS.Face(explorer.Current())
-        if not any(value.IsSame(candidate) for value in faces):
-            faces.append(candidate)
-        explorer.Next()
-    areas = {}
-    for entity_id, face in zip(result.model.face_ids, faces, strict=True):
-        properties = GProp_GProps()
-        BRepGProp.SurfaceProperties_s(face, properties)
-        areas[entity_id] = float(properties.Mass())
-    return areas
+def _face_areas(result: BRepPartitionResult) -> dict[BRepEntityId, float]:
+    measures = prepare_brep_query(result.model).measures
+    return {
+        entity_id: float(measures.face_areas[index])
+        for index, entity_id in enumerate(result.model.face_ids)
+    }
 
 
-def _region_area(result: Any, name: str) -> float:
+def _region_area(result: BRepPartitionResult, name: str) -> float:
     areas = _face_areas(result)
     return sum(areas[value] for value in result.region(name).entity_ids)
 
@@ -280,6 +263,30 @@ def test_void_subtracts_only_its_declared_planar_target(tmp_path: Any) -> None:
     assert _region_area(result, "right") == pytest.approx(2.0)
 
 
+def test_void_empties_winning_planar_region_without_lower_refill(tmp_path: Path) -> None:
+    result = _execute(
+        _plan(
+            (
+                _operand("left", _rectangle(0.0, 2.0, feature_id="left")),
+                _operand("right", _rectangle(1.0, 3.0, feature_id="right")),
+                _operand(
+                    "cut",
+                    _rectangle(1.0, 2.0, feature_id="cut"),
+                    BRepPartitionRole.VOID,
+                    targets=("left",),
+                ),
+            ),
+            ("left", "right"),
+        ),
+        tmp_path / "owned-hole.brep",
+    )
+    assert _region_area(result, "left") == pytest.approx(1.0)
+    assert _region_area(result, "right") == pytest.approx(1.0)
+    assert all(len(patch.adjacent_region_ids) == 1 for patch in result.patches)
+    coverage = result.association_graph.transaction.coverage
+    assert coverage.source_exhaustive and coverage.target_exhaustive
+
+
 def test_exact_face_and_edge_histories_cover_split_and_deleted_sources(
     tmp_path: Any,
 ) -> None:
@@ -385,43 +392,12 @@ def test_planar_sources_must_share_the_declared_embedding_plane(tmp_path: Any) -
         (0.0, 0.0, 1.0),
     )
 
-    with pytest.raises(ValueError, match="another plane"):
+    with pytest.raises(ValueError, match="not coplanar"):
         _execute(
             _plan((_operand("source", first.model),), ("source",), embedding=displaced),
             tmp_path / "wrong-plane.brep",
         )
     assert not (tmp_path / "wrong-plane.brep").exists()
-
-
-def test_missing_live_planar_history_publishes_nothing(
-    tmp_path: Any, monkeypatch: Any
-) -> None:
-    class NoHistoryCellsBuilder(BOPAlgo_CellsBuilder):
-        def HasHistory(self) -> bool:
-            return False
-
-    destination = tmp_path / "unresolved-history.brep"
-    monkeypatch.setattr(planar_module, "BOPAlgo_CellsBuilder", NoHistoryCellsBuilder)
-
-    with pytest.raises(BRepPartitionHistoryError, match="live Boolean history"):
-        _execute(
-            _plan(
-                (
-                    _operand(
-                        "left",
-                        _rectangle(0.0, 2.0, feature_id="unresolved-left"),
-                    ),
-                    _operand(
-                        "right",
-                        _rectangle(1.0, 3.0, feature_id="unresolved-right"),
-                    ),
-                ),
-                ("left", "right"),
-            ),
-            destination,
-        )
-    assert not destination.exists()
-    assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
 
 
 def test_holes_must_be_strictly_inside_the_outer_loop(tmp_path: Any) -> None:

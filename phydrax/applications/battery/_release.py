@@ -800,11 +800,9 @@ def _release_profile(
     issued_at: int,
     expires_at: int,
 ) -> CapabilityProfile:
-    from ._qualification import BATTERY_RELEASE_COORDINATES
+    from ._qualification import BATTERY_RELEASE_NAMES
 
-    name, version = BATTERY_RELEASE_COORDINATES[
-        candidate.support_tuples[0].support_tuple_id
-    ]
+    name = BATTERY_RELEASE_NAMES[candidate.support_tuples[0].support_tuple_id]
     reviewer = bundle._signature(bundle.coverage, "scientific-reviewer").signature.key_id
     gate = ReleaseGateEvidence(
         f"{name}.scientific",
@@ -822,7 +820,6 @@ def _release_profile(
     return CapabilityProfile(
         name,
         "phydrax",
-        version,
         candidate.support_tuples,
         dependencies=bundle.dependencies,
         required_gates=(gate.gate,),

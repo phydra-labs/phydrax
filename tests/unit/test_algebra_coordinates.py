@@ -46,9 +46,10 @@ def test_algebra_coordinates_scenario_1() -> None:
     assert isinstance(coordinates, phx.linalg.AbstractRealCoordinateMap)
     assert coordinates.evidence.domain_kind == "constrained_subspace"
     assert coordinates.evidence.norm_relation == "isometry"
+    # Identity binds the periodic cell's authored maximum condition number.
     assert (
         coordinates.coordinate_id
-        == "5cb3e54c0c191bde3770e09bae8f946bb05d7f6cbd58abfabff8fe2c409fd4df"
+        == "15767d133f4a6b60f0961c609b985d03ef77a6f790e40a0216547d1f140b51e7"
     )
     assert jnp.allclose(coordinates.from_real_coordinates(real), state, atol=1e-12)
     source = phx.linalg.ArraySpace((2,), dtype=jnp.float64)

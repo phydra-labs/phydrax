@@ -12,7 +12,25 @@ pytestmark = [
     pytest.mark.skipif(
         find_spec("gmsh") is None, reason="optional gmsh package is not installed"
     ),
+    pytest.mark.skipif(
+        find_spec("OCP") is None, reason="optional OCP comparison fixture is unavailable"
+    ),
 ]
+
+_CONTRACT = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+_IMPORT_POLICY = phx.interchange.CadImportPolicy(
+    _CONTRACT,
+    phx.interchange.ResourceLimits(
+        max_bytes=1 << 24,
+        max_depth=64,
+        max_nodes=100_000,
+        max_attributes=2_000_000,
+        max_losses=8,
+    ),
+    tessellation=phx.geometry.BRepTessellationPolicy(
+        linear_deflection=0.03, angular_deflection=0.15
+    ),
+)
 
 
 def _split_boxes(
@@ -34,22 +52,36 @@ def _split_boxes(
 
 
 def _source(path: Any, shape: Any) -> Any:
-    return phx.geometry.persist_occt_shape(
+    # OCCT constructs the external comparison fixture; decode its saved bytes natively.
+    phx.interchange.persist_occt_shape(
         shape,
         path,
-        coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
+        coordinate_contract=_CONTRACT,
         linear_deflection=0.03,
         angular_deflection=0.15,
     )
+    return phx.interchange.read_cad(
+        path,
+        _IMPORT_POLICY,
+        trusted_root=path.parent,
+        source_length_unit=_CONTRACT.length_unit,
+    ).model
 
 
 def _face_indices(source: Any, axis: Any, coordinate: Any) -> Any:
-    points = np.asarray(source.mesh_vertices)
-    triangles = points[np.asarray(source.mesh_faces)]
-    face_ids = np.asarray(source.triangle_face_ids)
-    return tuple(
-        np.unique(face_ids[np.all(np.isclose(triangles[:, :, axis], coordinate), axis=1)])
-    )
+    assert source.geometry is not None
+    selected = []
+    for face, patch in enumerate(source.patches):
+        lower, upper = np.asarray(source.parameter_bounds[face])
+        first, second = np.meshgrid(
+            np.linspace(lower[0], upper[0], 3),
+            np.linspace(lower[1], upper[1], 3),
+        )
+        parameters = np.column_stack((first.ravel(), second.ravel()))
+        points = np.asarray(patch.evaluate(parameters))
+        if np.allclose(points[:, axis], coordinate):
+            selected.append(face)
+    return tuple(selected)
 
 
 def _scope(provider: Any, source: Any, dimension: Any, indices: Any) -> Any:
@@ -311,7 +343,6 @@ def test_swept_lateral_face_adjoining_unswept_volume_is_rejected_before_generati
 def test_schedule_total_mismatch_fails_before_gmsh_mesh_generation(
     tmp_path: Any, monkeypatch: Any
 ) -> None:
-    # ty: ignore[unresolved-import]
     import gmsh
 
     provider = phx.meshing.GmshProvider()

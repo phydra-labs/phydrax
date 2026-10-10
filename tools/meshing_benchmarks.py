@@ -6,11 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import resource
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
-from typing import Any
+from typing import Any, NoReturn
 
 import equinox as eqx
 import jax
@@ -26,7 +29,17 @@ from phydrax._bvh import (
     prepare_bvh,
     refit_packed_bvh_bounds,
 )
+from phydrax._fingerprint import canonical_fingerprint
 from phydrax.meshing._quality import _standard_block_quality
+from tools._meshing_cases import (
+    CASE_NAMES,
+    corpus_identity,
+    load_corpus_registration,
+    MANDATORY_WORKFLOWS,
+    meshing_case,
+    POLYHEDRAL_CASE_NAMES,
+    polyhedral_identity,
+)
 
 
 def _contract() -> phx.SpatialCoordinateContract:
@@ -90,7 +103,7 @@ def _planar_partition(count: int, destination: Path) -> Any:
 def _persist_shape(
     shape: Any, path: Path, contract: phx.SpatialCoordinateContract
 ) -> Any:
-    return phx.geometry.persist_occt_shape(shape, path, coordinate_contract=contract)
+    return phx.interchange.persist_occt_shape(shape, path, coordinate_contract=contract)
 
 
 def _cad_partition(count: int, destination: Path) -> Any:
@@ -1765,11 +1778,12 @@ def _lattice_square(cells_per_axis: int, /) -> phx.meshing.CellMeshingResult:
 def benchmark_repartition(resolution: int) -> dict[str, object]:
     """Partition about ``resolution`` triangles, refine a corner, and migrate.
 
-    Host-only NumPy stages: certification, MORTON/HILBERT ownership (GRAPH too
-    when METIS loads) with ghost construction, native bisection of the cells
-    in one corner, and the HILBERT distribution transition onto the refined
-    revision. The compiled consumer is the transition's ``transfer`` (send
-    gather plus receive reduction) through ``_migrate_cell_data``: lowering,
+    Host-only NumPy stages: certification, MORTON/HILBERT/native GRAPH
+    ownership (METIS comparison too when it loads) with ghost construction,
+    native bisection of the cells in one corner, and the HILBERT distribution
+    transition onto the refined revision. The compiled consumer is the
+    transition's ``transfer`` (send gather plus receive reduction) through
+    ``_migrate_cell_data``: lowering,
     compile, cold and warm execution, and compiler memory.
     """
     from phydrax.meshing._metis import metis_identity
@@ -1779,14 +1793,15 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     part = phx.meshing.MeshPart("repartition", source)
     kind = phx.meshing.MeshPartitionKind
     parts = 4
-    routes = [kind.MORTON, kind.HILBERT]
-    # Loading the shared library is the only way to learn whether METIS is usable.
+    routes = [kind.MORTON, kind.HILBERT, kind.GRAPH]
+    # METIS is an explicit comparison route; loading its library is the only
+    # way to learn whether it is usable.
     try:
         metis = metis_identity()
     except phx.meshing.MetisUnavailableError as error:
         metis = f"missing-dependency: {error}"
     else:
-        routes.append(kind.GRAPH)
+        routes.append(kind.METIS)
     stages, distributions, partitions = {}, {}, {}
     stages["host_certification"] = certification_seconds
     for route in routes:
@@ -2466,6 +2481,340 @@ def benchmark_predicates(resolution: int) -> dict[str, object]:
     }
 
 
+_PARTITION_PART_COUNTS = (2, 8, 32, 64)
+_PARTITION_IMBALANCE = 1.03
+
+
+def _partition_csr(count: int, pairs: np.ndarray, /) -> phx.graph.WeightedCSRGraph:
+    """Unit-weight symmetric CSR graph of ``count`` vertices and undirected pairs."""
+    rows = np.concatenate((pairs[:, 0], pairs[:, 1]))
+    columns = np.concatenate((pairs[:, 1], pairs[:, 0]))
+    order = np.lexsort((columns, rows))
+    offsets = np.zeros((count + 1,), dtype=np.int64)
+    np.cumsum(np.bincount(rows, minlength=count), out=offsets[1:])
+    return phx.graph.WeightedCSRGraph(offsets, columns[order].astype(np.int32))
+
+
+def _grid_pairs(shape: tuple[int, ...], /) -> np.ndarray:
+    """Axis-neighbor vertex pairs of a structured grid."""
+    index = np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
+    pairs = []
+    for axis in range(len(shape)):
+        lower = [slice(None)] * len(shape)
+        upper = [slice(None)] * len(shape)
+        lower[axis], upper[axis] = slice(None, -1), slice(1, None)
+        pairs.append(
+            np.stack(
+                (index[tuple(lower)].reshape((-1,)), index[tuple(upper)].reshape((-1,))),
+                axis=1,
+            )
+        )
+    return np.concatenate(pairs)
+
+
+def _simplex_dual_pairs(simplices: np.ndarray, /) -> np.ndarray:
+    """Pairs of simplices sharing a facet."""
+    count, corners = simplices.shape
+    facets = np.concatenate(
+        [
+            np.sort(np.delete(simplices, corner, axis=1), axis=1)
+            for corner in range(corners)
+        ]
+    )
+    owners = np.tile(np.arange(count, dtype=np.int64), corners)
+    order = np.lexsort(facets.T[::-1])
+    facets, owners = facets[order], owners[order]
+    shared = np.flatnonzero(np.all(facets[1:] == facets[:-1], axis=1))
+    return np.stack((owners[shared], owners[shared + 1]), axis=1)
+
+
+def _freudenthal_tetrahedra(cells_per_axis: int, /) -> np.ndarray:
+    """Six Freudenthal tetrahedra per cube of a structured lattice."""
+    side = cells_per_axis + 1
+    index = np.arange(side**3, dtype=np.int64).reshape((side, side, side))
+    base = index[:-1, :-1, :-1].reshape((-1,))
+    steps = np.asarray((side * side, side, 1), dtype=np.int64)
+    tetrahedra = []
+    for permutation in ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)):
+        path = np.cumsum(steps[list(permutation)])
+        tetrahedra.append(np.stack((base, *(base + offset for offset in path)), axis=1))
+    return np.concatenate(tetrahedra)
+
+
+def _partition_graphs(resolution: int, /) -> dict[str, phx.graph.WeightedCSRGraph | str]:
+    """Deterministic unit, vertex-weighted and disconnected mesh campaigns."""
+    rng = np.random.default_rng(resolution)
+    square = max(2, round(resolution**0.5))
+    cube = max(2, round(resolution ** (1.0 / 3.0)))
+    planar_points = rng.random((max(8, resolution // 2), 2))
+    spatial_points = rng.random((max(8, resolution // 6), 3))
+
+    def dual(points: np.ndarray) -> phx.graph.WeightedCSRGraph:
+        cells = np.asarray(
+            phx.geometry.DelaunayTriangulation(points).simplices, dtype=np.int64
+        )
+        return _partition_csr(cells.shape[0], _simplex_dual_pairs(cells))
+
+    def lattice(dimension: int) -> phx.graph.WeightedCSRGraph:
+        cells = (
+            _planar_triangles(max(2, round((resolution / 2) ** 0.5))).astype(np.int64)
+            if dimension == 2
+            else _freudenthal_tetrahedra(max(2, round((resolution / 6) ** (1.0 / 3.0))))
+        )
+        return _partition_csr(cells.shape[0], _simplex_dual_pairs(cells))
+
+    factories = {
+        "grid-2d": lambda: _partition_csr(square * square, _grid_pairs((square, square))),
+        "grid-3d": lambda: _partition_csr(cube**3, _grid_pairs((cube, cube, cube))),
+        "delaunay-dual-2d": lambda: dual(planar_points),
+        "delaunay-dual-3d": lambda: dual(spatial_points),
+        "mesh-dual-2d": lambda: lattice(2),
+        "mesh-dual-3d": lambda: lattice(3),
+    }
+    graphs: dict[str, phx.graph.WeightedCSRGraph | str] = {}
+    for family, construct in factories.items():
+        try:
+            graph = construct()
+        except Exception as error:
+            # Campaign failures are observations, not successful provider fallbacks.
+            for suffix in ("", "-weighted", "-disconnected"):
+                graphs[family + suffix] = f"{type(error).__name__}: {error}"
+            continue
+        graphs[family] = graph
+        graphs[family + "-weighted"] = phx.graph.WeightedCSRGraph(
+            graph.offsets,
+            graph.neighbors,
+            edge_weights=graph.edge_weights,
+            vertex_weights=rng.integers(1, 9, graph.vertex_count, dtype=np.int64),
+        )
+        graphs[family + "-disconnected"] = phx.graph.WeightedCSRGraph(
+            np.concatenate((graph.offsets, graph.offsets[1:] + graph.neighbors.size)),
+            np.concatenate((graph.neighbors, graph.neighbors + graph.vertex_count)),
+            edge_weights=np.tile(graph.edge_weights, 2),
+        )
+    return graphs
+
+
+def _partition_measure(
+    graph: phx.graph.WeightedCSRGraph, parts: np.ndarray, part_count: int, /
+) -> dict[str, float | int | bool]:
+    """Independent acceptance of exact capacities and required nonempty parts."""
+    if parts.shape != (graph.vertex_count,) or parts.dtype.kind not in "iu":
+        raise ValueError("Provider returned an invalid ownership shape or dtype.")
+    if np.any((parts < 0) | (parts >= part_count)):
+        raise ValueError("Provider returned an invalid ownership index.")
+    rows = np.repeat(
+        np.arange(graph.vertex_count, dtype=np.int64), np.diff(graph.offsets)
+    )
+    crossing = parts[rows] != parts[graph.neighbors]
+    weights = np.zeros((part_count,), dtype=np.int64)
+    np.add.at(weights, parts, graph.vertex_weights)
+    counts = np.bincount(parts, minlength=part_count)
+    target = int(np.sum(graph.vertex_weights)) / part_count
+    capacity = min(
+        int(np.sum(graph.vertex_weights)),
+        max(int(np.floor(_PARTITION_IMBALANCE * target)), int(np.ceil(target))),
+    )
+    return {
+        "edge_cut": int(np.sum(graph.edge_weights[crossing])) // 2,
+        "imbalance": float(np.max(weights)) / target,
+        "capacity": capacity,
+        "maximum_part_weight": int(np.max(weights)),
+        "empty_parts": int(np.count_nonzero(counts == 0)),
+        "accepted": bool(np.all(weights <= capacity) and np.all(counts > 0)),
+    }
+
+
+def _partition_route(
+    graph: phx.graph.WeightedCSRGraph, plan: phx.graph.GraphPartitionPlan, route: str, /
+) -> dict[str, Any]:
+    """Measure execution/audit phases and truthful process/Python memory."""
+    import resource
+    import sys
+    import tracemalloc
+
+    from phydrax.meshing._metis import metis_partition
+
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    before_bytes = tracemalloc.get_traced_memory()[0]
+    started = perf_counter()
+    record: dict[str, Any] = {}
+    phase = "execute_with_boundary_evidence"
+    phase_started = started
+    try:
+        if route == "native":
+            result = phx.graph.partition_graph(graph, plan)
+            owners = np.asarray(result.parts)
+            record["status"] = result.evidence.status
+            work = result.evidence.work
+            record["work"] = {
+                "coarsening_levels": work.coarsening_levels,
+                "coarsest_vertices": work.coarsest_vertex_count,
+                "matched_pairs": work.matched_pairs,
+                "bisection_trials": work.bisection_trials,
+                "refinement_passes": work.refinement_passes,
+                "moves_committed": work.moves_committed,
+                "moves_rolled_back": work.moves_rolled_back,
+                "balance_moves": work.balance_moves,
+                "nonempty_repairs": work.nonempty_repairs,
+                "adjacency_visits": work.adjacency_visits,
+                "candidate_evaluations": work.candidate_evaluations,
+            }
+        elif route == "metis":
+            owners = metis_partition(
+                np.asarray(graph.offsets),
+                np.asarray(graph.neighbors),
+                np.asarray(graph.vertex_weights),
+                plan.part_count,
+                imbalance=plan.maximum_imbalance,
+                seed=0,
+            )
+            record["status"] = "returned"
+        else:
+            raise ValueError(f"Unknown partition comparison route: {route}.")
+        execution_seconds = perf_counter() - started
+        record["stages_seconds"] = {"execute_with_boundary_evidence": execution_seconds}
+        phase = "independent_audit"
+        phase_started = perf_counter()
+        audit_started = perf_counter()
+        record |= _partition_measure(graph, owners, plan.part_count)
+        if route == "native":
+            record["accepted"] = record["accepted"] and record["status"] == "balanced"
+        record["stages_seconds"] = {
+            "execute_with_boundary_evidence": execution_seconds,
+            "independent_audit": perf_counter() - audit_started,
+        }
+    except Exception as error:
+        record.setdefault("stages_seconds", {})[phase] = perf_counter() - phase_started
+        record |= {
+            "status": "failed",
+            "accepted": False,
+            "failure_phase": phase,
+            "error": f"{type(error).__name__}: {error}",
+        }
+    finally:
+        current, peak = tracemalloc.get_traced_memory()
+        record["seconds"] = perf_counter() - started
+        record["memory_bytes"] = {
+            "python_retained_delta": current - before_bytes,
+            "python_traced_peak_cumulative": peak,
+            "process_peak_rss_cumulative": resource.getrusage(
+                resource.RUSAGE_SELF
+            ).ru_maxrss
+            * (1 if sys.platform == "darwin" else 1024),
+            "graph_retained": sum(
+                array.nbytes
+                for array in (
+                    graph.offsets,
+                    graph.neighbors,
+                    graph.edge_weights,
+                    graph.vertex_weights,
+                )
+            ),
+        }
+        if not tracing:
+            tracemalloc.stop()
+    return record
+
+
+def benchmark_graph_partition(resolution: int) -> dict[str, object]:
+    """Record every case/failure at fixed tolerance; never drop quality tails."""
+    from phydrax.meshing._metis import metis_identity
+
+    try:
+        metis = metis_identity()
+    except phx.meshing.MetisUnavailableError as error:
+        metis = f"missing-dependency: {error}"
+        compare = False
+    else:
+        compare = True
+    graphs, construction_seconds = _timed(lambda: _partition_graphs(resolution))
+    cases: list[dict[str, Any]] = []
+    ratios: list[float] = []
+    zero_baseline_losses = 0
+    for family, graph in graphs.items():
+        for part_count in _PARTITION_PART_COUNTS:
+            case: dict[str, Any] = {"family": family, "parts": part_count}
+            cases.append(case)
+            if isinstance(graph, str):
+                case |= {
+                    "construction_error": graph,
+                    "failure_phase": "graph_construction",
+                    "native": {"status": "not_run", "accepted": False},
+                    "metis": {"status": "not_run", "accepted": False},
+                }
+                continue
+            case |= {
+                "vertices": graph.vertex_count,
+                "edges": graph.neighbors.size // 2,
+                "graph_id": graph.graph_id,
+            }
+            plan = phx.graph.GraphPartitionPlan(
+                part_count,
+                maximum_imbalance=_PARTITION_IMBALANCE,
+                work_limit=max(
+                    100_000, 100_000 * (graph.vertex_count + graph.neighbors.size)
+                ),
+            )
+            case["plan_id"] = plan.plan_id
+            case["native"] = _partition_route(graph, plan, "native")
+            case["metis"] = (
+                _partition_route(graph, plan, "metis")
+                if compare
+                else {"status": "unavailable", "accepted": False}
+            )
+            case["cut_ratio"] = None
+            if case["native"]["accepted"] and case["metis"]["accepted"]:
+                native_cut, baseline_cut = (
+                    case["native"]["edge_cut"],
+                    case["metis"]["edge_cut"],
+                )
+                if baseline_cut:
+                    ratio = native_cut / baseline_cut
+                elif native_cut == 0:
+                    ratio = 1.0
+                else:
+                    zero_baseline_losses += 1
+                    case["zero_baseline_cut_loss"] = True
+                    continue
+                ratios.append(ratio)
+                case["cut_ratio"] = ratio
+    all_accepted = all(
+        case["native"]["accepted"] and case["metis"]["accepted"] for case in cases
+    )
+    median = float(np.median(ratios)) if ratios else None
+    maximum = float(np.max(ratios)) if ratios and zero_baseline_losses == 0 else None
+    return {
+        "resolution": resolution,
+        "stages_seconds": {"graph_construction": construction_seconds},
+        "metis": metis,
+        "imbalance_tolerance": _PARTITION_IMBALANCE,
+        "memory_scope": "Python traced bytes exclude native allocations; process RSS is cumulative, not per-phase.",
+        "cases": cases,
+        "summary": {
+            "case_count": len(cases),
+            "comparable_cases": len(ratios),
+            "native_not_accepted": sum(not case["native"]["accepted"] for case in cases),
+            "metis_not_accepted": sum(not case["metis"]["accepted"] for case in cases),
+            "median_cut_ratio": median,
+            "maximum_cut_ratio": maximum,
+            "zero_baseline_cut_losses": zero_baseline_losses,
+            "cases_above_three_percent": sum(ratio > 1.03 for ratio in ratios)
+            + zero_baseline_losses,
+            "quality_target_met": bool(
+                all_accepted
+                and zero_baseline_losses == 0
+                and median is not None
+                and maximum is not None
+                and median <= 1.0
+                and maximum <= 1.03
+            ),
+        },
+    }
+
+
 def _repeated_case(
     runner: Any,
     resolution: int,
@@ -2483,6 +2832,773 @@ def _repeated_case(
             for name in timing_names
         },
     }
+
+
+def _reject_nonfinite_json(value: str, /) -> NoReturn:
+    raise ValueError(f"Non-finite JSON value {value!r} is not permitted.")
+
+
+def _unique_json_object(pairs: list[tuple[str, object]], /) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"Qualification JSON contains duplicate field {name!r}.")
+        result[name] = value
+    return result
+
+
+def _captured_text(value: object, /) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    if isinstance(value, str):
+        return value
+    raise TypeError("Captured process output must be text, bytes, or None.")
+
+
+def _launcher_evidence(
+    started: float,
+    timeout: float,
+    /,
+    *,
+    terminated: bool,
+    returncode: int | None,
+) -> dict[str, object]:
+    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return {
+        "hard_timeout": {
+            "limit_seconds": timeout,
+            "mechanism": "subprocess.run-timeout",
+            "completed_before_deadline": not terminated,
+            "terminated_by_launcher": terminated,
+            "returncode": returncode,
+        },
+        "resource_measurement": {
+            "child_process_peak_resident_bytes": peak
+            * (1 if sys.platform == "darwin" else 1024),
+            "scope": "launcher-lifetime-maximum-over-completed-children",
+            "per_attempt_peak_available": False,
+        },
+        "process_total_seconds": perf_counter() - started,
+    }
+
+
+def _complete_campaign_sample(
+    record: dict[str, Any],
+    capacity: int,
+    /,
+    *,
+    positive: bool,
+) -> dict[str, Any]:
+    """Attach the phase/resource evidence required on every attempted sample."""
+    record.setdefault("runtime", None)
+    record.setdefault("hard_timeout", None)
+    record.setdefault("independent_acceptance", None)
+    record.setdefault("mandatory_workflow_completion", "incomplete")
+    record["positive_completion"] = positive
+    phase_evidence = corpus_phase_evidence(record, capacity)
+    record["phase_evidence"] = phase_evidence
+    record["resource_evidence"] = phase_evidence["resources"]
+    return record
+
+
+def _qualification_positive_completion(record: dict[str, Any], engine: str, /) -> bool:
+    """Accept only the canonical child result, never a bare successful status."""
+    if engine != "native":
+        acceptance = record.get("independent_acceptance")
+        return (
+            record.get("status") == "passed"
+            and record.get("case_contract_completion") == "complete"
+            and record.get("independent_scientific_certification") == "passed"
+            and isinstance(acceptance, dict)
+            and acceptance.get("passed") is True
+        )
+    from tools.meshing_qualification import _validate_mandatory_workflow_result
+
+    workflow = _validate_mandatory_workflow_result(record.get("workflow_result"))
+    if workflow["observed_status"] != record.get("status"):
+        raise ValueError(
+            "Qualification status disagrees with its mandatory workflow result."
+        )
+    if record.get("positive_completion") is not workflow["positive_completion"]:
+        raise ValueError(
+            "Qualification completion disagrees with its mandatory workflow result."
+        )
+    return workflow["positive_completion"] is True
+
+
+def _native_campaign_sample(
+    case_name: str,
+    resolution: int,
+    capacity: int,
+    timeout: float,
+    repeats: int,
+    target_error: float,
+    adaptation_rounds: int,
+    engine: str,
+    *,
+    scenario_override: str | None = None,
+    controls: dict[str, str | int | float | tuple[float, ...]] | None = None,
+    attempt_index: int = 0,
+) -> dict[str, Any]:
+    """One isolated measured sample, including hard cancellation and failures."""
+    if attempt_index < 0:
+        raise ValueError("Campaign sample attempt index must be nonnegative.")
+    generic = scenario_override is not None
+    surface = case_name == "sphere-feature-surface"
+    polyhedral = case_name in POLYHEDRAL_CASE_NAMES
+    scenario = (
+        scenario_override
+        if generic
+        else "native-polyhedral-lifecycle"
+        if polyhedral
+        else "native-surface-pde"
+        if surface
+        else "native-lifecycle"
+        if engine == "native"
+        else "comparison-triangle-lifecycle"
+    )
+    effective_controls = dict(controls or {})
+    checkpoint_root = effective_controls.get("distributed_checkpoint_root")
+    if scenario == "native-distributed-lifecycle" and isinstance(checkpoint_root, str):
+        effective_controls["distributed_checkpoint_root"] = (
+            f"{checkpoint_root}-resolution-{resolution}-capacity-{capacity}"
+            f"-attempt-{attempt_index}"
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "tools.meshing_qualification",
+        "--scenario",
+        scenario,
+        "--corpus-case",
+        "planar-hole-feature" if surface or polyhedral or generic else case_name,
+        "--resolution",
+        str(resolution),
+        "--capacity",
+        str(capacity),
+        "--timeout",
+        str(timeout),
+        "--repeats",
+        str(repeats),
+        "--target-error",
+        str(target_error),
+        "--adaptation-rounds",
+        str(adaptation_rounds),
+    ]
+    if polyhedral:
+        command.extend(("--polyhedral-source", case_name))
+    for name, value in sorted(effective_controls.items()):
+        command.append(f"--{name.replace('_', '-')}")
+        command.extend(
+            str(item) for item in (value if isinstance(value, tuple) else (value,))
+        )
+    frozen_controls = {
+        "case_name": case_name,
+        "scenario": scenario,
+        "engine": engine,
+        "resolution": resolution,
+        "entity_capacity": capacity,
+        "wall_seconds": timeout,
+        "solver_warm_repeats": repeats,
+        "target_error": target_error,
+        "adaptation_rounds": adaptation_rounds,
+        "scenario_controls": {
+            name: value for name, value in sorted(effective_controls.items())
+        },
+    }
+    ineligible = (
+        "No explicit baseline adapter matches this complete source/control/state contract."
+        if generic and engine != "native"
+        else "Triangle does not admit the nonconvex material polyhedral VEM/FV contract."
+        if polyhedral and engine != "native"
+        else "Triangle does not admit the source sphere/seam/pole/PDE contract."
+        if surface and engine != "native"
+        else None
+    )
+    if ineligible is not None:
+        return _complete_campaign_sample(
+            {
+                "status": "ineligible-comparison",
+                "engine": engine,
+                "command": command,
+                "frozen_controls": frozen_controls,
+                "frozen_controls_id": canonical_fingerprint(frozen_controls),
+                "process_started": False,
+                "failure": ineligible,
+            },
+            capacity,
+            positive=False,
+        )
+    started = perf_counter()
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as failure:
+        launcher = _launcher_evidence(started, timeout, terminated=True, returncode=None)
+        return _complete_campaign_sample(
+            {
+                "status": "timeout",
+                "engine": engine,
+                "command": command,
+                "frozen_controls": frozen_controls,
+                "frozen_controls_id": canonical_fingerprint(frozen_controls),
+                "process_started": True,
+                "failure": str(failure),
+                "stdout": _captured_text(failure.stdout),
+                "stderr": _captured_text(failure.stderr),
+                **launcher,
+            },
+            capacity,
+            positive=False,
+        )
+    launcher = _launcher_evidence(
+        started, timeout, terminated=False, returncode=completed.returncode
+    )
+    try:
+        record = json.loads(
+            completed.stdout,
+            parse_constant=_reject_nonfinite_json,
+            object_pairs_hook=_unique_json_object,
+        )
+    except (json.JSONDecodeError, ValueError) as failure:
+        return _complete_campaign_sample(
+            {
+                "status": "failed",
+                "engine": engine,
+                "command": command,
+                "frozen_controls": frozen_controls,
+                "frozen_controls_id": canonical_fingerprint(frozen_controls),
+                "process_started": True,
+                "failure": str(failure),
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "returncode": completed.returncode,
+                **launcher,
+            },
+            capacity,
+            positive=False,
+        )
+    if not isinstance(record, dict):
+        return _complete_campaign_sample(
+            {
+                "status": "failed",
+                "engine": engine,
+                "command": command,
+                "frozen_controls": frozen_controls,
+                "frozen_controls_id": canonical_fingerprint(frozen_controls),
+                "process_started": True,
+                "failure": "Qualification output is not an evidence object.",
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+                "returncode": completed.returncode,
+                **launcher,
+            },
+            capacity,
+            positive=False,
+        )
+    record.update(
+        {
+            "command": command,
+            "returncode": completed.returncode,
+            "stderr": completed.stderr,
+            "frozen_controls": frozen_controls,
+            "frozen_controls_id": canonical_fingerprint(frozen_controls),
+            "process_started": True,
+            **launcher,
+        }
+    )
+    if completed.returncode != 0 and record.get("status") not in ("failed", "timeout"):
+        record["status"] = "failed"
+    try:
+        positive = _qualification_positive_completion(record, engine)
+    except (TypeError, ValueError) as failure:
+        reported = record.get("status", "missing")
+        record.update(
+            {
+                "status": "failed",
+                "reported_status": reported,
+                "failure_phase": "qualification-result-schema",
+                "failure": f"{type(failure).__name__}: {failure}",
+            }
+        )
+        positive = False
+    return _complete_campaign_sample(record, capacity, positive=positive)
+
+
+def corpus_phase_evidence(sample: dict[str, Any], capacity: int) -> dict[str, Any]:
+    """Expose actual phase measurements without deriving missing work or bytes."""
+    epochs = sample.get("epochs", [])
+    compiler_records = []
+    stages = sample.get("stages_seconds", {})
+    if not isinstance(stages, dict):
+        raise TypeError("Qualification stage evidence must be a mapping.")
+    for epoch in epochs:
+        compiler = epoch.get("compiler", {})
+        index = epoch["epoch"]
+        compiler_records.append(
+            {
+                "epoch": index,
+                "controlling_entity_capacity": capacity,
+                "lowering_seconds": stages.get(f"solver_lowering_epoch_{index}"),
+                "compile_seconds": stages.get(f"solver_compile_epoch_{index}"),
+                "first_execution_seconds": stages.get(
+                    f"solver_first_execution_epoch_{index}"
+                ),
+                "warm_samples_seconds": compiler.get("warm_samples_seconds"),
+                "temporary_bytes": compiler.get("temporary_bytes"),
+                "output_bytes": compiler.get("output_bytes"),
+                "argument_bytes": compiler.get("argument_bytes"),
+                "generated_code_bytes": compiler.get("generated_code_bytes"),
+                "logical_retained_bytes": epoch.get("retained_bytes"),
+                "memory_status": compiler.get("memory_status", "unmeasured"),
+            }
+        )
+    measured_stages = [
+        {
+            "name": name,
+            "seconds": seconds,
+            "measurement": "wall-clock",
+            "accounting": "owned-interval-not-assumed-exclusive",
+        }
+        for name, seconds in sorted(stages.items())
+    ]
+    native_execution = sample.get("native_phases")
+    resources = {
+        "hard_timeout": sample.get("hard_timeout"),
+        "launcher_resource_measurement": sample.get("resource_measurement"),
+        "process_peak_resident_bytes": sample.get("peak_process_resident_bytes"),
+        "process_peak_scope": sample.get("process_peak_scope"),
+        "device_memory": sample.get("device_memory"),
+    }
+    recorded = bool(
+        measured_stages
+        or compiler_records
+        or native_execution
+        or any(value is not None for value in resources.values())
+    )
+    return {
+        "controlling_entity_capacity": capacity,
+        "measured_stages": measured_stages,
+        "compiler_epochs": compiler_records,
+        "native_execution": native_execution,
+        "resources": resources,
+        "scope": (
+            "Measured stage intervals, compiler analysis, logical retention, process peak, "
+            "and backend device reports remain separate; inclusive intervals are not summed."
+        ),
+        "missing_measurements_are_zero": False,
+        "status": "recorded" if recorded else "unmeasured",
+    }
+
+
+def benchmark_native_lifecycle(
+    case_name: str,
+    resolution: int,
+    capacity: int,
+    timeout: float,
+    repeats: int,
+    target_error: float,
+    adaptation_rounds: int,
+    comparison: str | None,
+    *,
+    scenario_override: str | None = None,
+    controls: dict[str, str | int | float | tuple[float, ...]] | None = None,
+    source_reference: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Freeze a common physical contract and retain every candidate's sample."""
+    from tools.meshing_qualification import _runtime_identity, _scenario_source_reference
+
+    polyhedral = case_name in POLYHEDRAL_CASE_NAMES
+    engines = ("native",) if comparison is None else ("native", comparison)
+    candidates = {}
+    identities: set[str] = set()
+    request_identity_complete = True
+    outcome_names = (
+        "passed",
+        "expected-refusal",
+        "failed",
+        "timeout",
+        "missing-dependency",
+        "ineligible-comparison",
+    )
+    for engine in engines:
+        samples = [
+            _native_campaign_sample(
+                case_name,
+                resolution,
+                capacity,
+                timeout,
+                3,
+                target_error,
+                adaptation_rounds,
+                engine,
+                scenario_override=scenario_override,
+                controls=controls,
+                attempt_index=attempt,
+            )
+            for attempt in range(repeats)
+        ]
+        candidate_identities = []
+        for sample in samples:
+            request_id = sample.get("request_id")
+            if isinstance(request_id, str):
+                candidate_identities.append(request_id)
+                identities.add(request_id)
+            else:
+                request_identity_complete = False
+        statuses = [sample["status"] for sample in samples]
+        accepted = [sample for sample in samples if sample["positive_completion"] is True]
+        times = [
+            sample["time_to_target_error_seconds"]
+            for sample in accepted
+            if isinstance(sample.get("time_to_target_error_seconds"), (int, float))
+        ]
+        peaks = [
+            sample["peak_process_resident_bytes"]
+            for sample in accepted
+            if isinstance(sample.get("peak_process_resident_bytes"), int)
+        ]
+        counts = {status: statuses.count(status) for status in outcome_names}
+        counts.update(
+            {
+                status: statuses.count(status)
+                for status in sorted(set(statuses) - set(outcome_names))
+            }
+        )
+        candidates[engine] = {
+            "samples": samples,
+            "attempts": len(samples),
+            "counts": counts,
+            "positive_completions": len(accepted),
+            "certified_refusals": statuses.count("expected-refusal"),
+            "refusals_count_as_positive_completion": False,
+            "success_rate": len(accepted) / len(samples),
+            "request_identities": sorted(set(candidate_identities)),
+            "request_identity_complete": len(candidate_identities) == len(samples),
+            "time_to_target_error_seconds": {
+                "median": None if not times else float(np.median(times)),
+                "minimum": None if not times else float(np.min(times)),
+                "maximum": None if not times else float(np.max(times)),
+            },
+            "peak_process_resident_bytes": None if not peaks else int(np.max(peaks)),
+            (
+                "worst_accepted_physics_error"
+                if polyhedral or scenario_override is not None
+                else "worst_accepted_l2_error"
+            ): (
+                None
+                if not accepted
+                else max(sample["physical_error"] for sample in accepted)
+            ),
+            "leadership_eligible": False,
+            "nonclaim": (
+                "No leadership claim until the complete mandatory corpus and all "
+                "equal construction-work/scratch/query guarantees are qualified."
+            ),
+        }
+    optional_baselines = {}
+    if polyhedral:
+        available = shutil.which("vc_mesh") is not None
+        baseline_status = "ineligible-comparison" if available else "missing-dependency"
+        optional_baselines["vorocrust"] = {
+            "status": baseline_status,
+            "attempts": 0,
+            "counts": {
+                status: int(status == baseline_status) for status in outcome_names
+            },
+            "dependency": "vc_mesh",
+            "detail": (
+                "Installed VoroCrust has no qualified adapter matching prescribed sites, "
+                "two-material organization, VEM/FV and consumed conservative state."
+                if available
+                else "Optional VoroCrust executable is not installed."
+            ),
+            "leadership_eligible": False,
+        }
+    normalized_controls = {
+        name: value for name, value in sorted((controls or {}).items())
+    }
+    if source_reference is not None:
+        case_identity = source_reference
+    else:
+        case_identity = (
+            {
+                **_scenario_source_reference(scenario_override, normalized_controls),
+                "scenario": scenario_override,
+                "frozen_scenario_controls": normalized_controls,
+            }
+            if scenario_override is not None
+            else polyhedral_identity(case_name)
+            if polyhedral
+            else corpus_identity(meshing_case(case_name))
+        )
+    site_count = resolution
+    if polyhedral and "sites" in case_identity:
+        sites = case_identity["sites"]
+        if not isinstance(sites, list):
+            raise TypeError("Polyhedral campaign sites must be a frozen list.")
+        site_count = len(sites)
+    frozen_controls: dict[str, object] = {
+        "resolution": resolution,
+        "entity_capacity": capacity,
+        "campaign_repeats": repeats,
+        "qualification_solver_warm_repeats": 3,
+        "adaptation_rounds": adaptation_rounds,
+        "timeout_seconds": timeout,
+        "target_error": target_error,
+        "comparison": comparison,
+        "scenario_controls": normalized_controls,
+    }
+    target_name = (
+        "physical_error"
+        if scenario_override is not None
+        else "maximum_physics_error"
+        if polyhedral
+        else "l2_error"
+    )
+    body: dict[str, object] = {
+        "kind": "native-meshing-benchmark-campaign",
+        "case": case_identity,
+        "runtime": _runtime_identity(),
+        "frozen_controls": frozen_controls,
+        "frozen_controls_id": canonical_fingerprint(frozen_controls),
+        "control_capacities": (
+            {
+                "requested_resolution": resolution,
+                "site_count": site_count,
+                "entity_capacity": capacity,
+                "adaptation_claimed": False,
+            }
+            if polyhedral
+            else {
+                "resolution": resolution,
+                "entity_capacity": capacity,
+                "adaptation_rounds": adaptation_rounds,
+            }
+        ),
+        "targets": {target_name: target_error, "wall_seconds": timeout},
+        "request_identities": sorted(identities),
+        "request_identity_complete": request_identity_complete,
+        "matching_request_identity": request_identity_complete and len(identities) == 1,
+        "candidates": candidates,
+        "comparison_scope": (
+            "Frozen native source/control/state/solver lifecycle; no exact baseline adapter admitted."
+            if scenario_override is not None
+            else "Restricted power generation, VEM/FV, conservative material remap and consumed FV update."
+            if polyhedral
+            else "Generation engines; identical native bisection/transfer/solver consumer."
+        ),
+        "optional_baselines": optional_baselines,
+        "mandatory_workflow_completion": "incomplete",
+        "hard_size_claim": False,
+        "release": "unassessed",
+        "leadership": "unassessed",
+    }
+    return {**body, "campaign_id": canonical_fingerprint(body)}
+
+
+_NATIVE_DRIVER_ARGUMENTS = {
+    "native-image-lifecycle": (
+        "image_size",
+        "transport_steps",
+        "transport_dt",
+        "balance_tolerance",
+        "oracle_capacity",
+    ),
+    "native-cad-lifecycle": ("cad_format",),
+    "native-envelope-lifecycle": (),
+    "native-periodic-lifecycle": ("periodic_case",),
+    "native-design-lifecycle": ("maximum_memory_bytes", "maximum_condition"),
+    "native-family-lifecycle": ("family_case",),
+    "native-surface-pde": ("surface_case",),
+    "native-hybrid-lifecycle": (
+        "layer_count",
+        "first_thickness",
+        "layer_growth",
+        "geometry_order",
+        "hybrid_profile",
+        "hybrid_archive",
+        "hybrid_content_id",
+        "hybrid_core_size",
+        "hybrid_region_densities",
+        "hybrid_material_site",
+    ),
+    "native-implicit-lifecycle": (
+        "maximum_memory_bytes",
+        "implicit_radius",
+        "implicit_fidelity",
+        "implicit_maximum_level",
+        "implicit_edge_isolation_depth",
+        "implicit_root_tolerance",
+        "implicit_refinement_rounds",
+        "implicit_improvement_passes",
+        "implicit_metric_passes",
+    ),
+    "native-distributed-lifecycle": (
+        "distributed_parts",
+        "restart_parts",
+        "distributed_processes",
+        "distributed_source",
+        "distributed_halo_width",
+        "distributed_halo_capacity",
+        "distributed_cavity_capacity",
+        "distributed_slack",
+        "distributed_checkpoint_root",
+        "distributed_host_packet_bytes",
+    ),
+    "native-overset-lifecycle": (
+        "overset_motion_steps",
+        "overset_wall_pairs",
+        "overset_donor_pairs",
+        "overset_overlap_pairs",
+    ),
+}
+
+
+_CAMPAIGN_REGISTRATION_FIELDS = frozenset(
+    {
+        "contains_benchmark_results",
+        "expected_artifacts",
+        "kind",
+        "license",
+        "phase_sections",
+        "provenance",
+        "required_result_fields",
+        "source_corpus_registration_id",
+        "workflows",
+    }
+)
+_CAMPAIGN_WORKFLOW_FIELDS = frozenset(
+    {
+        "expected_admission",
+        "profiles",
+        "refusal_counts_as_positive_completion",
+        "scenarios",
+        "workflow",
+    }
+)
+_CAMPAIGN_RESULT_FIELDS = (
+    "runtime",
+    "frozen_controls",
+    "hard_timeout",
+    "resource_evidence",
+    "phase_evidence",
+    "independent_acceptance",
+    "positive_completion",
+    "mandatory_workflow_completion",
+)
+_CAMPAIGN_PHASE_SECTIONS = (
+    "source_decode_and_geometry_preparation",
+    "constraint_metric_and_reusable_plan_preparation",
+    "generation_classification_refinement_improvement",
+    "projection_curving_and_independent_certification",
+    "publication_and_state_transfer",
+    "lowering_compilation_first_and_warmed_execution",
+    "compiler_process_device_and_logical_memory",
+    "partition_communication_checkpoint_restart",
+    "solver_time_and_memory_to_physical_target",
+)
+
+
+NATIVE_CAMPAIGN_REGISTRATION_PATH = (
+    Path(__file__).resolve().parents[1] / "benchmarks/native_meshing_campaigns.json"
+)
+
+
+def load_native_campaign_registration(
+    path: Path = NATIVE_CAMPAIGN_REGISTRATION_PATH,
+) -> dict[str, object]:
+    """Load the reviewed mandatory campaign matrix and verify its identity."""
+    value = json.loads(
+        path.read_text(encoding="utf-8"),
+        parse_constant=_reject_nonfinite_json,
+        object_pairs_hook=_unique_json_object,
+    )
+    if not isinstance(value, dict):
+        raise TypeError("Native meshing campaign registration must be a JSON object.")
+    record_id = value.get("registration_id")
+    body = {name: field for name, field in value.items() if name != "registration_id"}
+    workflows = body.get("workflows")
+    corpus = load_corpus_registration()
+    valid = (
+        set(body) == _CAMPAIGN_REGISTRATION_FIELDS
+        and record_id == canonical_fingerprint(body)
+        and body.get("kind") == "native-meshing-campaign-registration"
+        and body.get("license") == "LicenseRef-PHYDRA-Proprietary"
+        and body.get("contains_benchmark_results") is False
+        and body.get("expected_artifacts")
+        == [
+            "benchmarks/native_meshing_qualification.json",
+            "benchmarks/native_meshing_benchmarks.json",
+        ]
+        and body.get("required_result_fields") == list(_CAMPAIGN_RESULT_FIELDS)
+        and body.get("phase_sections") == list(_CAMPAIGN_PHASE_SECTIONS)
+        and body.get("source_corpus_registration_id") == corpus["registration_id"]
+        and isinstance(workflows, list)
+        and len(workflows) == len(MANDATORY_WORKFLOWS)
+    )
+    if valid:
+        for expected_workflow, entry in zip(MANDATORY_WORKFLOWS, workflows, strict=True):
+            valid = (
+                isinstance(entry, dict)
+                and set(entry) == _CAMPAIGN_WORKFLOW_FIELDS
+                and entry.get("workflow") == expected_workflow
+                and entry.get("expected_admission") == "positive"
+                and entry.get("refusal_counts_as_positive_completion") is False
+                and isinstance(entry.get("profiles"), list)
+                and bool(entry["profiles"])
+                and len(entry["profiles"]) == len(set(entry["profiles"]))
+                and all(isinstance(name, str) and name for name in entry["profiles"])
+                and isinstance(entry.get("scenarios"), list)
+                and bool(entry["scenarios"])
+                and len(entry["scenarios"]) == len(set(entry["scenarios"]))
+                and all(isinstance(name, str) and name for name in entry["scenarios"])
+            )
+            if not valid:
+                break
+    if not valid:
+        raise ValueError(
+            f"Native meshing campaign registration is stale or malformed: {path}"
+        )
+    return value
+
+
+def _native_driver_controls(
+    name: str,
+    args: argparse.Namespace,
+) -> dict[str, str | int | float | tuple[float, ...]]:
+    values = vars(args)
+    result: dict[str, str | int | float | tuple[float, ...]] = {}
+    for key in _NATIVE_DRIVER_ARGUMENTS[name]:
+        value = values[key]
+        if value is None:
+            continue
+        if key == "hybrid_region_densities":
+            if (
+                not isinstance(value, (tuple, list))
+                or not value
+                or any(
+                    not isinstance(item, (int, float)) or isinstance(item, bool)
+                    for item in value
+                )
+            ):
+                raise TypeError(
+                    "hybrid_region_densities must be the declared numeric sequence."
+                )
+            result[key] = tuple(value)
+            continue
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            raise TypeError(f"{key} must be a declared scalar driver control.")
+        result[key] = value
+    return result
 
 
 _CASES = {
@@ -2568,6 +3684,11 @@ _CASES = {
         resolution,
         repeats,
     ),
+    "graph-partition": lambda resolution, repeats: _repeated_case(
+        benchmark_graph_partition,
+        resolution,
+        repeats,
+    ),
     "provider-worker": lambda resolution, repeats: _provider_worker_case(
         resolution, repeats
     ),
@@ -2589,10 +3710,252 @@ _CASES = {
 }
 
 
+def _benchmark_registered_native_corpus(
+    args: argparse.Namespace,
+    profiles: dict[str, dict[str, Any]],
+    /,
+) -> dict[str, object]:
+    """Execute the deterministic registered profile matrix without omitting gaps."""
+    arguments = vars(args)
+    requested = arguments["corpus_profile"]
+    selected = tuple(profiles) if requested is None else tuple(requested)
+    unknown = sorted(set(selected) - set(profiles))
+    if unknown or len(selected) != len(set(selected)):
+        raise ValueError(
+            f"Registered benchmark profiles must be unique and known; unknown={unknown}."
+        )
+    records: dict[str, object] = {}
+    missing_inputs: dict[str, list[str]] = {}
+    for name in selected:
+        profile = profiles[name]
+        scenario = profile.get("scenario")
+        case_name = profile.get("case_name")
+        workflow = profile.get("workflow")
+        source_reference = profile.get("source_reference")
+        profile_controls = profile.get("controls")
+        prerequisites = profile.get("prerequisites", ())
+        if (
+            scenario is not None
+            and not isinstance(scenario, str)
+            or not isinstance(case_name, str)
+            or not isinstance(workflow, str)
+            or not isinstance(source_reference, dict)
+            or not isinstance(profile_controls, dict)
+            or not isinstance(prerequisites, (tuple, list))
+            or not all(isinstance(value, str) for value in prerequisites)
+        ):
+            raise TypeError(f"Registered benchmark profile {name!r} is malformed.")
+        required = list(prerequisites)
+        if scenario == "native-distributed-lifecycle":
+            required.append("distributed_checkpoint_root")
+        missing = sorted({key for key in required if arguments.get(key) is None})
+        if missing:
+            missing_inputs[name] = missing
+            body: dict[str, object] = {
+                "kind": "native-meshing-benchmark-profile",
+                "profile": name,
+                "workflow": workflow,
+                "scenario": scenario,
+                "status": "blocked-missing-input",
+                "missing_inputs": missing,
+                "source_reference_id": canonical_fingerprint(source_reference),
+                "campaigns": [],
+            }
+            records[name] = {**body, "profile_result_id": canonical_fingerprint(body)}
+            continue
+        controls = {} if scenario is None else _native_driver_controls(scenario, args)
+        for control_name, control_value in profile_controls.items():
+            if (
+                not isinstance(control_name, str)
+                or isinstance(control_value, bool)
+                or not isinstance(control_value, (str, int, float, tuple))
+            ):
+                raise TypeError(
+                    f"Registered benchmark profile {name!r} has invalid controls."
+                )
+            controls[control_name] = control_value
+        rounds = (
+            0
+            if case_name in POLYHEDRAL_CASE_NAMES
+            and case_name != "polyhedral-periodic-cube"
+            else args.adaptation_rounds
+        )
+        campaigns = [
+            benchmark_native_lifecycle(
+                case_name,
+                resolution,
+                capacity,
+                args.timeout,
+                args.repeats,
+                args.target_error,
+                rounds,
+                args.comparison,
+                scenario_override=scenario,
+                controls=controls,
+                source_reference=source_reference,
+            )
+            for resolution in args.resolution
+            for capacity in args.capacity
+        ]
+        body = {
+            "kind": "native-meshing-benchmark-profile",
+            "profile": name,
+            "workflow": workflow,
+            "scenario": scenario,
+            "status": "attempted",
+            "missing_inputs": [],
+            "source_reference_id": canonical_fingerprint(source_reference),
+            "campaigns": campaigns,
+        }
+        records[name] = {**body, "profile_result_id": canonical_fingerprint(body)}
+    body = {
+        "kind": "registered-native-meshing-benchmark-corpus",
+        "selected_profiles": list(selected),
+        "missing_profile_inputs": missing_inputs,
+        "profiles": records,
+    }
+    return {**body, "corpus_benchmark_id": canonical_fingerprint(body)}
+
+
 def main() -> None:
+    from tools.meshing_qualification import (
+        _corpus_profiles,
+        _family_qualification_requirements,
+        _hybrid_qualification_requirements,
+        _surface_qualification_requirements,
+    )
+
+    profiles = _corpus_profiles()
+
+    family_requirements = _family_qualification_requirements()
+    family_choices = family_requirements["parser_choices"]
+    family_default = family_requirements["parser_default"]
+    surface_arguments = _surface_qualification_requirements()["required_arguments"]
+    hybrid_arguments = _hybrid_qualification_requirements()["required_arguments"]
+    if (
+        not isinstance(family_choices, tuple)
+        or not all(isinstance(value, str) for value in family_choices)
+        or not isinstance(family_default, str)
+        or not isinstance(surface_arguments, dict)
+        or not isinstance(hybrid_arguments, dict)
+    ):
+        raise TypeError("Native benchmark parser contracts are malformed.")
+    surface_contract = surface_arguments["surface_case"]
+    hybrid_profile_contract = hybrid_arguments["hybrid_profile"]
+    hybrid_density_contract = hybrid_arguments["hybrid_region_densities"]
+    hybrid_material_contract = hybrid_arguments["hybrid_material_site"]
+    hybrid_core_contract = hybrid_arguments["hybrid_core_size"]
+    if (
+        not isinstance(surface_contract, dict)
+        or not isinstance(hybrid_profile_contract, dict)
+        or not isinstance(hybrid_density_contract, dict)
+        or not isinstance(hybrid_material_contract, dict)
+        or not isinstance(hybrid_core_contract, dict)
+    ):
+        raise TypeError("Native benchmark profile argument contracts must be mappings.")
+    surface_choices = surface_contract["choices"]
+    surface_default = surface_contract["default"]
+    hybrid_choices = hybrid_profile_contract["choices"]
+    hybrid_default = hybrid_profile_contract["default"]
+    hybrid_density_default = hybrid_density_contract["default"]
+    hybrid_material_default = hybrid_material_contract["default"]
+    hybrid_core_default = hybrid_core_contract["default"]
+    if (
+        not isinstance(surface_choices, (tuple, list))
+        or not all(isinstance(value, str) for value in surface_choices)
+        or not isinstance(surface_default, str)
+        or not isinstance(hybrid_choices, (tuple, list))
+        or not all(isinstance(value, str) for value in hybrid_choices)
+        or not isinstance(hybrid_default, str)
+        or not isinstance(hybrid_density_default, (tuple, list))
+        or not all(isinstance(value, float) for value in hybrid_density_default)
+        or not isinstance(hybrid_material_default, str)
+        or not isinstance(hybrid_core_default, float)
+    ):
+        raise TypeError("Native benchmark parser choices/defaults are malformed.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--resolution", type=int, nargs="+", default=[8, 16])
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--corpus-case", choices=CASE_NAMES, default="planar-hole-feature"
+    )
+    parser.add_argument(
+        "--corpus-profile",
+        nargs="+",
+        choices=tuple(profiles),
+        default=None,
+        help="Benchmark only these profiles while retaining registered gaps.",
+    )
+    parser.add_argument(
+        "--polyhedral-source",
+        choices=POLYHEDRAL_CASE_NAMES,
+        nargs="+",
+        default=list(POLYHEDRAL_CASE_NAMES),
+    )
+    parser.add_argument("--capacity", type=int, nargs="+", default=[20000])
+    parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--target-error", type=float, default=0.05)
+    parser.add_argument("--adaptation-rounds", type=int, default=1)
+    parser.add_argument("--comparison", choices=("triangle",), default=None)
+    parser.add_argument("--cad-format", choices=("step", "iges", "brep"), default="step")
+    parser.add_argument(
+        "--periodic-case",
+        choices=("skew-lattice", "skew-material-feature"),
+        default="skew-lattice",
+    )
+    parser.add_argument("--maximum-memory-bytes", type=int, default=8 * 1024**3)
+    parser.add_argument("--maximum-condition", type=float, default=1.0e12)
+    parser.add_argument("--family-case", choices=family_choices, default=family_default)
+    parser.add_argument(
+        "--surface-case", choices=surface_choices, default=surface_default
+    )
+    parser.add_argument(
+        "--hybrid-profile", choices=hybrid_choices, default=hybrid_default
+    )
+    parser.add_argument("--hybrid-archive")
+    parser.add_argument("--hybrid-content-id")
+    parser.add_argument("--hybrid-core-size", type=float, default=hybrid_core_default)
+    parser.add_argument(
+        "--hybrid-region-densities", type=float, nargs="+", default=hybrid_density_default
+    )
+    parser.add_argument("--hybrid-material-site", default=hybrid_material_default)
+    parser.add_argument("--layer-count", type=int, default=2)
+    parser.add_argument("--first-thickness", type=float, default=0.1)
+    parser.add_argument("--layer-growth", type=float, default=1.0)
+    parser.add_argument("--geometry-order", type=int, choices=(2, 3, 4, 6, 10), default=2)
+    parser.add_argument("--implicit-radius", type=float, default=0.371)
+    parser.add_argument("--implicit-fidelity", type=float, default=0.02)
+    parser.add_argument("--implicit-maximum-level", type=int, default=9)
+    parser.add_argument("--implicit-edge-isolation-depth", type=int, default=8)
+    parser.add_argument("--implicit-root-tolerance", type=float, default=1.0e-10)
+    parser.add_argument("--implicit-refinement-rounds", type=int, default=8)
+    parser.add_argument("--implicit-improvement-passes", type=int, default=8)
+    parser.add_argument("--implicit-metric-passes", type=int, default=16)
+    parser.add_argument("--distributed-parts", type=int, default=2)
+    parser.add_argument("--restart-parts", type=int, default=1)
+    parser.add_argument("--distributed-processes", type=int, default=2)
+    parser.add_argument(
+        "--distributed-source",
+        choices=("native-unit-square",),
+        default="native-unit-square",
+    )
+    parser.add_argument("--distributed-halo-width", type=int, default=2)
+    parser.add_argument("--distributed-halo-capacity", type=int, default=20000)
+    parser.add_argument("--distributed-cavity-capacity", type=int, default=20000)
+    parser.add_argument("--distributed-slack", type=int, default=2)
+    parser.add_argument(
+        "--distributed-host-packet-bytes", type=int, default=64 * 1024 * 1024
+    )
+    parser.add_argument("--distributed-checkpoint-root", default=None)
+    parser.add_argument("--image-size", type=int, default=2)
+    parser.add_argument("--transport-steps", type=int, default=5)
+    parser.add_argument("--transport-dt", type=float, default=0.01)
+    parser.add_argument("--balance-tolerance", type=float, default=1.0e-9)
+    parser.add_argument("--oracle-capacity", type=int, default=2048)
+    parser.add_argument("--overset-motion-steps", type=int, default=2)
+    parser.add_argument("--overset-wall-pairs", type=int, default=500000)
+    parser.add_argument("--overset-donor-pairs", type=int, default=500000)
+    parser.add_argument("--overset-overlap-pairs", type=int, default=500000)
     parser.add_argument(
         "--gmsh-semantic",
         action="store_true",
@@ -2601,17 +3964,87 @@ def main() -> None:
     parser.add_argument(
         "--case",
         action="append",
-        choices=tuple(_CASES),
+        choices=(
+            *_CASES,
+            "native-lifecycle",
+            "native-polyhedral-lifecycle",
+            "native-corpus",
+            *_NATIVE_DRIVER_ARGUMENTS,
+        ),
         help="Run one named scaling case; defaults to native meshing only.",
     )
     args = parser.parse_args()
-    if args.repeats < 1 or any(value < 1 for value in args.resolution):
-        parser.error("resolutions and repeats must be positive")
+    if (
+        args.repeats < 1
+        or any(value < 1 for value in (*args.resolution, *args.capacity))
+        or args.timeout <= 0.0
+        or args.target_error <= 0.0
+        or args.adaptation_rounds < 0
+    ):
+        parser.error(
+            "resolutions, capacities, repeats, timeout and error must be positive; rounds nonnegative"
+        )
     selected = ("native-meshing",) if args.case is None else tuple(args.case)
-    output = {
-        name: [_CASES[name](value, args.repeats) for value in args.resolution]
-        for name in selected
-    }
+    output = {}
+    for name in selected:
+        if name == "native-corpus":
+            output[name] = _benchmark_registered_native_corpus(args, profiles)
+            continue
+        if name in _NATIVE_DRIVER_ARGUMENTS:
+            controls = _native_driver_controls(name, args)
+            output[name] = [
+                benchmark_native_lifecycle(
+                    name,
+                    resolution,
+                    capacity,
+                    args.timeout,
+                    args.repeats,
+                    args.target_error,
+                    args.adaptation_rounds,
+                    args.comparison,
+                    scenario_override=name,
+                    controls=controls,
+                )
+                for resolution in args.resolution
+                for capacity in args.capacity
+            ]
+            continue
+        if name == "native-polyhedral-lifecycle":
+            output[name] = [
+                benchmark_native_lifecycle(
+                    source,
+                    sites,
+                    capacity,
+                    args.timeout,
+                    args.repeats,
+                    args.target_error,
+                    0,
+                    args.comparison,
+                )
+                for source in args.polyhedral_source
+                for sites in args.resolution
+                for capacity in args.capacity
+            ]
+            continue
+        if name == "native-lifecycle":
+            output[name] = [
+                benchmark_native_lifecycle(
+                    args.corpus_case,
+                    resolution,
+                    capacity,
+                    args.timeout,
+                    args.repeats,
+                    args.target_error,
+                    args.adaptation_rounds,
+                    args.comparison,
+                )
+                for resolution in args.resolution
+                for capacity in args.capacity
+            ]
+        else:
+            output[name] = [
+                _CASES[name](value, args.repeats) for value in args.resolution
+            ]
     if args.gmsh_semantic:
         with TemporaryDirectory(prefix="phydrax-gmsh-semantic-benchmark-") as temporary:
             directory = Path(temporary)
@@ -2619,7 +4052,14 @@ def main() -> None:
                 benchmark_gmsh_semantic(value, args.repeats, directory)
                 for value in (2, 8, 32)
             ]
-    print(json.dumps(output, indent=2))
+    registration = load_native_campaign_registration()
+    suite: dict[str, object] = {
+        "kind": "meshing-benchmark-suite",
+        "campaign_registration_id": registration["registration_id"],
+        "selected_cases": list(selected),
+        "campaigns": output,
+    }
+    print(json.dumps({**suite, "suite_id": canonical_fingerprint(suite)}, indent=2))
 
 
 if __name__ == "__main__":

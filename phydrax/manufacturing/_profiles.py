@@ -22,7 +22,6 @@ def manufacturing_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, attrs),),
             required_gates=("identity", "conservation", "restart", "public-workflow"),
         )

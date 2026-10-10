@@ -8,7 +8,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import directional_derivative, grad
+from ..operators.differential._domain_ops import directional_derivative, grad
 from ..operators.linalg import einsum
 from ._base import Residual
 from ._field_ops import constant_field, dot, outer_scalar_vector

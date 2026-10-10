@@ -18,7 +18,6 @@ CONTROLLED_SIGN_STUDY_SUPPORT = SupportTuple(
 CONTROLLED_SIGN_STUDY_CANDIDATE = CapabilityProfile(
     "sign-problem.controlled-sign-study.candidate",
     "phydrax",
-    "candidate",
     (CONTROLLED_SIGN_STUDY_SUPPORT,),
     required_gates=("raw-chain", "autocorrelation", "abstention", "locked-small-control"),
     released=False,

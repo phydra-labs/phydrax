@@ -385,27 +385,29 @@ def _qef_vertices(
     )
     vertices = np.zeros_like(cell_lower)
     selected_regularization = np.full((cell_lower.shape[0],), np.nan, dtype=np.float64)
-    pending = np.arange(cell_lower.shape[0], dtype=np.int64)
+    done = np.zeros((cell_lower.shape[0],), dtype=np.bool_)
     identity = np.eye(3, dtype=np.float64)
+    # Every level solves every vertex system so one batch shape serves all
+    # levels; each vertex keeps its first in-cell solution.
     for level in range(_QEF_REGULARIZATION_LEVELS):
         weight = regularization * 10.0**level
         solved = solve_small_linear(
             _QEF_SOLVE_PLAN,
-            normal_matrix[pending]
-            + (weight * count[pending])[:, None, None] * identity[None, :, :],
-            right_hand_side[pending],
+            normal_matrix + (weight * count)[:, None, None] * identity[None, :, :],
+            right_hand_side,
         )
-        value = mass[pending] + np.asarray(solved.value)
+        value = mass + np.asarray(solved.value)
         accepted = (
-            np.asarray(solved.successful)
+            ~done
+            & np.asarray(solved.successful)
             & np.all(np.isfinite(value), axis=1)
-            & np.all(value >= cell_lower[pending] - tolerance, axis=1)
-            & np.all(value <= cell_upper[pending] + tolerance, axis=1)
+            & np.all(value >= cell_lower - tolerance, axis=1)
+            & np.all(value <= cell_upper + tolerance, axis=1)
         )
-        vertices[pending[accepted]] = value[accepted]
-        selected_regularization[pending[accepted]] = weight
-        pending = pending[~accepted]
-        if not pending.size:
+        vertices[accepted] = value[accepted]
+        selected_regularization[accepted] = weight
+        done |= accepted
+        if np.all(done):
             return vertices, selected_regularization
     raise ValueError(
         "Implicit QEF vertex left its discovery cell even after bounded regularization adaptation."

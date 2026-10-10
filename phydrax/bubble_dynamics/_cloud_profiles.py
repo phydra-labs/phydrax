@@ -15,7 +15,6 @@ def bubble_cloud_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             "bubble-dynamics.cloud.profile",
             "phydrax",
-            "candidate",
             (
                 SupportTuple(
                     "bubble-dynamics.cloud",

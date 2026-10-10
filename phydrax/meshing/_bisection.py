@@ -25,12 +25,15 @@ a dimension-dependent bound for tetrahedra; Maubach 1995, Traxler 1997), so ever
 shape measure of every descendant is bounded below by its minimum over the
 classes of the initial mesh. The matching condition (Stevenson 2008) makes the
 conformity closure terminate with the optimal closure-size bound; initial
-labellings that violate it are rejected or first made compatible by one
-barycentric subdivision, whose simplices are pairwise reflected neighbors.
+labellings that violate it are rejected, first made compatible by one
+barycentric subdivision, whose simplices are pairwise reflected neighbors, or,
+for triangle meshes, closed locally under their original labels.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import StrEnum
 from itertools import combinations
 from typing import Any, final, NamedTuple
@@ -42,26 +45,49 @@ from jax import Array
 from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._meshcore import (
+    current_native_execution_budget,
+    current_native_host_workspace,
+    NativeExecutionBudget,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
 from ..discretization._adaptive_simplex import maubach_bisection_tables
+from ..discretization._cell_geometry_transfer import NestedReferenceWitnesses
 from ._contracts import MeshingFailure, MeshingFailureCategory
 from ._lineage import EntityLineageKind
+from ._result import CellMeshingResult
 from ._topology_edit import (
+    CellTopologyEdit,
     entity_keys,
     EntityRelations,
     key_rows,
+    nested_reference_vertices,
     PrescribedEntityIds,
-    SimplexTopologyEdit,
+    source_family_blocks,
 )
 
 
 class BisectionCompatibility(StrEnum):
-    """Handling of an initial labelling that violates the matching condition."""
+    """Handling of an initial labelling that violates the matching condition.
+
+    ``REJECT`` refuses it. ``UNIFORM_REFINEMENT`` first subdivides every simplex
+    barycentrically into pairwise reflected neighbors. ``CONFORMING_CLOSURE``
+    keeps the longest-edge labels of a triangle mesh and lets the conformity
+    closure bisect every neighbor across a split edge whose refinement edge
+    differs. Two-dimensional newest-vertex bisection needs no matching condition:
+    bisecting a triangle twice splits all three of its edges, so every even
+    uniform generation is conforming and bounds the closure, whose size estimate
+    holds for arbitrary initial refinement edges (Karkulik, Pavlicek, Praetorius
+    2013). From a labelled start the closure splits only source edges, so each
+    source triangle yields at most four children. Tetrahedral closure relies on
+    the matching condition; incompatible tetrahedral labels stay refused.
+    """
 
     REJECT = "reject"
     UNIFORM_REFINEMENT = "uniform_refinement"
+    CONFORMING_CLOSURE = "conforming_closure"
 
 
 def _identifiers(values: ArrayLike, name: str, /) -> np.ndarray:
@@ -78,7 +104,9 @@ def _tag_array(values: ArrayLike, count: int, dimension: int, name: str, /) -> n
     return tags
 
 
-def _simplex_rows(values: ArrayLike, count: int, dimension: int, name: str, /) -> Any:
+def _simplex_rows(
+    values: ArrayLike, count: int, dimension: int, name: str, /
+) -> np.ndarray:
     rows = np.asarray(values, dtype=np.int64)
     if rows.shape != (count, dimension + 1) or np.any(rows < 0):
         raise ValueError(f"{name} must have shape ({count}, {dimension + 1}).")
@@ -159,6 +187,457 @@ def _validated_forest(
     }
 
 
+def _require_uniform_action_family(barycentric: np.ndarray, dimension: int, /) -> None:
+    width = dimension + 1
+    arrangements = _TABLES[dimension][4].shape[0]
+    expected = {
+        tuple(
+            sorted(
+                tuple(
+                    1.0 / size if axis in order[:size] else 0.0 for axis in range(width)
+                )
+                for size in range(1, width + 1)
+            )
+        )
+        for order in _TABLES[dimension][4]
+    }
+    for sibling_actions in barycentric:
+        actual = [
+            tuple(sorted(tuple(point.tolist()) for point in action))
+            for action in sibling_actions
+        ]
+        if len(set(actual)) != arrangements or set(actual) != expected:
+            raise ValueError(
+                "Uniform actions must be the complete canonical barycentric source subdivision."
+            )
+
+
+@final
+class BisectionUniformRefinement(StrictModule, NonTrainableState):
+    """Actual compatibility siblings and their original source reference actions."""
+
+    dimension: int = eqx.field(static=True)
+    parent_ids: Array
+    parent_blocks: Array
+    parent_row_order: Array
+    parent_rows: Array
+    parent_vertices: Array
+    parent_tags: Array
+    parent_levels: Array
+    parent_classes: Array
+    parent_facet_classes: Array
+    child_ids: Array
+    child_vertices: Array
+    reference_vertices: Array
+    barycentric_weights: Array
+    source: CellMeshingResult
+    lineage_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        parent_ids: ArrayLike,
+        parent_blocks: ArrayLike,
+        parent_row_order: ArrayLike,
+        parent_rows: ArrayLike,
+        parent_vertices: ArrayLike,
+        parent_tags: ArrayLike,
+        parent_levels: ArrayLike,
+        parent_classes: ArrayLike,
+        parent_facet_classes: ArrayLike,
+        child_ids: ArrayLike,
+        child_vertices: ArrayLike,
+        reference_vertices: ArrayLike,
+        barycentric_weights: ArrayLike,
+        /,
+        *,
+        source: CellMeshingResult,
+    ) -> None:
+        if isinstance(dimension, bool) or dimension not in (2, 3):
+            raise ValueError("Uniform simplex lineage requires dimension two or three.")
+        ids = _identifiers(parent_ids, "uniform_parent_ids")
+        count, width = ids.size, dimension + 1
+        if count == 0 or np.any(ids[1:] <= ids[:-1]):
+            raise ValueError(
+                "Uniform parent IDs must be nonempty and strictly increasing."
+            )
+        children = np.asarray(child_ids, dtype=np.int64)
+        arrangements = _TABLES[dimension][4].shape[0]
+        if (
+            children.shape != (count, arrangements)
+            or np.any(children < 0)
+            or np.unique(children).size != children.size
+        ):
+            raise ValueError(
+                "Uniform siblings require all six or twenty-four distinct child IDs."
+            )
+        if np.intersect1d(ids, children).size:
+            raise ValueError(
+                "Uniform parents and their children must have distinct identities."
+            )
+        rows = _simplex_rows(parent_rows, count, dimension, "uniform_parent_rows")
+        vertices = _simplex_rows(
+            parent_vertices, count, dimension, "uniform_parent_vertices"
+        )
+        if not np.array_equal(np.sort(rows, axis=1), np.sort(vertices, axis=1)):
+            raise ValueError(
+                "Uniform source rows and tagged tuples must own the same vertices."
+            )
+        child_rows = np.asarray(child_vertices, dtype=np.int64)
+        if child_rows.shape != (count, arrangements, width) or np.any(child_rows < 0):
+            raise ValueError(
+                "Uniform child vertex identities must align with all actual siblings."
+            )
+        if np.any(np.diff(np.sort(child_rows, axis=2), axis=2) == 0):
+            raise ValueError("Every uniform child must have distinct vertex identities.")
+        references = np.asarray(reference_vertices, dtype=np.float64)
+        if references.shape != (count, arrangements, width, dimension) or not np.all(
+            np.isfinite(references)
+        ):
+            raise ValueError(
+                "Uniform reference actions must be finite complete simplex corner maps."
+            )
+        if np.any(references < 0.0) or np.any(np.sum(references, axis=3) > 1.0):
+            raise ValueError(
+                "Uniform reference corners must lie in their actual source simplex."
+            )
+        barycentric = np.asarray(barycentric_weights, dtype=np.float64)
+        if (
+            barycentric.shape != (count, arrangements, width, width)
+            or not np.all(np.isfinite(barycentric))
+            or np.any(barycentric < 0.0)
+            or not np.all(np.sum(barycentric, axis=3) == 1.0)
+            or not np.array_equal(barycentric[..., 1:], references)
+        ):
+            raise ValueError(
+                "Uniform actions must retain their complete original barycentric construction weights."
+            )
+        _require_uniform_action_family(barycentric, dimension)
+        construction: dict[int, tuple[tuple[int, float], ...]] = {}
+        construction_vertices: dict[tuple[tuple[int, float], ...], int] = {}
+        for parent_index in range(count):
+            for child_index in range(arrangements):
+                for vertex_index in range(width):
+                    vertex = int(child_rows[parent_index, child_index, vertex_index])
+                    key = tuple(
+                        sorted(
+                            (
+                                int(rows[parent_index, source_index]),
+                                float(
+                                    barycentric[
+                                        parent_index,
+                                        child_index,
+                                        vertex_index,
+                                        source_index,
+                                    ]
+                                ),
+                            )
+                            for source_index in range(width)
+                            if barycentric[
+                                parent_index, child_index, vertex_index, source_index
+                            ]
+                        )
+                    )
+                    known = construction.setdefault(vertex, key)
+                    if known != key:
+                        raise ValueError(
+                            "Incident uniform siblings must retain the same original barycentric vertex action."
+                        )
+                    owner = construction_vertices.setdefault(key, vertex)
+                    if owner != vertex:
+                        raise ValueError(
+                            "A shared original barycentric construction must have one scientific vertex identity."
+                        )
+        original_vertices = set(rows.reshape(-1).tolist())
+        if not original_vertices.issubset(construction):
+            raise ValueError(
+                "Uniform subdivision must contain every original scientific source vertex."
+            )
+        for vertex, key in construction.items():
+            if vertex in original_vertices and key != ((vertex, 1.0),):
+                raise ValueError(
+                    "Uniform subdivision must retain every original vertex under its scientific identity."
+                )
+        blocks = np.asarray(parent_blocks, dtype=np.int32)
+        row_order = np.asarray(parent_row_order, dtype=np.int64)
+        levels = np.asarray(parent_levels, dtype=np.int32)
+        classes = np.asarray(parent_classes, dtype=np.int64)
+        facet_classes = np.asarray(parent_facet_classes, dtype=np.int64)
+        if any(value.shape != (count,) for value in (blocks, row_order, levels, classes)):
+            raise ValueError(
+                "Uniform source blocks, row order, levels and classes must align with parents."
+            )
+        if np.any(blocks < 0) or np.any(row_order < 0) or np.any(levels < 0):
+            raise ValueError(
+                "Uniform source blocks, row order and levels must be nonnegative."
+            )
+        if facet_classes.shape != (count, width):
+            raise ValueError(
+                "Uniform source facet classes must align with all parent facets."
+            )
+        if np.unique(np.stack((blocks, row_order), axis=1), axis=0).shape[0] != count:
+            raise ValueError(
+                "Uniform source rows must have distinct explicit block positions."
+            )
+        source_facets: dict[tuple[int, ...], int] = {}
+        for parent_index in range(count):
+            for facet_index, local in enumerate(combinations(range(width), dimension)):
+                key = tuple(sorted(int(rows[parent_index, index]) for index in local))
+                cell_class = int(facet_classes[parent_index, facet_index])
+                known = source_facets.setdefault(key, cell_class)
+                if known != cell_class:
+                    raise ValueError(
+                        "Incident uniform parents must agree on their original source facet class."
+                    )
+        if (
+            not isinstance(source, CellMeshingResult)
+            or source.mesh.topological_dimension != dimension
+        ):
+            raise TypeError(
+                "Uniform source lineage requires its actual accepted scientific source carrier."
+            )
+        source_vertices = np.asarray(source.mesh.vertex_global_ids, dtype=np.int64)
+        for identifier, block, row, parent in zip(
+            ids, blocks, row_order, rows, strict=True
+        ):
+            if block >= len(source.mesh.blocks):
+                raise ValueError(
+                    "Uniform parent blocks must belong to the retained original scientific source."
+                )
+            original = source.mesh.blocks[int(block)]
+            if (
+                row >= original.cell_count
+                or np.asarray(original.global_ids)[row] != identifier
+            ):
+                raise ValueError(
+                    "Uniform parent IDs and source row order must bind the retained scientific source."
+                )
+            if not np.array_equal(
+                source_vertices[np.asarray(original.vertices)[row]], parent
+            ):
+                raise ValueError(
+                    "Uniform parent vertex rows must bind the retained original scientific source."
+                )
+        arrays = {
+            "parent_ids": ids,
+            "parent_blocks": blocks,
+            "parent_row_order": row_order,
+            "parent_rows": rows,
+            "parent_vertices": vertices,
+            "parent_tags": _tag_array(
+                parent_tags, count, dimension, "uniform_parent_tags"
+            ),
+            "parent_levels": levels,
+            "parent_classes": classes,
+            "parent_facet_classes": facet_classes,
+            "child_ids": children,
+            "child_vertices": child_rows,
+            "reference_vertices": references,
+            "barycentric_weights": barycentric,
+        }
+        self.dimension = dimension
+        self.source = source
+        self.parent_ids = jnp.asarray(arrays["parent_ids"])
+        self.parent_blocks = jnp.asarray(arrays["parent_blocks"])
+        self.parent_row_order = jnp.asarray(arrays["parent_row_order"])
+        self.parent_rows = jnp.asarray(arrays["parent_rows"])
+        self.parent_vertices = jnp.asarray(arrays["parent_vertices"])
+        self.parent_tags = jnp.asarray(arrays["parent_tags"])
+        self.parent_levels = jnp.asarray(arrays["parent_levels"])
+        self.parent_classes = jnp.asarray(arrays["parent_classes"])
+        self.parent_facet_classes = jnp.asarray(arrays["parent_facet_classes"])
+        self.child_ids = jnp.asarray(arrays["child_ids"])
+        self.child_vertices = jnp.asarray(arrays["child_vertices"])
+        self.reference_vertices = jnp.asarray(arrays["reference_vertices"])
+        self.barycentric_weights = jnp.asarray(arrays["barycentric_weights"])
+        self.lineage_id = canonical_fingerprint(
+            {
+                "kind": "bisection-uniform-refinement",
+                "dimension": dimension,
+                "source": source.result_id,
+                "arrays": array_tree_fingerprint(arrays),
+            }
+        )
+
+    def host_arrays(self) -> dict[str, np.ndarray]:
+        return {
+            "parent_ids": np.asarray(self.parent_ids),
+            "parent_blocks": np.asarray(self.parent_blocks),
+            "parent_row_order": np.asarray(self.parent_row_order),
+            "parent_rows": np.asarray(self.parent_rows),
+            "parent_vertices": np.asarray(self.parent_vertices),
+            "parent_tags": np.asarray(self.parent_tags),
+            "parent_levels": np.asarray(self.parent_levels),
+            "parent_classes": np.asarray(self.parent_classes),
+            "parent_facet_classes": np.asarray(self.parent_facet_classes),
+            "child_ids": np.asarray(self.child_ids),
+            "child_vertices": np.asarray(self.child_vertices),
+            "reference_vertices": np.asarray(self.reference_vertices),
+            "barycentric_weights": np.asarray(self.barycentric_weights),
+        }
+
+    def select(self, rows: np.ndarray, /) -> BisectionUniformRefinement | None:
+        if rows.size == 0:
+            return None
+        if rows.size == self.parent_ids.size and all(
+            row == index for index, row in enumerate(rows)
+        ):
+            return self
+        arrays = self.host_arrays()
+        return BisectionUniformRefinement(
+            self.dimension,
+            *(value[rows] for value in arrays.values()),
+            source=self.source,
+        )
+
+
+def _reconcile_uniform_refinement(
+    regenerated: BisectionUniformRefinement,
+    retained: BisectionUniformRefinement,
+    restored_parent_ids: ArrayLike,
+    /,
+) -> tuple[BisectionUniformRefinement, dict[int, int]]:
+    """Replace actual restored roots while preserving live construction SCIs.
+
+    The owning collective preparation authenticates which roots were restored.
+    Only unaffected, still-live uniform roots supply reusable vertices; retired
+    construction identities never become a source for a new issuance.
+    """
+    if (
+        regenerated.dimension != retained.dimension
+        or regenerated.source.result_id != retained.source.result_id
+    ):
+        raise ValueError(
+            "Uniform reconciliation requires the same genuine original scientific source."
+        )
+    width = retained.dimension + 1
+    entries = regenerated.child_vertices.size + retained.child_vertices.size
+    _uniform_charge(entries * width, entries * (512 + 128 * width))
+    original = retained.host_arrays()
+    incoming = regenerated.host_arrays()
+    restored = _identifiers(restored_parent_ids, "restored_uniform_parent_ids")
+    if restored.size == 0 or np.any(restored[1:] <= restored[:-1]):
+        raise ValueError(
+            "Uniform reconciliation requires actual distinct restored parents in SCI order."
+        )
+    if not np.array_equal(incoming["parent_ids"], restored):
+        raise ValueError(
+            "Regenerated uniform roots differ from the actual restored parent cohort."
+        )
+    positions = np.searchsorted(original["parent_ids"], restored)
+    if np.any(positions >= original["parent_ids"].size):
+        raise ValueError(
+            "Regenerated uniform roots contain an undeclared original parent."
+        )
+    if not np.array_equal(original["parent_ids"][positions], restored):
+        raise ValueError(
+            "Regenerated uniform roots contain an undeclared original parent."
+        )
+    for name in (
+        "parent_blocks",
+        "parent_row_order",
+        "parent_rows",
+        "parent_vertices",
+        "parent_tags",
+        "parent_levels",
+        "parent_classes",
+        "parent_facet_classes",
+    ):
+        if not np.array_equal(original[name][positions], incoming[name]):
+            raise ValueError(
+                f"Uniform reconciliation changed the original scientific {name}."
+            )
+
+    type Construction = tuple[tuple[int, float], ...]
+    live: dict[Construction, int] = {}
+    live_vertices: dict[int, Construction] = {}
+    kept = np.ones(original["parent_ids"].shape, dtype=np.bool_)
+    kept[positions] = False
+
+    def construction(corners: np.ndarray, weights: np.ndarray) -> Construction:
+        return tuple(
+            sorted(
+                (int(identifier), float(weight))
+                for identifier, weight in zip(corners, weights, strict=True)
+                if weight != 0.0
+            )
+        )
+
+    for parent in np.flatnonzero(kept):
+        corners = original["parent_rows"][parent]
+        for vertices, weights in zip(
+            original["child_vertices"][parent],
+            original["barycentric_weights"][parent],
+            strict=True,
+        ):
+            for identifier, coefficients in zip(vertices, weights, strict=True):
+                key = construction(corners, coefficients)
+                identifier = int(identifier)
+                if key in live and live[key] != identifier:
+                    raise ValueError(
+                        "Live uniform roots disagree on an actual shared construction SCI."
+                    )
+                if identifier in live_vertices and live_vertices[identifier] != key:
+                    raise ValueError(
+                        "A live uniform construction SCI has contradictory original source support."
+                    )
+                live[key], live_vertices[identifier] = identifier, key
+
+    remap: dict[int, int] = {}
+    generated_vertices: dict[int, Construction] = {}
+    child_vertices = np.array(incoming["child_vertices"], copy=True)
+    for parent, corners in enumerate(incoming["parent_rows"]):
+        for child, (vertices, weights) in enumerate(
+            zip(
+                incoming["child_vertices"][parent],
+                incoming["barycentric_weights"][parent],
+                strict=True,
+            )
+        ):
+            for corner, (identifier, coefficients) in enumerate(
+                zip(vertices, weights, strict=True)
+            ):
+                identifier = int(identifier)
+                key = construction(corners, coefficients)
+                if (
+                    identifier in generated_vertices
+                    and generated_vertices[identifier] != key
+                ):
+                    raise ValueError(
+                        "A regenerated uniform vertex has contradictory original source support."
+                    )
+                generated_vertices[identifier] = key
+                if key in live:
+                    replacement = live[key]
+                    if len(key) == 1 and key[0][1] == 1.0 and replacement != identifier:
+                        raise ValueError(
+                            "Uniform reconciliation cannot rename an original scientific source corner."
+                        )
+                    if replacement != identifier:
+                        remap[identifier] = replacement
+                        child_vertices[parent, child, corner] = replacement
+                elif identifier in live_vertices:
+                    raise ValueError(
+                        "A regenerated uniform vertex collides with a different live scientific construction."
+                    )
+    combined = dict(original)
+    for name in (
+        "child_ids",
+        "child_vertices",
+        "reference_vertices",
+        "barycentric_weights",
+    ):
+        combined[name] = np.array(original[name], copy=True)
+        combined[name][positions] = (
+            child_vertices if name == "child_vertices" else incoming[name]
+        )
+    return BisectionUniformRefinement(
+        retained.dimension,
+        *combined.values(),
+        source=retained.source,
+    ), remap
+
+
 @final
 class BisectionHierarchy(StrictModule, NonTrainableState):
     """Persistent Maubach labels and bisection forest of one bisection mesh.
@@ -171,6 +650,10 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     tables keep the global IDs of edges/faces removed by refinement so that
     coarsening restores them under their original IDs. Vertex and cell IDs are
     issued from the high-water counters and never reused.
+    ``scientific_cell_ids`` and ``scientific_block_ids`` retain the original
+    authored block authority of every issued cell, including inactive parents.
+    Descendants inherit it at birth; coordinate presentation regrouping never
+    rewrites it. The forest's source-block rows remain presentation routing.
 
     A hierarchy applies to a mesh iff its active cell IDs equal the mesh cell IDs
     and every cell has the same vertex-ID set in both.
@@ -181,6 +664,8 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     ordered_vertices: Array
     tags: Array
     generations: Array
+    scientific_cell_ids: Array
+    scientific_block_ids: Array
     record_parent_ids: Array
     record_parent_blocks: Array
     record_parent_rows: Array
@@ -190,6 +675,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
     record_vertex_ids: Array
     retired_entity_keys: tuple[Array, ...]
     retired_entity_ids: tuple[Array, ...]
+    uniform_refinement: BisectionUniformRefinement | None
     next_vertex_id: int = eqx.field(static=True)
     next_cell_id: int = eqx.field(static=True)
     hierarchy_id: str = eqx.field(static=True)
@@ -214,6 +700,9 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         retired_entity_ids: tuple[ArrayLike, ...],
         next_vertex_id: int,
         next_cell_id: int,
+        uniform_refinement: BisectionUniformRefinement | None,
+        scientific_cell_ids: ArrayLike,
+        scientific_block_ids: ArrayLike,
     ) -> None:
         if isinstance(dimension, bool) or dimension not in (2, 3):
             raise ValueError("Bisection hierarchies are two- or three-dimensional.")
@@ -233,6 +722,91 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
                 "vertex_ids": record_vertex_ids,
             },
         )
+        scientific_ids = np.asarray(scientific_cell_ids, dtype=np.int64)
+        scientific_blocks = np.asarray(scientific_block_ids, dtype=np.int32)
+        if (
+            scientific_ids.ndim != 1
+            or scientific_blocks.shape != scientific_ids.shape
+            or np.any(scientific_blocks < 0)
+            or np.any(scientific_ids < 0)
+            or np.any(np.diff(scientific_ids) <= 0)
+            or not np.all(np.isin(arrays["cell_global_ids"], scientific_ids))
+            or not np.all(np.isin(arrays["record_parent_ids"], scientific_ids))
+            or not np.all(np.isin(arrays["record_child_ids"], scientific_ids))
+        ):
+            raise ValueError(
+                "Scientific block authority must cover active and forest cells in canonical ID order."
+            )
+        authority_parts = [
+            arrays["cell_global_ids"],
+            arrays["record_parent_ids"],
+            arrays["record_child_ids"].reshape(-1),
+        ]
+        if uniform_refinement is not None:
+            if not isinstance(uniform_refinement, BisectionUniformRefinement):
+                raise TypeError(
+                    "uniform_refinement must be the canonical uniform source lineage or None."
+                )
+            authority_parts.extend(
+                (
+                    np.asarray(uniform_refinement.parent_ids),
+                    np.asarray(uniform_refinement.child_ids).reshape(-1),
+                )
+            )
+        required_authority = np.unique(np.concatenate(authority_parts))
+        authority_rows = np.searchsorted(scientific_ids, required_authority)
+        canonical_scientific_ids = scientific_ids[authority_rows]
+        canonical_scientific_blocks = scientific_blocks[authority_rows]
+        parent_authority = scientific_blocks[
+            np.searchsorted(scientific_ids, arrays["record_parent_ids"])
+        ]
+        child_authority = scientific_blocks[
+            np.searchsorted(scientific_ids, arrays["record_child_ids"])
+        ]
+        if np.any(child_authority != parent_authority[:, None]):
+            raise ValueError(
+                "Bisection children must retain their parent's scientific block authority."
+            )
+        if uniform_refinement is not None:
+            if uniform_refinement.dimension != dimension:
+                raise ValueError(
+                    "Uniform source lineage must have the hierarchy's simplex dimension."
+                )
+            roots = np.concatenate(
+                (arrays["cell_global_ids"], arrays["record_parent_ids"])
+            )
+            restored = np.isin(np.asarray(uniform_refinement.parent_ids), roots)
+            children = np.asarray(uniform_refinement.child_ids)
+            if not np.all(np.isin(children[~restored], roots)) or np.any(
+                np.isin(children[restored], roots)
+            ):
+                raise ValueError(
+                    "Uniform source roots must retain exactly their actual child or restored-parent ancestry."
+                )
+            node_vertices = np.concatenate(
+                (arrays["ordered_vertices"], arrays["record_parent_rows"])
+            )
+            node_order = np.argsort(roots, kind="stable")
+            node_ids = roots[node_order]
+            lineage = uniform_refinement.host_arrays()
+            for row, is_restored in enumerate(restored):
+                identifiers = (
+                    lineage["parent_ids"][row : row + 1]
+                    if is_restored
+                    else lineage["child_ids"][row]
+                )
+                expected = (
+                    lineage["parent_rows"][row : row + 1]
+                    if is_restored
+                    else lineage["child_vertices"][row]
+                )
+                positions = node_order[np.searchsorted(node_ids, identifiers)]
+                if not np.array_equal(
+                    np.sort(node_vertices[positions], axis=1), np.sort(expected, axis=1)
+                ):
+                    raise ValueError(
+                        "Packed uniform source ancestry changed its actual scientific vertex incidence."
+                    )
         retired_keys, retired_ids = _retired_tables(
             retired_entity_keys, retired_entity_ids, dimension
         )
@@ -247,6 +821,13 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
             int(np.max(arrays["record_parent_ids"], initial=-1)),
             int(np.max(arrays["record_child_ids"], initial=-1)),
         )
+        if uniform_refinement is not None:
+            vertex_high = max(
+                vertex_high, int(np.max(np.asarray(uniform_refinement.child_vertices)))
+            )
+            cell_high = max(
+                cell_high, int(np.max(np.asarray(uniform_refinement.child_ids)))
+            )
         if vertex_counter <= vertex_high or cell_counter <= cell_high:
             raise ValueError("Hierarchy counters must exceed every issued ID.")
         self.dimension = dimension
@@ -254,6 +835,8 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         self.ordered_vertices = jnp.asarray(arrays["ordered_vertices"])
         self.tags = jnp.asarray(arrays["tags"])
         self.generations = jnp.asarray(arrays["generations"])
+        self.scientific_cell_ids = jnp.asarray(scientific_ids)
+        self.scientific_block_ids = jnp.asarray(scientific_blocks)
         self.record_parent_ids = jnp.asarray(arrays["record_parent_ids"])
         self.record_parent_blocks = jnp.asarray(arrays["record_parent_blocks"])
         self.record_parent_rows = jnp.asarray(arrays["record_parent_rows"])
@@ -263,6 +846,7 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
         self.record_vertex_ids = jnp.asarray(arrays["record_vertex_ids"])
         self.retired_entity_keys = tuple(jnp.asarray(value) for value in retired_keys)
         self.retired_entity_ids = tuple(jnp.asarray(value) for value in retired_ids)
+        self.uniform_refinement = uniform_refinement
         self.next_vertex_id = vertex_counter
         self.next_cell_id = cell_counter
         self.hierarchy_id = canonical_fingerprint(
@@ -270,8 +854,14 @@ class BisectionHierarchy(StrictModule, NonTrainableState):
                 "kind": "bisection-hierarchy",
                 "dimension": dimension,
                 "arrays": array_tree_fingerprint(arrays),
+                "scientific_blocks": array_tree_fingerprint(
+                    (canonical_scientific_ids, canonical_scientific_blocks)
+                ),
                 "retired_entity_keys": array_tree_fingerprint(retired_keys),
                 "retired_entity_ids": array_tree_fingerprint(retired_ids),
+                "uniform_refinement": None
+                if uniform_refinement is None
+                else uniform_refinement.lineage_id,
                 "next_vertex_id": vertex_counter,
                 "next_cell_id": cell_counter,
             }
@@ -286,9 +876,13 @@ class BisectionEvidence(StrictModule, NonTrainableState):
     closure would split a protected edge; ``admissibility_tests`` counts the
     closure simulations of the group test that isolated them.
     ``initially_compatible`` is ``None`` when a supplied hierarchy carried the
-    labels. ``rejected_coarsening_ids`` are marked source cells that stay active
-    (their family is incomplete, unmarked, protected, class-mixed, or touches the
-    refinement closure).
+    labels; ``incompatible_facets`` counts the source facets violating the
+    matching condition. Incompatible labels with ``uniform_refinement_applied``
+    false were closed under ``CONFORMING_CLOSURE``: ``bisections`` and
+    ``closure_iterations`` then include every closure bisection beyond the
+    accepted marks. ``rejected_coarsening_ids`` are marked source cells that stay
+    active (their family is incomplete, unmarked, protected, class-mixed, or
+    touches the refinement closure).
     """
 
     requested_refinements: int = eqx.field(static=True)
@@ -390,7 +984,7 @@ class BisectionEvidence(StrictModule, NonTrainableState):
 class BisectionOutcome(NamedTuple):
     """Topology edit, target hierarchy, and evidence of one bisection adaptation."""
 
-    edit: SimplexTopologyEdit
+    edit: CellTopologyEdit
     hierarchy: BisectionHierarchy
     evidence: BisectionEvidence
 
@@ -469,6 +1063,72 @@ class _Request(NamedTuple):
     limit: int
 
 
+class _UniformAllowance(NamedTuple):
+    work: int
+    geometry_queries: int
+    cells: int
+    vertices: int
+    scratch_bytes: int
+    wall_seconds: float
+    cavity_cells: int
+
+
+@contextmanager
+def _uniform_execution(
+    allowance: _UniformAllowance, /
+) -> Iterator[NativeExecutionBudget]:
+    active = current_native_execution_budget()
+    if active is not None:
+        if current_native_host_workspace() is None:
+            with active.host_workspace():
+                yield active
+        else:
+            yield active
+        return
+    with NativeExecutionBudget(
+        max_work=allowance.work,
+        max_geometry_queries=allowance.geometry_queries,
+        max_cavity_cells=allowance.cavity_cells,
+        max_scratch_bytes=allowance.scratch_bytes,
+        max_wall_seconds=allowance.wall_seconds,
+    ) as budget:
+        with budget.host_workspace():
+            yield budget
+
+
+def _uniform_charge(work: int, storage_bytes: int = 0, /) -> None:
+    budget = current_native_execution_budget()
+    if budget is None:
+        raise RuntimeError(
+            "Uniform source preparation and inverse require their original native allowance."
+        )
+    budget.charge(work=work)
+    workspace = current_native_host_workspace()
+    if workspace is None:
+        raise RuntimeError(
+            "Uniform source storage requires its owning native host workspace."
+        )
+    if storage_bytes:
+        workspace.set_bound(workspace.bound + storage_bytes)
+
+
+def _uniform_retain_source(source: CellMeshingResult, /) -> None:
+    workspace = current_native_host_workspace()
+    if workspace is None:
+        raise RuntimeError(
+            "Packed scientific source retention requires its owning native host workspace."
+        )
+    workspace.retain_owner(source)
+
+
+class _Capacity(NamedTuple):
+    """Declared cell, vertex, and construction-step budgets of one closure."""
+
+    cells: int
+    vertices: int
+    work_units: int
+
+
 class _Start(NamedTuple):
     front: _Front
     records: _Records
@@ -478,6 +1138,7 @@ class _Start(NamedTuple):
     incompatible: int
     uniform: bool
     retired: tuple[tuple[np.ndarray, np.ndarray], ...]
+    uniform_refinement: BisectionUniformRefinement | None
 
 
 class _Refinement(NamedTuple):
@@ -502,6 +1163,7 @@ class _Coarsening(NamedTuple):
     undone: np.ndarray
     removed_vertices: np.ndarray
     supports: np.ndarray
+    support_weights: np.ndarray
     passes: int
     rejected_ids: np.ndarray
 
@@ -707,6 +1369,8 @@ def _prepared_request(
     facet_classes: np.ndarray,
     maximum_closure_iterations: int,
     /,
+    *,
+    source_cell_classes: np.ndarray | None = None,
 ) -> _Request:
     refine = _marked_ids(refine_cell_ids, source, "refine_cell_ids")
     coarsen = _marked_ids(coarsen_cell_ids, source, "coarsen_cell_ids")
@@ -728,9 +1392,18 @@ def _prepared_request(
     if maximum_closure_iterations < 1:
         raise ValueError("maximum_closure_iterations must be positive.")
     mesh, dimension = source.mesh, source.dimension
-    cell_order = np.searchsorted(source.cells.ids, entity_keys(mesh, dimension)[:, 0])
-    classes = np.empty(source.cells.ids.shape, dtype=np.int64)
-    classes[cell_order] = _aligned_classes(cell_classes, cell_order.size, "cell_classes")
+    if source_cell_classes is None:
+        cell_order = np.searchsorted(source.cells.ids, entity_keys(mesh, dimension)[:, 0])
+        classes = np.empty(source.cells.ids.shape, dtype=np.int64)
+        classes[cell_order] = _aligned_classes(
+            cell_classes, cell_order.size, "cell_classes"
+        )
+    else:
+        # An authenticated root projection retains the whole original mesh and
+        # coefficient bank; only its actual selected SCI cell axis is classified.
+        classes = _aligned_classes(
+            source_cell_classes, source.cells.ids.size, "source_cell_classes"
+        )
     facet_keys = np.searchsorted(source.vertex_ids, entity_keys(mesh, dimension - 1))
     return _Request(
         refine,
@@ -839,7 +1512,7 @@ def _incompatible_facets(cells: _Cells, dimension: int, /) -> int:
     return int(np.sum(~matched))
 
 
-def _subdivided(front: _Front, dimension: int, /) -> _Front:
+def _subdivided(front: _Front, dimension: int, maximum_vertices: int, /) -> _Front:
     """Barycentric subdivision: each simplex into (d+1)! simplices (v, m, [f,] c)_d."""
 
     cells, width = front.cells, dimension + 1
@@ -850,6 +1523,12 @@ def _subdivided(front: _Front, dimension: int, /) -> _Front:
     offsets = np.cumsum([0] + [table.shape[0] for table in tables])
     if front.vertex_base + offsets[-1] >= _VERTEX_LIMIT:
         raise ValueError("Barycentric subdivision would exceed 2**31 vertices.")
+    if front.vertex_base + offsets[-1] > maximum_vertices:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "Uniform source preparation exceeds its original vertex allowance.",
+            stage="uniform-source-preparation",
+        )
     columns = [cells.rows[:, orders[:, 0]]]
     for size in range(2, width):
         prefix = np.sort(cells.rows[:, orders[:, :size]], axis=2).reshape((-1, size))
@@ -930,6 +1609,10 @@ def _bisected(front: _Front, selected: np.ndarray, level: int, dimension: int, /
     cells = front.cells
     chosen = _select(cells, selected)
     count = selected.size
+    budget = current_native_execution_budget()
+    if budget is not None:
+        budget.admit_cavity(count)
+        budget.charge(work=count)
     codes = _edge_codes(chosen.tuples[:, 0], chosen.tuples[np.arange(count), chosen.tags])
     front, midpoints, created = _split_edges(front, codes, level, dimension)
     first, second = _children(chosen.tuples, chosen.tags, midpoints, dimension)
@@ -972,17 +1655,65 @@ def _nonconforming(cells: _Cells, split_keys: np.ndarray, dimension: int, /) -> 
     return np.any(_members(split_keys, codes), axis=1)
 
 
+def _admit_closure_batch(
+    front: _Front, records: _Records, selected: np.ndarray, capacity: _Capacity, /
+) -> None:
+    """Refuse one closure batch before it allocates beyond the declared budgets.
+
+    A bisection is one construction step: it retires one cell, creates two, and
+    issues the midpoint of its refinement edge unless this adaptation already
+    split that edge.
+    """
+
+    chosen = _select(front.cells, selected)
+    ends = chosen.tuples[np.arange(selected.size), chosen.tags]
+    codes = np.unique(_edge_codes(chosen.tuples[:, 0], ends))
+    cells = front.cells.ids.size + selected.size
+    vertices = (
+        front.vertex_base
+        + front.growth.levels.size
+        + int(np.count_nonzero(~_members(front.split_keys, codes)))
+    )
+    steps = records.parent_ids.size + selected.size
+    if (
+        cells > capacity.cells
+        or vertices > capacity.vertices
+        or steps > capacity.work_units
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            f"The next bisection closure batch would reach {cells} active cells, "
+            f"{vertices} vertices and {steps} bisection steps, beyond the declared "
+            f"{capacity.cells} cells, {capacity.vertices} vertices and "
+            f"{capacity.work_units} work units.",
+            stage="bisection-closure",
+            entity_ids=tuple(int(value) for value in chosen.ids),
+            requested=(
+                ("maximum_cells", float(capacity.cells)),
+                ("maximum_vertices", float(capacity.vertices)),
+                ("maximum_work_units", float(capacity.work_units)),
+            ),
+            achieved=(
+                ("active_cells", float(cells)),
+                ("vertices", float(vertices)),
+                ("bisection_steps", float(steps)),
+            ),
+        )
+
+
 def _closure(
     front: _Front,
     selected: np.ndarray,
     protected_codes: np.ndarray,
     limit: int,
+    capacity: _Capacity,
     dimension: int,
     /,
 ) -> tuple[_Front, _Records, int] | None:
     """Bisect the selected cells, then every cell with a split edge, until conforming.
 
-    Returns ``None`` as soon as the closure would split a protected edge.
+    Returns ``None`` as soon as the closure would split a protected edge. Every
+    batch is admitted against the declared capacity before it is bisected.
     """
 
     records = _empty_records(dimension)
@@ -997,6 +1728,7 @@ def _closure(
                 stage="bisection-closure",
                 entity_ids=tuple(int(value) for value in front.cells.ids[selected]),
             )
+        _admit_closure_batch(front, records, selected, capacity)
         iterations += 1
         front, record, created = _bisected(front, selected, iterations, dimension)
         if np.any(_members(protected_codes, created)):
@@ -1009,7 +1741,12 @@ def _closure(
 
 
 def _admissible_marks(
-    front: _Front, marks: np.ndarray, request: _Request, dimension: int, /
+    front: _Front,
+    marks: np.ndarray,
+    request: _Request,
+    capacity: _Capacity,
+    dimension: int,
+    /,
 ) -> Any:
     """Split marks into those whose own closure keeps every protected edge whole.
 
@@ -1031,7 +1768,8 @@ def _admissible_marks(
     while pending:
         group = pending.pop()
         tests += 1
-        if _closure(front, group, protected, request.limit, dimension) is not None:
+        closure = _closure(front, group, protected, request.limit, capacity, dimension)
+        if closure is not None:
             accepted.append(group)
         elif group.size == 1:
             rejected.append(group)
@@ -1041,12 +1779,19 @@ def _admissible_marks(
     return np.sort(np.concatenate(accepted)), np.sort(np.concatenate(rejected)), tests
 
 
-def _refinement(start: _Start, request: _Request, dimension: int, /) -> _Refinement:
+def _refinement(
+    start: _Start, request: _Request, capacity: _Capacity, dimension: int, /
+) -> _Refinement:
     accepted, rejected, tests = _admissible_marks(
-        start.front, start.marks, request, dimension
+        start.front, start.marks, request, capacity, dimension
     )
     closure = _closure(
-        start.front, accepted, request.protected_codes, request.limit, dimension
+        start.front,
+        accepted,
+        request.protected_codes,
+        request.limit,
+        capacity,
+        dimension,
     )
     if closure is None:
         raise MeshingFailure(
@@ -1077,11 +1822,300 @@ def _initial_front(
     return _Front(cells, growth, empty, empty, vertex_base, next_cell)
 
 
+def _uniform_lineage(
+    source: _Source,
+    request: _Request,
+    parents: _Cells,
+    front: _Front,
+    next_vertex: int,
+    scientific_source: CellMeshingResult,
+    /,
+) -> BisectionUniformRefinement:
+    _uniform_retain_source(scientific_source)
+    dimension, width = source.dimension, source.dimension + 1
+    count = source.vertex_ids.size
+    arrangements = _TABLES[dimension][4].shape[0]
+    one_hot = np.full((count, width), -1, dtype=np.int64)
+    one_hot[:, 0] = source.vertex_ids
+    growth = front.growth
+    sources = np.concatenate(
+        (
+            one_hot,
+            np.where(
+                growth.parents >= 0, source.vertex_ids[np.maximum(growth.parents, 0)], -1
+            ),
+        )
+    )
+    weights = np.concatenate(
+        (
+            np.eye(1, width, dtype=np.float64).repeat(count, axis=0),
+            growth.weights,
+        )
+    )
+    parent_rows = source.vertex_ids[np.repeat(parents.rows, arrangements, axis=0)]
+    references = nested_reference_vertices(
+        sources[front.cells.rows],
+        weights[front.cells.rows],
+        parent_rows,
+    ).reshape((parents.ids.size, arrangements, width, dimension))
+    matches = sources[front.cells.rows][..., :, None] == parent_rows[:, None, None, :]
+    barycentric = np.sum(
+        np.where(matches, weights[front.cells.rows][..., None], 0.0),
+        axis=2,
+    ).reshape((parents.ids.size, arrangements, width, width))
+    original_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids) for block in source.mesh.blocks)
+    )
+    original_rows = np.concatenate(
+        tuple(np.arange(block.cell_count, dtype=np.int64) for block in source.mesh.blocks)
+    )
+    original_order = np.argsort(original_ids, kind="stable")
+    positions = np.searchsorted(original_ids[original_order], parents.ids)
+    if np.any(positions >= original_ids.size):
+        raise ValueError(
+            "Uniform source lineage contains an undeclared original parent identity."
+        )
+    original_positions = original_order[positions]
+    if not np.array_equal(original_ids[original_positions], parents.ids):
+        raise ValueError(
+            "Uniform source lineage contains an undeclared original parent identity."
+        )
+    row_order = original_rows[original_positions]
+    facet_columns = np.asarray(
+        tuple(combinations(range(width), dimension)), dtype=np.int64
+    )
+    facet_keys = np.sort(parents.rows[:, facet_columns], axis=2).reshape((-1, dimension))
+    facets = key_rows(request.facet_keys, facet_keys)
+    if np.any(facets < 0):
+        raise ValueError("Uniform source lineage lost an original source facet.")
+    return BisectionUniformRefinement(
+        dimension,
+        parents.ids,
+        parents.blocks,
+        row_order,
+        source.vertex_ids[parents.rows],
+        source.vertex_ids[parents.tuples],
+        parents.tags,
+        parents.generations,
+        request.cell_classes,
+        request.facet_classes[facets].reshape((-1, width)),
+        front.cells.ids.reshape((-1, arrangements)),
+        _global_vertices(front.cells.rows, source, next_vertex).reshape(
+            (-1, arrangements, width)
+        ),
+        references,
+        barycentric,
+        source=scientific_source,
+    )
+
+
+def _reprepare_admitted_uniform(
+    source: _Source,
+    request: _Request,
+    admitted: BisectionUniformRefinement,
+    allowance: _UniformAllowance,
+    retained_issuers: tuple[int, int],
+    retained_retired: tuple[tuple[np.ndarray, np.ndarray], ...],
+    /,
+) -> _Start:
+    """Reissue an authenticated existing uniform law, not a policy fallback.
+
+    The collective owner authenticates prior admission and the restored cohort.
+    Current parent metadata must still be its original scientific metadata.
+    Fresh identifiers retain the original action rows and arrangement order;
+    discarded historical children and construction identifiers are never reused.
+    """
+    if (
+        source.dimension != admitted.dimension
+        or source.mesh.mesh_id != admitted.source.mesh.mesh_id
+    ):
+        raise ValueError(
+            "Admitted uniform preparation requires its actual original source mesh."
+        )
+    if request.coarsen_ids.size:
+        raise ValueError(
+            "Admitted uniform source preparation cannot replace a coarsening request."
+        )
+    width = source.dimension + 1
+    count = source.cells.ids.size
+    arrangements = _TABLES[source.dimension][4].shape[0]
+    if count == 0 or count * arrangements > allowance.cells:
+        raise MeshingFailure(
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+            "Admitted uniform source preparation exceeds its original cell allowance.",
+            stage="uniform-source-preparation",
+        )
+    if len(retained_issuers) != 2 or any(
+        isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+        for value in retained_issuers
+    ):
+        raise TypeError(
+            "Admitted uniform preparation requires exact retained integer issuers."
+        )
+    next_vertex, next_cell = (int(value) for value in retained_issuers)
+    with _uniform_execution(allowance) as budget:
+        budget.admit_cavity(count)
+        slots = count * arrangements * width
+        _uniform_charge(
+            slots + admitted.child_vertices.size + source.coordinates.size,
+            4 * slots * (64 + 16 * width)
+            + source.vertex_ids.nbytes
+            + source.coordinates.nbytes,
+        )
+        vertices = np.asarray(admitted.source.mesh.vertex_global_ids, dtype=np.int64)
+        coordinates = np.asarray(admitted.source.mesh.coordinates, dtype=np.float64)
+        if (
+            source.original.shape != vertices.shape
+            or source.coordinates.shape != coordinates.shape
+            or np.any((source.original < 0) | (source.original >= vertices.size))
+            or not np.array_equal(source.vertex_ids, vertices[source.original])
+            or not np.array_equal(
+                source.coordinates.view(np.uint64),
+                coordinates[source.original].view(np.uint64),
+            )
+        ):
+            raise ValueError(
+                "Admitted uniform preparation changed the actual original scientific coordinate bank."
+            )
+        original = admitted.host_arrays()
+        positions = np.searchsorted(original["parent_ids"], source.cells.ids)
+        if np.any(positions >= original["parent_ids"].size):
+            raise ValueError(
+                "Admitted uniform cohort contains an undeclared original parent."
+            )
+        if not np.array_equal(original["parent_ids"][positions], source.cells.ids):
+            raise ValueError(
+                "Admitted uniform cohort contains an undeclared original parent."
+            )
+        if next_vertex <= max(
+            int(source.vertex_ids[-1]), int(np.max(original["child_vertices"]))
+        ) or next_cell <= max(
+            int(source.cells.ids[-1]), int(np.max(original["child_ids"]))
+        ):
+            raise ValueError(
+                "Admitted uniform reissuance cannot revive an existing or historical scientific identity."
+            )
+        for name, current in (
+            ("parent_rows", source.vertex_ids[source.cells.rows]),
+            ("parent_vertices", source.vertex_ids[source.cells.tuples]),
+            ("parent_blocks", source.cells.blocks),
+            ("parent_tags", source.cells.tags),
+            ("parent_levels", source.cells.generations),
+            ("parent_classes", request.cell_classes),
+        ):
+            if not np.array_equal(original[name][positions], current):
+                raise ValueError(
+                    f"Admitted uniform preparation changed the original scientific {name}."
+                )
+        keys, identifiers = _retired_tables(
+            tuple(value[0] for value in retained_retired),
+            tuple(value[1] for value in retained_retired),
+            source.dimension,
+        )
+        if any(np.any((table < 0) | (table >= source.vertex_ids.size)) for table in keys):
+            raise ValueError(
+                "Admitted uniform retirement must bind the actual original source vertex axis."
+            )
+        pairs = _TABLES[source.dimension][3]
+        edges = _edge_codes(
+            source.cells.rows[:, pairs[:, 0]], source.cells.rows[:, pairs[:, 1]]
+        )
+        if np.any(_members(request.protected_codes, edges)):
+            raise ValueError(
+                "Admitted uniform reissuance would split an actual protected edge."
+            )
+        front = _subdivided(
+            _initial_front(
+                source.cells, source.vertex_ids.size, next_cell, source.dimension
+            ),
+            source.dimension,
+            allowance.vertices,
+        )
+        generated = _uniform_lineage(
+            source, request, source.cells, front, next_vertex, admitted.source
+        )
+        incoming = generated.host_arrays()
+        order = []
+        for parent, old in enumerate(positions):
+            authored = {
+                matrix.tobytes(): child
+                for child, matrix in enumerate(incoming["barycentric_weights"][parent])
+            }
+            for matrix in original["barycentric_weights"][old]:
+                child = authored.get(matrix.tobytes())
+                if child is None:
+                    raise ValueError(
+                        "Admitted uniform reissuance changed an actual original raw coefficient action."
+                    )
+                order.append(parent * arrangements + child)
+        order = np.asarray(order, dtype=np.int64)
+        actual = incoming
+        regenerated = generated
+        if not np.array_equal(order, np.arange(count * arrangements, dtype=np.int64)):
+            front = front._replace(
+                cells=_select(front.cells, order)._replace(
+                    ids=next_cell + np.arange(count * arrangements, dtype=np.int64),
+                )
+            )
+            actual = dict(incoming)
+            actual["child_ids"] = front.cells.ids.reshape((count, arrangements))
+            for name in ("child_vertices", "reference_vertices", "barycentric_weights"):
+                values = incoming[name]
+                actual[name] = values.reshape((-1, *values.shape[2:]))[order].reshape(
+                    values.shape
+                )
+        for name in (
+            "parent_row_order",
+            "parent_facet_classes",
+            "reference_vertices",
+            "barycentric_weights",
+        ):
+            expected = original[name][positions]
+            if expected.dtype == np.float64:
+                equal = np.array_equal(
+                    actual[name].view(np.uint64), expected.view(np.uint64)
+                )
+            else:
+                equal = np.array_equal(actual[name], expected)
+            if not equal:
+                raise ValueError(
+                    f"Admitted uniform reissuance changed the original scientific {name}."
+                )
+        if actual is not incoming:
+            regenerated = BisectionUniformRefinement(
+                source.dimension,
+                *actual.values(),
+                source=admitted.source,
+            )
+        incompatible = _incompatible_facets(source.cells, source.dimension)
+        if _incompatible_facets(front.cells, source.dimension):
+            raise ValueError(
+                "The retained admitted uniform arrangement does not match its actual scientific neighbors."
+            )
+        return _Start(
+            front,
+            _empty_records(source.dimension),
+            np.flatnonzero(np.isin(front.cells.origins, request.refine_ids)),
+            next_vertex,
+            incompatible == 0,
+            incompatible,
+            True,
+            tuple(zip(keys, identifiers, strict=True)),
+            regenerated,
+        )
+
+
 def _labelled_start(
     source: _Source,
     request: _Request,
     compatibility: BisectionCompatibility,
     /,
+    *,
+    uniform_allowance: _UniformAllowance,
+    source_hierarchy: BisectionHierarchy | None,
+    scientific_source: CellMeshingResult,
+    retained_issuers: tuple[int, int] | None = None,
+    retained_retired: tuple[tuple[np.ndarray, np.ndarray], ...] | None = None,
 ) -> _Start:
     dimension = source.dimension
     if request.coarsen_ids.size:
@@ -1090,10 +2124,37 @@ def _labelled_start(
         )
     tuples, tags = _longest_edge_labels(source.cells, source.coordinates, dimension)
     cells = source.cells._replace(tuples=tuples, tags=tags)
-    front = _initial_front(
-        cells, source.vertex_ids.size, int(cells.ids[-1]) + 1, dimension
+    next_vertex = (
+        int(source.vertex_ids[-1]) + 1
+        if source_hierarchy is None
+        else source_hierarchy.next_vertex_id
     )
+    next_cell = (
+        int(cells.ids[-1]) + 1
+        if source_hierarchy is None
+        else source_hierarchy.next_cell_id
+    )
+    if retained_issuers is not None:
+        if source_hierarchy is not None or len(retained_issuers) != 2:
+            raise ValueError(
+                "Retained relabel issuers require one independently bound predecessor, not a second hierarchy."
+            )
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in retained_issuers
+        ):
+            raise TypeError(
+                "Retained relabel issuers must be exact integer high-water marks."
+            )
+        next_vertex, next_cell = (int(value) for value in retained_issuers)
+        if next_vertex <= source.vertex_ids[-1] or next_cell <= cells.ids[-1]:
+            raise ValueError(
+                "Retained relabel issuers must exceed every current scientific source identity."
+            )
+    front = _initial_front(cells, source.vertex_ids.size, next_cell, dimension)
     incompatible = _incompatible_facets(cells, dimension)
+    uniform_refinement = None
     uniform = False
     if incompatible:
         match compatibility:
@@ -1102,7 +2163,9 @@ def _labelled_start(
                     f"{incompatible} interior facets violate the bisection matching "
                     "condition of the longest-edge labelling; use "
                     "BisectionCompatibility.UNIFORM_REFINEMENT to subdivide "
-                    "barycentrically into a compatible mesh first."
+                    "barycentrically into a compatible mesh first, or, for triangle "
+                    "meshes, BisectionCompatibility.CONFORMING_CLOSURE to close the "
+                    "original labels locally."
                 )
             case BisectionCompatibility.UNIFORM_REFINEMENT:
                 pairs = _TABLES[dimension][3]
@@ -1113,8 +2176,39 @@ def _labelled_start(
                     raise ValueError(
                         "Uniform barycentric refinement would split protected edges."
                     )
-                front = _subdivided(front, dimension)
+                arrangements = _TABLES[dimension][4].shape[0]
+                if cells.ids.size * arrangements > uniform_allowance.cells:
+                    raise MeshingFailure(
+                        MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                        "Uniform source preparation exceeds its original cell allowance.",
+                        stage="uniform-source-preparation",
+                    )
+                with _uniform_execution(uniform_allowance) as budget:
+                    budget.admit_cavity(cells.ids.size)
+                    slots = cells.ids.size * arrangements * (dimension + 1)
+                    _uniform_charge(
+                        slots,
+                        2 * slots * (64 + 16 * (dimension + 1))
+                        + source.vertex_ids.nbytes,
+                    )
+                    front = _subdivided(front, dimension, uniform_allowance.vertices)
+                    uniform_refinement = _uniform_lineage(
+                        source,
+                        request,
+                        cells,
+                        front,
+                        next_vertex,
+                        scientific_source,
+                    )
                 uniform = True
+            case BisectionCompatibility.CONFORMING_CLOSURE:
+                if dimension != 2:
+                    raise ValueError(
+                        f"{incompatible} interior facets violate the bisection "
+                        "matching condition; CONFORMING_CLOSURE closes incompatible "
+                        "labels of triangle meshes only, and tetrahedral bisection "
+                        "requires BisectionCompatibility.UNIFORM_REFINEMENT."
+                    )
             case _:
                 raise ValueError(
                     f"Unsupported bisection compatibility {compatibility!r}."
@@ -1124,15 +2218,388 @@ def _labelled_start(
         (np.zeros((0, degree + 1), dtype=np.int64), np.zeros((0,), dtype=np.int64))
         for degree in range(1, dimension)
     )
+    if source_hierarchy is not None:
+        retired = _bound_start(source, request, source_hierarchy).retired
+    if retained_retired is not None:
+        if source_hierarchy is not None:
+            raise ValueError(
+                "Retained relabel retirement must have exactly one predecessor owner."
+            )
+        keys, identifiers = _retired_tables(
+            tuple(value[0] for value in retained_retired),
+            tuple(value[1] for value in retained_retired),
+            dimension,
+        )
+        if any(np.any((table < 0) | (table >= source.vertex_ids.size)) for table in keys):
+            raise ValueError(
+                "Retained relabel retirement keys must use the actual source vertex axis."
+            )
+        retired = tuple(zip(keys, identifiers, strict=True))
     return _Start(
         front,
         _empty_records(dimension),
         marks,
-        int(source.vertex_ids[-1]) + 1,
+        next_vertex,
         incompatible == 0,
         incompatible,
         uniform,
         retired,
+        uniform_refinement,
+    )
+
+
+def _prepared_start(
+    source: _Source,
+    request: _Request,
+    compatibility: BisectionCompatibility,
+    hierarchy: BisectionHierarchy | None,
+    allowance: _UniformAllowance,
+    scientific_source: CellMeshingResult,
+    /,
+    *,
+    future_refinement: bool = False,
+    retained_issuers: tuple[int, int] | None = None,
+    retained_retired: tuple[tuple[np.ndarray, np.ndarray], ...] | None = None,
+) -> _Start:
+    # Device preparation admits marks later. A completely inverted hierarchy
+    # retains the original (possibly incompatible) root tags, not the uniform
+    # children's matching theorem; relabel those roots before future splits.
+    # These private inputs are authenticated by the accepted collective source
+    # replay before entry; they retain its genuine issuer and retirement law
+    # without constructing a hierarchy for a different presentation mesh.
+    if (retained_issuers is None) != (retained_retired is None):
+        raise ValueError(
+            "Retained relabel issuers and retirement require the same complete predecessor."
+        )
+    if hierarchy is not None and retained_issuers is not None:
+        raise ValueError(
+            "Retained relabel preparation cannot have two predecessor authorities."
+        )
+    if hierarchy is not None:
+        bound = _bound_start(source, request, hierarchy)
+        if bound.uniform_refinement is not None:
+            _require_uniform_source_geometry(scientific_source, bound.uniform_refinement)
+        if (
+            bound.records.parent_ids.size
+            or bound.uniform_refinement is not None
+            or request.coarsen_ids.size
+            or (not request.refine_ids.size and not future_refinement)
+        ):
+            return bound
+    return _labelled_start(
+        source,
+        request,
+        compatibility,
+        uniform_allowance=allowance,
+        source_hierarchy=hierarchy,
+        scientific_source=scientific_source,
+        retained_issuers=retained_issuers,
+        retained_retired=retained_retired,
+    )
+
+
+def _require_uniform_source_geometry(
+    current: CellMeshingResult,
+    lineage: BisectionUniformRefinement,
+    /,
+) -> None:
+    """Bind action groups to original SCI roots, columns, and coefficient banks."""
+    from ..discretization._cell_geometry import (
+        _require_p1_cardinal_source,
+        BarycentricCellGeometryElement,
+        PolynomialComposedCellGeometryElement,
+    )
+    from ..discretization._cell_geometry_validity import cell_geometry_id
+
+    original = lineage.source
+    _uniform_retain_source(original)
+    _uniform_charge(
+        lineage.barycentric_weights.size, lineage.barycentric_weights.size * 32
+    )
+    arrays = lineage.host_arrays()
+    _require_uniform_action_family(arrays["barycentric_weights"], lineage.dimension)
+    for identifier, block, row, vertices in zip(
+        arrays["parent_ids"],
+        arrays["parent_blocks"],
+        arrays["parent_row_order"],
+        arrays["parent_rows"],
+        strict=True,
+    ):
+        if block < 0 or block >= len(original.mesh.blocks):
+            raise ValueError(
+                "Uniform lineage references an undeclared original scientific block."
+            )
+        definition = original.mesh.blocks[int(block)]
+        if (
+            row < 0
+            or row >= definition.cell_count
+            or np.asarray(definition.global_ids)[row] != identifier
+        ):
+            raise ValueError(
+                "Uniform lineage changed its original scientific block or row order."
+            )
+        if not np.array_equal(
+            np.asarray(original.mesh.vertex_global_ids)[
+                np.asarray(definition.vertices)[row]
+            ],
+            vertices,
+        ):
+            raise ValueError(
+                "Uniform lineage changed its original scientific vertex columns."
+            )
+    origin = current.geometry.restriction_source
+    if origin is None or (
+        origin.source_geometry_id != cell_geometry_id(original.geometry)
+        or origin.source_topology_id != original.mesh.topology_id
+    ):
+        raise ValueError(
+            "Uniform source actions lost their original scientific geometry owner."
+        )
+    original_elements, original_routes, _ = original.geometry.resolve(original.mesh)
+    elements, routes, _ = current.geometry.resolve(current.mesh)
+    _uniform_charge(
+        original.geometry.coordinates.size + current.geometry.coordinates.size,
+        (original.geometry.coordinates.size + current.geometry.coordinates.size) * 512,
+    )
+    from ..discretization._coordinate_enclosure import prepared_coordinate_source_bank
+
+    original_bank = prepared_coordinate_source_bank(original.geometry)
+    current_bank = (
+        original_bank
+        if current.geometry.coordinates is original.geometry.coordinates
+        and current.geometry.exact_source is original.geometry.exact_source
+        else prepared_coordinate_source_bank(current.geometry)
+    )
+    roots = {
+        int(identifier): (
+            element,
+            np.asarray(route)[row],
+            np.asarray(original.mesh.vertex_global_ids)[np.asarray(block.vertices)[row]],
+        )
+        for block, element, route in zip(
+            original.mesh.blocks, original_elements, original_routes, strict=True
+        )
+        for row, identifier in enumerate(block.global_ids)
+    }
+    coefficient_ids = (
+        np.arange(current.geometry.coordinates.shape[0], dtype=np.int64)
+        if current.mesh.storage is None
+        else np.asarray(current.mesh.storage.coordinate_global_ids)
+    )
+    for block, element, route in zip(current.mesh.blocks, elements, routes, strict=True):
+        root = element
+        while isinstance(
+            root,
+            (
+                BarycentricCellGeometryElement,
+                PolynomialComposedCellGeometryElement,
+            ),
+        ):
+            root = root.source_element
+        _require_p1_cardinal_source(root)
+        parents = np.asarray(origin.block_parent_cell_ids[block.name])
+        corners = np.asarray(origin.block_parent_vertex_ids[block.name])
+        _uniform_charge(block.vertices.size, block.vertices.size * 32)
+        for parent, vertices, coefficients in zip(
+            parents, corners, np.asarray(route), strict=True
+        ):
+            if int(parent) not in roots:
+                raise ValueError(
+                    "Uniform source action references an undeclared original scientific cell."
+                )
+            original_element, original_route, original_corners = roots[int(parent)]
+            ancestor = element
+            while (
+                isinstance(
+                    ancestor,
+                    (
+                        BarycentricCellGeometryElement,
+                        PolynomialComposedCellGeometryElement,
+                    ),
+                )
+                and ancestor.element_id != original_element.element_id
+            ):
+                ancestor = ancestor.source_element
+            if ancestor.element_id != original_element.element_id or not np.array_equal(
+                vertices, original_corners
+            ):
+                raise ValueError(
+                    "Uniform source action changed its original scientific basis or corner columns."
+                )
+            if not np.array_equal(coefficient_ids[coefficients], original_route):
+                raise ValueError(
+                    "Uniform source action changed its original scientific coefficient SCI columns."
+                )
+            if tuple(current_bank[int(index)] for index in coefficients) != tuple(
+                original_bank[int(index)] for index in original_route
+            ):
+                raise ValueError(
+                    "Uniform source action changed its original scientific coefficient bank."
+                )
+
+
+def _uniform_binary_chart(
+    identifier: int,
+    hierarchy: BisectionHierarchy,
+    /,
+) -> tuple[int, int | None, tuple[np.ndarray, ...]]:
+    """Reconstruct authored binary half actions, never compress source weights."""
+    lineage = hierarchy.uniform_refinement
+    if lineage is None:
+        raise ValueError(
+            "Exact packed chart reconstruction requires its original source owner."
+        )
+    _uniform_charge(
+        hierarchy.record_parent_ids.size + lineage.child_ids.size,
+        256 * (hierarchy.record_parent_ids.size + lineage.child_ids.size),
+    )
+    arrays = lineage.host_arrays()
+    roots = {int(parent): (row, None) for row, parent in enumerate(arrays["parent_ids"])}
+    roots.update(
+        {
+            int(child): (row, column)
+            for row, children in enumerate(arrays["child_ids"])
+            for column, child in enumerate(children)
+        }
+    )
+    parents = np.asarray(hierarchy.record_parent_ids)
+    children = np.asarray(hierarchy.record_child_ids)
+    rows = np.asarray(hierarchy.record_parent_rows)
+    tuples = np.asarray(hierarchy.record_parent_vertices)
+    tags = np.asarray(hierarchy.record_parent_tags)
+    vertices = np.asarray(hierarchy.record_vertex_ids)
+    records = {int(parent): row for row, parent in enumerate(parents)}
+    predecessors: dict[int, int] = {}
+    for parent, descendants in zip(parents, children, strict=True):
+        for child in descendants:
+            known = predecessors.setdefault(int(child), int(parent))
+            if known != int(parent):
+                raise ValueError(
+                    "A packed binary chart has contradictory scientific parents."
+                )
+    path = []
+    current = identifier
+    visited: set[int] = set()
+    while current not in roots:
+        if current in visited or current not in predecessors or current not in records:
+            raise ValueError(
+                "A restored packed cell has no complete original scientific chart path."
+            )
+        visited.add(current)
+        path.append(current)
+        current = predecessors[current]
+    root, child = roots[current]
+    steps = []
+    width = lineage.dimension + 1
+    for descendant in reversed(path):
+        parent = predecessors[descendant]
+        parent_row = records[parent]
+        parent_vertices = rows[parent_row]
+        corners = rows[records[descendant]]
+        action = np.zeros((width, width), dtype=np.float64)
+        endpoints = (tuples[parent_row, 0], tuples[parent_row, tags[parent_row]])
+        for corner, vertex in enumerate(corners):
+            if vertex == vertices[parent_row]:
+                for endpoint in endpoints:
+                    matches = np.flatnonzero(parent_vertices == endpoint)
+                    if matches.size != 1:
+                        raise ValueError(
+                            "A binary chart split edge lost its original parent columns."
+                        )
+                    action[corner, matches[0]] = 0.5
+            else:
+                matches = np.flatnonzero(parent_vertices == vertex)
+                if matches.size != 1:
+                    raise ValueError(
+                        "A binary chart corner has foreign original scientific support."
+                    )
+                action[corner, matches[0]] = 1.0
+        steps.append(action)
+    return root, child, tuple(steps)
+
+
+def _rebind_bisection_presentation_blocks(
+    hierarchy: BisectionHierarchy,
+    target: CellMeshingResult,
+    /,
+) -> BisectionHierarchy:
+    """Lower binary records onto actual descendant presentation groups."""
+    if (
+        hierarchy.record_parent_ids.size == 0
+        or target.geometry.restriction_source is None
+    ):
+        return hierarchy
+    _uniform_charge(
+        hierarchy.record_child_ids.size + hierarchy.cell_global_ids.size,
+        256 * (hierarchy.record_child_ids.size + hierarchy.cell_global_ids.size),
+    )
+    origin = target.geometry.restriction_source
+    owners = {}
+    roots = {}
+    for block_index, block in enumerate(target.mesh.blocks):
+        ancestors = np.asarray(origin.block_parent_cell_ids[block.name])
+        for identifier, ancestor in zip(block.global_ids, ancestors, strict=True):
+            owners[int(identifier)] = block_index
+            roots[int(identifier)] = int(ancestor)
+    parents = np.asarray(hierarchy.record_parent_ids)
+    children = np.asarray(hierarchy.record_child_ids)
+    if np.any(children <= parents[:, None]):
+        raise ValueError(
+            "Binary presentation records require their actual monotone scientific birth IDs."
+        )
+    descendants = {
+        int(parent): tuple(int(child) for child in row)
+        for parent, row in zip(parents, children, strict=True)
+    }
+    representatives: dict[int, tuple[int, int]] = {}
+    pending: list[tuple[int, bool]] = [(int(parent), False) for parent in parents[::-1]]
+    while pending:
+        identifier, expanded = pending.pop()
+        if identifier in representatives:
+            continue
+        if identifier in owners:
+            representatives[identifier] = (identifier, roots[identifier])
+            continue
+        if identifier not in descendants:
+            raise ValueError(
+                "A binary presentation record has no active scientific descendant."
+            )
+        row = descendants[identifier]
+        if not expanded:
+            pending.append((identifier, True))
+            pending.extend((child, False) for child in reversed(row))
+            continue
+        values = [representatives[child] for child in row]
+        if len({root for _, root in values}) != 1:
+            raise ValueError(
+                "Binary descendants disagree on their explicit original scientific root."
+            )
+        representatives[identifier] = min(values)
+    blocks = np.asarray(
+        [owners[representatives[int(parent)][0]] for parent in parents], dtype=np.int32
+    )
+    if np.array_equal(blocks, np.asarray(hierarchy.record_parent_blocks)):
+        return hierarchy
+    return BisectionHierarchy(
+        hierarchy.dimension,
+        hierarchy.cell_global_ids,
+        hierarchy.ordered_vertices,
+        hierarchy.tags,
+        hierarchy.generations,
+        scientific_cell_ids=hierarchy.scientific_cell_ids,
+        scientific_block_ids=hierarchy.scientific_block_ids,
+        record_parent_ids=hierarchy.record_parent_ids,
+        record_parent_blocks=blocks,
+        record_parent_rows=hierarchy.record_parent_rows,
+        record_parent_vertices=hierarchy.record_parent_vertices,
+        record_parent_tags=hierarchy.record_parent_tags,
+        record_child_ids=hierarchy.record_child_ids,
+        record_vertex_ids=hierarchy.record_vertex_ids,
+        retired_entity_keys=hierarchy.retired_entity_keys,
+        retired_entity_ids=hierarchy.retired_entity_ids,
+        next_vertex_id=hierarchy.next_vertex_id,
+        next_cell_id=hierarchy.next_cell_id,
+        uniform_refinement=hierarchy.uniform_refinement,
     )
 
 
@@ -1206,6 +2673,7 @@ def _bound_start(
         0,
         False,
         retired,
+        hierarchy.uniform_refinement,
     )
 
 
@@ -1338,12 +2806,20 @@ def _undone(cells: _Cells, flags: _Flags, records: _Records, family: _Family, /)
     return _select(merged, order), _select(merged_flags, order), _select(records, keep)
 
 
-def _reverse_supports(steps: Any, vertex_count: int, dimension: int, /) -> np.ndarray:
-    """Surviving vertices spanning each source vertex (removed ones by their edges)."""
+def _reverse_supports(
+    steps: Any, vertex_count: int, dimension: int, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Surviving vertices spanning each source vertex and its reference weights.
+
+    A removed vertex is the reference midpoint of its bisection edge, so its
+    weights compose half of each endpoint's weights, level by level.
+    """
 
     width = dimension + 1
     supports = np.full((vertex_count, width), -1, dtype=np.int64)
     supports[:, 0] = np.arange(vertex_count)
+    weights = np.zeros((vertex_count, width), dtype=np.float64)
+    weights[:, 0] = 1.0
     for vertices, first, second in reversed(steps):
         unique, index = np.unique(vertices, return_index=True)
         spans, counts = _distinct_rows(
@@ -1351,12 +2827,345 @@ def _reverse_supports(steps: Any, vertex_count: int, dimension: int, /) -> np.nd
         )
         if np.any(counts > width):
             raise ValueError("A coarsened vertex spans more than one target simplex.")
-        supports[unique] = spans[:, :width]
-    return supports
+        merged, merged_weights = _merged_rows(
+            np.concatenate((supports[first[index]], supports[second[index]]), axis=1),
+            0.5 * np.concatenate((weights[first[index]], weights[second[index]]), axis=1),
+            width,
+        )
+        if not np.array_equal(merged, spans[:, :width]):
+            raise RuntimeError("Coarsening supports disagree with their weights.")
+        supports[unique] = merged
+        weights[unique] = merged_weights
+    return supports, weights
+
+
+def _uniform_vertex_positions(
+    source: _Source, start: _Start, values: np.ndarray, /
+) -> np.ndarray:
+    positions = np.searchsorted(source.vertex_ids, values)
+    original = (positions < source.vertex_ids.size) & (
+        source.vertex_ids[np.minimum(positions, source.vertex_ids.size - 1)] == values
+    )
+    issued = values - start.next_vertex
+    if np.any(~original & ((issued < 0) | (issued >= start.front.growth.levels.size))):
+        raise ValueError(
+            "Uniform source lineage references an unowned scientific vertex."
+        )
+    return np.where(original, positions, source.vertex_ids.size + issued)
+
+
+def _uniform_facet_agreement(
+    source: _Source,
+    start: _Start,
+    arrays: dict[str, np.ndarray],
+    parent: int,
+    facets: tuple[np.ndarray, np.ndarray],
+    /,
+) -> bool:
+    dimension, width = source.dimension, source.dimension + 1
+    columns = tuple(combinations(range(width), dimension))
+    vertices = arrays["child_vertices"][parent]
+    barycentric = arrays["barycentric_weights"][parent]
+    for child, row in enumerate(vertices):
+        for local in columns:
+            _uniform_charge(width * len(local), 0)
+            key = np.sort(_uniform_vertex_positions(source, start, row[list(local)]))[
+                None
+            ]
+            slot = key_rows(facets[0], key)[0]
+            if slot < 0:
+                raise ValueError(
+                    "Uniform inverse lost an actual source facet occurrence."
+                )
+            original = [
+                facet
+                for facet, corner_indices in enumerate(columns)
+                if np.all(
+                    barycentric[
+                        child,
+                        list(local),
+                        next(
+                            index for index in range(width) if index not in corner_indices
+                        ),
+                    ]
+                    == 0.0
+                )
+            ]
+            if len(original) > 1:
+                raise ValueError(
+                    "Uniform inverse contains a degenerate original source facet incidence."
+                )
+            if original:
+                if facets[1][slot] != arrays["parent_facet_classes"][parent, original[0]]:
+                    return False
+            elif facets[1][slot] not in (-1, 0):
+                # A newly organized interior facet is scientific source data,
+                # not an unlabelled subdivision seam that may disappear.
+                return False
+    return True
+
+
+def _uniform_reverse_supports(
+    source: _Source,
+    start: _Start,
+    arrays: dict[str, np.ndarray],
+    selected: np.ndarray,
+    coarsening: _Coarsening,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    count, width = source.vertex_ids.size, source.dimension + 1
+    _uniform_charge(count * width, 2 * count * width * 16)
+    replacements = np.full((count, width), -1, dtype=np.int64)
+    replacements[:, 0] = np.arange(count, dtype=np.int64)
+    replacement_weights = np.zeros((count, width), dtype=np.float64)
+    replacement_weights[:, 0] = 1.0
+    discarded = []
+    assigned: set[int] = set()
+    for parent in selected:
+        original = _uniform_vertex_positions(source, start, arrays["parent_rows"][parent])
+        for vertices, barycentric in zip(
+            arrays["child_vertices"][parent],
+            arrays["barycentric_weights"][parent],
+            strict=True,
+        ):
+            positions = _uniform_vertex_positions(source, start, vertices)
+            for position, weights in zip(positions, barycentric, strict=True):
+                _uniform_charge(width, 0)
+                if position >= count:
+                    discarded.append(int(position))
+                    continue
+                valid = weights != 0.0
+                ids = original[valid]
+                values = weights[valid]
+                order = np.argsort(ids, kind="stable")
+                packed_ids = np.full((width,), -1, dtype=np.int64)
+                packed_weights = np.zeros((width,), dtype=np.float64)
+                packed_ids[: ids.size], packed_weights[: ids.size] = (
+                    ids[order],
+                    values[order],
+                )
+                if int(position) in assigned:
+                    if not np.array_equal(
+                        replacements[position], packed_ids
+                    ) or not np.array_equal(
+                        replacement_weights[position], packed_weights
+                    ):
+                        raise ValueError(
+                            "Incident uniform roots disagree on their exact source-vertex reference action."
+                        )
+                replacements[position], replacement_weights[position] = (
+                    packed_ids,
+                    packed_weights,
+                )
+                assigned.add(int(position))
+                if int(position) not in original:
+                    discarded.append(int(position))
+    support = coarsening.supports
+    _uniform_charge(count * width * width, 4 * count * width * width * 16)
+    expanded = replacements[np.maximum(support, 0)]
+    coefficients = (
+        coarsening.support_weights[..., None]
+        * replacement_weights[np.maximum(support, 0)]
+    )
+    expanded = np.where((support >= 0)[..., None], expanded, -1)
+    coefficients = np.where((support >= 0)[..., None], coefficients, 0.0)
+    sources, weights = _merged_rows(
+        expanded.reshape((count, width * width)),
+        coefficients.reshape((count, width * width)),
+        width,
+    )
+    return sources, weights, np.unique(np.asarray(discarded, dtype=np.int64))
+
+
+def _uniform_inverse(
+    source: _Source,
+    start: _Start,
+    request: _Request,
+    cells: _Cells,
+    flags: _Flags,
+    facets: tuple[np.ndarray, np.ndarray],
+    coarsening: _Coarsening,
+    /,
+) -> _Coarsening:
+    from ._mixed_adaptation import _Cell, _coarsen_patch, _Sibling
+
+    lineage = start.uniform_refinement
+    if lineage is None or request.coarsen_ids.size == 0:
+        return coarsening
+    _uniform_retain_source(lineage.source)
+    arrays = lineage.host_arrays()
+    kind = "triangle" if source.dimension == 2 else "tetrahedron"
+    _uniform_charge(cells.ids.size, 512 * cells.ids.size)
+    budget = current_native_execution_budget()
+    if budget is None:
+        raise RuntimeError("Uniform inverse lost its original native admission owner.")
+    budget.admit_cavity(int(np.count_nonzero(flags.marked)))
+    child_blocks = {
+        int(child): int(block)
+        for children, block in zip(
+            arrays["child_ids"], arrays["parent_blocks"], strict=True
+        )
+        for child in children
+    }
+    active = {int(identifier): index for index, identifier in enumerate(cells.ids)}
+    records = []
+    for parent, identifier in enumerate(arrays["parent_ids"]):
+        children = arrays["child_ids"][parent]
+        _uniform_charge(children.size, 128 * children.size)
+        if not all(int(child) in active for child in children):
+            continue
+        slots = np.asarray([active[int(child)] for child in children], dtype=np.int64)
+        if not np.all(flags.marked[slots]) or np.any(flags.blocked[slots]):
+            continue
+        if not _uniform_facet_agreement(source, start, arrays, parent, facets):
+            continue
+        references = []
+        for child, vertices, reference in zip(
+            children,
+            arrays["child_vertices"][parent],
+            arrays["reference_vertices"][parent],
+            strict=True,
+        ):
+            _uniform_charge(source.dimension + 1, 256 * (source.dimension + 1))
+            original_block = lineage.source.mesh.blocks[
+                int(arrays["parent_blocks"][parent])
+            ]
+            if (
+                source.mesh.blocks[int(cells.blocks[active[int(child)]])].cell_kind
+                != original_block.cell_kind
+            ):
+                raise ValueError(
+                    "Uniform inverse changed the recorded scientific child cell kind."
+                )
+            current = _global_vertices(
+                cells.rows[active[int(child)]], source, start.next_vertex
+            )
+            if not np.array_equal(np.sort(current), np.sort(vertices)):
+                raise ValueError(
+                    "Uniform inverse changed the recorded scientific child incidence."
+                )
+            positions = {int(vertex): index for index, vertex in enumerate(vertices)}
+            references.append(
+                tuple(
+                    tuple(float(value) for value in reference[positions[int(vertex)]])
+                    for vertex in current
+                )
+            )
+        records.append(
+            _Sibling(
+                int(identifier),
+                lineage.source.mesh.blocks[int(arrays["parent_blocks"][parent])].name,
+                kind,
+                tuple(arrays["parent_rows"][parent].tolist()),
+                tuple(children.tolist()),
+                tuple(references),
+                int(arrays["parent_classes"][parent]),
+                None,
+                None,
+                (),
+                (),
+            )
+        )
+    _uniform_charge(cells.rows.size, 128 * cells.rows.size)
+    current = [
+        _Cell(
+            int(identifier),
+            lineage.source.mesh.blocks[child_blocks[int(identifier)]].name
+            if int(identifier) in child_blocks
+            else source.mesh.blocks[int(cells.blocks[index])].name,
+            kind,
+            _global_vertices(cells.rows[index], source, start.next_vertex),
+            int(flags.classes[index]),
+        )
+        for index, identifier in enumerate(cells.ids)
+    ]
+    protected = set(
+        _global_vertices(
+            np.flatnonzero(request.protected_vertices), source, start.next_vertex
+        ).tolist()
+    )
+    protected.update(
+        _global_vertices(
+            request.protected_codes // _SHIFT, source, start.next_vertex
+        ).tolist()
+    )
+    protected.update(
+        _global_vertices(
+            request.protected_codes % _SHIFT, source, start.next_vertex
+        ).tolist()
+    )
+    # Uniform simplex ancestry has no layer-column cohorts and does not author
+    # the mixed hierarchy's unchanged-cell scientific signatures.
+    patch = _coarsen_patch(
+        current,
+        tuple(records),
+        set(cells.ids[flags.marked].tolist()),
+        protected,
+        set(cells.ids[flags.blocked].tolist()),
+        source.vertex_ids,
+        column_members={},
+        unchanged=set(),
+    )
+    if not patch.restored:
+        return coarsening
+    restored_ids = np.asarray(
+        [cell.identifier for cell in patch.restored], dtype=np.int64
+    )
+    selected = np.searchsorted(arrays["parent_ids"], restored_ids)
+    restored = _Cells(
+        restored_ids,
+        _uniform_vertex_positions(source, start, arrays["parent_rows"][selected]),
+        _uniform_vertex_positions(source, start, arrays["parent_vertices"][selected]),
+        arrays["parent_tags"][selected],
+        arrays["parent_blocks"][selected],
+        restored_ids,
+        arrays["parent_levels"][selected],
+    )
+    retained = _select(
+        coarsening.restored,
+        ~np.isin(
+            coarsening.restored.ids, np.asarray(tuple(patch.removed), dtype=np.int64)
+        ),
+    )
+    links = {
+        child: parent for child, parent in zip(patch.fine, patch.parents, strict=True)
+    }
+    extra = source.cells.ids[
+        np.isin(source.cells.ids, np.asarray(tuple(patch.removed), dtype=np.int64))
+    ]
+    removed = np.concatenate((coarsening.removed_ids, extra))
+    targets = np.asarray(
+        [links.get(int(target), int(target)) for target in coarsening.link_targets]
+        + [links[int(child)] for child in extra],
+        dtype=np.int64,
+    )
+    order = np.argsort(removed, kind="stable")
+    supports, weights, discarded = _uniform_reverse_supports(
+        source, start, arrays, selected, coarsening
+    )
+    return _Coarsening(
+        _joined(retained, restored),
+        removed[order],
+        targets[order],
+        np.concatenate((coarsening.undone, restored_ids)),
+        np.union1d(coarsening.removed_vertices, discarded),
+        supports,
+        weights,
+        coarsening.passes + 1,
+        np.setdiff1d(
+            coarsening.rejected_ids,
+            np.asarray(tuple(patch.removed), dtype=np.int64),
+        ),
+    )
 
 
 def _coarsening(
-    start: _Start, request: _Request, blocked: np.ndarray, dimension: int, /
+    source: _Source,
+    start: _Start,
+    request: _Request,
+    blocked: np.ndarray,
+    dimension: int,
+    /,
 ) -> _Coarsening:
     cells, records = start.front.cells, start.records
     flags = _Flags(np.isin(cells.ids, request.coarsen_ids), blocked, request.cell_classes)
@@ -1394,16 +3203,17 @@ def _coarsening(
     removed_vertices = np.unique(
         np.concatenate([np.zeros((0,), dtype=np.int64), *(step[0] for step in steps)])
     )
-    return _Coarsening(
+    coarsening = _Coarsening(
         _select(cells, ~_members(source_ids, cells.ids)),
         removed_ids,
         targets,
         np.concatenate([np.zeros((0,), dtype=np.int64), *undone]),
         removed_vertices,
-        _reverse_supports(steps, start.front.vertex_base, dimension),
+        *_reverse_supports(steps, start.front.vertex_base, dimension),
         len(steps),
         request.coarsen_ids[_members(cells.ids, request.coarsen_ids)],
     )
+    return _uniform_inverse(source, start, request, cells, flags, facets, coarsening)
 
 
 def _resolved_stencil(growth: _Growth, vertex_base: int, dimension: int, /) -> Any:
@@ -1605,9 +3415,55 @@ def _target_hierarchy(
     retired: Any,
     front: _Front,
     /,
+    *,
+    prior: BisectionHierarchy | None = None,
 ) -> BisectionHierarchy:
     def ids(values: np.ndarray) -> np.ndarray:
         return _global_vertices(values, source, start.next_vertex)
+
+    uniform = start.uniform_refinement
+    if uniform is not None and np.all(
+        np.isin(
+            np.asarray(uniform.parent_ids),
+            cells.ids,
+        )
+    ):
+        uniform = None
+    authority = (
+        {
+            int(identifier): int(block)
+            for identifier, block in zip(
+                prior.scientific_cell_ids, prior.scientific_block_ids, strict=True
+            )
+        }
+        if prior is not None
+        else {
+            int(identifier): int(block)
+            for identifier, block in zip(
+                source.cells.ids, source.cells.blocks, strict=True
+            )
+        }
+    )
+    if start.uniform_refinement is not None:
+        lineage = start.uniform_refinement
+        for parent, children in zip(lineage.parent_ids, lineage.child_ids, strict=True):
+            parent_id = int(parent)
+            if parent_id not in authority:
+                raise ValueError(
+                    "Uniform refinement lost its original scientific block authority."
+                )
+            for child in children:
+                authority[int(child)] = authority[parent_id]
+    for parent, children in zip(records.parent_ids, records.child_ids, strict=True):
+        parent_id = int(parent)
+        if parent_id not in authority:
+            raise ValueError("Bisection lost its parent scientific block authority.")
+        for child in children:
+            authority[int(child)] = authority[parent_id]
+    scientific_ids = np.asarray(sorted(authority), dtype=np.int64)
+    scientific_blocks = np.asarray(
+        [authority[int(identifier)] for identifier in scientific_ids], dtype=np.int32
+    )
 
     return BisectionHierarchy(
         source.dimension,
@@ -1615,6 +3471,8 @@ def _target_hierarchy(
         ids(cells.tuples),
         cells.tags,
         cells.generations,
+        scientific_cell_ids=scientific_ids,
+        scientific_block_ids=scientific_blocks,
         record_parent_ids=records.parent_ids,
         record_parent_blocks=records.blocks,
         record_parent_rows=ids(records.rows),
@@ -1626,6 +3484,7 @@ def _target_hierarchy(
         retired_entity_ids=tuple(value[1] for value in retired),
         next_vertex_id=start.next_vertex + front.growth.levels.size,
         next_cell_id=front.next_cell,
+        uniform_refinement=uniform,
     )
 
 
@@ -1687,6 +3546,13 @@ def _edit(
 ) -> Any:
     dimension, count = source.dimension, source.vertex_ids.size
     growth = refinement.front.growth
+    if start.uniform_refinement is not None:
+        _uniform_charge(
+            cells.rows.size + source.cells.rows.size + growth.parents.size,
+            cells.rows.nbytes * 8
+            + source.cells.rows.nbytes * 8
+            + growth.parents.nbytes * 8,
+        )
     stencil = _resolved_stencil(growth, count, dimension)
     ordered, position, alive = _target_vertices(
         source, coarsening.removed_vertices, growth.levels.size
@@ -1702,21 +3568,154 @@ def _edit(
         for degree in range(1, dimension)
     )
     prescribed, retired = _entity_identities(source, start, entity_tables, alive)
+    block_definitions = tuple(
+        (block.name, block.cell_kind) for block in source.mesh.blocks
+    )
     block_rows = tuple(
         np.flatnonzero(cells.blocks == index) for index in range(len(source.mesh.blocks))
     )
-    edit = SimplexTopologyEdit(
+    uniform = start.uniform_refinement
+    if uniform is not None:
+        original_ids = np.asarray(uniform.parent_ids)
+        restored = np.isin(cells.ids, original_ids)
+        if np.any(restored):
+            original_blocks = np.asarray(uniform.parent_blocks)[
+                np.searchsorted(original_ids, cells.ids[restored])
+            ]
+            definitions = list(block_definitions)
+            rows = [
+                np.flatnonzero((cells.blocks == index) & ~restored)
+                for index in range(len(definitions))
+            ]
+            restored_rows = np.flatnonzero(restored)
+            for index, block in enumerate(uniform.source.mesh.blocks):
+                group = restored_rows[original_blocks == index]
+                if group.size == 0:
+                    continue
+                parent_positions = np.searchsorted(original_ids, cells.ids[group])
+                group = group[
+                    np.argsort(
+                        np.asarray(uniform.parent_row_order)[parent_positions],
+                        kind="stable",
+                    )
+                ]
+                definition = (block.name, block.cell_kind)
+                if definition in definitions:
+                    slot = definitions.index(definition)
+                    rows[slot] = np.concatenate((rows[slot], group))
+                else:
+                    definitions.append(definition)
+                    rows.append(group)
+            block_definitions, block_rows = tuple(definitions), tuple(rows)
+        if cells.ids.size == original_ids.size and np.array_equal(
+            cells.ids, original_ids
+        ):
+            original_order = np.asarray(uniform.parent_row_order)
+            block_definitions = tuple(
+                (block.name, block.cell_kind) for block in uniform.source.mesh.blocks
+            )
+            block_rows = tuple(
+                np.flatnonzero(
+                    np.asarray(uniform.parent_blocks)[
+                        np.searchsorted(original_ids, cells.ids)
+                    ]
+                    == index
+                )
+                for index in range(len(block_definitions))
+            )
+            block_rows = tuple(
+                rows[
+                    np.argsort(
+                        original_order[np.searchsorted(original_ids, cells.ids[rows])],
+                        kind="stable",
+                    )
+                ]
+                for rows in block_rows
+            )
+    refined = bool(refinement.records.parent_ids.size) or start.uniform
+    coarsened = bool(coarsening.removed_ids.size)
+    refinement_witnesses, coarsening_witnesses = _nested_witnesses(
+        source, cells, coarsening, (sources, weights), position
+    )
+    edit = CellTopologyEdit(
+        "nested_adaptation"
+        if refined and coarsened
+        else "nested_coarsening"
+        if coarsened
+        else "nested_refinement",
         coordinates,
         _global_vertices(ordered, source, start.next_vertex),
-        tuple(position[cells.rows[rows]].astype(np.int32) for rows in block_rows),
-        tuple(cells.ids[rows] for rows in block_rows),
+        source_family_blocks(
+            block_definitions,
+            tuple(position[cells.rows[rows]].astype(np.int32) for rows in block_rows),
+            tuple(cells.ids[rows] for rows in block_rows),
+        ),
         sources,
         weights,
         valid,
         _relations(source, start, cells, stencil, coarsening, entity_tables),
         prescribed,
+        refinement=refinement_witnesses,
+        coarsening=coarsening_witnesses,
     )
     return edit, retired
+
+
+def _nested_witnesses(
+    source: _Source,
+    cells: _Cells,
+    coarsening: _Coarsening,
+    stencil: tuple[np.ndarray, np.ndarray],
+    position: np.ndarray,
+    /,
+) -> tuple[NestedReferenceWitnesses, NestedReferenceWitnesses]:
+    """Reference witnesses of every target cell of one bisection edit.
+
+    A target cell restored by coarsening contains its removed source cells, whose
+    vertices are reference-midpoint combinations of the restored corners; every
+    other target cell lies in its origin source cell (itself when preserved), with
+    corners given by their source-vertex stencils.
+    """
+
+    sources, weights = stencil
+    restored = _members(np.unique(coarsening.link_targets), cells.ids)
+    origins = cells.origins[~restored]
+    parent_rows = source.cells.rows[np.searchsorted(source.cells.ids, origins)]
+    fine = position[cells.rows[~restored]]
+    refined = NestedReferenceWitnesses(
+        cells.ids[~restored],
+        origins,
+        nested_reference_vertices(
+            sources[fine], weights[fine], source.vertex_ids[parent_rows]
+        ),
+    )
+    children = source.cells.rows[
+        np.searchsorted(source.cells.ids, coarsening.removed_ids)
+    ]
+    coarse = cells.rows[np.searchsorted(cells.ids, coarsening.link_targets)]
+    coarsened = NestedReferenceWitnesses(
+        coarsening.removed_ids,
+        coarsening.link_targets,
+        nested_reference_vertices(
+            coarsening.supports[children],
+            coarsening.support_weights[children],
+            coarse,
+        ),
+    )
+    return refined, coarsened
+
+
+def _prepared_capacity(cells: int, vertices: int, work_units: int, /) -> _Capacity:
+    for value, name in (
+        (cells, "maximum_cells"),
+        (vertices, "maximum_vertices"),
+        (work_units, "maximum_work_units"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+            raise TypeError(f"{name} must be an integer.")
+        if value < 1:
+            raise ValueError(f"{name} must be positive.")
+    return _Capacity(int(cells), int(vertices), int(work_units))
 
 
 def execute_bisection(
@@ -1725,6 +3724,7 @@ def execute_bisection(
     coarsen_cell_ids: np.ndarray,
     /,
     *,
+    source_result: CellMeshingResult,
     hierarchy: BisectionHierarchy | None,
     compatibility: BisectionCompatibility,
     protected_edges: np.ndarray,
@@ -1732,19 +3732,36 @@ def execute_bisection(
     cell_classes: np.ndarray,
     facet_classes: np.ndarray,
     maximum_closure_iterations: int,
+    maximum_cavity_cells: int,
+    maximum_cells: int,
+    maximum_vertices: int,
+    maximum_work_units: int,
+    maximum_scratch_bytes: int,
+    maximum_wall_seconds: float,
+    maximum_geometry_queries: int,
 ) -> BisectionOutcome:
     """Refine and coarsen one simplex mesh by compatible Maubach bisection.
 
     Refinement marks whose own conformity closure would split a protected edge are
     rejected (reported in the evidence); the rest are bisected once and closed to
-    a conforming mesh. Coarsening removes, pass by pass, every unprotected
-    bisection vertex whose star is the marked, class-uniform children of its
-    bisections and does not touch the refinement closure. Children stay in their
-    parent's block with the parent's orientation.
+    a conforming mesh. Every closure batch, including the admissibility closures,
+    is admitted before it is bisected: active cells, vertices, and bisection steps
+    (one work unit each) stay within the declared budgets or the adaptation is
+    refused. Coarsening removes, pass by pass, every unprotected bisection vertex
+    whose star is the marked, class-uniform children of its bisections and does
+    not touch the refinement closure. Children stay in their parent's block with
+    the parent's orientation.
     """
 
     if not isinstance(compatibility, BisectionCompatibility):
         raise TypeError("compatibility must be BisectionCompatibility.")
+    if (
+        not isinstance(source_result, CellMeshingResult)
+        or source_result.mesh.mesh_id != mesh.mesh_id
+    ):
+        raise ValueError(
+            "Native bisection requires its actual accepted scientific source result."
+        )
     source = _prepared_source(mesh)
     dimension = source.dimension
     request = _prepared_request(
@@ -1757,45 +3774,57 @@ def execute_bisection(
         facet_classes,
         maximum_closure_iterations,
     )
-    start = (
-        _labelled_start(source, request, compatibility)
-        if hierarchy is None
-        else _bound_start(source, request, hierarchy)
+    capacity = _prepared_capacity(maximum_cells, maximum_vertices, maximum_work_units)
+    allowance = _UniformAllowance(
+        maximum_work_units,
+        maximum_geometry_queries,
+        maximum_cells,
+        maximum_vertices,
+        maximum_scratch_bytes,
+        maximum_wall_seconds,
+        maximum_cavity_cells,
     )
-    refinement = _refinement(start, request, dimension)
-    blocked = np.isin(start.front.cells.ids, refinement.records.parent_ids)
-    coarsening = _coarsening(start, request, blocked, dimension)
-    cells, records = _merged_forest(start, refinement, coarsening)
-    edit, retired = _edit(source, start, refinement, coarsening, cells)
-    evidence = BisectionEvidence(
-        requested_refinements=request.refine_ids.size,
-        accepted_refinements=request.refine_ids.size - refinement.rejected_ids.size,
-        rejected_refinement_ids=refinement.rejected_ids,
-        admissibility_tests=refinement.tests,
-        bisections=refinement.records.parent_ids.size,
-        closure_iterations=refinement.iterations,
-        created_vertices=refinement.front.growth.levels.size,
-        maximum_generation=int(np.max(cells.generations)),
-        initially_compatible=start.compatible,
-        incompatible_facets=start.incompatible,
-        uniform_refinement_applied=start.uniform,
-        requested_coarsenings=request.coarsen_ids.size,
-        coarsened_vertices=coarsening.removed_vertices.size,
-        coarsening_passes=coarsening.passes,
-        restored_cells=coarsening.restored.ids.size,
-        rejected_coarsening_ids=coarsening.rejected_ids,
-    )
-    return BisectionOutcome(
-        edit,
-        _target_hierarchy(source, start, cells, records, retired, refinement.front),
-        evidence,
-    )
+    with _uniform_execution(allowance):
+        start = _prepared_start(
+            source, request, compatibility, hierarchy, allowance, source_result
+        )
+        refinement = _refinement(start, request, capacity, dimension)
+        blocked = np.isin(start.front.cells.ids, refinement.records.parent_ids)
+        coarsening = _coarsening(source, start, request, blocked, dimension)
+        cells, records = _merged_forest(start, refinement, coarsening)
+        edit, retired = _edit(source, start, refinement, coarsening, cells)
+        evidence = BisectionEvidence(
+            requested_refinements=request.refine_ids.size,
+            accepted_refinements=request.refine_ids.size - refinement.rejected_ids.size,
+            rejected_refinement_ids=refinement.rejected_ids,
+            admissibility_tests=refinement.tests,
+            bisections=refinement.records.parent_ids.size,
+            closure_iterations=refinement.iterations,
+            created_vertices=refinement.front.growth.levels.size,
+            maximum_generation=int(np.max(cells.generations)),
+            initially_compatible=start.compatible,
+            incompatible_facets=start.incompatible,
+            uniform_refinement_applied=start.uniform,
+            requested_coarsenings=request.coarsen_ids.size,
+            coarsened_vertices=coarsening.removed_vertices.size,
+            coarsening_passes=coarsening.passes,
+            restored_cells=coarsening.restored.ids.size,
+            rejected_coarsening_ids=coarsening.rejected_ids,
+        )
+        return BisectionOutcome(
+            edit,
+            _target_hierarchy(
+                source, start, cells, records, retired, refinement.front, prior=hierarchy
+            ),
+            evidence,
+        )
 
 
 __all__ = [
     "BisectionCompatibility",
     "BisectionEvidence",
     "BisectionHierarchy",
+    "BisectionUniformRefinement",
     "BisectionOutcome",
     "execute_bisection",
 ]

@@ -1,19 +1,37 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Deterministic performance and invariant benchmarks for neurofluid substrates."""
+"""Deterministic performance and invariant benchmarks for neurofluid substrates.
+
+``--scenario synthetic`` retains image sampling, voxel transfer, and H(div)
+microbenchmarks. ``--scenario native-generated-transport`` runs the shared real
+generated compartment/Neurofluid admission and independently checked transport
+campaign, retaining every warmed execution sample and phase-separated memory.
+Each ``--attempts`` run uses a fresh spawned process with a hard ``--timeout``
+deadline; passed, failed, and forcibly cancelled attempts all remain in JSON.
+Use ``JAX_ENABLE_X64=1 python -m tools.neurofluid_benchmarks
+--scenario native-generated-transport --size 2 --repeats 5 --target-error 0.05``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
+from multiprocessing.connection import Connection
 from time import perf_counter
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from tools.neurofluid_qualification import (
+    add_native_arguments,
+    native_transport,
+    validate_native_arguments,
+)
 
 
 def image_sampling(size: int, query_count: int, repeats: int) -> dict[str, float | int]:
@@ -124,17 +142,164 @@ def hdiv_tabulation(repeats: int) -> dict[str, float | int]:
     }
 
 
+def _transport_worker(connection: Connection, args: argparse.Namespace) -> None:
+    """Send lifecycle phases and one complete native record from a fresh process."""
+
+    def phase(name: str) -> None:
+        connection.send({"kind": "phase", "phase": name})
+
+    try:
+        record = native_transport(
+            size=args.size,
+            repeats=args.repeats,
+            steps=args.steps,
+            dt=args.dt,
+            target_error=args.target_error,
+            balance_tolerance=args.balance_tolerance,
+            maximum_cells=args.maximum_cells,
+            maximum_vertices=args.maximum_vertices,
+            oracle_capacity=args.oracle_capacity,
+            phase_callback=phase,
+        )
+        connection.send({"kind": "result", "record": record})
+    finally:
+        connection.close()
+
+
+def _native_attempt(args: argparse.Namespace, attempt: int) -> dict[str, Any]:
+    """Cancel the native process at the deadline; never discard a failed attempt."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(target=_transport_worker, args=(sender, args))
+    started = perf_counter()
+    last_phase = "process-startup"
+    timed_out = False
+    record: dict[str, Any] | None = None
+    process_error: dict[str, object] | None = None
+    try:
+        worker.start()
+        sender.close()
+        while record is None:
+            remaining = args.timeout - (perf_counter() - started)
+            if remaining <= 0.0 or not receiver.poll(remaining):
+                timed_out = True
+                break
+            try:
+                message = receiver.recv()
+            except EOFError:
+                break
+            if message["kind"] == "phase":
+                last_phase = message["phase"]
+            elif message["kind"] == "result":
+                record = message["record"]
+            else:
+                raise RuntimeError(
+                    "Native campaign received an invalid lifecycle message."
+                )
+    except Exception as error:
+        process_error = {"exception_type": type(error).__name__, "message": str(error)}
+    finally:
+        receiver.close()
+        sender.close()
+        if worker.pid is not None:
+            if record is not None:
+                worker.join(timeout=0.1)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=0.1)
+            if worker.is_alive():
+                worker.kill()
+            worker.join()
+    if record is None:
+        record = {
+            "scenario": "native-generated-transport",
+            "successful": False,
+            "status": "timeout" if timed_out else "failed",
+            "failure": {
+                "phase": last_phase,
+                "exception_type": "TimeoutError" if timed_out else "WorkerExit",
+                "message": (
+                    "Native process was forcibly cancelled at the declared deadline."
+                    if timed_out
+                    else "Native process exited without a complete result record."
+                ),
+                "process_exitcode": worker.exitcode,
+                **(process_error or {}),
+            },
+            "controls": {
+                "size": args.size,
+                "steps": args.steps,
+                "dt_seconds": args.dt,
+                "repeats": args.repeats,
+                "maximum_cells": args.maximum_cells,
+                "maximum_vertices": args.maximum_vertices,
+                "oracle_capacity": args.oracle_capacity,
+            },
+            "targets": {
+                "physical_error": args.target_error,
+                "balance_tolerance": args.balance_tolerance,
+            },
+            "comparison": {"status": "not-requested"},
+        }
+    else:
+        record["status"] = "passed" if record["successful"] else "failed"
+    record["attempt"] = attempt
+    record["deadline_seconds"] = args.timeout
+    record["attempt_wall_seconds"] = perf_counter() - started
+    return record
+
+
+def native_campaign(args: argparse.Namespace) -> dict[str, Any]:
+    records = [_native_attempt(args, index) for index in range(args.attempts)]
+    passed = sum(record["status"] == "passed" for record in records)
+    timed_out = sum(record["status"] == "timeout" for record in records)
+    return {
+        "scenario": "native-generated-transport",
+        "attempts": records,
+        "counts": {
+            "attempted": len(records),
+            "successful": passed,
+            "failed": len(records) - passed - timed_out,
+            "timed_out": timed_out,
+        },
+        "timeout_seconds": args.timeout,
+        "successful": passed == len(records),
+        "comparison": {"status": "not-requested"},
+    }
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--size", type=int, default=32)
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_native_arguments(parser, default_scenario="synthetic")
     parser.add_argument("--queries", type=int, default=4096)
-    parser.add_argument("--repeats", type=int, default=10)
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="Independent cold native campaign attempts; every result is retained.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Hard native process deadline in seconds per attempt.",
+    )
     args = parser.parse_args()
-    if args.size < 2 or args.queries < 1 or args.repeats < 1:
-        parser.error("size, queries, and repeats must be positive; size must exceed one")
+    validate_native_arguments(parser, args)
+    if args.attempts < 1 or not np.isfinite(args.timeout) or args.timeout <= 0.0:
+        parser.error("attempts must be positive; timeout must be finite and positive")
+    if args.queries < 1:
+        parser.error("queries must be positive")
+    if args.scenario == "native-generated-transport":
+        record = native_campaign(args)
+        print(json.dumps(record, indent=2))
+        if not record["successful"]:
+            raise SystemExit(1)
+        return
     print(
         json.dumps(
             {
+                "scenario": "synthetic",
                 "image_sampling": image_sampling(args.size, args.queries, args.repeats),
                 "conservative_transfer": conservative_transfer(
                     args.queries, args.repeats

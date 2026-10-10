@@ -630,6 +630,18 @@ class _RowGatherLayout(StrictModule):
         ``(routes, r_t, r_s)``, contracted on ``r_s`` forward or ``r_t`` when
         ``reverse``.
         """
+        if self.routes.shape[0] == 0:
+            # No valid routes. `jnp.take` returns an empty-axis operand unchanged
+            # rather than with the index shape, so the gather cannot run here.
+            fiber = (
+                ()
+                if coefficients.ndim == 1
+                else (coefficients.shape[2 if reverse else 1],)
+            )
+            return jnp.zeros(
+                self.routes.shape[1:] + fiber,
+                dtype=jnp.result_type(coefficients, values),
+            )
         valid = self.routes < self.route_count
         gathered = jnp.take(coefficients, self.routes, axis=0, mode="fill", fill_value=0)
         sources = values[self.inputs]
@@ -644,9 +656,6 @@ class _RowGatherLayout(StrictModule):
             products,
             jnp.zeros((), dtype=products.dtype),
         )
-        if products.shape[0] == 0:
-            # No valid routes: the loop body could not index an empty slot axis.
-            return jnp.zeros(products.shape[1:], dtype=products.dtype)
         # The loop-carried sum fixes route order per output; unrolled and
         # reduce-based sums were not bitwise route-ordered on CPU. A
         # module-level body keeps eager applies on one cached executable.

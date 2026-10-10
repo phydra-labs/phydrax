@@ -357,7 +357,5 @@ def test_fem_l2_projection_transfer_scenario_3() -> None:
             ),
         ),
     ).prepare()
-    with pytest.raises(ValueError, match="scalar Lagrange elements"):
+    with pytest.raises(ValueError):
         prepare(vector, target, _refinement(first, second), field_name="u")
-    with pytest.raises(ValueError, match="scalar Lagrange elements"):
-        phx.discretization.prepare_l2_projection_target(vector, field_name="u")

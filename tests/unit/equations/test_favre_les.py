@@ -63,6 +63,7 @@ from phydrax.equations.fem._viscous_conservation import (
     ViscousBoundaryClosure,
     ViscousDGPlan,
 )
+from phydrax.linalg import ArraySpace
 
 
 def _schema() -> Any:
@@ -797,9 +798,12 @@ def test_nodal_dg_semidiscrete_rhs_includes_gradient_aware_sgs_energy_rate() -> 
     point_state = system.primitive_to_conserved(
         jnp.asarray((0.36, 0.84, 0.0, 0.0, 0.0, 400.0, 0.25))
     )
+    state_space = discretization.field_spaces[0].vector_space
+    if not isinstance(state_space, ArraySpace):
+        raise TypeError("Favre LES fixture requires an array vector space.")
     state = jnp.broadcast_to(
         point_state,
-        discretization.field_spaces[0].vector_space.shape,
+        state_space.shape,
     )
     # ty: ignore[invalid-argument-type]
     rate = compiled(0.0, state)

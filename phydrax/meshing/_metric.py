@@ -1560,6 +1560,70 @@ def metric_edge_lengths(
     return _edge_lengths(tensors, points, pairs)
 
 
+@partial(jax.jit, static_argnames=("dimension",))
+def _metric_shape_quality(metric: Array, corners: Array, /, *, dimension: int) -> Array:
+    """Metric mean ratio from one cell tensor and its physical tangent corners."""
+    from ..linalg import determinant_small_linear, SmallLinearSolvePlan
+
+    basis = corners[:, 1:] - corners[:, :1]
+    gram = basis @ metric @ jnp.swapaxes(basis, -1, -2)
+    determinant = determinant_small_linear(SmallLinearSolvePlan(dimension), gram)
+    edge_sum = jnp.zeros((corners.shape[0],), dtype=metric.dtype)
+    for first in range(dimension + 1):
+        for second in range(first + 1, dimension + 1):
+            edge = corners[:, second] - corners[:, first]
+            edge_sum = edge_sum + contract("ci,cij,cj->c", edge, metric, edge)
+    # det(Gram) of a unit-edge regular d-simplex is (d+1)/2**d.
+    scale = dimension * (dimension + 1) / 2
+    reference = (dimension + 1) / 2**dimension
+    quality = scale * jnp.maximum(determinant / reference, 0.0) ** (1.0 / dimension)
+    return jnp.where(edge_sum > 0.0, quality / edge_sum, 0.0)
+
+
+@partial(jax.jit, static_argnames=("dimension",))
+def _simplex_quality(
+    tensors: Array, points: Array, cells: Array, /, *, dimension: int
+) -> Array:
+    samples = tensors[cells]
+    weights = jnp.full(samples.shape[:-2], 1.0 / (dimension + 1), dtype=tensors.dtype)
+    metric = _log_euclidean_mean(samples, weights)
+    return _metric_shape_quality(metric, points[cells], dimension=dimension)
+
+
+def metric_simplex_quality(
+    values: ArrayLike, coordinates: ArrayLike, cells: ArrayLike, /
+) -> Array:
+    """Metric mean-ratio quality of triangles or tetrahedra, one for regular cells.
+
+    The full SPD tensor is restricted to the actual cell tangent space through
+    ``E M E.T``. Embedded triangles therefore use physical metric geometry,
+    not UV quality or Euclidean edge-length surrogates. A tetrahedral sliver
+    has quality approaching zero even when all six metric edges approach one.
+    This is a cellwise log-mean metric statistic, not a certificate of a
+    continuously varying metric or of curved coordinate-map validity.
+    """
+    tensors = jnp.asarray(values, dtype=jnp.float64)
+    points = jnp.asarray(coordinates, dtype=jnp.float64)
+    simplices = jnp.asarray(cells)
+    if (
+        points.ndim != 2
+        or tensors.shape != (points.shape[0], points.shape[1], points.shape[1])
+        or simplices.ndim != 2
+        or simplices.shape[1] not in (3, 4)
+        or not jnp.issubdtype(simplices.dtype, jnp.integer)
+        or simplices.shape[1] - 1 > points.shape[1]
+    ):
+        raise ValueError(
+            "Metrics, coordinates, and triangle/tetrahedron rows must align."
+        )
+    simplices = eqx.error_if(
+        simplices,
+        jnp.any((simplices < 0) | (simplices >= points.shape[0])),
+        "Simplex vertex rows must lie in the coordinate table.",
+    )
+    return _simplex_quality(tensors, points, simplices, dimension=simplices.shape[1] - 1)
+
+
 class HessianMetricEvidence(StrictModule, NonTrainableState):
     """Spectral handling of one Hessian field before Lp normalization.
 
@@ -1738,5 +1802,6 @@ __all__ = [
     "interpolate_mesh_metric",
     "lp_metric_from_hessian",
     "metric_edge_lengths",
+    "metric_simplex_quality",
     "normalize_mesh_metric",
 ]

@@ -173,6 +173,16 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem, NonTrainableState):
     def component_count(self) -> int:
         return self.layout.component_count
 
+    def proper_isometry_state_matrix(self, rotation: Array, /) -> Array:
+        from ._hyperbolic_systems import _proper_isometry_representation
+
+        return _proper_isometry_representation(
+            rotation,
+            self.dimension,
+            self.component_count,
+            (self.layout.momentum_slice,),
+        )
+
     @property
     def alpha_index(self) -> int:
         return self.layout.alpha_index

@@ -599,7 +599,18 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
         route_bytes = np.dtype(np.int64).itemsize + np.dtype(np.bool_).itemsize
         storage = ordering_bytes + factors * (
             matrix.nnz * (itemsize + route_bytes)
-            + _analysis_storage_bytes(matrix.shape[0], matrix.nnz, index_size)
+            + _analysis_storage_bytes(
+                matrix.shape[0],
+                matrix.nnz,
+                index_size,
+                row_width=int(np.max(np.diff(matrix.indptr), initial=0)),
+                transpose_row_width=int(
+                    np.max(
+                        np.bincount(matrix.indices, minlength=matrix.shape[0]),
+                        initial=0,
+                    )
+                ),
+            )
         )
         return PreconditionerCostEstimate(
             component=self.builder_id,

@@ -27,9 +27,7 @@ def _hydrogen_system(distance: Any = 0.74) -> Any:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [11, 17],
-        # ty: ignore[invalid-argument-type]
         [_EXPONENTS, _EXPONENTS],
-        # ty: ignore[invalid-argument-type]
         [_COEFFICIENTS, _COEFFICIENTS],
         source_id="general-mean-field-hydrogen",
     ).prepare(system)
@@ -79,9 +77,7 @@ def test_general_mean_field_scenario_1() -> None:
     )
     basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
         [5],
-        # ty: ignore[invalid-argument-type]
         [[1.0]],
-        # ty: ignore[invalid-argument-type]
         [[1.0]],
         source_id="one-electron-reference",
     ).prepare(system)

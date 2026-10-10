@@ -18,6 +18,14 @@ authority, capability evidence) and explicit scientific value ports; see
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
   and approximation bundles/hierarchies
+- `phydrax.geometry`: analytic, implicit, reconstructed, simplicial, and native
+  B-Rep source authority, exact predicates, certification, and bounded queries
+- `phydrax.meshing`: source-bound native construction, adaptation,
+  certification, organization, distribution, and explicitly optional provider
+  boundaries ([guide](../guides_meshing.md), [API](meshing.md))
+- `phydrax.interchange`: bounded native CAD and scientific format codecs plus
+  explicit optional external adapters; file extensions are routing hints, not
+  scientific identities
 - `phydrax.exterior`: canonical form types/proxies, exterior algebra and de Rham,
   chain, trace, product and coefficient-system bridges ([API](exterior/index.md))
 - `phydrax.signal`: differentiable windows, framing, finite convolution, causal
@@ -64,8 +72,9 @@ authority, capability evidence) and explicit scientific value ports; see
 - `phydrax.qualification`: exact support tuples, immutable criterion and campaign
   boundary identities, current evidence matrices, unsigned candidates, signed
   release indexes, and fail-closed admission
-- `phydrax.lifecycle`: resolved run identities, explicit configuration migration,
-  transactional repositories, topology-aware direct restart, and provenance
+- `phydrax.lifecycle`: accepted revisions, composition rebind, allowlisted
+  artifacts, distributed checkpoints, topology-aware direct restart, source and
+  runtime provenance, and meshing accepted-epoch records
 - `phydrax.service`: in-process reference orchestration, durable stores, injected
   scheduler/identity providers, tenant isolation, observability, and signing/trust
 - `phydrax.closure_data`: identified flow series, filters and closure targets,
@@ -561,9 +570,12 @@ ID, and coupling ID include every named component.
 
 Candidate evidence is not release evidence. `QualificationMatrix.evaluate()` resolves
 every named predicate against current `QualificationEvidence`.
-`CapabilityProfile(released=False)` remains an unsigned candidate; `ReleaseIndex` and
-`require_profile` are the separate signed, time-scoped, exact-support admission
-boundary.
+`CapabilityProfile(name, provider, support_tuples, released=False)` remains an
+unsigned candidate. Its content-addressed identity binds the exact support,
+dependencies, and evidence gates without an internal version field. External
+provider release revisions remain explicit provider metadata, not capability
+generations. `ReleaseIndex` and `require_profile` are the separate signed,
+time-scoped, exact-support admission boundary.
 
 ::: phydrax.qualification.SupportTuple
 

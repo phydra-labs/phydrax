@@ -9,8 +9,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax.optim._primal_dual import (
+    _barrier_schur_metric,
+    AbstractPrimalDualKKTSetup,
+    PrimalDualEvidence,
+    PrimalDualKKTSetupResult,
+    PrimalDualNewtonKrylov,
+)
 
 
 class _PartitionedDesign(eqx.Module):
@@ -24,6 +32,340 @@ def _termination(*, tolerance: Any = 1e-7, steps: Any = 50) -> Any:
         relative_optimality=0.0,
         maximum_steps=steps,
     )
+
+
+def test_prepared_kkt_renews_dynamic_objective_and_preserves_actual_linear_evidence() -> (
+    None
+):
+    def objective(parameters: jax.Array, target: jax.Array) -> jax.Array:
+        return 0.5 * jnp.sum((parameters - target) ** 2)
+
+    def total(parameters: jax.Array, target: jax.Array) -> jax.Array:
+        return jnp.sum(parameters, keepdims=True)
+
+    def first(parameters: jax.Array, target: jax.Array) -> jax.Array:
+        return parameters[:1]
+
+    problem = phx.optim.MinimizationProblem(
+        objective,
+        constraints=(
+            phx.optim.NonlinearConstraint(
+                total, lower=1.0, upper=1.0, constraint_id="sum"
+            ),
+            phx.optim.NonlinearConstraint(
+                first, upper=1.5, constraint_id="first-ceiling"
+            ),
+        ),
+        problem_id="dynamic-matrix-free-kkt",
+    )
+    method = PrimalDualNewtonKrylov(
+        maximum_restoration_steps=0,
+        linear_policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.MINRES(),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1.0e-8,
+                absolute=1.0e-8,
+                max_steps=64,
+            ),
+            preconditioning=phx.linalg.PreconditioningPolicy(
+                phx.linalg.JacobiPreconditionerBuilder(),
+            ),
+        ),
+    )
+
+    @eqx.filter_jit
+    def solve(target: jax.Array) -> phx.optim.MinimizationResult:
+        return phx.optim.minimize(
+            problem,
+            jnp.asarray((3.0, 3.0), dtype=np.float64),
+            method=method,
+            termination=_termination(),
+            args=target,
+        )
+
+    for target, expected in (((2.0, -1.0), (1.5, -0.5)), ((1.0, 0.0), (1.0, 0.0))):
+        result = solve(jnp.asarray(target, dtype=np.float64))
+        np.testing.assert_allclose(result.parameters, expected, atol=2.0e-6)
+        assert int(result.status) == int(phx.optim.OptimizationStatus.SUCCESS)
+        evidence = result.method_evidence
+        assert isinstance(evidence, PrimalDualEvidence)
+        assert int(evidence.linear_status) == int(phx.linalg.LinearSolveStatus.SUCCESS)
+        assert np.isfinite(float(evidence.linear_residual_norm))
+        assert int(evidence.linear_iterations) > 0
+        assert int(evidence.linear_matvec_count) > 0
+        assert int(result.diagnostics.direction_fallbacks) == 0
+
+
+def test_current_barrier_metric_matches_gram_and_schur_diagonals() -> None:
+    def constraints(point: jax.Array) -> tuple[jax.Array, jax.Array]:
+        return (
+            (point[0] + 2.0 * point[1])[None],
+            jnp.stack((3.0 * point[0] - point[1], point[0] + point[1])),
+        )
+
+    point = jnp.asarray((0.3, -0.2), dtype=np.float64)
+    equality = jnp.zeros(1, dtype=np.float64)
+    space = phx.linalg.BlockSpace(
+        (
+            phx.linalg.ArraySpace((2,), dtype=np.float64),
+            phx.linalg.ArraySpace((1,), dtype=np.float64),
+        )
+    )
+    derivative = phx.linalg.JacobianLinearOperator(
+        phx.linalg.prepare_linearization(
+            constraints,
+            point,
+            source=space.spaces[0],
+        )
+    )
+    for weights in ((2.0, 4.0), (7.0, 0.5)):
+        metric = _barrier_schur_metric(
+            derivative,
+            jnp.asarray(weights, dtype=np.float64),
+            1.0e-8,
+            point,
+            equality,
+            space,
+            "actual-barrier-metric",
+        )
+        first = 1.0e-8 + 9.0 * weights[0] + weights[1]
+        second = 1.0e-8 + weights[0] + weights[1]
+        np.testing.assert_allclose(
+            metric.diagonal,
+            (first, second, 1.0 / first + 4.0 / second),
+            rtol=1.0e-14,
+        )
+        correction = phx.linalg.JacobiPreconditionerBuilder().prepare(
+            metric,
+            materialization=phx.linalg.MaterializationPolicy(),
+        )
+        applied = correction.apply(
+            (jnp.ones(2, dtype=np.float64), jnp.ones(1, dtype=np.float64))
+        )
+        np.testing.assert_allclose(applied[0], (1.0 / first, 1.0 / second), rtol=1.0e-14)
+        np.testing.assert_allclose(
+            applied[1], (1.0 / (1.0 / first + 4.0 / second),), rtol=1.0e-14
+        )
+        assert correction.properties.certifies("positive_definite")
+        estimate = phx.linalg.JacobiPreconditionerBuilder().cost_for(metric)
+        assert estimate.setup_matvec_count == 0
+        assert estimate.storage_bytes == 3 * np.dtype(np.float64).itemsize
+
+
+def test_compiled_barrier_metric_refreshes_point_and_slack_weights() -> None:
+    space = phx.linalg.BlockSpace(
+        (
+            phx.linalg.ArraySpace((2,), dtype=np.float64),
+            phx.linalg.ArraySpace((1,), dtype=np.float64),
+        )
+    )
+
+    def constraints(point: jax.Array) -> tuple[jax.Array, jax.Array]:
+        return (
+            (point[0] ** 2 + 2.0 * point[1])[None],
+            jnp.stack((3.0 * point[0] ** 2 - point[1], point[0] + point[1])),
+        )
+
+    @eqx.filter_jit
+    def metric(point: jax.Array, weights: jax.Array) -> jax.Array:
+        derivative = phx.linalg.JacobianLinearOperator(
+            phx.linalg.prepare_linearization(
+                constraints,
+                point,
+                source=space.spaces[0],
+            ),
+        )
+        return _barrier_schur_metric(
+            derivative,
+            weights,
+            1.0e-8,
+            point,
+            jnp.zeros(1, dtype=np.float64),
+            space,
+            "dynamic-barrier-metric",
+        ).diagonal
+
+    for coordinate, weights in ((0.3, (2.0, 4.0)), (0.8, (7.0, 0.5))):
+        first = 1.0e-8 + (6.0 * coordinate) ** 2 * weights[0] + weights[1]
+        second = 1.0e-8 + weights[0] + weights[1]
+        actual = metric(
+            jnp.asarray((coordinate, -0.2), dtype=np.float64),
+            jnp.asarray(weights, dtype=np.float64),
+        )
+        np.testing.assert_allclose(
+            actual,
+            (first, second, (2.0 * coordinate) ** 2 / first + 4.0 / second),
+            rtol=1.0e-14,
+        )
+
+
+def test_failed_kkt_status_survives_finite_primal_direction() -> None:
+    problem = phx.optim.MinimizationProblem(
+        lambda parameters, _: jnp.sum(
+            jnp.asarray((1.0, 7.0, 31.0), dtype=np.float64) * (parameters - 2.0) ** 2,
+        ),
+        constraints=(
+            phx.optim.NonlinearConstraint(
+                lambda parameters, _: jnp.sum(parameters, keepdims=True),
+                lower=1.0,
+                upper=1.0,
+                constraint_id="sum",
+            ),
+        ),
+        problem_id="limited-kkt-evidence",
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.zeros(3, dtype=np.float64),
+        method=PrimalDualNewtonKrylov(
+            maximum_restoration_steps=0,
+            linear_policy=phx.linalg.LinearSolvePolicy(
+                phx.linalg.MINRES(),
+                tolerance=phx.linalg.TolerancePolicy(
+                    relative=1.0e-14,
+                    absolute=1.0e-14,
+                    max_steps=1,
+                ),
+                preconditioning=phx.linalg.PreconditioningPolicy(
+                    phx.linalg.JacobiPreconditionerBuilder(),
+                ),
+            ),
+        ),
+        termination=_termination(tolerance=1.0e-14, steps=1),
+    )
+    evidence = result.method_evidence
+    assert isinstance(evidence, PrimalDualEvidence)
+    assert int(evidence.linear_status) == int(
+        phx.linalg.LinearSolveStatus.MAXIMUM_STEPS_REACHED,
+    )
+    assert float(evidence.linear_residual_norm) > 1.0e-14
+    assert int(evidence.linear_iterations) == 1
+    assert int(evidence.linear_matvec_count) > 1
+    assert np.all(np.isfinite(np.asarray(result.parameters)))
+    assert int(result.status) != int(phx.optim.OptimizationStatus.SUCCESS)
+    assert int(result.diagnostics.direction_fallbacks) == 0
+
+
+class _FixedNativeKKTSetup(AbstractPrimalDualKKTSetup):
+    operator: phx.sparse.SparseCoordinateOperator
+
+    def __init__(self, operator: phx.sparse.SparseCoordinateOperator, /) -> None:
+        self.operator = operator
+
+    def prepare(
+        self,
+        derivative: phx.linalg.AbstractLinearOperator,
+        barrier_weights: jax.Array,
+        regularization: float,
+        primal: jax.Array,
+        equality: jax.Array,
+        space: phx.linalg.BlockSpace,
+        kkt_operator: phx.linalg.AbstractLinearOperator,
+        /,
+    ) -> PrimalDualKKTSetupResult:
+        del derivative, barrier_weights, regularization, primal, equality, kkt_operator
+        if not self.operator.source.compatible(space):
+            raise ValueError(
+                "The native test correction must preserve the bound block space."
+            )
+        return PrimalDualKKTSetupResult(
+            self.operator,
+            jnp.asarray(0, dtype=np.int32),
+            jnp.asarray(0, dtype=np.int64),
+            jnp.asarray(0, dtype=np.int32),
+        )
+
+
+@pytest.mark.parametrize(
+    "diagonal,status,optimization_status",
+    (
+        (
+            0.0,
+            phx.linalg.SparseFactorizationStatus.NONPOSITIVE_PIVOT,
+            phx.optim.OptimizationStatus.LINEAR_SOLVE_FAILED,
+        ),
+        (
+            np.nan,
+            phx.linalg.SparseFactorizationStatus.NONFINITE,
+            phx.optim.OptimizationStatus.NONFINITE_EVALUATION,
+        ),
+    ),
+)
+def test_failed_native_setup_stops_before_minres_and_preserves_factor_evidence(
+    diagonal: float,
+    status: phx.linalg.SparseFactorizationStatus,
+    optimization_status: phx.optim.OptimizationStatus,
+) -> None:
+    space = phx.linalg.BlockSpace(
+        (
+            phx.linalg.ArraySpace((2,), dtype=np.float64),
+            phx.linalg.ArraySpace((1,), dtype=np.float64),
+        )
+    )
+    relation = phx.sparse.EdgeRelation(
+        np.arange(3, dtype=np.int32),
+        np.arange(3, dtype=np.int32),
+        source_size=3,
+        target_size=3,
+    )
+    operator = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.asarray((1.0, 1.0, diagonal), dtype=np.float64),
+        source=space,
+        target=space,
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id="actual-native-factor-status-fixture",
+    )
+    plan = phx.linalg.prepare_sparse_factorization(
+        operator,
+        phx.linalg.SparseFactorizationPolicy("cholesky"),
+    )
+    method = PrimalDualNewtonKrylov(
+        maximum_restoration_steps=0,
+        kkt_setup=_FixedNativeKKTSetup(operator),
+        linear_policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.MINRES(),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1.0e-6, absolute=1.0e-10, max_steps=64
+            ),
+            preconditioning=phx.linalg.PreconditioningPolicy(
+                phx.linalg.SparseFactorizationPreconditionerBuilder(
+                    prepared_plan=plan,
+                    setup_operator=operator,
+                ),
+            ),
+        ),
+    )
+    problem = phx.optim.MinimizationProblem(
+        lambda point, _: jnp.sum((point - 2.0) ** 2),
+        constraints=(
+            phx.optim.NonlinearConstraint(
+                lambda point, _: jnp.sum(point, keepdims=True),
+                lower=1.0,
+                upper=1.0,
+            ),
+        ),
+    )
+    initial = jnp.asarray((0.0, 0.0), dtype=np.float64)
+    result = phx.optim.minimize(
+        problem, initial, method=method, termination=_termination(steps=16)
+    )
+    evidence = result.method_evidence
+    assert isinstance(evidence, PrimalDualEvidence)
+    assert int(evidence.factorization_status) == int(status)
+    assert evidence.factorization_diagnostics is not None
+    assert int(result.status) == int(optimization_status)
+    assert int(evidence.linear_status) == -1
+    assert int(result.diagnostics.linear_solves) == 0
+    assert int(result.diagnostics.direction_fallbacks) == 0
+    np.testing.assert_array_equal(result.parameters, initial)
 
 
 def _forbid_explicit_jacobians(monkeypatch: Any) -> None:

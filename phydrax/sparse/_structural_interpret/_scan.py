@@ -33,7 +33,7 @@ def _prop_scan(
         outvars: [carry_final..., ys...]
         body jaxpr invars:  [consts..., carry..., x_slice...]
         body jaxpr outvars: [carry_new..., y_slice...]
-        params: jaxpr, num_consts, num_carry, length, reverse, linear, unroll
+        params: jaxpr, ft_in, ft_out, length, reverse, unroll
 
     xs arrays have an extra leading dimension of size ``length``
     compared to their body counterparts x_slice.
@@ -43,15 +43,14 @@ def _prop_scan(
     """
     body_closed = eqn.params["jaxpr"]
     body_jaxpr = body_closed.jaxpr
-    num_consts = eqn.params["num_consts"]
-    num_carry = eqn.params["num_carry"]
     length = eqn.params["length"]
     reverse = eqn.params["reverse"]
 
-    # Split invars: [consts | carry_init | xs]
-    consts = eqn.invars[:num_consts]
-    carry_init = eqn.invars[num_consts : num_consts + num_carry]
-    xs = eqn.invars[num_consts + num_carry :]
+    # ``ft_in`` groups the flat invars as (consts, carry_init, xs).
+    consts, carry_init, xs = (
+        list(group) for group in eqn.params["ft_in"].update(eqn.invars).unpack()
+    )
+    num_consts, num_carry = len(consts), len(carry_init)
 
     # Split outvars: [carry_final | ys]
     carry_final = eqn.outvars[:num_carry]

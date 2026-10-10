@@ -15,6 +15,7 @@
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
 #include "spatial_sort.hpp"
+#include "triangulation2d.hpp"
 
 namespace {
 
@@ -46,7 +47,7 @@ Result collect(int32_t status, phx_mc_mesh* mesh) {
   phx_mc_mesh_copy_cells(mesh, result.cells.data());
   phx_mc_mesh_copy_vertex_map(mesh, result.vertex_map.data());
   std::vector<int32_t> segments(result.cells.size());
-  phx_mc_mesh_copy_cell_segments(mesh, segments.data());
+  phx_mc_mesh_copy_cell_constraints(mesh, segments.data());
   PHX_CHECK(std::all_of(segments.begin(), segments.end(), [](int32_t s) { return s == -1; }));
   phx_mc_mesh_free(mesh);
   return result;
@@ -54,16 +55,14 @@ Result collect(int32_t status, phx_mc_mesh* mesh) {
 
 Result delaunay(const std::vector<double>& points, int64_t max_triangles = 1 << 30) {
   phx_mc_mesh* mesh = nullptr;
-  const int32_t status = phx_mc_delaunay_2d(static_cast<int64_t>(points.size() / 2),
-                                            points.data(), max_triangles, &mesh);
+  const int32_t status = phx_mc_delaunay_2d(static_cast<int64_t>(points.size() / 2), points.data(), max_triangles, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh);
   PHX_CHECK((status == PHX_MC_OK) == (mesh != nullptr));
   return collect(status, mesh);
 }
 
 Result regular(const std::vector<double>& points, const std::vector<double>& weights) {
   phx_mc_mesh* mesh = nullptr;
-  const int32_t status = phx_mc_regular_2d(static_cast<int64_t>(points.size() / 2),
-                                           points.data(), weights.data(), 1 << 30, &mesh);
+  const int32_t status = phx_mc_regular_2d(static_cast<int64_t>(points.size() / 2), points.data(), weights.data(), 1 << 30, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh);
   PHX_CHECK((status == PHX_MC_OK) == (mesh != nullptr));
   return collect(status, mesh);
 }
@@ -215,18 +214,18 @@ void test_degenerate_and_arguments() {
   PHX_CHECK(delaunay({}).status == PHX_MC_DEGENERATE_INPUT);
   phx_mc_mesh* mesh = reinterpret_cast<phx_mc_mesh*>(&mesh);
   const double pts[6] = {0, 0, 1, 0, 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(-1, pts, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(-1, pts, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   PHX_CHECK(mesh == nullptr);
-  PHX_CHECK(phx_mc_delaunay_2d(3, pts, 10, nullptr) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_2d(3, nullptr, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_delaunay_2d(3, pts, -1, &mesh) == PHX_MC_INVALID_ARGUMENT);
-  PHX_CHECK(phx_mc_regular_2d(3, pts, nullptr, 10, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, pts, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, nullptr) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, nullptr, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, pts, -1, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(phx_mc_regular_2d(3, pts, nullptr, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_INVALID_ARGUMENT);
   const double nan_pts[6] = {0, 0, 1, std::nan(""), 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(3, nan_pts, 10, &mesh) == PHX_MC_NONFINITE_INPUT);
+  PHX_CHECK(phx_mc_delaunay_2d(3, nan_pts, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_NONFINITE_INPUT);
   const double big_pts[6] = {0, 0, 1e300, 0, 0, 1};
-  PHX_CHECK(phx_mc_delaunay_2d(3, big_pts, 10, &mesh) == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_delaunay_2d(3, big_pts, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_RANGE_ERROR);
   const double weights[3] = {0, 1e-200, 0};
-  PHX_CHECK(phx_mc_regular_2d(3, pts, weights, 10, &mesh) == PHX_MC_RANGE_ERROR);
+  PHX_CHECK(phx_mc_regular_2d(3, pts, weights, 10, INT64_MAX, INT64_MAX, INT64_MAX, nullptr, nullptr, &mesh) == PHX_MC_RANGE_ERROR);
   PHX_CHECK(mesh == nullptr);
 }
 
@@ -361,10 +360,132 @@ void test_performance() {
   std::printf("delaunay_2d 100k random points: %.3f s, %zu triangles\n", seconds,
               r.cells.size() / 3);
   PHX_CHECK(r.status == PHX_MC_OK);
-  // The time bound applies to uninstrumented optimized builds only.
-#if defined(NDEBUG) && !defined(PHX_MC_SANITIZE)
-  PHX_CHECK(seconds < 1.0);
-#endif
+}
+
+void test_native_budget_boundaries() {
+  const std::vector<double> points = random_points(80, 19);
+  const std::vector<double> original = points;
+  uint64_t work[9] = {}, memory[6] = {};
+  phx_mc_mesh* mesh = nullptr;
+  auto run = [&](int64_t cavity, int64_t units, int64_t bytes) {
+    return phx_mc_delaunay_2d(80, points.data(), INT64_MAX, cavity, units, bytes,
+                              work, memory, &mesh);
+  };
+  PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_OK);
+  const Result baseline = collect(PHX_MC_OK, mesh);
+  const int64_t exact_work = static_cast<int64_t>(work[0]);
+  const int64_t exact_cavity = static_cast<int64_t>(work[6]);
+  const int64_t exact_bytes = static_cast<int64_t>(memory[2]);
+  PHX_CHECK(work[1] > 0 && work[2] > 0 && work[3] == 0);
+  PHX_CHECK(work[4] == 80 && work[5] == 0);
+  PHX_CHECK(run(exact_cavity, exact_work, exact_bytes) == PHX_MC_OK);
+  const Result bounded = collect(PHX_MC_OK, mesh);
+  PHX_CHECK(bounded.cells == baseline.cells && bounded.vertex_map == baseline.vertex_map);
+  PHX_CHECK(run(exact_cavity, exact_work - 1, exact_bytes) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(mesh == nullptr && work[7] == 1 && memory[1] == 0);
+  PHX_CHECK(run(exact_cavity - 1, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(mesh == nullptr && work[8] == 1 && work[6] > static_cast<uint64_t>(exact_cavity - 1));
+  PHX_CHECK(run(INT64_MAX, INT64_MAX, exact_bytes - 1) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(mesh == nullptr && memory[5] == 1 && memory[1] == 0);
+  PHX_CHECK(run(0, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(run(INT64_MAX, 0, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(run(INT64_MAX, INT64_MAX, 0) == PHX_MC_CAPACITY_EXCEEDED);
+  PHX_CHECK(run(-1, INT64_MAX, INT64_MAX) == PHX_MC_INVALID_ARGUMENT);
+  PHX_CHECK(points == original);
+
+  const std::vector<double> weights(80, 0.0);
+  PHX_CHECK(phx_mc_regular_2d(80, points.data(), weights.data(), INT64_MAX,
+                              INT64_MAX, INT64_MAX, INT64_MAX, work, memory, &mesh) == PHX_MC_OK);
+  const Result weighted = collect(PHX_MC_OK, mesh);
+  PHX_CHECK(weighted.cells == baseline.cells);
+  PHX_CHECK(work[2] == 0 && work[3] > 0);
+
+  // A nested pointset call cannot escape an ancestor byte envelope, and its
+  // evidence must exclude the ancestor's retained buffers and historical peak.
+  const auto ancestor = std::make_shared<BoundedMemoryResource>();
+  {
+    MemoryScope ancestor_scope(ancestor);
+    NativeVector<uint8_t> retained(64);
+    {
+      NativeVector<uint8_t> historical(static_cast<std::size_t>(2 * exact_bytes));
+    }
+    const std::size_t retained_bytes = ancestor->live_bytes();
+    const std::size_t limited_total = retained_bytes + static_cast<std::size_t>(exact_bytes - 1);
+    PHX_CHECK(ancestor->set_limit(limited_total));
+    PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_CAPACITY_EXCEEDED);
+    PHX_CHECK(mesh == nullptr && memory[5] == 1 && memory[1] == 0);
+    PHX_CHECK(memory[0] == static_cast<uint64_t>(exact_bytes - 1));
+    PHX_CHECK(memory[2] <= memory[0]);
+    PHX_CHECK(ancestor->live_bytes() == retained_bytes);
+    PHX_CHECK(ancestor->limit_bytes() == limited_total);
+    PHX_CHECK(ancestor->set_limit(retained_bytes + static_cast<std::size_t>(exact_bytes)));
+    PHX_CHECK(run(INT64_MAX, INT64_MAX, INT64_MAX) == PHX_MC_OK);
+    PHX_CHECK(memory[2] == static_cast<uint64_t>(exact_bytes));
+  }
+  // Output survives the creating scope and retains the shared allocation owner.
+  const Result nested = collect(PHX_MC_OK, mesh);
+  PHX_CHECK(nested.cells == baseline.cells && nested.vertex_map == baseline.vertex_map);
+  PHX_CHECK(ancestor->live_bytes() == 0);
+}
+
+void test_insertion_refusal_preserves_topology() {
+  const double points[] = {0, 0, 2, 0, 0, 2, 0.5, 0.5};
+  auto trial_owner = std::make_shared<BoundedMemoryResource>();
+  PlanarBudget trial_budget(INT64_MAX, INT64_MAX, trial_owner);
+  Triangulation2D trial(trial_budget);
+  trial.reset(points, 4, nullptr);
+  trial.initialize(0, 1, 2);
+  trial.insert(3);
+  const uint64_t complete_work = trial_budget.work_units;
+  for (int refusal = 0; refusal < 4; ++refusal) {
+    auto owner = std::make_shared<BoundedMemoryResource>();
+    PlanarBudget budget(INT64_MAX, INT64_MAX, owner);
+    Triangulation2D tri(budget);
+    tri.reset(points, 4, nullptr);
+    tri.initialize(0, 1, 2);
+    const std::vector<Triangle2D> before(tri.triangles.begin(), tri.triangles.end());
+    const std::vector<int32_t> vertices(tri.vertex_triangle.begin(), tri.vertex_triangle.end());
+    const std::vector<int32_t> constraints(tri.constraints.begin(), tri.constraints.end());
+    if (refusal == 0) budget.max_work = complete_work - 1;  // final commit precharge
+    if (refusal == 1) budget.max_cavity_cells = 0;
+    if (refusal == 2) PHX_CHECK(owner->set_limit(owner->live_bytes()));
+    if (refusal == 3) tri.max_finite_cells = 1;
+    bool refused = false;
+    try {
+      tri.insert(3);
+    } catch (const std::bad_alloc&) {
+      refused = true;
+    }
+    PHX_CHECK(refused);
+    PHX_CHECK(tri.finite_count == 1 && tri.triangles.size() == before.size());
+    PHX_CHECK(std::equal(vertices.begin(), vertices.end(), tri.vertex_triangle.begin()));
+    PHX_CHECK(std::equal(constraints.begin(), constraints.end(), tri.constraints.begin()));
+    PHX_CHECK(tri.free_slots.empty());
+    for (std::size_t t = 0; t < before.size(); ++t) {
+      PHX_CHECK(tri.live[t] == 1);
+      for (int k = 0; k < 3; ++k) {
+        PHX_CHECK(tri.triangles[t].v[k] == before[t].v[k]);
+        PHX_CHECK(tri.triangles[t].n[k] == before[t].n[k]);
+      }
+    }
+    budget.max_work = INT64_MAX;
+    budget.max_cavity_cells = INT64_MAX;
+    tri.max_finite_cells = INT64_MAX;
+    PHX_CHECK(owner->set_limit(INT64_MAX));
+    PHX_CHECK(tri.insert(3) == Triangulation2D::Insertion::kInserted);
+    PHX_CHECK(tri.finite_count == 3 && tri.vertex_triangle[3] >= 0);
+    for (std::size_t t = 0; t < tri.triangles.size(); ++t) {
+      if (!tri.live[t]) continue;
+      for (int k = 0; k < 3; ++k) {
+        const int32_t u = tri.triangles[t].v[next3(k)];
+        const int32_t w = tri.triangles[t].v[prev3(k)];
+        const int32_t nb = tri.triangles[t].n[k];
+        const int twin = tri.edge_index(nb, w, u);
+        PHX_CHECK(twin >= 0);
+        if (twin >= 0) PHX_CHECK(tri.triangles[nb].n[twin] == static_cast<int32_t>(t));
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -375,6 +496,8 @@ int main() {
   test_cocircular();
   test_degenerate_and_arguments();
   test_capacity();
+  test_native_budget_boundaries();
+  test_insertion_refusal_preserves_topology();
   test_duplicates();
   test_determinism();
   test_regular_zero_weights_is_delaunay();

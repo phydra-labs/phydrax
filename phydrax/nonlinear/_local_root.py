@@ -135,8 +135,16 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         ) -> Array:
             basis = jnp.eye(self.dimension, dtype=right_hand_side.dtype)
             matrix = jax.vmap(linearize)(basis).T
-            value, _ = self._solve_linear(matrix, right_hand_side)
-            return value
+            # The refined solve gates refinement/success on the right-hand side,
+            # so it is not structurally linear. Declare the linear solve and its
+            # transpose explicitly so reverse mode transposes the solve, not its
+            # internal predicates.
+            return jax.lax.custom_linear_solve(
+                linearize,
+                right_hand_side,
+                lambda _, rhs: self._solve_linear(matrix, rhs)[0],
+                lambda _, rhs: self._solve_linear(matrix.T, rhs)[0],
+            )
 
         return custom_root(residual, initial_, solve_fn, tangent_solve)
 

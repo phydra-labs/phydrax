@@ -8,6 +8,11 @@
 // retriangulation, optional hull constraints, carving by flood fill over
 // unconstrained edges, then Delaunay refinement by Lawson insertion (splits
 // plus flips that never cross constrained edges).
+// Hard cavity/work limits share the pointset budget through recovery, carving
+// and refinement. Exact scratch allocation requests use its one native owner.
+// Refusals return CAPACITY_EXCEEDED without publishing a partially accepted
+// mesh or changing the borrowed physical source arrays. Anglada reconstruction
+// stages its predicates and links; Lawson primitives reserve before commit.
 //
 // Constraint ids stored on edges: input segment index (>= 0), kHullConstraint
 // for convex hull boundary edges, -1 for free edges.  region[t] is 1 for
@@ -141,12 +146,14 @@ class ConstrainedMesher {
   // split it and every piece carries id.
   void insert_segment(int32_t a, int32_t b, int32_t id) {
     while (a != b) {
+      tri_.budget.charge();
       a = recover_from(a, b, id);
     }
   }
 
   void constrain_hull() {
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      tri_.budget.charge();
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && tri_.is_ghost(slot) && tri_.constraint(slot, 2) == kFree) {
         const Triangle2D& ghost = tri_.triangles[t];
@@ -156,8 +163,9 @@ class ConstrainedMesher {
   }
 
   void carve(bool keep_hull, int64_t hole_count, const double* holes) {
-    std::vector<int32_t> queue;
+    NativeVector<int32_t> queue;
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      tri_.budget.charge();
       const bool ghost = tri_.live[t] != 0 && tri_.is_ghost(static_cast<int32_t>(t));
       tri_.region[t] = (tri_.live[t] != 0 && !ghost) ? 1 : 0;
       if (ghost && !keep_hull) {
@@ -166,6 +174,7 @@ class ConstrainedMesher {
     }
     flood_outside(queue);
     for (int64_t h = 0; h < hole_count; ++h) {
+      tri_.budget.charge();
       const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(any_vertex())];
       const int32_t located = tri_.walk(start, holes + 2 * h);
       if (!tri_.is_ghost(located) && tri_.region[static_cast<std::size_t>(located)] != 0) {
@@ -180,6 +189,7 @@ class ConstrainedMesher {
   int32_t refine() {
     count_segment_degrees();
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      tri_.budget.charge();
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0) {
         enqueue_triangle_checks(slot);
@@ -187,6 +197,7 @@ class ConstrainedMesher {
     }
     bool limit_reached = false;
     while (!limit_reached) {
+      tri_.budget.charge();
       if (!segment_queue_.empty()) {
         const auto [a, b] = segment_queue_.front();
         segment_queue_.pop_front();
@@ -216,6 +227,7 @@ class ConstrainedMesher {
       process_bad_triangle(entry, limit_reached);
     }
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      tri_.budget.charge();
       const int32_t slot = static_cast<int32_t>(t);
       if (tri_.live[t] != 0 && !tri_.is_ghost(slot) && tri_.region[t] != 0 &&
           quality(slot).bad) {
@@ -234,18 +246,19 @@ class ConstrainedMesher {
   bool angle_enabled_;
   double sin_min_angle_;
   int64_t steiner_count_ = 0;
-  std::vector<int32_t> segment_degree_;
+  NativeVector<int32_t> segment_degree_;
   // Per Steiner vertex (index - input_count_): the input vertices ending the
   // constrained chain it was inserted on, {-1, -1} for circumcenters.
-  std::vector<std::pair<int32_t, int32_t>> chain_ends_;
-  std::deque<std::pair<int32_t, int32_t>> segment_queue_;
-  std::priority_queue<BadTriangle, std::vector<BadTriangle>, BadOrder> bad_queue_;
-  std::vector<int32_t> flip_stack_;
-  std::vector<std::uint64_t> marks_;
+  NativeVector<std::pair<int32_t, int32_t>> chain_ends_;
+  NativeDeque<std::pair<int32_t, int32_t>> segment_queue_;
+  std::priority_queue<BadTriangle, NativeVector<BadTriangle>, BadOrder> bad_queue_;
+  NativeVector<int32_t> flip_stack_;
+  NativeVector<std::uint64_t> marks_;
   std::uint64_t epoch_ = 0;
 
   int32_t any_vertex() const {
     for (int32_t v = 0; v < tri_.vertex_count(); ++v) {
+      tri_.budget.charge();
       if (tri_.vertex_triangle[static_cast<std::size_t>(v)] >= 0) {
         return v;
       }
@@ -253,11 +266,13 @@ class ConstrainedMesher {
     throw std::logic_error("cdt2d: empty triangulation");
   }
 
-  void flood_outside(std::vector<int32_t>& queue) {
+  void flood_outside(NativeVector<int32_t>& queue) {
     while (!queue.empty()) {
+      tri_.budget.charge();
       const int32_t t = queue.back();
       queue.pop_back();
       for (int k = 0; k < 3; ++k) {
+        tri_.budget.charge();
         const int32_t nb = tri_.triangles[static_cast<std::size_t>(t)].n[k];
         if (tri_.constraint(t, k) == kFree && tri_.region[static_cast<std::size_t>(nb)] != 0) {
           tri_.region[static_cast<std::size_t>(nb)] = 0;
@@ -275,6 +290,7 @@ class ConstrainedMesher {
     }
     int32_t t = start;
     do {
+      tri_.budget.charge();
       const int i = tri_.index_of(t, a);
       const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
       if (triangle.v[next3(i)] == b) {
@@ -286,6 +302,7 @@ class ConstrainedMesher {
   }
 
   void constrain_edge(int32_t t, int k, int32_t id) {
+    tri_.budget.charge();
     if (tri_.constraint(t, k) != kFree) {
       throw StatusError{PHX_MC_CONSTRAINT_INTERSECTION};
     }
@@ -301,6 +318,7 @@ class ConstrainedMesher {
     const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(a)];
     int32_t t = start;
     do {
+      tri_.budget.charge();
       const int i = tri_.index_of(t, a);
       const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
       const int32_t u = triangle.v[next3(i)];
@@ -314,12 +332,12 @@ class ConstrainedMesher {
           constrain_edge(t, next3(i), id);
           return b;
         }
-        const int su = orient2d(pa, pb, tri_.point(u));
+        const int su = tri_.budget.orient(pa, pb, tri_.point(u));
         if (su == 0 && same_direction(pa, pb, tri_.point(u))) {
           constrain_edge(t, prev3(i), id);
           return u;
         }
-        const int sw = orient2d(pa, pb, tri_.point(w));
+        const int sw = tri_.budget.orient(pa, pb, tri_.point(w));
         if (sw == 0 && same_direction(pa, pb, tri_.point(w))) {
           constrain_edge(t, next3(i), id);
           return w;
@@ -337,12 +355,14 @@ class ConstrainedMesher {
                             int32_t id) {
     const double* pa = tri_.point(a);
     const double* pb = tri_.point(b);
-    std::vector<int32_t> crossed{first};
-    std::vector<int32_t> left_chain{left};
-    std::vector<int32_t> right_chain{right};
+    tri_.budget.cavity(1);
+    NativeVector<int32_t> crossed{first};
+    NativeVector<int32_t> left_chain{left};
+    NativeVector<int32_t> right_chain{right};
     int32_t current = first;
     int32_t end = -1;
     for (;;) {
+      tri_.budget.charge();
       const int k = tri_.edge_index(current, right, left);
       if (tri_.constraint(current, k) != kFree) {
         throw StatusError{PHX_MC_CONSTRAINT_INTERSECTION};
@@ -353,12 +373,13 @@ class ConstrainedMesher {
       }
       const int j = tri_.edge_index(next, left, right);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(next)].v[j];
+      tri_.budget.cavity(crossed.size() + 1);
       crossed.push_back(next);
       if (x == b) {
         end = b;
         break;
       }
-      const int side = orient2d(pa, pb, tri_.point(x));
+      const int side = tri_.budget.orient(pa, pb, tri_.point(x));
       if (side == 0) {
         end = x;
         break;
@@ -385,9 +406,9 @@ class ConstrainedMesher {
   // Replaces the triangles `region_triangles` (the union is the polygon
   // a -> end plus both pseudo-polygon chains) by constrained Delaunay
   // triangulations of the two pseudo-polygons (Anglada).
-  void retriangulate(std::vector<int32_t> region_triangles, int32_t a, int32_t end,
-                     const std::vector<int32_t>& left_chain,
-                     const std::vector<int32_t>& right_chain) {
+  void retriangulate(NativeVector<int32_t>& region_triangles, int32_t a, int32_t end,
+                     const NativeVector<int32_t>& left_chain,
+                     const NativeVector<int32_t>& right_chain) {
     struct Boundary {
       std::uint64_t key;
       int32_t outside;
@@ -397,75 +418,119 @@ class ConstrainedMesher {
       return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(u)) << 32) |
              static_cast<std::uint32_t>(w);
     };
-    std::sort(region_triangles.begin(), region_triangles.end());
-    std::vector<Boundary> boundary;
+    tri_.budget.cavity(region_triangles.size());
+    std::sort(region_triangles.begin(), region_triangles.end(), [&](int32_t l, int32_t r) {
+      tri_.budget.charge();
+      return l < r;
+    });
+    NativeVector<Boundary> boundary;
     for (int32_t t : region_triangles) {
       const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
       for (int k = 0; k < 3; ++k) {
+        tri_.budget.charge();
         if (!std::binary_search(region_triangles.begin(), region_triangles.end(),
-                                triangle.n[k])) {
+                                triangle.n[k], [&](int32_t l, int32_t r) {
+                                  tri_.budget.charge();
+                                  return l < r;
+                                })) {
           boundary.push_back({key_of(triangle.v[next3(k)], triangle.v[prev3(k)]), triangle.n[k],
                               tri_.constraint(t, k)});
         }
       }
     }
-    std::sort(boundary.begin(), boundary.end(),
-              [](const Boundary& l, const Boundary& r) { return l.key < r.key; });
+    std::sort(boundary.begin(), boundary.end(), [&](const Boundary& l, const Boundary& r) {
+      tri_.budget.charge();
+      return l.key < r.key;
+    });
     const uint8_t region = tri_.region[static_cast<std::size_t>(region_triangles[0])];
-    for (int32_t t : region_triangles) {
-      tri_.release(t);
-    }
-    std::vector<int32_t> created;
-    anglada(a, end, left_chain, region, created);
-    anglada(end, a, right_chain, region, created);
+    // Plan every Anglada predicate and allocation before releasing the cavity.
+    NativeVector<Triangle2D> planned;
+    anglada(a, end, left_chain, planned);
+    anglada(end, a, right_chain, planned);
+    NativeVector<int32_t> created;
+    created.reserve(planned.size());
     struct Half {
       std::uint64_t key;
       int32_t t;
     };
-    std::vector<Half> halves;
-    for (int32_t t : created) {
-      const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
+    NativeVector<Half> halves;
+    halves.reserve(3 * planned.size());
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+      const Triangle2D& triangle = planned[i];
       for (int k = 0; k < 3; ++k) {
-        halves.push_back({key_of(triangle.v[next3(k)], triangle.v[prev3(k)]), t});
+        tri_.budget.charge();
+        halves.push_back({key_of(triangle.v[next3(k)], triangle.v[prev3(k)]),
+                          static_cast<int32_t>(i)});
       }
     }
-    std::sort(halves.begin(), halves.end(),
-              [](const Half& l, const Half& r) { return l.key < r.key; });
-    for (int32_t t : created) {
+    std::sort(halves.begin(), halves.end(), [&](const Half& l, const Half& r) {
+      tri_.budget.charge();
+      return l.key < r.key;
+    });
+    // Stage neighbors/constraints and validate every link before commit.
+    NativeVector<int32_t> ids(3 * planned.size(), kFree);
+    NativeVector<uint8_t> inner_edge(3 * planned.size(), 0);
+    for (std::size_t i = 0; i < planned.size(); ++i) {
       for (int k = 0; k < 3; ++k) {
-        const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
-        const int32_t u = triangle.v[next3(k)];
-        const int32_t w = triangle.v[prev3(k)];
-        const std::uint64_t twin = key_of(w, u);
-        auto inner = std::lower_bound(halves.begin(), halves.end(), twin,
-                                      [](const Half& h, std::uint64_t key) { return h.key < key; });
-        if (inner != halves.end() && inner->key == twin) {
-          tri_.link_edge(t, u, w, inner->t);
-          continue;
+        tri_.budget.charge();
+        const int32_t u = planned[i].v[next3(k)];
+        const int32_t w = planned[i].v[prev3(k)];
+        auto inner = std::lower_bound(halves.begin(), halves.end(), key_of(w, u),
+                                     [&](const Half& h, std::uint64_t key) {
+                                       tri_.budget.charge();
+                                       return h.key < key;
+                                     });
+        if (inner != halves.end() && inner->key == key_of(w, u)) {
+          planned[i].n[k] = inner->t;
+          inner_edge[3 * i + k] = 1;
+        } else {
+          auto outer = std::lower_bound(boundary.begin(), boundary.end(), key_of(u, w),
+                                       [&](const Boundary& e, std::uint64_t key) {
+                                         tri_.budget.charge();
+                                         return e.key < key;
+                                       });
+          if (outer == boundary.end() || outer->key != key_of(u, w)) {
+            throw std::logic_error("cdt2d: retriangulation does not match its cavity");
+          }
+          planned[i].n[k] = outer->outside;
+          ids[3 * i + k] = outer->constraint;
         }
-        const std::uint64_t own = key_of(u, w);
-        auto outer =
-            std::lower_bound(boundary.begin(), boundary.end(), own,
-                             [](const Boundary& e, std::uint64_t key) { return e.key < key; });
-        if (outer == boundary.end() || outer->key != own) {
-          throw std::logic_error("cdt2d: retriangulation does not match its cavity");
-        }
-        tri_.link_edge(t, u, w, outer->outside);
-        tri_.constraints[3 * static_cast<std::size_t>(t) + k] = outer->constraint;
+      }
+    }
+    tri_.prepare_slots(planned.size(), region_triangles.size());
+    tri_.budget.charge(region_triangles.size() + 4 * planned.size());
+    for (int32_t t : region_triangles) {
+      tri_.release(t);
+    }
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+      const int32_t t = tri_.allocate();
+      const Triangle2D& p = planned[i];
+      tri_.set_triangle(t, p.v[0], p.v[1], p.v[2], ids[3 * i], ids[3 * i + 1], ids[3 * i + 2]);
+      tri_.region[static_cast<std::size_t>(t)] = region;
+      created.push_back(t);
+    }
+    for (std::size_t i = 0; i < planned.size(); ++i) {
+      for (int k = 0; k < 3; ++k) {
+        const Triangle2D& p = planned[i];
+        const int32_t neighbor = inner_edge[3 * i + k] != 0
+                                     ? created[static_cast<std::size_t>(p.n[k])]
+                                     : p.n[k];
+        tri_.link_edge(created[i], p.v[next3(k)], p.v[prev3(k)], neighbor);
       }
     }
   }
 
   // Constrained Delaunay triangulation of the polygon u, w, chain reversed
   // (chain listed from the u side to the w side, all left of u -> w).
-  void anglada(int32_t u, int32_t w, const std::vector<int32_t>& chain, uint8_t region,
-               std::vector<int32_t>& created) {
+  void anglada(int32_t u, int32_t w, const NativeVector<int32_t>& chain,
+               NativeVector<Triangle2D>& planned) {
     struct Job {
       int32_t u, w;
       std::size_t lo, hi;
     };
-    std::vector<Job> jobs{{u, w, 0, chain.size()}};
+    NativeVector<Job> jobs{{u, w, 0, chain.size()}};
     while (!jobs.empty()) {
+      tri_.budget.charge();
       const Job job = jobs.back();
       jobs.pop_back();
       if (job.lo >= job.hi) {
@@ -475,16 +540,13 @@ class ConstrainedMesher {
       for (std::size_t j = job.lo + 1; j < job.hi; ++j) {
         const int32_t c = chain[best];
         const int32_t p = chain[j];
-        if (incircle_sos(tri_.point(job.u), tri_.point(job.w), tri_.point(c), tri_.point(p),
+        if (tri_.budget.incircle_sos(tri_.point(job.u), tri_.point(job.w), tri_.point(c), tri_.point(p),
                          job.u, job.w, c, p) > 0) {
           best = j;
         }
       }
       const int32_t c = chain[best];
-      const int32_t t = tri_.allocate();
-      tri_.set_triangle(t, job.u, job.w, c);
-      tri_.region[static_cast<std::size_t>(t)] = region;
-      created.push_back(t);
+      planned.push_back({{job.u, job.w, c}, {-1, -1, -1}});
       jobs.push_back({job.u, c, job.lo, best});
       jobs.push_back({c, job.w, best + 1, job.hi});
     }
@@ -495,6 +557,7 @@ class ConstrainedMesher {
   void count_segment_degrees() {
     segment_degree_.assign(static_cast<std::size_t>(tri_.vertex_count()), 0);
     for (std::size_t t = 0; t < tri_.triangles.size(); ++t) {
+      tri_.budget.charge();
       if (tri_.live[t] == 0) {
         continue;
       }
@@ -513,6 +576,7 @@ class ConstrainedMesher {
   }
 
   Quality quality(int32_t t) const {
+    tri_.budget.charge();
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     const double* p[3] = {tri_.point(triangle.v[0]), tri_.point(triangle.v[1]),
                           tri_.point(triangle.v[2])};
@@ -576,6 +640,7 @@ class ConstrainedMesher {
   }
 
   bool encroaches(int32_t t, int k, const double* v) const {
+    tri_.budget.charge();
     const Triangle2D& triangle = tri_.triangles[static_cast<std::size_t>(t)];
     return dot_sign(tri_.point(triangle.v[next3(k)]), tri_.point(triangle.v[prev3(k)]), v) < 0;
   }
@@ -595,6 +660,7 @@ class ConstrainedMesher {
   }
 
   void enqueue_triangle_checks(int32_t t) {
+    tri_.budget.charge();
     const Quality q = quality(t);
     if (q.bad) {
       bad_queue_.push(make_entry(t, q.badness));
@@ -609,12 +675,11 @@ class ConstrainedMesher {
 
   void after_insertion(int32_t m) {
     ++steiner_count_;
-    if (tri_.finite_count > max_triangles_) {
-      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
-    }
+    // Capacity is checked before each Lawson primitive commits.
     const int32_t start = tri_.vertex_triangle[static_cast<std::size_t>(m)];
     int32_t t = start;
     do {
+      tri_.budget.charge();
       if (!tri_.is_ghost(t) && tri_.region[static_cast<std::size_t>(t)] != 0) {
         enqueue_triangle_checks(t);
       }
@@ -626,8 +691,10 @@ class ConstrainedMesher {
     if (tri_.vertex_count() >= kMaxMeshPoints) {
       throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
     }
+    tri_.budget.charge();
     chain_ends_.push_back(ends);
-    return tri_.add_vertex(xy);
+    const int32_t v = tri_.add_vertex(xy);
+    return v;
   }
 
   std::pair<int32_t, int32_t> chain_ends_of(int32_t a, int32_t b) const {
@@ -672,6 +739,19 @@ class ConstrainedMesher {
 
   // --------------------------------------------------- Lawson primitives
 
+  // Reserve every buffer that a topological replacement can grow before
+  // releasing any triangle; no allocation/work refusal may split a commit.
+  void prepare_lawson(std::size_t allocations, std::size_t releases,
+                      int64_t finite_increase, std::size_t stack_entries) {
+    tri_.budget.cavity(releases);
+    if (finite_increase > max_triangles_ - tri_.finite_count) {
+      throw StatusError{PHX_MC_CAPACITY_EXCEEDED};
+    }
+    tri_.prepare_slots(allocations, releases);
+    flip_stack_.reserve(flip_stack_.size() + stack_entries);
+    tri_.budget.charge(allocations + releases + stack_entries);
+  }
+
   // Splits t into three triangles around m (strictly inside t).
   void split_triangle(int32_t t, int32_t m) {
     const Triangle2D old = tri_.triangles[static_cast<std::size_t>(t)];
@@ -680,6 +760,7 @@ class ConstrainedMesher {
     const int32_t c2 = tri_.constraint(t, 2);
     const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
     const int32_t a = old.v[0], b = old.v[1], c = old.v[2];
+    prepare_lawson(3, 1, 2, 3);
     tri_.release(t);
     const int32_t t0 = tri_.allocate();
     const int32_t t1 = tri_.allocate();
@@ -697,6 +778,7 @@ class ConstrainedMesher {
     tri_.link_edge(t1, a, m, t2);
     tri_.link_edge(t2, b, m, t0);
     flip_stack_.insert(flip_stack_.end(), {t0, t1, t2});
+    ++tri_.budget.insertions;
   }
 
   // Splits edge k of t (and its twin) at m, which lies exactly on the open
@@ -716,6 +798,7 @@ class ConstrainedMesher {
     const int32_t n_db = oold.n[jd], c_db = tri_.constraint(o, jd);
     const uint8_t region_t = tri_.region[static_cast<std::size_t>(t)];
     const uint8_t region_o = tri_.region[static_cast<std::size_t>(o)];
+    prepare_lawson(4, 2, d == kInfiniteVertex ? 1 : 2, 4);
     tri_.release(t);
     tri_.release(o);
     const int32_t t1 = tri_.allocate();
@@ -744,6 +827,7 @@ class ConstrainedMesher {
     tri_.link_edge(t1, a, m, o2);
     tri_.link_edge(t2, m, b, o1);
     flip_stack_.insert(flip_stack_.end(), {t1, t2, o1, o2});
+    ++tri_.budget.insertions;
   }
 
   // m lies strictly outside the hull edge p -> q of ghost g: adds the finite
@@ -754,6 +838,7 @@ class ConstrainedMesher {
     const int32_t ghost_q = old.n[tri_.edge_index(g, q, kInfiniteVertex)];
     const int32_t ghost_p = old.n[tri_.edge_index(g, kInfiniteVertex, p)];
     const uint8_t region = tri_.region[static_cast<std::size_t>(inner)];
+    prepare_lawson(3, 1, 1, 1);
     tri_.release(g);
     const int32_t f = tri_.allocate();
     const int32_t h1 = tri_.allocate();
@@ -772,12 +857,14 @@ class ConstrainedMesher {
     tri_.link_edge(h2, kInfiniteVertex, p, ghost_p);
     tri_.set_edge_constraint(f, p, q, kFree);
     flip_stack_.push_back(f);
+    ++tri_.budget.insertions;
   }
 
   // Lawson flips of free edges opposite m until every one is locally
   // Delaunay (a non-locally-Delaunay edge always has a strictly convex quad).
   void legalize(int32_t m) {
     while (!flip_stack_.empty()) {
+      tri_.budget.charge();
       const int32_t t = flip_stack_.back();
       flip_stack_.pop_back();
       if (tri_.live[static_cast<std::size_t>(t)] == 0 || tri_.is_ghost(t)) {
@@ -796,7 +883,7 @@ class ConstrainedMesher {
       const int32_t w = told.v[prev3(i)];
       const int j = tri_.edge_index(o, w, u);
       const int32_t x = tri_.triangles[static_cast<std::size_t>(o)].v[j];
-      if (incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
+      if (tri_.budget.incircle_sos(tri_.point(m), tri_.point(u), tri_.point(w), tri_.point(x), m, u, w, x) <=
           0) {
         continue;
       }
@@ -808,6 +895,8 @@ class ConstrainedMesher {
       const int32_t n_ux = oold.n[jw], c_ux = tri_.constraint(o, jw);
       const int32_t n_xw = oold.n[ju], c_xw = tri_.constraint(o, ju);
       const uint8_t region = tri_.region[static_cast<std::size_t>(t)];
+      prepare_lawson(2, 2, 0, 2);
+      ++tri_.budget.flips;
       tri_.release(t);
       tri_.release(o);
       const int32_t first = tri_.allocate();
@@ -869,7 +958,7 @@ class ConstrainedMesher {
       if (same_point(c, pa) || same_point(c, pb)) {
         return 0;
       }
-      const int side = orient2d(pa, pb, c);
+      const int side = tri_.budget.orient(pa, pb, c);
       if (side == 0) {
         return strictly_between(pa, pb, c) ? 1 : 0;
       }
@@ -881,8 +970,8 @@ class ConstrainedMesher {
       const int32_t q = side > 0 ? b : a;
       const int32_t apex =
           tri_.triangles[static_cast<std::size_t>(near_side)].v[tri_.edge_index(near_side, p, q)];
-      return orient2d(tri_.point(q), tri_.point(apex), c) > 0 &&
-                     orient2d(tri_.point(apex), tri_.point(p), c) > 0
+      return tri_.budget.orient(tri_.point(q), tri_.point(apex), c) > 0 &&
+                     tri_.budget.orient(tri_.point(apex), tri_.point(p), c) > 0
                  ? 2
                  : 0;
     };
@@ -914,7 +1003,7 @@ class ConstrainedMesher {
       return false;
     }
     const std::pair<int32_t, int32_t> ends = chain_ends_of(a, b);
-    const int side = orient2d(pa, pb, chosen);
+    const int side = tri_.budget.orient(pa, pb, chosen);
     if (side == 0) {
       const int32_t v = new_vertex(chosen, ends);
       split_edge(t, k, v, id);
@@ -972,7 +1061,7 @@ class ConstrainedMesher {
     if (!snap_to_domain(center)) {
       return;
     }
-    std::vector<std::pair<int32_t, int32_t>> to_split;
+    NativeVector<std::pair<int32_t, int32_t>> to_split;
     std::pair<int32_t, int> blocked{-1, -1};
     const int32_t located = tri_.walk(t, center, &blocked);
     if (located < 0) {
@@ -986,7 +1075,7 @@ class ConstrainedMesher {
       int zero_count = 0;
       int zero_edge = -1;
       for (int k = 0; k < 3; ++k) {
-        if (orient2d(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]), center) == 0) {
+        if (tri_.budget.orient(tri_.point(host.v[next3(k)]), tri_.point(host.v[prev3(k)]), center) == 0) {
           ++zero_count;
           zero_edge = k;
         }
@@ -1011,10 +1100,14 @@ class ConstrainedMesher {
         return;
       }
     }
-    std::sort(to_split.begin(), to_split.end());
+    std::sort(to_split.begin(), to_split.end(), [&](const auto& l, const auto& r) {
+      tri_.budget.charge();
+      return l < r;
+    });
     to_split.erase(std::unique(to_split.begin(), to_split.end()), to_split.end());
     bool progress = false;
     for (const auto& [a, b] : to_split) {
+      tri_.budget.charge();
       if (steiner_count_ >= max_steiner_) {
         limit_reached = true;
         return;
@@ -1030,7 +1123,7 @@ class ConstrainedMesher {
   // `center` (conflict region reachable from `start` without crossing
   // constraints) that `center` encroaches upon.
   void collect_encroached_by(int32_t start, const double* center,
-                             std::vector<std::pair<int32_t, int32_t>>& out) {
+                             NativeVector<std::pair<int32_t, int32_t>>& out) {
     const int32_t id = tri_.vertex_count();
     if (marks_.size() < tri_.triangles.size()) {
       marks_.resize(tri_.triangles.size(), 0);
@@ -1038,13 +1131,17 @@ class ConstrainedMesher {
     epoch_ += 2;
     const std::uint64_t inside = epoch_;
     const std::uint64_t outside = epoch_ + 1;
-    std::vector<int32_t> stack{start};
+    uint64_t cavity_cells = 1;
+    tri_.budget.cavity(cavity_cells);
+    NativeVector<int32_t> stack{start};
     marks_[static_cast<std::size_t>(start)] = inside;
     while (!stack.empty()) {
+      tri_.budget.charge();
       const int32_t t = stack.back();
       stack.pop_back();
       const Triangle2D triangle = tri_.triangles[static_cast<std::size_t>(t)];
       for (int k = 0; k < 3; ++k) {
+        tri_.budget.charge();
         if (tri_.constraint(t, k) != kFree) {
           if (encroaches(t, k, center)) {
             out.emplace_back(triangle.v[next3(k)], triangle.v[prev3(k)]);
@@ -1057,8 +1154,9 @@ class ConstrainedMesher {
           continue;
         }
         const Triangle2D& other = tri_.triangles[static_cast<std::size_t>(nb)];
-        if (incircle_sos(tri_.point(other.v[0]), tri_.point(other.v[1]), tri_.point(other.v[2]),
+        if (tri_.budget.incircle_sos(tri_.point(other.v[0]), tri_.point(other.v[1]), tri_.point(other.v[2]),
                          center, other.v[0], other.v[1], other.v[2], id) > 0) {
+          tri_.budget.cavity(++cavity_cells);
           marks_[static_cast<std::size_t>(nb)] = inside;
           stack.push_back(nb);
         } else {
@@ -1072,7 +1170,8 @@ class ConstrainedMesher {
 int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t segment_count,
                              const int32_t* segments, int64_t hole_count, const double* holes,
                              int32_t keep_convex_hull, double min_angle_degrees, double max_area,
-                             int64_t max_steiner, int64_t max_triangles, phx_mc_mesh** mesh) {
+                             int64_t max_steiner, int64_t max_triangles,
+                             PlanarBudget& budget, phx_mc_mesh** mesh) {
   if (mesh == nullptr) {
     return PHX_MC_INVALID_ARGUMENT;
   }
@@ -1084,14 +1183,15 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
       !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0)) {
     return PHX_MC_INVALID_ARGUMENT;
   }
-  int32_t status = validate_points(points, point_count, 2, nullptr);
+  int32_t status = validate_points(points, point_count, 2, nullptr, charge_planar_work, &budget);
   if (status == PHX_MC_OK) {
-    status = validate_points(holes, hole_count, 2, nullptr);
+    status = validate_points(holes, hole_count, 2, nullptr, charge_planar_work, &budget);
   }
   if (status != PHX_MC_OK) {
     return status;
   }
   for (int64_t k = 0; k < 2 * segment_count; ++k) {
+    budget.charge();
     if (segments[k] < 0 || segments[k] >= point_count) {
       return PHX_MC_INVALID_INPUT;
     }
@@ -1099,10 +1199,10 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   if (point_count == 0) {
     return PHX_MC_DEGENERATE_INPUT;
   }
-  auto result = std::make_unique<phx_mc_mesh>();
+  auto result = make_native_unique<phx_mc_mesh>();
   result->dimension = 2;
   result->input_point_count = point_count;
-  Triangulation2D triangulation;
+  Triangulation2D triangulation(budget);
   triangulation.reset(points, point_count, nullptr);
   status = build_delaunay_2d(triangulation, points, point_count, nullptr, max_triangles,
                              result->vertex_map);
@@ -1110,6 +1210,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
     return status;
   }
   for (int64_t s = 0; s < segment_count; ++s) {
+    budget.charge();
     if (result->vertex_map[static_cast<std::size_t>(segments[2 * s])] ==
         result->vertex_map[static_cast<std::size_t>(segments[2 * s + 1])]) {
       return PHX_MC_INVALID_INPUT;
@@ -1120,6 +1221,7 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
                            max_area, max_steiner, max_triangles);
   try {
     for (int64_t s = 0; s < segment_count; ++s) {
+      budget.charge();
       mesher.insert_segment(result->vertex_map[static_cast<std::size_t>(segments[2 * s])],
                             result->vertex_map[static_cast<std::size_t>(segments[2 * s + 1])],
                             static_cast<int32_t>(s));
@@ -1132,8 +1234,9 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   } catch (const StatusError& error) {
     return error.status;
   }
-  result->points = triangulation.coordinates;
+  result->points = std::move(triangulation.coordinates);
   for (std::size_t t = 0; t < triangulation.triangles.size(); ++t) {
+    budget.charge();
     if (triangulation.live[t] == 0 || triangulation.region[t] == 0 ||
         triangulation.is_ghost(static_cast<int32_t>(t))) {
       continue;
@@ -1142,10 +1245,10 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
     result->cells.insert(result->cells.end(), triangle.v, triangle.v + 3);
     for (int k = 0; k < 3; ++k) {
       const int32_t id = triangulation.constraints[3 * t + static_cast<std::size_t>(k)];
-      result->cell_segments.push_back(id >= 0 ? id : -1);
+      result->cell_constraints.push_back(id >= 0 ? id : -1);
     }
   }
-  canonicalize_cells(*result);
+  canonicalize_cells(*result, charge_planar_work, &budget);
   *mesh = result.release();
   return status;
 }
@@ -1160,11 +1263,35 @@ int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points
                                        int64_t hole_count, const double* holes,
                                        int32_t keep_convex_hull, double min_angle_degrees,
                                        double max_area, int64_t max_steiner,
-                                       int64_t max_triangles, phx_mc_mesh** mesh) {
+                                       int64_t max_triangles, int64_t max_cavity_cells,
+                                       int64_t max_work, int64_t max_scratch_bytes,
+                                       uint64_t* work_evidence, uint64_t* memory_evidence,
+                                       phx_mc_mesh** mesh) {
+  if (mesh != nullptr) *mesh = nullptr;
+  if (work_evidence != nullptr) std::fill_n(work_evidence, 9, uint64_t{0});
+  if (memory_evidence != nullptr) std::fill_n(memory_evidence, 6, uint64_t{0});
   return phx::mc::guarded([&] {
-    return phx::mc::constrained_delaunay(point_count, points, segment_count, segments, hole_count,
-                                         holes, keep_convex_hull, min_angle_degrees, max_area,
-                                         max_steiner, max_triangles, mesh);
+    if (max_cavity_cells < 0 || max_work < 0 || max_scratch_bytes < 0) {
+      return int32_t{PHX_MC_INVALID_ARGUMENT};
+    }
+    phx::mc::MemoryBudgetWindow window(static_cast<std::size_t>(max_scratch_bytes));
+    const auto& owner = window.owner();
+    phx::mc::PlanarBudget budget(max_cavity_cells, max_work, owner);
+    const int32_t status = phx::mc::guarded([&] {
+      phx::mc::MemoryScope scope(owner);
+      return phx::mc::constrained_delaunay(
+          point_count, points, segment_count, segments, hole_count, holes, keep_convex_hull,
+          min_angle_degrees, max_area, max_steiner, max_triangles, budget, mesh);
+    });
+    if (work_evidence != nullptr) {
+      const auto evidence = budget.evidence();
+      std::copy(evidence.begin(), evidence.end(), work_evidence);
+    }
+    if (memory_evidence != nullptr) {
+      const auto evidence = window.evidence();
+      std::copy(evidence.begin(), evidence.end(), memory_evidence);
+    }
+    return status;
   });
 }
 

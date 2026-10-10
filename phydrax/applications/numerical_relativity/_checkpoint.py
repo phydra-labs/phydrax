@@ -23,16 +23,13 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...lifecycle._chunk_repository import (
-    ArtifactManifest,
-    ArtifactRepository,
-    ChunkEncoding,
-)
+from ...lifecycle._chunk_repository import ArtifactRepository, ChunkEncoding
 from ...lifecycle._distributed_checkpoint import (
     _NO_PARENT_ID,
     assemble_distributed_checkpoint_from_repository,
     ProcessCheckpointPublication,
     publish_process_checkpoint,
+    read_process_checkpoint_shards,
     restore_global_array_from_checkpoint,
 )
 from ...lifecycle._models import CheckpointManifest
@@ -1270,35 +1267,11 @@ def _validate_publication(
         for key, value in expected.items()
     ):
         raise ValueError("Distributed checkpoint committed metadata is incompatible.")
-    descriptor_payload = metadata["shards"]
-    if len(descriptor_payload.encode("utf-8")) > _MAX_RECONSTRUCTION_METADATA_BYTES:
-        raise ValueError("Distributed checkpoint shard descriptors exceed bounds.")
-    descriptors = json.loads(descriptor_payload)
-    if (
-        not isinstance(descriptors, list)
-        or len(descriptors) != len(publication.shards)
-        or len(descriptors) > _MAX_RESTART_SHARDS
-    ):
-        raise ValueError("Distributed checkpoint shard descriptors are invalid.")
-    for descriptor, shard in zip(descriptors, publication.shards, strict=True):
-        shard_metadata = dict(shard.metadata)
-        if (
-            not isinstance(descriptor, dict)
-            or descriptor.get("shard_id") != shard.shard_id
-            or descriptor.get("payload_digest") != shard.payload_digest
-            or int(descriptor.get("byte_count", -1)) != shard.byte_count
-            or descriptor.get("layout_id") not in shard.layout_ids
-            or any(
-                str(descriptor.get(key)) != value
-                for key, value in shard_metadata.items()
-                if key != "artifact_manifest_id"
-            )
-            or shard_metadata.get("artifact_manifest_id") != durable.manifest_id
-            or shard_metadata.get("artifact_id") != artifact_id
-            or shard_metadata.get("process_index") != str(process_index)
-            or shard_metadata.get("topology_epoch") != str(plan.topology_epoch)
-        ):
-            raise ValueError("Distributed checkpoint shard bindings were substituted.")
+    if len(publication.shards) > _MAX_RESTART_SHARDS or tuple(
+        shard.shard_fingerprint
+        for shard in read_process_checkpoint_shards(repository, durable)
+    ) != tuple(shard.shard_fingerprint for shard in publication.shards):
+        raise ValueError("Distributed checkpoint shard bindings were substituted.")
     if any(chunk.transaction_id != durable.transaction_id for chunk in durable.chunks):
         raise ValueError("Distributed checkpoint chunks cross transaction boundaries.")
 
@@ -1362,8 +1335,7 @@ def _validate_manifest_repository_binding(
     parent_checkpoint_id = manifest.parent_checkpoint_id or _NO_PARENT_ID
     parent_manifest_id = manifest.parent_manifest_id or _NO_PARENT_ID
     processes = set()
-    durable_by_artifact: dict[str, ArtifactManifest] = {}
-    descriptors_by_artifact: dict[str, dict[str, dict[str, Any]]] = {}
+    fingerprints_by_artifact: dict[str, frozenset[str]] = {}
     for shard in manifest.shards:
         metadata = dict(shard.metadata)
         process_record = metadata.get("process_index")
@@ -1379,10 +1351,9 @@ def _validate_manifest_repository_binding(
                 "Distributed checkpoint shard rank/artifact binding is invalid."
             )
         processes.add(process_index)
-        if artifact_id not in durable_by_artifact:
+        if artifact_id not in fingerprints_by_artifact:
             durable = repository.get_manifest(artifact_id)
             durable_metadata = dict(durable.metadata)
-            descriptor_payload = durable_metadata.get("shards", "")
             if (
                 durable.provider_id != repository.provider_id
                 or durable.artifact_id != artifact_id
@@ -1395,38 +1366,19 @@ def _validate_manifest_repository_binding(
                 or durable_metadata.get("topology_epoch") != str(plan.topology_epoch)
                 or durable_metadata.get("parent_checkpoint_id") != parent_checkpoint_id
                 or durable_metadata.get("parent_manifest_id") != parent_manifest_id
-                or len(descriptor_payload.encode("utf-8"))
-                > _MAX_RECONSTRUCTION_METADATA_BYTES
             ):
                 raise ValueError(
                     "Distributed checkpoint repository artifact is incompatible."
                 )
-            descriptors = json.loads(descriptor_payload)
-            if (
-                not isinstance(descriptors, list)
-                or len(descriptors) > _MAX_RESTART_SHARDS
-            ):
+            durable_shards = read_process_checkpoint_shards(repository, durable)
+            if len(durable_shards) > _MAX_RESTART_SHARDS:
                 raise ValueError(
                     "Distributed checkpoint repository descriptors are invalid."
                 )
-            durable_by_artifact[artifact_id] = durable
-            descriptors_by_artifact[artifact_id] = {
-                str(value["shard_id"]): value for value in descriptors
-            }
-        descriptor = descriptors_by_artifact[artifact_id].get(shard.shard_id)
-        if descriptor is None or (
-            descriptor.get("payload_digest") != shard.payload_digest
-            or int(descriptor.get("byte_count", -1)) != shard.byte_count
-            or descriptor.get("layout_id") not in shard.layout_ids
-            or metadata.get("logical_name") != descriptor.get("logical_name")
-            or metadata.get("repository_id") != repository.provider_id
-            or metadata.get("parent_checkpoint_id") != parent_checkpoint_id
-            or metadata.get("checkpoint_id") != plan.checkpoint_id
-            or metadata.get("analysis_plan_id") != plan.analysis_plan_id
-            or metadata.get("numeric_revision_id") != plan.numeric_revision_id
-            or metadata.get("execution_plan_id") != plan.execution_plan_id
-            or metadata.get("parent_manifest_id") != parent_manifest_id
-        ):
+            fingerprints_by_artifact[artifact_id] = frozenset(
+                value.shard_fingerprint for value in durable_shards
+            )
+        if shard.shard_fingerprint not in fingerprints_by_artifact[artifact_id]:
             raise ValueError("Distributed checkpoint manifest shard was substituted.")
     if processes != set(range(len(processes))):
         raise ValueError("Distributed checkpoint process coverage is not contiguous.")

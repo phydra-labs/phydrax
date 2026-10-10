@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
@@ -32,6 +33,21 @@ from phydrax.equations._homogeneous_thermodynamics import (
 )
 from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.solver._finite_volume_runtime import PreparedFiniteVolumeRuntime
+
+
+# Thermochemistry never writes energy (the balance runtime refuses any bit change
+# to a component a process does not own), and transport of this spatially
+# uniform periodic state is flux-free, so every SSPRK3 stage returns its base.
+# Energy therefore moves only by the rounding of the content/average
+# conversions and stage combinations applied to one value: 4 content products
+# (initialization, two source-view writes, transport acceptance) at one rounding
+# each; 4 average quotients (two source views, the transport read, the
+# read-out) at up to two roundings each, because XLA may lower division by a
+# broadcast volume as a reciprocal product; and at most 5 roundings on any path
+# of the stage combinations 3/4 u + 1/4 u and fl(1/3) u + fl(2/3) v.  With
+# n = 17 roundings and unit roundoff 2**-53, |change| <= gamma_n |energy|.
+_UNIT_ROUNDOFF = 2.0**-53
+_FLUX_FREE_ENERGY_RTOL = 17 * _UNIT_ROUNDOFF / (1.0 - 17 * _UNIT_ROUNDOFF)
 
 
 def _problem(rate: Any = 1.0, *, viscous: Any = False) -> Any:
@@ -176,16 +192,17 @@ def test_reacting_advance_scenario_1() -> None:
     np.testing.assert_allclose(
         after[..., system.energy_index],
         conserved[..., system.energy_index],
-        rtol=0.0,
+        rtol=_FLUX_FREE_ENERGY_RTOL,
         atol=0.0,
     )
     _, mechanism, runtime, conserved = _problem(rate=1.0e6)
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=1)
     result = _advance(balance, runtime, conserved, 0.01)
     after = _average(result, conserved.shape)
+    incoming = runtime.initialize_state(conserved, 0.0, 0.01).cell_average()
 
     assert not bool(result.accepted)
-    np.testing.assert_array_equal(after, conserved)
+    np.testing.assert_array_equal(after, incoming.reshape(conserved.shape))
 
 
 def test_thermochemistry_process_composes_with_viscous_mixture_transport() -> None:
@@ -197,6 +214,30 @@ def test_thermochemistry_process_composes_with_viscous_mixture_transport() -> No
     assert isinstance(system, HomogeneousMixtureCompressibleNavierStokesSystem)
     assert bool(result.accepted)
     assert float(after[0, 0]) < float(conserved[0, 0])
+    np.testing.assert_allclose(
+        after[..., system.energy_index],
+        conserved[..., system.energy_index],
+        rtol=_FLUX_FREE_ENERGY_RTOL,
+        atol=0.0,
+    )
+
+
+def test_compiled_reacting_rollout_matches_eager_step() -> None:
+    _, mechanism, runtime, conserved = _problem()
+    balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=16)
+    initial = balance.initialize_state(runtime.initialize_state(conserved, 0.0, 0.05))
+    plan = phx.solver.ScheduledBalanceLawRolloutPlan(
+        balance, phx.discretization.TemporalMesh(jnp.asarray((0.0, 0.05)))
+    )
+    eager = balance.advance_prescribed(initial, 0.0, 0.05)
+    compiled = eqx.filter_jit(lambda rollout, state: rollout.rollout(state))(
+        plan, initial
+    )
+
+    assert bool(eager.accepted)
+    assert bool(compiled.accepted[0])
+    assert int(compiled.statuses[0]) == int(eager.status)
     np.testing.assert_array_equal(
-        after[..., system.energy_index], conserved[..., system.energy_index]
+        compiled.final_state.transport_state.content_state.conservative_content,
+        eager.runtime_state.transport_state.content_state.conservative_content,
     )

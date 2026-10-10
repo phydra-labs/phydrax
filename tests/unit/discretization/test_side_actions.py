@@ -2250,6 +2250,7 @@ def test_fv_face_state_routes_are_local_with_exact_transposes_and_volume_adjoint
         rtol=1e-12,
     )
     # Partial assembly: each facet gathers its side cell and that cell's stencil.
+    assert isinstance(trace.route, SideGatherRoute)
     assert trace.route.dofs.shape == (
         trace.output_shape[0],
         1 + reconstruction.report.stencil_capacity,

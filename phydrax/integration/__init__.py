@@ -222,25 +222,7 @@ from ._sparse_grid import (
     prepare_adaptive_sparse_grid,
     SparseGridRealization,
 )
-from ._splitting import (
-    adaptive_multilevel_splitting,
-    AdaptiveMultilevelSplittingPlan,
-    AdaptiveMultilevelSplittingResult,
-    AdaptiveSplittingBranchRequest,
-    AdaptiveSplittingDiagnostics,
-    AdaptiveSplittingEnsembleResult,
-    AdaptiveSplittingStatus,
-    InitialPathSampler,
-    PathBranchSampler,
-    replicate_adaptive_multilevel_splitting,
-)
 from ._status import IntegrationStatus, status_message
-from ._surrogate import (
-    smolyak_surrogate_expectation,
-    SmolyakInputSampler,
-    SmolyakProbabilityInputSampler,
-    SmolyakSurrogateHierarchyAdapter,
-)
 from ._targets import (
     ComponentTarget,
     density,
@@ -268,7 +250,12 @@ from ._transformations import (
 from ._vegas import __all__ as _vegas_all
 
 
-_FACADE_EXPORT_MODULES = ("._complex_weight", "._vegas")
+_FACADE_EXPORT_MODULES = (
+    "._complex_weight",
+    "._vegas",
+    "._splitting",
+    "._surrogate",
+)
 
 
 def __getattr__(name: str) -> Any:

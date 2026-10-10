@@ -93,7 +93,6 @@ def phoresis_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             f"{name}.profile",
             "phydrax",
-            "candidate",
             (SupportTuple(name, {"regime": "reduced-dilute-sphere"}),),
             required_gates=("analytic-mobility", "force-balance", "support-refusal"),
         )

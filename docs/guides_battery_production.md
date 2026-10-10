@@ -91,6 +91,13 @@ The retained distribution manifest content-addresses the source build, wheel,
 sdist, and SBOM mapping. Scientific evidence uses its source build ID; runtime
 admission uses its distinct distribution ID. Both identities are authenticated.
 
+Capability profiles have no internal version or generation field. Their canonical
+profile IDs bind provider, exact support, dependencies, gates, and scientific
+evidence content. Release admission reconstructs that identity from the retained
+typed proof; matching display names alone cannot authorize execution. OED retains
+the exact released profile ID and support-tuple ID while its pre-gate scientific
+subject binds model/provider/support without a circular evidence citation.
+
 `QualificationRoleTrust` assigns distinct keys to criterion approver, executor,
 scientific reviewer, entry-decision authority, release authority, and channel
 promoter. Ed25519/KMS purpose signatures use the existing signing trust store's

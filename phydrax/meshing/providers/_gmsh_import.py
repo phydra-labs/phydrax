@@ -12,21 +12,29 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
 
 if TYPE_CHECKING:
-    from OCP.TopoDS import TopoDS_Edge, TopoDS_Shape
+    from OCP.TopoDS import TopoDS_Shape
 
+from ..._fingerprint import canonical_fingerprint
 from ...geometry.brep import BRepModel, BRepPartitionResult, BRepSource
-from ...geometry.brep._occt import _explore_unique, read_occt_shape
+from ...interchange._cad_brep_text import write_brep_text
+from ...interchange._cad_occt import _explore_unique, read_occt_shape
 from .._contracts import MeshingFailure, MeshingFailureCategory
 from .._planar_bands import PlanarBandResult
 from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import MeshingStageKind
+from ._gmsh_inventory import (
+    _cad_occurrence_inventory,
+    _cad_scope_set,
+    _CadOccurrenceInventory,
+    _exact_geometry,
+)
 
 
 _BRepMeshingSource = BRepModel | BRepSource | BRepPartitionResult | PlanarBandResult
@@ -52,7 +60,7 @@ def _entity_scope(source: BRepModel, dimension: int, identifiers: Any, /) -> Mes
         source.report.source_revision,
         MeshingEntityKind.GEOMETRY,
         dimension,
-        f"{source.report.source_revision}:brep:{dimension}",
+        _cad_scope_set(source, dimension),
         np.asarray(identifiers, dtype=np.int64),
     )
 
@@ -66,8 +74,10 @@ class _CadImport:
     """One digest-verified CAD artifact owned by a Gmsh session."""
 
     digest: str
+    source_model_id: str
+    export_digest: str
     snapshot: Path
-    shape: object
+    shape: TopoDS_Shape
     inventory: tuple[tuple[int, int], ...] | None
     entity_maps: dict[str, _CadEntityMap]
 
@@ -75,10 +85,10 @@ class _CadImport:
 class _CadImportCache:
     """Session CAD imports keyed by source revision and coordinate contract.
 
-    Entries own a private snapshot of the digest-verified source bytes, the parsed
-    OCCT shape, and resolved Gmsh entity maps. Every acquisition re-digests the
-    persisted source first, so replaced bytes evict the entry before any reuse,
-    and Gmsh imports the verified snapshot rather than the mutable source path.
+    Entries own a verified native BRep text export in the source coordinate
+    unit, its explicit OCCT comparison shape, and revision-qualified Gmsh
+    entity maps. Native snapshot model/revision identity owns acquisition;
+    original paths are provenance, while Gmsh consumes only the checked export.
     """
 
     def __init__(self, capacity: int, /) -> None:
@@ -99,49 +109,53 @@ class _CadImportCache:
 
     def acquire(self, source: BRepModel, /) -> _CadImport:
         report = source.report
-        path = Path(report.source_id)
-        if not path.is_file():
+        if source.geometry is None:
             raise MeshingFailure(
                 MeshingFailureCategory.INVALID_SOURCE,
-                "Gmsh BRep meshing requires a reopenable STEP/IGES/BREP source path.",
+                "External CAD meshing requires an exact native source model.",
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
-        payload = path.read_bytes()
-        digest = hashlib.sha256(payload).hexdigest()
+        digest = report.source_digest
         key = (report.source_revision, source.coordinate_contract.spatial_id)
         entry = self._entries.get(key)
-        if entry is not None and entry.digest != digest:
+        if entry is not None and (
+            entry.digest != digest or entry.source_model_id != source.model_id
+        ):
             self._evict(key)
             entry = None
-        if digest != report.source_digest:
-            raise MeshingFailure(
-                MeshingFailureCategory.INVALID_SOURCE,
-                "The persisted BRep source bytes changed after import.",
-                stage=MeshingStageKind.SOURCE_INSPECTION.value,
-            )
         if entry is not None:
             self.hits += 1
             self._entries.move_to_end(key)
             return entry
         self.misses += 1
         self._created += 1
-        snapshot = Path(self._workspace.name) / f"{self._created}{path.suffix.lower()}"
-        snapshot.write_bytes(payload)
+        # Export native geometry in its declared coordinate unit. Importing raw
+        # STEP/IGES in OCCT would otherwise silently choose the engine's units.
+        snapshot = Path(self._workspace.name) / f"{self._created}.brep"
+        exported = write_brep_text(source, snapshot)
         shape, source_format, snapshot_digest = read_occt_shape(snapshot)
-        if snapshot_digest != digest or source_format != report.source_format:
+        if snapshot_digest != exported.receipt.content_sha256 or source_format != "brep":
             snapshot.unlink(missing_ok=True)
             raise MeshingFailure(
                 MeshingFailureCategory.INVALID_SOURCE,
-                "The persisted BRep source bytes changed after import.",
+                "The native CAD comparison export changed before engine import.",
                 stage=MeshingStageKind.SOURCE_INSPECTION.value,
             )
-        entry = _CadImport(digest, snapshot, shape, None, {})
+        entry = _CadImport(
+            digest, source.model_id, snapshot_digest, snapshot, shape, None, {}
+        )
         self._entries[key] = entry
         while len(self._entries) > self._capacity:
             self._evict(next(iter(self._entries)))
         return entry
 
     def import_shapes(self, gmsh: Any, entry: _CadImport, /) -> None:
+        if hashlib.sha256(entry.snapshot.read_bytes()).hexdigest() != entry.export_digest:
+            raise MeshingFailure(
+                MeshingFailureCategory.INVALID_SOURCE,
+                "The verified native comparison export changed before Gmsh import.",
+                stage=MeshingStageKind.SOURCE_INSPECTION.value,
+            )
         # Free curves and points must survive import so protection can embed them.
         gmsh.model.occ.importShapes(str(entry.snapshot), highestDimOnly=False)
         gmsh.model.occ.synchronize()
@@ -175,28 +189,19 @@ class _CadImportCache:
         self._workspace.cleanup()
 
 
-@runtime_checkable
-class _TopoDSEdgeCaster(Protocol):
-    @staticmethod
-    def Edge_s(shape: TopoDS_Shape, /) -> TopoDS_Edge: ...
-
-
-def _scope_samples(
-    source: BRepModel, shape: Any, scope: MeshingScope, /
-) -> tuple[np.ndarray, ...]:
+def _scope_samples(source: BRepModel, scope: MeshingScope, /) -> tuple[np.ndarray, ...]:
     """Sample stable source entities independently of Gmsh's import tag numbering."""
     ids = np.asarray(scope.entity_ids, dtype=np.int64)
-    counts = {
-        0: source.report.num_vertices,
-        1: source.report.num_edges,
-        2: source.report.num_faces,
-    }
+    inventory = _cad_occurrence_inventory(source)
+    counts = {dimension: len(inventory.entities[dimension]) for dimension in (0, 1, 2)}
     if (
         scope.entity_kind is not MeshingEntityKind.GEOMETRY
         or scope.entity_dimension not in counts
         or scope.source_id != source.report.source_id
         or scope.source_revision != source.report.source_revision
+        or scope.entity_set_id != _cad_scope_set(source, scope.entity_dimension)
         or np.any(ids >= counts[scope.entity_dimension])
+        or np.any(ids < 0)
     ):
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
@@ -206,7 +211,8 @@ def _scope_samples(
         face_ids = np.asarray(source.triangle_face_ids)
         parameters = np.asarray(source.triangle_parameters)
         result = []
-        for face in ids:
+        for face_row in ids:
+            face = inventory.entities[2][int(face_row)].index
             triangles = np.flatnonzero(face_ids == face)
             if not triangles.size:
                 raise MeshingFailure(
@@ -217,32 +223,43 @@ def _scope_samples(
                 np.linspace(0, len(triangles) - 1, min(3, len(triangles)), dtype=np.int64)
             ]
             uv = np.mean(parameters[selected], axis=1)
-            result.append(np.asarray(source.patches[int(face)].evaluate(jnp.asarray(uv))))
+            values = np.asarray(source.patches[face].evaluate(jnp.asarray(uv)))
+            result.append(inventory.world_points(2, int(face_row), values))
         return tuple(result)
-    from OCP.BRep import BRep_Tool
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
-    from OCP.TopoDS import TopoDS
-
+    geometry = _exact_geometry(source)
     if scope.entity_dimension == 0:
-        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
-        result = []
-        for vertex in ids:
-            point = BRep_Tool.Pnt_s(vertices[int(vertex)])
-            result.append(np.asarray(((point.X(), point.Y(), point.Z()),)))
-        return tuple(result)
-    if not isinstance(TopoDS, _TopoDSEdgeCaster):
-        raise MeshingFailure(
-            MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-            "The CAD kernel must expose the TopoDS.Edge_s edge downcast.",
+        points = np.asarray(geometry.vertex_points, dtype=np.float64)
+        return tuple(
+            inventory.world_points(
+                0,
+                int(row),
+                points[
+                    inventory.entities[0][int(row)].index : inventory.entities[0][
+                        int(row)
+                    ].index
+                    + 1
+                ],
+            )
+            for row in ids
         )
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
     result = []
-    for edge in ids:
-        curve = BRepAdaptor_Curve(edges[int(edge)])
-        parameters = np.linspace(curve.FirstParameter(), curve.LastParameter(), 5)[1:-1]
-        values = [curve.Value(float(value)) for value in parameters]
-        result.append(np.asarray([(point.X(), point.Y(), point.Z()) for point in values]))
+    ranges = np.asarray(geometry.edge_ranges, dtype=np.float64)
+    for edge_row in ids:
+        edge = inventory.entities[1][int(edge_row)].index
+        curve_index = geometry.edge_curves[edge]
+        if curve_index == -1:
+            raise MeshingFailure(
+                MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
+                "A collapsed native pole edge has no external curve entity.",
+                stage=MeshingStageKind.SCOPE_RESOLUTION.value,
+            )
+        parameters = np.linspace(
+            float(ranges[edge, 0]), float(ranges[edge, 1]), 5, dtype=np.float64
+        )[1:-1]
+        values = np.asarray(
+            geometry.curves[curve_index].evaluate(jnp.asarray(parameters))
+        )
+        result.append(inventory.world_points(1, int(edge_row), values))
     return tuple(result)
 
 
@@ -255,15 +272,21 @@ def _match_entities(
         for tag in candidates:
             if tag in result:
                 continue
-            closest, _ = gmsh.model.getClosestPoint(
-                dimension, tag, np.asarray(points).reshape(-1)
-            )
-            closest = np.asarray(closest).reshape((-1, 3))
+            if dimension == 0:
+                closest = np.asarray(gmsh.model.getValue(0, tag, [])).reshape((-1, 3))
+                inside = True
+            else:
+                values, _ = gmsh.model.getClosestPoint(
+                    dimension, tag, np.asarray(points).reshape(-1)
+                )
+                closest = np.asarray(values).reshape((-1, 3))
+                inside = gmsh.model.isInside(dimension, tag, closest.reshape(-1)) == len(
+                    points
+                )
             if (
                 closest.shape == points.shape
                 and np.max(np.linalg.norm(closest - points, axis=1)) <= tolerance
-                and gmsh.model.isInside(dimension, tag, closest.reshape(-1))
-                == len(points)
+                and inside
             ):
                 matches.append(tag)
         if len(matches) != 1:
@@ -277,9 +300,9 @@ def _match_entities(
 
 
 def _resolve_entities(
-    gmsh: Any, source: Any, shape: Any, scope: Any, /
+    gmsh: Any, source: BRepModel, scope: MeshingScope, /
 ) -> tuple[int, ...]:
-    samples = _scope_samples(source, shape, scope)
+    samples = _scope_samples(source, scope)
     return _match_entities(
         gmsh,
         scope.entity_dimension,
@@ -291,9 +314,75 @@ def _resolve_entities(
 
 @dataclass(frozen=True, slots=True)
 class _CadEntityMap:
+    source_model_id: str
+    source_revision: str
+    artifact_digest: str
+    native_export_digest: str
+    correspondence_id: str
+    inventory: _CadOccurrenceInventory
     face_to_surface: tuple[int, ...]
     solid_to_volume: tuple[int, ...]
-    edge_to_curve: tuple[int, ...] = ()
+    edge_to_curve: tuple[int, ...]
+
+    def require_source(self, source: BRepModel, /) -> None:
+        if (
+            self.source_model_id != source.model_id
+            or self.source_revision != source.source_revision
+            or self.artifact_digest != source.source_digest
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.ASSOCIATION_FAILED,
+                "External CAD correspondence belongs to a different native source revision.",
+                stage=MeshingStageKind.CANONICALIZATION.value,
+            )
+
+
+def _cad_entity_map(
+    source: BRepModel,
+    export_digest: str,
+    faces: tuple[int, ...],
+    solids: tuple[int, ...],
+    edges: tuple[int, ...] = (),
+    /,
+) -> _CadEntityMap:
+    """Bind a verified external tag correspondence to exact native authority."""
+    inventory = _cad_occurrence_inventory(source)
+    if (
+        len(faces) != inventory.topology.num_faces
+        or len(solids) != inventory.topology.num_solids
+    ):
+        raise MeshingFailure(
+            MeshingFailureCategory.ASSOCIATION_FAILED,
+            "External CAD correspondence does not cover the native source strata.",
+            stage=MeshingStageKind.SCOPE_RESOLUTION.value,
+        )
+    identifier = canonical_fingerprint(
+        {
+            "kind": "native-source-gmsh-correspondence",
+            "model_id": source.model_id,
+            "source_revision": source.source_revision,
+            "artifact_digest": source.source_digest,
+            "native_export_digest": export_digest,
+            "qualified_entities": [
+                [(entity.kind, entity.index, entity.occurrence_path) for entity in rows]
+                for rows in inventory.entities
+            ],
+            "face_to_surface": faces,
+            "solid_to_volume": solids,
+            "edge_to_curve": edges,
+        }
+    )
+    return _CadEntityMap(
+        source.model_id,
+        source.source_revision,
+        source.source_digest,
+        export_digest,
+        identifier,
+        inventory,
+        faces,
+        solids,
+        edges,
+    )
 
 
 def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]:
@@ -302,10 +391,10 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
-    from OCP.TopAbs import TopAbs_SOLID
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
     from OCP.TopoDS import TopoDS
 
-    topology = source.topology
+    topology = _cad_occurrence_inventory(source).topology
     if (
         any(not faces for faces in topology.solid_faces)
         or any(len(owners) not in (1, 2) for owners in topology.face_solids)
@@ -341,10 +430,8 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
     volume_tolerance = 1.0e-12 * scale**3
     contact_tolerance = 1.0e-9 * scale
     for left_index, left in enumerate(solids):
-        left_faces = set(topology.solid_faces[left_index])
-        for right_index, right in enumerate(
-            solids[left_index + 1 :], start=left_index + 1
-        ):
+        left_faces = _explore_unique(left, TopAbs_FACE, TopoDS.Face)
+        for right in solids[left_index + 1 :]:
             distance = BRepExtrema_DistShapeShape(left, right)
             distance.Perform()
             if not distance.IsDone():
@@ -353,7 +440,11 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
                     "BRep solid contact validation did not complete.",
                     stage=MeshingStageKind.SOURCE_INSPECTION.value,
                 )
-            shared_faces = left_faces & set(topology.solid_faces[right_index])
+            shared_faces = any(
+                first.IsSame(second)
+                for first in left_faces
+                for second in _explore_unique(right, TopAbs_FACE, TopoDS.Face)
+            )
             if not shared_faces and float(distance.Value()) <= contact_tolerance:
                 raise MeshingFailure(
                     MeshingFailureCategory.INVALID_SOURCE,
@@ -380,33 +471,41 @@ def _validate_source_solids(source: BRepModel, shape: Any, /) -> tuple[Any, ...]
 
 
 def _resolve_planar_cad_entity_map(
-    gmsh: Any, source: BRepModel, shape: Any, /
+    gmsh: Any, source: BRepModel, entry: _CadImport, /
 ) -> _CadEntityMap:
-    if source.topology.num_solids:
+    inventory = _cad_occurrence_inventory(source)
+    topology = inventory.topology
+    if topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
             "Strict planar CAD meshing requires a zero-solid BRep.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
     face_tags = _resolve_entities(
-        gmsh,
-        source,
-        shape,
-        _entity_scope(source, 2, np.arange(source.report.num_faces)),
+        gmsh, source, _entity_scope(source, 2, np.arange(topology.num_faces))
     )
-    edge_tags = _resolve_entities(
-        gmsh,
-        source,
-        shape,
-        _entity_scope(source, 1, np.arange(source.report.num_edges)),
+    geometry = _exact_geometry(source)
+    active_edges = np.asarray(
+        [
+            row
+            for row, entity in enumerate(inventory.entities[1])
+            if geometry.edge_curves[entity.index] >= 0
+        ],
+        dtype=np.int64,
     )
+    resolved_edges = _resolve_entities(
+        gmsh, source, _entity_scope(source, 1, active_edges)
+    )
+    edge_tags = [0] * topology.num_edges
+    for row, tag in zip(active_edges.tolist(), resolved_edges, strict=True):
+        edge_tags[row] = tag
     if set(face_tags) != {tag for _, tag in gmsh.model.getEntities(2)}:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
             "Imported Gmsh surfaces are not a bijection with planar BRep faces.",
             stage=MeshingStageKind.SCOPE_RESOLUTION.value,
         )
-    if set(edge_tags) != {tag for _, tag in gmsh.model.getEntities(1)}:
+    if {tag for tag in edge_tags if tag} != {tag for _, tag in gmsh.model.getEntities(1)}:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
             "Imported Gmsh curves are not a bijection with planar BRep edges.",
@@ -417,7 +516,11 @@ def _resolve_planar_cad_entity_map(
             [(2, surface)], combined=False, oriented=False, recursive=False
         )
         actual = {abs(int(tag)) for dimension, tag in boundary if dimension == 1}
-        expected = {edge_tags[index] for index in source.topology.face_edges[face_index]}
+        expected = {
+            edge_tags[index]
+            for index in topology.face_edges[face_index]
+            if edge_tags[index]
+        }
         if len(actual) != len(boundary) or actual != expected:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
@@ -425,16 +528,20 @@ def _resolve_planar_cad_entity_map(
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
     for edge_index, curve in enumerate(edge_tags):
+        if not curve:
+            continue
         upward, _ = gmsh.model.getAdjacencies(1, curve)
         actual = {int(value) for value in np.asarray(upward, dtype=np.int64)}
-        expected = {face_tags[index] for index in source.topology.edge_faces[edge_index]}
+        expected = {face_tags[index] for index in topology.edge_faces[edge_index]}
         if actual != expected:
             raise MeshingFailure(
                 MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
                 "Gmsh curve-to-surface adjacency differs from source planar incidence.",
                 stage=MeshingStageKind.SCOPE_RESOLUTION.value,
             )
-    return _CadEntityMap(tuple(face_tags), (), tuple(edge_tags))
+    return _cad_entity_map(
+        source, entry.export_digest, tuple(face_tags), (), tuple(edge_tags)
+    )
 
 
 def _volume_boundaries(
@@ -469,13 +576,13 @@ def _volume_boundaries(
     return boundary_faces, boundary_orientations
 
 
-def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _CadEntityMap:
-    _validate_source_solids(source, shape)
+def _resolve_cad_entity_map(
+    gmsh: Any, source: BRepModel, entry: _CadImport, /
+) -> _CadEntityMap:
+    _validate_source_solids(source, entry.shape)
+    topology = _cad_occurrence_inventory(source).topology
     face_tags = _resolve_entities(
-        gmsh,
-        source,
-        shape,
-        _entity_scope(source, 2, np.arange(source.report.num_faces)),
+        gmsh, source, _entity_scope(source, 2, np.arange(topology.num_faces))
     )
     imported_surfaces = {tag for _, tag in gmsh.model.getEntities(2)}
     if set(face_tags) != imported_surfaces:
@@ -486,7 +593,7 @@ def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _Cad
         )
 
     volume_tags = tuple(tag for _, tag in sorted(gmsh.model.getEntities(3)))
-    if len(volume_tags) != source.topology.num_solids:
+    if len(volume_tags) != topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.SCOPE_RESOLUTION_FAILED,
             "Imported Gmsh volumes do not match the source solid inventory.",
@@ -496,7 +603,7 @@ def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _Cad
 
     solid_to_volume = []
     used_volumes = set()
-    for faces in source.topology.solid_faces:
+    for faces in topology.solid_faces:
         expected = frozenset(face_tags[face] for face in faces)
         candidates = tuple(
             volume
@@ -519,7 +626,7 @@ def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _Cad
         )
 
     for face_index, surface in enumerate(face_tags):
-        source_owners = source.topology.face_solids[face_index]
+        source_owners = topology.face_solids[face_index]
         expected_volumes = {solid_to_volume[owner] for owner in source_owners}
         upward, _ = gmsh.model.getAdjacencies(2, surface)
         actual_volumes = {int(value) for value in np.asarray(upward, dtype=np.int64)}
@@ -540,4 +647,6 @@ def _resolve_cad_entity_map(gmsh: Any, source: BRepModel, shape: Any, /) -> _Cad
                     "A shared Gmsh surface has inconsistent volume orientations.",
                     stage=MeshingStageKind.SCOPE_RESOLUTION.value,
                 )
-    return _CadEntityMap(tuple(face_tags), tuple(solid_to_volume))
+    return _cad_entity_map(
+        source, entry.export_digest, tuple(face_tags), tuple(solid_to_volume)
+    )

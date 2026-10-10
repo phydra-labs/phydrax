@@ -50,10 +50,7 @@ See [building energy](guides_building_energy.md), [energy planning](guides_energ
 
 ## API
 
-::: phydrax.applications.EnergySeries
-
-::: phydrax.applications.rebin_energy_series
-
-::: phydrax.applications.integrate_energy_series
-
-::: phydrax.applications.counter_to_intervals
+The public application facade exports `EnergySeries`,
+`rebin_energy_series`, `integrate_energy_series`, and
+`counter_to_intervals`. Their exact signatures and canonical paths are retained
+in the generated public API manifest.

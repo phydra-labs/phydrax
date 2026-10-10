@@ -36,7 +36,6 @@ def phase_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     deterministic = CapabilityProfile(
         "phase-field-deterministic-general-binary",
         "phydrax-native",
-        "candidate",
         (deterministic_support,),
         required_gates=(
             "behavioral",
@@ -62,7 +61,6 @@ def phase_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     stochastic = CapabilityProfile(
         "phase-field-stochastic-adaptive-binary",
         "phydrax-native",
-        "candidate",
         (stochastic_support,),
         dependencies=(
             SupportDependency(
@@ -94,7 +92,6 @@ def phase_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     active = CapabilityProfile(
         "phase-field-active-grand-potential",
         "phydrax-native",
-        "candidate",
         (active_support,),
         dependencies=(
             SupportDependency(
@@ -127,7 +124,6 @@ def phase_field_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     flagship = CapabilityProfile(
         "phase-field-fully-integrated-flagship",
         "phydrax-native",
-        "candidate",
         (flagship_support,),
         dependencies=(
             SupportDependency(stochastic.profile_id, stochastic_support.support_tuple_id),
@@ -198,7 +194,6 @@ def phase_field_released_profiles(
             CapabilityProfile(
                 candidate.name,
                 candidate.provider,
-                "released",
                 candidate.support_tuples,
                 dependencies=dependencies,
                 required_gates=candidate.required_gates,

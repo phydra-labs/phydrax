@@ -4,6 +4,9 @@
 
 """Typed external measurements and predicted scientific quantities."""
 
+from importlib import import_module
+from typing import Any, TYPE_CHECKING
+
 from ._asset import (
     AcquisitionIdentity,
     DataOrigin,
@@ -33,7 +36,6 @@ from ._field import (
     SamplingSemantics,
     SpatialSamplingKind,
 )
-from ._las import LasPointProvider
 from ._operations import (
     ConditionPayloadReference,
     DataQualityAnnotation,
@@ -59,6 +61,22 @@ from ._support import (
 from ._time import SampleTimeAxis, TemporalSampling, TemporalSamplingKind, TimeBasis
 from ._waveform import PulseResponse, WaveformSupport
 from .lidar import cartesianize_lidar_scan, LidarPointProduct, LidarScan
+
+
+if TYPE_CHECKING:
+    from ._las import LasPointProvider
+
+
+def __getattr__(name: str) -> Any:
+    if name != "LasPointProvider":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module("._las", __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

@@ -8,25 +8,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
-from OCP.BRepBuilderAPI import (
-    BRepBuilderAPI_MakeFace,
-    BRepBuilderAPI_MakePolygon,
-)
-from OCP.BRepCheck import BRepCheck_Analyzer
-from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCP.gp import gp_Pnt, gp_Vec
-
-
-if TYPE_CHECKING:
-    from OCP.TopoDS import TopoDS_Shape, TopoDS_Wire
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
+from ...interchange._cad_archive import load_brep_archive, save_brep_archive
 from .._cad_revision import AssociationGraph, CADRevision
+from ..brep._constructors import (
+    brep_extrusion,
+    BRepTessellationPolicy,
+    PlanarProfile,
+    ProfileLoop,
+    ProfilePlane,
+)
 from ..brep._model import BRepEntityId, BRepModel
-from ..brep._occt import persist_occt_shape
 from ..brep._partition import (
     BRepPartitionOperand,
     BRepPartitionPatch,
@@ -170,36 +166,28 @@ def _footprint_loops(footprint: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
     return tuple(loops)
 
 
-def _wire(points: np.ndarray, z: float, /) -> TopoDS_Wire:
-    builder = BRepBuilderAPI_MakePolygon()
-    for x, y in points:
-        builder.Add(gp_Pnt(float(x), float(y), z))
-    builder.Close()
-    if not builder.IsDone():
-        raise ValueError("OCCT could not construct a process footprint wire.")
-    return builder.Wire()
-
-
 def _vertical_extrusion(
-    footprint: PlanarMeshRegion, interval: ZInterval, /
-) -> TopoDS_Shape:
+    footprint: PlanarMeshRegion,
+    interval: ZInterval,
+    /,
+    *,
+    coordinate_contract: SpatialCoordinateContract,
+    tessellation: BRepTessellationPolicy,
+    source_id: str,
+) -> BRepModel:
     loops = _footprint_loops(footprint)
-    face_builder = BRepBuilderAPI_MakeFace(_wire(loops[0], interval.lower), True)
-    for hole in loops[1:]:
-        face_builder.Add(_wire(hole, interval.lower))
-    if not face_builder.IsDone():
-        raise ValueError("OCCT could not construct a process footprint face.")
-    prism = BRepPrimAPI_MakePrism(
-        face_builder.Face(),
-        gp_Vec(0.0, 0.0, interval.height),
-        True,
+    profile = PlanarProfile(
+        ProfilePlane(origin=(0.0, 0.0, interval.lower)),
+        ProfileLoop.polygon(loops[0]),
+        tuple(ProfileLoop.polygon(hole) for hole in loops[1:]),
     )
-    if not prism.IsDone():
-        raise ValueError("OCCT could not construct a vertical process extrusion.")
-    shape = prism.Shape()
-    if shape.IsNull() or not BRepCheck_Analyzer(shape).IsValid():
-        raise ValueError("Vertical process extrusion is not a valid OCCT solid.")
-    return shape
+    return brep_extrusion(
+        profile,
+        (0.0, 0.0, interval.height),
+        coordinate_contract=coordinate_contract,
+        tessellation=tessellation,
+        source_id=source_id,
+    )
 
 
 def _persist_operand(
@@ -216,16 +204,25 @@ def _persist_operand(
     angular_deflection: float,
     trim_samples_per_edge: int,
 ) -> tuple[str, BRepModel]:
-    destination = directory / f"{index:04d}-{fingerprint[:16]}.brep"
-    model = persist_occt_shape(
-        _vertical_extrusion(footprint, interval),
-        destination,
-        coordinate_contract=stack.coordinate_contract,
-        overwrite=overwrite,
+    destination = directory / f"{index:04d}-{fingerprint[:16]}.phx"
+    tessellation = BRepTessellationPolicy(
         linear_deflection=linear_deflection,
         angular_deflection=angular_deflection,
         trim_samples_per_edge=trim_samples_per_edge,
     )
+    model = _vertical_extrusion(
+        footprint,
+        interval,
+        coordinate_contract=stack.coordinate_contract,
+        tessellation=tessellation,
+        source_id=f"process-operand:{fingerprint}",
+    )
+    receipt = save_brep_archive(
+        model,
+        destination,
+        mode="atomic_replace" if overwrite else "exclusive",
+    )
+    model = load_brep_archive(receipt.path)
     if model.topology.num_solids != 1:
         raise RuntimeError("A persisted process operand must contain exactly one solid.")
     return operand_id, model
@@ -243,7 +240,13 @@ def lower_process_stack(
     angular_deflection: float = 0.1,
     trim_samples_per_edge: int = 33,
 ) -> ProcessStackResult:
-    """Persist exact extrusions, partition them, and return exact named CAD history."""
+    """Persist exact extrusions, partition them, and return exact named CAD history.
+
+    Operands are lossless native ``.phx`` B-Rep archives in ``operand_directory``;
+    the returned operand models are restored from those archives. Coordinates,
+    exact wall/cap/solid topology and source identities retain the stack's
+    physical coordinate contract. The final destination is external B-Rep text.
+    """
 
     if not isinstance(stack, ProcessStack):
         raise TypeError("stack must be a ProcessStack.")

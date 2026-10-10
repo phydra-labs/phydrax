@@ -29,7 +29,6 @@ def assemble(report: dict[str, object]) -> phx.qualification.CapabilityProfile:
     return phx.qualification.CapabilityProfile(
         "iga.tensor",
         "phydrax",
-        "canonical",
         tuple(supports),
         required_gates=("code-verification", "solution-verification", "operational"),
         release_evidence=(),

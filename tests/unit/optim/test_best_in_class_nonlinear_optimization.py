@@ -7,7 +7,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import phydrax as phx
 
@@ -529,6 +531,217 @@ def test_best_in_class_nonlinear_optimization_scenario_4() -> None:
 
     assert not bool(result.successful)
     assert result.diagnostics.primal_feasibility > 0.0
+
+
+def test_cobyqa_concrete_host_bounds_and_nonlinear_values() -> None:
+    calls = {"objective": 0, "constraint": 0}
+
+    def objective(parameters: dict[str, object], args: object) -> float:
+        calls["objective"] += 1
+        coordinates = np.asarray(parameters["x"])
+        assert np.all(np.abs(coordinates) <= 1.0)
+        return float(np.sum((coordinates - np.asarray([0.25, -0.5])) ** 2))
+
+    def constraint(
+        parameters: dict[str, object], args: object
+    ) -> dict[str, NDArray[np.float64]]:
+        calls["constraint"] += 1
+        return {"sum": np.asarray(np.sum(np.asarray(parameters["x"])), dtype=np.float64)}
+
+    result = opt.minimize(
+        opt.MinimizationProblem(
+            objective,
+            bounds=opt.Bounds(-1.0, 1.0),
+            constraints=(opt.NonlinearConstraint(constraint, lower=-1.0, upper=1.0),),
+        ),
+        {"x": jnp.asarray([3.0, -3.0])},
+        method=opt.COBYQA(initial_radius=0.5),
+        termination=_termination(200),
+    )
+
+    assert bool(result.successful)
+    assert np.allclose(np.asarray(result.parameters["x"]), [0.25, -0.5], atol=1e-4)
+    assert int(result.diagnostics.objective_evaluations) == calls["objective"]
+    assert int(result.diagnostics.constraint_evaluations) == calls["constraint"]
+    assert float(result.diagnostics.primal_feasibility) == 0.0
+
+
+@pytest.mark.parametrize("budget", [1, 2, 3, 5, 6])
+def test_model_based_hard_initial_and_poll_allowance(budget: int) -> None:
+    calls = 0
+
+    def objective(parameters: object, args: object) -> float:
+        nonlocal calls
+        calls += 1
+        coordinate = float(np.asarray(parameters)[0])
+        return 0.0 if coordinate == 0.0 else 1.0 + 0.1 * coordinate
+
+    result = opt.minimize(
+        opt.MinimizationProblem(objective, bounds=opt.Bounds(-1.0, 1.0)),
+        jnp.zeros((1,)),
+        method=opt.BOBYQA(),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=1e-6,
+            relative_optimality=0.0,
+            maximum_evaluations=budget,
+        ),
+    )
+
+    assert calls <= budget
+    assert int(result.diagnostics.objective_evaluations) == calls
+    assert int(result.status) == int(opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert np.isnan(float(result.diagnostics.final_optimality_norm))
+    assert float(result.objective) == 0.0
+    assert np.all(np.abs(np.asarray(result.parameters)) <= 1.0)
+
+
+@pytest.mark.parametrize(
+    "budget, expected_calls, successful", [(4, 3, False), (5, 5, True)]
+)
+def test_model_based_terminal_gradient_requires_complete_allowance(
+    budget: int, expected_calls: int, successful: bool
+) -> None:
+    calls = 0
+
+    def objective(parameters: object, args: object) -> float:
+        nonlocal calls
+        calls += 1
+        return float(np.asarray(parameters)[0] ** 2)
+
+    result = opt.minimize(
+        opt.MinimizationProblem(objective, bounds=opt.Bounds(-1.0, 1.0)),
+        jnp.zeros((1,)),
+        method=opt.BOBYQA(),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=1e-6,
+            relative_optimality=0.0,
+            maximum_evaluations=budget,
+        ),
+    )
+
+    assert calls == expected_calls
+    assert int(result.diagnostics.objective_evaluations) == calls
+    assert bool(result.successful) is successful
+    if successful:
+        assert float(result.diagnostics.final_optimality_norm) <= 1e-6
+    else:
+        assert int(result.status) == int(
+            opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+        )
+        assert np.isnan(float(result.diagnostics.final_optimality_norm))
+
+
+@pytest.mark.parametrize("enforce_equality", [False, True])
+def test_cobyqa_exhausted_initial_allowance_retains_best_feasible_state(
+    enforce_equality: bool,
+) -> None:
+    result = opt.minimize(
+        opt.MinimizationProblem(
+            lambda parameters, args: float((np.asarray(parameters)[0] - 0.25) ** 2),
+            bounds=opt.Bounds(-1.0, 1.0),
+            constraints=(
+                (
+                    opt.NonlinearConstraint(
+                        lambda parameters, args: {"equality": np.asarray(parameters)},
+                        lower=0.0,
+                        upper=0.0,
+                    ),
+                )
+                if enforce_equality
+                else ()
+            ),
+        ),
+        jnp.zeros((1,)),
+        method=opt.COBYQA(),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=1e-6, maximum_evaluations=2
+        ),
+    )
+
+    assert int(result.status) == int(opt.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert np.array_equal(
+        np.asarray(result.parameters), [0.0 if enforce_equality else 0.25]
+    )
+    assert float(result.objective) == (0.0625 if enforce_equality else 0.0)
+    assert float(result.diagnostics.primal_feasibility) == 0.0
+    assert int(result.diagnostics.objective_evaluations) == 2
+    assert int(result.diagnostics.constraint_evaluations) == (
+        2 if enforce_equality else 0
+    )
+
+
+def test_model_based_nonfinite_terminal_check_cannot_report_success() -> None:
+    calls = 0
+
+    def objective(parameters: object, args: object) -> float:
+        nonlocal calls
+        calls += 1
+        return float("inf") if calls == 4 else float(np.asarray(parameters)[0] ** 2)
+
+    result = opt.minimize(
+        opt.MinimizationProblem(objective, bounds=opt.Bounds(-1.0, 1.0)),
+        jnp.zeros((1,)),
+        method=opt.BOBYQA(),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=1e-6, maximum_evaluations=5
+        ),
+    )
+
+    assert calls == int(result.diagnostics.objective_evaluations) == 4
+    assert int(result.status) == int(opt.OptimizationStatus.NONFINITE_EVALUATION)
+    assert np.array_equal(np.asarray(result.parameters), [0.0])
+    assert float(result.objective) == 0.0
+    assert np.isnan(float(result.diagnostics.final_optimality_norm))
+
+
+@pytest.mark.parametrize("failure_call", [1, 2, 4, 5])
+@pytest.mark.parametrize("nonfinite_constraint", [False, True])
+def test_cobyqa_nonfinite_evaluation_refuses_and_retains_finite_feasible_state(
+    failure_call: int, nonfinite_constraint: bool
+) -> None:
+    calls = {"objective": 0, "constraint": 0}
+
+    def objective(parameters: object, args: object) -> float:
+        calls["objective"] += 1
+        if calls["objective"] == failure_call and not nonfinite_constraint:
+            return float("inf")
+        coordinate = float(np.asarray(parameters)[0])
+        return 0.0 if coordinate == 0.0 else 1.0 + 0.1 * coordinate
+
+    def constraint(parameters: object, args: object) -> NDArray[np.float64]:
+        calls["constraint"] += 1
+        return np.asarray(
+            [
+                np.nan
+                if calls["constraint"] == failure_call and nonfinite_constraint
+                else 0.0
+            ],
+            dtype=np.float64,
+        )
+
+    result = opt.minimize(
+        opt.MinimizationProblem(
+            objective,
+            bounds=opt.Bounds(-1.0, 1.0),
+            constraints=(opt.NonlinearConstraint(constraint, upper=0.0),),
+        ),
+        jnp.zeros((1,)),
+        method=opt.COBYQA(),
+        termination=opt.OptimizationTermination(
+            absolute_optimality=1e-6, maximum_evaluations=20
+        ),
+    )
+
+    assert int(result.status) == int(opt.OptimizationStatus.NONFINITE_EVALUATION)
+    assert calls["objective"] == calls["constraint"] == failure_call
+    assert int(result.diagnostics.objective_evaluations) == failure_call
+    assert int(result.diagnostics.constraint_evaluations) == failure_call
+    assert np.isnan(float(result.diagnostics.final_optimality_norm))
+    assert not bool(result.successful)
+    if failure_call > 1:
+        assert np.isfinite(float(result.objective))
+        assert float(result.diagnostics.primal_feasibility) == 0.0
+        assert np.array_equal(np.asarray(result.parameters), [0.0])
 
 
 def test_best_in_class_nonlinear_optimization_scenario_5() -> None:

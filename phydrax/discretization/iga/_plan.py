@@ -422,6 +422,47 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             qualification_policy=qualification_policy,
         )
 
+    @classmethod
+    def from_source(
+        cls,
+        source: object,
+        /,
+        *,
+        field_name: str = "u",
+        axis_names: Sequence[str] | None = None,
+        quadrature_policy: IsogeometricQuadraturePolicy,
+        precision_policy: FiniteElementPrecisionPolicy | None = None,
+        qualification_policy: IsogeometricH1QualificationPolicy | None = None,
+    ) -> IsogeometricPlan:
+        """Bind an untrimmed native rational source without changing its bank.
+
+        Native parameter order, knot domains, degree and denominator scale are
+        retained. This does not lower trimmed faces, occurrences or periodic
+        quotient spaces into an unqualified tensor H1 space.
+        """
+        from ...geometry.brep._patches import BSplineCurve, BSplineSurfacePatch
+
+        if isinstance(source, BSplineCurve):
+            grids = (BSplineGrid(source.knots, source.degree),)
+        elif isinstance(source, BSplineSurfacePatch):
+            grids = (
+                BSplineGrid(source.u_knots, source.u_degree),
+                BSplineGrid(source.v_knots, source.v_degree),
+            )
+        else:
+            raise TypeError(
+                "IGA source binding requires an untrimmed native BSplineCurve or BSplineSurfacePatch."
+            )
+        return cls.isoparametric(
+            grids,
+            NURBSGeometryState(source.control_points, source.weights),
+            field_name=field_name,
+            axis_names=axis_names,
+            quadrature_policy=quadrature_policy,
+            precision_policy=precision_policy,
+            qualification_policy=qualification_policy,
+        )
+
     def prepare(
         self, /, *, numeric_version: str = "0"
     ) -> PreparedIsogeometricDiscretization:

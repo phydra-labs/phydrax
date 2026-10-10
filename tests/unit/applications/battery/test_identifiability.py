@@ -64,7 +64,6 @@ def _candidate() -> Any:
     return CapabilityProfile(
         "battery.identifiability-candidate",
         "phydrax-tests",
-        "candidate",
         (support,),
         released=False,
     ), support

@@ -3,15 +3,19 @@
 #
 
 
+import sys
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax._external_runtime import pin_executable
 from phydrax.applications.relativistic_scattering._matrix_element_revision import (
     MatrixElementRevision,
 )
+from phydrax.applications.relativistic_scattering._providers import ExternalHEPProvider
 from phydrax.artifacts import DerivativeEstimatorKind, DerivativeEvidence
 from phydrax.particle_physics._capabilities import HEPProviderBinding
 from phydrax.particle_physics._host_events import HostEventRecord, HostEventWeight
@@ -24,16 +28,18 @@ from phydrax.particle_physics._matching_runtime import (
     record_provider_execution,
 )
 from phydrax.particle_physics._operations import ProcessNormalization
+from phydrax.particle_physics._spectrum_provider import ExternalSpectrumProvider
 from phydrax.particle_physics._weights import WeightVariationKind
 from phydrax.qualification import CapabilityProfile, SupportTuple
 
 
-def _provider_contracts() -> Any:
+def _provider_contracts(
+    *, provider_release: str = "1.2.3", capability: str = "hep.shower"
+) -> Any:
     profile = CapabilityProfile(
         "external-shower",
         "provider-x",
-        "1.2.3",
-        (SupportTuple("hep.shower", {"event_record": "host", "signed_weights": True}),),
+        (SupportTuple(capability, {"event_record": "host", "signed_weights": True}),),
     )
     differentiation = DerivativeEvidence(
         phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
@@ -45,6 +51,7 @@ def _provider_contracts() -> Any:
     binding = HEPProviderBinding(
         profile,
         differentiation,
+        provider_release=provider_release,
         configuration_checksum="configuration-sha256",
         input_profile_ids=("hard-events",),
         output_profile_ids=("showered-events",),
@@ -87,6 +94,28 @@ def _provider_contracts() -> Any:
         differentiation_id=differentiation.evidence_id,
     )
     return binding, normalization, revision
+
+
+@pytest.mark.parametrize(
+    "provider_type,capability",
+    (
+        (ExternalHEPProvider, "hep.shower"),
+        (ExternalSpectrumProvider, "particle-spectrum.external"),
+    ),
+    ids=("external-hep", "external-spectrum"),
+)
+def test_external_release_change_requires_a_new_provider_binding(
+    provider_type: type[ExternalHEPProvider] | type[ExternalSpectrumProvider],
+    capability: str,
+) -> None:
+    binding, _, _ = _provider_contracts(capability=capability)
+    changed, _, _ = _provider_contracts(provider_release="1.2.4", capability=capability)
+    executable = pin_executable(sys.executable, version="1.2.3", license_id="PSF-2.0")
+    assert binding.profile.profile_id == changed.profile.profile_id
+    assert binding.binding_id != changed.binding_id
+    provider_type(executable, binding)
+    with pytest.raises(ValueError, match="releases must match"):
+        provider_type(executable, changed)
 
 
 def _event(source: Any, nominal: Any, shape: Any) -> Any:

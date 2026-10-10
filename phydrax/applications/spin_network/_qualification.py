@@ -28,7 +28,6 @@ def spin_network_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         CapabilityProfile(
             support.capability,
             "phydrax",
-            "research-only",
             (support,),
             required_gates=(
                 "edge-orientation-and-spin-convention",

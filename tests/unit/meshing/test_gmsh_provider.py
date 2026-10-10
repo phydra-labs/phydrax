@@ -1,20 +1,50 @@
 from typing import Any
 
-import build123d as bd
 import numpy as np
 import pytest
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.gp import gp_Pnt
 
 import phydrax as phx
 
 
-gmsh = pytest.importorskip("gmsh")
+gmsh = pytest.importorskip(
+    "gmsh",
+    reason="optional Gmsh comparison provider is not installed; native periodic execution is independent",
+)
+bd = pytest.importorskip(
+    "build123d",
+    reason="optional Gmsh comparison CAD fixture provider is not installed; native periodic execution is independent",
+)
 pytestmark = pytest.mark.meshing_gmsh
+
+_CONTRACT = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
+_IMPORT_POLICY = phx.interchange.CadImportPolicy(
+    _CONTRACT,
+    phx.interchange.ResourceLimits(
+        max_bytes=1 << 24,
+        max_depth=64,
+        max_nodes=100_000,
+        max_attributes=2_000_000,
+        max_losses=8,
+    ),
+    tessellation=phx.geometry.BRepTessellationPolicy(
+        linear_deflection=0.05, angular_deflection=0.2
+    ),
+)
+
+
+def _read_native(path: Any) -> Any:
+    return phx.interchange.read_cad(
+        path,
+        _IMPORT_POLICY,
+        trusted_root=path.parent,
+        source_length_unit=_CONTRACT.length_unit,
+    ).model
 
 
 def _planar_face(points: Any) -> Any:
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+    from OCP.gp import gp_Pnt
+
     polygon = BRepBuilderAPI_MakePolygon()
     for x, y in points:
         polygon.Add(gp_Pnt(float(x), float(y), 0.0))
@@ -23,18 +53,23 @@ def _planar_face(points: Any) -> Any:
 
 
 def _source(path: Any, shape: Any = None) -> Any:
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
     persisted = path.with_suffix(".brep")
-    model = phx.geometry.persist_occt_shape(
+    # OCCT only constructs the external comparison fixture; native CAD owns it below.
+    phx.interchange.persist_occt_shape(
         (
             BRepPrimAPI_MakeBox(gp_Pnt(-0.5, -0.5, -0.5), 1.0, 1.0, 1.0).Shape()
             if shape is None
             else shape
         ),
         persisted,
-        coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
+        coordinate_contract=_CONTRACT,
         linear_deflection=0.05,
         angular_deflection=0.2,
     )
+    model = _read_native(persisted)
     return phx.geometry.BRepSource(model) if shape is None else model
 
 
@@ -89,43 +124,49 @@ def _provider() -> Any:
 
 
 def _scope(source: Any, dimension: Any, identifiers: Any) -> Any:
-    return phx.meshing.MeshingScope(
-        source.report.source_id,
-        source.report.source_revision,
-        phx.meshing.MeshingEntityKind.GEOMETRY,
-        dimension,
-        f"{source.report.source_revision}:brep:{dimension}",
-        np.asarray(identifiers, dtype=np.int64),
+    model = source.model if isinstance(source, phx.geometry.BRepSource) else source
+    kind = ("vertex", "edge", "face", "solid")[dimension]
+    return _provider().entity_scope(
+        model,
+        tuple(
+            phx.geometry.BRepEntityId(model.source_revision, kind, int(identifier))
+            for identifier in identifiers
+        ),
     )
 
 
 def _face_scope(source: Any, axis: Any, coordinate: Any) -> Any:
-    points = np.asarray(source.model.mesh_vertices)
-    triangles = points[np.asarray(source.model.mesh_faces)]
-    face_ids = np.asarray(source.model.triangle_face_ids)
-    selected = np.unique(
-        face_ids[np.all(np.isclose(triangles[:, :, axis], coordinate), axis=1)]
-    )
-    assert selected.size == 1
+    model = source.model if isinstance(source, phx.geometry.BRepSource) else source
+    assert model.geometry is not None
+    selected = []
+    for face, patch in enumerate(model.patches):
+        lower, upper = np.asarray(model.parameter_bounds[face])
+        first, second = np.meshgrid(
+            np.linspace(lower[0], upper[0], 3),
+            np.linspace(lower[1], upper[1], 3),
+        )
+        parameters = np.column_stack((first.ravel(), second.ravel()))
+        points = np.asarray(patch.evaluate(parameters))
+        if np.allclose(points[:, axis], coordinate):
+            selected.append(face)
+    assert len(selected) == 1
     return _scope(source, 2, selected)
 
 
 def _edge_scope(source: Any, axis: Any, coordinate: Any) -> Any:
-    from OCP.BRepAdaptor import BRepAdaptor_Curve
-    from OCP.TopAbs import TopAbs_EDGE
-    from OCP.TopoDS import TopoDS
-
-    from phydrax.geometry.brep._occt import _explore_unique, read_occt_shape
-
-    shape, _, _ = read_occt_shape(source.report.source_id)
+    model = source.model if isinstance(source, phx.geometry.BRepSource) else source
+    geometry = model.geometry
+    assert geometry is not None
     selected = []
-    for index, edge in enumerate(_explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)):
-        curve = BRepAdaptor_Curve(edge)
-        values = [
-            curve.Value(float(value))
-            for value in np.linspace(curve.FirstParameter(), curve.LastParameter(), 3)
-        ]
-        points = np.asarray([(point.X(), point.Y(), point.Z()) for point in values])
+    for index, curve_index in enumerate(geometry.edge_curves):
+        if curve_index < 0:
+            points = np.asarray(geometry.vertex_points)[
+                list(geometry.edge_vertices[index])
+            ]
+        else:
+            interval = np.asarray(geometry.edge_ranges[index], dtype=np.float64)
+            parameters = np.linspace(interval[0], interval[1], 3)
+            points = np.asarray(geometry.curves[curve_index].evaluate(parameters))
         if np.allclose(points[:, axis], coordinate):
             selected.append(index)
     assert len(selected) == 1
@@ -352,12 +393,21 @@ def test_real_contracts() -> None:
 def test_open_cad_model_is_rejected_for_volume_meshing_without_weakening_solid_source(
     tmp_path: Any,
 ) -> None:
+    from phydrax.meshing.providers._gmsh_inventory import _cad_scope_set
+
     provider = _provider()
     model = _source(
         tmp_path / "open-sheet.brep",
         _planar_face(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
     )
-    scope = _scope(model, 3, (0,))
+    scope = phx.meshing.MeshingScope(
+        model.source_id,
+        model.source_revision,
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        3,
+        _cad_scope_set(model, 3),
+        np.asarray((0,), dtype=np.int64),
+    )
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -466,15 +516,36 @@ def _two_box_shape(*, conformal: Any) -> Any:
 
 
 def _semantic_source(path: Any, *, conformal: Any = True) -> Any:
-    model = phx.geometry.persist_occt_shape(
+    # Keep external shape construction independent of native row ordering.
+    phx.interchange.persist_occt_shape(
         _two_box_shape(conformal=conformal),
         path,
-        coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
+        coordinate_contract=_CONTRACT,
         linear_deflection=0.05,
         angular_deflection=0.2,
     )
+    model = _read_native(path)
     assert model.report.num_solids == 2
     return model
+
+
+def _semantic_solid_rows(source: Any) -> Any:
+    geometry = source.geometry
+    assert geometry is not None
+    points = np.asarray(geometry.vertex_points)
+    centers = []
+    for solid, faces in enumerate(source.topology.solid_faces):
+        vertices = sorted(
+            {
+                vertex
+                for face in faces
+                for edge in source.topology.face_edges[face]
+                for vertex in geometry.edge_vertices[edge]
+                if vertex >= 0
+            }
+        )
+        centers.append((float(np.mean(points[vertices, 0])), solid))
+    return tuple(solid for _, solid in sorted(centers))
 
 
 def _semantic_specification(
@@ -486,8 +557,9 @@ def _semantic_specification(
     interface_required: Any = True,
 ) -> Any:
     whole = provider.whole_scope(source, 3)
-    left_scope = provider.entity_scope(source, source.solid_ids[0])
-    right_scope = provider.entity_scope(source, source.solid_ids[1])
+    left, right = _semantic_solid_rows(source)
+    left_scope = provider.entity_scope(source, source.solid_ids[left])
+    right_scope = provider.entity_scope(source, source.solid_ids[right])
     controls = (
         (
             phx.meshing.UniformSizeControl(
@@ -615,15 +687,40 @@ def test_real_persisted_semantic_source_replays_with_stable_identity(
     assert first.mesh.mesh_id == second.mesh.mesh_id
     assert first.provenance.semantic_id == second.provenance.semantic_id
 
-    phx.geometry.persist_occt_shape(
+    phx.interchange.persist_occt_shape(
         bd.Box(3.0, 1.0, 1.0).wrapped,
         path,
         coordinate_contract=phx.SpatialCoordinateContract(phx.units.MILLIMETER),
         overwrite=True,
     )
-    with pytest.raises(phx.meshing.MeshingFailure) as failure:
-        plan.execute()
-    assert failure.value.category is phx.meshing.MeshingFailureCategory.INVALID_SOURCE
+    retained = plan.execute()
+    assert retained.result_id == first.result_id
+    reread = phx.interchange.read_cad(
+        path.name,
+        phx.interchange.CadImportPolicy(
+            source.coordinate_contract,
+            phx.interchange.ResourceLimits(
+                16 * 1024 * 1024, 64, 100_000, 1_000_000, 1024
+            ),
+        ),
+        trusted_root=path.parent,
+        source_length_unit=source.coordinate_contract.length_unit,
+    ).model
+    assert reread.source_revision != source.source_revision
+    reloaded = provider.plan(
+        reread,
+        _specification(
+            provider,
+            reread,
+            3,
+            phx.meshing.CellFamilyPolicy(required=("tetrahedron",)),
+            order=1,
+        ),
+    ).execute()
+    points = np.asarray(reloaded.mesh.coordinates)
+    corners = points[np.asarray(reloaded.mesh.blocks[0].vertices)]
+    volume = np.sum(np.linalg.det(corners[:, 1:] - corners[:, :1])) / 6.0
+    assert float(volume) == pytest.approx(3.0, rel=1e-9)
 
 
 def test_semantic_region_ownership_conflict_is_rejected_by_contract(
@@ -632,7 +729,9 @@ def test_semantic_region_ownership_conflict_is_rejected_by_contract(
     provider = _provider()
     source = _semantic_source(tmp_path / "ownership-conflict.brep")
     whole = provider.whole_scope(source, 3)
-    left = provider.entity_scope(source, source.solid_ids[0])
+    left = provider.entity_scope(
+        source, source.solid_ids[_semantic_solid_rows(source)[0]]
+    )
     size = phx.meshing.UniformSizeControl(
         whole,
         0.3,
@@ -682,7 +781,9 @@ def test_real_solid_scoped_uniform_size_refines_only_selected_region(
     provider = _provider()
     source = _semantic_source(tmp_path / "scoped-size-partition.brep")
     whole = provider.whole_scope(source, 3)
-    right = provider.entity_scope(source, source.solid_ids[1])
+    right = provider.entity_scope(
+        source, source.solid_ids[_semantic_solid_rows(source)[1]]
+    )
     baseline = phx.meshing.UniformSizeControl(
         whole,
         0.38,

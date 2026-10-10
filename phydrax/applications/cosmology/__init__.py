@@ -1,6 +1,9 @@
 """Differentiable cosmological geometry, products, simulation, and observations."""
 
 # ruff: noqa: F401
+import typing as _typing
+from importlib import import_module as _import_module
+
 from ...discretization.particle._relativistic_stress_transfer import (
     RelativisticParticleState,
     RelativisticStressAdjointEvidence,
@@ -377,36 +380,6 @@ from ._full_dark_sector_inference import (
     FullPathSampleBatch,
     FullPathScoreCRNPlan,
     FullPathScoreCRNProduct,
-)
-from ._full_dark_sector_observables import (
-    EventShowerHadronizationObservables,
-    FullDarkSectorLedgerObservables,
-    FullDarkSectorObservableBundle,
-    FullDarkSectorObservationPlan,
-    MetricStressObservables,
-    ObservedFullDarkSectorBundle,
-    QuantumCoherenceObservables,
-    RadiationObservables,
-)
-from ._full_dark_sector_runtime import (
-    assemble_full_dark_sector_stress,
-    commit_full_dark_sector_stage,
-    einstein_vlasov_stress_component,
-    FullDarkSectorCheckpointPlan,
-    FullDarkSectorCompositeState,
-    FullDarkSectorOutputBundle,
-    FullDarkSectorResourceEvidence,
-    FullDarkSectorRuntimePlan,
-    FullDarkSectorStageCandidate,
-    FullDarkSectorStageCommit,
-    FullDarkSectorStageEvidence,
-    FullDarkSectorStageLedger,
-    FullDarkSectorStageToken,
-    FullDarkSectorStressAssembly,
-    NamedStressEnergyComponent,
-    propose_full_dark_sector_stage,
-    radiation_stress_component,
-    weak_gravity_stress_component,
 )
 from ._growth import FLRWGrowthPlan
 from ._halo_finder import (
@@ -805,4 +778,92 @@ from ._weak_field_relativistic_pm import (
 )
 
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+if _typing.TYPE_CHECKING:
+    from ._full_dark_sector_observables import (
+        EventShowerHadronizationObservables,
+        FullDarkSectorLedgerObservables,
+        FullDarkSectorObservableBundle,
+        FullDarkSectorObservationPlan,
+        MetricStressObservables,
+        ObservedFullDarkSectorBundle,
+        QuantumCoherenceObservables,
+        RadiationObservables,
+    )
+    from ._full_dark_sector_runtime import (
+        assemble_full_dark_sector_stress,
+        commit_full_dark_sector_stage,
+        einstein_vlasov_stress_component,
+        FullDarkSectorCheckpointPlan,
+        FullDarkSectorCompositeState,
+        FullDarkSectorOutputBundle,
+        FullDarkSectorResourceEvidence,
+        FullDarkSectorRuntimePlan,
+        FullDarkSectorStageCandidate,
+        FullDarkSectorStageCommit,
+        FullDarkSectorStageEvidence,
+        FullDarkSectorStageLedger,
+        FullDarkSectorStageToken,
+        FullDarkSectorStressAssembly,
+        NamedStressEnergyComponent,
+        propose_full_dark_sector_stage,
+        radiation_stress_component,
+        weak_gravity_stress_component,
+    )
+
+# The full dark-sector observables and runtime compose ``curved_spacetime_qft``
+# transport, whose kernels import this package's species plan. Resolving them on
+# first access keeps either package importable first without a partially
+# initialized cycle.
+_LAZY_FULL_DARK_SECTOR: dict[str, str] = {
+    name: "._full_dark_sector_observables"
+    for name in (
+        "EventShowerHadronizationObservables",
+        "FullDarkSectorLedgerObservables",
+        "FullDarkSectorObservableBundle",
+        "FullDarkSectorObservationPlan",
+        "MetricStressObservables",
+        "ObservedFullDarkSectorBundle",
+        "QuantumCoherenceObservables",
+        "RadiationObservables",
+    )
+} | {
+    name: "._full_dark_sector_runtime"
+    for name in (
+        "assemble_full_dark_sector_stress",
+        "commit_full_dark_sector_stage",
+        "einstein_vlasov_stress_component",
+        "FullDarkSectorCheckpointPlan",
+        "FullDarkSectorCompositeState",
+        "FullDarkSectorOutputBundle",
+        "FullDarkSectorResourceEvidence",
+        "FullDarkSectorRuntimePlan",
+        "FullDarkSectorStageCandidate",
+        "FullDarkSectorStageCommit",
+        "FullDarkSectorStageEvidence",
+        "FullDarkSectorStageLedger",
+        "FullDarkSectorStageToken",
+        "FullDarkSectorStressAssembly",
+        "NamedStressEnergyComponent",
+        "propose_full_dark_sector_stage",
+        "radiation_stress_component",
+        "weak_gravity_stress_component",
+    )
+}
+
+
+def __getattr__(name: str) -> _typing.Any:
+    module = _LAZY_FULL_DARK_SECTOR.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(_import_module(module, __package__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
+__all__ = [name for name in globals() if not name.startswith("_")] + list(
+    _LAZY_FULL_DARK_SECTOR
+)

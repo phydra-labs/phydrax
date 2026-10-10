@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -24,11 +24,13 @@ from ._observation_covariance import (
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .linalg import LinearSystem, solve, TriangularLinearOperator
-from .observation import (
-    CholeskyCovarianceAction,
-    CoordinateLayout,
-    PrecisionCovarianceAction,
-)
+
+
+if TYPE_CHECKING:
+    from .observation import (
+        CholeskyCovarianceAction,
+        CoordinateLayout,
+    )
 
 
 class _CovarianceProtocol(Protocol):
@@ -73,14 +75,6 @@ class NuisanceProjectionResult(StrictModule):
     successful: Array
 
 
-_WHITENING_ACTIONS = (
-    CholeskyCovarianceAction,
-    DiagonalCovarianceAction,
-    KroneckerCholeskyCovarianceAction,
-    CirculantCovarianceAction,
-)
-
-
 def _whiten(
     covariance: CholeskyCovarianceAction
     | DiagonalCovarianceAction
@@ -94,7 +88,19 @@ def _whiten(
 
 
 def _precision_apply(covariance: _CovarianceProtocol, value: Array) -> Array:
-    if isinstance(covariance, _WHITENING_ACTIONS):
+    # `phydrax.observation` re-exports this module, so its actions are resolved
+    # at call time rather than at import.
+    from .observation import CholeskyCovarianceAction, PrecisionCovarianceAction
+
+    if isinstance(
+        covariance,
+        (
+            CholeskyCovarianceAction,
+            DiagonalCovarianceAction,
+            KroneckerCholeskyCovarianceAction,
+            CirculantCovarianceAction,
+        ),
+    ):
         whitened = _whiten(covariance, value)
         if value.ndim == 1:
             # WᴴW action is obtained without materializing W.

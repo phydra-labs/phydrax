@@ -16,6 +16,7 @@ installed distribution rather than to the source tree. Fixture expectations use
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import tempfile
@@ -62,6 +63,20 @@ def check_installed(wheel: Path, python: str, workspace: Path, /) -> None:
     )
     consumer = workspace / f"consumer-{python}"
     consumer.mkdir()
+    _run(
+        (
+            str(interpreter),
+            "-I",
+            "-c",
+            "import importlib.util, pathlib, sys\n"
+            "spec = importlib.util.find_spec('phydrax')\n"
+            "if spec is None or spec.origin is None:\n"
+            "    raise SystemExit('Installed phydrax is missing')\n"
+            "if not pathlib.Path(spec.origin).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()):\n"
+            "    raise SystemExit('Typing consumer resolves outside its independent environment')",
+        ),
+        cwd=consumer,
+    )
     fixtures = sorted(FIXTURES.glob("*.py"))
     if not fixtures:
         raise SystemExit(f"No installed-typing fixtures in {FIXTURES}.")
@@ -94,14 +109,32 @@ def check_installed(wheel: Path, python: str, workspace: Path, /) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--python", action="append", dest="pythons")
+    parser.add_argument(
+        "--wheel", type=Path, help="Check the final built wheel without rebuilding it."
+    )
     arguments = parser.parse_args()
+    for name in ("PYTHONPATH", "PYTHONHOME", "PHYDRAX_MESHCORE_LIBRARY", "VIRTUAL_ENV"):
+        os.environ.pop(name, None)
     verify_pinned(ROOT, "ty")
     with tempfile.TemporaryDirectory(prefix="phydrax-installed-typing-") as scratch:
         workspace = Path(scratch)
-        wheel = build_wheel(workspace / "dist")
-        print(f"built {wheel.name} with {MARKER}")
+        wheel = (
+            arguments.wheel.resolve()
+            if arguments.wheel is not None
+            else build_wheel(workspace / "dist")
+        )
+        with zipfile.ZipFile(wheel) as archive:
+            if MARKER not in archive.namelist():
+                raise SystemExit(f"{wheel.name} does not contain {MARKER}.")
+        print(f"checking {wheel.name} with {MARKER}")
+        failures = []
         for python in arguments.pythons or DEFAULT_PYTHONS:
-            check_installed(wheel, python, workspace)
+            try:
+                check_installed(wheel, python, workspace)
+            except SystemExit as failure:
+                failures.append(f"python {python}: {failure}")
+        if failures:
+            raise SystemExit("\n\n".join(failures))
 
 
 if __name__ == "__main__":

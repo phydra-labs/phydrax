@@ -135,6 +135,10 @@ def certify_least_squares_physical(
 ) -> OptimizationCertificate:
     if not isinstance(problem, NonlinearLeastSquaresProblem):
         raise TypeError("problem must be NonlinearLeastSquaresProblem.")
+    if problem.trial_policy is not None:
+        raise ValueError(
+            "A smooth normal-gradient certificate cannot certify a nonsmooth trial policy."
+        )
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination.")
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision

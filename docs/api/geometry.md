@@ -226,30 +226,87 @@ contracts can be represented without approximation.
 
 ## CAD B-Reps
 
-`BRep(path, coordinate_contract=...)` imports STEP, IGES, and BREP files through
-OCCT. `import_brep` and `persist_occt_shape` likewise require an explicit
-coordinate contract.
-`BRepModel` keeps stable vertex/edge/wire/face/solid incidence, one parametric
-surface patch per face, trim loops, tessellation-to-face identities, and an import
-report. Supported analytic OCCT surfaces remain analytic patches; other faces are
-represented by rational tensor-product B-splines.
+Native CAD construction and file decoding produce `BRepModel`, whose exact
+carriers, oriented topology, p-curves, occurrences and coordinate contract own
+geometry identity. Derived query tessellations do not replace that authority.
+`phx.interchange.read_cad(path, policy, trusted_root=...)` selects the native
+STEP, IGES or external OCCT BRep text codec. The format-specific `read_step`,
+`read_iges` and `read_brep_text` preserve their own coverage and refusal reports.
+STEP and IGES own embedded units; BRep text requires `source_length_unit`.
+The native decoders implement these file formats without invoking OCP.
+
+These native carriers, codecs, queries, bounded intersections, sewing, Boolean,
+and tessellation routes are implemented surfaces. Source-only
+`BRepTessellationPolicy(realize=False)`, spline-preserving loft, topology/volume,
+cavity/shared-shell, unattached-edge, periodic-rational, surface-array, and
+scaled-oblique checks passed their targeted matrix. Overlapping-sphere
+partitions retain the exact rational chart coordinate of every collapsed-pole
+radial split; the rounded binary64 vertex is only an execution representative
+bound to that authority. Curved-void trim ribbons are bounded per source-curve
+interval, and an interval whose ribbon exceeds the requested deviation is
+bisected locally before publication. Native BRep text refuses implicit curved
+intersection branches instead of approximating them. This is not complete
+native CAD qualification: complete STEP/IGES entity coverage, every
+intersection curve, singular arrangements, the independent writer campaign,
+W15, and release remain separate gates.
 
 Rational spline evaluation uses the shared span-local B-spline kernel. Each
 curve query gathers `degree + 1` controls; each surface query gathers only the
 tensor product of the active controls in its two parameter axes. Expanded
-nonuniform and repeated OCCT knot vectors are preserved. At an exact chart
+nonuniform and repeated knot vectors are preserved. At an exact chart
 endpoint the final polynomial span supplies the one-sided differential, so
 surface Jacobians and boundary frames remain finite instead of collapsing to a
 constant endpoint branch.
 
-```python
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+::: phydrax.geometry.brep.ParabolaCurve
 
+---
+
+::: phydrax.geometry.brep.HyperbolaCurve
+
+---
+
+::: phydrax.geometry.brep.OffsetCurve
+
+`OffsetSurface(base, distance)` retains a signed normal-offset operation tree.
+It is available from `phydrax.geometry` and `phydrax.geometry.brep`; the base
+definition and offset remain the source authority. An analytic equivalent may
+be used only when the original source expression is proved equivalent, not
+because a rounded radius or sampled surface looks close.
+
+::: phydrax.geometry.OffsetSurface
+
+`AffinePCurve` applies an exact UV matrix and offset to the original p-curve,
+without refitting its conic or rational coefficients. `PeriodicPCurve` retains
+the original curve and an explicit native surface patch plus two integer period
+shifts. Its floating-point UV coordinates are representatives; interval bounds
+enclose the patch's mathematical periods. Distinct period shifts identify
+distinct chart sheets even when their physical images coincide. Neither carrier
+changes source edge parameters or root-valued endpoint identity.
+
+`phydrax.geometry.brep.NativePeriodEndpoint` authors a source parameter as
+`rational + turns × 2π`, bound to the original period-owning curve or an explicit
+surface-period axis. Turn zero and turn one identify the exact endpoints of an
+authored closed circle. Its binary64 parameter and outward enclosure are only
+numerical representatives; this does not reinterpret an independently authored
+floating-point endpoint or infer closure from nearby coordinates.
+
+::: phydrax.geometry.brep.NativePeriodEndpoint
+
+These source chart operations do not by themselves declare a quotient mesh or
+prove a physical field-transfer correspondence across poles and seams. Those
+contracts require their own explicit topology and atlas witnesses.
+
+::: phydrax.geometry.AffinePCurve
+
+::: phydrax.geometry.PeriodicPCurve
+
+```python
 coordinate_contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
-model = phx.geometry.model_from_occt_shape(
-    BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
+model = phx.geometry.brep_box(
+    (0.0, 0.0, 0.0),
+    (1.0, 2.0, 3.0),
     coordinate_contract=coordinate_contract,
-    linear_deflection=0.1,
 )
 source = phx.geometry.BRepSource(model)
 geometry = source.compile()
@@ -265,22 +322,66 @@ vertices, faces, atlas, and a differentiable seam residual. The validity region
 requires unchanged topology, positive surface Jacobians, and compatible seams;
 `BRepSeamCompatibility` makes the last condition an explicit design constraint.
 
-`prepare_brep_projection(model, source)` binds OCCT closest-point queries to the
-exact revision of a `BRepModel`: `source` is the in-memory shape the model was
-extracted from or its persisted CAD file, and its digest must equal
-`model.source_digest` (the in-memory digest excludes cached tessellations). The
-`PreparedBRepProjection` projects batches onto explicit vertices, edges, and
-faces (`project`), reports `(u, v)` or `t` parameters, residuals, oriented face
-normals and tangent frames, and a `BRepProjectionStatus`: `SEAM` for periodic
-seams and singular poles, `AMBIGUOUS` for distinct tied minima or continua such
-as a sphere center, `FAILED` when no closest point exists. Trimmed faces are
-honored through the OCCT face classifier. `classify` returns the
-lowest-dimensional entity within a tolerance (BVH candidates, optional admissible
-entity groups), `locate_solids` the containing solid, and `contains`,
-`containers`, and `members` expose the closure relation. A `PlanarEmbedding`
-binds a face-only revision to two-dimensional coordinates. Each query is one host
-call into OCCT extrema (the external-provider boundary); calls are grouped per
-entity so projectors and classifiers are prepared once.
+`prepare_brep_projection(model, policy=..., query_policy=...)` binds native
+closest-point queries to the exact revision of a native `BRepModel`. It returns
+`NativeBRepProjection`; callers provide no live external shape or fallback
+tessellation. Projection results retain their entity parameters, residuals,
+frames and `BRepProjectionStatus`. `prepare_brep_query` owns native containment,
+surface queries and measure evidence under its explicit query budget.
+
+Trimmed area and volume rules partition inner Green integration legs at the
+owning source's native-u knot and chart walls, through placement, offset, sweep,
+ruled and spline source trees. Splitting only the outer trim curve is
+insufficient for a C0 profile. The original quadrature order and subdivisions
+remain unchanged; source-wall preparation and generated points consume the
+same query allowances. Reported fine/coarse agreement is a numerical error
+estimate, not an outward integral certificate.
+
+Native spline-profile extrusion interpolation covers the complete footprint
+against every original knot stratum. A footprint touching or crossing a C0 knot
+uses closed one-sided span jets and a complete first-jet hull where a global
+second derivative is unavailable; it does not replace the source profile or
+declare that derivative finite. Surface generation retains the original source,
+remaining resource scope and default fidelity gates.
+
+`phydrax.geometry.brep.BRepQueryBudget` shares caller-authored operation, point
+and scratch allowances across prepared `contains` and `closest` calls. Complete
+candidate covers are admitted before work; only executed operations, points and
+subdivisions are consumed. Negative counts and noninteger inputs refuse without
+crediting or changing the ledger. `BRepQueryResourceError` retains the refused
+resource, requested quantity and remaining allowance.
+
+Containment reports include distance lower/upper bounds, `query_operations` and
+`resource_exhausted`; surface queries also retain `query_operations`. An
+unfinished interval proof remains failed or unresolved, never successful merely
+because its proposed point is finite.
+
+For complete native-gauge sphere charts, containment prepares the exact affine
+coefficients of retained placement operations and the provable rational radius
+of the original normal-offset tree. Approximately orthogonal placement matrices
+are not treated as exactly orthogonal. Native seam and pole walls establish
+whole-source coverage even when root enclosures pad the numerical parameter box.
+The authored source tree, pose, and root identities remain intact through
+archive round-trips; boundary ambiguity remains explicit. Other source or trim
+compositions retain their generic certified-query path.
+
+::: phydrax.geometry.brep.BRepQueryBudget
+
+::: phydrax.geometry.brep.BRepQueryResourceError
+
+Intentional OCCT comparisons use the separate optional
+`phx.interchange.model_from_occt_shape`, `import_occt_brep`, `persist_occt_shape`
+and `read_occt_shape` boundaries, installed with `phydrax[cad-occt-interop]`.
+These APIs call an external geometry engine; a `.brep` extension denotes the
+external OCCT text format, not a native Phydrax persistence archive.
+`save_brep_archive`/`load_brep_archive` provide the canonical native lifecycle
+persistence instead.
+
+`AbstractBRepProjection` is the engine-neutral query contract that B-Rep
+association and high-order curving accept. It owns the closure relation,
+tolerance classification and coordinate frames; a concrete projection supplies
+`project` and `locate_solids`. Native queries and optional external comparisons
+are distinct implementations of this contract, not aliases.
 
 ## Physical CAD identity and selection
 
@@ -304,6 +405,10 @@ contract, ordered `BRepPartitionOperand` values, roles, void targets, and
 named solid regions and face patches as exact `BRepEntityId` selections,
 revision-to-revision association evidence, and deleted/created occurrence
 history. It does not offer general Boolean repair.
+Region ownership is decided before voiding: the highest-precedence present
+region wins. A present void targeting that owner leaves a hole; lower-priority
+regions never refill removed material. Void targets are explicit region
+identities, not inferred from material names or geometric overlap.
 
 `partition_planar` applies the same selection and history discipline to
 `PlanarMeshRegion` operands embedded by `PlanarEmbedding`. Its result has
@@ -415,6 +520,24 @@ R-(d+1). `Revolution` remains the explicitly axisymmetric 2D-to-3D operation.
 runtime preserves triangle connectivity and reports sign, root, QEF, orientation,
 and intersection evidence.
 
+`discover_adaptive_implicit_surface(geometry, domain=..., policy=...)` refines a
+2:1-balanced octree over `domain` and never treats a leaf as empty unless its
+value enclosure excludes zero. `AdaptiveImplicitSurfacePolicy.enclosure` selects
+the bound source: `"interval"` evaluates the field program in outward-rounded
+interval arithmetic with independent directional-derivative enclosures,
+`"lipschitz"` uses the certificate's established Lipschitz bound for values only,
+and `"sampled"` makes no enclosure claim. The returned `AdaptiveImplicitSurface`
+carries the dual-contoured `TriangleMesh` (one vertex per leaf boundary cycle,
+polygons on shared minimal edges, so level transitions are crack free),
+`AdaptiveImplicitSurfaceEvidence` (`accuracy` `"certified"`, `"enclosed"` or
+`"sampled"`, status flags, unresolved boxes with their issues, residuals and
+evaluation counts), the `CertifiedImplicitCover`, a `CertifiedImplicitTopology`
+when certified, and an `ImplicitVolumeQuery` that classifies points and boxes
+as inside, outside or unknown. Budget exhaustion stops refinement and reports
+the remaining boxes as unresolved. Tangential zeros, near-zero gradients and
+sharp creases whose wedge an axis direction crosses remain unresolved rather
+than certified; the adaptive product is not differentiable.
+
 `NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
 network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are
 design parameters of the compiled `DesignState`; FIXED arrays (`fixed_field`
@@ -448,6 +571,79 @@ recentering, warnings, and an input digest. Invalid reconstruction raises
 `ReconstructionFailure` with the same report; approximation is never hidden behind
 a primitive constructor.
 
+Planar and terrain reconstruction triangulate with the exact native Delaunay
+kernel. Point-cloud surfaces use native screened Poisson reconstruction:
+`estimate_point_normals` supplies PCA normals over exact BVH neighborhoods,
+oriented along a minimum spanning forest (`NormalOrientation`) with
+`NormalEstimationEvidence`; the indicator is solved with continuous trilinear
+elements either on a 2:1-balanced adaptive octree refined only in sample cells
+(`PoissonDiscretization` `"octree"`, the default, with hanging-node
+constraints) or on the full regular grid (`"regular"`), by
+Jacobi-preconditioned conjugate gradients (`PoissonSolveEvidence`, including
+unknown, leaf, and hanging-node counts), and extracted by crack-free marching
+tetrahedra. Reports add the Euler characteristic and
+`SampledSurfaceDeviation`, a sampled two-sided deviation rather than a
+continuous Hausdorff certificate. Poisson smoothing does not preserve features
+below the finest cell width.
+
+`ReconstructionRobustness` declares how imperfect samples are treated and each
+policy reports its evidence: statistical outlier removal
+(`OutlierRemovalEvidence`), surface farther than a coverage distance from every
+sample (`SamplingCoverageEvidence`, closed and reported or refused by
+`IncompleteSamplingPolicy`), stacked sheets thinner than the resolution
+(`ThinFeatureEvidence`), and sample components whose sampled indicator is not
+fit by the level set, which are refused (`ComponentFitEvidence`).
+`reconstruct_trimmed_surface` instead trims unsupported triangles and returns
+the open `TriangleSurface` in a `TrimmedSurfaceReconstruction`.
+
+The `native-reconstruction-lifecycle` qualification scenario retains the actual
+noisy point-cloud digest, native screened-Poisson report, and extracted triangle
+coordinates in the revision of its `NativePlcSource`. Native constrained volume
+fill must certify that exact represented PLC, independently close its signed
+boundary volume, and retain the original region identity. Reconstruction's
+sampled distances remain separate from exact extracted-domain coverage; an
+analytic reference surface never replaces the reconstructed triangles.
+The scalar diffusion continuation uses `FiniteElementTopologyTransaction` and
+`CompositionRebind`, including a rejected physical-error gate that must preserve
+the accepted mesh and state. The repaired-envelope scenario uses the same atomic
+solver-state transition while retaining its raw/repaired identities, explicit
+feature/topology permissions, two directed bounds, and inclusion margin.
+Generated interior vertices inherit PLC authority only from one explicit
+incident-cell/source-parent owner and an exact mapped interior-support proof;
+boundary, interface, and feature vertices still require their lower-stratum
+witnesses. Strict volume audits remain active after adaptation. Independent
+volume and scalar-inventory gates cover every retained/refined simplex block,
+including global vertex routing, rather than assuming a single carrier block.
+The target PLC support proof is handed directly to final acceptance through its
+owning prepared-evidence record. Reuse requires the same actual mesh, coordinate
+map, represented domain, region rows, complete certification request, original
+certificate limits, and scoped source/facet/tolerance tuples. The embedding and
+coverage work ledger is retained once, not recomputed or replaced with zero
+cost. The strict target audit remains independent, and any required whole-source
+or scoped fidelity checks still run; a volume proof is not a fidelity verdict.
+
+The fixed lifecycle controls are `--resolution 4 --capacity 20000 --timeout 120
+--repeats 3 --target-error 0.05 --adaptation-rounds 1`. These are acceptance gates,
+not a claim that either workflow has qualified. Native circumcenter failure is
+reported as structured meshing failure before publication, rather than replacing
+nonfinite quality evidence with a finite value. Envelope carrier initialization
+also enforces the request's actual native scratch-allocation allowance.
+Ordinary single-device organization-ID banks use immutable NumPy host preparation
+instead of repeated dynamic-size JAX selections. Named/collective placements,
+nonaddressable arrays, and tracers retain their existing array route. This does
+not merge source facets or change target patch, zone, label, scope, inventory, or
+lineage identity; collapsed sources retain their existing deciding-source
+precedence and ambiguous membership still refuses.
+
+Restricted tetrahedral roots reuse the linear embedding theorem only after
+proving every complete source expression affine, every exact root corner
+binary64-representable without rounding, and all shared scientific corner
+identities consistent. This proves equality of whole affine maps, not a corner
+surrogate. Curved, rational, and nonrepresentable roots retain their generic
+theorem. Candidate/ray/subdivision ledgers retain the original remaining caps;
+a failed complete-root premise names its actual source-cell IDs without
+claiming an overlap of the retained children.
+
 ## Exact predicates, triangulations, and diagrams
 
 `orient2d`, `orient3d`, `incircle`, and `insphere` return a `PredicateResult`
@@ -479,10 +675,30 @@ unproved loop uncertain. Both are host algorithms (`FILTERED` or `EXACT`) whose
 classes are exact wherever every contributing sign is certified.
 
 `phydrax-meshcore` is released in lockstep with Phydrax: `phydrax[meshcore]`
-pins the identical version, and a library that is another release, lacks any
-bound C ABI symbol, or returns a null/malformed release or build identity is
-reported as `MeshcoreUnavailableError` with the reason. No C++ exception crosses
-its C ABI: a refused allocation is the call status `CAPACITY_EXCEEDED`.
+pins the identical version. Before binding other entry points, Phydrax verifies
+`phx_mc_abi_contract`, the SHA-256 of the public C header with LF line endings.
+Missing or different contracts, another release, missing bound symbols, and
+null/malformed release or build identities produce `MeshcoreUnavailableError`
+with the reason. Editing `native/meshcore/include/phydrax_meshcore.h` requires
+updating `phydrax/_meshcore.py:_ABI_CONTRACT` and rebuilding the native library;
+an old binary is never treated as compatible merely because it exports the
+same function names. No C++ exception crosses the C ABI: a refused allocation
+is the call status `CAPACITY_EXCEEDED`.
+`phx_mc_build_hash` is the configured digest of the canonical meshcore source
+and header map, while `MeshcoreLibrary.binary_hash` is SHA-256 of the exact
+shared-library bytes selected by the loader. `phx_mc_build_configuration`
+records compiler, platform, floating-point flags, sanitizer selection, and build
+configuration. Qualification runtime records retain those three identities
+separately; an installed wheel and an isolated local build may share source and
+ABI identity while having different binary digests. None of these identities is
+a numerical qualification or benchmark result.
+
+The root package does not bundle or rename an external geometry engine.
+`phydrax[meshcore]` installs the separately packaged, version-identical
+`phydrax-meshcore`; `PHYDRAX_MESHCORE_LIBRARY` is an explicit override. A
+missing native library is not repaired by a SciPy/Qhull or provider fallback,
+and optional OCCT, Gmsh, Mmg, fTetWild, Manifold, OpenVDB, Poisson, VoroCrust,
+Omega_h, TIOGA, and METIS results remain separate provider evidence.
 To build and test the library from source, and to repeat the tests under
 AddressSanitizer and UndefinedBehaviorSanitizer:
 
@@ -548,6 +764,56 @@ double-coverage counts, candidate/accepted/piece-pair counts, and retained and
 working bytes. Finite-volume remap, block-AMR cut-cell transitions, and
 finite-element L2 projection transfers consume this one artifact.
 
+## Triangle-surface arrangements and Booleans
+
+`arrange_triangle_surfaces(first_vertices, first_triangles, second_vertices,
+second_triangles, operands=((vertices, triangles), ...),
+limits=SurfaceArrangementLimits())` splits two or more embedded triangle surfaces
+(open sheets admitted) in one simultaneous exact arrangement. Float64 BVHs
+enumerate candidate pairs; the native arrangement represents every constructed
+point implicitly by the original input planes defining it (line-plane, coplanar
+edge-edge and triple-plane points) and decides every orientation, order and
+equality on those implicit points with filtered predicates and exact dyadic
+fallback, so a point where three or more operands meet is one exact vertex. Each
+touched triangle is split by exact point insertion and constraint recovery, and
+points are welded across operands by exact equality, never by proximity.
+Coordinates are rounded only on publication, with rigorous max-norm bounds.
+`SurfaceArrangement` publishes welded vertices, bounds, construction families,
+per-operand feature simplices and every exact source-face incidence, fragments
+with source operand/face, per-operand coplanar coverage and orientation, and the
+contact edges. Self-intersecting or degenerate inputs, coordinates outside the
+exact contact-predicate domain, budget exhaustion, and exact arrangements whose
+binary64 publication would invert or collide fragments
+(`unrepresentable_publication`) raise `SurfaceArrangementError` with a
+`SurfaceArrangementStatus`.
+
+`surface_boolean(first, second, SurfaceBooleanOperation.UNION | INTERSECTION |
+DIFFERENCE, operands=(...))` computes the n-ary Boolean of closed, edge-manifold,
+outward oriented `SurfaceModel` solids (`DIFFERENCE` removes every later operand
+from the first). A `SurfaceBooleanResult` operand declares its region expression
+over its original models, so nested calls such as
+`surface_boolean(surface_boolean(a, b, UNION), c, DIFFERENCE)` evaluate the CSG
+tree on one exact arrangement of the original operands instead of re-cutting
+rounded intermediates. Fragment components bounded by contact curves are
+classified against every other operand exactly by the native arrangement: the
+winding number is counted along a symbolically perturbed axis ray from the
+centroid of a representative's implicit corners with filtered and exact dyadic
+predicates, with no floating-point trust margin. The classification work
+(winding-matrix entries plus representative/triangle scans, reported as
+`classification_matrix_entries` and `classification_pair_scans`) is admitted
+against `maximum_winding_evaluations` and any active native execution budget
+before allocation. Coplanar fragments follow exact per-operand coverage
+orientation and are emitted once, from the lowest contributing operand whose
+subexpression actually bounds the region. Open or non-solid operands raise
+`SurfaceBooleanError`. `SurfaceBooleanResult` carries the oriented triangles
+with per-triangle original operand, source cell global ID, source vertices and
+barycentric weights (`source_corner_values` transfers operand vertex data),
+vertex construction bounds, `operand_ids`, `SurfaceClosureEvidence` (unpaired and
+non-manifold edges, non-manifold vertices, components, signed volume), the
+arrangement evidence and a `SurfaceModel` for nonempty edge-manifold results.
+Empty and disconnected results are legitimate; tangent contacts may yield
+closed results with non-manifold vertices or edges, which the evidence reports.
+
 ## Core API
 
 ::: phydrax.geometry.CompiledGeometry
@@ -588,6 +854,26 @@ finite-element L2 projection transfers consume this one artifact.
 ---
 
 ::: phydrax.geometry.discover_implicit_curve
+
+---
+
+::: phydrax.geometry.discover_adaptive_implicit_surface
+
+---
+
+::: phydrax.geometry.AdaptiveImplicitSurfacePolicy
+
+---
+
+::: phydrax.geometry.AdaptiveImplicitSurface
+
+---
+
+::: phydrax.geometry.AdaptiveImplicitSurfaceEvidence
+
+---
+
+::: phydrax.geometry.ImplicitVolumeQuery
 
 ---
 
@@ -651,6 +937,8 @@ finite-element L2 projection transfers consume this one artifact.
 
 ::: phydrax.geometry.PlanarEmbedding
 
+::: phydrax.geometry.AbstractBRepProjection
+
 ---
 
 ::: phydrax.geometry.PlanarPartitionPlan
@@ -697,6 +985,38 @@ finite-element L2 projection transfers consume this one artifact.
 
 ---
 
+::: phydrax.geometry.estimate_point_normals
+
+---
+
+::: phydrax.geometry.PointNormals
+
+---
+
+::: phydrax.geometry.NormalEstimationEvidence
+
+---
+
+::: phydrax.geometry.PoissonSolveEvidence
+
+---
+
+::: phydrax.geometry.SampledSurfaceDeviation
+
+---
+
+::: phydrax.geometry.ReconstructionRobustness
+
+---
+
+::: phydrax.geometry.reconstruct_trimmed_surface
+
+---
+
+::: phydrax.geometry.TrimmedSurfaceReconstruction
+
+---
+
 ::: phydrax.geometry.prepare_common_refinement
 
 ---
@@ -718,3 +1038,177 @@ finite-element L2 projection transfers consume this one artifact.
 ---
 
 ::: phydrax.geometry.CommonRefinementEvidence
+
+---
+
+::: phydrax.geometry.arrange_triangle_surfaces
+
+---
+
+::: phydrax.geometry.SurfaceArrangement
+
+---
+
+::: phydrax.geometry.SurfaceArrangementEvidence
+
+---
+
+::: phydrax.geometry.SurfaceArrangementLimits
+
+---
+
+::: phydrax.geometry.SurfaceArrangementError
+
+---
+
+::: phydrax.geometry.surface_boolean
+
+---
+
+::: phydrax.geometry.SurfaceBooleanOperation
+
+---
+
+::: phydrax.geometry.SurfaceBooleanResult
+
+---
+
+::: phydrax.geometry.SurfaceClosureEvidence
+
+---
+
+::: phydrax.geometry.SurfaceBooleanError
+
+## Native source, CAD, and certification records
+
+The following public records expose the exact owners used by native meshing.
+They do not turn a sampled bound into a global certificate or an optional
+external shape into native source authority.
+
+::: phydrax.geometry
+    options:
+      members:
+        - SphereMaterialCellAtlas
+        - SphereMaterialInverse
+        - SphereProjectiveReferenceMap
+        - SphereProjectiveTriangleBounds
+        - prepare_sphere_material_atlas
+        - sphere_material_atlas_from_result
+        - AnalyticBoundaryCoverCapacityError
+        - AnalyticImplicitFamily
+        - AnalyticImplicitProfile
+        - BRepAssemblyContainer
+        - BRepQualifiedIncidence
+        - ParametricCurveBoundarySource
+        - CompartmentImageInterpretation
+        - CompartmentMeshingSource
+        - SourceBoundaryChartCover
+        - SourceBoundaryChartQuery
+        - boolean_brep
+        - BRepBooleanFailure
+        - BRepBooleanOperation
+        - BRepBooleanPolicy
+        - BRepBooleanResult
+        - BRepSewingContact
+        - BRepSewingContactRelation
+        - BRepSewingEdgeImage
+        - BRepSewingFailure
+        - BRepSewingLineage
+        - BRepSewingPolicy
+        - BRepSewingResult
+        - sew_brep
+        - AbstractTrimCurve
+        - AdaptiveImplicitBoxIssue
+        - AdaptiveImplicitSurfaceStatus
+        - CoincidentParameterRegion
+        - CoordinateMapScope
+        - CurveIntersectionResult
+        - CurveSurfaceIntersectionRoot
+        - CurveRange
+        - CurveTrimLoop
+        - CurveTrimSegment
+        - DomainCoverageCertificate
+        - FieldBoundOrigin
+        - GlobalEmbeddingCertificate
+        - ImplicitBoundOrigin
+        - ImplicitBoundarySource
+        - ImplicitDiscoveryAccuracy
+        - ImplicitDiscoveryEnclosure
+        - ImplicitTopologyPremise
+        - ImplicitVolumeClass
+        - ImplicitVolumeClassification
+        - IntersectionCurve
+        - IntersectionCurvePoint
+        - IntersectionCurveSide
+        - IntersectionEndpointKind
+        - IntersectionPCurve
+        - MappedBoundaryDegreeEvidence
+        - MappedBoundaryDegreeStatus
+        - MappedReferenceDomain
+        - MeshCertificateBinding
+        - MeshCertificateEntityKind
+        - MeshCertificateFinding
+        - MeshCertificateLimits
+        - MeshCertificateStatus
+        - MeshFindingStatus
+        - ParametricIntersectionCertificate
+        - ParametricIntersectionKind
+        - ParametricIntersectionPoint
+        - ParametricIntersectionPolicy
+        - ParametricIntersectionWork
+        - PiecewiseLinearDomain
+        - PeriodicDelaunayTriangulation
+        - PeriodicImageBudgetError
+        - PeriodicImageLimit
+        - PeriodicTriangulationEvidence
+        - PolygonTrimLoop
+        - RestrictedPowerDiagram
+        - SourceBoundSemantics
+        - SourceBoundaryDistance
+        - SourceBoundaryQuery
+        - SourceBoundarySamples
+        - SourceFidelityCertificate
+        - SurfaceIntersectionResult
+        - SurfaceRegion
+        - TrimRootEndpoint
+        - TrimClassification
+        - UnresolvedIntersectionReason
+        - UnresolvedParameterRegion
+        - certify_domain_coverage
+        - certify_global_embedding
+        - certify_source_fidelity
+        - establish_implicit_cover
+        - implicit_state_id
+        - intersect_curve_ranges
+        - intersect_curve_region
+        - intersect_surface_regions
+        - AbstractCurve
+        - BRepContainmentResult
+        - BRepGeometry
+        - BRepMeasureResult
+        - BRepOccurrence
+        - BRepQueryPolicy
+        - BRepSurfaceQueryResult
+        - BRepTessellationPolicy
+        - CircleCurve
+        - EllipseCurve
+        - ExtrusionSurface
+        - LineCurve
+        - PlanarProfile
+        - PreparedBRepQuery
+        - ProfileArc
+        - ProfileLine
+        - ProfileLoop
+        - ProfilePlane
+        - RationalBezierPiece
+        - RevolutionSurface
+        - RuledSurface
+        - brep_box
+        - brep_cone
+        - brep_cylinder
+        - brep_extrusion
+        - brep_offset
+        - brep_planar_face
+        - brep_revolution
+        - brep_sphere
+        - brep_torus

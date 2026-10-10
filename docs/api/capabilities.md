@@ -4,15 +4,15 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
+Catalog ID: `12ed4af5170899abbee5032cef01cc3fb3aef300d6e5f5d8cb89d61c4c40bf46`
 
 ## Dispositions
 
 | Disposition | Count |
 | --- | ---: |
 | released | 0 |
-| candidate | 301 |
-| research | 171 |
+| candidate | 329 |
+| research | 183 |
 | internal | 5 |
 | retired | 0 |
 
@@ -282,6 +282,46 @@ Catalog ID: `a4673e5f9845deadd897b8aa0dd71bee8f881d3b877f0d7af8dafca026e3b121`
 | `meshfree.strong-form` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.surface-operators` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
 | `meshfree.surface-stokes` | `phydrax.discretization.meshfree` | candidate | candidate | 1 |
+| `meshing.native.affine-prism-tetrahedron-layer-core` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.curve-affine-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.implicit-affine-surface` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.mandatory-compartment-lifecycle` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-design-learned-loop` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-distributed-lifecycle` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-general-all-hex` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-hybrid-layers` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.mandatory-imperfect-surface` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-implicit-volume` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-labeled-image` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-moving-overset-conservative` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-moving-overset-interpolative` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-native-cad` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-periodic-combination` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.mandatory-planar-curved-features` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mandatory-polyhedral-system` | `phydrax.meshing` | research | mandatory-native-combination-incomplete | 1 |
+| `meshing.native.mapped-balanced-grid-hexahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.mapped-frame-grid-hexahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.occupied-image-compartment-construction` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.occupied-image-compartment-publication` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.parametric-affine-surface` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.periodic-affine-tetrahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.periodic-affine-triangle-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.planar-affine-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.planar-dual-quadrilateral-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.planar-metric-transfer` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-affine-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-affine-polyhedral-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-balanced-grid-hexahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-dual-hexahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-frame-grid-hexahedron-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.plc-hex-dominant-generation` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.structured-hexahedron-construction` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.structured-hexahedron-publication` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.structured-quadrilateral-construction` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.surface-envelope-affine-publication` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.swept-hexahedron-construction` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.swept-hexahedron-publication` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
+| `meshing.native.tetrahedron-bisection-transfer` | `phydrax.meshing` | candidate | source-inspected-native-admission | 1 |
 | `multiregion-surface.geometry` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.label-field-extraction` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |
 | `multiregion-surface.remeshing` | `phydrax.geometry.multiregion_surface` | candidate | candidate | 1 |

@@ -8,7 +8,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import cauchy_stress
+from ..operators.differential._domain_ops import cauchy_stress
 from ._base import Residual
 from ._field_ops import dot, matvec, outer_scalar_vector
 from .boundary import _condition_value, ConditionValue

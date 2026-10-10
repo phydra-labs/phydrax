@@ -32,6 +32,7 @@ from phydrax.meshing import (
     prepare_mesh_adaptation,
     RelocationMeshAdaptation,
 )
+from phydrax.meshing._device_metric import DeviceMetricEvidence
 
 
 _LOWER = 1.0 / np.sqrt(2.0)
@@ -294,9 +295,8 @@ def test_device_metric_scenario_1() -> None:
     assert not report.failed
     assert report.rejected_uncertain > 0
     result = commit_device_metric_adaptation(prepared, update.state)
-    # ty: ignore[unresolved-attribute]
+    assert isinstance(result.evidence, DeviceMetricEvidence)
     assert result.evidence.status & AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
-    # ty: ignore[unresolved-attribute]
     assert result.evidence.collapses > 0
     points = np.asarray(source.mesh.coordinates)
     identifiers = np.asarray(source.mesh.vertex_global_ids)

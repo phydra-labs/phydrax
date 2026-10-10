@@ -675,7 +675,10 @@ def test_exact_numerical_coefficient_component_has_scalar_zero_derivative() -> N
         PDEExpression.parameter("a").component(1).derivative("x", axis=0, order=3)
     )
     problem = _problem(
-        expression, parameters=(PDEParameter("a", components=2, value=(1.0, 2.0)),)
+        expression,
+        parameters=(
+            PDEParameter("a", representation="vector", components=2, value=(1.0, 2.0)),
+        ),
     )
     coefficient = jnp.asarray([0.5, 0.7], dtype=jnp.float64)
 

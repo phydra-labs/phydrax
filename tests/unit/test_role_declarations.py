@@ -11,7 +11,6 @@ import dataclasses
 import functools
 import importlib
 import inspect
-import pkgutil
 import sys
 import typing
 from typing import Any
@@ -31,6 +30,7 @@ from phydrax._trainable import (
     ParameterOwner,
     resolve_array_roles,
 )
+from tests._support.package_modules import import_phydrax_modules
 
 
 # Extension points whose implementations may be learned components. A
@@ -143,12 +143,7 @@ def _subclasses(root: type, /) -> set[type]:
 @functools.cache
 def _repository() -> tuple[tuple[type, ...], tuple[type, ...]]:
     """Import every phydrax module; return its dataclass classes and slot bases."""
-    for info in pkgutil.walk_packages(phx.__path__, "phydrax."):
-        try:
-            importlib.import_module(info.name)
-        except ImportError:
-            # Optional-dependency modules cannot define built-in classes here.
-            continue
+    import_phydrax_modules()
     candidates = (
         _subclasses(eqx.Module)
         | _subclasses(NonTrainableState)

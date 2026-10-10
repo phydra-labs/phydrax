@@ -87,7 +87,6 @@ def nuclear_candidate_profile(name: str, /) -> CapabilityProfile:
     return CapabilityProfile(
         name,
         "phydrax",
-        "candidate",
         (SupportTuple(capability, attributes),),
         required_gates=gates,
         released=False,

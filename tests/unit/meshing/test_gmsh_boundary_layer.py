@@ -20,19 +20,41 @@ requires_meshcore = pytest.mark.skipif(
 
 _COORDINATES = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 _SCHEDULE = phx.meshing.LayerSchedule.geometric(3, 0.02, growth_rate=1.25)
+_IMPORT_LIMITS = phx.interchange.ResourceLimits(
+    max_bytes=1 << 24,
+    max_depth=64,
+    max_nodes=100_000,
+    max_attributes=2_000_000,
+    max_losses=8,
+)
 
 
 def _persist(shape: Any, path: Any, **options: Any) -> Any:
-    return phx.geometry.persist_occt_shape(
+    # OCCT constructs only the external comparison fixture, not the native model.
+    phx.interchange.persist_occt_shape(
         shape,
         path,
         coordinate_contract=_COORDINATES,
         linear_deflection=options.get("linear_deflection", 0.01),
         angular_deflection=options.get("angular_deflection", 0.1),
     )
+    return phx.interchange.read_cad(
+        path,
+        phx.interchange.CadImportPolicy(
+            _COORDINATES,
+            _IMPORT_LIMITS,
+            tessellation=phx.geometry.BRepTessellationPolicy(
+                linear_deflection=options.get("linear_deflection", 0.01),
+                angular_deflection=options.get("angular_deflection", 0.1),
+            ),
+        ),
+        trusted_root=path.parent,
+        source_length_unit=_COORDINATES.length_unit,
+    ).model
 
 
 def _ball_in_box(path: Any) -> Any:
+    pytest.importorskip("OCP")
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
     from OCP.gp import gp_Pnt
@@ -43,6 +65,7 @@ def _ball_in_box(path: Any) -> Any:
 
 
 def _box(path: Any) -> Any:
+    pytest.importorskip("OCP")
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.gp import gp_Pnt
 
@@ -55,10 +78,19 @@ def _box(path: Any) -> Any:
 
 
 def _faces(source: Any, predicate: Any) -> Any:
-    points = np.asarray(source.mesh_vertices)
-    triangles = points[np.asarray(source.mesh_faces)]
-    face_ids = np.asarray(source.triangle_face_ids)
-    return tuple(np.unique(face_ids[np.all(predicate(triangles), axis=1)]))
+    assert source.geometry is not None
+    selected = []
+    for face, patch in enumerate(source.patches):
+        lower, upper = np.asarray(source.parameter_bounds[face])
+        first, second = np.meshgrid(
+            np.linspace(lower[0], upper[0], 3),
+            np.linspace(lower[1], upper[1], 3),
+        )
+        parameters = np.column_stack((first.ravel(), second.ravel()))
+        points = np.asarray(patch.evaluate(parameters))
+        if np.all(predicate(points[None, :, :])):
+            selected.append(face)
+    return tuple(selected)
 
 
 def _face_scope(provider: Any, source: Any, indices: Any) -> Any:
@@ -245,9 +277,16 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
     tmp_path: Any,
 ) -> None:
     provider = phx.meshing.GmshProvider()
-    source = _box(tmp_path / "box.brep")
-    # ty: ignore[invalid-argument-type]
-    schedule = phx.meshing.LayerSchedule((0.08, 0.10, 0.12))
+    source = phx.geometry.brep_box(
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        coordinate_contract=_COORDINATES,
+        tessellation=phx.geometry.BRepTessellationPolicy(
+            linear_deflection=0.03,
+            angular_deflection=0.15,
+        ),
+    )
+    schedule = phx.meshing.LayerSchedule(np.asarray((0.08, 0.10, 0.12), dtype=np.float64))
     control = phx.meshing.BoundaryLayerControl(
         _face_scope(
             provider,
@@ -263,6 +302,41 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
     ):
         provider.plan(source, _layered_spec(provider, source, control))
 
+    domain = phx.geometry.MeshingDomain.from_brep(source)
+    wall_faces = set(
+        _faces(source, lambda triangles: np.isclose(triangles[:, :, 2], 0.0))
+    )
+    wall_slots = domain.scope_indices(2)
+    native_wall = phx.meshing.MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        2,
+        domain.entity_set_id(2),
+        np.asarray(
+            tuple(
+                wall_slots[row]
+                for row, face in enumerate(domain.source_indices[2])
+                if face in wall_faces
+            ),
+            dtype=np.int64,
+        ),
+    )
+    native_volume = phx.meshing.MeshingScope(
+        domain.source_id,
+        domain.source_revision,
+        phx.meshing.MeshingEntityKind.GEOMETRY,
+        3,
+        domain.entity_set_id(3),
+        np.asarray(domain.scope_indices(3), dtype=np.int64),
+    )
+    control = phx.meshing.BoundaryLayerControl(
+        native_wall,
+        schedule,
+        route=phx.meshing.BoundaryLayerRoute.CAD_EXTRUSION,
+        volume_scope=native_volume,
+    )
+
     extrusion = phx.meshing.prepare_boundary_layer_extrusion(
         source, control, destination=tmp_path / "split.brep"
     )
@@ -274,6 +348,44 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
     whole = provider.whole_scope(part, 3)
     layers = provider.entity_scope(part, part.solid_ids[extrusion.layer_solid_ids[0]])
     core = provider.entity_scope(part, part.solid_ids[extrusion.core_solid_ids[0]])
+    native_control = extrusion.control
+    assert native_control.volume_scope is not None
+    assert native_control.cap_scope is not None
+    # Native extrusion names exact definition rows; author comparison-provider
+    # scopes from those entities rather than reinterpreting its numeric namespace.
+    sweep = phx.meshing.BoundaryLayerControl(
+        provider.entity_scope(
+            part,
+            tuple(
+                part.face_ids[int(row)]
+                for row in np.asarray(native_control.wall_scope.entity_ids)
+            ),
+        ),
+        native_control.schedule,
+        route=native_control.route,
+        volume_scope=provider.entity_scope(
+            part,
+            tuple(
+                part.solid_ids[int(row)]
+                for row in np.asarray(native_control.volume_scope.entity_ids)
+            ),
+        ),
+        cap_scope=provider.entity_scope(
+            part,
+            tuple(
+                part.face_ids[int(row)]
+                for row in np.asarray(native_control.cap_scope.entity_ids)
+            ),
+        ),
+        collision=native_control.collision,
+        corner=native_control.corner,
+        feature_angle=native_control.feature_angle,
+        minimum_thickness_fraction=native_control.minimum_thickness_fraction,
+        growth_rate_bounds=native_control.growth_rate_bounds,
+        maximum_corner_stretch=native_control.maximum_corner_stretch,
+        smoothing_iterations=native_control.smoothing_iterations,
+        core_maximum_size=native_control.core_maximum_size,
+    )
     specification = phx.meshing.VolumeMeshingSpec(
         phx.meshing.CellMeshingTarget(
             3,
@@ -301,11 +413,11 @@ def test_cad_extrusion_partitions_an_exact_slab_meshed_as_an_exact_sweep(
             phx.meshing.PatchControl(
                 "cap",
                 # ty: ignore[invalid-argument-type]
-                extrusion.control.cap_scope,
+                sweep.cap_scope,
                 ("core", "layers"),
             ),
         ),
-        layer_controls=(extrusion.control,),
+        layer_controls=(sweep,),
     )
 
     result = provider.plan(part, specification).execute()

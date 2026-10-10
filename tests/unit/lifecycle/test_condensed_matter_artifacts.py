@@ -231,7 +231,6 @@ def _candidate(name: Any) -> Any:
     return CapabilityProfile(
         f"{name}.profile",
         "phydrax",
-        "candidate",
         (support,),
         required_gates=("scientific-validation",),
         released=False,
