@@ -24,7 +24,7 @@ from ..linalg import (
     solve as solve_linear,
     SumLinearOperator,
 )
-from ._linearization import JacobianPolicy, prepare_jacobian
+from ._linearization import _jacobian_jvp_actions, JacobianPolicy, prepare_jacobian
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -345,9 +345,10 @@ class PseudoTransient(AbstractNonlinearMethod):
                 + jacobian.residual_evaluations
                 + 1,
                 jvp_evaluations=current.jvp_evaluations
-                + jnp.sum(
-                    linear_result.diagnostics.matvec_count,
-                    dtype=jnp.int32,
+                + jacobian.setup_jvp_evaluations
+                + _jacobian_jvp_actions(
+                    jacobian.operator,
+                    jnp.sum(linear_result.diagnostics.matvec_count, dtype=jnp.int32),
                 ),
                 jacobian_preparations=current.jacobian_preparations + 1,
                 linear_solves=current.linear_solves + 1,

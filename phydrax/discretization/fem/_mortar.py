@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from ..._coordinate_measure import CoordinateFrame, CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -177,6 +178,8 @@ class FiniteElementMortarMetricData(StrictModule):
     owner_scaled_normals: Array
     neighbor_scaled_normals: Array
     metric_id: str = eqx.field(static=True)
+    rotational_measure: CoordinateMeasurePlan | None
+    coordinate_frame: CoordinateFrame = eqx.field(static=True)
 
     def __init__(
         self,
@@ -187,6 +190,8 @@ class FiniteElementMortarMetricData(StrictModule):
         /,
         *,
         metric_id: str | None = None,
+        rotational_measure: CoordinateMeasurePlan | None = None,
+        coordinate_frame: CoordinateFrame = "reference",
     ) -> None:
         coordinates = jnp.asarray(physical_coordinates)
         weights = jnp.asarray(physical_weights)
@@ -201,6 +206,15 @@ class FiniteElementMortarMetricData(StrictModule):
             or not jnp.issubdtype(weights.dtype, jnp.inexact)
         ):
             raise ValueError("Mortar metric arrays have incompatible shapes.")
+        from ...typing import parse
+
+        frame = parse(coordinate_frame, CoordinateFrame, "coordinate_frame")
+        if rotational_measure is not None:
+            if not isinstance(rotational_measure, CoordinateMeasurePlan):
+                raise TypeError(
+                    "rotational_measure must be CoordinateMeasurePlan or None."
+                )
+            weights = rotational_measure.weight(coordinates, weights, frame=frame)
         identifier = (
             canonical_fingerprint(
                 {
@@ -209,6 +223,12 @@ class FiniteElementMortarMetricData(StrictModule):
                     "weights": array_tree_fingerprint(np.asarray(weights)),
                     "owner_normals": array_tree_fingerprint(np.asarray(owner)),
                     "neighbor_normals": array_tree_fingerprint(np.asarray(neighbor)),
+                    **(
+                        {"coordinate_measure": rotational_measure.plan_id}
+                        if rotational_measure is not None
+                        and rotational_measure.kind != "cartesian"
+                        else {}
+                    ),
                 }
             )
             if metric_id is None
@@ -221,6 +241,8 @@ class FiniteElementMortarMetricData(StrictModule):
         self.owner_scaled_normals = owner
         self.neighbor_scaled_normals = neighbor
         self.metric_id = identifier
+        self.rotational_measure = rotational_measure
+        self.coordinate_frame = frame
 
     @property
     def opposite_normal_error(self) -> Array:
@@ -341,6 +363,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
     child_index: int = eqx.field(static=True)
     child_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    rotational_measure: CoordinateMeasurePlan | None
 
     def __init__(
         self,
@@ -365,6 +388,8 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         child_index: int,
         child_count: int,
         /,
+        *,
+        rotational_measure: CoordinateMeasurePlan | None = None,
     ) -> None:
         left = jnp.asarray(left_interpolation)
         right = jnp.asarray(right_interpolation)
@@ -454,6 +479,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         self.interface_id = identifier
         self.child_index = child
         self.child_count = children
+        self.rotational_measure = rotational_measure
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-serial-mortar-plan",
@@ -481,6 +507,12 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
                 "left_projection": array_tree_fingerprint(np.asarray(left_projection)),
                 "right_projection": array_tree_fingerprint(np.asarray(right_projection)),
                 "evidence": evidence.evidence_id,
+                **(
+                    {"coordinate_measure": rotational_measure.plan_id}
+                    if rotational_measure is not None
+                    and rotational_measure.kind != "cartesian"
+                    else {}
+                ),
             }
         )
 
@@ -532,6 +564,23 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
             raise ValueError("Mortar values have incompatible shape.")
         return ein.contract("im,m...->i...", self.right_pairing_adjoint, values)
 
+    def _physical_weights(self, metric: FiniteElementMortarMetricData | None, /) -> Array:
+        if metric is None:
+            return self.physical_weights
+        if not isinstance(metric, FiniteElementMortarMetricData):
+            raise TypeError("metric must be FiniteElementMortarMetricData or None.")
+        expected = self.rotational_measure
+        actual = metric.rotational_measure
+        if (expected is None) != (actual is None) or (
+            expected is not None
+            and actual is not None
+            and expected.plan_id != actual.plan_id
+        ):
+            raise ValueError(
+                "Mortar plan and runtime must bind the same coordinate measure."
+            )
+        return metric.physical_weights
+
     def integrated_flux(
         self,
         flux: ArrayLike,
@@ -539,9 +588,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         value = jnp.asarray(flux)
-        physical_weights = (
-            self.physical_weights if metric is None else metric.physical_weights
-        )
+        physical_weights = self._physical_weights(metric)
         if value.shape[0] != physical_weights.shape[0]:
             raise ValueError("Mortar flux has incompatible quadrature shape.")
         weights = physical_weights.reshape(
@@ -556,9 +603,7 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         value = jnp.asarray(flux)
-        physical_weights = (
-            self.physical_weights if metric is None else metric.physical_weights
-        )
+        physical_weights = self._physical_weights(metric)
         if value.shape[0] != physical_weights.shape[0]:
             raise ValueError("Mortar flux has incompatible quadrature shape.")
         weights = physical_weights.reshape(
@@ -598,13 +643,20 @@ def serial_finite_element_mortar_plan(
     left_physical_coordinates: ArrayLike | None = None,
     right_physical_coordinates: ArrayLike | None = None,
     coordinate_measure: ArrayLike | None = None,
+    rotational_measure: CoordinateMeasurePlan | None = None,
     reproduction_tolerance: float = 1.0e-10,
     coordinate_tolerance: float = 1.0e-10,
     interface_id: str = "mortar-interface",
     child_index: int = 0,
     child_count: int = 1,
 ) -> FiniteElementMortarPlan:
-    """Build one serial mortar; side evaluation points encode child mappings."""
+    """Build a serial mortar with Cartesian metric and rotational measure once.
+
+    ``coordinate_measure`` is the existing Cartesian surface metric factor.
+    ``rotational_measure`` binds its physical coordinates to a coordinate frame
+    and supplies only 2πr or 4πr². Physical side coordinates are required for a
+    rotational reduction; parameter coordinates are never interpreted as radii.
+    """
 
     left_nodes = _point_array(left_trace_nodes, "left_trace_nodes")
     right_nodes = _point_array(right_trace_nodes, "right_trace_nodes")
@@ -694,6 +746,21 @@ def serial_finite_element_mortar_plan(
     ):
         raise ValueError("Mortar coordinate measure must be positive and finite.")
     physical_weights = weights * measure
+    if rotational_measure is not None:
+        if not isinstance(rotational_measure, CoordinateMeasurePlan):
+            raise TypeError("rotational_measure must be CoordinateMeasurePlan or None.")
+        if rotational_measure.kind != "cartesian" and left_physical_coordinates is None:
+            raise ValueError(
+                "Rotational mortar measures require physical side coordinates."
+            )
+        rotational_measure.validate_coordinates(physical)
+        physical_weights = np.asarray(
+            rotational_measure.weight(
+                physical, physical_weights, frame=rotational_measure.frame
+            )
+        )
+        if np.any(~np.isfinite(physical_weights)) or np.any(physical_weights <= 0.0):
+            raise ValueError("Mortar physical area must be finite and strictly positive.")
 
     degree = (
         (int(declared_reproduction_degree),) * dimension
@@ -809,6 +876,7 @@ def serial_finite_element_mortar_plan(
         interface_id,
         child_index,
         child_count,
+        rotational_measure=rotational_measure,
     )
 
 

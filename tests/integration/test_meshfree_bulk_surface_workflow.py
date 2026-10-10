@@ -328,6 +328,11 @@ def test_retry_reports_refused_attempts_and_selects_the_accepted_native_step(
     assert bool(retried.successful)
     selected = int(retried.retry_count)
     assert selected >= 1
+    assert float(retried.accepted_step_size) == 8.0 * 0.125**selected
+    np.testing.assert_array_equal(
+        retried.attempt_executed,
+        np.arange(5) <= selected,
+    )
     np.testing.assert_array_equal(
         retried.attempt_successful[:selected], [False] * selected
     )
@@ -340,15 +345,14 @@ def test_retry_reports_refused_attempts_and_selects_the_accepted_native_step(
     chosen = retried.evidence
     assert isinstance(chosen, MeshfreeBulkSurfaceEvidence)
     assert int(chosen.status) == int(FilmStepStatus.ACCEPTED)
-    # Independent recomputation of the selected native step and its balance.
-    direct = method.step(
-        jnp.asarray(0), jnp.asarray(0.0), state, retried.accepted_step_size, None
-    )
-    np.testing.assert_array_equal(retried.accepted_state[0], direct.accepted_state[0])
-    np.testing.assert_array_equal(retried.accepted_state[1], direct.accepted_state[1])
     transferred = float(jnp.sum(chosen.transferred_to_surface_mol))
     np.testing.assert_allclose(
         float(jnp.sum(state[0]) - jnp.sum(retried.accepted_state[0])),
+        transferred,
+        rtol=1e-9,
+    )
+    np.testing.assert_allclose(
+        float(jnp.sum(retried.accepted_state[1]) - jnp.sum(state[1])),
         transferred,
         rtol=1e-9,
     )

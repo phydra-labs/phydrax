@@ -41,12 +41,20 @@ def custom_root(
     zero. The rule is a custom JVP, so ``jax.linearize`` of a vmapped root works
     (JAX's hijax ``custom_root`` batches into a ``VmapOf`` without a
     linearization rule).
+
+    Symbolically inactive residual parameters are not differentiated. Undefined
+    active parameter actions remain undefined; no tangent magnitude is clipped.
     """
     # Hoist every closed-over array, including undifferentiated batch or staged
     # tracers, so neither the primal nor the rule captures an outer tracer.
     residual = eqx.filter_closure_convert(f, initial_guess)
     residual_dynamic, residual_static = eqx.partition(residual, eqx.is_array)
-    residual_shape = jax.eval_shape(residual, initial_guess)
+
+    # Name the shape-only boundary instead of formatting the residual's Jaxpr.
+    def evaluate_residual_shape(point: PyTree[Any]) -> PyTree[Any]:
+        return residual(point)
+
+    residual_shape = jax.eval_shape(evaluate_residual_shape, initial_guess)
     if jax.tree.structure(residual_shape) != jax.tree.structure(initial_guess):
         raise TypeError("f must return the same pytree structure as initial_guess.")
     primal_solve = eqx.filter_closure_convert(
@@ -68,7 +76,7 @@ def custom_root(
     )
     tangent_dynamic, tangent_static = eqx.partition(implicit_solve, eqx.is_array)
 
-    @jax.custom_jvp
+    @eqx.filter_custom_jvp
     def root(
         residual_dynamic: Any,
         solve_dynamic: Any,
@@ -78,23 +86,37 @@ def custom_root(
         # Differentiation may pass constant primals as typed scalar literals.
         return eqx.combine(solve_dynamic, solve_static)(jax.tree.map(jnp.asarray, guess))
 
-    @root.defjvp
+    @root.def_jvp
     def root_jvp(primals: Any, tangents: Any) -> tuple[Any, Any]:
         residual_dynamic = jax.tree.map(jnp.asarray, primals[0])
         tangent_dynamic = primals[2]
         solution = root(*primals)
         value, auxiliary = solution if has_aux else (solution, None)
-        _, parameter_action = jax.jvp(
-            lambda dynamic: eqx.combine(dynamic, residual_static)(value),
-            (residual_dynamic,),
-            (tangents[0],),
-        )
-        value_tangent = jax.tree.map(
-            jnp.negative,
-            eqx.combine(tangent_dynamic, tangent_static)(
-                residual_dynamic, value, parameter_action
-            ),
-        )
+        if jax.tree.leaves(tangents[0]):
+            # Preserve symbolic zero parameter tangents: differentiating an
+            # inactive fractional power at zero can otherwise inject 0 * inf.
+            _, parameter_action = eqx.filter_jvp(
+                lambda dynamic: eqx.combine(dynamic, residual_static)(value),
+                (residual_dynamic,),
+                (tangents[0],),
+            )
+            parameter_action = jax.tree.map(
+                lambda primal, tangent: (
+                    _zero_tangent(primal) if tangent is None else tangent
+                ),
+                value,
+                parameter_action,
+                is_leaf=lambda leaf: leaf is None,
+            )
+            value_tangent = jax.tree.map(
+                jnp.negative,
+                eqx.combine(tangent_dynamic, tangent_static)(
+                    residual_dynamic, value, parameter_action
+                ),
+            )
+        else:
+            # Guess/solver/auxiliary dependence is explicitly outside the IFT.
+            value_tangent = jax.tree.map(_zero_tangent, value)
         if has_aux:
             return solution, (value_tangent, jax.tree.map(_zero_tangent, auxiliary))
         return solution, value_tangent

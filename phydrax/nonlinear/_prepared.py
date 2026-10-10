@@ -235,7 +235,7 @@ def _refreshed_run(
             jacobian.residual_evaluations * problem.trial_valid(state, args),
             dtype=jnp.int32,
         ),
-        jvp_evaluations=zero_count,
+        jvp_evaluations=jacobian.setup_jvp_evaluations * problem.trial_valid(state, args),
         vjp_evaluations=zero_count,
         jacobian_preparations=problem.trial_valid(state, args).astype(jnp.int32),
         linear_solves=zero_count,

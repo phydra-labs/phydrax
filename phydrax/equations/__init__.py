@@ -594,6 +594,7 @@ from ._mixed_dimensional import (
     ReservoirCouplingPlan,
 )
 from ._mixture_transport import (
+    brokaw_mixture_conductivity,
     MixtureAveragedTransportPlan,
     MixtureTransportEvaluation,
     StefanMaxwellEvidence,
@@ -1418,6 +1419,7 @@ __all__ = [
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",
+    "brokaw_mixture_conductivity",
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
     "MultilayerShallowWaterSystem",

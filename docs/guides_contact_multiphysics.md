@@ -59,6 +59,24 @@ returned separately as generated heat. `assemble_contact_fluxes` partitions
 that heat between participants while enforcing equal/opposite conductive heat,
 electrical current, and mass flux.
 
+### Rotational measures and fuel-gap exchange
+
+`FiniteElementMortarMetricData` accepts `rotational_measure=CoordinateMeasurePlan`
+and an explicit `coordinate_frame`. Supply unweighted meridional quadrature
+weights; the native metric applies the rotational factor once. An
+`axisymmetric-rz` plan therefore integrates a cylindrical interface with `2πr`,
+not a planar interface or a second application-side circumference factor.
+The measure frame must agree with the supplied reference or current geometry.
+
+The nuclear-fuel application's `GapConductanceLaw` combines gas conduction,
+source-bound accommodation and contact conductance, and gray-surface radiation.
+Its assembled interface exchange is equal and opposite between the fuel and
+cladding; connected gas volume and closed HBS pores are tracked separately.
+Contact pressure and frictional state remain mechanical unknowns rather than
+being inferred from a heat-transfer coefficient. See
+[the fuel workflow](guides_nuclear_fuel.md) for its admission, source-support,
+and scientific-release boundaries.
+
 ## Wear and cohesive evolution
 
 `FrictionWearEvolutionLaw` advances accumulated slip, Archard-style wear depth,

@@ -1,5 +1,14 @@
 # Nuclear
 
+`HeavyMetalReference`, `ExposureState`, `advance_exposure`, and
+`FissionGasYieldTable` provide source-bound reference fuel exposure and gas
+production. `HeliumProductionPlan` binds explicit isotope-resolved ternary
+yields and native decay transitions; `HeliumProductionRates` retains their
+separate contributions in atoms/m³/s. These APIs do not supply an evaluated
+helium library, fuel transport laws, isotope depletion, or scientific fuel
+release. See [nuclear data](../guides_nuclear_data.md) and
+[fuel source boundaries](../nuclear_fuel_sources.md).
+
 ::: phydrax.nuclear
     options:
       show_root_heading: true

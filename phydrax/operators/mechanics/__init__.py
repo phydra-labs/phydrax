@@ -4,6 +4,15 @@
 
 """Pointwise continuum, Lagrangian, and Hamiltonian mechanics operators."""
 
+from ._axisymmetric import (
+    axisymmetric_deformation_gradient,
+    axisymmetric_hencky_stress,
+    AxisymmetricHenckyStress,
+    coaxial_hencky_stress,
+    CoaxialHenckyStress,
+    cylindrical_principal_stretches,
+    spherical_principal_stretches,
+)
 from ._finite_strain import (
     cauchy_to_first_piola,
     finite_strain_kinematics,
@@ -46,6 +55,8 @@ from ._linear_elasticity import LinearElasticityTensor
 
 
 __all__ = [
+    "AxisymmetricHenckyStress",
+    "CoaxialHenckyStress",
     "FiniteStrainKinematics",
     "HyperelasticLaw",
     "HyperelasticResponse",
@@ -55,11 +66,15 @@ __all__ = [
     "NeoHookeanParameters",
     "VolumetricConstraint",
     "VolumetricConstraintKind",
+    "axisymmetric_deformation_gradient",
+    "axisymmetric_hencky_stress",
     "canonical_hamiltonian_residual",
     "canonical_hamiltonian_vector_field",
     "canonical_momentum",
     "canonical_poisson_bracket",
     "cauchy_to_first_piola",
+    "coaxial_hencky_stress",
+    "cylindrical_principal_stretches",
     "euler_lagrange",
     "finite_strain_kinematics",
     "first_piola_to_cauchy",
@@ -81,5 +96,6 @@ __all__ = [
     "neo_hookean_tangent_from_moduli",
     "plane_strain_embedding",
     "poisson_bracket",
+    "spherical_principal_stretches",
     "volumetric_constraint",
 ]

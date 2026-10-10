@@ -1,6 +1,6 @@
 # Omniphysics closure matrix
 
-Source ledger ID: `0576a91cc97d0b77a579436bd297643224c9c348f95329a7894f6fb6507367fb`
+Source ledger ID: `0d24a807c13cf6bf5717265576dc1ea5c25072c0c9bd04c8f9eb0f3fdc2b4f30`
 
 | Family | Requirements | Resolutions | Classified | Implementation closed | Release closed |
 | --- | ---: | ---: | --- | --- | --- |
@@ -25,5 +25,7 @@ Source ledger ID: `0576a91cc97d0b77a579436bd297643224c9c348f95329a7894f6fb650736
 | `acoustics` | 2 | 2 | true | true | false |
 | `electrochemistry` | 2 | 2 | true | true | false |
 | `process-systems` | 2 | 2 | true | true | false |
+| `nuclear-fuel.implementation` | 15 | 15 | true | false | false |
+| `nuclear-fuel.scientific-release` | 2 | 2 | true | false | false |
 
 This generated matrix is an inventory, not a release claim.

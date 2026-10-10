@@ -17,7 +17,11 @@ from jaxtyping import PyTree
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._preconditioning import prepare_preconditioner, PreparedPreconditioner
-from .._spaces import _coordinate_dtype, _coordinate_pairing_matrix
+from .._spaces import (
+    _coordinate_dtype,
+    _coordinate_pairing_matrix,
+    _has_euclidean_pairing,
+)
 from ._native import _solve_dense_eigh, _solve_lobpcg, _solve_restarted_lanczos
 from ._plans import EigenSolvePlan, make_eigensolve_plan
 from ._policies import DenseEigh, EigenSolvePolicy, LOBPCG, RestartedLanczos
@@ -165,54 +169,63 @@ def _prepare_dense_state(
     space = problem.operator.source
     n = problem.dimension
     dtype = _coordinate_dtype(space)
-    pairing = _coordinate_pairing_matrix(space)
     operator_matrix = materialize(problem.operator, plan.policy.materialization)
-    metric_matrix = (
-        materialize(problem.metric_operator, plan.policy.materialization)
-        if isinstance(problem, GeneralizedEigenproblem)
-        else jnp.broadcast_to(
-            jnp.eye(n, dtype=dtype),
-            problem.batch_shape + (n, n),
+    standard_euclidean = isinstance(problem, Eigenproblem) and _has_euclidean_pairing(
+        space
+    )
+    if standard_euclidean:
+        reduced_operator = _require_hermitian(operator_matrix, "paired operator")
+        metric_factor = jnp.broadcast_to(
+            jnp.eye(n, dtype=dtype), problem.batch_shape + (n, n)
         )
-    )
-    paired_operator = _require_hermitian(
-        jnp.matmul(pairing, operator_matrix),
-        "paired operator",
-    )
-    paired_metric = _require_hermitian(
-        jnp.matmul(pairing, metric_matrix),
-        "paired metric",
-    )
-    metric_factor = jnp.linalg.cholesky(
-        paired_metric,
-        symmetrize_input=False,
-    )
-    metric_factor = eqx.error_if(
-        metric_factor,
-        jnp.any(~jnp.isfinite(metric_factor))
-        | jnp.any(jnp.real(jnp.diagonal(metric_factor, axis1=-2, axis2=-1)) <= 0),
-        "Dense generalized eigensolve metric factorization failed.",
-    )
-    left_reduced = jsp.linalg.solve_triangular(
-        metric_factor,
-        paired_operator,
-        lower=True,
-    )
-    reduced_operator = jnp.conj(
-        jnp.swapaxes(
-            jsp.linalg.solve_triangular(
-                metric_factor,
-                jnp.conj(jnp.swapaxes(left_reduced, -1, -2)),
-                lower=True,
-            ),
-            -1,
-            -2,
+    else:
+        pairing = _coordinate_pairing_matrix(space)
+        metric_matrix = (
+            materialize(problem.metric_operator, plan.policy.materialization)
+            if isinstance(problem, GeneralizedEigenproblem)
+            else jnp.broadcast_to(
+                jnp.eye(n, dtype=dtype),
+                problem.batch_shape + (n, n),
+            )
         )
-    )
-    reduced_operator = _require_hermitian(
-        reduced_operator,
-        "reduced Hermitian operator",
-    )
+        paired_operator = _require_hermitian(
+            jnp.matmul(pairing, operator_matrix),
+            "paired operator",
+        )
+        paired_metric = _require_hermitian(
+            jnp.matmul(pairing, metric_matrix),
+            "paired metric",
+        )
+        metric_factor = jnp.linalg.cholesky(
+            paired_metric,
+            symmetrize_input=False,
+        )
+        metric_factor = eqx.error_if(
+            metric_factor,
+            jnp.any(~jnp.isfinite(metric_factor))
+            | jnp.any(jnp.real(jnp.diagonal(metric_factor, axis1=-2, axis2=-1)) <= 0),
+            "Dense generalized eigensolve metric factorization failed.",
+        )
+        left_reduced = jsp.linalg.solve_triangular(
+            metric_factor,
+            paired_operator,
+            lower=True,
+        )
+        reduced_operator = jnp.conj(
+            jnp.swapaxes(
+                jsp.linalg.solve_triangular(
+                    metric_factor,
+                    jnp.conj(jnp.swapaxes(left_reduced, -1, -2)),
+                    lower=True,
+                ),
+                -1,
+                -2,
+            )
+        )
+        reduced_operator = _require_hermitian(
+            reduced_operator,
+            "reduced Hermitian operator",
+        )
     return DenseEigenState(
         reduced_operator,
         metric_factor,

@@ -696,3 +696,76 @@ def test_batched_banded_structured_solve_preserves_batch_and_rhs_axes() -> None:
     assert result.value.shape == rhs.shape
     assert jnp.allclose(result.value, expected, rtol=2e-12, atol=2e-12)
     assert jnp.all(result.successful)
+
+
+def _bordered_roundoff_case(
+    leakage: float, multiplier: float, /
+) -> tuple[la.BorderedBlockAssemblyPlan, la.DenseLinearOperator, jax.Array]:
+    source = la.ArraySpace((4,), dtype=jnp.float64, space_id="bordered-roundoff")
+    local = la.CoordinateBlock(
+        la.ArraySpace((3,), dtype=jnp.float64, space_id="bordered-roundoff/local"),
+        ((0, 1), (1, 2), (2, 3)),
+    )
+    border = la.CoordinateBlock(
+        la.ArraySpace((1,), dtype=jnp.float64, space_id="bordered-roundoff/border"),
+        ((3, 4),),
+    )
+    selection = la.BlockSelection(source, (("local", local), ("border", border)))
+    matrix = jnp.asarray(
+        [
+            [4.0, -1.0, leakage, 0.2],
+            [-1.0, 4.0, -1.0, 0.3],
+            [0.0, -1.0, 4.0, 0.4],
+            [0.2, 0.3, 0.4, 2.0],
+        ],
+        dtype=jnp.float64,
+    )
+    plan = la.BorderedBlockAssemblyPlan(
+        selection,
+        local_bandwidth=(1, 1),
+        verify_local_independence=True,
+        probe_chunk_size=2,
+        max_local_size=3,
+        max_border_size=1,
+        max_workspace_bytes=1_000_000,
+        max_output_bytes=1_000_000,
+        leakage_roundoff_multiplier=multiplier,
+    )
+    return plan, la.DenseLinearOperator(matrix, source=source, target=source), matrix
+
+
+def test_bordered_assembly_reports_accepted_roundoff_leakage() -> None:
+    plan, operator, matrix = _bordered_roundoff_case(1.0e-15, 4.0)
+    assembled = plan.assemble(operator)
+    actual = jax.vmap(assembled.mv)(jnp.eye(4, dtype=jnp.float64)).T
+    expected = matrix.at[0, 2].set(0.0)
+
+    assert bool(assembled.assembly_evidence.accepted)
+    assert not bool(assembled.assembly_evidence.exact)
+    assert jnp.isclose(
+        assembled.assembly_evidence.maximum_absolute_omitted_coupling,
+        1.0e-15,
+    )
+    assert (
+        assembled.assembly_evidence.maximum_relative_omitted_coupling
+        <= assembled.assembly_evidence.relative_roundoff_limit
+    )
+    assert jnp.array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("leakage", "multiplier"),
+    ((1.0e-15, 0.0), (1.0e-6, 4.0)),
+    ids=("undeclared-roundoff", "resolved"),
+)
+def test_bordered_assembly_refuses_leakage_outside_policy(
+    leakage: float, multiplier: float
+) -> None:
+    plan, operator, _ = _bordered_roundoff_case(leakage, multiplier)
+
+    @jax.jit
+    def action(value: jax.Array) -> jax.Array:
+        return plan.assemble(operator).mv(value)
+
+    with pytest.raises(jax.errors.JaxRuntimeError):
+        jax.block_until_ready(action(jnp.ones((4,))))

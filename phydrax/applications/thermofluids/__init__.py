@@ -4,6 +4,7 @@
 
 """Native acausal thermofluid components and fixed-grid spatial design workflows."""
 
+from ._channel_heat import LiquidChannelHeatBalance
 from ._heat import (
     ConstantCOPHeatPumpLaw,
     heat_conversion_component,
@@ -86,6 +87,7 @@ __all__ = [
     "HydraulicPressureDropPlan",
     "HydraulicReason",
     "HydraulicReducedResponsePlan",
+    "LiquidChannelHeatBalance",
     "MonotoneHydraulicResponsePlan",
     "ResistiveHeatingLaw",
     "MaterialFlowDirection",
