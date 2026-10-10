@@ -536,7 +536,7 @@ def test_branchwise_retry_reduces_step_and_commits_first_success() -> None:
     assert result.retry_count == 1
     assert jnp.allclose(result.accepted_step_size, 0.5)
     assert jnp.allclose(result.accepted_state, jnp.asarray((5.0,)))
-    assert jnp.allclose(result.attempted_step_sizes, jnp.asarray((1.0, 0.5, 0.25, 0.125)))
+    assert jnp.allclose(result.attempted_step_sizes, jnp.asarray((1.0, 0.5, 0.0, 0.0)))
 
 
 def test_branchwise_retry_commits_nested_state_atomically() -> None:
@@ -621,11 +621,11 @@ def test_retry_keeps_refused_attempt_evidence_apart_from_the_accepted_attempt() 
     )
     assert bool(retried.successful)
     assert int(retried.retry_count) == 2
-    np.testing.assert_array_equal(retried.attempt_executed, [True] * 4)
-    np.testing.assert_array_equal(retried.attempt_successful, [False, False, True, True])
+    np.testing.assert_array_equal(retried.attempt_executed, [True, True, True, False])
+    np.testing.assert_array_equal(retried.attempt_successful, [False, False, True, False])
     assert retried.attempt_evidence is not None
     np.testing.assert_allclose(
-        retried.attempt_evidence["attempted_size"], [1.0, 0.5, 0.25, 0.125]
+        retried.attempt_evidence["attempted_size"], [1.0, 0.5, 0.25, 0.0]
     )
     # The selected evidence is the accepted attempt's, not a merge of attempts.
     assert retried.evidence is not None
@@ -675,7 +675,8 @@ def test_inactive_retry_is_a_held_branch_of_the_executed_retry(publishes: bool) 
     assert bool(held.successful)
     np.testing.assert_array_equal(held.accepted_state, state)
     np.testing.assert_array_equal(held.attempt_executed, [False] * 3)
-    np.testing.assert_array_equal(executed.attempt_executed, [True] * 3)
+    expected_executed = [True, True, True] if publishes else [True, True, False]
+    np.testing.assert_array_equal(executed.attempt_executed, expected_executed)
     assert (held.evidence is None) is (not publishes)
 
 

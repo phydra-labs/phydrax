@@ -28,7 +28,6 @@ from ..linalg import (
     prepare_linearization,
     PreparedLinearization,
 )
-from ..linalg._materialization import _require_materialization_budget
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._qp_compiler import LinearQuadraticControlProblem
 
@@ -402,12 +401,8 @@ def _linearize(
     joint_size = local_size + control_size
     dtype = jnp.result_type(states, controls)
     # One policy bounds each dense Jacobian family over the whole case batch.
-    _require_materialization_budget(
-        case_count * local_size * joint_size, dtype, materialization
-    )
-    _require_materialization_budget(
-        case_count * output_size * joint_size, dtype, materialization
-    )
+    materialization.require(case_count * local_size * joint_size, dtype)
+    materialization.require(case_count * output_size * joint_size, dtype)
 
     def dense_point(
         t: Array,

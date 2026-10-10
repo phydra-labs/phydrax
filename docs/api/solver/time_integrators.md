@@ -219,6 +219,14 @@ the policy's static attempt axis; `evidence` is that of the selected attempt
 `inactive_fixed_step_retry` returns a held transition with the identical PyTree
 structure for branches that execute no attempt.
 
+For nonzero retry capacity, the initial attempt and subsequent retries share one
+bounded scan body; abstract preparation determines buffer structure without
+executing a numerical attempt. Every active attempt starts from the same original
+accepted state. Success or terminal refusal stops further method execution, and
+`attempt_executed` distinguishes zero-masked unused capacity from actual refusal.
+Zero retry capacity keeps the direct single-attempt host boundary. Candidate,
+selected receipt, stacked evidence, and ordered effects retain their ownership.
+
 ::: phydrax.solver.FixedStepRolloutPlan
 
 ---
@@ -357,6 +365,11 @@ and checkpoint boundaries together. `ExactTimeSchedule` emits accepted-endpoint
 snapshots at declared targets; typed trigger bindings request checkpoint,
 publication, or stop actions. Output is immutable and count/byte bounded, writer
 failures fail the run, and checkpoint commit drains earlier publications.
+An optional `step_controller` makes the accepted step adaptive within its
+`minimum_step`/`maximum_step` bounds while output targets and `end_time` still land
+exactly. The controller state lives in `ProductionRunState.controller_state` and is
+checkpointed, so restart reproduces the uninterrupted run bitwise. See
+[Runtime lifecycle](../../guides_solver_substrates.md#runtime-lifecycle).
 
 `PreparedProductionRun(..., session=session)` emits accepted or rejected step
 records after each compiled segment transaction. Session cursors and stop requests
@@ -440,6 +453,14 @@ run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
 ---
 
 ::: phydrax.solver.ProductionRunPlan
+
+---
+
+::: phydrax.solver.AbstractStepSizeController
+
+---
+
+::: phydrax.solver.IncrementLimitedStepController
 
 ---
 

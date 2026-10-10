@@ -871,6 +871,54 @@ displacement.
     assert result.successful
     ```
 
+`CompositeLeastSquaresProblem` represents residual squares plus an optional
+signed scalar objective. `GeneralizedGaussNewton` uses the residual Gauss--Newton
+operator plus the exact signed scalar Hessian, native MINRES, and damped Armijo
+globalization. The default route remains matrix-free.
+
+`CompositeLeastSquaresProblem(..., residual_linearization=provider)` optionally
+accepts a callable `(parameters, args) -> phydrax.linalg.PreparedLinearization`.
+It is called once at each model-preparation point; its retained primal and native
+JVP/VJP actions replace generic residual linearization, without replaying the primal
+for validation. Trial objective evaluations still use `residual`. The provider owns
+same-point and same-argument correctness and must represent that exact residual.
+The artifact source must have the canonical `PyTreeSpace(parameters)` identity,
+including tree, dtype, and pairing, rather than merely an equal coordinate count;
+its target must validate the real floating residual tree. Named scientific spaces
+inside a composed artifact may retain their own identities. Callback array leaves
+remain dynamic Equinox leaves, not static closure storage. Supplying this hook
+changes the represented callback/compiler identity; it does not change scalar
+Hessian exactness, GGN curvature, solver policy, or work-count conventions.
+
+Composite solve execution has two exact lifecycle phases: one native
+`lax.while_loop` owns every optimization iteration, then one final-point model
+evaluation owns status, diagnostics, and result construction. Public
+`composite_least_squares` composes both without changing semantics. Qualification
+and benchmarks may compile the phases separately so the final evidence evaluation
+is not duplicated inside the recurrent executable; there is no host
+synchronization inside the numerical iteration.
+The historical expanded-operation and textual-loop regression ceilings belong to
+the STEP executable that established them. Structurally distinct FIT iteration
+and finalization phases report those counts but are admitted by the declared IR
+byte ceiling, phase deadlines, explicit numerical working-set policies, and
+official compiler memory evidence; they are not forced to equal a STEP graph.
+
+For explicitly bounded parameter spaces, set
+`curvature_materialization=phx.linalg.MaterializationPolicy(...)`. Native linalg
+prepares the undamped current-point curvature once per active step; every damping
+trial reuses that matrix with its declared diagonal shift. Accepted-point changes
+prepare fresh curvature. Neither indefinite scalar curvature nor native linear
+failure evidence is replaced by a positive-semidefinite approximation.
+
+The policy limits matrix entries and bytes before allocation. It does not bound
+the prepared derivative model, compiler workspace, or whole optimizer state.
+The materialized route reports `matrix_free=False` and distinct method provenance;
+its representation, compiler/PyTree identity, and floating-point reduction order
+are not interchangeable with historical matrix-free templates. Derivative-work
+counts charge the parameter-space basis actions once, not each subsequent dense
+MINRES matrix-vector product.
+
+
 ### Composite proximal methods
 
 `ProximalProblem` separates a differentiable scalar objective from one

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias
+from typing import Any, final, TypeAlias
 
 import equinox as eqx
 import jax
@@ -13,17 +13,24 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import Array
 
+import phydrax.ein as ein
+
 from ..._strict import StrictModule
+from .._bordered import _bordered_base, BorderedBlockLinearOperator
 from .._local_blocks import (
+    LocalBlockFactorization,
     prepare_local_block_factorization,
     solve_local_blocks,
 )
 from .._operators import (
+    AbstractLinearOperator,
+    AdjointLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
     IdentityLinearOperator,
+    TransposeLinearOperator,
 )
-from .._plans import _certified_rank, LinearSolvePlan
+from .._plans import _certified_rank, _structured_candidate_fits, LinearSolvePlan
 from .._results import LinearSolveStatus
 from .._spaces import _coordinate_pairing_weights, _has_diagonal_pairing
 from .._structured_operators import (
@@ -90,8 +97,21 @@ class _TransformDiagonalState(StrictModule):
     singular: Array
 
 
+@final
+class _BorderedState(StrictModule):
+    locals: LocalBlockFactorization | _BandedLUState
+    upper_solved: Array
+    schur: _LUState
+    failed_blocks: Array
+
+
+@final
+class _StructuredSymbolicState(StrictModule):
+    bordered_structure: str | None = eqx.field(static=True)
+
+
 class StructuredState(StrictModule):
-    operator: Any
+    operator: AbstractLinearOperator
     prepared: Any
 
 
@@ -110,7 +130,9 @@ def is_structured_exact(operator: Any, /) -> bool:
 
 
 def prepare_structured(problem: Any, plan: LinearSolvePlan, /) -> StructuredState:
-    del plan
+    fits, explanation = _structured_candidate_fits(problem, plan.policy)
+    if not fits:
+        raise ValueError(f"Structured preparation exceeds policy: {explanation}.")
     if not is_structured_exact(problem.operator):
         raise ValueError("Operator has no native exact structured solve.")
     if problem.operator.batch_shape and not isinstance(
@@ -138,13 +160,16 @@ def solve_structured(
     status_shape = state.operator.batch_shape + (count,)
     status = jnp.full(status_shape, int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(failed, int(LinearSolveStatus.SINGULAR), status)
-    rank = _certified_rank(state.operator)
-    rank_value = -1 if rank is None else rank
-    rank_array = jnp.full(
-        state.operator.batch_shape,
-        rank_value,
-        dtype=jnp.int32,
-    )
+    if isinstance(state.prepared, _BorderedState):
+        rank_array = _bordered_rank(state.operator, state.prepared)
+    else:
+        rank = _certified_rank(state.operator)
+        rank_value = -1 if rank is None else rank
+        rank_array = jnp.full(
+            state.operator.batch_shape,
+            rank_value,
+            dtype=jnp.int32,
+        )
     return StructuredBackendOutput(
         value=value,
         status=status,
@@ -170,8 +195,12 @@ def _prepare_lu(matrix: Array, /) -> _LUState:
     return _LUState(factor, pivots, singular)
 
 
-def _solve_lu(state: _LUState, rhs: Array, /) -> tuple[Array, Array]:
-    value = jsp.linalg.lu_solve((state.factor, state.pivots), rhs)
+def _solve_lu(
+    state: _LUState, rhs: Array, /, *, transpose: bool = False
+) -> tuple[Array, Array]:
+    value = jsp.linalg.lu_solve(
+        (state.factor, state.pivots), rhs, trans=1 if transpose else 0
+    )
     failed = state.singular[..., None] | jnp.any(~jnp.isfinite(value), axis=-2)
     return value, failed
 
@@ -202,40 +231,19 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
             )
             pivot_row = column + jnp.argmax(candidates).astype(jnp.int32)
             pivots = pivots.at[column].set(pivot_row)
-            active_start = max(0, column - lower)
             active_stop = min(size, column + upper + lower + 1)
-            for target_column in range(active_start, active_stop):
+            # Historical multipliers stay in their elimination columns. Compact
+            # band LU stores the pivot sequence, not a globally permuted dense L.
+            for target_column in range(column, active_stop):
                 first_index = diagonal + column - target_column
                 second_index = diagonal + pivot_row - target_column
-                first_valid = (first_index >= 0) & (first_index < factor_width)
-                second_valid = (second_index >= 0) & (second_index < factor_width)
-                first_clipped = jnp.clip(first_index, 0, factor_width - 1)
-                second_clipped = jnp.clip(second_index, 0, factor_width - 1)
-                first_value = jnp.where(
-                    first_valid, factor[first_clipped, target_column], 0
-                )
-                second_value = jnp.where(
-                    second_valid, factor[second_clipped, target_column], 0
-                )
-                factor = jax.lax.cond(
-                    first_valid,
-                    lambda current: current.at[first_clipped, target_column].set(
-                        second_value
-                    ),
-                    lambda current: current,
-                    factor,
-                )
-                factor = jax.lax.cond(
-                    second_valid,
-                    lambda current: current.at[second_clipped, target_column].set(
-                        first_value
-                    ),
-                    lambda current: current,
-                    factor,
-                )
+                first_value = factor[first_index, target_column]
+                second_value = factor[second_index, target_column]
+                factor = factor.at[first_index, target_column].set(second_value)
+                factor = factor.at[second_index, target_column].set(first_value)
             pivot = factor[diagonal, column]
             minimum_margin = jnp.minimum(minimum_margin, jnp.abs(pivot) / scale)
-            singular = singular | (jnp.abs(pivot) <= threshold)
+            singular = singular | (jnp.abs(pivot) <= threshold) | ~jnp.isfinite(pivot)
             safe_pivot = jnp.where(jnp.abs(pivot) <= threshold, 1.0, pivot)
             for row_offset in range(1, min(lower, size - column - 1) + 1):
                 lower_index = diagonal + row_offset
@@ -247,6 +255,7 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
                     factor = factor.at[band_index, target].add(
                         -multiplier * factor[diagonal - column_offset, target]
                     )
+        singular = singular | jnp.any(~jnp.isfinite(factor))
         return factor, pivots, singular, minimum_margin
 
     factors, pivots, singular, margins = jax.vmap(factor_one)(flattened_bands)
@@ -264,6 +273,8 @@ def _solve_banded_lu(
     state: _BandedLUState,
     rhs: Array,
     /,
+    *,
+    transpose: bool = False,
 ) -> tuple[Array, Array]:
     lower = operator.lower_bandwidth
     upper_factor = operator.upper_bandwidth + lower
@@ -274,16 +285,33 @@ def _solve_banded_lu(
     flattened_rhs = rhs.reshape((-1, size, rhs.shape[-1]))
 
     def solve_one(factor: Array, pivot_rows: Array, value: Array) -> Array:
+        if transpose:
+            for row in range(size):
+                for offset in range(1, min(upper_factor, row) + 1):
+                    value = value.at[row].add(
+                        -factor[diagonal - offset, row] * value[row - offset]
+                    )
+                value = value.at[row].set(value[row] / factor[diagonal, row])
+            for row in range(size - 1, -1, -1):
+                for offset in range(1, min(lower, size - row - 1) + 1):
+                    value = value.at[row].add(
+                        -factor[diagonal + offset, row] * value[row + offset]
+                    )
+                pivot_row = pivot_rows[row]
+                first = value[row]
+                second = value[pivot_row]
+                value = value.at[row].set(second)
+                value = value.at[pivot_row].set(first)
+            return value
         for row in range(size):
             pivot_row = pivot_rows[row]
             first = value[row]
             second = value[pivot_row]
             value = value.at[row].set(second)
             value = value.at[pivot_row].set(first)
-        for row in range(size):
-            for offset in range(1, min(lower, row) + 1):
-                value = value.at[row].add(
-                    -factor[diagonal + offset, row - offset] * value[row - offset]
+            for offset in range(1, min(lower, size - row - 1) + 1):
+                value = value.at[row + offset].add(
+                    -factor[diagonal + offset, row] * value[row]
                 )
         for row in range(size - 1, -1, -1):
             for offset in range(1, min(upper_factor, size - row - 1) + 1):
@@ -436,7 +464,181 @@ def _solve_kronecker_sum(
     return value, failed
 
 
+def _solve_bordered_locals(
+    operator: BorderedBlockLinearOperator,
+    factors: LocalBlockFactorization | _BandedLUState,
+    rhs: Array,
+    /,
+    *,
+    transpose: bool,
+) -> tuple[Array, Array]:
+    if isinstance(factors, LocalBlockFactorization):
+        value = jsp.linalg.lu_solve(
+            (factors.factors, factors.pivots),
+            rhs,
+            trans=1 if transpose else 0,
+        )
+        failed = factors.failed_blocks[:, None] | jnp.any(~jnp.isfinite(value), axis=-2)
+        return value, failed
+    if not isinstance(operator.local_blocks, BandedLinearOperator):
+        raise ValueError("Banded bordered factors require their local operator.")
+    return _solve_banded_lu(operator.local_blocks, factors, rhs, transpose=transpose)
+
+
+def _prepare_bordered(operator: BorderedBlockLinearOperator, /) -> _BorderedState:
+    if isinstance(operator.local_blocks, BandedLinearOperator):
+        locals_: LocalBlockFactorization | _BandedLUState = _prepare_banded_lu(
+            operator.local_blocks
+        )
+        failed_blocks = locals_.singular
+    else:
+        locals_ = prepare_local_block_factorization(operator.local_blocks)
+        failed_blocks = locals_.failed_blocks
+    # Condense the shared border, not a duplicated border per local matrix.
+    # The existing local-elimination plan owns a different retained-DOF layout.
+    upper_solved, upper_failed = _solve_bordered_locals(
+        operator, locals_, operator.upper, transpose=False
+    )
+    failed_blocks = failed_blocks | jnp.any(upper_failed, axis=-1)
+    schur = operator.border - ein.contract("lbi,lic->bc", operator.lower, upper_solved)
+    return _BorderedState(locals_, upper_solved, _prepare_lu(schur), failed_blocks)
+
+
+def _solve_bordered(
+    operator: BorderedBlockLinearOperator,
+    state: _BorderedState,
+    rhs: Array,
+    /,
+    *,
+    transpose: bool,
+) -> tuple[Array, Array]:
+    rhs = operator._pack_columns(rhs)
+    split = operator.num_blocks * operator.local_size
+    local_rhs = rhs[:split].reshape(
+        (operator.num_blocks, operator.local_size, rhs.shape[-1])
+    )
+    local_load, local_failed = _solve_bordered_locals(
+        operator, state.locals, local_rhs, transpose=transpose
+    )
+    border_rhs = rhs[split:]
+    if transpose:
+        border_rhs = border_rhs - ein.contract("lib,lik->bk", operator.upper, local_load)
+    else:
+        border_rhs = border_rhs - ein.contract("lbi,lik->bk", operator.lower, local_load)
+    border_value, border_failed = _solve_lu(state.schur, border_rhs, transpose=transpose)
+    if transpose:
+        local_value, reconstruction_failed = _solve_bordered_locals(
+            operator,
+            state.locals,
+            local_rhs - jnp.swapaxes(operator.lower, -1, -2) @ border_value,
+            transpose=True,
+        )
+        local_failed = local_failed | reconstruction_failed
+    else:
+        local_value = local_load - state.upper_solved @ border_value
+    value = jnp.concatenate(
+        (local_value.reshape((split, rhs.shape[-1])), border_value), axis=0
+    )
+    value = operator._unpack_columns(value)
+    failed = (
+        jnp.any(state.failed_blocks)
+        | jnp.any(local_failed, axis=0)
+        | border_failed
+        | jnp.any(~jnp.isfinite(value), axis=0)
+    )
+    return value, failed
+
+
+def _solve_bordered_adjoint(
+    operator: BorderedBlockLinearOperator,
+    state: _BorderedState,
+    rhs: Array,
+    /,
+    *,
+    transpose: bool = True,
+) -> tuple[Array, Array]:
+    weighted = jax.vmap(operator.source.riesz, in_axes=1, out_axes=1)(rhs)
+    value, failed = _solve_bordered(
+        operator, state, jnp.conj(weighted), transpose=transpose
+    )
+    value = jax.vmap(operator.target.inverse_riesz, in_axes=1, out_axes=1)(
+        jnp.conj(value)
+    )
+    return value, failed | jnp.any(~jnp.isfinite(value), axis=0)
+
+
+def _bordered_rank(operator: AbstractLinearOperator, state: _BorderedState, /) -> Array:
+    # A failed local pivot is not proof of global rank deficiency: another
+    # elimination ordering might succeed. Only successful factors certify rank.
+    failed = jnp.any(state.failed_blocks) | state.schur.singular
+    return jnp.where(failed, -1, operator.source.size).astype(jnp.int32)
+
+
+def solve_structured_transformed(
+    state: StructuredState,
+    rhs: Array,
+    plan: LinearSolvePlan,
+    /,
+    *,
+    adjoint: bool,
+) -> StructuredBackendOutput:
+    del plan
+    operator = _bordered_base(state.operator)
+    if operator is None or not isinstance(state.prepared, _BorderedState):
+        raise ValueError(
+            "Prepared transformed structured reuse requires bordered factors."
+        )
+    if rhs.ndim != 2 or rhs.shape[0] != state.operator.source.size:
+        raise ValueError("Transformed bordered right-hand sides must have shape (n, k).")
+    if isinstance(state.operator, TransposeLinearOperator):
+        value, failed = (
+            _solve_bordered_adjoint(operator, state.prepared, rhs, transpose=False)
+            if adjoint
+            else _solve_bordered(operator, state.prepared, rhs, transpose=False)
+        )
+    elif isinstance(state.operator, AdjointLinearOperator):
+        if adjoint:
+            value, failed = _solve_bordered(
+                operator, state.prepared, rhs, transpose=False
+            )
+        else:
+            # For an endomorphism, (G^-1 A^H G)^-T =
+            # G^T conjugate(A^-1) G^-T; Riesz maps own both metric actions.
+            weighted = jax.vmap(operator.source.inverse_riesz, in_axes=1, out_axes=1)(
+                jnp.conj(rhs)
+            )
+            value, failed = _solve_bordered(
+                operator, state.prepared, weighted, transpose=False
+            )
+            value = jnp.conj(
+                jax.vmap(operator.target.riesz, in_axes=1, out_axes=1)(value)
+            )
+    else:
+        value, failed = (
+            _solve_bordered_adjoint(operator, state.prepared, rhs)
+            if adjoint
+            else _solve_bordered(operator, state.prepared, rhs, transpose=True)
+        )
+    failed = failed | jnp.any(~jnp.isfinite(value), axis=0)
+    return StructuredBackendOutput(
+        value=value,
+        status=jnp.where(
+            failed, int(LinearSolveStatus.SINGULAR), int(LinearSolveStatus.SUCCESS)
+        ).astype(jnp.int32),
+        iterations=jnp.zeros((rhs.shape[-1],), dtype=jnp.int32),
+        rank=_bordered_rank(state.operator, state.prepared),
+        condition_estimate=jnp.asarray(jnp.nan, dtype=rhs.real.dtype),
+        singular_values=None,
+    )
+
+
 def _prepare_operator(operator: Any, /) -> Any:
+    if isinstance(operator, BorderedBlockLinearOperator):
+        return _prepare_bordered(operator)
+    if isinstance(
+        operator, (TransposeLinearOperator, AdjointLinearOperator)
+    ) and isinstance(operator.operator, BorderedBlockLinearOperator):
+        return _prepare_bordered(operator.operator)
     if isinstance(operator, TreeLinearOperator):
         return _prepare_tree(operator)
     if isinstance(operator, DenseLinearOperator):
@@ -490,6 +692,16 @@ def _solve_operator(
     rhs: Array,
     /,
 ) -> tuple[Array, Array]:
+    if isinstance(operator, BorderedBlockLinearOperator):
+        return _solve_bordered(operator, prepared, rhs, transpose=False)
+    if isinstance(operator, TransposeLinearOperator) and isinstance(
+        operator.operator, BorderedBlockLinearOperator
+    ):
+        return _solve_bordered(operator.operator, prepared, rhs, transpose=True)
+    if isinstance(operator, AdjointLinearOperator) and isinstance(
+        operator.operator, BorderedBlockLinearOperator
+    ):
+        return _solve_bordered_adjoint(operator.operator, prepared, rhs)
     if isinstance(operator, TreeLinearOperator):
         return _solve_tree(operator, prepared, rhs)
     if isinstance(operator, IdentityLinearOperator):

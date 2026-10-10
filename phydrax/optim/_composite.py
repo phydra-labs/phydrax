@@ -27,12 +27,17 @@ from .._tree_math import (
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
 from ..linalg import (
+    DenseLinearOperator,
     FunctionLinearOperator,
+    IdentityLinearOperator,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
+    MaterializationPolicy,
+    materialize,
     MINRES,
     OperatorProperties,
+    PreparedLinearization,
     PyTreeSpace,
     solve as solve_linear,
     TolerancePolicy,
@@ -57,11 +62,18 @@ class CompositeLeastSquaresProblem(StrictModule):
 
     The represented objective is ``0.5 * ||residual(x, args)||² + scalar(x, args)``.
     The scalar is never converted into an artificial square-root residual.
+
+    ``residual_linearization`` may prepare the exact residual at the supplied
+    current parameters and arguments. Its canonical ``PreparedLinearization``
+    primal and derivative actions are reused without an extra residual replay.
+    The provider owns same-point correctness and must use the canonical
+    ``PyTreeSpace(parameters)`` source identity. Provider array leaves are dynamic.
     """
 
     residual: Callable[[PyTree[Any], Any], PyTree[Any]]
     scalar_objective: Callable[[PyTree[Any], Any], Any] | None
     problem_id: str = eqx.field(static=True)
+    residual_linearization: Callable[[PyTree[Any], Any], PreparedLinearization] | None
 
     def __init__(
         self,
@@ -70,17 +82,23 @@ class CompositeLeastSquaresProblem(StrictModule):
         /,
         *,
         problem_id: str = "composite-least-squares",
+        residual_linearization: (
+            Callable[[PyTree[Any], Any], PreparedLinearization] | None
+        ) = None,
     ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if scalar_objective is not None and not callable(scalar_objective):
             raise TypeError("scalar_objective must be callable or None.")
+        if residual_linearization is not None and not callable(residual_linearization):
+            raise TypeError("residual_linearization must be callable or None.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.residual = residual
         self.scalar_objective = scalar_objective
         self.problem_id = identifier
+        self.residual_linearization = residual_linearization
 
     def residual_value(
         self,
@@ -224,10 +242,16 @@ def _prepare_composite_model(
     args: Any,
     /,
 ) -> _CompositeModel:
-    residual_model = _prepare_residual_model(
-        lambda candidate: problem.residual_value(candidate, args),
-        parameters,
-    )
+    if problem.residual_linearization is None:
+        residual_model = _prepare_residual_model(
+            lambda candidate: problem.residual_value(candidate, args),
+            parameters,
+        )
+    else:
+        linearization = problem.residual_linearization(parameters, args)
+        if not isinstance(linearization, PreparedLinearization):
+            raise TypeError("residual_linearization must return PreparedLinearization.")
+        residual_model = _prepare_residual_model(linearization, parameters)
     (scalar_value, scalar_gradient), scalar_linearized = jax.linearize(
         jax.value_and_grad(lambda candidate: problem.scalar_value(candidate, args)),
         parameters,
@@ -264,27 +288,36 @@ _TrialCarry: TypeAlias = tuple[
 
 
 def _curvature_system(
-    parameters: PyTree[Any],
-    action: Callable[[PyTree[Any]], PyTree[Any]],
+    space: PyTreeSpace,
+    curvature: Callable[[PyTree[Any]], PyTree[Any]] | Array,
     /,
 ) -> LinearSystem:
-    space = PyTreeSpace(parameters)
-    curvature = FunctionLinearOperator(
-        action,
-        source=space,
-        target=space,
-        transpose_action=action,
-        properties=OperatorProperties(
-            self_adjoint=True,
-            evidence={"self_adjoint": "asserted"},
-        ),
-        operator_id="composite-generalized-gauss-newton",
+    properties = OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "asserted"},
     )
-    return LinearSystem(curvature)
+    if callable(curvature):
+        operator = FunctionLinearOperator(
+            curvature,
+            source=space,
+            target=space,
+            transpose_action=curvature,
+            properties=properties,
+            operator_id="composite-generalized-gauss-newton",
+        )
+    else:
+        operator = DenseLinearOperator(
+            curvature,
+            source=space,
+            target=space,
+            properties=properties,
+            operator_id="composite-generalized-gauss-newton",
+        )
+    return LinearSystem(operator)
 
 
 class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
-    """Matrix-free Gauss–Newton plus exact signed-scalar curvature."""
+    """Gauss–Newton plus exact signed-scalar curvature, matrix-free by default."""
 
     linear_policy: LinearSolvePolicy
     line_search: ArmijoLineSearch
@@ -294,6 +327,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
     damping_increase: float = eqx.field(static=True)
     damping_decrease: float = eqx.field(static=True)
     maximum_trials: int = eqx.field(static=True)
+    curvature_materialization: MaterializationPolicy | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -306,6 +340,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         damping_increase: float = 10.0,
         damping_decrease: float = 0.2,
         maximum_trials: int = 6,
+        curvature_materialization: MaterializationPolicy | None = None,
     ) -> None:
         policy = (
             _default_composite_linear_policy() if linear_policy is None else linear_policy
@@ -315,6 +350,12 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
         if not isinstance(search, ArmijoLineSearch):
             raise TypeError("line_search must be an ArmijoLineSearch or None.")
+        if curvature_materialization is not None and not isinstance(
+            curvature_materialization, MaterializationPolicy
+        ):
+            raise TypeError(
+                "curvature_materialization must be a MaterializationPolicy or None."
+            )
         damping = (
             float(initial_damping),
             float(minimum_damping),
@@ -339,10 +380,15 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         self.damping_increase = increase
         self.damping_decrease = decrease
         self.maximum_trials = trials
+        self.curvature_materialization = curvature_materialization
 
     @property
     def method_id(self) -> str:
-        return "generalized-gauss-newton"
+        return (
+            "generalized-gauss-newton"
+            if self.curvature_materialization is None
+            else "generalized-gauss-newton-materialized-curvature"
+        )
 
     @property
     def globalization_id(self) -> str:
@@ -353,15 +399,23 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         return OptimizationCapabilities(
             scalar_objective=True,
             residual_objective=True,
-            matrix_free=True,
+            matrix_free=self.curvature_materialization is None,
             prepared_refresh=True,
             implicit_differentiation=False,
         )
 
     def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
         parameters = _validate_real_inexact_tree(parameters, name="parameters")
+        space = PyTreeSpace(parameters)
+        if self.curvature_materialization is None:
+            system = _curvature_system(space, lambda vector: vector)
+        else:
+            matrix = materialize(
+                IdentityLinearOperator(space), self.curvature_materialization
+            )
+            system = _curvature_system(space, matrix)
         _, refresh_state = prepare_refresh_state(
-            _curvature_system(parameters, lambda vector: vector),
+            system,
             self.linear_policy,
         )
         metric_nan = jnp.asarray(jnp.nan, dtype=_tree_norm(parameters).dtype)
@@ -397,6 +451,10 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         termination: OptimizationTermination | None,
         args: Any,
     ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
+        # Keep the traced accept/terminal state machine together: its branches
+        # share one prepared model and the exact dynamic refresh-state layout.
+        # Moving preparation across either guard would execute failed/converged
+        # curvature actions or change the compiler and work-evidence boundary.
         if state.linear_refresh_state is None:
             raise ValueError(
                 "GeneralizedGaussNewton state is missing linear refresh state."
@@ -460,6 +518,21 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             return parameters, dynamic_updated, model.objective
 
         def composite_step(_: None) -> tuple[PyTree[Any], PyTree[Any], Array]:
+            space = PyTreeSpace(parameters)
+            if self.curvature_materialization is None:
+                curvature_matrix = None
+            else:
+
+                def undamped_curvature_action(vector: PyTree[Any]) -> PyTree[Array]:
+                    return model.curvature_action(vector, jnp.zeros_like(state.damping))
+
+                curvature_system = _curvature_system(space, undamped_curvature_action)
+                # The current-point curvature is prepared once. Trial damping
+                # shifts the numerical matrix without retracing model actions.
+                curvature_matrix = materialize(
+                    curvature_system.operator, self.curvature_materialization
+                )
+
             dynamic_refresh_state, static_refresh_state = eqx.partition(
                 state.linear_refresh_state,
                 eqx.is_array,
@@ -486,11 +559,19 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
                     static_refresh_state,
                 )
 
-                def curvature_action(vector: PyTree[Any]) -> PyTree[Array]:
-                    return model.curvature_action(vector, damping)
+                if curvature_matrix is None:
 
+                    def curvature_action(vector: PyTree[Any]) -> PyTree[Array]:
+                        return model.curvature_action(vector, damping)
+
+                    system = _curvature_system(space, curvature_action)
+                else:
+                    matrix = curvature_matrix + damping * jnp.eye(
+                        space.size, dtype=curvature_matrix.dtype
+                    )
+                    system = _curvature_system(space, matrix)
                 current_prepared, current_refresh_state = refresh_state_for_trial.refresh(
-                    _curvature_system(parameters, curvature_action)
+                    system
                 )
                 linear_result = solve_linear(
                     current_prepared,
@@ -606,6 +687,11 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
                 ),
                 damping,
             )
+            curvature_products = (
+                matvecs
+                if curvature_matrix is None
+                else jnp.asarray(space.size, dtype=jnp.int32)
+            )
             metrics = IterativeStepMetrics(
                 objective=search.value,
                 residual_objective=model.residual_objective,
@@ -632,9 +718,11 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
                 ),
                 scalar_evaluations=(state.scalar_evaluations + 1 + search.evaluations),
                 scalar_gradient_evaluations=(state.scalar_gradient_evaluations + 1),
-                scalar_hvp_evaluations=(state.scalar_hvp_evaluations + matvecs),
-                jvp_evaluations=state.jvp_evaluations + matvecs,
-                vjp_evaluations=state.vjp_evaluations + 1 + matvecs,
+                scalar_hvp_evaluations=(
+                    state.scalar_hvp_evaluations + curvature_products
+                ),
+                jvp_evaluations=state.jvp_evaluations + curvature_products,
+                vjp_evaluations=state.vjp_evaluations + 1 + curvature_products,
                 linear_iterations=state.linear_iterations + linear_iterations,
                 linear_solves=state.linear_solves + trials,
                 setup_refreshes=state.setup_refreshes,
@@ -682,7 +770,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
         )
 
 
-def _solve_composite(
+def _iterate_composite(
     method: GeneralizedGaussNewton,
     problem: CompositeLeastSquaresProblem,
     initial_parameters: PyTree[Any],
@@ -690,16 +778,44 @@ def _solve_composite(
     *,
     termination: OptimizationTermination,
     args: Any,
-) -> CompositeLeastSquaresResult:
+) -> tuple[PyTree[Any], LeastSquaresState, Array]:
+    """Prepare iteration state, then execute the native optimization recurrence."""
     if not isinstance(problem, CompositeLeastSquaresProblem):
         raise TypeError("problem must be a CompositeLeastSquaresProblem.")
+    if not isinstance(termination, OptimizationTermination):
+        raise TypeError("termination must be an OptimizationTermination.")
+    state = method.prepare_state(problem, initial_parameters, args=args)
+    return _iterate_prepared_composite(
+        method,
+        problem,
+        initial_parameters,
+        state,
+        termination=termination,
+        args=args,
+    )
+
+
+def _iterate_prepared_composite(
+    method: GeneralizedGaussNewton,
+    problem: CompositeLeastSquaresProblem,
+    initial_parameters: PyTree[Any],
+    state: LeastSquaresState,
+    /,
+    *,
+    termination: OptimizationTermination,
+    args: Any,
+) -> tuple[PyTree[Any], LeastSquaresState, Array]:
+    """Execute iterations from one shape-compatible native method state."""
+    if not isinstance(problem, CompositeLeastSquaresProblem):
+        raise TypeError("problem must be a CompositeLeastSquaresProblem.")
+    if not isinstance(state, LeastSquaresState):
+        raise TypeError("state must be a LeastSquaresState.")
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be an OptimizationTermination.")
     initial = _validate_real_inexact_tree(
         initial_parameters,
         name="initial_parameters",
     )
-    state = method.prepare_state(problem, initial, args=args)
     state, static_state = eqx.partition(state, eqx.is_array)
     initial_status = jnp.where(
         _tree_allfinite(initial),
@@ -762,6 +878,21 @@ def _solve_composite(
         int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
         status,
     )
+    return parameters, state, status
+
+
+def _finalize_composite(
+    method: GeneralizedGaussNewton,
+    problem: CompositeLeastSquaresProblem,
+    parameters: PyTree[Any],
+    state: LeastSquaresState,
+    status: Array,
+    /,
+    *,
+    termination: OptimizationTermination,
+    args: Any,
+) -> CompositeLeastSquaresResult:
+    """Evaluate and package exact final-point status after native iterations."""
     final_model = _prepare_composite_model(problem, parameters, args)
     finite_final = (
         jnp.isfinite(final_model.objective)
@@ -824,6 +955,33 @@ def _solve_composite(
             matrix_free=True,
             notes="Exact scalar Hessian actions augment the Gauss-Newton model.",
         ),
+    )
+
+
+def _solve_composite(
+    method: GeneralizedGaussNewton,
+    problem: CompositeLeastSquaresProblem,
+    initial_parameters: PyTree[Any],
+    /,
+    *,
+    termination: OptimizationTermination,
+    args: Any,
+) -> CompositeLeastSquaresResult:
+    parameters, state, status = _iterate_composite(
+        method,
+        problem,
+        initial_parameters,
+        termination=termination,
+        args=args,
+    )
+    return _finalize_composite(
+        method,
+        problem,
+        parameters,
+        state,
+        status,
+        termination=termination,
+        args=args,
     )
 
 

@@ -138,6 +138,7 @@ def execute_finite_element_mortar_flux(
     metric = workset.mortar_metric
     if mortar is None or metric is None:
         raise ValueError("Mortar execution requires reference and metric data.")
+    physical_weights = mortar._physical_weights(metric)
     owner = mortar.interpolate_left(owner_trace)
     neighbor = mortar.interpolate_right(neighbor_trace)
     normal_scale = jnp.linalg.norm(metric.owner_scaled_normals, axis=-1)
@@ -146,14 +147,14 @@ def execute_finite_element_mortar_flux(
         owner,
         neighbor,
         metric.physical_coordinates,
-        metric.physical_weights,
+        physical_weights,
         normal,
         context,
     )
     if isinstance(result, tuple):
         owner_flux, neighbor_flux = result
-        weights = metric.physical_weights.reshape(
-            metric.physical_weights.shape + (1,) * (jnp.asarray(owner_flux).ndim - 1)
+        weights = physical_weights.reshape(
+            physical_weights.shape + (1,) * (jnp.asarray(owner_flux).ndim - 1)
         )
         return (
             mortar.pullback_left_raw(weights * owner_flux),
@@ -238,12 +239,62 @@ def _cell_metric(
     )
     coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
     cell_coordinates = coordinates[coordinate_routes]
-    return FiniteElementMetricData(
+    metric = FiniteElementMetricData(
         coordinate_basis,
         coordinate_gradients,
         cell_coordinates,
         reference.weights,
     )
+    measure = discretization.coordinate_measure
+    if measure is None or measure.kind == "cartesian":
+        return metric
+    factor = measure.factor(metric.physical_points, frame=measure.frame)
+    if measure.radial_axis is None:
+        raise RuntimeError("Rotational measure lost its radial identity.")
+    valid = jnp.all(jnp.isfinite(cell_coordinates)) & jnp.all(
+        cell_coordinates[..., measure.radial_axis] >= 0.0
+    )
+    factor = jnp.where(valid, factor, jnp.nan)
+    return eqx.tree_at(
+        lambda value: (value.weighted_measure, value.weighted_metric),
+        metric,
+        (
+            metric.weighted_measure * factor,
+            metric.weighted_metric * factor[..., None, None],
+        ),
+    )
+
+
+def _coordinate_weights(
+    discretization: FiniteElementDiscretization,
+    points: Array,
+    weights: Array,
+    context: FiniteElementExecutionContext,
+    /,
+) -> Array:
+    measure = discretization.coordinate_measure
+    if measure is None:
+        return weights
+    runtime = cast(FiniteElementRuntimeData, context.runtime)
+    weighted = measure.weight(points, weights, frame=runtime.coordinate_frame)
+    if measure.radial_axis is not None:
+        coordinates = runtime.coordinates
+        valid = jnp.all(jnp.isfinite(coordinates)) & jnp.all(
+            coordinates[..., measure.radial_axis] >= 0.0
+        )
+        weighted = jnp.where(valid, weighted, jnp.nan)
+    return weighted
+
+
+def _capacity_weights(
+    discretization: AbstractPreparedLocalDiscretization, weights: Array, /
+) -> Array:
+    if isinstance(discretization, FiniteElementDiscretization):
+        measure = discretization.coordinate_measure
+        if measure is not None and measure.kind != "cartesian":
+            valid = jnp.all(jnp.isfinite(weights) & (weights > 0.0), axis=-1)
+            return jnp.where(valid[..., None], weights, jnp.nan)
+    return weights
 
 
 def _tensor_forward(plan: SumFactorizationPlan, local: Array, /) -> Array:
@@ -327,6 +378,7 @@ def _tensor_gradient_transpose(
 
 def _pairwise_volume_residual(
     action: PairwiseVolumeFluxAction,
+    discretization: FiniteElementDiscretization,
     local_state: Array,
     local_cells: Array,
     reference: PreparedFiniteElementReference,
@@ -358,6 +410,10 @@ def _pairwise_volume_residual(
             + nodal_shape
             + (plan.tabulation.dimension, metric.physical_points.shape[-1])
         )
+    coordinate_measure = discretization.coordinate_measure
+    if coordinate_measure is not None:
+        factor = coordinate_measure.factor(points_grid, frame=coordinate_measure.frame)
+        cofactor_grid = cofactor_grid * factor[..., None, None]
     weight_grid = reference.tensor_weights_by_axis[0]
     for axis_weights in reference.tensor_weights_by_axis[1:]:
         weight_grid = jnp.multiply.outer(weight_grid, axis_weights)
@@ -618,6 +674,8 @@ def _prepared_local_volume_residual(
     local_state = output_state[dofs]
     reference = references[output_field]
     physical_weights = metric.physical_weights
+    if isinstance(action, MassAction):
+        physical_weights = _capacity_weights(discretization, physical_weights)
 
     def weighted(values: Array, scalar_weight: Array) -> Array:
         return values * scalar_weight.reshape(
@@ -1153,6 +1211,7 @@ def _exterior_functional_value(
     else:
         normal = None
     weights = measure[:, None] * data.weights[None, :]
+    weights = _coordinate_weights(discretization, physical_points, weights, context)
     valid = jnp.asarray(workset.valid)
     semantic_to_field = action.semantic_to_field
     input_indices = {
@@ -1524,6 +1583,12 @@ def _accumulate_finite_element_workset(
             )
             physical_weights = metric.weighted_measure
             basis_values = reference.basis_values
+        if isinstance(action, MassAction):
+            physical_weights = _capacity_weights(discretization, physical_weights)
+            if metric is not None:
+                metric = eqx.tree_at(
+                    lambda value: value.weighted_measure, metric, physical_weights
+                )
         reference_points = (
             rule_data.points if reference is None else reference.volume_rule.points
         )
@@ -1540,6 +1605,7 @@ def _accumulate_finite_element_workset(
                 )
             local = _pairwise_volume_residual(
                 action,
+                discretization,
                 local_state,
                 local_cells,
                 reference,
@@ -2234,6 +2300,9 @@ def _prepared_facet_side(
         physical_points = facet_metric.physical_points
         physical_weights = facet_metric.physical_weights
         normal = facet_metric.normal
+    physical_weights = _coordinate_weights(
+        discretization, physical_points, physical_weights, context
+    )
     dof_map = discretization.dof_maps[field_index]
     dofs = dof_map.cell_dofs[block_index][local_cells]
     orientation = dof_map.orientations[block_index][local_cells]
@@ -2528,6 +2597,9 @@ def _sipg_facet_residual(
     outward = jnp.sum(normal * (midpoint - cell_centers[owners]), axis=-1)
     normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
     facet_weights = facet_measure[:, None] * rule_data.weights[None, :]
+    facet_weights = _coordinate_weights(
+        discretization, physical_points, facet_weights, context
+    )
     normal_at_points = jnp.broadcast_to(
         normal[:, None, :],
         physical_points.shape,
@@ -2544,6 +2616,13 @@ def _sipg_facet_residual(
         discretization.block_geometries[field_index][0].reference_weights,
     )
     cell_measure = cell_geometry.measure
+    coordinate_measure = discretization.coordinate_measure
+    if coordinate_measure is not None and coordinate_measure.kind != "cartesian":
+        factor = coordinate_measure.factor(
+            cell_geometry.physical_points, frame=coordinate_measure.frame
+        )
+        # Penalty height is a meridional length, not a rotated volume/edge ratio.
+        cell_measure = jnp.sum(cell_geometry.physical_weights / factor, axis=-1)
     plus_height = 2.0 * cell_measure[owners] / facet_measure
     diffusivity_entities = (
         facets if action.diffusivity.entity_set_id == domain.entity_set_id else owners
@@ -2848,6 +2927,7 @@ def _cell_local_interior_facet_residual(
     outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
     normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
     weights = measure[:, None] * data.weights[None, :]
+    weights = _coordinate_weights(discretization, physical_points, weights, context)
 
     def side_data(
         local_facet: int, orientation: float, cells: Array
@@ -3000,6 +3080,7 @@ def _exterior_facet_residual(
     outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
     normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
     weights = measure[:, None] * data.weights[None, :]
+    weights = _coordinate_weights(discretization, physical_points, weights, context)
     result = jnp.zeros_like(state)
     for local_facet in range(block.arity):
         for orientation in (-1.0, 1.0):
@@ -3157,6 +3238,7 @@ def _interior_facet_residual(
         minus_dofs = face_vertices
     else:
         raise TypeError("Unsupported interior-facet connectivity.")
+    weights = _coordinate_weights(discretization, physical_points, weights, context)
     plus_local = state[plus_dofs]
     minus_local = state[minus_dofs]
     plus_value = ein.contract("qi,ei...->eq...", trace_basis, plus_local)
@@ -3344,6 +3426,9 @@ def _boundary_load(
             dofs = face_vertices
         else:
             raise TypeError("Unsupported finite-element boundary connectivity.")
+        physical_weights = _coordinate_weights(
+            discretization, physical_points, physical_weights, context
+        )
         physical_weights = physical_weights * active[:, None]
         values = _coefficient_values(
             action.load,

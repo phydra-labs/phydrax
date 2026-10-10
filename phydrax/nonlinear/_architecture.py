@@ -237,6 +237,7 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
             merit=self.precision.decision(0.5 * residual_norm * residual_norm),
             work=NonlinearWork(
                 residual_evaluations=prepared.residual_evaluations,
+                jvp_evaluations=prepared.setup_jvp_evaluations,
                 jacobian_preparations=1,
             ),
             precision_evidence=self.precision.evidence_for(
