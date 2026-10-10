@@ -1245,6 +1245,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             evidence=transition.evidence,
             attempt_evidence=transition.attempt_evidence,
             decision_id=transition.decision_id,
+            terminal_failure=transition.terminal_failure,
         )
         return self._place_run_state(following), placed_transition
 
