@@ -14,6 +14,10 @@
   dynamic-LES production, distributed LES) extract the real part of the
   state-dtype time and step explicitly, so complex modal states no longer emit a
   `ComplexWarning`. Results and compiled storage are unchanged.
+- `HeliumGasModel.initial_state` and `FiniteElementDiscretization.axis_dof_mask`
+  no longer carry `checked` decorators whose static-only signatures enforced no
+  input contract; their owners' shape, radius, and field-name validation is
+  unchanged.
 - Bordered block assembly now distinguishes resolved structural coupling from
   dimension-scaled floating-point JVP roundoff under an explicit, default-zero
   policy. It records maximum absolute/relative omitted coupling, the roundoff
