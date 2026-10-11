@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lazy public equations facade; equation families load from canonical owners."""
+"""Serializable, validated equation representations for physics-aware models."""
 
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
@@ -1390,6 +1390,10 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
         "._matter_radiation_interactions",
         "bremsstrahlung_suppression_factor",
     ),
+    "brokaw_mixture_conductivity": (
+        "._mixture_transport",
+        "brokaw_mixture_conductivity",
+    ),
     "channel_les_filter": ("._channel_les", "channel_les_filter"),
     "cherenkov_step_spectral_yield": (
         "._matter_radiation_interactions",
@@ -2329,6 +2333,7 @@ if TYPE_CHECKING:
         ReservoirCouplingPlan,
     )
     from ._mixture_transport import (
+        brokaw_mixture_conductivity,
         MixtureAveragedTransportPlan,
         MixtureTransportEvaluation,
         StefanMaxwellEvidence,
@@ -3165,6 +3170,7 @@ __all__ = [
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",
+    "brokaw_mixture_conductivity",
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
     "MultilayerShallowWaterSystem",

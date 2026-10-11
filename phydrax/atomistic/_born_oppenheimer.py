@@ -81,7 +81,7 @@ class NativeAtomisticEvaluation(StrictModule):
     request: NativeAtomisticRequest
 
 
-class NativeAtomisticProvider(AbstractExternalAtomisticProvider):
+class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze):
     """Serve one prepared native potential program through the provider boundary.
 
     Energy, forces, and stress come from one ``program.evaluate`` pass of the
@@ -90,6 +90,11 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider):
     lifecycle; callers owning a state pass it to ``evaluate_state`` and keep the
     returned state. Stress is available exactly when the system is a fully
     periodic 3D cell and every program term owns cell derivatives.
+
+    This conditioned deployment intentionally freezes its prepared program,
+    including embedded learned potentials: every array below the provider is
+    FIXED. Internal position and cell derivatives still produce forces and
+    stress; the external provider exposes no trainable model coordinates.
     """
 
     program: PreparedAtomisticPotentialProgram
@@ -310,9 +315,10 @@ class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
     within one prepared image stencil before a fresh preparation is required.
     ``model_revision_id`` is the model's numeric revision at construction.
 
-    The plan is a deployment recipe bound to that revision, so it freezes the
-    model on purpose (`ExplicitFreeze`): its arrays are FIXED wherever the plan
-    is held. Train the potential itself and build a new plan from the result.
+    This immutable deployment recipe intentionally freezes its embedded model:
+    every array below the recipe is FIXED, while training uses ``model``
+    separately. A new numeric model revision requires a new recipe, preserving
+    the revision-bound provider and compiler identities.
     """
 
     model: AbstractAtomisticPotential

@@ -2,7 +2,49 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lazy public solver facade; solver capabilities load from their canonical owners."""
+"""
+# Solver
+
+Solvers aggregate numerical terms and attached model losses for training or
+evaluation. `FunctionalSolver` consumes one ordered `terms` collection.
+
+Hard `EnforcementSpec` declarations compile local boundary/initial ansätze and
+joint typed field realizations into an `EnforcementProgram`. Finite, fiberwise,
+coefficient, kernel, nonlinear, and feasibility routes are applied once before
+term evaluation. Dynamic realization state advances only at accepted-step
+boundaries.
+
+!!! example
+    ```python
+    import jax.random as jr
+    import phydrax as phx
+
+    geom = phx.domain.Interval1d(0.0, 1.0)
+
+    @geom.Function("x")
+    def u(x):
+        return 1.0
+
+    component = geom.component()
+    condition = phx.conditions.Residual("u", component, lambda field: field)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(
+            32,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": u},
+        terms=(term,),
+    )
+
+    loss = solver.loss(key=jr.key(0))
+    print(loss)
+    ```
+"""
 
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
@@ -39,6 +81,7 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "AbstractRoughSolver": ("._rough", "AbstractRoughSolver"),
     "AbstractSSPRKStageTransform": ("._fixed_step", "AbstractSSPRKStageTransform"),
     "AbstractSolverObjective": ("._solver_objective", "AbstractSolverObjective"),
+    "AbstractStepSizeController": ("._step_control", "AbstractStepSizeController"),
     "AbstractStochasticDelayInterpolation": (
         "._delay_capabilities",
         "AbstractStochasticDelayInterpolation",
@@ -1293,6 +1336,10 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "IncompressibleProjectionResult": (
         "._compatible_systems",
         "IncompressibleProjectionResult",
+    ),
+    "IncrementLimitedStepController": (
+        "._step_control",
+        "IncrementLimitedStepController",
     ),
     "InfiniteMemoryEvidence": ("._delay_capabilities", "InfiniteMemoryEvidence"),
     "InputDAEBlockLinearization": (
@@ -6882,6 +6929,10 @@ if TYPE_CHECKING:
         StaggeredAcousticPlan,
         StaggeredAcousticState,
     )
+    from ._step_control import (
+        AbstractStepSizeController,
+        IncrementLimitedStepController,
+    )
     from ._stinespring_tomography import (
         fit_causal_process_memory,
         fit_stinespring_process,
@@ -7633,6 +7684,8 @@ __all__ = [
     "ProductionTriggerBinding",
     "DurableCheckpointStore",
     "PreparedProductionRun",
+    "AbstractStepSizeController",
+    "IncrementLimitedStepController",
     "ProductionResourceForecast",
     "PreparedCompilationService",
     "prepare_production_resource_forecast",

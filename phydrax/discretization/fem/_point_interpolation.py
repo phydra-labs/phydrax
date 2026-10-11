@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, assert_never, final
+from typing import Any, assert_never, final, Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -214,6 +214,25 @@ def _nodal_field(discretization: FiniteElementDiscretization, field_name: str, /
     )
 
 
+class FiniteElementPointRouteData(Protocol):
+    """Numerical data consumed by the owning FE gather/transpose kernels."""
+
+    @property
+    def weights(self) -> Array: ...
+
+    @property
+    def dof_routes(self) -> Array: ...
+
+    @property
+    def field_space(self) -> ArraySpace: ...
+
+    @property
+    def attachment_count(self) -> int: ...
+
+    @property
+    def value_shape(self) -> tuple[int, ...]: ...
+
+
 @final
 class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     """Fixed FE point routes with an exact algebraic transpose scatter.
@@ -350,11 +369,15 @@ class PreparedFiniteElementPointInterpolation(StrictModule, NonTrainableState):
     def value_shape(self) -> tuple[int, ...]:
         return (*self.basis_value_shape, *self.field_space.shape[1:])
 
-    def interpolate(self, coefficients: ArrayLike, /) -> Array:
+    def interpolate(
+        self: FiniteElementPointRouteData, coefficients: ArrayLike, /
+    ) -> Array:
         values = self.field_space.validate(coefficients)
         return _apply_point_weights(self.weights, values[self.dof_routes])
 
-    def transpose_scatter(self, point_dual: ArrayLike, /) -> Array:
+    def transpose_scatter(
+        self: FiniteElementPointRouteData, point_dual: ArrayLike, /
+    ) -> Array:
         dual = jnp.asarray(point_dual, dtype=self.weights.dtype)
         if dual.shape != (self.attachment_count, *self.value_shape):
             raise ValueError("Point dual must match attachment count and value shape.")

@@ -20,14 +20,19 @@ from .._tree_math import validate_inexact_tree
 from ..linalg import (
     AbstractLinearOperator,
     AbstractVectorSpace,
+    ArraySpace,
     FGMRES,
     FunctionLinearOperator,
     GMRES,
+    LinearizationPolicy,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
+    prepare_linearization,
+    PreparedLinearSolve,
     PyTreeSpace,
     solve as solve_linear,
+    solve_transpose,
     transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
@@ -285,6 +290,135 @@ def _checked_tangent_solve(
         jnp.zeros_like(checked),
         checked,
     )
+
+
+@eqx.filter_custom_jvp
+@checked
+def implicit_root_output(
+    root_state: Array,
+    arguments: Any,
+    receipt: Any,
+    successful: Array,
+    /,
+    *,
+    residual_and_output: Callable[[Array, Any], tuple[Array, Any]],
+    root_space: ArraySpace,
+    prepare_linear_solve: Callable[[AbstractLinearOperator], PreparedLinearSolve],
+) -> tuple[Array, Any]:
+    """Retain an existing root/output receipt and attach physical derivatives.
+
+    The primal solver is not executed again and no receipt value is replaced.
+    Algorithmic tangents of ``root_state`` and ``receipt`` are ignored: tangent
+    and reverse actions follow the supplied endpoint equations and output map.
+    ``arguments`` carries differentiable history/physical inputs. The callbacks
+    and declared space are conditioned dynamic structure, not static arrays.
+    """
+    if len(root_space.shape) != 1:
+        raise ValueError(
+            "Implicit output attachment requires one native coordinate vector."
+        )
+    root_space.validate(root_state)
+    return root_state, receipt
+
+
+@implicit_root_output.def_jvp
+def _implicit_root_output_jvp(
+    primals: tuple[Array, Any, Any, Array],
+    tangents: tuple[Any, Any, Any, Any],
+    *,
+    residual_and_output: Callable[[Array, Any], tuple[Array, Any]],
+    root_space: ArraySpace,
+    prepare_linear_solve: Callable[[AbstractLinearOperator], PreparedLinearSolve],
+) -> tuple[tuple[Array, Any], tuple[Array, Any]]:
+    root_state, arguments, receipt, successful = primals
+    _, arguments_tangent, _, _ = tangents
+    root_state = eqx.error_if(root_state, ~successful, _FAILED_ROOT_MESSAGE)
+    active = jax.tree.map(
+        lambda primal, tangent: eqx.is_inexact_array(primal) and tangent is not None,
+        arguments,
+        arguments_tangent,
+        is_leaf=lambda value: value is None,
+    )
+    # Inactive floats remain conditioned dynamic operands of the converted map;
+    # they are not extra derivative coordinates or statically hidden arrays.
+    floating, conditioned = eqx.partition(arguments, active)
+
+    def materialize(primal: Any, tangent: Any) -> Any:
+        if primal is None:
+            return None
+        return jnp.zeros_like(primal) if tangent is None else tangent
+
+    floating_tangent = jax.tree.map(
+        materialize, floating, arguments_tangent, is_leaf=lambda value: value is None
+    )
+
+    def paired(point: tuple[Array, Any]) -> tuple[Array, Any]:
+        state, values = point
+        residual, output = residual_and_output(state, eqx.combine(values, conditioned))
+        return root_space.validate(residual), eqx.filter(output, eqx.is_inexact_array)
+
+    shared = prepare_linearization(
+        paired, (root_state, floating), policy=LinearizationPolicy("store")
+    )
+    argument_zero = jax.tree.map(jnp.zeros_like, floating)
+    output_zero = jax.tree.map(jnp.zeros_like, shared.primal[1])
+    state_zero = jnp.zeros_like(root_state)
+
+    def forward(direction: Array) -> Array:
+        result = shared.jvp((direction, argument_zero))[0]
+        if not isinstance(result, Array):
+            raise TypeError("The implicit endpoint residual action must be an array.")
+        return result
+
+    def reverse(cotangent: Array) -> Array:
+        result = shared.vjp((cotangent, output_zero))[0]
+        if not isinstance(result, Array):
+            raise TypeError("The implicit endpoint transpose action must be an array.")
+        return result
+
+    operator = FunctionLinearOperator(
+        forward,
+        source=root_space,
+        target=root_space,
+        transpose_action=reverse,
+        operator_id=f"{root_space.space_id}/implicit-output-derivative",
+    )
+    rhs = -shared.jvp((state_zero, floating_tangent))[0]
+    if not isinstance(rhs, Array):
+        raise TypeError("The implicit endpoint input derivative must be an array.")
+    prepared = prepare_linear_solve(operator)
+
+    def solve_direction(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
+        result = solve_linear(prepared, right_hand_side[:, None])
+        value = result.value
+        if not isinstance(value, Array):
+            raise TypeError(
+                "The native implicit derivative solve must return array coordinates."
+            )
+        return eqx.error_if(
+            value[:, 0],
+            jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
+            "Implicit output derivative solve failed; the physical root Jacobian is unresolved.",
+        )
+
+    def solve_transposed(_: Callable[[Array], Array], right_hand_side: Array) -> Array:
+        result = solve_transpose(prepared, right_hand_side[:, None])
+        value = result.value
+        if not isinstance(value, Array):
+            raise TypeError(
+                "The native implicit adjoint solve must return array coordinates."
+            )
+        return eqx.error_if(
+            value[:, 0],
+            jnp.any(result.status != int(LinearSolveStatus.SUCCESS)),
+            "Implicit output adjoint solve failed; the physical root Jacobian is unresolved.",
+        )
+
+    direction = jax.lax.custom_linear_solve(
+        forward, rhs, solve=solve_direction, transpose_solve=solve_transposed
+    )
+    output_tangent = shared.jvp((direction, floating_tangent))[1]
+    return (root_state, receipt), (direction, output_tangent)
 
 
 def implicit_root_result(
@@ -602,4 +736,5 @@ __all__ = [
     "implicit_fixed_point_result",
     "implicit_root",
     "implicit_root_result",
+    "implicit_root_output",
 ]

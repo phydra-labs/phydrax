@@ -294,6 +294,8 @@ def test_handoff_places_yee_components_at_staggered_psatd_positions(
     assert bool(evidence.successful)
     assert bool(evidence.constraint_satisfied)
     assert evidence.route == "cochain-to-spectral"
+    assert evidence.source_solver_id == case.source.solver.solver_id
+    assert evidence.target_solver_id == case.target.solver.solver_id
     assert float(evidence.target_electric_constraint) <= 1e-13
     assert float(evidence.target_magnetic_constraint) <= 1e-14
     volume = _H**3

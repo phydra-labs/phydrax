@@ -12,6 +12,7 @@ from ..._iteration import (
     IterationPlan,
     IterationRuntimeState,
 )
+from .._bordered import _bordered_base, _bordered_structure
 from .._plans import LinearBackend, LinearSolvePlan
 from .._policies import LinearSolveControl
 from .._preconditioners import AbstractPreconditioner
@@ -22,7 +23,13 @@ from ._jax_sparse import (
     solve_host_sparse_transformed,
     solve_sparse,
 )
-from ._jax_structured import prepare_structured, solve_structured
+from ._jax_structured import (
+    _StructuredSymbolicState,
+    prepare_structured,
+    solve_structured,
+    solve_structured_transformed,
+    StructuredState,
+)
 from ._lineax import prepare_lineax, solve_lineax
 from ._native_block_krylov import (
     prepare_native_block_krylov,
@@ -41,7 +48,7 @@ from ._spineax import (
 if TYPE_CHECKING:
     from ._jax_dense import DenseBackendOutput
     from ._jax_sparse import SparseBackendOutput
-    from ._jax_structured import StructuredBackendOutput, StructuredState
+    from ._jax_structured import StructuredBackendOutput
     from ._lineax import LineaxBackendOutput, LineaxState
     from ._native_block_krylov import (
         NativeBlockKrylovBackendOutput,
@@ -145,6 +152,10 @@ class _StructuredProvider(AbstractLinearProvider):
     backends = ("jax-structured",)
     supports_implicit_differentiation = True
 
+    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> _StructuredSymbolicState:
+        del plan
+        return _StructuredSymbolicState(_bordered_structure(problem.operator))
+
     def bind(
         self,
         symbolic_state: Any,
@@ -154,7 +165,12 @@ class _StructuredProvider(AbstractLinearProvider):
         *,
         preconditioner: AbstractPreconditioner | None = None,
     ) -> StructuredState:
-        del symbolic_state
+        if not isinstance(symbolic_state, _StructuredSymbolicState):
+            raise TypeError("Structured binding requires native symbolic state.")
+        if symbolic_state.bordered_structure != _bordered_structure(problem.operator):
+            raise ValueError(
+                "Structured binding cannot change the bordered coordinate layout."
+            )
         if preconditioner is not None:
             raise ValueError("Structured direct binding rejects preconditioning.")
         return prepare_structured(problem, plan)
@@ -173,6 +189,17 @@ class _StructuredProvider(AbstractLinearProvider):
     ) -> StructuredBackendOutput:
         del iteration, iteration_state
         return solve_structured(state, rhs, plan)
+
+    def supports_transformed(self, state: Any, /) -> bool:
+        return (
+            isinstance(state, StructuredState)
+            and _bordered_base(state.operator) is not None
+        )
+
+    def solve_transformed(
+        self, state: StructuredState, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
+    ) -> StructuredBackendOutput:
+        return solve_structured_transformed(state, rhs, plan, adjoint=adjoint)
 
 
 class _DenseProvider(AbstractLinearProvider):

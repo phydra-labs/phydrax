@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, NoReturn, TypeAlias
+from typing import assert_never, final, Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,6 +17,7 @@ from .._trainable import fixed_field
 from ..typing import checked, parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
+from ._named_blocks import BlockSelection, select_block_operator
 from ._operators import (
     AbstractLinearOperator,
     AdjointLinearOperator,
@@ -33,6 +34,7 @@ from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import (
     _source_cost,
     AbstractPreconditionerBuilder,
+    PreconditionerRefreshPolicy,
     PreconditionerSource,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
@@ -392,11 +394,35 @@ def _materializable_schur_setup(
     )
 
 
-class BlockFactorizationPreconditioner(AbstractPreconditioner):
-    """Prepared approximate inverse for one compatible 2-by-2 block operator."""
+def _action_couplings(
+    form: BlockFactorizationForm,
+    lower: AbstractLinearOperator,
+    upper: AbstractLinearOperator,
+    /,
+) -> tuple[AbstractLinearOperator | None, AbstractLinearOperator | None]:
+    """Retain only couplings consumed by the declared execution form."""
+    match form:
+        case "diagonal":
+            return None, None
+        case "lower":
+            return lower, None
+        case "upper":
+            return None, upper
+        case "ldu":
+            return lower, upper
+        case _:
+            assert_never(form)
 
-    schur_operator: SchurComplementLinearOperator
+
+class BlockFactorizationPreconditioner(AbstractPreconditioner):
+    """Prepared pivot/Schur actions and only execution-required couplings."""
+
+    pivot_action: AbstractPreconditioner
     schur_action: AbstractPreconditioner
+    lower_block: AbstractLinearOperator | None
+    upper_block: AbstractLinearOperator | None
+    schur_operator_id: str = eqx.field(static=True)
+    schur_input_ids: tuple[str, str, str, str] = eqx.field(static=True)
     form: BlockFactorizationForm = eqx.field(static=True)
     space: BlockSpace = fixed_field()
     __hash__ = object.__hash__
@@ -438,12 +464,19 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
             1
         ].compatible(schur_action.space):
             raise ValueError("space members must match the pivot and Schur actions.")
+        schur_input_ids = (
+            schur_operator.diagonal_block.operator_id,
+            schur_operator.lower_block.operator_id,
+            pivot_action.preconditioner_id,
+            schur_operator.upper_block.operator_id,
+        )
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "block-factorization-preconditioner",
+                    "kind": "block-factorization-action",
                     "form": form,
                     "schur_operator": schur_operator.operator_id,
+                    "schur_input_ids": schur_input_ids,
                     "pivot_action": pivot_action.preconditioner_id,
                     "schur_action": schur_action.preconditioner_id,
                     "properties": _preconditioner_properties_payload(properties_),
@@ -454,7 +487,12 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         )
         if not identifier:
             raise ValueError("preconditioner_id must be non-empty.")
-        self.schur_operator = schur_operator
+        self.pivot_action = pivot_action
+        self.lower_block, self.upper_block = _action_couplings(
+            form, schur_operator.lower_block, schur_operator.upper_block
+        )
+        self.schur_operator_id = schur_operator.operator_id
+        self.schur_input_ids = schur_input_ids
         self.schur_action = schur_action
         self.form = form
         self.space = space_
@@ -462,8 +500,8 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         self.preconditioner_id = identifier
 
     @property
-    def pivot_action(self) -> AbstractPreconditioner:
-        return self.schur_operator.inverse_action
+    def preparation_failed(self) -> Array:
+        return self.pivot_action.preparation_failed | self.schur_action.preparation_failed
 
     def cost_for(
         self,
@@ -484,9 +522,26 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
             pivot_setup,
             materialization=materialization,
         )
+        current_input_ids = (
+            diagonal.operator_id,
+            lower.operator_id,
+            self.pivot_action.preconditioner_id,
+            upper.operator_id,
+        )
+        schur_setup = SchurComplementLinearOperator(
+            diagonal,
+            lower,
+            self.pivot_action,
+            upper,
+            operator_id=(
+                self.schur_operator_id
+                if current_input_ids == self.schur_input_ids
+                else None
+            ),
+        )
         schur_cost = _source_cost(
             self.schur_action,
-            self.schur_operator,
+            schur_setup,
             materialization=materialization,
         )
         accepted = pivot_cost.accepted and schur_cost.accepted
@@ -501,7 +556,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
             storage_bytes=(
                 pivot_cost.storage_bytes
                 + schur_cost.storage_bytes
-                + _array_tree_storage_bytes((diagonal, lower, upper))
+                + _array_tree_storage_bytes((self.lower_block, self.upper_block))
             ),
             preparation_workspace_bytes=(
                 pivot_cost.preparation_workspace_bytes
@@ -517,7 +572,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
             ),
             accepted=accepted,
             reason=(
-                "prepared pivot and Schur actions plus retained Schur operator state"
+                "prepared pivot and Schur actions plus execution-required couplings"
                 if accepted
                 else "; ".join(
                     estimate.reason
@@ -537,26 +592,42 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
         first, second = self.space.validate(residual)
         pivot = self.pivot_action
         schur = self.schur_action
-        upper = self.schur_operator.upper_block
-        lower = self.schur_operator.lower_block
-        if self.form == "diagonal":
-            return (
-                pivot.apply(first, iteration=iteration),
-                schur.apply(second, iteration=iteration),
-            )
-        if self.form == "lower":
-            first_solution = pivot.apply(first, iteration=iteration)
-            second_rhs = _tree_subtract(second, lower.mv(first_solution))
-            return first_solution, schur.apply(second_rhs, iteration=iteration)
-        if self.form == "upper":
-            second_solution = schur.apply(second, iteration=iteration)
-            first_rhs = _tree_subtract(first, upper.mv(second_solution))
-            return pivot.apply(first_rhs, iteration=iteration), second_solution
-        pivot_rhs = pivot.apply(first, iteration=iteration)
-        second_rhs = _tree_subtract(second, lower.mv(pivot_rhs))
-        second_solution = schur.apply(second_rhs, iteration=iteration)
-        first_correction = pivot.apply(upper.mv(second_solution), iteration=iteration)
-        return _tree_subtract(pivot_rhs, first_correction), second_solution
+        upper = self.upper_block
+        lower = self.lower_block
+        match self.form:
+            case "diagonal":
+                return (
+                    pivot.apply(first, iteration=iteration),
+                    schur.apply(second, iteration=iteration),
+                )
+            case "lower":
+                if lower is None:
+                    raise RuntimeError(
+                        "A lower block action requires its lower coupling."
+                    )
+                first_solution = pivot.apply(first, iteration=iteration)
+                second_rhs = _tree_subtract(second, lower.mv(first_solution))
+                return first_solution, schur.apply(second_rhs, iteration=iteration)
+            case "upper":
+                if upper is None:
+                    raise RuntimeError(
+                        "An upper block action requires its upper coupling."
+                    )
+                second_solution = schur.apply(second, iteration=iteration)
+                first_rhs = _tree_subtract(first, upper.mv(second_solution))
+                return pivot.apply(first_rhs, iteration=iteration), second_solution
+            case "ldu":
+                if lower is None or upper is None:
+                    raise RuntimeError("An LDU block action requires both couplings.")
+                pivot_rhs = pivot.apply(first, iteration=iteration)
+                second_rhs = _tree_subtract(second, lower.mv(pivot_rhs))
+                second_solution = schur.apply(second_rhs, iteration=iteration)
+                first_correction = pivot.apply(
+                    upper.mv(second_solution), iteration=iteration
+                )
+                return _tree_subtract(pivot_rhs, first_correction), second_solution
+            case _:
+                assert_never(self.form)
 
 
 class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
@@ -604,6 +675,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             {
                 "kind": "block-factorization-preconditioner-builder",
                 "component_property_rule": "fixed-self-adjoint-spd-congruence:structural-zero-block",
+                "prepared_state": "execution-required-action",
                 "pivot_solver": pivot_id,
                 "schur_solver": schur_id,
                 "form": form,
@@ -748,16 +820,19 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             )
             if schur_cost.accepted and not forward_cost.accepted:
                 schur_matvecs = max(schur_matvecs, diagonal.source.size)
+        retained_couplings = _action_couplings(self.form, lower, upper)
+        retained_coupling_bytes = _array_tree_storage_bytes(retained_couplings)
+        setup_only_bytes = (
+            _array_tree_storage_bytes((diagonal, lower, upper)) - retained_coupling_bytes
+        )
         storage = (
-            pivot_cost.storage_bytes
-            + schur_cost.storage_bytes
-            + _array_tree_storage_bytes((diagonal, lower, upper))
+            pivot_cost.storage_bytes + schur_cost.storage_bytes + retained_coupling_bytes
         )
         itemsize = _coordinate_dtype(block.source).itemsize
         workspace = (2 if self.form == "ldu" else 1) * block.source.size * itemsize
         accepted = pivot_cost.accepted and schur_cost.accepted
         reason = (
-            "pivot and Schur actions plus retained Schur operator state"
+            "pivot and Schur actions plus execution-required couplings"
             if accepted
             else "; ".join(
                 estimate.reason
@@ -771,6 +846,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
             preparation_workspace_bytes=(
                 pivot_cost.preparation_workspace_bytes
                 + schur_cost.preparation_workspace_bytes
+                + setup_only_bytes
             ),
             apply_workspace_bytes_per_rhs=(
                 pivot_cost.apply_workspace_bytes_per_rhs
@@ -867,7 +943,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         materialization: MaterializationPolicy,
-    ) -> AbstractPreconditioner:
+    ) -> BlockFactorizationPreconditioner:
         self.properties_for(setup_operator)
         return self._build(
             setup_operator,
@@ -882,7 +958,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         materialization: MaterializationPolicy,
-    ) -> AbstractPreconditioner:
+    ) -> BlockFactorizationPreconditioner:
         if not isinstance(preconditioner, BlockFactorizationPreconditioner):
             raise TypeError(
                 "Block factorization refresh requires a BlockFactorizationPreconditioner."
@@ -897,8 +973,215 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
         )
 
 
+def _mapped_properties(
+    selection: BlockSelection, properties: PreconditionerProperties, /
+) -> PreconditionerProperties:
+    claims = {
+        "linear": properties.certifies("linear"),
+        "stationary": properties.certifies("stationary"),
+        "self_adjoint": selection.preserves_pairing
+        and properties.certifies("self_adjoint"),
+        "positive_definite": selection.preserves_pairing
+        and properties.certifies("positive_definite"),
+    }
+    return PreconditionerProperties(
+        **claims,
+        evidence={name: "transformed" for name, claimed in claims.items() if claimed},
+    )
+
+
+def _mapped_setup(
+    selection: BlockSelection, operator: AbstractLinearOperator, /
+) -> BlockLinearOperator:
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("setup_operator must be an AbstractLinearOperator.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Mapped block setup must be an endomorphism.")
+    return select_block_operator(operator, selection, selection)
+
+
+@final
+class MappedBlockFactorizationPreconditioner(AbstractPreconditioner):
+    """Complete canonical restriction/action/prolongation on the native space."""
+
+    selection: BlockSelection = fixed_field()
+    action: BlockFactorizationPreconditioner
+
+    def __init__(
+        self,
+        selection: BlockSelection,
+        action: BlockFactorizationPreconditioner,
+        /,
+    ) -> None:
+        if not isinstance(selection, BlockSelection):
+            raise TypeError("selection must be a BlockSelection.")
+        if not selection.covers_source:
+            raise ValueError(
+                "Mapped block preconditioning requires a complete selection."
+            )
+        if not isinstance(action, BlockFactorizationPreconditioner):
+            raise TypeError("action must be a BlockFactorizationPreconditioner.")
+        if not selection.target.compatible(action.space):
+            raise ValueError("Selection target must match the prepared block action.")
+        self.selection = selection
+        self.action = action
+        self.space = selection.source
+        self.properties = _mapped_properties(selection, action.properties)
+        self.preconditioner_id = canonical_fingerprint(
+            {
+                "kind": "mapped-block-factorization-preconditioner",
+                "selection": selection.selection_id,
+                "action": action.preconditioner_id,
+            }
+        )
+
+    @property
+    def preparation_failed(self) -> Array:
+        return self.action.preparation_failed
+
+    def apply(
+        self,
+        residual: PyTree[ArrayLike],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        selected = self.selection.restrict(residual)
+        return self.selection.prolong(self.action.apply(selected, iteration=iteration))
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        selected = _mapped_setup(self.selection, setup_operator)
+        cost = self.action.cost_for(selected, materialization=materialization)
+        return _mapped_cost(self.preconditioner_id, self.selection, cost)
+
+
+def _mapped_cost(
+    identifier: str, selection: BlockSelection, cost: PreconditionerCostEstimate, /
+) -> PreconditionerCostEstimate:
+    mapping_workspace = (
+        2 * selection.source.size * _coordinate_dtype(selection.source).itemsize
+    )
+    return PreconditionerCostEstimate(
+        component=identifier,
+        storage_bytes=cost.storage_bytes + _array_tree_storage_bytes(selection),
+        preparation_workspace_bytes=cost.preparation_workspace_bytes,
+        apply_workspace_bytes_per_rhs=cost.apply_workspace_bytes_per_rhs
+        + mapping_workspace,
+        setup_matvec_count=cost.setup_matvec_count,
+        accepted=cost.accepted,
+        reason=cost.reason,
+    )
+
+
+@final
+class MappedBlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
+    """Adapt one native complete partition to the existing exact 2-by-2 LDU recipe."""
+
+    selection: BlockSelection = fixed_field()
+    builder: BlockFactorizationPreconditionerBuilder
+    _builder_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        selection: BlockSelection,
+        builder: BlockFactorizationPreconditionerBuilder,
+        /,
+    ) -> None:
+        if not isinstance(selection, BlockSelection):
+            raise TypeError("selection must be a BlockSelection.")
+        if not selection.covers_source or len(selection.target.spaces) != 2:
+            raise ValueError(
+                "Mapped block factorization requires a complete two-member selection."
+            )
+        if not isinstance(builder, BlockFactorizationPreconditionerBuilder):
+            raise TypeError("builder must be a BlockFactorizationPreconditionerBuilder.")
+        self.selection = selection
+        self.builder = builder
+        self._builder_id = canonical_fingerprint(
+            {
+                "kind": "mapped-block-factorization-preconditioner-builder",
+                "selection": selection.selection_id,
+                "builder": builder.builder_id,
+            }
+        )
+
+    @property
+    def builder_id(self) -> str:
+        return self._builder_id
+
+    @property
+    def default_refresh(self) -> PreconditionerRefreshPolicy:
+        return "numeric"
+
+    def properties_for(
+        self, setup_operator: AbstractLinearOperator, /
+    ) -> PreconditionerProperties:
+        selected = _mapped_setup(self.selection, setup_operator)
+        return _mapped_properties(self.selection, self.builder.properties_for(selected))
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        selected = _mapped_setup(self.selection, setup_operator)
+        cost = self.builder.cost_for(selected, materialization=materialization)
+        return _mapped_cost(self.builder_id, self.selection, cost)
+
+    def prepare(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> MappedBlockFactorizationPreconditioner:
+        selected = _mapped_setup(self.selection, setup_operator)
+        action = self.builder.prepare(selected, materialization=materialization)
+        if not isinstance(action, BlockFactorizationPreconditioner):
+            raise TypeError(
+                "Block factorization builder returned an incompatible action."
+            )
+        return MappedBlockFactorizationPreconditioner(self.selection, action)
+
+    def refresh(
+        self,
+        preconditioner: AbstractPreconditioner,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> MappedBlockFactorizationPreconditioner:
+        if not isinstance(preconditioner, MappedBlockFactorizationPreconditioner):
+            raise TypeError(
+                "Mapped refresh requires a mapped block factorization action."
+            )
+        if preconditioner.selection.selection_id != self.selection.selection_id:
+            raise ValueError(
+                "Mapped refresh must preserve the complete coordinate selection."
+            )
+        selected = _mapped_setup(self.selection, setup_operator)
+        action = self.builder.refresh(
+            preconditioner.action, selected, materialization=materialization
+        )
+        if not isinstance(action, BlockFactorizationPreconditioner):
+            raise TypeError(
+                "Block factorization refresh returned an incompatible action."
+            )
+        return MappedBlockFactorizationPreconditioner(self.selection, action)
+
+
 __all__ = [
     "BlockFactorizationForm",
     "BlockFactorizationPreconditioner",
     "BlockFactorizationPreconditionerBuilder",
+    "MappedBlockFactorizationPreconditioner",
+    "MappedBlockFactorizationPreconditionerBuilder",
 ]

@@ -19,7 +19,7 @@ from ..._strict import StrictModule
 from ...typing import checked
 from .._materialization import MaterializationPolicy
 from .._policies import FailurePolicy
-from .._spaces import _coordinate_dtype
+from .._spaces import _coordinate_dtype, _has_euclidean_pairing
 from ._plans import EigenCostEstimate, EigenSolvePlan
 from ._policies import (
     DenseEigh,
@@ -362,14 +362,29 @@ def _build_prepared_spectrum(
         vectors = jax.lax.stop_gradient(
             jax.vmap(space.flatten, in_axes=-1, out_axes=1)(source.eigenvectors)
         )
-    if eigen_prepared.dense_state is None:
-        raise ValueError("Prepared self-adjoint spectrum lost its dense state.")
-    factor = eigen_prepared.dense_state.metric_factor
-    paired_metric = jax.lax.stop_gradient(factor @ jnp.conj(jnp.swapaxes(factor, -1, -2)))
-    inverse_basis = jax.lax.stop_gradient(
-        jnp.conj(jnp.swapaxes(vectors, -1, -2)) @ paired_metric
+    standard_euclidean = isinstance(problem, Eigenproblem) and _has_euclidean_pairing(
+        space
     )
-    identity = jnp.eye(problem.dimension, dtype=vectors.dtype)
+    if standard_euclidean:
+        paired_metric = jax.lax.stop_gradient(
+            jnp.broadcast_to(
+                jnp.eye(problem.dimension, dtype=vectors.dtype), vectors.shape
+            )
+        )
+        inverse_basis = jax.lax.stop_gradient(jnp.conj(jnp.swapaxes(vectors, -1, -2)))
+    else:
+        if eigen_prepared.dense_state is None:
+            raise ValueError("Prepared self-adjoint spectrum lost its dense state.")
+        factor = eigen_prepared.dense_state.metric_factor
+        paired_metric = jax.lax.stop_gradient(
+            factor @ jnp.conj(jnp.swapaxes(factor, -1, -2))
+        )
+        inverse_basis = jax.lax.stop_gradient(
+            jnp.conj(jnp.swapaxes(vectors, -1, -2)) @ paired_metric
+        )
+    identity = jnp.broadcast_to(
+        jnp.eye(problem.dimension, dtype=vectors.dtype), vectors.shape
+    )
     normalization = jnp.linalg.norm(
         inverse_basis @ vectors - identity,
         axis=(-2, -1),

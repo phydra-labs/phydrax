@@ -1,5 +1,5 @@
 {
-  "catalog_id": "12ed4af5170899abbee5032cef01cc3fb3aef300d6e5f5d8cb89d61c4c40bf46",
+  "catalog_id": "46698e64ac47aa14344004b5afc890a8878ae944ad28230b99217bba6f96b543",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -1796,6 +1796,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.nonequilibrium_field"
+      ]
+    },
+    {
+      "capability": "application.nuclear-fuel",
+      "declaration_id": "397b0fb15c5c49ae42af3a2e303515144abf060cf5ccaf24e8c5b266b74e569d",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.nuclear_fuel",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.nuclear_fuel"
       ]
     },
     {
@@ -10218,6 +10240,186 @@
               "capability": "dicom-radiotherapy-admission",
               "kind": "capability-support-tuple",
               "support_tuple_id": "bbbd402d718c9792902ed0b1a87a43d7af2c97c49f069c68874e4a6b25cd8871"
+            }
+          ]
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "distributed-spectral-execution",
+      "declaration_id": "63f6e053b1ead121bf22989718c0ec783502a8b19d4526e053514d3d93160f71",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "unreleased-candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-distributed-spectral-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-dynamic-scheduling",
+        "no-external-fft-provider",
+        "no-forced-or-simulated-device-evidence",
+        "no-implicit-host-gather",
+        "no-les-or-pic-evidence-inheritance",
+        "no-r2c-or-c2r",
+        "no-rank-one-slab",
+        "no-same-host-multi-host-evidence",
+        "no-uneven-shards",
+        "no-unlisted-mixed-transform-sequences",
+        "not-release-authorized"
+      ],
+      "owner": "phydrax.discretization.spectral",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "distributed-spectral-execution.profile",
+          "profile_id": "730d34fbc1557b3bcf8fbe137c6389807a149b74998d7b19368146661b7ebbfc",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "channel-atomic-zero-mode",
+            "channel-execution",
+            "channel-horizontal-layout",
+            "channel-horizontal-partition",
+            "compiler-memory",
+            "declared-resource",
+            "directional-jvp",
+            "forward-reference",
+            "hilbert-adjoint",
+            "inverse-reference",
+            "no-host-gather",
+            "payload-admission",
+            "physical-multi-device",
+            "physical-multi-host",
+            "precision-policy",
+            "process-qualified-topology",
+            "stage-identity"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "scale-resource",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "20e4a74a239e93134849b661fc7937f43615c425b413a51e7d0ff07b3ac364db"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "pencil-roundtrip",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "29821417ce6846c5d719976056a2f08151c6a7e6d51c8c0a979df2815c1b63b3"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "padded-dealias",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "642117db9f6360e8b900416f83e88059ecd391b560b751b5374b08f81aef5834"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "channel-action-derivative-not-claimed",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "current-fourier-chebyshev-fourier-channel",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "channel-horizontal",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "execute-channel-horizontal-action"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "7ddeb9726b91ffc2bfcd3fadff6063f2c50615a6ad98ae8bde91b8ca9ac7928c"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "global-reductions",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "8f7a032cf897eb8508f8124565aaf58d12845bfa60fb2f950aa76d5abd42d82f"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "multi-host",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "c89e293e9cb33312cc6b65c74a40cfc27aab3b6f005150c33eda308be308bd42"
+            },
+            {
+              "attributes": {
+                "backend": "jax",
+                "decomposition": "regular-divisible-slab-and-pencil",
+                "differentiation": "directional-jvp-and-hilbert-adjoint",
+                "execution": "global-arrays-without-host-gather",
+                "geometry": "periodic-cartesian",
+                "precision": "declared-transform-storage-accumulation-policy",
+                "resources": "exact-admitted-payload-shapes-including-state",
+                "route": "slab-roundtrip",
+                "topology": "process-qualified-physical-jax-mesh",
+                "transform": "full-complex-c2c"
+              },
+              "capability": "distributed-spectral-execution",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "ff654d2d3f575ac248e76de0e697264234771175a0b27b1f2857a8a2164e0f77"
             }
           ]
         }
@@ -24123,6 +24325,152 @@
       "public_symbols": []
     },
     {
+      "capability": "nuclear-fuel.performance",
+      "declaration_id": "371442b3e79af552f339888ab0b1b1f7f7100c268794acba8f9e30354c0b9f73",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.nuclear_fuel",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "nuclear-fuel.uo2-zircaloy.candidate",
+          "profile_id": "dd9ac6f9d8c776aca0b86314b1c8209dc41be0209987123c07eb859c109d15cb",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "nuclear-fuel.ancestry-and-fabrication-split",
+            "nuclear-fuel.ifpe-data-rights",
+            "nuclear-fuel.independent-locked-evaluation",
+            "nuclear-fuel.precommitted-observable-criteria",
+            "nuclear-fuel.runtime-precision-resources",
+            "nuclear-fuel.verification.V1",
+            "nuclear-fuel.verification.V10",
+            "nuclear-fuel.verification.V11",
+            "nuclear-fuel.verification.V12",
+            "nuclear-fuel.verification.V13",
+            "nuclear-fuel.verification.V14",
+            "nuclear-fuel.verification.V15",
+            "nuclear-fuel.verification.V2",
+            "nuclear-fuel.verification.V3",
+            "nuclear-fuel.verification.V4",
+            "nuclear-fuel.verification.V5",
+            "nuclear-fuel.verification.V6",
+            "nuclear-fuel.verification.V7",
+            "nuclear-fuel.verification.V8",
+            "nuclear-fuel.verification.V9"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "cladding": "zircaloy-4",
+                "fuel": "uo2-pellet",
+                "heat_treatment": "stress-relief-annealed",
+                "model_family": "mechanistic-gas-effective-diffusivity",
+                "regulatory_use": false,
+                "scattering_input": "required-spectrum-averaged-source-datum",
+                "support_kind": "source-bound-family-declaration"
+              },
+              "capability": "nuclear-fuel.performance",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "08e232cae78f45d010da49d358ae57089a8cf1f35507fbbcd50b55ed6be68615"
+            }
+          ]
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "nuclear-fuel.release-matrix",
+      "declaration_id": "eb7abe565882ecc00e8fefd79465224113933275380eac64dcc8d108ef5b4827",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.qualification",
+      "profiles": [
+        {
+          "dependencies": [
+            "dd9ac6f9d8c776aca0b86314b1c8209dc41be0209987123c07eb859c109d15cb"
+          ],
+          "kind": "capability-profile",
+          "name": "nuclear-fuel.release-matrix.candidate",
+          "profile_id": "a04592ce6cf8e728ea0c1e9c193832d6f6c8da2478074becdb021a5f517a0c1d",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "nuclear-fuel.ancestry-and-fabrication-split",
+            "nuclear-fuel.ifpe-data-rights",
+            "nuclear-fuel.independent-locked-evaluation",
+            "nuclear-fuel.precommitted-observable-criteria",
+            "nuclear-fuel.runtime-precision-resources",
+            "nuclear-fuel.verification.V1",
+            "nuclear-fuel.verification.V10",
+            "nuclear-fuel.verification.V11",
+            "nuclear-fuel.verification.V12",
+            "nuclear-fuel.verification.V13",
+            "nuclear-fuel.verification.V14",
+            "nuclear-fuel.verification.V15",
+            "nuclear-fuel.verification.V2",
+            "nuclear-fuel.verification.V3",
+            "nuclear-fuel.verification.V4",
+            "nuclear-fuel.verification.V5",
+            "nuclear-fuel.verification.V6",
+            "nuclear-fuel.verification.V7",
+            "nuclear-fuel.verification.V8",
+            "nuclear-fuel.verification.V9"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "V1": "constant-cylinder-conduction",
+                "V10": "constant-stress-creep",
+                "V11": "rz-thermomechanics-mms",
+                "V12": "layered-rz-comparison",
+                "V13": "whole-history-balances",
+                "V14": "fault-rollback-and-restart",
+                "V15": "whole-history-refinement",
+                "V2": "nonlinear-cylinder-conduction",
+                "V3": "lame-generalized-plane-strain",
+                "V4": "finite-strain-inflation",
+                "V5": "free-thermal-expansion",
+                "V6": "shrink-fit-contact",
+                "V7": "booth-release",
+                "V8": "piecewise-temperature-gas",
+                "V9": "paired-gap-heat-exchange"
+              },
+              "capability": "nuclear-fuel.release-matrix",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a2c3c209e11a22b39676abcdabe02ba4c9ccdb75d87e3fc9ba5fd371188c1f1a"
+            }
+          ]
+        }
+      ],
+      "public_symbols": []
+    },
+    {
       "capability": "nuclear.activation",
       "declaration_id": "cf089b23eeff9fc374bd0e505aa4397b058a46735ab667e338b772d4a2e68d2f",
       "dependencies": [],
@@ -25604,7 +25952,7 @@
     },
     {
       "capability": "pic.distributed",
-      "declaration_id": "6ffd2191e9de7048ee48d12ff84e4c9b8c23db440069501dc64f2f57463ac6b5",
+      "declaration_id": "be30439bc2c8887030540ef70f831ec906728da04c7fb99296cad760791e866d",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [],
@@ -25621,10 +25969,12 @@
       "owner": "phydrax.solver",
       "profiles": [
         {
-          "dependencies": [],
+          "dependencies": [
+            "730d34fbc1557b3bcf8fbe137c6389807a149b74998d7b19368146661b7ebbfc"
+          ],
           "kind": "capability-profile",
           "name": "pic.distributed.profile",
-          "profile_id": "fa6fad5388edb0217ddf9bd91fce8699943911ccb4c7a18acbcfce709b66ce16",
+          "profile_id": "29567013d3068efb16198291a324f26158e8fb0f5b1fc46e6d191c5ac9d5f253",
           "provider": "phydrax",
           "release_evidence": [],
           "released": false,
@@ -25644,7 +25994,7 @@
               "attributes": {
                 "decomposition": "static-equal-blocks-1d-2d-3d-mesh-restart-repartition",
                 "deposition": "window-local-axis-by-axis-halo-accumulation-plus-uniform",
-                "field_solvers": "cochain-3d-reduced-1d-2d-psatd-global-fft-and-local-guarded",
+                "field_solvers": "cochain-reduced-and-psatd-consumer-configurations",
                 "migration": "fixed-capacity-ppermute-packets-diagonals-atomic-rejection",
                 "precision": "float64",
                 "processes": "per-device-creation-population-stateful-resampling-tile-reserved-identities",
@@ -25652,7 +26002,7 @@
               },
               "capability": "pic.distributed",
               "kind": "capability-support-tuple",
-              "support_tuple_id": "d32c664476360b2e82e4bb711827b5147f82871486c0d3727a83b997e40a9c2b"
+              "support_tuple_id": "44be0f36f4f921cfc3f63748930a204e81055523d2be1eef459e38b6bcc927a6"
             }
           ]
         }

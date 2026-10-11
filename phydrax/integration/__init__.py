@@ -16,6 +16,11 @@ from .._axis_factorization import (
     AxisProductTerm,
     contract_axis_factors,
 )
+from .._coordinate_measure import (
+    CoordinateFrame,
+    CoordinateMeasure,
+    CoordinateMeasurePlan,
+)
 from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
 from ._adaptive_cubature import adaptive_cubature_callable, integrate_adaptive_cubature
 from ._adaptive_signed import (
@@ -380,6 +385,9 @@ __all__ = [
     "MeasureTransformationRecord",
     "IntegrationProvenance",
     "IntegrationStatus",
+    "CoordinateFrame",
+    "CoordinateMeasure",
+    "CoordinateMeasurePlan",
     "DeformedMeasureKind",
     "DeformedMeasurePlan",
     "DeformedMeasureState",

@@ -135,7 +135,7 @@ def _prepared(
     spectral = phx.discretization.DistributedSpectralExecutionPlan.from_discretization(
         topology,
         space,
-        checkpoint_count=1,
+        admitted_payload_shapes=((),),
         maximum_bytes=2**28,
     )
     group = phx.execution.ExecutionGroupSpec(
@@ -259,25 +259,42 @@ def test_cosmology_distributed_mixed_scenario_2() -> None:
     admitted = distributed.plan
     wave = admitted.mixed.plan.wave
     topology = admitted.spectral.topology
+    foreign = wave.discretization.plan.prepare(
+        tuple(axis.domain for axis in wave.discretization.axes),
+        numeric_version="foreign-owner",
+    )
     invalid_spectral = (
         phx.discretization.DistributedSpectralExecutionPlan.from_discretization(
             topology,
             wave.discretization,
             state_shape=(1,),
-            checkpoint_count=1,
+            admitted_payload_shapes=((1,),),
+            maximum_bytes=2**28,
+        ),
+        phx.discretization.DistributedSpectralExecutionPlan.from_discretization(
+            topology,
+            foreign,
+            admitted_payload_shapes=((),),
             maximum_bytes=2**28,
         ),
         phx.discretization.DistributedSpectralExecutionPlan(
             topology,
             admitted.spectral.spatial_shape,
+            owner_id=wave.discretization.prepared_id,
+            precision=phx.discretization.SpectralPrecisionPolicy(jnp.float32),
+            admitted_payload_shapes=((),),
             schedule="slab",
             domain_lengths=admitted.spectral.domain_lengths,
-            coefficient_dtype=jnp.complex64,
-            accumulation_dtype=jnp.float64,
-            checkpoint_count=1,
             maximum_bytes=2**28,
         ),
     )
+    assert foreign.modal_shape == wave.discretization.modal_shape
+    assert invalid_spectral[1].owner_id != wave.discretization.prepared_id
+    assert (
+        invalid_spectral[1].precision.policy_id
+        == wave.discretization.plan.precision.policy_id
+    )
+    assert invalid_spectral[1].admitted_payload_shapes == ((),)
     for spectral in invalid_spectral:
         result = DistributedMixedExecutionPlan(
             admitted.mixed,
@@ -425,6 +442,24 @@ def test_cosmology_distributed_mixed_scenario_3() -> None:
     assert not collective.host_gather_fallback
     _, _, distributed = _prepared()
     admitted = distributed.plan
+    exact = DistributedMixedExecutionPlan(
+        admitted.mixed,
+        admitted.spectral,
+        admitted.execution,
+        admitted.particles,
+        admitted.feasibility,
+        maximum_checkpoint_bytes=admitted.required_checkpoint_bytes,
+        particle_send_capacity=admitted.particle_send_capacity,
+        particle_receive_capacity=admitted.particle_receive_capacity,
+        particle_ghost_capacity=admitted.particle_ghost_capacity,
+        particle_ghost_width=admitted.particle_ghost_width,
+    ).prepare()
+    assert exact.evidence.checkpoint.capacity_sufficient
+    assert (
+        exact.evidence.checkpoint.maximum_bytes
+        == exact.evidence.checkpoint.required_bytes
+    )
+    assert exact.executable is not None
     refused = DistributedMixedExecutionPlan(
         admitted.mixed,
         admitted.spectral,
@@ -443,11 +478,32 @@ def test_cosmology_distributed_mixed_scenario_3() -> None:
     assert refused.evidence.status == "checkpoint-incomplete"
     assert not refused.evidence.checkpoint.capacity_sufficient
     _, state, distributed = _prepared(parts=3, count=6)
-    payload = distributed.checkpoint_tree(distributed.initialize(state))["payload"]
+    initialized = distributed.initialize(state)
+    payload = distributed.checkpoint_tree(initialized)["payload"]
+    checkpoint_values = (
+        initialized.wave.psi,
+        initialized.wave.scale_factor,
+        initialized.particles.positions,
+        initialized.particles.momenta,
+        initialized.particles.masses,
+        initialized.particles.stable_ids,
+        initialized.particles.logical_slots,
+        initialized.particles.active_mask,
+        initialized.particles.rng_counters,
+        initialized.particles.scale_factor,
+        initialized.particles.owner,
+    )
+    expected_unpadded = sum(
+        value.size * np.dtype(value.dtype).itemsize for value in checkpoint_values
+    )
     expected_padding = (
         distributed.checkpoint_payload_bytes - distributed.checkpoint_unpadded_bytes
     )
 
+    assert distributed.checkpoint_unpadded_bytes == expected_unpadded
+    assert distributed.plan.required_checkpoint_bytes == (
+        distributed.plan.checkpoint_count * (expected_unpadded + expected_padding)
+    )
     assert payload.size == distributed.checkpoint_unpadded_bytes + expected_padding
     assert payload.size % 3 == 0
     assert expected_padding > 0
@@ -483,6 +539,18 @@ def test_checkpoint_restore_changes_particle_and_field_sharding(
         source_state = source.initialize(
             state, rng_counters=jnp.arange(count**2, dtype=jnp.uint64)
         )
+        assert source.checkpoint_owner_id == destination.checkpoint_owner_id
+        assert source.checkpoint_schema_id == destination.checkpoint_schema_id
+        assert source.checkpoint_numerical_id == destination.checkpoint_numerical_id
+        assert (
+            source.checkpoint_compatibility_id == destination.checkpoint_compatibility_id
+        )
+        assert source.plan.spectral.execution_id != destination.plan.spectral.execution_id
+        assert source.execution_id != destination.execution_id
+        assert (
+            source.evidence.checkpoint.shard_plan_id
+            != destination.evidence.checkpoint.shard_plan_id
+        )
         profile = HPCFilesystemProfile(
             "posix.distributed-mixed-reshard",
             "local-posix",
@@ -503,20 +571,20 @@ def test_checkpoint_restore_changes_particle_and_field_sharding(
         publish_process_checkpoint(
             repository,
             "distributed-mixed-reshard",
-            source.checkpoint_execution_id,
+            source.checkpoint_compatibility_id,
             source.checkpoint_tree(source_state),
             analysis_plan_id=source.checkpoint_schema_id,
-            numeric_revision_id=source.checkpoint_numeric_id,
+            numeric_revision_id=source.checkpoint_numerical_id,
             writer_id="distributed-mixed-reshard-writer",
         )
         manifest = assemble_distributed_checkpoint_from_repository(
             repository,
             "distributed-mixed-reshard",
             source.checkpoint_schema_id,
-            source.checkpoint_numeric_id,
-            source.checkpoint_execution_id,
+            source.checkpoint_numerical_id,
+            source.checkpoint_compatibility_id,
             expected_process_count=jax.process_count(),
-            diagnostic_ids=(source.checkpoint_physics_id,),
+            diagnostic_ids=(source.checkpoint_owner_id,),
         )
         destination_prototype = destination.initialize(state)
         restored = destination.restore_checkpoint(

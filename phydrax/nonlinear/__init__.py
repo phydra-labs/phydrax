@@ -85,6 +85,7 @@ from ._higher_order import VectorHalley
 from ._implicit import (
     implicit_fixed_point_result,
     implicit_root,
+    implicit_root_output,
     implicit_root_result,
     ImplicitRootDerivativePolicy,
 )
@@ -212,6 +213,7 @@ from ._vi import (
     ConeVariationalInequalityFeasibility,
     ConeVariationalInequalityProblem,
     ConeVariationalInequalityResult,
+    fischer_burmeister_map,
     GeneralizedDerivativePolicy,
     prepare_variational_inequality,
     PreparedVariationalInequalitySolve,
@@ -378,6 +380,7 @@ __all__ = [
     "RootPolyalgorithm",
     "implicit_root",
     "implicit_root_result",
+    "implicit_root_output",
     "implicit_fixed_point_result",
     "select_initial_state",
     "batched_small_root",
@@ -413,6 +416,7 @@ __all__ = [
     "solve_causal_recurrence",
     "scalar_root",
     "cone_complementarity_certificate",
+    "fischer_burmeister_map",
     "ConeComplementarityCertificate",
     "ConeSemismoothNewton",
     "ConeVariationalInequalityFeasibility",

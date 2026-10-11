@@ -24,7 +24,7 @@ from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import ExplicitFreeze, NonTrainableState
+from ..._trainable import ExplicitFreeze, fixed_field, NonTrainableState
 from ...linalg import (
     ArraySpace,
     GMRES,
@@ -531,7 +531,7 @@ def _runtime_metric_weights(
 
 
 @final
-class MeshfreeConservationProblem(StrictModule, ExplicitFreeze):
+class MeshfreeConservationProblem(StrictModule):
     """Integrated steady equations ``B.T a law(Bu) = volumes * source``.
 
     The equation mask names solved rows. Every other row is prescribed by
@@ -539,22 +539,21 @@ class MeshfreeConservationProblem(StrictModule, ExplicitFreeze):
     introduced. Even/odd constitutive context is immutable *external* data,
     independent of the unknown state, so the monotonicity proof is global.
 
-    ``law`` is the prepared reference law: its traits are fixed by
-    preparation and its numeric values are the default runtime law. The
-    problem freezes it on purpose (`ExplicitFreeze`); a learned law trains
-    through a ``law`` parameter binding or the ``law=`` runtime refresh.
+    The public owner retains the law's declared model-parameter roles. Geometry,
+    features, source, boundary data and binding declarations remain FIXED;
+    declared runtime parameters still require explicit bindings.
     """
 
-    exterior: PreparedMeshfreeExteriorCalculus
+    exterior: PreparedMeshfreeExteriorCalculus = fixed_field()
     law: AbstractEdgeConstitutiveLaw
-    features: EdgeFrameFeatures
+    features: EdgeFrameFeatures = fixed_field()
     __strict_contract__ = True
-    source: Float64[_ConservationNodeDim]
-    boundary_values: Float64[_ConservationNodeDim]
-    boundary_mask: Bool[_ConservationNodeDim]
-    equation_mask: Bool[_ConservationNodeDim]
-    coverage: EdgeFeatureCoverage | None
-    parameters: PreparedParameters
+    source: Float64[_ConservationNodeDim] = fixed_field()
+    boundary_values: Float64[_ConservationNodeDim] = fixed_field()
+    boundary_mask: Bool[_ConservationNodeDim] = fixed_field()
+    equation_mask: Bool[_ConservationNodeDim] = fixed_field()
+    coverage: EdgeFeatureCoverage | None = fixed_field()
+    parameters: PreparedParameters = fixed_field()
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -642,27 +641,29 @@ class MeshfreeConservationProblem(StrictModule, ExplicitFreeze):
 
 
 @final
-class MeshfreeCoupledConservationProblem(StrictModule, ExplicitFreeze):
+class MeshfreeCoupledConservationProblem(StrictModule):
     """Block equations ``(B.T kron I) a F(B u) = volumes * source`` for a coupled law.
 
     ``u`` holds one packed O(3) component vector per node and ``F`` is an
     ``AbstractCoupledEdgeConstitutiveLaw`` acting on endpoint differences in the
     oriented 3-D edge frame. Masks, boundary prescription, immutable external
-    context, parameter semantics and the deliberately frozen reference law
-    (`ExplicitFreeze`) match ``MeshfreeConservationProblem``; source and
-    boundary values are scalar, one packed vector, or one vector per node.
+    context and parameter semantics match ``MeshfreeConservationProblem``;
+    source and boundary values are scalar, one packed vector, or one vector per
+    node.
     """
 
-    exterior: PreparedMeshfreeExteriorCalculus
+    exterior: PreparedMeshfreeExteriorCalculus = fixed_field()
     law: AbstractCoupledEdgeConstitutiveLaw
-    features: EdgeFrameFeatures
+    features: EdgeFrameFeatures = fixed_field()
     __strict_contract__ = True
-    source: Float64[_ConservationNodeDim, _ConservationComponentDim]
-    boundary_values: Float64[_ConservationNodeDim, _ConservationComponentDim]
-    boundary_mask: Bool[_ConservationNodeDim]
-    equation_mask: Bool[_ConservationNodeDim]
-    coverage: EdgeFeatureCoverage | None
-    parameters: PreparedParameters
+    source: Float64[_ConservationNodeDim, _ConservationComponentDim] = fixed_field()
+    boundary_values: Float64[_ConservationNodeDim, _ConservationComponentDim] = (
+        fixed_field()
+    )
+    boundary_mask: Bool[_ConservationNodeDim] = fixed_field()
+    equation_mask: Bool[_ConservationNodeDim] = fixed_field()
+    coverage: EdgeFeatureCoverage | None = fixed_field()
+    parameters: PreparedParameters = fixed_field()
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -886,11 +887,7 @@ def _prepared_edges(
 
 @final
 class _ConservationResidual(StrictModule, ExplicitFreeze):
-    """Reduced residual; ``law_reference`` is a trait template, frozen on purpose.
-
-    ``bound_law`` replaces every numeric leaf of the template with the runtime
-    law parameters, so the template's own values never enter the residual.
-    """
+    """Fixed law reference; numerical law coordinates arrive through runtime args."""
 
     __strict_contract__ = True
     exterior: PreparedMeshfreeExteriorCalculus
@@ -942,7 +939,7 @@ class _ConservationResidual(StrictModule, ExplicitFreeze):
 class _CoupledConservationResidual(StrictModule, ExplicitFreeze):
     """Flattened block residual over free nodes, component index fastest.
 
-    ``law_reference`` is a frozen trait template, as in ``_ConservationResidual``.
+    The law reference is fixed; numerical law coordinates arrive through runtime args.
     """
 
     __strict_contract__ = True
@@ -1254,13 +1251,16 @@ def _accepted_root(root: NonlinearResult, accepted: Array, /) -> NonlinearResult
 
 
 @final
-class PreparedMeshfreeConservationSolve(StrictModule, NonTrainableState):
+class PreparedMeshfreeConservationSolve(StrictModule, ExplicitFreeze):
     """Native nonlinear template, fixed sparse edge pattern and explicit background.
 
     The certificate's norm is ``||v||_A0`` for the Dirichlet-reduced background
     stiffness, not the unweighted Euclidean norm. Fixed external context and the
     same edge metric give ``||T(u)-T(v)||_A0 <= (L/b)||u-v||_A0`` by Cauchy-Schwarz.
     No claim is made for context that depends on the solved nodal field.
+
+    Embedded problem and law references are frozen on purpose. Numerical law
+    parameters enter through explicit refresh or bindings, not template discovery.
     """
 
     problem: MeshfreeConservationProblem
@@ -1634,7 +1634,7 @@ def _prepared_nonlinear[RuntimeT: (_ConservationRuntime, _CoupledConservationRun
 
 
 @final
-class PreparedMeshfreeCoupledConservationSolve(StrictModule, NonTrainableState):
+class PreparedMeshfreeCoupledConservationSolve(StrictModule, ExplicitFreeze):
     """Native NewtonKrylov template for a coupled law on a fixed block edge pattern.
 
     Coercivity holds in the component-blocked background energy
@@ -1644,6 +1644,9 @@ class PreparedMeshfreeCoupledConservationSolve(StrictModule, NonTrainableState):
     additionally reports the Picard contraction bound ``L/b`` of its learned
     perturbation. The block Jacobian is symmetric only for potential-gradient
     laws; Lipschitz laws use the nonsymmetric pattern.
+
+    Embedded problem and law references are frozen on purpose. Numerical law
+    parameters enter through explicit refresh or bindings, not template discovery.
     """
 
     problem: MeshfreeCoupledConservationProblem

@@ -1103,6 +1103,9 @@ class PreparedFELFullWave(StrictModule, NonTrainableState):
                 "plan": plan.plan_id,
                 "beam": beam.beam_id,
                 "run": run.prepared_id,
+                "transform_numerical": solver.transform.plan.numerical_id,
+                "transform_execution": solver.transform.plan.execution_id,
+                "transform_plan": solver.transform.plan.plan_id,
                 "step_size": step,
                 "step_count": count,
             }

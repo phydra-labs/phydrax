@@ -451,6 +451,8 @@ def test_distributed_run_matches_single_device_run(
     )
     reference = phx.solver.ElectromagneticPICPlan(base, species=species, **tolerance)
     run = _distributed(base, species, mesh, **tolerance, **options)
+    assert run.solver.solver_id != base.solver_id
+    assert run.pic.plan_id != reference.plan_id
     evidence = run.evidence
     if shape != (2, 2, 2):
         # Deposits and gathers are genuinely window-local.
@@ -1032,6 +1034,8 @@ def test_same_topology_restart_continues_bitwise(tmp_path: Path) -> None:
     restored = plan.restore(repository, checkpoint)
     assert restored.restart_class == "bitwise"
     assert restored.source.topology_id == run.topology_id
+    assert restored.source.plan_id == run.plan_id
+    assert restored.source.numerical_id == run.numerical_id
     continued, resumed = state, restored.state
     for _ in range(3):
         continued, resumed = advance(continued), advance(resumed)
@@ -1047,8 +1051,13 @@ def test_repartition_restart_is_a_tolerance_restart(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     checkpoint = _publish(phx.solver.PICRestartPlan(run), state, repository, "pic-4")
     smaller = _distributed(reference.solver, reference.species, _mesh((2,)))
+    with pytest.raises(ValueError, match="another plan"):
+        smaller.pic.restore(run.pic.checkpoint(state))
     restored = phx.solver.PICRestartPlan(smaller).restore(repository, checkpoint)
     assert restored.restart_class == "tolerance"
+    assert restored.source.plan_id == run.plan_id
+    assert restored.source.numerical_id == smaller.numerical_id
+    assert restored.source.plan_id != smaller.plan_id
     assert restored.source.part_count == 4
     # Repartition is a slot permutation: the restored state is exact.
     _assert_same_run(restored.state, state, atol=0.0)

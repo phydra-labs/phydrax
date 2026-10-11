@@ -28,7 +28,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._trainable import fixed_field, NonTrainableState
+from ..._trainable import ExplicitFreeze, NonTrainableState
 from ..._validation import canonical_identifier
 from ...discretization import (
     AbstractSideFluxEvaluator,
@@ -177,6 +177,7 @@ class FiniteVolumeComponent(
     AbstractTraceComponent,
     AbstractCapacityComponent,
     AbstractReconstructionComponent,
+    ExplicitFreeze,
 ):
     """One scalar field of a prepared cell-centered finite-volume diffusion problem.
 
@@ -191,8 +192,13 @@ class FiniteVolumeComponent(
     ``V (-(D u) - f)``, with ``D`` the native action including the boundary
     targets. ``reconstruction`` selects the published face state of side
     traces: the side cell average (default) or a coefficient-linear MUSCL face
-    state. The component's own arrays and its diffusion operator are FIXED;
-    the reconstruction plan keeps its own roles.
+    state.
+
+    This conditioned owner intentionally freezes its prepared diffusion data
+    and reconstruction: every array below the component is FIXED. Face traces
+    are prepared from that immutable reconstruction; trainable coupled inputs
+    remain explicit runtime parameter bindings, not embedded reconstruction
+    coordinates.
     """
 
     __strict_contract__ = True
@@ -200,11 +206,11 @@ class FiniteVolumeComponent(
     owner_id: str = eqx.field(static=True)
     space: ComponentSpace = eqx.field(static=True)
     discretization: FiniteVolumeDiscretization
-    diffusion: PreparedConservativeDiffusion = fixed_field()
+    diffusion: PreparedConservativeDiffusion
     reconstruction: PiecewiseConstantReconstruction | MUSCLReconstruction | None
-    volumes: Float[_CellDims] = fixed_field()
-    source: Float[_CellDims] = fixed_field()
-    boundary_targets: tuple[tuple[Array, Array], ...] = fixed_field()
+    volumes: Float[_CellDims]
+    source: Float[_CellDims]
+    boundary_targets: tuple[tuple[Array, Array], ...]
     impositions: tuple[BoundaryImposition, ...]
     state_blocks: tuple[ComponentBlock, ...]
     row_blocks: tuple[ComponentBlock, ...]

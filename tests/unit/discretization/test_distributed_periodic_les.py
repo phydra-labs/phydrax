@@ -12,12 +12,13 @@ import pytest
 
 import phydrax as phx
 from phydrax.discretization.spectral._distributed import (
+    DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
-    SpectralResourceError,
 )
 from phydrax.discretization.spectral._distributed_les import (
     DistributedPeriodicLESPlan,
     DistributedPeriodicLESStage,
+    PreparedDistributedPeriodicFourierFilter,
 )
 from phydrax.discretization.spectral._incompressible import PeriodicLerayProjector
 from phydrax.equations._les_closures import (
@@ -133,7 +134,17 @@ def test_distributed_periodic_contracts() -> None:
     assert distributed.preparation.scientific_prepared_id == scientific.prepared_id
     assert distributed.preparation.qualification_inherited is False
     assert distributed.preparation.host_gather is False
-    assert distributed.preparation.resource.closure_bytes > 0
+    assert distributed.preparation.admitted_payload_shapes == ((), (3,), (3, 3))
+    assert distributed.preparation.owner_id == space.prepared_id
+    assert distributed.preparation.precision_policy_id == space.plan.precision.policy_id
+    assert distributed.preparation.numerical_id == distributed.execution.numerical_id
+    assert distributed.preparation.execution_id == distributed.execution.execution_id
+    assert distributed.preparation.resource.closure_workspace_bytes > 0
+    assert (
+        distributed.preparation.resource.numerical_phase_bytes
+        == distributed.preparation.fft_resource.peak_live_bytes
+        + distributed.preparation.resource.closure_workspace_bytes
+    )
     assert stage.projected_rate.sharding == distributed.execution.modal_layout.sharding(
         distributed.execution.topology
     )
@@ -250,11 +261,13 @@ def test_distributed_periodic_contracts() -> None:
     assert restriction.backend_id == distributed.prepared_id
 
 
-def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound(
+def test_distributed_periodic_les_has_no_host_gather_and_restart_is_execution_bound(
     monkeypatch: Any,
 ) -> None:
     space = _space()
-    distributed = _distributed(_scientific(space))
+    scientific = _scientific(space)
+    distributed = _distributed(scientific)
+    changed_execution = _distributed(scientific, maximum_bytes=1024**3)
     state = _velocity(space)
 
     with monkeypatch.context() as guard:
@@ -271,6 +284,12 @@ def test_distributed_periodic_les_has_no_host_gather_and_restart_is_layout_bound
     assert restart.sharding_preserved
     assert restart.layout_id == distributed.execution.modal_layout.layout_id
     assert restart.topology_id == distributed.execution.topology.topology_id
+    assert restart.owner_id == distributed.execution.owner_id
+    assert restart.numerical_id == distributed.execution.numerical_id
+    assert restart.execution_id == distributed.execution.execution_id
+    assert changed_execution.execution.execution_id != restart.execution_id
+    with pytest.raises(ValueError, match="does not belong"):
+        changed_execution.restore(restart)
 
 
 def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
@@ -280,14 +299,40 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(
     scientific = _scientific(space)
     topology = _topology()
 
-    with pytest.raises(SpectralResourceError) as caught:
+    with pytest.raises(MemoryError, match="LES resource preflight") as caught:
         DistributedPeriodicLESPlan(
             scientific,
             topology,
+            checkpoint_count=1,
             maximum_bytes=128,
         ).prepare()
-    assert caught.value.report.closure_bytes > 0
-    assert caught.value.report.total_bytes > caught.value.report.maximum_bytes
+    refusal: Any = caught.value
+    assert refusal.report.closure_workspace_bytes > 0
+    assert refusal.report.checkpoint_bytes > 0
+    assert refusal.report.declared_peak_bytes > refusal.report.maximum_bytes
+    assert (
+        refusal.report.numerical_phase_bytes
+        == refusal.report.fft_resource.peak_live_bytes
+        + refusal.report.closure_workspace_bytes
+    )
+
+    foreign_space = phx.discretization.TensorSpectralPlan(
+        tuple(phx.discretization.FourierBasisPlan(4) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+        field_name="velocity",
+    ).prepare(tuple(phx.discretization.AxisDomain.periodic(0.0, 2.0) for _ in range(3)))
+    foreign_execution = DistributedSpectralExecutionPlan.from_discretization(
+        topology,
+        foreign_space,
+        schedule="slab",
+        state_shape=(3,),
+        admitted_payload_shapes=((), (3,), (3, 3)),
+    ).prepare()
+    with pytest.raises(ValueError, match="foreign scientific owner"):
+        PreparedDistributedPeriodicFourierFilter(
+            scientific.grid_filter,
+            foreign_execution,
+        )
 
     with pytest.raises(ValueError, match="schedule"):
         # ty: ignore[invalid-argument-type]

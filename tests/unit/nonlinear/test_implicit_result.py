@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
+from jax import Array
 
 import phydrax as phx
 import phydrax.linalg as la
@@ -561,3 +562,114 @@ def test_opaque_residual_closures_record_undeclared_determinism() -> None:
         "residual:determinism-undeclared",
         "residual:regularity-undeclared",
     )
+
+
+def _receipt_equations(
+    state: Array, arguments: tuple[Array, Array]
+) -> tuple[Array, Array]:
+    target, history_offset = arguments
+    return state**2 - target, state * target + history_offset
+
+
+def _receipt_linear_solve(operator: la.AbstractLinearOperator) -> la.PreparedLinearSolve:
+    return la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.GMRES(restart=2),
+            tolerance=la.TolerancePolicy(relative=1e-12, absolute=1e-12, max_steps=20),
+        ),
+        rhs_layout=la.RHSLayout((1,)),
+    )
+
+
+def _fixed_point_receipt(
+    arguments: tuple[Array, Array], *, maximum_evaluations: int = 20
+) -> tuple[Array, Array, Array]:
+    target, _ = arguments
+    result = nl.FixedPointIteration().solve(
+        nl.FixedPointProblem(
+            lambda state, value: 0.5 * (state + value / state),
+            problem_id="physical-square-partition",
+        ),
+        jnp.ones_like(target),
+        args=target,
+        termination=nl.NonlinearTermination(
+            absolute_residual=1e-12,
+            relative_residual=0.0,
+            maximum_steps=20,
+            maximum_evaluations=maximum_evaluations,
+        ),
+    )
+    state = jax.lax.stop_gradient(result.state)
+    receipt = jax.lax.stop_gradient(_receipt_equations(state, arguments)[1])
+    return state, receipt, result.successful
+
+
+def test_implicit_output_receipt_preserves_primal_and_physical_history_derivatives() -> (
+    None
+):
+    space = la.ArraySpace((2,), dtype=jnp.float64, space_id="physical-square-receipt")
+
+    def observable(arguments: tuple[Array, Array]) -> Array:
+        point, receipt, successful = _fixed_point_receipt(arguments)
+        _, output = nl.implicit_root_output(
+            point,
+            arguments,
+            receipt,
+            successful,
+            residual_and_output=_receipt_equations,
+            root_space=space,
+            prepare_linear_solve=_receipt_linear_solve,
+        )
+        return output
+
+    arguments = (
+        jnp.asarray([4.0, 9.0], dtype=jnp.float64),
+        jnp.asarray([0.7, 0.9], dtype=jnp.float64),
+    )
+    _, receipt, successful = _fixed_point_receipt(arguments)
+    assert bool(successful)
+    output = eqx.filter_jit(observable)(arguments)
+    assert jnp.array_equal(output, receipt)
+    directions = (
+        jnp.asarray([1.0, -2.0], dtype=jnp.float64),
+        jnp.asarray([0.3, 0.4], dtype=jnp.float64),
+    )
+    _, tangent = eqx.filter_jit(
+        lambda values, directions: eqx.filter_jvp(observable, (values,), (directions,))
+    )(arguments, directions)
+
+    def summed_observable(arguments: tuple[Array, Array]) -> Array:
+        return jnp.sum(observable(arguments))
+
+    gradient = eqx.filter_jit(eqx.filter_grad(summed_observable))(arguments)
+    assert jnp.allclose(tangent, jnp.asarray([3.3, -8.6]), rtol=1e-10, atol=1e-11)
+    assert jnp.allclose(gradient[0], jnp.asarray([3.0, 4.5]), rtol=1e-10, atol=1e-11)
+    assert jnp.allclose(gradient[1], jnp.ones(2), rtol=1e-10, atol=1e-11)
+
+
+def test_implicit_output_receipt_refuses_derivative_of_failed_native_root() -> None:
+    space = la.ArraySpace((2,), dtype=jnp.float64, space_id="failed-square-receipt")
+    history = jnp.zeros(2, dtype=jnp.float64)
+
+    def observable(target: Array) -> Array:
+        arguments = target, history
+        point, receipt, successful = _fixed_point_receipt(
+            arguments, maximum_evaluations=1
+        )
+        _, output = nl.implicit_root_output(
+            point,
+            arguments,
+            receipt,
+            successful,
+            residual_and_output=_receipt_equations,
+            root_space=space,
+            prepare_linear_solve=_receipt_linear_solve,
+        )
+        return jnp.sum(output)
+
+    target = jnp.asarray([4.0, 9.0], dtype=jnp.float64)
+    _, _, successful = _fixed_point_receipt((target, history), maximum_evaluations=1)
+    assert not bool(successful)
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        eqx.filter_jit(eqx.filter_grad(observable))(target)

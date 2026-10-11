@@ -46,7 +46,6 @@ from ...linalg import (
     SpectralEstimate,
     transpose,
 )
-from ...linalg._materialization import _require_materialization_budget
 from ...linalg._operators import _generic_adjoint, _materialize_by_basis
 from ...sparse import (
     EdgeRelation,
@@ -1724,10 +1723,9 @@ def _prepare_compatible_target(
     count, width = frames.shape[0], tests.shape[-1] * components
     dof_map = target.dof_maps[field_index]
     constraint_count = count * width + measures.shape[-1]
-    _require_materialization_budget(
+    policy.materialization.require(
         max(constraint_count * dof_map.global_dof_count, constraint_count**2),
         jnp.dtype("float64"),
-        policy.materialization,
     )
     differential = np.zeros((count * width, dof_map.global_dof_count))
     start = 0

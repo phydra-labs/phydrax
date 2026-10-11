@@ -405,8 +405,135 @@ def test_fixed_point_refuses_negative_evaluation_work() -> None:
         jax.block_until_ready(work(jnp.asarray([1.0, -0.5])))
 
 
+@pytest.mark.parametrize("method", [nl.FixedPointIteration(), nl.SteffensenIteration()])
+@pytest.mark.parametrize("initially_converged", [False, True])
+@pytest.mark.parametrize("maximum_evaluations", [1, 4])
+def test_fixed_point_auxiliary_is_cached_at_the_returned_map_point(
+    method: Any, initially_converged: bool, maximum_evaluations: int
+) -> None:
+    executed: list[int] = []
+
+    def mapping(
+        state: jax.Array, args: None
+    ) -> tuple[jax.Array, dict[str, jax.Array], jax.Array]:
+        jax.debug.callback(lambda: executed.append(1))
+        auxiliary = {
+            "point": state,
+            "positive": state > 0.0,
+            "count": jnp.asarray(7, dtype=jnp.int32),
+        }
+        return (
+            state if initially_converged else state + 1.0,
+            auxiliary,
+            jnp.asarray(3, dtype=jnp.int32),
+        )
+
+    result = method.solve(
+        nl.FixedPointProblem(mapping, has_aux=True, evaluation_work=True),
+        jnp.asarray([1.0]),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=10,
+            maximum_evaluations=maximum_evaluations,
+        ),
+    )
+    jax.effects_barrier()
+
+    auxiliary = result.auxiliary
+    assert jnp.array_equal(auxiliary["point"], result.state)
+    assert jnp.array_equal(auxiliary["positive"], result.state > 0.0)
+    assert auxiliary["positive"].dtype == jnp.bool_
+    assert auxiliary["count"].dtype == jnp.int32
+    assert int(auxiliary["count"]) == 7
+    evaluations = int(result.diagnostics.residual_evaluations)
+    assert len(executed) == evaluations
+    assert int(result.evaluation_work) == 3 * evaluations
+    assert bool(result.successful) == initially_converged
+    if initially_converged:
+        assert evaluations == 1
+    else:
+        assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+
+
+def test_fixed_point_auxiliary_survives_nonfinite_trial_refusal() -> None:
+    executed: list[int] = []
+
+    def mapping(
+        state: jax.Array, args: None
+    ) -> tuple[jax.Array, dict[str, jax.Array], jax.Array]:
+        jax.debug.callback(lambda: executed.append(1))
+        mapped = jnp.where(state < 0.5, state + 1.0, jnp.nan)
+        return mapped, {"point": state}, jnp.asarray(2, dtype=jnp.int32)
+
+    result = nl.FixedPointIteration().solve(
+        nl.FixedPointProblem(mapping, has_aux=True, evaluation_work=True),
+        jnp.zeros(1),
+        termination=nl.NonlinearTermination(maximum_steps=3),
+    )
+    jax.effects_barrier()
+
+    assert int(result.status) == int(nl.NonlinearStatus.NONFINITE_EVALUATION)
+    assert jnp.array_equal(result.state, jnp.zeros(1))
+    assert jnp.array_equal(result.auxiliary["point"], result.state)
+    assert len(executed) == 2
+    assert int(result.diagnostics.residual_evaluations) == 2
+    work = result.evaluation_work
+    assert isinstance(work, jax.Array)
+    assert int(work) == 4
+
+
+@pytest.mark.parametrize("has_aux", [False, True])
+@pytest.mark.parametrize("evaluation_work", [False, True])
+def test_fixed_point_evaluate_contract_and_nonlinear_auxiliary_conversion(
+    has_aux: bool, evaluation_work: bool
+) -> None:
+    def mapping(state: jax.Array, args: None) -> Any:
+        mapped = 0.5 * state
+        auxiliary = {"point": state, "flag": state > 0.0}
+        work = jnp.asarray(1, dtype=jnp.int32)
+        if has_aux:
+            return (mapped, auxiliary, work) if evaluation_work else (mapped, auxiliary)
+        return (mapped, work) if evaluation_work else mapped
+
+    problem = nl.FixedPointProblem(
+        mapping, has_aux=has_aux, evaluation_work=evaluation_work
+    )
+    state = jnp.ones(1)
+    mapped, auxiliary, work = problem.evaluate(state)
+    assert jnp.array_equal(mapped, 0.5 * state)
+    assert (auxiliary is not None) == has_aux
+    assert (work is not None) == evaluation_work
+    converted = problem.as_nonlinear_problem()
+    residual, converted_auxiliary = converted.evaluate(state)
+    assert converted.problem_id == problem.problem_id
+    assert converted.has_aux == has_aux
+    assert jnp.array_equal(residual, -0.5 * state)
+    if has_aux:
+        assert jnp.array_equal(converted_auxiliary["point"], state)
+    else:
+        assert converted_auxiliary is None
+
+
+@pytest.mark.parametrize("method", [nl.FixedPointIteration(), nl.SteffensenIteration()])
+def test_auxiliary_fixed_point_refuses_output_precision_change(method: Any) -> None:
+    method = eqx.tree_at(
+        lambda value: value.precision,
+        method,
+        nl.NonlinearPrecisionPolicy(output_dtype=jnp.float32),
+    )
+    problem = nl.FixedPointProblem(
+        lambda state, args: (state, {"point": state}), has_aux=True
+    )
+    with pytest.raises(ValueError, match="preserve the evaluated state dtype"):
+        method.solve(problem, jnp.ones(1, dtype=jnp.float16))
+
+
+@pytest.mark.parametrize("has_aux", [False, True])
 @pytest.mark.parametrize("kind", ["type-i", "type-ii"])
-def test_anderson_damped_complex_two_step_recurrence(kind: Any) -> None:
+def test_anderson_damped_complex_two_step_recurrence(kind: Any, has_aux: bool) -> None:
     matrix = jnp.asarray(
         [
             [0.20 + 0.10j, 0.05 - 0.02j],
@@ -431,7 +558,14 @@ def test_anderson_damped_complex_two_step_recurrence(kind: Any) -> None:
             restart_condition=1e20,
         ),
     ).solve(
-        nl.FixedPointProblem(mapping),
+        nl.FixedPointProblem(
+            lambda state, args: (
+                (mapping(state, args), {"point": state})
+                if has_aux
+                else mapping(state, args)
+            ),
+            has_aux=has_aux,
+        ),
         initial,
         termination=nl.NonlinearTermination(
             absolute_residual=0.0,
@@ -467,6 +601,8 @@ def test_anderson_damped_complex_two_step_recurrence(kind: Any) -> None:
     assert int(result.diagnostics.linear_solves) == 1
     assert bool(result.diagnostics.final_linear_converged)
     assert f"anderson-kind={kind}" in result.provenance.notes
+    if has_aux:
+        assert jnp.array_equal(result.auxiliary["point"], result.state)
 
 
 def test_type_ii_regularization_is_direct_and_reports_direct_condition() -> None:
@@ -501,9 +637,17 @@ def test_type_ii_regularization_is_direct_and_reports_direct_condition() -> None
     )
 
 
-def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart() -> None:
+@pytest.mark.parametrize("has_aux", [False, True])
+def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart(
+    has_aux: bool,
+) -> None:
     matrix = jnp.diag(jnp.asarray([11.0, 0.0]))
     offset = jnp.asarray([1.0, 0.0])
+
+    def mapping(state: jax.Array, args: None) -> Any:
+        mapped = matrix @ state + offset
+        return (mapped, {"point": state}) if has_aux else mapped
+
     result = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(
             kind="type-ii",
@@ -513,7 +657,7 @@ def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart() -> Non
             restart_condition=50.0,
         )
     ).solve(
-        nl.FixedPointProblem(lambda state, args: matrix @ state + offset),
+        nl.FixedPointProblem(mapping, has_aux=has_aux),
         jnp.zeros(2),
         termination=nl.NonlinearTermination(
             absolute_residual=0.0,
@@ -532,6 +676,8 @@ def test_unusable_anderson_solve_reuses_raw_mapping_and_records_restart() -> Non
     assert float(result.diagnostics.final_linear_condition_estimate) == pytest.approx(
         101.0**0.5, rel=1e-6
     )
+    if has_aux:
+        assert jnp.array_equal(result.auxiliary["point"], result.state)
 
 
 def test_anderson_budget_reserves_active_history_mapping_work() -> None:
@@ -611,14 +757,19 @@ def test_anderson_honors_aggregate_iterative_coefficient_budget() -> None:
     assert int(wide_budget.diagnostics.linear_iterations) <= 16
 
 
-def test_anderson_safeguard_counts_rejected_accelerated_proposals() -> None:
+@pytest.mark.parametrize("has_aux", [False, True])
+def test_anderson_safeguard_counts_rejected_accelerated_proposals(has_aux: bool) -> None:
+    def mapping(state: jax.Array, args: None) -> Any:
+        mapped = 0.2 + 1.4 * state - 0.6 * state**2
+        return (mapped, {"point": state}) if has_aux else mapped
+
     result = nl.FixedPointIteration(
         acceleration=nl.AndersonAcceleration(
             history=3,
             safeguard_factor=1.000001,
         )
     ).solve(
-        nl.FixedPointProblem(lambda state, args: 0.2 + 1.4 * state - 0.6 * state**2),
+        nl.FixedPointProblem(mapping, has_aux=has_aux),
         jnp.asarray([0.0]),
         termination=nl.NonlinearTermination(
             absolute_residual=0.0,
@@ -634,6 +785,8 @@ def test_anderson_safeguard_counts_rejected_accelerated_proposals() -> None:
     assert int(result.diagnostics.rejected_steps) == int(
         result.diagnostics.acceleration_restarts
     )
+    if has_aux:
+        assert jnp.array_equal(result.auxiliary["point"], result.state)
 
 
 def test_zero_coordinate_anderson_is_jittable_and_skips_coefficients() -> None:
@@ -1309,7 +1462,8 @@ def test_vector_local_root_singular_tangent_keeps_refusal_in_both_modes() -> Non
     _, tangent = jax.jvp(root, (jnp.asarray(0.0),), (jnp.asarray(1.0),))
     _, pullback = jax.vjp(root, jnp.asarray(0.0))
     (cotangent,) = pullback(jnp.asarray([1.0, 1.0]))
-    # The refused singular solve contributes no fabricated sensitivity, and
-    # reverse mode reports exactly the transpose of the forward refusal.
-    assert jnp.array_equal(tangent, jnp.zeros(2))
-    assert jnp.array_equal(cotangent, jnp.asarray(0.0))
+    # dx0/dp = 1 / (2 sqrt(p)) is unbounded at p = 0: the refused singular
+    # tangent solve is reported as a nonfinite sensitivity in both modes,
+    # never a plausible zero.
+    assert bool(jnp.all(jnp.isnan(tangent)))
+    assert bool(jnp.isnan(cotangent))

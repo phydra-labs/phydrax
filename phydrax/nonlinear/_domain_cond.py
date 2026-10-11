@@ -11,25 +11,30 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax._src import ad_util, core, effects, source_info_util
+from jax._src import ad_util, core, effects, source_info_util, util
 from jax._src.ad_checkpoint import transpose_jaxpr
-from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
-from jax._src.util import partition_list
+from jax._src.interpreters import ad, batching, mlir, partial_eval as pe, remat
+from jax._src.lax.control_flow import conditionals
 from jax.typing import ArrayLike
 
 
 _BranchResult = TypeVar("_BranchResult")
 
 
-# A separate call primitive is necessary: lax.cond batches to select, while
-# custom_batching.sequential_vmap does not support reverse-mode differentiation.
-# Keep the JAX interpreter boundary here; physical models never depend on it.
+# Retain the guard boundary through JAX transformations: native cond's select
+# batching evaluates refused operands. Pure branches use same-branch reference
+# operands instead; effectful branches retain lane-local ordered execution.
 _domain_call = core.Primitive("phydrax_domain_call")
 _domain_call.multiple_results = True
+_pure_cond = core.Primitive("phydrax_pure_domain_cond")
+_pure_cond.multiple_results = True
+_pure_cond.skip_canonicalization = True
 
 
 def _bind(call: core.ClosedJaxpr, arguments: Sequence[Any]) -> list[Any]:
-    closed = core.ClosedJaxpr(pe.convert_constvars_jaxpr(call.jaxpr), ())
+    # Keep the converted jaxpr's identity: JAX caches AD/partial evaluation by
+    # this object. Rewrapping it would retrace every nested guard transform.
+    closed = pe.convert_constvars_jaxpr(call)
     return _domain_call.bind(*call.consts, *arguments, call=closed)
 
 
@@ -44,7 +49,7 @@ def _abstract(
     return call.out_avals, call.effects
 
 
-def _batch(
+def _sequential_batch(
     arguments: Sequence[Any],
     dimensions: Sequence[int | None],
     *,
@@ -85,6 +90,143 @@ def _batch(
     return outputs, tuple(0 if present else None for present in output_mapped)
 
 
+@util.weakref_lru_cache
+def _vectorized_call(call: core.Jaxpr) -> core.Jaxpr:
+    def replace_parameter(value: Any) -> Any:
+        return _vectorized_call(value) if isinstance(value, core.Jaxpr) else value
+
+    equations = [
+        equation.replace(
+            primitive=(
+                _pure_cond
+                if equation.primitive is conditionals.cond_p
+                else equation.primitive
+            ),
+            params=jax.tree.map(
+                replace_parameter,
+                equation.params,
+                is_leaf=lambda value: isinstance(value, core.Jaxpr),
+            ),
+        )
+        for equation in call.eqns
+    ]
+    return call.replace(eqns=equations)
+
+
+def _batch(
+    axis_data: batching.AxisData,
+    arguments: Sequence[Any],
+    dimensions: Sequence[int | None],
+    *,
+    call: core.ClosedJaxpr,
+) -> tuple[list[Any], tuple[int | None, ...]]:
+    if call.effects:
+        return _sequential_batch(arguments, dimensions, call=call)
+    mapped = tuple(axis is not None for axis in dimensions)
+    batched_call, output_mapped = batching.batch_jaxpr(
+        _vectorized_call(call), axis_data, mapped, False
+    )
+    values = _bind(
+        batched_call,
+        tuple(
+            value if axis is None else jnp.moveaxis(value, axis, 0)
+            for value, axis in zip(arguments, dimensions, strict=True)
+        ),
+    )
+    return values, tuple(0 if present else None for present in output_mapped)
+
+
+def _lane_select(mask: Array, accepted: Array, refused: Array) -> Array:
+    expanded = mask.reshape(mask.shape + (1,) * (accepted.ndim - mask.ndim))
+    return jnp.where(expanded, accepted, refused)
+
+
+def _pure_cond_implementation(
+    *arguments: Any, branches: Sequence[core.Jaxpr], **params: Any
+) -> list[Any]:
+    return conditionals.cond_p.bind(*arguments, branches=branches, **params)
+
+
+def _reference_branch(
+    axis_data: batching.AxisData,
+    active: Array,
+    operands: Sequence[Any],
+    branch: core.Jaxpr,
+    input_mapped: tuple[bool, ...],
+) -> list[Any]:
+    def evaluate(_: None) -> list[Any]:
+        reference = jnp.argmax(active.astype(jnp.int32))
+        safe_operands = [
+            _lane_select(active, value, value[reference]) if present else value
+            for value, present in zip(operands, input_mapped, strict=True)
+        ]
+        batched_branch, _ = batching.batch_jaxpr(branch, axis_data, input_mapped, True)
+        return _bind(batched_branch, safe_operands)
+
+    def empty(_: None) -> list[Array]:
+        values = []
+        for aval in branch.out_avals:
+            if not isinstance(aval, core.ShapedArray):
+                raise TypeError("Vectorized domain branches require array outputs.")
+            values.append(
+                batching.bdim_at_front(
+                    jnp.zeros(aval.shape, dtype=aval.dtype),
+                    None,
+                    axis_data.size,
+                    mesh_axis=axis_data.explicit_mesh_axis,
+                )
+            )
+        return values
+
+    # This guard also protects outer vmap axes. Native lax.cond would
+    # otherwise batch an outer all-refused lane to an eager select.
+    return domain_cond(jnp.any(active), evaluate, empty)
+
+
+def _pure_cond_batch(
+    axis_data: batching.AxisData,
+    arguments: Sequence[Any],
+    dimensions: Sequence[int | None],
+    *,
+    branches: Sequence[core.Jaxpr],
+    **params: Any,
+) -> tuple[list[Any], Sequence[int | None]]:
+    if dimensions[0] is None:
+        return batching.fancy_primitive_batchers[conditionals.cond_p](
+            axis_data, arguments, dimensions, branches=branches, **params
+        )
+    index = batching.bdim_at_front(
+        arguments[0],
+        dimensions[0],
+        axis_data.size,
+        mesh_axis=axis_data.explicit_mesh_axis,
+    )
+    input_mapped = tuple(axis is not None for axis in dimensions[1:])
+    # Only declared lane operands need reference substitution; shared numerical
+    # operands remain explicit and dynamic without acquiring a broadcast axis.
+    operands = [
+        value
+        if axis is None
+        else batching.bdim_at_front(
+            value, axis, axis_data.size, mesh_axis=axis_data.explicit_mesh_axis
+        )
+        for value, axis in zip(arguments[1:], dimensions[1:], strict=True)
+    ]
+    branch_outputs = [
+        _reference_branch(
+            axis_data, index == branch_index, operands, branch, input_mapped
+        )
+        for branch_index, branch in enumerate(branches)
+    ]
+    outputs = branch_outputs[0]
+    for branch_index, values in enumerate(branch_outputs[1:], start=1):
+        outputs = [
+            _lane_select(index == branch_index, accepted, refused)
+            for accepted, refused in zip(values, outputs, strict=True)
+        ]
+    return outputs, (0,) * len(outputs)
+
+
 def _jvp(
     primals: Sequence[Any],
     tangents: Sequence[Any],
@@ -111,6 +253,54 @@ def _jvp(
     ]
 
 
+def _linearize(
+    is_vjp: bool,
+    nonzero: Sequence[bool],
+    *primals: Any,
+    call: core.ClosedJaxpr,
+) -> tuple[list[Any], Sequence[bool], tuple[Any, ...], Any, Callable[..., list[Any]]]:
+    # Use JAX's cached call linearization directly. Falling back through the
+    # JVP rule re-enters legacy partial evaluation and hoists nested scans again.
+    forward_call, forward_tree, output_nonzero, forwarded, tangent_call = (
+        ad.linearize_jaxpr(call, nonzero, is_vjp=is_vjp)
+    )
+    primal_avals, residual_avals, structured_avals = forward_tree.unpack()
+    values = _bind(forward_call, primals)
+    primal_count = len(primal_avals)
+    residual_end = primal_count + len(residual_avals)
+    materialized = iter(values[primal_count:residual_end])
+    original_inputs = (*call.consts, *primals)
+    residuals = tuple(
+        next(materialized) if index is None else original_inputs[index]
+        for index in forwarded
+    )
+    structured = structured_avals.update(values[residual_end:]).unflatten()
+
+    def linearized(
+        saved: Sequence[Any], structured_saved: Any, *tangents: Any
+    ) -> list[Any]:
+        tangent_values = iter(
+            _bind(
+                tangent_call,
+                (
+                    *saved,
+                    *(
+                        value
+                        for value, present in zip(tangents, nonzero, strict=True)
+                        if present
+                    ),
+                    *jax.tree.leaves(structured_saved),
+                ),
+            )
+        )
+        return [
+            next(tangent_values) if present else ad_util.Zero(aval.to_tangent_aval())
+            for aval, present in zip(call.out_avals, output_nonzero, strict=True)
+        ]
+
+    return values[:primal_count], output_nonzero, residuals, structured, linearized
+
+
 def _partial_eval(
     trace: pe.JaxprTrace, *tracers: pe.JaxprTracer, call: core.ClosedJaxpr
 ) -> list[Any]:
@@ -132,7 +322,7 @@ def _partial_eval(
         *(trace.new_instantiated_const(value) for value in known_values[known_count:]),
         *(tracer for tracer, present in zip(tracers, unknown, strict=True) if present),
     ]
-    closed = core.ClosedJaxpr(pe.convert_constvars_jaxpr(linear_call.jaxpr), ())
+    closed = pe.convert_constvars_jaxpr(linear_call)
     outputs = [
         pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
         for aval in closed.out_avals
@@ -158,62 +348,34 @@ def _partial_eval(
     ]
 
 
-def _partial_eval_custom(
-    saveable: Callable[..., Any],
+def _rematerialization_parameters(
+    _unknown_inputs: Sequence[bool],
+    _instantiated_inputs: Sequence[bool],
+    _known_outputs: Sequence[bool],
+    _instantiated_outputs: Sequence[bool],
+    _forwarded_residuals: int,
+    _total_residuals: int,
+    known: dict[str, Any],
+    staged: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    # The closed-call rule splits primal/tangent outputs while retaining both
+    # calls behind this lane-local primitive; there are no other parameters.
+    return known, staged
+
+
+def _rematerialization_partial_eval(
+    saveable: Callable[..., pe.RematCases_],
     unknown_inputs: Sequence[bool],
     instantiated_inputs: Sequence[bool],
-    eqn: core.JaxprEqn,
-) -> tuple[core.JaxprEqn, core.JaxprEqn, list[bool], list[bool], list[core.Var]]:
-    """Split one call for rematerialization without staging its known outputs.
-
-    Without this rule, any unknown operand stages the whole call, so the primal
-    outputs of a differentiated call become unknown and downstream primal
-    values reach transposition as linear inputs. Both halves remain domain calls.
-    """
-    known, staged, unknown_outputs, instantiated_outputs, residual_count = (
-        pe.partial_eval_jaxpr_custom(
-            eqn.params["call"].jaxpr,
-            unknown_inputs,
-            instantiated_inputs,
-            False,
-            False,
-            saveable,
-        )
-    )
-    known_inputs, _ = partition_list(unknown_inputs, eqn.invars)
-    known_binders, _ = partition_list(unknown_outputs, eqn.outvars)
-    _, staged_inputs = partition_list(instantiated_inputs, eqn.invars)
-    _, staged_binders = partition_list(instantiated_outputs, eqn.outvars)
-    residuals = [core.Var(variable.aval) for variable in staged.invars[:residual_count]]
-    known_eqn = pe.new_jaxpr_eqn(
-        known_inputs,
-        [*known_binders, *residuals],
-        _domain_call,
-        dict(call=core.ClosedJaxpr(known, ())),
-        core.eqn_effects(known, known_inputs),
-        eqn.source_info,
-        eqn.ctx,
-    )
-    staged_eqn = pe.new_jaxpr_eqn(
-        [*residuals, *staged_inputs],
-        staged_binders,
-        _domain_call,
-        dict(call=core.ClosedJaxpr(staged, ())),
-        core.eqn_effects(staged, [*residuals, *staged_inputs]),
-        eqn.source_info,
-        eqn.ctx,
-    )
-    forwarded = [
-        variable
-        for variable, instantiated in zip(eqn.invars, instantiated_inputs, strict=True)
-        if isinstance(variable, core.Var) and not instantiated
-    ]
-    return (
-        known_eqn,
-        staged_eqn,
-        unknown_outputs,
-        instantiated_outputs,
-        forwarded + residuals,
+    equation: core.JaxprEqn,
+) -> pe.PartialEvalCustomResult:
+    return pe.closed_call_partial_eval_custom_rule(
+        "call",
+        _rematerialization_parameters,
+        saveable,
+        list(unknown_inputs),
+        list(instantiated_inputs),
+        equation,
     )
 
 
@@ -242,15 +404,57 @@ def _transpose(
     ]
 
 
+def _dead_code_elimination(
+    used_outputs: list[bool], equation: core.JaxprEqn
+) -> tuple[list[bool], core.JaxprEqn | None]:
+    # Delegate liveness and effect retention to JAX's closed-call owner. Only
+    # its parameter spelling differs from this lane-local native primitive.
+    parameters = dict(equation.params)
+    parameters["call_jaxpr"] = parameters.pop("call")
+    used_inputs, pruned = pe.dce_jaxpr_closed_call_rule(
+        used_outputs, equation.replace(params=parameters)
+    )
+    if pruned is None:
+        return used_inputs, None
+    parameters = dict(pruned.params)
+    parameters["call"] = parameters.pop("call_jaxpr")
+    return used_inputs, pruned.replace(params=parameters)
+
+
 _domain_call.def_impl(_implementation)
 _domain_call.def_effectful_abstract_eval(_abstract)
-batching.primitive_batchers[_domain_call] = _batch
+batching.fancy_primitive_batchers[_domain_call] = _batch
 ad.primitive_jvps[_domain_call] = _jvp
+ad.primitive_linearizations[_domain_call] = _linearize
 ad.primitive_transposes[_domain_call] = _transpose
 pe.custom_partial_eval_rules[_domain_call] = _partial_eval
-pe.partial_eval_jaxpr_custom_rules[_domain_call] = _partial_eval_custom
+pe.partial_eval_jaxpr_custom_rules[_domain_call] = _rematerialization_partial_eval
+pe.dce_rules[_domain_call] = _dead_code_elimination
 mlir.register_lowering(
-    _domain_call, mlir.lower_fun(_implementation, multiple_results=True)
+    _domain_call,
+    mlir.lower_fun(_implementation, multiple_results=True),
+    inline=False,
+)
+
+# Only the batching semantics differ from scalar JAX cond. Every derivative,
+# partial-evaluation, refusal callback, and lowering remains with its owner.
+_pure_cond.def_impl(_pure_cond_implementation)
+_pure_cond.def_effectful_abstract_eval(conditionals.cond_p.abstract_eval)
+batching.fancy_primitive_batchers[_pure_cond] = _pure_cond_batch
+ad.primitive_jvps[_pure_cond] = ad.primitive_jvps[conditionals.cond_p]
+ad.primitive_linearizations[_pure_cond] = ad.primitive_linearizations[conditionals.cond_p]
+ad.fancy_transposes[_pure_cond] = ad.fancy_transposes[conditionals.cond_p]
+pe.custom_partial_eval_rules[_pure_cond] = pe.custom_partial_eval_rules[
+    conditionals.cond_p
+]
+pe.partial_eval_jaxpr_custom_rules[_pure_cond] = pe.partial_eval_jaxpr_custom_rules[
+    conditionals.cond_p
+]
+pe.dce_rules[_pure_cond] = pe.dce_rules[conditionals.cond_p]
+remat.rules[_pure_cond] = remat.rules[conditionals.cond_p]
+core.custom_typechecks[_pure_cond] = core.custom_typechecks[conditionals.cond_p]
+mlir.register_lowering(
+    _pure_cond, mlir._lowerings[conditionals.cond_p].rule, inline=False
 )
 
 
@@ -260,11 +464,12 @@ def domain_cond(
     false_function: Callable[[Any], _BranchResult],
     operand: object = None,
 ) -> _BranchResult:
-    """Scalar conditional whose mapped lanes never execute the other branch.
+    """Scalar conditional preserving scientific refusal under mapped evaluation.
 
-    Closure values are explicit primitive operands, including model parameters;
-    JVP and transpose calls use the same sequential batching rule. Neither trial
-    states nor residuals are clipped, replaced with valid states, or sanitized.
+    Closure values are explicit primitive operands, including model parameters.
+    Pure mapped branches replace only discarded evaluation operands with a
+    reference from the same branch; trial states and selected outputs are not
+    changed. Effectful branches execute once per selected lane in order.
     """
     call, output_shape, static = eqx.filter_make_jaxpr(
         lambda: jax.lax.cond(predicate, true_function, false_function, operand)

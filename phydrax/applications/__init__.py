@@ -1,4 +1,8 @@
-"""Lazy scientific application facade."""
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+"""Executable scientific application workflows built on Phydrax substrates."""
 
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
@@ -108,6 +112,7 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "neuroscience": (".neuroscience", None),
     "neutrino": (".neutrino", None),
     "nonequilibrium_field": (".nonequilibrium_field", None),
+    "nuclear_fuel": (".nuclear_fuel", None),
     "nucleic_acid_biophysics": (".nucleic_acid_biophysics", None),
     "numerical_relativity": (".numerical_relativity", None),
     "ocean": (".ocean", None),
@@ -218,6 +223,7 @@ if TYPE_CHECKING:
         neuroscience,
         neutrino,
         nonequilibrium_field,
+        nuclear_fuel,
         nucleic_acid_biophysics,
         numerical_relativity,
         ocean,
@@ -374,6 +380,7 @@ __all__ = [
     "magnetism",
     "neuroscience",
     "nucleic_acid_biophysics",
+    "nuclear_fuel",
     "mineral_processing",
     "neurofluid",
     "microfluidics",

@@ -2106,8 +2106,11 @@ Use `SimulationCalibrationPlan` for simulation-based rank calibration. It retain
 failed case IDs, interval ranks for ties, histogram counts, raw and corrected
 p-values, and the declared minimum valid-case policy. `PowerLaw`,
 `TruncatedNormal`, `HalfNormal`, `Cauchy`, `StudentT`, `SineAngle`, and
-`CosineAngle` provide normalized scalar physical priors for these posterior
-contracts. See the
+`CosineAngle` provide normalized scalar-event physical priors for these posterior
+contracts. `TruncatedNormal` broadcasts location, scale, and interval bounds into
+an explicit batch, validates every member, and samples with shape
+`sample_shape + batch_shape`; it does not collapse a vector prior to one event.
+See the
 [gravitational-wave inference guide](guides_gravitational_wave_inference.md)
 for one complete application.
 

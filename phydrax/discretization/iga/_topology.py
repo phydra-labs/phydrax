@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class SplineSpanTopology(StrictModule, NonTrainableState):
-    """Positive-span tensor topology; coefficient sites are deliberately absent."""
+    """Positive-span topology with immutable host routes and no coefficient sites."""
 
     tensor_topology: TensorTopology
     axis_names: tuple[str, ...] = eqx.field(static=True)

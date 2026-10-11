@@ -42,6 +42,7 @@ from .._tree_math import (
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
 from ..linalg import (
+    AbstractVectorSpace,
     FunctionLinearOperator,
     GeneralizedLSMR,
     IdentityLinearOperator,
@@ -51,6 +52,7 @@ from ..linalg import (
     LinearSolveStatus,
     OperatorProperties,
     prepare_linearization,
+    PreparedLinearization,
     PyTreeSpace,
     ScaledLinearOperator,
     solve as solve_linear,
@@ -307,18 +309,36 @@ def _usable_inexact_linear_status(status: Any, /) -> Array:
 
 
 def _prepare_residual_model(
-    residual_function: Callable[[PyTree[Any]], PyTree[Any]],
+    residual_function: (Callable[[PyTree[Any]], PyTree[Any]] | PreparedLinearization),
     parameters: PyTree[Any],
     /,
 ) -> _ResidualModel:
     source = PyTreeSpace(parameters)
-    linearization = prepare_linearization(
-        residual_function,
-        parameters,
-        source=source,
-    )
+    if isinstance(residual_function, PreparedLinearization):
+        linearization = residual_function
+        if not isinstance(linearization.source, AbstractVectorSpace):
+            raise TypeError("Prepared residual source must be an AbstractVectorSpace.")
+        if not isinstance(linearization.target, AbstractVectorSpace):
+            raise TypeError("Prepared residual target must be an AbstractVectorSpace.")
+        if not source.compatible(linearization.source):
+            raise ValueError(
+                "Prepared residual source must match the canonical parameter space."
+            )
+        linearization.source.validate(parameters)
+        source.validate(linearization.point)
+        linearization.target.validate(linearization.primal)
+    else:
+        if not callable(residual_function):
+            raise TypeError(
+                "Residual model requires a callable or PreparedLinearization."
+            )
+        linearization = prepare_linearization(
+            residual_function,
+            parameters,
+            source=source,
+        )
     jacobian = JacobianLinearOperator(linearization)
-    residual = linearization.primal
+    residual = _validate_real_inexact_tree(linearization.primal, name="residual")
     gradient = jacobian.adjoint_mv(residual)
     objective = 0.5 * _tree_inner(residual, residual)
     return _ResidualModel(

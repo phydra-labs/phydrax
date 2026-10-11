@@ -1,5 +1,5 @@
 {
-  "catalog_id": "12ed4af5170899abbee5032cef01cc3fb3aef300d6e5f5d8cb89d61c4c40bf46",
+  "catalog_id": "46698e64ac47aa14344004b5afc890a8878ae944ad28230b99217bba6f96b543",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -272,8 +272,11 @@
         "research-capabilities-present"
       ],
       "capability_ids": [
+        "application.nuclear-fuel",
         "application.reactor-physics",
         "application.tokamak",
+        "nuclear-fuel.performance",
+        "nuclear-fuel.release-matrix",
         "nuclear.activation",
         "nuclear.data",
         "nuclear.depletion.linear-bateman",
@@ -290,7 +293,7 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "nuclear-reactor-tokamak",
-      "portfolio_id": "56eb484aed867277ec56cf5ee73f52f2bef5a91d25aa947bd9a8d310e35e9dd7",
+      "portfolio_id": "b88b4697ccbb42279b5306be360925f47e6ca0d9980c6cf8eace17039e314ecc",
       "profile_ids": [
         "017e2b66382b3fccd912b7987b6f2d92cc904049d459952d1bce49005e9a6248",
         "17a44f30b1c801a8809c557c3f5ff47ca861304b97c49e4ba0efb7a8b74598ae",
@@ -304,10 +307,12 @@
         "6f089a02088ee9eae9e504f1012f5a04af59d9a7e4017a97a993a75c110ccdb7",
         "7808a3bc634ace5eeb3ffcc2bd0e8c60d301da3cc7d65a9ffff2ad5dc531650b",
         "7dbbb28ee30e261d5c971bbc03272d371ee87eb65f0f95601390e65a434d6848",
+        "a04592ce6cf8e728ea0c1e9c193832d6f6c8da2478074becdb021a5f517a0c1d",
         "a448cd0916ca1bc71d1395a8925afa951d1e71764eb51aa005181a3bea3a0fbb",
         "aa0875ea1ac2c1860e018b590ae59e29a32efdc5c4e84669b40cbd2fad58a7bd",
         "c3d405a72ebdd63120aae73e87ec76c3a583f8ef89a56d56a0278003d384bdaa",
-        "d644fc5e342378453bf35012c147bcf084bed3ab8d9815d612b70c5d4681b6cf"
+        "d644fc5e342378453bf35012c147bcf084bed3ab8d9815d612b70c5d4681b6cf",
+        "dd9ac6f9d8c776aca0b86314b1c8209dc41be0209987123c07eb859c109d15cb"
       ],
       "ready_for_release_review": false
     },

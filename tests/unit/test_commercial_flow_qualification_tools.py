@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 
+from phydrax.discretization.spectral._qualification import (
+    distributed_spectral_candidate_profiles,
+    distributed_spectral_support_tuples,
+)
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
 from phydrax.qualification._evidence import (
     ForecastResourceRecord,
@@ -34,13 +38,20 @@ from tools._commercial_qualification import (
 
 
 def _request(capability: Any, definition: Any) -> Any:
-    support = SupportTuple(
-        capability,
-        {"route": definition.route, "method": f"{definition.route}-test-method"},
-    )
-    dependency = SupportDependency(
-        f"{capability}.qualified-provider", support.support_tuple_id
-    )
+    if capability == distributed.CAPABILITY:
+        support = next(
+            value
+            for value in distributed_spectral_support_tuples()
+            if dict(value.attributes)["route"] == definition.route
+        )
+        profile_id = distributed_spectral_candidate_profiles()[0].profile_id
+    else:
+        support = SupportTuple(
+            capability,
+            {"route": definition.route, "method": f"{definition.route}-test-method"},
+        )
+        profile_id = f"{capability}.qualified-provider"
+    dependency = SupportDependency(profile_id, support.support_tuple_id)
     scientific = (dependency,) if definition.dependency_scope == "scientific" else ()
     deployment = (dependency,) if definition.dependency_scope == "deployment" else ()
     run_spec = ResolvedRunSpec(
@@ -104,19 +115,51 @@ def test_commercial_flow_qualification_tools_scenario_1() -> None:
         "ou-fluid",
     }
     assert set(distributed.ROUTES) == {
-        "slab",
-        "pencil",
-        "padded",
-        "channel",
+        "slab-roundtrip",
+        "pencil-roundtrip",
+        "padded-dealias",
+        "channel-horizontal",
         "global-reductions",
-        "line-local",
-        "partitioned-thomas",
-        "spike",
-        "pcr",
-        "topology-restart",
-        "multiblock-extruded",
         "scale-resource",
-        "substrate",
+        "multi-host",
+    }
+    channel_gates = {gate.name for gate in distributed.ROUTES["channel-horizontal"].gates}
+    assert {
+        "channel-execution",
+        "channel-horizontal-layout",
+        "channel-horizontal-partition",
+        "channel-atomic-zero-mode",
+        "precision-policy",
+        "payload-admission",
+        "process-qualified-topology",
+        "declared-resource",
+        "compiler-memory",
+        "no-host-gather",
+        "physical-multi-device",
+    } == channel_gates
+    assert {
+        "forward-reference",
+        "inverse-reference",
+        "directional-jvp",
+        "hilbert-adjoint",
+        "stage-identity",
+    }.isdisjoint(channel_gates)
+    assert any(
+        symbol.endswith("DistributedSpectralExecutionPlan.execute_channel")
+        for symbol in distributed.ROUTES["channel-horizontal"].private_api_symbols
+    )
+    full_complex_gates = {
+        "forward-reference",
+        "inverse-reference",
+        "directional-jvp",
+        "hilbert-adjoint",
+        "stage-identity",
+    }
+    assert full_complex_gates <= {
+        gate.name for gate in distributed.ROUTES["slab-roundtrip"].gates
+    }
+    assert full_complex_gates <= {
+        gate.name for gate in distributed.ROUTES["pencil-roundtrip"].gates
     }
     assert set(compressible.ROUTES) == {
         "smooth-dgsem",
@@ -328,13 +371,12 @@ def test_commercial_flow_qualification_tools_scenario_2() -> None:
 
 
 def test_commercial_flow_qualification_tools_scenario_3() -> None:
-    slab_definition = distributed.ROUTES["slab"]
+    slab_definition = distributed.ROUTES["slab-roundtrip"]
     absent_request = _request(distributed.CAPABILITY, slab_definition)
-    absent = distributed.produce_candidate("slab", absent_request)
+    absent = distributed.produce_candidate("slab-roundtrip", absent_request)
     assert absent["status"] == "inconclusive"
     assert (
-        _gate(absent, "operational", "multi-device-execution")["outcome"]
-        == "inconclusive"
+        _gate(absent, "operational", "physical-multi-device")["outcome"] == "inconclusive"
     )
 
     simulated_request = _request(distributed.CAPABILITY, slab_definition)
@@ -344,11 +386,58 @@ def test_commercial_flow_qualification_tools_scenario_3() -> None:
         "device_count": 8,
         "simulated": True,
     }
-    simulated = distributed.produce_candidate("slab", simulated_request)
+    simulated = distributed.produce_candidate("slab-roundtrip", simulated_request)
     assert simulated["status"] == "inconclusive"
     assert (
         "simulation-is-not-qualification"
-        in _gate(simulated, "operational", "multi-device-execution")["reason"]
+        in _gate(simulated, "operational", "physical-multi-device")["reason"]
+    )
+
+    forced_request = _request(distributed.CAPABILITY, slab_definition)
+    forced_request["availability"] = {
+        "observed": True,
+        "provider_available": True,
+        "device_count": 4,
+        "forced": True,
+        "physical": False,
+        "process_count": 1,
+        "process_qualified": True,
+        "simulated": False,
+    }
+    forced = distributed.produce_candidate("slab-roundtrip", forced_request)
+    assert forced["status"] == "inconclusive"
+    assert (
+        "forced-device-is-not-qualification"
+        in _gate(forced, "operational", "physical-multi-device")["reason"]
+    )
+
+    inherited_request = _request(distributed.CAPABILITY, slab_definition)
+    support = inherited_request["support_tuple"]
+    inherited_request["support_dependency"] = SupportDependency(
+        "pic.distributed.profile",
+        support.support_tuple_id,
+    )
+    with pytest.raises(ValueError, match="cannot inherit"):
+        distributed.produce_candidate("slab-roundtrip", inherited_request)
+
+    multi_host_definition = distributed.ROUTES["multi-host"]
+    same_host_request = _request(distributed.CAPABILITY, multi_host_definition)
+    same_host_request["availability"] = {
+        "observed": True,
+        "provider_available": True,
+        "device_count": 4,
+        "host_count": 1,
+        "physical": True,
+        "process_count": 2,
+        "process_qualified": True,
+        "same_host": True,
+        "simulated": False,
+    }
+    same_host = distributed.produce_candidate("multi-host", same_host_request)
+    assert same_host["status"] == "inconclusive"
+    assert (
+        "same-host-is-not-qualification"
+        in _gate(same_host, "operational", "physical-multi-host")["reason"]
     )
 
     cantera_definition = reacting.ROUTES["cantera-boundary"]
@@ -359,22 +448,32 @@ def test_commercial_flow_qualification_tools_scenario_3() -> None:
     definition = distributed.ROUTES["scale-resource"]
     request = _request(distributed.CAPABILITY, definition)
     context = request["evidence_context"]
+    if not isinstance(context, dict):
+        raise TypeError("Qualification evidence context must be a dictionary.")
+    build_id = context["build_id"]
+    environment_id = context["environment_id"]
+    backend = context["backend"]
+    topology = context["topology"]
+    if not all(
+        isinstance(value, str) for value in (build_id, environment_id, backend, topology)
+    ):
+        raise TypeError("Qualification evidence context identities must be strings.")
     observed = ObservedResourceRecord(
         "distributed-scale-test",
-        context["build_id"],
-        context["environment_id"],
-        backend=context["backend"],
-        topology=context["topology"],
+        build_id,
+        environment_id,
+        backend=backend,
+        topology=topology,
         measurements={"device_bytes": 1024.0, "global_cells": 4096.0},
         observed_at=12,
         raw_artifact_ids=("raw-resource-test",),
     )
     forecast = ForecastResourceRecord(
         "distributed-scale-test",
-        context["build_id"],
-        context["environment_id"],
-        backend=context["backend"],
-        topology=context["topology"],
+        build_id,
+        environment_id,
+        backend=backend,
+        topology=topology,
         estimates={"device_bytes": 2048.0},
         uncertainty_bounds={"device_bytes": (1536.0, 2560.0)},
         forecast_model_id="forecast-model-test",
@@ -388,6 +487,9 @@ def test_commercial_flow_qualification_tools_scenario_3() -> None:
         "observed": True,
         "provider_available": True,
         "device_count": 2,
+        "physical": True,
+        "process_count": 1,
+        "process_qualified": True,
         "simulated": False,
     }
 
@@ -399,6 +501,11 @@ def test_commercial_flow_qualification_tools_scenario_3() -> None:
     assert artifact["status"] == "passed"
     assert performance.observed_resource_record_ids == (observed.record_id,)
     assert performance.forecast_resource_record_ids == (forecast.record_id,)
+    extra = artifact["extra"]
+    if not isinstance(extra, dict):
+        raise TypeError("Qualification extra evidence must be a dictionary.")
+    assert extra["les_evidence_inherited"] is False
+    assert extra["pic_evidence_inherited"] is False
     definition = reacting.ROUTES["statistics"]
     request = _request(reacting.CAPABILITY, definition)
     artifact = reacting.produce_candidate("statistics", request)

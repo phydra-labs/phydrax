@@ -27,7 +27,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..typing import checked, parse
-from ._linearization import prepare_jacobian
+from ._linearization import _jacobian_jvp_actions, prepare_jacobian
 from ._newton import _remaining_linear_steps, NewtonKrylov
 from ._prepared import (
     prepare_nonlinear,
@@ -103,13 +103,29 @@ def _natural_map(
     return jax.tree.map(lambda x, y: x - y, value, projected)
 
 
-def _fischer_burmeister_map(
+def fischer_burmeister_map(
     value: PyTree[Any],
     operator_value: PyTree[Any],
     bounds: Bounds,
-    origin_coefficient: float,
     /,
+    *,
+    derivative_policy: GeneralizedDerivativePolicy | None = None,
 ) -> PyTree[Array]:
+    """Evaluate the box Fischer--Burmeister complementarity residual.
+
+    Each leaf is zero exactly where ``value`` lies in ``bounds`` and
+    ``operator_value`` satisfies box complementarity: nonnegative at an active
+    lower bound, nonpositive at an active upper bound, and zero in the interior.
+    Fixed entries (equal bounds) map to ``value - lower``; unbounded entries map
+    to ``operator_value``. ``derivative_policy`` selects the Clarke derivative
+    at the origin of each Fischer--Burmeister pair.
+    """
+    policy = (
+        GeneralizedDerivativePolicy() if derivative_policy is None else derivative_policy
+    )
+    if not isinstance(policy, GeneralizedDerivativePolicy):
+        raise TypeError("derivative_policy must be GeneralizedDerivativePolicy or None.")
+    origin_coefficient = policy.origin_coefficient
     lower, upper = bounds.materialize(value)
 
     def residual_leaf(x: Array, f: Array, lo: Array, hi: Array) -> Array:
@@ -201,11 +217,11 @@ class VariationalInequalityProblem(StrictModule):
         policy_ = GeneralizedDerivativePolicy() if policy is None else policy
         if not isinstance(policy_, GeneralizedDerivativePolicy):
             raise TypeError("policy must be GeneralizedDerivativePolicy or None.")
-        return _fischer_burmeister_map(
+        return fischer_burmeister_map(
             value,
             self.evaluate(value, args),
             self.bounds,
-            policy_.origin_coefficient,
+            derivative_policy=policy_,
         )
 
     def as_nonlinear_problem(
@@ -236,11 +252,11 @@ class VariationalInequalityProblem(StrictModule):
             transformed = (
                 _natural_map(value, physical, self.bounds)
                 if formulation == "natural"
-                else _fischer_burmeister_map(
+                else fischer_burmeister_map(
                     value,
                     physical,
                     self.bounds,
-                    policy.origin_coefficient,
+                    derivative_policy=policy,
                 )
             )
             return transformed, physical
@@ -1319,17 +1335,17 @@ def _solve_projected_semismooth(
             iteration=current.iteration + 1,
             residual_evaluations=next_evaluations,
             jvp_evaluations=current.jvp_evaluations
-            + jnp.sum(
-                linear_result.diagnostics.matvec_count,
-                dtype=jnp.int32,
-            )
-            + 2,
+            + jacobian.setup_jvp_evaluations
+            + _jacobian_jvp_actions(
+                jacobian.operator,
+                jnp.sum(linear_result.diagnostics.matvec_count, dtype=jnp.int32) + 2,
+            ),
             vjp_evaluations=current.vjp_evaluations
-            + jnp.sum(
-                linear_result.diagnostics.adjoint_matvec_count,
-                dtype=jnp.int32,
-            )
-            + 1,
+            + _jacobian_jvp_actions(
+                jacobian.operator,
+                jnp.sum(linear_result.diagnostics.adjoint_matvec_count, dtype=jnp.int32)
+                + 1,
+            ),
             jacobian_preparations=current.jacobian_preparations + 1,
             linear_solves=current.linear_solves + 1,
             linear_iterations=next_linear_iterations,
@@ -1495,11 +1511,11 @@ def complementarity_certificate(
     operator_value = problem.evaluate(value, args)
     lower, upper = problem.bounds.materialize(value)
     natural = _natural_map(value, operator_value, problem.bounds)
-    fischer = _fischer_burmeister_map(
+    fischer = fischer_burmeister_map(
         value,
         operator_value,
         problem.bounds,
-        policy.origin_coefficient,
+        derivative_policy=policy,
     )
     lower_active = jnp.asarray(0, dtype=jnp.int32)
     upper_active = jnp.asarray(0, dtype=jnp.int32)
@@ -1563,6 +1579,7 @@ __all__ = [
     "VariationalInequalityResult",
     "VariationalInequalityFeasibility",
     "complementarity_certificate",
+    "fischer_burmeister_map",
     "prepare_variational_inequality",
     "refresh_variational_inequality",
     "solve_prepared_variational_inequality",

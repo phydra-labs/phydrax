@@ -74,6 +74,8 @@ benchmarks/*
 !benchmarks/pic_chain_integration.json
 !benchmarks/spectral_de_rham.py
 !benchmarks/spectral_de_rham.json
+!benchmarks/distributed_spectral.py
+!benchmarks/distributed_spectral.json
 !benchmarks/spline_de_rham.py
 !benchmarks/spline_de_rham.json
 !benchmarks/structured_cochain.py
@@ -82,6 +84,7 @@ benchmarks/*
 !benchmarks/unstructured_maxwell.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
+!benchmarks/nuclear_fuel_performance.py
 # Native Taylor contraction campaigns and scoped diagnostic evidence.
 !benchmarks/taylor_contraction_capacities.json
 !benchmarks/taylor_order_capacities.json

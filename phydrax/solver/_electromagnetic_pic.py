@@ -360,6 +360,7 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
     constraint_tolerance: float = eqx.field(static=True)
     pairing_defect: float = eqx.field(static=True)
     field_derivatives: bool = eqx.field(static=True)
+    configuration_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -497,10 +498,9 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
         self.constraint_tolerance = constraint
         self.pairing_defect = pairing
         self.field_derivatives = derivatives
-        self.plan_id = canonical_fingerprint(
+        self.configuration_id = canonical_fingerprint(
             {
-                "kind": "electromagnetic-pic-plan",
-                "solver": solver.solver_id,
+                "kind": "electromagnetic-pic-configuration",
                 "species": [value.plan_id for value in species_],
                 "processes": [value.process_id for value in processes_],
                 "boundaries": None if boundaries is None else boundaries.plan_id,
@@ -514,6 +514,13 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 "maximum_displacement_fraction": maximum,
                 "continuity_tolerance": continuity,
                 "constraint_tolerance": constraint,
+            }
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "electromagnetic-pic-plan",
+                "solver": solver.solver_id,
+                "configuration": self.configuration_id,
             }
         )
 
@@ -1731,6 +1738,17 @@ class ElectromagneticPICPlan(StrictModule, NonTrainableState):
                 "solver": self.solver.solver_id,
             }
         )
+
+    def execution_restart_owners(self) -> dict[str, str]:
+        """Execution-bound component owners eligible for explicit repartition."""
+        owners = {
+            "field": self.solver.solver_id,
+            "clock": self.solver.solver_id,
+            "boundaries": self._boundary_owner(),
+        }
+        if self.field_derivatives:
+            owners["field-history"] = self.solver.solver_id
+        return owners
 
     def _templates(self) -> dict[str, tuple[str, Any]]:
         dtype = jnp.dtype(self.precision.particle_dtype)

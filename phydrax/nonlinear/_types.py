@@ -22,6 +22,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractLinearOperator, AbstractVectorSpace, PyTreeSpace
+from ..typing import checked
 from ._domain_cond import domain_cond as _domain_cond
 
 
@@ -486,8 +487,13 @@ class NonlinearSystemProblem(StrictModule):
 class FixedPointProblem(StrictModule):
     """Fixed-point equation ``state = mapping(state, args)``.
 
-    With `evaluation_work=True` the mapping returns ``(mapped_state, work)``,
-    where `work` is a fixed-structure PyTree of non-negative integer arrays: the
+    With `has_aux=True` the mapping returns ``(mapped_state, auxiliary)``.
+    Auxiliary data is an arbitrary fixed-structure PyTree, independent of the
+    inexact-array contract of the state.
+
+    With `evaluation_work=True` the mapping returns ``(mapped_state, work)``
+    without auxiliary data, or ``(mapped_state, auxiliary, work)`` with it.
+    `work` is a fixed-structure PyTree of non-negative integer arrays: the
     owner-reported work spent by that single evaluation. Methods that account it
     report the exact sum in `NonlinearResult.evaluation_work`.
     """
@@ -495,7 +501,9 @@ class FixedPointProblem(StrictModule):
     mapping_function: Callable[[PyTree[Any], Any], Any]
     problem_id: str = eqx.field(static=True)
     evaluation_work: bool = eqx.field(static=True)
+    has_aux: bool = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         mapping: Callable[[PyTree[Any], Any], Any],
@@ -503,28 +511,52 @@ class FixedPointProblem(StrictModule):
         *,
         problem_id: str = "fixed-point",
         evaluation_work: bool = False,
+        has_aux: bool = False,
     ) -> None:
-        if not callable(mapping):
-            raise TypeError("mapping must be callable.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         if not isinstance(evaluation_work, bool):
             raise TypeError("evaluation_work must be a bool.")
+        if not isinstance(has_aux, bool):
+            raise TypeError("has_aux must be a bool.")
         self.mapping_function = mapping
         self.problem_id = identifier
         self.evaluation_work = evaluation_work
+        self.has_aux = has_aux
 
     def evaluate(
         self, state: PyTree[Any], args: Any = None, /
-    ) -> tuple[PyTree[Array], PyTree[Array] | None]:
-        """Return the mapped state and this evaluation's reported work, if any."""
+    ) -> tuple[PyTree[Array], Any, PyTree[Array] | None]:
+        """Return the mapped state, auxiliary data, and reported evaluation work."""
         state_ = validate_inexact_tree(state, name="fixed-point state")
         output = self.mapping_function(state_, args)
-        if not self.evaluation_work:
-            mapped_output, work = output, None
-        elif isinstance(output, tuple) and len(output) == 2:
+        if self.has_aux:
+            if self.evaluation_work:
+                if not isinstance(output, tuple) or len(output) != 3:
+                    raise TypeError(
+                        "An auxiliary work-reporting fixed-point mapping must return "
+                        "(mapped_state, auxiliary, work)."
+                    )
+                mapped_output, auxiliary, work = output
+            else:
+                if not isinstance(output, tuple) or len(output) != 2:
+                    raise TypeError(
+                        "A has_aux fixed-point mapping must return "
+                        "(mapped_state, auxiliary)."
+                    )
+                mapped_output, auxiliary = output
+                work = None
+        elif self.evaluation_work:
+            if not isinstance(output, tuple) or len(output) != 2:
+                raise TypeError(
+                    "A work-reporting fixed-point mapping must return (mapped_state, work)."
+                )
             mapped_output, work = output
+            auxiliary = None
+        else:
+            mapped_output, auxiliary, work = output, None, None
+        if self.evaluation_work:
             work = jax.tree.map(jnp.asarray, work)
             if not all(
                 jnp.issubdtype(leaf.dtype, jnp.integer) for leaf in jax.tree.leaves(work)
@@ -540,10 +572,6 @@ class FixedPointProblem(StrictModule):
                 ),
                 work,
             )
-        else:
-            raise TypeError(
-                "A work-reporting fixed-point mapping must return (mapped_state, work)."
-            )
         mapped = validate_inexact_tree(mapped_output, name="fixed-point mapping")
         if jax.tree.structure(mapped) != jax.tree.structure(state_):
             raise ValueError(
@@ -554,7 +582,7 @@ class FixedPointProblem(StrictModule):
             mapped,
             state_,
         )
-        return mapped, work
+        return mapped, auxiliary, work
 
     def mapping(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         return self.evaluate(state, args)[0]
@@ -562,15 +590,20 @@ class FixedPointProblem(StrictModule):
     def as_nonlinear_problem(self) -> NonlinearSystemProblem:
         """Return the equivalent residual problem using ``mapping - state``."""
 
-        def residual(state: PyTree[Array], args: Any) -> PyTree[Array]:
-            mapped = self.mapping(state, args)
-            return jax.tree.map(
+        def residual(
+            state: PyTree[Array], args: Any
+        ) -> PyTree[Array] | tuple[PyTree[Array], Any]:
+            mapped, auxiliary, _ = self.evaluate(state, args)
+            value = jax.tree.map(
                 lambda mapped_leaf, state_leaf: mapped_leaf - state_leaf,
                 mapped,
                 state,
             )
+            return (value, auxiliary) if self.has_aux else value
 
-        return NonlinearSystemProblem(residual, problem_id=self.problem_id)
+        return NonlinearSystemProblem(
+            residual, has_aux=self.has_aux, problem_id=self.problem_id
+        )
 
 
 class NonlinearDiagnostics(StrictModule):

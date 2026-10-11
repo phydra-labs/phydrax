@@ -2,11 +2,23 @@ import phydrax as phx
 from phydrax.qualification import CapabilityDepth, ClosureState
 
 
+# Fuel-performance closure matrices are candidates: they close only with
+# external evidence artifacts (see tests/unit/applications/nuclear_fuel).
+NUCLEAR_FUEL_FAMILIES = {"nuclear-fuel.implementation", "nuclear-fuel.scientific-release"}
+
+
 def test_advanced_closure_scenario_1() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
-    matrices = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
+    builtin = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
+    assert phx.qualification.validate_closure_catalog(catalog, builtin) == ()
+    fuel = tuple(matrix for matrix in builtin if matrix.family in NUCLEAR_FUEL_FAMILIES)
+    assert {matrix.family for matrix in fuel} == NUCLEAR_FUEL_FAMILIES
+    assert all(matrix.state is ClosureState.CLASSIFIED for matrix in fuel)
+    assert all(not matrix.release_closed for matrix in fuel)
+    matrices = tuple(
+        matrix for matrix in builtin if matrix.family not in NUCLEAR_FUEL_FAMILIES
+    )
     assert len(matrices) == 21
-    assert phx.qualification.validate_closure_catalog(catalog, matrices) == ()
     assert all(matrix.classified for matrix in matrices)
     assert all(matrix.implementation_closed for matrix in matrices)
     assert all(not matrix.release_closed for matrix in matrices)
@@ -28,7 +40,7 @@ def test_advanced_closure_scenario_1() -> None:
             assert implementation_depth >= CapabilityDepth.SPATIAL_SINGLE_PHYSICS
     assert all(
         not resolution.release_authorized
-        for matrix in matrices
+        for matrix in builtin
         for resolution in matrix.resolutions
     )
     catalog = phx.qualification.builtin_capability_catalog()

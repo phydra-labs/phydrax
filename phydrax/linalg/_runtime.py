@@ -32,6 +32,7 @@ from .._iteration import (
     IterationScope,
 )
 from ._binding import LinearSolveTemplate
+from ._bordered import _bordered_structure
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_action
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
@@ -302,6 +303,7 @@ def release(prepared: PreparedLinearSolve, /) -> bool:
 def _operator_symbolic_contract(operator: AbstractLinearOperator, /) -> tuple[Any, ...]:
     properties = operator.properties
     capabilities = operator.capabilities
+    bordered_contract = _bordered_structure(operator)
     return (
         properties.diagonal,
         properties.triangular,
@@ -315,6 +317,7 @@ def _operator_symbolic_contract(operator: AbstractLinearOperator, /) -> tuple[An
         capabilities.adjoint,
         capabilities.materialize,
         capabilities.diagonal_assembly,
+        bordered_contract,
     )
 
 
@@ -957,6 +960,14 @@ def _solve_prepared(
     elif _dense_svd_least_squares_route(prepared, problem):
         derivative_regular = _rhs_broadcast(
             _dense_svd_least_squares_regularity(prepared), status.shape
+        )
+    if prepared.preconditioning_state is not None:
+        # A zero load or a user-stopped iteration may skip applying the action,
+        # but neither can certify a solve whose prepared pivots already failed.
+        status = jnp.where(
+            prepared.preconditioning_state.action.preparation_failed,
+            int(LinearSolveStatus.BREAKDOWN),
+            status,
         )
     converged = status == int(LinearSolveStatus.SUCCESS)
     status_out = _restore_rhs_axes(status, layout)
@@ -2429,9 +2440,17 @@ def _implicit_root_value(
             if (
                 not isinstance(problem, LinearSystem)
                 or problem.nullspace_policy is not None
-                or not isinstance(
-                    prepared.state,
-                    (DenseLUState, DenseCholeskyState, DenseMixedPrecisionLUState),
+                or not (
+                    isinstance(
+                        prepared.state,
+                        (DenseLUState, DenseCholeskyState, DenseMixedPrecisionLUState),
+                    )
+                    or (
+                        prepared.plan.backend == "jax-structured"
+                        and provider_for(prepared.plan.backend).supports_transformed(
+                            prepared.state
+                        )
+                    )
                 )
             ):
                 raise TypeError(
@@ -2882,6 +2901,18 @@ def _solve_independent_columns(
     dimension = right_hand_side.shape[-2]
     rhs_count = right_hand_side.shape[-1]
     batch_count = prod(batch_shape) if batch_shape else 1
+    if batch_count == 1 and rhs_count == 1:
+
+        def vector_action(vector: Array) -> Array:
+            return action(vector.reshape(right_hand_side.shape)).reshape((dimension,))
+
+        return _callable_gmres(
+            vector_action,
+            right_hand_side.reshape((dimension,)),
+            plan,
+            preconditioner,
+        ).reshape(right_hand_side.shape)
+
     flattened_rhs = right_hand_side.reshape((batch_count, dimension, rhs_count))
 
     def solve_instance(instance_index: Array) -> Array:
