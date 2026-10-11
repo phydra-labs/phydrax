@@ -247,11 +247,20 @@ class PeriodicLESStepRestriction(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
+def _retained_grid_advective_frequency(velocity: Array, widths: Array, /) -> Array:
+    """Own the native-grid sum of directional advective frequencies."""
+    return jnp.max(
+        jnp.sum(jnp.abs(velocity) / widths, axis=-1),
+        initial=jnp.asarray(0.0, dtype=velocity.real.dtype),
+    )
+
+
 class PeriodicIncompressibleRateComponents(StrictModule):
     """Named projected rates for the periodic incompressible equation."""
 
     advective_rate: Array
     molecular_rate: Array
+    spectral_viscosity_rate: Array | None
     algebraic_les_rate: Array
     dynamic_les_rate: Array
     forcing_rate: Array
@@ -380,10 +389,7 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         widths = self.grid_filter.filter_scale.directional_widths.astype(
             velocity.real.dtype
         )
-        advective_frequency = jnp.max(
-            jnp.sum(jnp.abs(velocity) / widths, axis=-1),
-            initial=jnp.asarray(0.0, dtype=velocity.real.dtype),
-        )
+        advective_frequency = _retained_grid_advective_frequency(velocity, widths)
         infinity = jnp.asarray(jnp.inf, dtype=advective_frequency.dtype)
         advective = jnp.where(
             advective_frequency > 0.0,

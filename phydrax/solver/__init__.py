@@ -671,8 +671,10 @@ from ._em_shower import (
     ShowerSpecies,
 )
 from ._etdrk import (
+    CourantGuardedETDRKMethod,
     ETDRKMethod,
     LESStabilityGuardedETDRKMethod,
+    PreparedCourantGuardedETDRKMethod,
     PreparedETDRKMethod,
     PreparedLESStabilityGuardedETDRKMethod,
     solve_etdrk,
@@ -888,6 +890,12 @@ from ._fixed_step import (
     SSPRK33FixedStepMethod,
     SSPRK54FixedStepMethod,
     StageTransformResult,
+)
+from ._fixed_step_ensemble import (
+    execute_fixed_step_ensemble,
+    FixedStepEnsemblePlan,
+    FixedStepEnsembleResult,
+    PreparedFixedStepEnsemble,
 )
 from ._fock_continuation import (
     FockContinuationPolicy,
@@ -3543,6 +3551,8 @@ __all__ = [
     "RosenbrockReplayAdequacy",
     "RosenbrockReplayStatus",
     "ScheduledRosenbrockSolve",
+    "CourantGuardedETDRKMethod",
+    "PreparedCourantGuardedETDRKMethod",
     "ETDRKMethod",
     "PreparedETDRKMethod",
     "LESStabilityGuardedETDRKMethod",
@@ -4312,6 +4322,10 @@ __all__ = [
     "SSPRK54FixedStepMethod",
     "StageTransformResult",
     "solve_fixed_step",
+    "FixedStepEnsemblePlan",
+    "PreparedFixedStepEnsemble",
+    "FixedStepEnsembleResult",
+    "execute_fixed_step_ensemble",
     "AcceptedStepTrigger",
     "AcceptedStepTriggerState",
     "AcceptedStepTriggerGraph",

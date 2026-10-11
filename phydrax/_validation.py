@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from numbers import Integral, Real
 from typing import SupportsFloat, SupportsIndex
 
+import numpy as np
+
 
 def is_canonical_identifier(value: str, /) -> bool:
     """Return whether `value` is non-empty and free of surrounding whitespace."""
@@ -93,14 +95,35 @@ def nonnegative_integer(value: object, name: str, /) -> int:
     return result
 
 
+def integer(value: object, name: str, /) -> int:
+    """Require an integral, non-boolean value; signed indices are admitted."""
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    return int(value)
+
+
+def real_number_array(values: object, name: str, /) -> np.ndarray:
+    """Return a host float64 copy of integer or floating values.
+
+    Boolean, complex, string, and object arrays are wrong kinds, refused before
+    any numerical cast could silently reinterpret them.
+    """
+    array = np.asarray(values)
+    if array.dtype.kind not in "iuf":
+        raise TypeError(f"{name} must contain real integer or floating values.")
+    return array.astype(np.float64)
+
+
 __all__ = [
     "canonical_identifier",
     "finite_real_scalar",
+    "integer",
     "is_canonical_identifier",
     "nonnegative_integer",
     "normalized_identifier",
     "optional_identifier",
     "positive_finite_float",
     "positive_integer",
+    "real_number_array",
     "unique_identifiers",
 ]

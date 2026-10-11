@@ -354,6 +354,7 @@ from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
     IncompressibleFlowProblem,
+    PeriodicAdvectiveCourantRestriction,
 )
 from ._integral_rewrite import (
     IntegralResidualProgram,
@@ -1167,6 +1168,7 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
+    "PeriodicAdvectiveCourantRestriction",
     "CompiledFLIPProblem",
     "CompiledSparseFLIPProblem",
     "CompiledSpectralDynamics",

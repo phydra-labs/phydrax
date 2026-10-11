@@ -1,8 +1,11 @@
+import itertools
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._polynomial._orthogonal import standard_series_value
@@ -178,3 +181,88 @@ def test_spectral_methods_scenario_2() -> None:
     assert result.linear_result.successful
     assert jnp.allclose(result.field, 1.0, atol=1e-10)
     assert jnp.allclose(result.tau, -1.0, atol=1e-10)
+
+
+@pytest.mark.parametrize("rank", [2, 3])
+@pytest.mark.parametrize("source_even", [False, True])
+@pytest.mark.parametrize("target_even", [False, True])
+def test_retained_band_restriction_signed_mode_oracle(
+    rank: int, source_even: bool, target_even: bool
+) -> None:
+    # Every axis exercises both odd and even counts across parameterizations.
+    source_shape = tuple(7 + ((axis + source_even) % 2) for axis in range(rank))
+    target_shape = tuple(4 + ((axis + target_even) % 2) for axis in range(rank))
+
+    def space(shape: tuple[int, ...]) -> phx.discretization.TensorSpectralDiscretization:
+        return phx.discretization.TensorSpectralPlan(
+            tuple(phx.discretization.FourierBasisPlan(n) for n in shape)
+        ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),) * rank)
+
+    prepared = phx.discretization.RetainedBandRestrictionPlan(
+        space(source_shape), space(target_shape)
+    ).prepare()
+    coefficients = (
+        np.arange(np.prod(source_shape) * 2, dtype=np.float64).reshape(
+            source_shape + (2,)
+        )
+        + 1j
+    )
+    expected = np.zeros(target_shape + (2,), dtype=np.complex128)
+    retained_source = np.zeros(source_shape, dtype=np.bool_)
+    retained_count = 0
+    for index in itertools.product(*(range(n) for n in target_shape)):
+        if any(n % 2 == 0 and i == n // 2 for i, n in zip(index, target_shape)):
+            continue
+        signed = tuple(
+            i if i <= (n - 1) // 2 else i - n for i, n in zip(index, target_shape)
+        )
+        source_index = tuple(k % n for k, n in zip(signed, source_shape))
+        expected[index] = coefficients[source_index]
+        retained_source[source_index] = True
+        retained_count += 1
+    actual = np.asarray(prepared(coefficients))
+    np.testing.assert_array_equal(actual, expected)
+    discarded = np.sum(np.abs(coefficients[~retained_source]) ** 2)
+    np.testing.assert_allclose(
+        np.sum(np.abs(coefficients) ** 2) - np.sum(np.abs(actual) ** 2),
+        discarded,
+        rtol=2e-15,
+    )
+    assert prepared.retained_mode_count == retained_count
+    assert (
+        prepared.discarded_forbidden_mode_count == np.prod(source_shape) - retained_count
+    )
+    for axis, count in enumerate(target_shape):
+        if count % 2 == 0:
+            np.testing.assert_array_equal(np.take(actual, count // 2, axis=axis), 0)
+
+
+def test_prepared_retained_band_restriction_is_dynamic_jit_argument() -> None:
+    prepared = phx.discretization.RetainedBandRestrictionPlan(
+        _fourier(12), _fourier(6)
+    ).prepare()
+
+    @eqx.filter_jit
+    def apply(
+        restriction: phx.discretization.PreparedRetainedBandRestriction,
+        values: jax.Array,
+    ) -> jax.Array:
+        return restriction(values)
+
+    coefficients = jnp.arange(24, dtype=jnp.float64).reshape(12, 2)
+    np.testing.assert_array_equal(apply(prepared, coefficients), prepared(coefficients))
+    np.testing.assert_array_equal(
+        jax.vmap(lambda values: apply(prepared, values))(
+            jnp.stack((coefficients, coefficients + 1))
+        ),
+        np.stack((prepared(coefficients), prepared(coefficients + 1))),
+    )
+
+
+def test_retained_band_restriction_is_transitive() -> None:
+    fine, middle, coarse = _fourier(12), _fourier(9), _fourier(6)
+    coefficients = jnp.asarray(np.arange(24).reshape(12, 2), dtype=jnp.complex128)
+    first = phx.discretization.RetainedBandRestrictionPlan(fine, middle).prepare()
+    second = phx.discretization.RetainedBandRestrictionPlan(middle, coarse).prepare()
+    direct = phx.discretization.RetainedBandRestrictionPlan(fine, coarse).prepare()
+    np.testing.assert_array_equal(second(first(coefficients)), direct(coefficients))
