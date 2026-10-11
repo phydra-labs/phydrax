@@ -402,6 +402,7 @@ nav:
         - Large-eddy simulation: "guides_large_eddy_simulation.md"
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
+        - Statistical incompressible flow: "guides_statistical_incompressible_flow.md"
         - Fourier-modal Maxwell: "guides_fourier_modal_maxwell.md"
         - Optics: "guides_optics.md"
         - Optical photon transport: "guides_optical_photon_transport.md"

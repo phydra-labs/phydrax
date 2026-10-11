@@ -1,6 +1,6 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "0576a91cc97d0b77a579436bd297643224c9c348f95329a7894f6fb6507367fb",
+  "ledger_id": "cf1202a2b7177db3cc783d085c804b5bed48f81fba519f8e780857078e3e3b1c",
   "sources": [
     {
       "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
@@ -62,6 +62,68 @@
       "source_id": "additive-foam",
       "source_reference_id": "e5873c03717082f7061e42dac8fd1d850351e9fc407a328708d72f6c6415e618",
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
+    },
+    {
+      "archive_digest": "git-tree-sha1:22bf5ba2436d690145f7dadbe900236d32d73230",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "random-initial-measures",
+        "spectral-vanishing-viscosity",
+        "statistical-solutions",
+        "structure-functions"
+      ],
+      "copying_permitted": false,
+      "data_rights": "No source, constants, configuration, or data copied; formulas and defaults follow the cited publications.",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "GPL-3.0",
+      "license_digest": "sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+      "notice_required": true,
+      "provider_only": true,
+      "publications": [
+        {
+          "locator": "https://arxiv.org/abs/1903.12361",
+          "title": "On the convergence of the spectral viscosity method for the two-dimensional incompressible Euler equations with rough initial data"
+        },
+        {
+          "locator": "https://arxiv.org/abs/1909.06615",
+          "title": "Statistical solutions of the incompressible Euler equations"
+        },
+        {
+          "locator": "https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf",
+          "title": "Efficient computation of large-scale statistical solutions to incompressible fluid flows"
+        },
+        {
+          "locator": "https://arxiv.org/abs/2405.19101",
+          "title": "Poseidon: Efficient Foundation Models for PDEs"
+        }
+      ],
+      "relevant_documents": [
+        "LICENSE.md@sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+        "README.md@sha256:73f24879e878c29635c014d445ae5fba6b118cb6d5992dacdba04b9702db4cb7"
+      ],
+      "relevant_paths": [
+        "doc",
+        "experiments",
+        "include/azeban/equations",
+        "include/azeban/evolution",
+        "include/azeban/forcing",
+        "include/azeban/operations",
+        "scripts/generate_fbm_fourier.py",
+        "src/azeban/cuda/operations/cufft_mpi.cpp",
+        "src/azeban/equations/incompressible_euler_mpi.cpp",
+        "src/azeban/init",
+        "src/azeban/operations",
+        "src/azeban/simulation.cpp"
+      ],
+      "repository_url": "https://github.com/TobiasRohner/azeban",
+      "reuse_class": "strong-copyleft",
+      "review_status": "technically-reviewed",
+      "revision": "f34d2225ed849e4d851e3b995687f700eeaa163a",
+      "source_id": "azeban",
+      "source_reference_id": "41551024f65bf0c29a3a2fee43cb7b73383a13d28c5996a0cb183341a56e574b",
+      "technical_reviewer": "phydrax-periodic-flow-source-review"
     },
     {
       "archive_digest": "git-tree-sha1:3e2794d3b49c8a5ba052180297dabc2ded6630c6",

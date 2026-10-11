@@ -147,6 +147,17 @@ outside XLA's analysis. See
 
 ::: phydrax.execution.CompiledMemoryEstimate
 
+---
+
+Owners that admit work against a declared byte cap refuse it before execution
+with `MemoryBudgetError`. Its `budget` names the cap parameter, and
+`required_bytes`/`limit_bytes` carry the owner's admission estimate and the cap.
+The statistical periodic-flow owners (increment moments, power-law fields,
+initial measures, fixed-step ensembles, coupled-ensemble metrics, and operator
+datasets) share this contract.
+
+::: phydrax.execution.MemoryBudgetError
+
 ## Native global arrays and rank-local providers
 
 Native JAX global arrays are the default numerical route. Use

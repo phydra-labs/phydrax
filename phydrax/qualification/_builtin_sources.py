@@ -281,9 +281,77 @@ def _atomistic_sources() -> tuple[SourceReference, ...]:
     )
 
 
+def _periodic_flow_sources() -> tuple[SourceReference, ...]:
+    """Strong-copyleft solver reference; Phydrax implements cited publications only."""
+    return (
+        SourceReference.create(
+            "azeban",
+            "https://github.com/TobiasRohner/azeban",
+            "f34d2225ed849e4d851e3b995687f700eeaa163a",
+            "GPL-3.0",
+            SourceReuseClass.STRONG_COPYLEFT,
+            concepts=(
+                "spectral-vanishing-viscosity",
+                "statistical-solutions",
+                "structure-functions",
+                "random-initial-measures",
+            ),
+            archive_digest="git-tree-sha1:22bf5ba2436d690145f7dadbe900236d32d73230",
+            license_digest="sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+            relevant_paths=(
+                "doc",
+                "experiments",
+                "include/azeban/equations",
+                "include/azeban/evolution",
+                "include/azeban/forcing",
+                "include/azeban/operations",
+                "scripts/generate_fbm_fourier.py",
+                "src/azeban/cuda/operations/cufft_mpi.cpp",
+                "src/azeban/equations/incompressible_euler_mpi.cpp",
+                "src/azeban/init",
+                "src/azeban/operations",
+                "src/azeban/simulation.cpp",
+            ),
+            relevant_documents=(
+                "README.md@sha256:73f24879e878c29635c014d445ae5fba6b118cb6d5992dacdba04b9702db4cb7",
+                "LICENSE.md@sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+            ),
+            publications=(
+                PublicationReference(
+                    "On the convergence of the spectral viscosity method for the two-dimensional incompressible Euler equations with rough initial data",
+                    "https://arxiv.org/abs/1903.12361",
+                ),
+                PublicationReference(
+                    "Statistical solutions of the incompressible Euler equations",
+                    "https://arxiv.org/abs/1909.06615",
+                ),
+                PublicationReference(
+                    "Efficient computation of large-scale statistical solutions to incompressible fluid flows",
+                    "https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf",
+                ),
+                PublicationReference(
+                    "Poseidon: Efficient Foundation Models for PDEs",
+                    "https://arxiv.org/abs/2405.19101",
+                ),
+            ),
+            code_inspected=True,
+            behavior_inspected=False,
+            copying_permitted=False,
+            provider_only=True,
+            data_rights="No source, constants, configuration, or data copied; formulas and defaults follow the cited publications.",
+            technical_reviewer="phydrax-periodic-flow-source-review",
+            review_status=SourceReview.TECHNICALLY_REVIEWED,
+        ),
+    )
+
+
 def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
     return SourceAbsorptionLedger.create(
-        (*(_source_reference(spec) for spec in _SOURCE_SPECS), *_atomistic_sources())
+        (
+            *(_source_reference(spec) for spec in _SOURCE_SPECS),
+            *_atomistic_sources(),
+            *_periodic_flow_sources(),
+        )
     )
 
 
