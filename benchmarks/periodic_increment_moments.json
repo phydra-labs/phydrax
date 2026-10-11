@@ -1,0 +1,253 @@
+{
+  "benchmark_identity": {
+    "fingerprint": "fb51dc75db8ab58af93cf14c3340f9a771071f620b0bb8b3e069d6046ce3f453",
+    "source_build_fingerprint": "413ff11be925e7bb75ed0b27fb68e604deb055af4e96878781ac2fdddfaf0b75",
+    "benchmark_driver_fingerprint": "cde8db211ba804ea20565752d158ea44adb8c46bc83be01d98be4990c6a1e5aa",
+    "evidence_schema": {
+      "fields": [
+        "cold_seconds",
+        "compilation_seconds",
+        "compiler",
+        "lowering_seconds",
+        "output_shape",
+        "plan",
+        "plan_id",
+        "prepared_bytes",
+        "warm"
+      ],
+      "signature": "a3681f670a5a3fdeacc295a2c646656b17fa92c9645b998d34bc810b2f3d46ae"
+    }
+  },
+  "environment": {
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "python_version": "3.12.8",
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "logical_cpus": 10,
+    "numpy_version": "2.5.3",
+    "jaxlib_version": "0.11.2",
+    "default_float_dtype": "float64",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "jax": {
+      "version": "0.11.2",
+      "backend": "cpu",
+      "x64_enabled": true,
+      "devices": [
+        {
+          "platform": "cpu",
+          "kind": "cpu"
+        }
+      ]
+    },
+    "performance_environment": {
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "NPROC": null,
+      "MKL_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "JAX_COMPILATION_CACHE_DIR": null
+    }
+  },
+  "size": 64,
+  "dimension": 2,
+  "members": 8,
+  "chunk": 4,
+  "preparation_seconds": 1.637249916,
+  "cases": [
+    {
+      "plan": "PeriodicLatticeIncrementMomentPlan",
+      "plan_id": "e911c8045de2e75d720a9b9eb1e7392e50cfae73bf6852ec82e9bdbddc80bd47",
+      "lowering_seconds": 0.088964041,
+      "compilation_seconds": 0.101972125,
+      "cold_seconds": 0.021269584,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.014736417,
+          0.022442875,
+          0.010560459,
+          0.001619,
+          0.001392791
+        ],
+        "min_seconds": 0.001392791,
+        "median_seconds": 0.010560459,
+        "mean_seconds": 0.0101503084,
+        "std_seconds": 0.008022283256633653,
+        "max_seconds": 0.022442875
+      },
+      "compiler": {
+        "flops": 5839121,
+        "bytes_accessed": 11085532,
+        "argument_bytes": 1052672,
+        "output_bytes": 262280,
+        "temporary_bytes": 1901144,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-periodic-increment-moments",
+        "unavailable_reason": null
+      },
+      "prepared_bytes": 463514,
+      "output_shape": [
+        8,
+        64,
+        64
+      ]
+    },
+    {
+      "plan": "PeriodicRadialIncrementMomentPlan",
+      "plan_id": "c59c36eb41cb4bd602b267a127805b21d472df0731c44140cf53540dd0965b65",
+      "lowering_seconds": 0.041085084,
+      "compilation_seconds": 0.157209042,
+      "cold_seconds": 0.004083209,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.001318542,
+          0.001188291,
+          0.001264125,
+          0.001354958,
+          0.001323667
+        ],
+        "min_seconds": 0.001188291,
+        "median_seconds": 0.001318542,
+        "mean_seconds": 0.0012899166,
+        "std_seconds": 5.862056967515756e-05,
+        "max_seconds": 0.001354958
+      },
+      "compiler": {
+        "flops": 998389,
+        "bytes_accessed": 8963315,
+        "argument_bytes": 1131072,
+        "output_bytes": 712,
+        "temporary_bytes": 1932208,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-periodic-increment-moments",
+        "unavailable_reason": null
+      },
+      "prepared_bytes": 597523,
+      "output_shape": [
+        8,
+        8
+      ]
+    },
+    {
+      "plan": "PeriodicThirdIncrementMomentPlan",
+      "plan_id": "aee76de2d0ba630431ecb36c07b7c3e284e2d799a7a5e0e0d602b4f750d768b1",
+      "lowering_seconds": 0.124971208,
+      "compilation_seconds": 0.396129,
+      "cold_seconds": 0.027804542,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.009052625,
+          0.013318459,
+          0.019129084,
+          0.011121084,
+          0.008034666
+        ],
+        "min_seconds": 0.008034666,
+        "median_seconds": 0.011121084,
+        "mean_seconds": 0.012131183600000001,
+        "std_seconds": 0.003941053503479221,
+        "max_seconds": 0.019129084
+      },
+      "compiler": {
+        "flops": 36103856,
+        "bytes_accessed": 92154992,
+        "argument_bytes": 1131520,
+        "output_bytes": 262280,
+        "temporary_bytes": 6798264,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-periodic-increment-moments",
+        "unavailable_reason": null
+      },
+      "prepared_bytes": 1563044,
+      "output_shape": [
+        8,
+        64,
+        64
+      ]
+    },
+    {
+      "plan": "PeriodicThirdIncrementMomentPlan",
+      "plan_id": "dbf082c7e3168949645d25ac75a0856b1cce518689d7e5b06bd6de0b2b0aab1c",
+      "lowering_seconds": 0.524811584,
+      "compilation_seconds": 0.399378333,
+      "cold_seconds": 0.015091333,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.01424825,
+          0.010498041,
+          0.010247334,
+          0.011980125,
+          0.013069
+        ],
+        "min_seconds": 0.010247334,
+        "median_seconds": 0.011980125,
+        "mean_seconds": 0.01200855,
+        "std_seconds": 0.0015182317023999996,
+        "max_seconds": 0.01424825
+      },
+      "compiler": {
+        "flops": 36202160,
+        "bytes_accessed": 91761776,
+        "argument_bytes": 1131520,
+        "output_bytes": 262280,
+        "temporary_bytes": 6765488,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-periodic-increment-moments",
+        "unavailable_reason": null
+      },
+      "prepared_bytes": 1563044,
+      "output_shape": [
+        8,
+        64,
+        64
+      ]
+    },
+    {
+      "plan": "PeriodicIncrementMomentEstimatorPlan",
+      "plan_id": "3ac28ad595d4bf1387613d0ac22cca08979bcdcfa3907aa632fbebb061497b2c",
+      "lowering_seconds": 0.098182083,
+      "compilation_seconds": 0.176573042,
+      "cold_seconds": 0.005029959,
+      "warm": {
+        "count": 5,
+        "samples_seconds": [
+          0.009071,
+          0.002350542,
+          0.028319458,
+          0.003999667,
+          0.025971541
+        ],
+        "min_seconds": 0.002350542,
+        "median_seconds": 0.009071,
+        "mean_seconds": 0.0139424416,
+        "std_seconds": 0.011030500254168395,
+        "max_seconds": 0.028319458
+      },
+      "compiler": {
+        "flops": 4331891,
+        "bytes_accessed": 16134856,
+        "argument_bytes": 1054768,
+        "output_bytes": 264,
+        "temporary_bytes": 1901632,
+        "generated_code_bytes": 0,
+        "source": "jax-compiled-periodic-increment-moments",
+        "unavailable_reason": null
+      },
+      "prepared_bytes": 463562,
+      "output_shape": [
+        8,
+        2
+      ]
+    }
+  ]
+}

@@ -144,8 +144,7 @@ def run_incompressible_spectral_benchmark(
     periodic_finite = bool(
         jnp.all(jnp.isfinite(periodic_rate))
         & jnp.isfinite(periodic_divergence)
-        # ty: ignore[unresolved-attribute]
-        & jnp.isfinite(periodic_diagnostics.nonlinear_energy_rate)
+        & jnp.isfinite(periodic_diagnostics.advective_energy_rate)
         & jnp.isfinite(periodic_diagnostics.energy_balance_defect)
     )
 
@@ -241,8 +240,7 @@ def run_incompressible_spectral_benchmark(
         "storage": storage,
         "raw_invariants": {
             "divergence_norm": float(periodic_divergence),
-            # ty: ignore[unresolved-attribute]
-            "nonlinear_energy_rate": float(periodic_diagnostics.nonlinear_energy_rate),
+            "advective_energy_rate": float(periodic_diagnostics.advective_energy_rate),
             "energy_balance_defect": float(periodic_diagnostics.energy_balance_defect),
             "finite": periodic_finite,
         },

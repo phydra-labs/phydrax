@@ -31,7 +31,7 @@ from ...discretization.spectral._distributed_les import (
     PreparedDistributedPeriodicLES,
 )
 from ...equations._incompressible import IncompressibleFlowProblem
-from ...solver._etdrk import _etdrk_update
+from ...solver._etdrk import _etdrk_update, _real_temporal
 from ...solver._fixed_step import (
     AbstractFixedStepMethod,
     FixedStepResult,
@@ -512,13 +512,13 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         /,
     ) -> FixedStepResult:
         value = self.dynamics.validate_state(state)
-        step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
+        step = _real_temporal(step_size, value.real.dtype)
         step = eqx.error_if(
             step,
             ~(jnp.isfinite(step) & (step > 0.0)),
             "Distributed LES step size must be finite and positive.",
         )
-        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        start = _real_temporal(time, step.dtype)
         incoming, incoming_valid, incoming_defect = self._boundary(value)
         stage = self.dynamics.stage(start, incoming, args)
         restriction = self.dynamics.step_restriction(

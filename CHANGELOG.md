@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Fixed
+- `tools/incompressible_spectral_benchmarks.py` reads the periodic
+  `advective_energy_rate` diagnostic instead of a nonexistent attribute that a
+  type-checker suppression had hidden; the emitted invariant key is renamed
+  accordingly.
+- `resize_fourier_axis` converts its real transfer weights to the coefficient
+  dtype explicitly, so Fourier resampling and padded dealiasing run under strict
+  dtype promotion. Results, compiled argument bytes, and temporaries are unchanged.
+- ETDRK-family fixed-step methods (plain, LES- and Courant-guarded, OU-forced,
+  dynamic-LES production, distributed LES) extract the real part of the
+  state-dtype time and step explicitly, so complex modal states no longer emit a
+  `ComplexWarning`. Results and compiled storage are unchanged.
+- `HeliumGasModel.initial_state` and `FiniteElementDiscretization.axis_dof_mask`
+  no longer carry `checked` decorators whose static-only signatures enforced no
+  input contract; their owners' shape, radius, and field-name validation is
+  unchanged.
 - Bordered block assembly now distinguishes resolved structural coupling from
   dimension-scaled floating-point JVP roundoff under an explicit, default-zero
   policy. It records maximum absolute/relative omitted coupling, the roundoff
@@ -133,6 +148,49 @@
   states and evidence change accordingly, without a compatibility alias.
 
 ### Added
+- Resolution-dependent spectral vanishing viscosity for isotropic periodic boxes:
+  `SpectralVanishingViscosityPlan` prepares λ_n = −ε_K|k|^(2s)Q(|n|/m_K) with
+  ε_K = εK^(1−2s), m_K = m₀K^θ and `tadmor_step` or `exponential_highpass` kernels.
+  Prepared evidence reports the resolved scaling, active modes, maximum decay
+  rate, scaling admissibility, and an explicit convergence nonclaim. Periodic
+  incompressible flow (`compile_periodic_incompressible_flow(...,
+  spectral_viscosity=...)`) and `BarotropicBetaPlane` integrate it exactly in the
+  ETDRK diagonal, keep it separate from molecular viscosity in stage rates,
+  diagnostics, budgets and turbulence statistics, and refuse it with LES closures.
+  When it is absent, compilation, linear-operator, nonlinear, drift, bundle, and
+  method identities are unchanged; turbulence-statistics identities change (see
+  Changed).
+- `CourantGuardedETDRKMethod` and `PeriodicAdvectiveCourantRestriction` reject
+  ETDRK4 DNS steps above a declared Courant number (at most 2√2/π, the frozen
+  uniform-advection RK4 reference) without claiming nonlinear stability.
+  Production accepts it; OU and constant-power adapter forcing refuse it.
+- Exact periodic increment moments: second-order moments at every lattice
+  displacement, sphere/ball-averaged radial moments from prepared Bessel kernels,
+  longitudinal-cube and energy-flux third moments from degree-2 dealiased
+  cross-spectra, and a bounded native-grid estimator for general orders.
+- `PeriodicPowerLawFieldPlan` samples Hermitian power-law Fourier fields
+  (normal or uniform laws, complex-exponential or tensor-trigonometric bases,
+  optional Leray projection) with member-addressed randomness and exact nested
+  retained-band restriction via `RetainedBandRestrictionPlan`, a prepared
+  jit-safe gather owner.
+- Periodic flow initial measures (Taylor–Green, displaced shear layers, vortex
+  patch, piecewise-constant vorticity, mollified sinusoidal vortex sheet,
+  power-law velocity) with explicit mean neutralization, projection and
+  quadrature evidence, planar 3D embedding with resolution-independent coupling
+  identity, `restrict_periodic_flow_initial_state`, and strict
+  `PeriodicLerayProjector.velocity_from_vorticity`/`vorticity_from_velocity`.
+- `FixedStepEnsemblePlan` executes padded member chunks of one fixed-step problem
+  under a single compiled program with per-member status, weighted reductions,
+  and compiler-memory admission covering unpadding and evidence.
+- `phydrax.execution.MemoryBudgetError` is the typed refusal for work whose
+  admitted bytes exceed a declared cap; the new statistical-flow owners raise it.
+- Coupled-ensemble evidence for statistical solutions: identity-bound
+  `PeriodicFlowEnsembleResult` campaigns, componentwise empirical Wasserstein
+  diagnostics, sliced joint-marginal distances, paired coupling upper bounds,
+  jackknifed structure-function scaling evidence, the
+  `periodic-spectral-vanishing-viscosity` and `periodic-statistical-solution`
+  qualification routes, a leakage-safe `periodic_flow_operator_dataset`
+  adapter, and the statistical incompressible-flow guide.
 - Prepared bounded streamed relation execution, seeded reductions, fragment
   replay, receiver epilogues, resource admission, and failure evidence. PaiNN,
   NequIP, selected graph operators, and meshfree constitutive/conservation
@@ -2240,6 +2298,13 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Periodic production turbulence statistics include spectral-viscosity
+  dissipation shells, totals, and the numerical-dissipation fraction. The
+  streamed statistics vector grows from 6 shell arrays plus 51 scalars to 7 shell
+  arrays plus 54 scalars, so production plan, runtime, and manifest identities
+  change and checkpoints written before this change are refused at restore.
+  `IncompressibleSpectralDiagnostics` and `BetaPlaneBudgets` gain always-present
+  spectral-viscosity terms.
 - `phydrax.special.dawsn` evaluates real arguments with
   `jax.scipy.special.dawsn`, public since JAX 0.11.0, instead of a vendored copy
   of the same Cody--Paciorek--Thacher kernel. Finite values and derivatives are

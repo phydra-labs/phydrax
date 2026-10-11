@@ -9,12 +9,14 @@ from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
+from .._validation import canonical_identifier, finite_real_scalar
 from ..discretization import (
     DiscretizationBundle,
     DiscretizationKey,
@@ -25,10 +27,13 @@ from ..discretization.spectral import (
     IncompressibleSpectralDiagnostics,
     PeriodicLerayProjector,
     PreparedPseudospectralMethod,
+    PreparedSpectralVanishingViscosity,
     PseudospectralMethodPlan,
+    SpectralVanishingViscosityPlan,
     TensorSpectralDiscretization,
 )
 from ..linalg import ArraySpace, DiagonalLinearOperator
+from ..typing import Bool, checked, Float, Scalar
 from ._dynamic_les import LagrangianDynamicLESState
 from ._ir import PDEField
 from ._periodic_dynamic_les import (
@@ -37,6 +42,7 @@ from ._periodic_dynamic_les import (
     PreparedPeriodicDynamicLES,
 )
 from ._periodic_les import (
+    _retained_grid_advective_frequency,
     PeriodicAlgebraicLESPlan,
     PeriodicAlgebraicLESStage,
     PeriodicIncompressibleRateComponents,
@@ -45,6 +51,50 @@ from ._periodic_les import (
     PreparedPeriodicAlgebraicLES,
 )
 from ._spectral_compile import SpectralStateLayout
+
+
+PERIODIC_ADVECTIVE_COURANT_REFERENCE_MODEL = "frozen_uniform_advection_rk4"
+
+
+class PeriodicAdvectiveCourantRestriction(StrictModule):
+    """Frozen-uniform-advection RK4 reference, not nonlinear stability proof."""
+
+    __strict_contract__ = True
+    courant_frequency: Float[Scalar]
+    maximum_step: Float[Scalar]
+    maximum_courant_number: Float[Scalar]
+    finite: Bool[Scalar]
+    reference_model: str = eqx.field(static=True)
+    nonlinear_stability_certified: bool = eqx.field(static=True)
+    compilation_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        courant_frequency: Float[Scalar],
+        maximum_step: Float[Scalar],
+        maximum_courant_number: Float[Scalar],
+        finite: Bool[Scalar],
+        compilation_id: str,
+    ) -> None:
+        identifier = canonical_identifier(compilation_id, "compilation_id")
+        self.courant_frequency = courant_frequency
+        self.maximum_step = maximum_step
+        self.maximum_courant_number = maximum_courant_number
+        self.finite = finite
+        self.reference_model = PERIODIC_ADVECTIVE_COURANT_REFERENCE_MODEL
+        self.nonlinear_stability_certified = False
+        self.compilation_id = identifier
+
+
+def validate_maximum_courant_number(value: float, /) -> float:
+    """Validate the frozen-uniform-advection RK4 reference Courant range."""
+    maximum = finite_real_scalar(value, "maximum_courant_number")
+    # Classical RK4 imaginary-axis interval |omega dt| <= 2 sqrt(2);
+    # omega <= pi sum_a |u_a|/dx_a for frozen uniform Fourier advection.
+    if not np.isfinite(maximum) or not 0.0 < maximum <= 2.0 * np.sqrt(2.0) / np.pi:
+        raise ValueError("maximum_courant_number must lie in (0, 2 sqrt(2)/pi].")
+    return maximum
 
 
 class IncompressibleFlowProblem(StrictModule):
@@ -119,6 +169,7 @@ class _PeriodicRotationalDrift(StrictModule):
     projector: PeriodicLerayProjector
     algebraic_les: PreparedPeriodicAlgebraicLES | None
     dynamic_les: PreparedPeriodicDynamicLES | None
+    spectral_viscosity: PreparedSpectralVanishingViscosity | None
     nonlinear_id: str = eqx.field(static=True)
 
     def __init__(
@@ -129,6 +180,7 @@ class _PeriodicRotationalDrift(StrictModule):
         projector: PeriodicLerayProjector,
         algebraic_les: PreparedPeriodicAlgebraicLES | None,
         dynamic_les: PreparedPeriodicDynamicLES | None,
+        spectral_viscosity: PreparedSpectralVanishingViscosity | None,
         /,
     ) -> None:
         self.problem = problem
@@ -137,6 +189,7 @@ class _PeriodicRotationalDrift(StrictModule):
         self.projector = projector
         self.algebraic_les = algebraic_les
         self.dynamic_les = dynamic_les
+        self.spectral_viscosity = spectral_viscosity
         if algebraic_les is None and dynamic_les is None:
             payload = {
                 "kind": "periodic-incompressible-rotational-drift",
@@ -159,6 +212,8 @@ class _PeriodicRotationalDrift(StrictModule):
                 ),
                 "dynamic_les": (None if dynamic_les is None else dynamic_les.prepared_id),
             }
+        if spectral_viscosity is not None:
+            payload["spectral_viscosity"] = spectral_viscosity.prepared_id
         self.nonlinear_id = canonical_fingerprint(payload)
 
     def _rotational_product(self, state: Array, /) -> Array:
@@ -289,14 +344,23 @@ class _PeriodicRotationalDrift(StrictModule):
             * self.projector.wavenumber_squared[..., None]
             * value
         )
+        spectral_rate = (
+            None
+            if self.spectral_viscosity is None
+            else self.spectral_viscosity.rate(value)
+        )
+        total = molecular + nonlinear
+        if spectral_rate is not None:
+            total = total + spectral_rate
         rates = PeriodicIncompressibleRateComponents(
             advective_rate=advective,
             molecular_rate=molecular,
+            spectral_viscosity_rate=spectral_rate,
             algebraic_les_rate=algebraic_rate,
             dynamic_les_rate=dynamic_rate,
             forcing_rate=forcing,
             nonlinear_rate=nonlinear,
-            total_rate=molecular + nonlinear,
+            total_rate=total,
         )
         return PeriodicIncompressibleStage(
             rates=rates,
@@ -346,6 +410,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
     nonlinear_drift: _PeriodicRotationalDrift
     algebraic_les: PreparedPeriodicAlgebraicLES | None
     dynamic_les: PreparedPeriodicDynamicLES | None
+    spectral_viscosity: PreparedSpectralVanishingViscosity | None
     semilinear_drift: Any
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -426,6 +491,21 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
                 )
             )
             residual_dependencies.append(les_key.key_id)
+        if nonlinear_drift.spectral_viscosity is not None:
+            svv_key = DiscretizationKey(
+                "periodic_spectral_viscosity",
+                DiscretizationRole.AUXILIARY,
+                domain_labels=discretization.key.domain_labels,
+            )
+            records.append(
+                DiscretizationRecord(
+                    svv_key,
+                    "prepared-spectral-vanishing-viscosity",
+                    nonlinear_drift.spectral_viscosity.prepared_id,
+                    dependency_key_ids=(discretization.key.key_id,),
+                )
+            )
+            residual_dependencies.append(svv_key.key_id)
         records.append(
             DiscretizationRecord(
                 residual_key,
@@ -443,6 +523,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
         self.nonlinear_drift = nonlinear_drift
         self.algebraic_les = nonlinear_drift.algebraic_les
         self.dynamic_les = nonlinear_drift.dynamic_les
+        self.spectral_viscosity = nonlinear_drift.spectral_viscosity
         self.semilinear_drift = semilinear_drift
         self.discretization_bundle = bundle
         self.compilation_id = str(compilation_id)
@@ -455,6 +536,8 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             self.resolved_method = (
                 "periodic-incompressible-rotational-dynamic-les-diagonal"
             )
+        elif self.spectral_viscosity is not None:
+            self.resolved_method = "periodic-incompressible-rotational-svv-diagonal"
         else:
             self.resolved_method = "periodic-incompressible-rotational-diagonal"
 
@@ -567,6 +650,36 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             )
         raise ValueError("Periodic LES step restriction requires compiled LES.")
 
+    def advective_courant_restriction(
+        self, state: ArrayLike, /, *, maximum_courant_number: float
+    ) -> PeriodicAdvectiveCourantRestriction:
+        """Return C_max / max_grid sum_a |u_a|/dx_a on the retained grid."""
+        maximum = validate_maximum_courant_number(maximum_courant_number)
+        if self.algebraic_les is not None or self.dynamic_les is not None:
+            raise ValueError("Advective Courant restriction requires DNS, not LES.")
+        value = self.projector.zero_forbidden_modes(self.projector.validate_state(state))
+        velocity = self.discretization.reconstruct(value)
+        widths = jnp.stack(
+            tuple(
+                axis.length.astype(velocity.real.dtype) / axis.mode_count
+                for axis in self.discretization.axes
+            )
+        )
+        frequency = _retained_grid_advective_frequency(velocity, widths)
+        positive = frequency > 0.0
+        bound = jnp.where(
+            positive,
+            maximum / jnp.where(positive, frequency, jnp.ones_like(frequency)),
+            jnp.asarray(jnp.inf, dtype=frequency.dtype),
+        )
+        return PeriodicAdvectiveCourantRestriction(
+            courant_frequency=frequency,
+            maximum_step=bound,
+            maximum_courant_number=jnp.asarray(maximum, dtype=frequency.dtype),
+            finite=jnp.all(jnp.isfinite(velocity)) & jnp.isfinite(frequency),
+            compilation_id=self.compilation_id,
+        )
+
     def pressure_coefficients(
         self,
         time: ArrayLike,
@@ -637,6 +750,12 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
         dynamic_energy_rate = energy_rate(rates.dynamic_les_rate)
         semidiscrete_energy_rate = energy_rate(rates.total_rate)
         zero = jnp.zeros_like(kinetic_energy)
+        spectral_dissipation = (
+            zero
+            if self.spectral_viscosity is None
+            else self.spectral_viscosity.dissipation(admissible)
+        )
+        spectral_energy_rate = -spectral_dissipation
         algebraic_stage = equation_stage.algebraic_les
         if algebraic_stage is None:
             algebraic_dissipation = zero
@@ -695,6 +814,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             - molecular_dissipation
             - algebraic_dissipation
             - dynamic_dissipation
+            - spectral_dissipation
         )
         forbidden = value - self.projector.zero_forbidden_modes(value)
         pressure = self.projector.pressure_from_unconstrained_rhs(
@@ -710,6 +830,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             & jnp.isfinite(forcing_power)
             & jnp.isfinite(molecular_energy_rate)
             & jnp.isfinite(molecular_dissipation)
+            & jnp.isfinite(spectral_dissipation)
             & jnp.isfinite(algebraic_energy_rate)
             & jnp.isfinite(algebraic_dissipation)
             & jnp.isfinite(algebraic_identity)
@@ -729,6 +850,8 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             forcing_power=forcing_power,
             molecular_energy_rate=molecular_energy_rate,
             molecular_dissipation=molecular_dissipation,
+            spectral_viscosity_energy_rate=spectral_energy_rate,
+            spectral_viscosity_dissipation=spectral_dissipation,
             algebraic_les_energy_rate=algebraic_energy_rate,
             algebraic_les_dissipation=algebraic_dissipation,
             algebraic_les_energy_identity_defect=algebraic_identity,
@@ -759,6 +882,11 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             dynamic_les_id=(
                 None if self.dynamic_les is None else self.dynamic_les.prepared_id
             ),
+            spectral_viscosity_id=(
+                None
+                if self.spectral_viscosity is None
+                else self.spectral_viscosity.prepared_id
+            ),
         )
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
@@ -774,6 +902,7 @@ def compile_periodic_incompressible_flow(
     algebraic_les: PeriodicAlgebraicLESPlan | None = None,
     dynamic_les: PeriodicDynamicLESPlan | None = None,
     dynamic_test_discretization: TensorSpectralDiscretization | None = None,
+    spectral_viscosity: SpectralVanishingViscosityPlan | None = None,
 ) -> CompiledIncompressibleSpectralDynamics:
     """Compile rotational incompressible flow with no, static, or dynamic LES."""
     if not isinstance(problem, IncompressibleFlowProblem):
@@ -792,6 +921,13 @@ def compile_periodic_incompressible_flow(
         raise TypeError("dynamic_les must be a PeriodicDynamicLESPlan or None.")
     if algebraic_les is not None and dynamic_les is not None:
         raise ValueError("Static algebraic LES and dynamic LES are alternatives.")
+    if spectral_viscosity is not None:
+        if not isinstance(spectral_viscosity, SpectralVanishingViscosityPlan):
+            raise TypeError(
+                "spectral_viscosity must be SpectralVanishingViscosityPlan or None."
+            )
+        if algebraic_les is not None or dynamic_les is not None:
+            raise ValueError("Spectral viscosity cannot be composed with LES closures.")
     if dynamic_les is None and dynamic_test_discretization is not None:
         raise ValueError("dynamic_test_discretization is valid only with dynamic_les.")
     if dynamic_les is not None and not isinstance(
@@ -819,6 +955,9 @@ def compile_periodic_incompressible_flow(
             projector,
         )
     )
+    prepared_svv = (
+        None if spectral_viscosity is None else spectral_viscosity.prepare(discretization)
+    )
     field = PDEField(
         "velocity",
         representation="vector",
@@ -836,6 +975,7 @@ def compile_periodic_incompressible_flow(
         projector,
         prepared_les,
         prepared_dynamic,
+        prepared_svv,
     )
     state_space = ArraySpace(
         projector.state_shape,
@@ -848,16 +988,21 @@ def compile_periodic_incompressible_flow(
         )[..., None],
         projector.state_shape,
     ).reshape((-1,))
+    if prepared_svv is not None:
+        diagonal = diagonal + jnp.broadcast_to(
+            prepared_svv.decay_rate[..., None], projector.state_shape
+        ).reshape((-1,))
+    linear_payload = {
+        "kind": "periodic-incompressible-viscosity",
+        "problem": problem.problem_id,
+        "projector": projector.projector_id,
+    }
+    if prepared_svv is not None:
+        linear_payload["spectral_viscosity"] = prepared_svv.prepared_id
     linear = DiagonalLinearOperator(
         diagonal,
         space=state_space,
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "periodic-incompressible-viscosity",
-                "problem": problem.problem_id,
-                "projector": projector.projector_id,
-            }
-        ),
+        operator_id=canonical_fingerprint(linear_payload),
     )
     from ..solver._semilinear_drift import SemilinearDrift
 
@@ -890,6 +1035,8 @@ def compile_periodic_incompressible_flow(
                 None if prepared_dynamic is None else prepared_dynamic.prepared_id
             ),
         }
+    if prepared_svv is not None:
+        compilation_payload["spectral_viscosity"] = prepared_svv.prepared_id
     compilation_id = canonical_fingerprint(compilation_payload)
     return CompiledIncompressibleSpectralDynamics(
         problem,
@@ -906,5 +1053,6 @@ def compile_periodic_incompressible_flow(
 __all__ = [
     "CompiledIncompressibleSpectralDynamics",
     "IncompressibleFlowProblem",
+    "PeriodicAdvectiveCourantRestriction",
     "compile_periodic_incompressible_flow",
 ]

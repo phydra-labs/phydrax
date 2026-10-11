@@ -33,6 +33,107 @@ from ._space import _apply_axis_transform, TensorSpectralDiscretization
 from ._spherical import SphericalSpectralDiscretization
 
 
+class RetainedBandRestrictionPlan(StrictModule, NonTrainableState):
+    """Host preparation of a signed-mode gather between periodic tensor spaces."""
+
+    source: TensorSpectralDiscretization
+    target: TensorSpectralDiscretization
+    restriction_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        source: TensorSpectralDiscretization,
+        target: TensorSpectralDiscretization,
+        /,
+    ) -> None:
+        if any(axis.family != "fourier" for axis in source.axes + target.axes):
+            raise TypeError("Retained-band restriction requires Fourier tensor spaces.")
+        if len(source.axes) != len(target.axes):
+            raise ValueError("Retained-band restriction ranks must match.")
+        for source_axis, target_axis in zip(source.axes, target.axes, strict=True):
+            _validate_axis_compatibility(source_axis, target_axis)
+            if target_axis.mode_count > source_axis.mode_count:
+                raise ValueError("Retained-band restriction refuses refinement.")
+        self.source, self.target = source, target
+        self.restriction_id = canonical_fingerprint(
+            {
+                "kind": "retained-band-restriction",
+                "source": source.prepared_id,
+                "target": target.prepared_id,
+            }
+        )
+
+    def prepare(self, /) -> "PreparedRetainedBandRestriction":
+        indices: list[Array] = []
+        masks: list[Array] = []
+        retained_count = 1
+        for source_axis, target_axis in zip(
+            self.source.axes, self.target.axes, strict=True
+        ):
+            lookup = {
+                int(mode): position
+                for position, mode in enumerate(
+                    np.asarray(source_axis.modes.mode_numbers)
+                )
+            }
+            retained = ~np.asarray(target_axis.modes.nyquist_mask)
+            gather = np.asarray(
+                [
+                    lookup[int(mode)] if retained[position] else 0
+                    for position, mode in enumerate(
+                        np.asarray(target_axis.modes.mode_numbers)
+                    )
+                ],
+                dtype=np.int32,
+            )
+            indices.append(jnp.asarray(gather))
+            masks.append(jnp.asarray(retained))
+            retained_count *= sum(1 for keep in retained if keep)
+        return PreparedRetainedBandRestriction(
+            gather_indices=tuple(indices),
+            retained_masks=tuple(masks),
+            source_shape=self.source.modal_shape,
+            target_shape=self.target.modal_shape,
+            restriction_id=self.restriction_id,
+            retained_mode_count=retained_count,
+            discarded_forbidden_mode_count=math.prod(self.source.modal_shape)
+            - retained_count,
+        )
+
+
+class PreparedRetainedBandRestriction(StrictModule, NonTrainableState):
+    """JIT-safe pure gather; target Nyquist planes are zero, never merged."""
+
+    gather_indices: tuple[Array, ...]
+    retained_masks: tuple[Array, ...]
+    source_shape: tuple[int, ...] = eqx.field(static=True)
+    target_shape: tuple[int, ...] = eqx.field(static=True)
+    restriction_id: str = eqx.field(static=True)
+    retained_mode_count: int = eqx.field(static=True)
+    discarded_forbidden_mode_count: int = eqx.field(static=True)
+
+    def __call__(self, coefficients: ArrayLike, /) -> Array:
+        values = jnp.asarray(coefficients)
+        rank = len(self.source_shape)
+        if values.ndim < rank or values.shape[:rank] != self.source_shape:
+            raise ValueError(
+                f"Restricted coefficients must have leading shape {self.source_shape}."
+            )
+        for axis, (indices, retained) in enumerate(
+            zip(self.gather_indices, self.retained_masks, strict=True)
+        ):
+            values = jnp.take(values, indices, axis=axis)
+            mask_shape = [1] * values.ndim
+            mask_shape[axis] = self.target_shape[axis]
+            values = jnp.where(
+                retained.reshape(tuple(mask_shape)),
+                values,
+                jnp.zeros((), dtype=values.dtype),
+            )
+        return values
+
+
 class SpectralModalTransferReport(StrictModule, NonTrainableState):
     """Resolution relation, losslessness, trace residual, and transfer work."""
 
@@ -715,6 +816,8 @@ def _constrained_axis_matrix(
 
 
 __all__ = [
+    "RetainedBandRestrictionPlan",
+    "PreparedRetainedBandRestriction",
     "PreparedSpectralModalTransfer",
     "SpectralModalTransferPlan",
     "SpectralModalTransferResult",
