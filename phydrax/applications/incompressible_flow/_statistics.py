@@ -78,8 +78,16 @@ def _modal_shell_statistic(
 
 
 class PeriodicModalTurbulenceStatistics(StrictModule):
+    """Term-resolved native domain integrals and volume-normalized means.
+
+    Numerical dissipation is SVV / (molecular + SVV - SGS energy transfer).
+    A nonpositive denominator reports zero with a false fraction-valid status.
+    SVV availability names the active operator, not instantaneous nonzero loss.
+    """
+
     energy_shells: ModalShellStatistic
     molecular_dissipation_shells: ModalShellStatistic
+    spectral_viscosity_dissipation_shells: ModalShellStatistic
     advective_transfer_shells: ModalShellStatistic
     sgs_transfer_shells: ModalShellStatistic
     forcing_injection_shells: ModalShellStatistic
@@ -88,6 +96,10 @@ class PeriodicModalTurbulenceStatistics(StrictModule):
     mean_kinetic_energy: Array
     molecular_dissipation: Array
     mean_molecular_dissipation: Array
+    spectral_viscosity_dissipation: Array
+    mean_spectral_viscosity_dissipation: Array
+    numerical_dissipation_fraction: Array
+    numerical_dissipation_fraction_valid: Array
     advective_energy_rate: Array
     mean_advective_energy_rate: Array
     sgs_energy_rate: Array
@@ -127,6 +139,7 @@ class PeriodicModalTurbulenceStatistics(StrictModule):
     sgs_regularization_available: Array
     sgs_stability_available: Array
     forcing_available: Array
+    spectral_viscosity_available: Array
     helicity_valid: Array
     taylor_microscale_valid: Array
     kolmogorov_scale_valid: Array
@@ -152,6 +165,7 @@ class PeriodicModalTurbulenceStatistics(StrictModule):
     sgs_dynamic_provenance_id: str | None = eqx.field(static=True)
     sgs_averaging_id: str | None = eqx.field(static=True)
     sgs_backscatter_id: str | None = eqx.field(static=True)
+    spectral_viscosity_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -318,6 +332,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
                 "sgs_backscatter": backscatter_id,
                 "terms": (
                     "molecular-dissipation",
+                    "spectral-viscosity-dissipation",
                     "advective-transfer",
                     "sgs-transfer",
                     "forcing-injection",
@@ -325,6 +340,107 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
                 ),
                 "storage": "full-complex-no-hermitian-multiplicity",
             }
+        )
+
+    def _spectral_viscosity_rate(
+        self,
+        rate: Array | None,
+        molecular: Array,
+        spectral_viscosity_available: bool,
+        /,
+    ) -> Array:
+        """Validate SVV stage evidence before the later rate validations."""
+        if rate is None:
+            if spectral_viscosity_available:
+                raise ValueError("SVV statistics require a spectral-viscosity rate.")
+            spectral_viscosity = jnp.zeros_like(molecular)
+        else:
+            if not spectral_viscosity_available:
+                raise ValueError("A no-SVV statistics plan cannot consume an SVV rate.")
+            spectral_viscosity = self.projector.validate_state(
+                rate, owner="Spectral-viscosity rate"
+            )
+        return spectral_viscosity
+
+    def _scale_evidence(
+        self,
+        modal_energy: Array,
+        modal_molecular_dissipation: Array,
+        kinetic_energy: Array,
+        molecular_dissipation: Array,
+        mean_energy: Array,
+        mean_molecular_dissipation: Array,
+        spectral_viscosity_available: bool,
+        /,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
+        """Compute scales and support flags without regrouping reductions."""
+        scale_valid = (
+            (self.projector.spatial_dimension == 3)
+            & (self.viscosity > 0.0)
+            & (mean_energy > 0.0)
+            & (mean_molecular_dissipation > 0.0)
+            & ~jnp.asarray(spectral_viscosity_available)
+        )
+        safe_mean_dissipation = jnp.where(
+            mean_molecular_dissipation > 0.0,
+            mean_molecular_dissipation,
+            1.0,
+        )
+        taylor = jnp.where(
+            scale_valid,
+            jnp.sqrt(10.0 * self.viscosity * mean_energy / safe_mean_dissipation),
+            0.0,
+        )
+        kolmogorov = jnp.where(
+            scale_valid,
+            (self.viscosity**3 / safe_mean_dissipation) ** 0.25,
+            0.0,
+        )
+        magnitude = self.geometry.wavenumber_magnitude.astype(modal_energy.dtype)
+        nonzero = magnitude > 0.0
+        inverse_wave = jnp.where(nonzero, 1.0 / magnitude, 0.0)
+        zero_energy = jnp.sum(jnp.where(nonzero, 0.0, modal_energy))
+        integral_valid = (
+            (self.projector.spatial_dimension == 3)
+            & (kinetic_energy > 0.0)
+            & (zero_energy <= self.reality_tolerance * jnp.maximum(kinetic_energy, 1.0))
+        )
+        safe_energy = jnp.where(kinetic_energy > 0.0, kinetic_energy, 1.0)
+        integral_scale = jnp.where(
+            integral_valid,
+            3.0 * jnp.pi * jnp.sum(modal_energy * inverse_wave) / (4.0 * safe_energy),
+            0.0,
+        )
+        tail = magnitude >= self.tail_start_wavenumber
+        tail_energy = jnp.sum(jnp.where(tail, modal_energy, 0.0))
+        tail_molecular_dissipation = jnp.sum(
+            jnp.where(tail, modal_molecular_dissipation, 0.0)
+        )
+        energy_tail_valid = kinetic_energy > 0.0
+        molecular_tail_valid = molecular_dissipation > 0.0
+        energy_tail_fraction = jnp.where(
+            energy_tail_valid, tail_energy / safe_energy, 0.0
+        )
+        safe_molecular_dissipation = jnp.where(
+            molecular_dissipation > 0.0,
+            molecular_dissipation,
+            1.0,
+        )
+        molecular_tail_fraction = jnp.where(
+            molecular_tail_valid,
+            tail_molecular_dissipation / safe_molecular_dissipation,
+            0.0,
+        )
+        return (
+            scale_valid,
+            taylor,
+            kolmogorov,
+            integral_valid,
+            integral_scale,
+            energy_tail_valid,
+            molecular_tail_valid,
+            energy_tail_fraction,
+            molecular_tail_fraction,
         )
 
     def evaluate(
@@ -340,6 +456,10 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         continuation_state: LagrangianDynamicLESState | None = None,
         accepted_update_mask: ArrayLike = True,
     ) -> PeriodicModalTurbulenceStatistics:
+        # Remaining phases deliberately retain their source order: LES evidence
+        # validation, term reductions, scalar diagnostics, and record assembly.
+        # Passing their many live intermediates through another state owner would
+        # obscure validation order and the source-faithful straight-line formulas.
         value = self.projector.validate_state(velocity)
         finite_velocity = jnp.all(jnp.isfinite(value))
         clean_velocity = jnp.where(finite_velocity, value, jnp.zeros_like(value))
@@ -401,6 +521,10 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         molecular = self.projector.validate_state(
             rates.molecular_rate, owner="Molecular rate"
         )
+        spectral_viscosity_available = self.dynamics.spectral_viscosity is not None
+        spectral_viscosity = self._spectral_viscosity_rate(
+            rates.spectral_viscosity_rate, molecular, spectral_viscosity_available
+        )
         sgs = self.projector.validate_state(rates.sgs_rate, owner="SGS rate")
         compiled_forcing = self.projector.validate_state(
             rates.forcing_rate, owner="Compiled forcing rate"
@@ -423,6 +547,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         finite_rates = (
             jnp.all(jnp.isfinite(advective))
             & jnp.all(jnp.isfinite(molecular))
+            & jnp.all(jnp.isfinite(spectral_viscosity))
             & jnp.all(jnp.isfinite(sgs))
             & jnp.all(jnp.isfinite(compiled_forcing))
             & finite_additive_forcing
@@ -433,6 +558,11 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         molecular = self.projector.zero_forbidden_modes(
             jnp.where(finite_rates, molecular, jnp.zeros_like(molecular))
         )
+        spectral_viscosity = self.projector.zero_forbidden_modes(
+            jnp.where(
+                finite_rates, spectral_viscosity, jnp.zeros_like(spectral_viscosity)
+            )
+        )
         sgs = self.projector.zero_forbidden_modes(
             jnp.where(finite_rates, sgs, jnp.zeros_like(sgs))
         )
@@ -442,6 +572,9 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         modal_energy = 0.5 * jnp.sum(jnp.abs(velocity_) ** 2, axis=-1)
         modal_molecular_dissipation = -jnp.real(
             ein.contract("...i,...i->...", jnp.conj(velocity_), molecular)
+        )
+        modal_spectral_viscosity_dissipation = -jnp.real(
+            ein.contract("...i,...i->...", jnp.conj(velocity_), spectral_viscosity)
         )
         modal_advective_transfer = jnp.real(
             ein.contract("...i,...i->...", jnp.conj(velocity_), advective)
@@ -459,6 +592,11 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             self.geometry,
             modal_molecular_dissipation,
             "molecular-dissipation",
+        )
+        spectral_viscosity_shells = _modal_shell_statistic(
+            self.geometry,
+            modal_spectral_viscosity_dissipation,
+            "spectral-viscosity-dissipation",
         )
         advective_shells = _modal_shell_statistic(
             self.geometry,
@@ -478,6 +616,17 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         resolved_flux = -jnp.cumsum(advective_shells.integral)
         kinetic_energy = energy_shells.total
         molecular_dissipation = molecular_shells.total
+        spectral_viscosity_dissipation = spectral_viscosity_shells.total
+        total_dissipation = (
+            molecular_dissipation + spectral_viscosity_dissipation - sgs_shells.total
+        )
+        numerical_fraction_valid = total_dissipation > 0.0
+        numerical_fraction = jnp.where(
+            numerical_fraction_valid,
+            spectral_viscosity_dissipation
+            / jnp.where(numerical_fraction_valid, total_dissipation, 1.0),
+            0.0,
+        )
         advective_energy_rate = advective_shells.total
         sgs_energy_rate = sgs_shells.total
         forcing_power = forcing_shells.total
@@ -506,61 +655,24 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         mean_molecular_dissipation = molecular_dissipation / self.volume
         mean_enstrophy = enstrophy / self.volume
         mean_helicity = helicity / self.volume
-        scale_valid = (
-            (self.projector.spatial_dimension == 3)
-            & (self.viscosity > 0.0)
-            & (mean_energy > 0.0)
-            & (mean_molecular_dissipation > 0.0)
-        )
-        safe_mean_dissipation = jnp.where(
-            mean_molecular_dissipation > 0.0,
-            mean_molecular_dissipation,
-            1.0,
-        )
-        taylor = jnp.where(
+        (
             scale_valid,
-            jnp.sqrt(10.0 * self.viscosity * mean_energy / safe_mean_dissipation),
-            0.0,
-        )
-        kolmogorov = jnp.where(
-            scale_valid,
-            (self.viscosity**3 / safe_mean_dissipation) ** 0.25,
-            0.0,
-        )
-        magnitude = self.geometry.wavenumber_magnitude.astype(modal_energy.dtype)
-        nonzero = magnitude > 0.0
-        inverse_wave = jnp.where(nonzero, 1.0 / magnitude, 0.0)
-        zero_energy = jnp.sum(jnp.where(nonzero, 0.0, modal_energy))
-        integral_valid = (
-            (self.projector.spatial_dimension == 3)
-            & (kinetic_energy > 0.0)
-            & (zero_energy <= self.reality_tolerance * jnp.maximum(kinetic_energy, 1.0))
-        )
-        safe_energy = jnp.where(kinetic_energy > 0.0, kinetic_energy, 1.0)
-        integral_scale = jnp.where(
+            taylor,
+            kolmogorov,
             integral_valid,
-            3.0 * jnp.pi * jnp.sum(modal_energy * inverse_wave) / (4.0 * safe_energy),
-            0.0,
-        )
-        tail = magnitude >= self.tail_start_wavenumber
-        tail_energy = jnp.sum(jnp.where(tail, modal_energy, 0.0))
-        tail_molecular_dissipation = jnp.sum(
-            jnp.where(tail, modal_molecular_dissipation, 0.0)
-        )
-        energy_tail_valid = kinetic_energy > 0.0
-        molecular_tail_valid = molecular_dissipation > 0.0
-        energy_tail_fraction = jnp.where(
-            energy_tail_valid, tail_energy / safe_energy, 0.0
-        )
-        safe_molecular_dissipation = jnp.where(
-            molecular_dissipation > 0.0,
-            molecular_dissipation,
-            1.0,
-        )
-        molecular_tail_fraction = jnp.where(
+            integral_scale,
+            energy_tail_valid,
             molecular_tail_valid,
-            tail_molecular_dissipation / safe_molecular_dissipation,
-            0.0,
+            energy_tail_fraction,
+            molecular_tail_fraction,
+        ) = self._scale_evidence(
+            modal_energy,
+            modal_molecular_dissipation,
+            kinetic_energy,
+            molecular_dissipation,
+            mean_energy,
+            mean_molecular_dissipation,
+            spectral_viscosity_available,
         )
         scalar_dtype = velocity_.real.dtype
         zero = jnp.zeros((), dtype=scalar_dtype)
@@ -667,6 +779,8 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             & finite_les
             & energy_shells.finite
             & molecular_shells.finite
+            & spectral_viscosity_shells.finite
+            & jnp.isfinite(numerical_fraction)
             & advective_shells.finite
             & sgs_shells.finite
             & forcing_shells.finite
@@ -688,6 +802,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         return PeriodicModalTurbulenceStatistics(
             energy_shells=energy_shells,
             molecular_dissipation_shells=molecular_shells,
+            spectral_viscosity_dissipation_shells=spectral_viscosity_shells,
             advective_transfer_shells=advective_shells,
             sgs_transfer_shells=sgs_shells,
             forcing_injection_shells=forcing_shells,
@@ -696,6 +811,11 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             mean_kinetic_energy=mean_energy,
             molecular_dissipation=molecular_dissipation,
             mean_molecular_dissipation=mean_molecular_dissipation,
+            spectral_viscosity_dissipation=spectral_viscosity_dissipation,
+            mean_spectral_viscosity_dissipation=spectral_viscosity_dissipation
+            / self.volume,
+            numerical_dissipation_fraction=numerical_fraction,
+            numerical_dissipation_fraction_valid=numerical_fraction_valid,
             advective_energy_rate=advective_energy_rate,
             mean_advective_energy_rate=advective_energy_rate / self.volume,
             sgs_energy_rate=sgs_energy_rate,
@@ -735,6 +855,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             sgs_regularization_available=regularization_available,
             sgs_stability_available=stability_available,
             forcing_available=jnp.asarray(forcing_available),
+            spectral_viscosity_available=jnp.asarray(spectral_viscosity_available),
             helicity_valid=helicity_valid,
             taylor_microscale_valid=scale_valid,
             kolmogorov_scale_valid=scale_valid,
@@ -764,6 +885,11 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             sgs_dynamic_provenance_id=self.sgs_dynamic_provenance_id,
             sgs_averaging_id=self.sgs_averaging_id,
             sgs_backscatter_id=self.sgs_backscatter_id,
+            spectral_viscosity_id=(
+                None
+                if self.dynamics.spectral_viscosity is None
+                else self.dynamics.spectral_viscosity.prepared_id
+            ),
             plan_id=self.plan_id,
         )
 
