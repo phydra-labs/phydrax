@@ -346,11 +346,14 @@ def _periodic_flow_sources() -> tuple[SourceReference, ...]:
 
 
 def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
+    from ._nuclear_fuel_release_matrix import nuclear_fuel_source_references
+
     return SourceAbsorptionLedger.create(
         (
             *(_source_reference(spec) for spec in _SOURCE_SPECS),
             *_atomistic_sources(),
             *_periodic_flow_sources(),
+            *nuclear_fuel_source_references(),
         )
     )
 

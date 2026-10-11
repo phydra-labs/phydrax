@@ -33,8 +33,8 @@ requires an explicit curved-geometry witness.
 
 ## Reference elements and fields
 
-`lagrange_element(cell_kind, degree)` constructs nodal triangle, quadrilateral,
-tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
+`lagrange_element(cell_kind, degree)` constructs nodal interval, triangle,
+quadrilateral, tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
 numbering is executable for polygonal and hexahedral H1 fields; discontinuous
 fields remain cell-local. `FiniteElementSpec.value_spec` declares canonical form
 degree, twist and proxy; conformity/mapping are derived, with continuity declared
@@ -74,6 +74,19 @@ residual = compiled.residual(state, context)
 
 Coordinates flow through residuals, sparse refresh, functionals, DAE mass
 operators, and shape derivatives. Connectivity changes require a new plan.
+
+`CoordinateMeasurePlan` binds Cartesian, cylindrical-radial, axisymmetric-RZ,
+or spherical-radial integration to an explicit radial coordinate component and
+reference/current frame. `FiniteElementPlan(..., coordinate_measure=...)`
+applies the rotational factor once to physical quadrature weights; determinant
+and Nanson transformations must not multiply it again. Dynamic invalid radial
+geometry carries numerical refusal rather than host synchronization.
+
+Axis displacement is constrained with `axis_dof_mask`. Consistent P1 capacity
+has positive row sums at the axis; a nodal rule that would create a zero axis
+capacity is refused. This P1 statement is not an arbitrary high-order
+mass-lumping guarantee.
+
 
 ## Domains, coefficients, and weak forms
 

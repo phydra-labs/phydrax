@@ -1,6 +1,9 @@
+import jax
+import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -39,3 +42,50 @@ def test_physical_priors_scenario_1() -> None:
     np.testing.assert_allclose(positive.variance, 1.0 - 2.0 / np.pi)
     assert np.isneginf(phx.uq.Cauchy(0.0, 1.0).log_prob(np.nan))
     assert np.isneginf(phx.uq.StudentT(3.0).log_prob(np.inf))
+
+
+def test_batched_truncated_normal_preserves_each_normalized_law() -> None:
+    with jax.enable_x64():
+        law = phx.uq.TruncatedNormal(
+            0.0,
+            np.asarray([1.0, 2.0], dtype=np.float64),
+            np.asarray([-np.inf, 0.0], dtype=np.float64),
+            np.inf,
+        )
+        # An ordinary unit normal and a scale-two half-normal are independent
+        # closed-form oracles for distinct support/scale members of one batch.
+        points = np.asarray([[0.0, 0.0], [1.0, 2.0]], dtype=np.float64)
+        reference = -0.5 * points**2 / np.asarray([1.0, 4.0])
+        reference -= 0.5 * np.log(2.0 * np.pi)
+        np.testing.assert_allclose(law.log_prob(points), reference, rtol=1e-12)
+        np.testing.assert_allclose(
+            law.icdf(0.5), [0.0, 1.3489795003921634], rtol=1e-12, atol=1e-15
+        )
+        np.testing.assert_array_equal(
+            law.contains(np.asarray([0.0, -0.01], dtype=np.float64)), [True, False]
+        )
+        assert law.batch_shape == (2,)
+        assert law.event_shape == ()
+
+
+@pytest.mark.parametrize(
+    ("scale", "low", "high"),
+    (
+        ((1.0, -1.0), (0.0, 0.0), (1.0, 1.0)),
+        ((1.0, 1.0), (0.0, 2.0), (1.0, 1.0)),
+        ((1.0, 1.0), (0.0, 100.0), (1.0, 101.0)),
+    ),
+    ids=("invalid-scale-member", "empty-support-member", "zero-mass-member"),
+)
+def test_batched_truncated_normal_refuses_one_invalid_member(
+    scale: tuple[float, float],
+    low: tuple[float, float],
+    high: tuple[float, float],
+) -> None:
+    with jax.enable_x64(), pytest.raises(ValueError):
+        phx.uq.TruncatedNormal(
+            jnp.asarray(0.0, dtype=jnp.float64),
+            jnp.asarray(scale, dtype=jnp.float64),
+            jnp.asarray(low, dtype=jnp.float64),
+            jnp.asarray(high, dtype=jnp.float64),
+        )

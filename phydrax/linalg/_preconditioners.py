@@ -137,6 +137,16 @@ class AbstractPreconditioner(AbstractComponentSlot):
     properties: PreconditionerProperties = fixed_field()
     preconditioner_id: str = eqx.field(static=True)
 
+    @property
+    def preparation_failed(self) -> Array:
+        """Native failure evidence for solve-status propagation.
+
+        Actions with fallible numerical preparation override this flag. A
+        failure-bearing action must return invalid values, not successful
+        zeros or identity, if evaluated before the solve owner rejects it.
+        """
+        return jnp.asarray(False, dtype=jnp.bool_)
+
     @abc.abstractmethod
     def apply(
         self,
@@ -185,6 +195,10 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
                 "compute_dtype": self.compute_dtype,
             }
         )
+
+    @property
+    def preparation_failed(self) -> Array:
+        return self.inner.preparation_failed
 
     def apply(
         self,

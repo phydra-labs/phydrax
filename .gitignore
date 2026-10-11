@@ -91,6 +91,7 @@ benchmarks/*
 !benchmarks/unstructured_maxwell.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
+!benchmarks/nuclear_fuel_performance.py
 # Native Taylor contraction campaigns and scoped diagnostic evidence.
 !benchmarks/taylor_contraction_capacities.json
 !benchmarks/taylor_order_capacities.json

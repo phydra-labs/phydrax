@@ -520,3 +520,52 @@ def test_lobpcg_zero_mode_keeps_true_operator_and_metric_images() -> None:
     np.testing.assert_allclose(
         np.outer(basis[:, 0], basis[:, 0]), np.outer(expected, expected), atol=1e-8
     )
+
+
+@pytest.mark.strict_jax
+def test_batched_dense_hermitian_spectrum_is_rank_promotion_strict() -> None:
+    matrices = jnp.asarray(
+        [
+            [[2.0, 0.3, 0.1], [0.3, 1.5, -0.2], [0.1, -0.2, 3.0]],
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        ]
+    )
+    perturbation = jnp.asarray(
+        [
+            [[0.2, -0.1, 0.0], [-0.1, 0.4, 0.3], [0.0, 0.3, -0.5]],
+            [[0.1, 0.2, -0.3], [0.2, -0.4, 0.0], [-0.3, 0.0, 0.6]],
+        ]
+    )
+    properties = _self_adjoint_properties()
+    policy = eigen.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
+
+    def logarithm(values: Any) -> Any:
+        return eigen.self_adjoint_spectral_operator(
+            eigen.Eigenproblem(la.DenseLinearOperator(values, properties=properties)),
+            eigen.LogarithmSpectralFunction(),
+            policy=policy,
+        )
+
+    spectrum = eigen.eigensolve(
+        eigen.Eigenproblem(la.DenseLinearOperator(matrices, properties=properties)),
+        policy=eigen.EigenSolvePolicy(eigen.DenseEigh(), count=3),
+    )
+    result = logarithm(matrices)
+    _, tangent = jax.jvp(
+        lambda values: logarithm(values).operator, (matrices,), (perturbation,)
+    )
+    _, single_tangent = jax.jvp(
+        lambda value: logarithm(value).operator, (matrices[0],), (perturbation[0],)
+    )
+
+    assert jnp.allclose(
+        spectrum.eigenvalues[0], jnp.linalg.eigvalsh(matrices[0]), atol=1e-12
+    )
+    assert jnp.array_equal(
+        result.status,
+        jnp.full(2, int(eigen.SelfAdjointSpectralOperatorStatus.SUCCESS)),
+    )
+    assert jnp.allclose(result.operator[0], spla.logm(matrices[0]), atol=1e-12)
+    assert jnp.allclose(tangent[0], single_tangent, rtol=1e-12, atol=1e-13)
+    # At the repeated spectrum of I, the Frechet derivative of log is the identity map.
+    assert jnp.allclose(tangent[1], perturbation[1], atol=1e-13)

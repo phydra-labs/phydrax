@@ -289,6 +289,22 @@ checkpoints have content-derived IDs; their immutable generations are monotonica
 numbered behind an atomically replaced durable pointer. A terminal checkpoint and
 terminal manifest are written after output drain unless output itself failed.
 
+`ProductionRunPlan(..., step_controller=controller)` replaces the nominal step by an
+`AbstractStepSizeController` proposal; `step_size` is then the first proposal and must
+lie in `[controller.minimum_step, controller.maximum_step]`. Each step attempts
+`min(controller.propose(state, time), end_time - time)`, clamped by the output schedule,
+so targets and `end_time` still land exactly; retries still reduce the attempt through
+the retry policy. `update` runs on device and is committed only for accepted steps.
+`IncrementLimitedStepController(increments, limits, ...)` scales the accepted step by
+`clip(safety * min_i(limit_i / |increment_i|), shrink, growth)` within the step bounds.
+The controller state is `ProductionRunState.controller_state`: it is created by
+`initial_state` (a caller-supplied controller state is refused), persisted in every
+checkpoint, and restored by `resume`, so a restarted run reproduces the uninterrupted
+run bitwise. Preflight counts steps with `maximum_step`; a run that exhausts
+`maximum_steps` before `end_time` fails with `step-capacity-exhausted`. The controller
+identity enters `plan_id` only when a controller is configured, and methods with an
+exact step or without step reduction refuse adaptive control.
+
 `StreamingMomentPlan` updates accepted-endpoint sample- or time-weighted mean,
 second moment, extrema, optional histogram, and fixed-capacity block totals. Its
 time window clips step intervals at `window_start` and `window_end`; block-mean

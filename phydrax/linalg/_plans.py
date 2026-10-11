@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import parse
 from ._assembly import assemble_sparse, SparseAssemblyPolicy
+from ._bordered import _bordered_base
 from ._costs import LinearCostEstimate
 from ._operators import (
     AbstractLinearOperator,
@@ -401,11 +402,14 @@ def _validate_derivative_route(
         case "krylov":
             return
         case "primal-factors":
-            if not isinstance(method, (DenseLU, DenseCholesky)):
+            bordered_factors = (
+                isinstance(method, StructuredDirect)
+                and _bordered_base(problem.operator) is not None
+            )
+            if not isinstance(method, (DenseLU, DenseCholesky)) and not bordered_factors:
                 raise ValueError(
-                    "route='primal-factors' requires a square direct DenseLU or "
-                    f"DenseCholesky factorization; the selected method is "
-                    f"{method.name}."
+                    "route='primal-factors' requires square direct dense or bordered "
+                    f"factors; the selected method is {method.name}."
                 )
             if not isinstance(problem, LinearSystem):
                 raise TypeError("route='primal-factors' requires a LinearSystem.")
@@ -1399,8 +1403,15 @@ def _dense_metric_pairings_supported(
 
 
 def _structured_dense_entries(operator: AbstractLinearOperator, /) -> int:
+    bordered = _bordered_base(operator)
+    if bordered is not None:
+        return bordered.border.size + (
+            0
+            if isinstance(bordered.local_blocks, BandedLinearOperator)
+            else bordered.local_blocks.size
+        )
     if isinstance(operator, BandedLinearOperator):
-        return operator.source.size * operator.target.size
+        return 0
     if isinstance(operator, DiagonalPlusLowRankLinearOperator):
         return (
             0
@@ -1481,6 +1492,38 @@ def _structured_factorization_bytes(
     /,
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
+    if isinstance(operator, BlockDiagonalLinearOperator):
+        return sum(_structured_factorization_bytes(block) for block in operator.blocks)
+    if isinstance(operator, KroneckerLinearOperator):
+        return sum(_structured_factorization_bytes(factor) for factor in operator.factors)
+    bordered = _bordered_base(operator)
+    if bordered is not None:
+        layers, local, border = (
+            bordered.num_blocks,
+            bordered.local_size,
+            bordered.border_size,
+        )
+        if isinstance(bordered.local_blocks, BandedLinearOperator):
+            bands = bordered.local_blocks
+            real_itemsize = jnp.empty((), dtype=bands.bands.dtype).real.dtype.itemsize
+            lower, upper = bands.lower_bandwidth, bands.upper_bandwidth
+            local_bytes = (
+                layers * local * (2 * lower + upper + 1) * itemsize
+                + layers * real_itemsize
+            )
+        else:
+            real_itemsize = jnp.empty(
+                (), dtype=bordered.local_blocks.dtype
+            ).real.dtype.itemsize
+            local_bytes = (
+                bordered.local_blocks.size * itemsize + layers * local * real_itemsize
+            )
+        return (
+            local_bytes
+            + (layers * local + border) * jnp.dtype(jnp.int32).itemsize
+            + (2 * layers + 1) * jnp.dtype(jnp.bool_).itemsize
+            + (bordered.upper.size + bordered.border.size) * itemsize
+        )
     if isinstance(operator, BandedLinearOperator):
         dimension = operator.source.size
         factor_width = 2 * operator.lower_bandwidth + operator.upper_bandwidth + 1
@@ -1534,6 +1577,9 @@ def _structured_solve_workspace_bytes(
     /,
 ) -> int:
     itemsize = _coordinate_dtype(operator.source).itemsize
+    if _bordered_base(operator) is not None:
+        # Includes the larger transpose/adjoint reconstruction and pairing path.
+        return 8 * operator.source.size * itemsize
     batch_count = (
         prod(operator.batch_shape or (1,))
         if isinstance(operator, BandedLinearOperator)
@@ -1544,6 +1590,33 @@ def _structured_solve_workspace_bytes(
     if isinstance(operator, KroneckerSumLinearOperator):
         return 4 * operator.source.size * itemsize
     return batch_count * (operator.source.size + operator.target.size) * itemsize
+
+
+def _structured_preparation_extra_bytes(operator: AbstractLinearOperator, /) -> int:
+    bordered = _bordered_base(operator)
+    if bordered is not None:
+        return (bordered.border.size + bordered.upper.size) * _coordinate_dtype(
+            operator.source
+        ).itemsize
+    if isinstance(operator, BlockDiagonalLinearOperator):
+        return max(
+            (_structured_preparation_extra_bytes(block) for block in operator.blocks),
+            default=0,
+        )
+    if isinstance(operator, KroneckerLinearOperator):
+        return max(
+            (_structured_preparation_extra_bytes(factor) for factor in operator.factors),
+            default=0,
+        )
+    return 0
+
+
+def _structured_preparation_workspace_bytes(operator: AbstractLinearOperator, /) -> int:
+    extra = _structured_preparation_extra_bytes(operator)
+    return max(
+        _structured_solve_workspace_bytes(operator),
+        _structured_factorization_bytes(operator) + extra,
+    )
 
 
 def _has_rank_cutoff(policy: LinearSolvePolicy, /) -> bool:
@@ -1576,10 +1649,7 @@ def _structured_candidate_fits(
         return False, f"fallback materialization requires {materialized_bytes} bytes"
     if factor_bytes > policy.resources.factorization_bytes:
         return False, f"factorization estimate {factor_bytes} exceeds budget"
-    workspace = max(
-        _structured_solve_workspace_bytes(operator),
-        factor_bytes,
-    )
+    workspace = _structured_preparation_workspace_bytes(operator)
     if workspace > policy.resources.workspace_bytes:
         return False, f"workspace estimate {workspace} exceeds budget"
     return True, "recognized exact structure fits declared budgets"
@@ -1744,9 +1814,8 @@ def _selected_estimate(
         preparation_workspace_bytes = rows * columns * itemsize
     elif structured_direct:
         factorization_bytes = structured_factor_bytes
-        preparation_workspace_bytes = max(
-            _structured_solve_workspace_bytes(problem.operator),
-            structured_factor_bytes,
+        preparation_workspace_bytes = _structured_preparation_workspace_bytes(
+            problem.operator
         )
     else:
         factorization_bytes = 0

@@ -2099,8 +2099,11 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
 
 def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
     """Return whether the native structured backend can solve the operator exactly."""
+    from ._bordered import _bordered_base
     from ._transform_operators import TransformDiagonalLinearOperator
 
+    if _bordered_base(operator) is not None:
+        return True
     if isinstance(operator, KroneckerSumLinearOperator):
         return all(
             factor.capabilities.materialize

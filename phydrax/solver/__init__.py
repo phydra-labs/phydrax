@@ -2530,6 +2530,10 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._step_control import (
+    AbstractStepSizeController,
+    IncrementLimitedStepController,
+)
 from ._stinespring_tomography import (
     fit_causal_process_memory,
     fit_stinespring_process,
@@ -3386,6 +3390,8 @@ __all__ = [
     "ProductionTriggerBinding",
     "DurableCheckpointStore",
     "PreparedProductionRun",
+    "AbstractStepSizeController",
+    "IncrementLimitedStepController",
     "ProductionResourceForecast",
     "PreparedCompilationService",
     "prepare_production_resource_forecast",

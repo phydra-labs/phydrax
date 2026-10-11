@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from enum import IntEnum, IntFlag
 from math import prod
 from operator import index
@@ -694,6 +695,7 @@ class FixedStepResult(StrictModule):
     transform_correction_norm: Array
     transform_admissibility: AdmissibilityHeader | None = None
     evidence: PyTree[Array] | None = None
+    terminal_failure: Array | None = None
 
 
 class RobustRetryPolicy(StrictModule, NonTrainableState):
@@ -727,14 +729,14 @@ class RobustRetryPolicy(StrictModule, NonTrainableState):
 class RetriedFixedStepResult(StrictModule):
     """Selected retry attempt with bounded per-attempt method evidence.
 
-    The policy executes `maximum_retries + 1` attempts; attempt `k` uses
-    `attempted_step_sizes[k]`, `attempt_executed[k]` states whether it ran (false
-    only for a held transition from `inactive_fixed_step_retry`), and
-    `attempt_successful[k]` is the method's native acceptance. `attempt_evidence`
-    stacks the method evidence of every attempt along that static attempt axis.
-    `evidence` is the evidence of attempt `retry_count`: the accepted attempt when
-    `successful`, otherwise the last refused attempt. Attempts before
-    `retry_count` are refusals; attempts after it ran but were not selected.
+    The policy has capacity for `maximum_retries + 1` attempts and stops after
+    the first success, terminal failure, or exhausted capacity. Attempt `k` uses
+    `attempted_step_sizes[k]`; `attempt_executed[k]` is false for masked slots
+    after that decision and for every slot of `inactive_fixed_step_retry`.
+    `attempt_successful[k]` is the method's native acceptance when executed.
+    `attempt_evidence` stacks zero-masked method evidence along the static attempt
+    axis. `evidence` is the evidence of attempt `retry_count`: the accepted
+    attempt when `successful`, otherwise the last refused attempt.
     """
 
     candidate_state: PyTree[Array]
@@ -748,10 +750,17 @@ class RetriedFixedStepResult(StrictModule):
     evidence: PyTree[Array] | None
     attempt_evidence: PyTree[Array] | None
     decision_id: str = eqx.field(static=True)
+    terminal_failure: Array
 
 
 class AbstractFixedStepMethod(StrictModule):
     method_id: eqx.AbstractVar[str]
+
+    @property
+    def evidence_template(self) -> PyTree[Array] | None:
+        """Fixed-shape evidence template for masked, unattempted runtime slots."""
+
+        return None
 
     @property
     def required_step_size(self) -> float | None:
@@ -805,6 +814,7 @@ class AbstractFixedStepMethod(StrictModule):
 class CallableFixedStepMethod(AbstractFixedStepMethod):
     step_function: Callable[[Array, Array, PyTree[Array], Array, Any], FixedStepResult]
     method_id: str = eqx.field(static=True)
+    _evidence_template: PyTree[Array] | None
 
     def __init__(
         self,
@@ -813,6 +823,8 @@ class CallableFixedStepMethod(AbstractFixedStepMethod):
         ],
         method_id: str,
         /,
+        *,
+        evidence_template: PyTree[Array] | None = None,
     ) -> None:
         if not callable(step_function):
             raise TypeError("step_function must be callable.")
@@ -821,6 +833,11 @@ class CallableFixedStepMethod(AbstractFixedStepMethod):
             raise ValueError("method_id must be non-empty.")
         self.step_function = step_function
         self.method_id = identifier
+        self._evidence_template = evidence_template
+
+    @property
+    def evidence_template(self) -> PyTree[Array] | None:
+        return self._evidence_template
 
     def step(
         self,
@@ -1100,6 +1117,32 @@ class FixedStepProblem(StrictModule):
         self.problem_id = identifier
 
 
+type _RetryCarry = tuple[
+    PyTree[Array], PyTree[Array], Array, Array, Array, Array, Array, FixedStepResult
+]
+
+
+def _validated_fixed_step_attempt(
+    method: AbstractFixedStepMethod,
+    step_index: Array,
+    time: Array,
+    initial: PyTree[Array],
+    requested: Array,
+    args: Any,
+    /,
+) -> FixedStepResult:
+    result = method.step(step_index, time, initial, requested, args)
+    if not isinstance(result, FixedStepResult):
+        raise TypeError("Fixed-step methods must return FixedStepResult.")
+    _validate_result_state("candidate_state", result.candidate_state, initial)
+    _validate_result_state("accepted_state", result.accepted_state, initial)
+    _validate_scalar_result("successful", result.successful, boolean=True)
+    _validate_evidence(result.evidence)
+    if result.terminal_failure is not None:
+        _validate_scalar_result("terminal_failure", result.terminal_failure, boolean=True)
+    return result
+
+
 def retry_fixed_step(
     method: AbstractFixedStepMethod,
     policy: RobustRetryPolicy,
@@ -1121,55 +1164,140 @@ def retry_fixed_step(
     if policy.maximum_retries and not method.allows_step_reduction:
         raise ValueError("The fixed-step method does not permit retry step reduction.")
     initial = _canonical_structured_state(state)
-    successful = jnp.asarray(False)
-    selected_state = initial
-    selected_candidate = initial
-    accepted_step = jnp.zeros_like(current_step)
-    retry_count = jnp.asarray(policy.maximum_retries, dtype=jnp.int32)
-    attempted = []
-    attempt_successful: list[Array] = []
-    attempt_evidence: list[PyTree[Array] | None] = []
-    for attempt in range(policy.maximum_retries + 1):
-        attempted.append(current_step)
-        result = method.step(
-            step_index,
-            time,
-            initial,
-            current_step,
-            args,
+    if policy.maximum_retries == 0:
+        # Keep the single-attempt host boundary: it need not be abstractly
+        # evaluated or placed in a loop when no retry can occur.
+        result = _validated_fixed_step_attempt(
+            method, step_index, time, initial, current_step, args
         )
-        if not isinstance(result, FixedStepResult):
-            raise TypeError("Fixed-step methods must return FixedStepResult.")
-        _validate_result_state("candidate_state", result.candidate_state, initial)
-        _validate_result_state("accepted_state", result.accepted_state, initial)
-        _validate_scalar_result("successful", result.successful, boolean=True)
-        _validate_evidence(result.evidence)
-        attempt_successful.append(result.successful)
-        attempt_evidence.append(result.evidence)
-        take = (~jax.lax.stop_gradient(successful)) & jax.lax.stop_gradient(
-            result.successful
+        terminal = (
+            jnp.asarray(False, dtype=jnp.bool_)
+            if result.terminal_failure is None
+            else result.terminal_failure
         )
-        selected_candidate = tree_where(take, result.candidate_state, selected_candidate)
-        selected_state = tree_where(take, result.accepted_state, selected_state)
-        accepted_step = jnp.where(take, current_step, accepted_step)
-        retry_count = jnp.where(take, jnp.asarray(attempt, dtype=jnp.int32), retry_count)
-        successful = successful | result.successful
-        if attempt < policy.maximum_retries:
-            current_step = current_step * policy.reduction_factor
-    # Attempt count is the policy's static bound; every attempt shares one structure.
-    stacked_evidence = jax.tree.map(lambda *leaves: jnp.stack(leaves), *attempt_evidence)
+        successful = result.successful & ~terminal
+        return RetriedFixedStepResult(
+            result.candidate_state,
+            tree_where(successful, result.accepted_state, initial),
+            successful,
+            jnp.where(successful, current_step, 0.0),
+            jnp.asarray(0, dtype=jnp.int32),
+            current_step[None],
+            jnp.ones((1,), dtype=jnp.bool_),
+            result.successful[None],
+            result.evidence,
+            jax.tree.map(lambda value: value[None], result.evidence),
+            _retry_decision_id(method, policy),
+            terminal,
+        )
+    structure = eqx.filter_eval_shape(
+        _validated_fixed_step_attempt,
+        method,
+        step_index,
+        time,
+        initial,
+        current_step,
+        args,
+    )
+    held = replace(
+        _zeros_from_structure(structure),
+        candidate_state=initial,
+        accepted_state=initial,
+    )
+    flag = jnp.asarray(False, dtype=jnp.bool_)
+    carry = (
+        initial,
+        initial,
+        flag,
+        flag,
+        jnp.zeros_like(current_step),
+        jnp.asarray(0, dtype=jnp.int32),
+        current_step,
+        held,
+    )
+
+    def retry(
+        carried: _RetryCarry, attempt: Array
+    ) -> tuple[_RetryCarry, tuple[Array, Array, Array, PyTree[Array] | None]]:
+        (
+            selected_state,
+            selected_candidate,
+            successful,
+            terminal,
+            accepted_step,
+            retry_count,
+            requested,
+            previous,
+        ) = carried
+        active = ~jax.lax.stop_gradient(successful | terminal)
+
+        def execute(_: None) -> FixedStepResult:
+            return _validated_fixed_step_attempt(
+                method, step_index, time, initial, requested, args
+            )
+
+        def inactive(_: None) -> FixedStepResult:
+            return previous
+
+        result = jax.lax.cond(active, execute, inactive, operand=None)
+        terminal_result = (
+            jnp.asarray(False, dtype=jnp.bool_)
+            if result.terminal_failure is None
+            else result.terminal_failure
+        )
+        take = active & jax.lax.stop_gradient(result.successful & ~terminal_result)
+        updated = (
+            tree_where(take, result.accepted_state, selected_state),
+            tree_where(active, result.candidate_state, selected_candidate),
+            successful | take,
+            terminal | (active & terminal_result),
+            jnp.where(take, requested, accepted_step),
+            jnp.where(active, attempt, retry_count),
+            requested * policy.reduction_factor,
+            result,
+        )
+        outputs = (
+            jnp.where(active, requested, 0.0),
+            active,
+            active & result.successful,
+            jax.tree.map(
+                lambda value: jnp.where(active, value, jnp.zeros_like(value)),
+                result.evidence,
+            ),
+        )
+        return updated, outputs
+
+    # The first attempt and every retry share one numerical body. Abstract
+    # preparation owns only buffer structure and executes no numerical attempt.
+    carry, outputs = jax.lax.scan(
+        retry,
+        carry,
+        jnp.arange(policy.maximum_retries + 1, dtype=jnp.int32),
+    )
+    attempted_steps, attempt_masks, attempt_successes, stacked_evidence = outputs
+    (
+        selected_state,
+        selected_candidate,
+        successful,
+        terminal,
+        accepted_step,
+        retry_count,
+        _,
+        _,
+    ) = carry
     return RetriedFixedStepResult(
         selected_candidate,
         tree_where(successful, selected_state, initial),
         successful,
         accepted_step,
         retry_count,
-        jnp.stack(tuple(attempted)),
-        jnp.ones((policy.maximum_retries + 1,), dtype=jnp.bool_),
-        jnp.stack(tuple(attempt_successful)),
+        attempted_steps,
+        attempt_masks,
+        attempt_successes,
         jax.tree.map(lambda leaf: leaf[retry_count], stacked_evidence),
         stacked_evidence,
         _retry_decision_id(method, policy),
+        terminal,
     )
 
 
@@ -1220,6 +1348,7 @@ def inactive_fixed_step_retry(
         _zeros_from_structure(structure.evidence),
         _zeros_from_structure(structure.attempt_evidence),
         structure.decision_id,
+        jnp.asarray(False),
     )
 
 
@@ -1473,10 +1602,18 @@ def _fixed_step_advance(
     _validate_scalar_result("transform_correction_norm", result.transform_correction_norm)
     _validate_transform_admissibility(result.transform_admissibility)
     _validate_evidence(result.evidence)
-    accepted = tree_where(previous_success, result.accepted_state, state)
-    successful = previous_success & result.successful
+    terminal = (
+        jnp.asarray(False) if result.terminal_failure is None else result.terminal_failure
+    )
+    if result.terminal_failure is not None:
+        _validate_scalar_result("terminal_failure", terminal, boolean=True)
+    attempt_successful = result.successful & ~terminal
+    accepted = tree_where(
+        previous_success & attempt_successful, result.accepted_state, state
+    )
+    successful = previous_success & attempt_successful
     retained = _record_evidence(
-        evidence, previous_success, result.successful, result.evidence, step_index
+        evidence, previous_success, attempt_successful, result.evidence, step_index
     )
     payload = (
         successful,

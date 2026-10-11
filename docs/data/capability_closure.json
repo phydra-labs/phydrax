@@ -1,5 +1,5 @@
 {
-  "catalog_id": "f626c40e8e117840396e0da5ccfaea692b50d725360a4d043eb233135f6d4903",
+  "catalog_id": "a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae",
   "kind": "omniphysics-closure-matrices",
   "matrices": [
     {
@@ -3141,7 +3141,1037 @@
       ],
       "state": "implementation-closed",
       "unclassified_requirement_ids": []
+    },
+    {
+      "classified": true,
+      "family": "nuclear-fuel.implementation",
+      "implementation_closed": false,
+      "kind": "capability-closure-matrix",
+      "matrix_id": "d47166acb1ca79758c917e082d5de08dfeff36a9e2913e02456f615beb25e5e9",
+      "release_closed": false,
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "richardson",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V15",
+          "requirement_id": "0887ce52710a93245126eb24a5c57823b28ac447bed1f2238d1f98c929c4a388",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "communicating-volume-ideal-gas",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V8",
+          "requirement_id": "3aa1378831d5c2d78cea233dec044867d53f8f4e80a65dd2d32175995410717f",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "independent-reductions",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V12",
+          "requirement_id": "4441da7da1c0cf0fe49be7f0d1b2ad6cc8b778971f533a0715baabbbebc20e99",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "kirchhoff-transform",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V2",
+          "requirement_id": "453ad9ef7684610ddee3430647ce36cd820042effbb8ce6d41e09f9d98f1f06e",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "accepted-checkpoint-replay",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V14",
+          "requirement_id": "6dc6211a052cef076ffbb7c122312cec31caa9e7e0b1019bb4d8e6bf680d0805",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "crepr-closed-form-and-norton-tube",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V10",
+          "requirement_id": "783f279500e0994b1fdade3c1fadb1230486491cad29da2582e2984dd6390590",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "lame-closed-end-tube",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V3",
+          "requirement_id": "8ecf7d10a8f599646afaf2bd94422fffec74eac13a99d438a2beb9e6fbcc6e4c",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "booth-sphere-series",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V7",
+          "requirement_id": "992a49de3d08ce0b29c6b76da3e403aee5b7fcdb1d18c34caaf6c4f7b8a03161",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "stress-free-eigenstrain",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V5",
+          "requirement_id": "b164c6ef465a232641c3966de079de4df760daf32456d5a76dee1c5f2f2b24e0",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "manufactured-independent-forcing",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V11",
+          "requirement_id": "b4a1c33bda7cb9604c22bbad11a2a035b38665984230da3f904c1c4e5282d9a0",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "energy-and-gas-conservation",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V13",
+          "requirement_id": "c0a8929e22069d8bf838472d30c672e0b7225c53d6f82720bbcd01e6c7890d57",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "concentric-cylinder-heat-flow",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V9",
+          "requirement_id": "cf8dc468cbaf32684a88ff984de325bb2ce80a85a7a213d7b103dc7d6ea0d50e",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "analytic-cylinder",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V1",
+          "requirement_id": "d25a92ec313ac64c3d80ac2a01d7d26534ef039385c481fe0bbb3be60072de05",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "lame-shrink-fit",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V6",
+          "requirement_id": "e680e2efb383d6ad2aa757f9dd713ec82c5419842ea2a83dc97628db423f4c86",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "spatial-coupled",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "rivlin-tube",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "fault-adequacy",
+            "numerical"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-V4",
+          "requirement_id": "e99fa28d988e7cbc66296873e4c4a0ca0abeb37fdf3e445c1b92d19e380dd6d9",
+          "source_ids": [
+            "iaea-fumex-public-report"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "0887ce52710a93245126eb24a5c57823b28ac447bed1f2238d1f98c929c4a388",
+          "resolution_id": "d76acac6060b9b1e2e2c45ee9a59187026b03d8843e106fb699c84207119d9e7"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "3aa1378831d5c2d78cea233dec044867d53f8f4e80a65dd2d32175995410717f",
+          "resolution_id": "003971212a33a35084fde0e47916371cedf182566844e1a177169e5bb4d7b898"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "4441da7da1c0cf0fe49be7f0d1b2ad6cc8b778971f533a0715baabbbebc20e99",
+          "resolution_id": "ac16347746b3e6605265503c7f1d9f7fddbc9ad025f762cf78677daac25ee322"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "453ad9ef7684610ddee3430647ce36cd820042effbb8ce6d41e09f9d98f1f06e",
+          "resolution_id": "6d7c23590d1fb582ac56957829d36124ad2f9fdebf8e414f0d20c0a3aa51e9ed"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "6dc6211a052cef076ffbb7c122312cec31caa9e7e0b1019bb4d8e6bf680d0805",
+          "resolution_id": "bc09fb60ff36c0bfa8773ad352a13f917a45a14ef244a883b1418c51289b10c5"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "783f279500e0994b1fdade3c1fadb1230486491cad29da2582e2984dd6390590",
+          "resolution_id": "1eb13b05d2ba515fa64364398c58b56adbe6850030111067402dce274b1c164e"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "8ecf7d10a8f599646afaf2bd94422fffec74eac13a99d438a2beb9e6fbcc6e4c",
+          "resolution_id": "a6840b2ecf2f8817b80bb40d020ede3acb0e0e75ce5115aa0fbcdcfb28d75fa7"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "992a49de3d08ce0b29c6b76da3e403aee5b7fcdb1d18c34caaf6c4f7b8a03161",
+          "resolution_id": "113429b9cfe0b8d6ba278f9584f8f33780f2b505d238d6b2926fdb5257ae5315"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "b164c6ef465a232641c3966de079de4df760daf32456d5a76dee1c5f2f2b24e0",
+          "resolution_id": "47c7e070a6e7e327b412373c5f1fadb715f5afda9eba0d4c7014a6614e9fa89d"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "b4a1c33bda7cb9604c22bbad11a2a035b38665984230da3f904c1c4e5282d9a0",
+          "resolution_id": "8251574527e0718b03ab4174aa0ce6538e777ce55ce42e8a4a4e7509c9d7f17b"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "c0a8929e22069d8bf838472d30c672e0b7225c53d6f82720bbcd01e6c7890d57",
+          "resolution_id": "c9104e9dd1ace77e8792265f3ba3563e220f6cf4810ab8bb2568c29d9069dbac"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "cf8dc468cbaf32684a88ff984de325bb2ce80a85a7a213d7b103dc7d6ea0d50e",
+          "resolution_id": "03d1a6a6f860b82db61977df262fc2baa1c29d779b998b4c2333393de9818ecd"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "d25a92ec313ac64c3d80ac2a01d7d26534ef039385c481fe0bbb3be60072de05",
+          "resolution_id": "cb1b0b13685e57a8ac815be4dc314586c09279c730f670e15bd91434c884115c"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "e680e2efb383d6ad2aa757f9dd713ec82c5419842ea2a83dc97628db423f4c86",
+          "resolution_id": "6dc52e6605822f03bcf1ed8c42243b1350a3bd4e75da75c0a0291bc2185b513d"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "assembled-runtime-verification-evidence-required",
+          "release_authorized": false,
+          "requirement_id": "e99fa28d988e7cbc66296873e4c4a0ca0abeb37fdf3e445c1b92d19e380dd6d9",
+          "resolution_id": "7569ee29c769695161894cc0573ab9ce826b6cf28fbebb2c4dff4754a9a86365"
+        }
+      ],
+      "state": "classified",
+      "unclassified_requirement_ids": []
+    },
+    {
+      "classified": true,
+      "family": "nuclear-fuel.scientific-release",
+      "implementation_closed": false,
+      "kind": "capability-closure-matrix",
+      "matrix_id": "f19af67ae3e02788bcb6d3d4cded2892a1d0e52d6fe1a1219253202aa2aadda3",
+      "release_closed": false,
+      "requirements": [
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "scientifically-validated",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "ancestry-fabrication-heldout-rods",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "locked-evaluation"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-independent-locked-evaluation",
+          "requirement_id": "77655d4ef04983ff9d2ddd9b3e79dcc6a8688d137d57738a4f9c47c8520a2f9b",
+          "source_ids": [
+            "iaea-fumex-public-report",
+            "nea-ifpe-access-metadata"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        },
+        {
+          "carriers": [
+            "continuum-volume",
+            "interface-surface"
+          ],
+          "coupling_locations": [
+            "boundary",
+            "bulk",
+            "contact"
+          ],
+          "execution_regimes": [
+            "transient"
+          ],
+          "kind": "capability-closure-requirement",
+          "minimum_depth": "scientifically-validated",
+          "physical_fields": [
+            "chemical-species",
+            "solid-mechanics",
+            "thermal"
+          ],
+          "rationale": "actual-originator-agreement",
+          "required_benchmarks": [
+            "benchmarks/nuclear_fuel_performance.py",
+            "tools/nuclear_fuel_qualification.py"
+          ],
+          "required_documents": [],
+          "required_evidence_dimensions": [
+            "data-rights"
+          ],
+          "required_providers": [],
+          "required_public_symbols": [],
+          "requirement": "nuclear-fuel-ifpe-data-rights",
+          "requirement_id": "b1a2ce7d9e46a105a20e910e6121c6543a79a06d894b13bb0f38c51f55c972b2",
+          "source_ids": [
+            "nea-ifpe-access-metadata"
+          ],
+          "topology_regimes": [
+            "contact"
+          ],
+          "workflow_classes": [
+            "qualification",
+            "restart-replay"
+          ]
+        }
+      ],
+      "resolutions": [
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "qualified-external-blocker-actual-data-agreement-and-locked-evaluation-required",
+          "release_authorized": false,
+          "requirement_id": "77655d4ef04983ff9d2ddd9b3e79dcc6a8688d137d57738a4f9c47c8520a2f9b",
+          "resolution_id": "306d3b291577ed97299cf9f5dea41da936c254ddbbfb16d6cbde688f3f1008c6"
+        },
+        {
+          "actual_depth": "semantic",
+          "capability_ids": [
+            "nuclear-fuel.performance"
+          ],
+          "disposition": "missing",
+          "evidence_ids": [],
+          "kind": "capability-gap-resolution",
+          "provider_ids": [],
+          "rationale": "qualified-external-blocker-actual-data-agreement-and-locked-evaluation-required",
+          "release_authorized": false,
+          "requirement_id": "b1a2ce7d9e46a105a20e910e6121c6543a79a06d894b13bb0f38c51f55c972b2",
+          "resolution_id": "ee67ec8bff66ce7f562d402a07216cd7ed38b1e7921fe60df78265dd50bd3c4f"
+        }
+      ],
+      "state": "classified",
+      "unclassified_requirement_ids": []
     }
   ],
-  "source_ledger_id": "cf1202a2b7177db3cc783d085c804b5bed48f81fba519f8e780857078e3e3b1c"
+  "source_ledger_id": "280c704ccbc3b0ebc3082c30ef28d5fc694a7574c9d8abd3de3852bf5c852208"
 }

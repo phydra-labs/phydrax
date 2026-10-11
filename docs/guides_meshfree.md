@@ -1819,6 +1819,16 @@ when it is unassessed a root may still converge, but no coercivity or contractio
 certificate is claimed. A converged root and a contraction certificate remain
 distinct facts.
 
+Both public conservation problems are neutral owners: their native constitutive
+laws retain their own parameter roles, while geometry, external features, source
+and boundary data, masks, coverage and binding declarations remain FIXED.
+Prepared scalar/coupled solves and their residual templates are `ExplicitFreeze`
+holders; their retained problem and law references are deliberately FIXED.
+Numerical law leaves are bound into runtime arguments at each solve or refresh,
+not rediscovered as duplicate template parameters. These roles do not add
+coordinates to an explicitly declared `ParameterSpace` or runtime inputs to the
+declared `ParameterBinding` set.
+
 `RuntimeInput("meshfree", "metric_weights")` (role `"coefficient"`) binds an
 externally corrected edge metric in compact exterior edge order, replacing the
 prepared metric in the residual, background solve, adjoint and coercivity

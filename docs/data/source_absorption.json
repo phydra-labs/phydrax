@@ -1,6 +1,6 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "cf1202a2b7177db3cc783d085c804b5bed48f81fba519f8e780857078e3e3b1c",
+  "ledger_id": "280c704ccbc3b0ebc3082c30ef28d5fc694a7574c9d8abd3de3852bf5c852208",
   "sources": [
     {
       "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
@@ -249,6 +249,42 @@
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
     },
     {
+      "archive_digest": "sha256:e6efbf9cf532713743f4a1926fabdd78c06e833a672288e30bab81b5f069cd14",
+      "behavior_inspected": false,
+      "code_inspected": false,
+      "concepts": [
+        "fuel-code-comparison",
+        "simplified-priority-cases",
+        "verification-protocol"
+      ],
+      "copying_permitted": false,
+      "data_rights": "public-report-only-experimental-histories-not-acquired-input-and-redistribution-rights-unestablished",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "IAEA-publication-copyright-permission-required",
+      "license_digest": "pdftotext-layout-utf8-sha256:9fbb783ab8f9789608c2f00cc3af415c838363c98bd0a1bedcd1ec8a3421fb52",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [
+        {
+          "locator": "https://www-pub.iaea.org/mtcd/publications/pdf/te-1697_cd/pdf/iaea-tecdoc-1697.pdf",
+          "title": "Improvement of Computer Codes Used for Fuel Behaviour Simulation (FUMEX-III), IAEA-TECDOC-1697: sections 1.2, 2.2 and 3.1.2"
+        }
+      ],
+      "relevant_documents": [
+        "https://www-pub.iaea.org/mtcd/publications/pdf/te-1697_cd/pdf/iaea-tecdoc-1697.pdf#page=5@pdftotext-layout-utf8-sha256:9fbb783ab8f9789608c2f00cc3af415c838363c98bd0a1bedcd1ec8a3421fb52",
+        "https://www-pub.iaea.org/mtcd/publications/pdf/te-1697_cd/pdf/iaea-tecdoc-1697.pdf@sha256:e6efbf9cf532713743f4a1926fabdd78c06e833a672288e30bab81b5f069cd14"
+      ],
+      "relevant_paths": [],
+      "repository_url": "https://www-pub.iaea.org/mtcd/publications/pdf/te-1697_cd/pdf/iaea-tecdoc-1697.pdf",
+      "reuse_class": "proprietary",
+      "review_status": "technically-reviewed",
+      "revision": "IAEA-TECDOC-1697-2013-public-report-reviewed-2026-09-30",
+      "source_id": "iaea-fumex-public-report",
+      "source_reference_id": "a57f5889ac66c8bf4a64855f9400b27af2ec1509d0a54bed25a18545202d3e7e",
+      "technical_reviewer": "phydrax-public-document-technical-review-2026-09-30"
+    },
+    {
       "archive_digest": "git-tree-sha1:ff344f9648661e0235472d43c236fdcb7e5d2c3c",
       "behavior_inspected": false,
       "code_inspected": false,
@@ -372,6 +408,46 @@
       "source_id": "mfix",
       "source_reference_id": "e383c08ebf709de11a88ca0dccb8ac27bd6334bdd37b5ed4c4d174a8a0ad78ce",
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
+    },
+    {
+      "archive_digest": "sha256:06dd6311afdb172400eff4b869a6f9065c2da8bfe257633eea8b9fb1ce4308bf",
+      "behavior_inspected": false,
+      "code_inspected": false,
+      "concepts": [
+        "heldout-rod-evaluation",
+        "integral-fuel-validation",
+        "restricted-data-access-policy"
+      ],
+      "copying_permitted": false,
+      "data_rights": "public-access-metadata-only-masterfiled-restricted-no-local-originator-agreement-evidence",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "OECD-copyright-no-copying-permission-established",
+      "license_digest": "utf8-excerpt-sha256:9d161f36fc51bceccb5cd5c4c1fcbfb6ef72ede32fbe0f0abe932a21e4b5f865",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [
+        {
+          "locator": "https://oecd-nea.org/tools/abstract/detail/nea-1664",
+          "title": "IFPE DATABASE: public description and restricted status"
+        },
+        {
+          "locator": "https://oecd-nea.org/jcms/pl_37221/international-fuel-performance-experiments-ifpe-request",
+          "title": "International Fuel Performance Experiments (IFPE) request"
+        }
+      ],
+      "relevant_documents": [
+        "https://oecd-nea.org/jcms/pl_37221/international-fuel-performance-experiments-ifpe-request@sha256:0f1d930b166b713c4623578a45b131412f99a1ac708693c346b389a6cd57bf75",
+        "https://oecd-nea.org/tools/abstract/detail/nea-1664@sha256:06dd6311afdb172400eff4b869a6f9065c2da8bfe257633eea8b9fb1ce4308bf"
+      ],
+      "relevant_paths": [],
+      "repository_url": "https://oecd-nea.org/tools/abstract/detail/nea-1664",
+      "reuse_class": "proprietary",
+      "review_status": "technically-reviewed",
+      "revision": "public-metadata-reviewed-2026-09-30-NEA-1664/03-status-2024-04-08",
+      "source_id": "nea-ifpe-access-metadata",
+      "source_reference_id": "cbd280eb7cba335ff55160f52ea9482a19f0ad8fa3cad455a4cfcda3e229bca2",
+      "technical_reviewer": "phydrax-public-document-technical-review-2026-09-30"
     },
     {
       "archive_digest": "git-tree-sha1:9cda85c9e7310a6990b0e1ad9b3244e3d9f0b35b",

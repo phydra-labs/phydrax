@@ -702,8 +702,9 @@ class LinearDerivativeSolvePolicy(StrictModule):
       cost). Minimum-norm problems instead apply the pseudoinverse through
       zero-start LSMR, accepted by its true residual or normal residual.
     - ``"primal-factors"`` reuses the primal square direct factorization
-      (``DenseLU`` or ``DenseCholesky``) and its algebraic transpose, then accepts
-      each solve by its true residual against the declared tolerances. It is exact
+      (``DenseLU``, ``DenseCholesky``, or native bordered ``StructuredDirect``)
+      and its algebraic transpose, then accepts each solve by its true residual
+      against the declared tolerances. It is exact
       to roundoff for indefinite operators, performs no iteration, and therefore
       refuses ``maximum_steps``; it serves systems without a declared nullspace and
       therefore refuses ``require_nullspace``.

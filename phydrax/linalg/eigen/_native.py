@@ -14,9 +14,9 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
-from .._spaces import _coordinate_pairing_matrix
+from .._spaces import _coordinate_pairing_matrix, _has_euclidean_pairing
 from ..krylov._decompositions import _block_inner, _orthonormalize_block, InnerProduct
-from ._problems import EigenproblemLike, GeneralizedEigenproblem
+from ._problems import Eigenproblem, EigenproblemLike, GeneralizedEigenproblem
 from ._results import _NativeEigenResult
 
 
@@ -81,23 +81,33 @@ def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         state.reduced_operator,
         symmetrize_input=False,
     )
-    vectors = jsp.linalg.solve_triangular(
-        jnp.conj(state.metric_factor.T),
-        reduced_vectors,
-        lower=False,
+    vectors = (
+        reduced_vectors
+        if isinstance(problem, Eigenproblem)
+        and _has_euclidean_pairing(problem.operator.source)
+        else jsp.linalg.solve_triangular(
+            jnp.conj(state.metric_factor.T),
+            reduced_vectors,
+            lower=False,
+        )
     )
-    if policy.which == "smallest-algebraic":
-        criterion = values
-    elif policy.which == "largest-algebraic":
-        criterion = -values
-    elif policy.which == "smallest-magnitude":
-        criterion = jnp.abs(values)
+    if policy.which == "smallest-algebraic" and policy.count == problem.dimension:
+        selected_indices = jnp.arange(problem.dimension)
+        selected_values = jnp.real(values)
+        selected_vectors = vectors
     else:
-        criterion = -jnp.abs(values)
-    order = jnp.argsort(criterion, stable=True)
-    selected_indices = order[: policy.count]
-    selected_values = jnp.real(values[selected_indices])
-    selected_vectors = vectors[:, selected_indices]
+        if policy.which == "smallest-algebraic":
+            criterion = values
+        elif policy.which == "largest-algebraic":
+            criterion = -values
+        elif policy.which == "smallest-magnitude":
+            criterion = jnp.abs(values)
+        else:
+            criterion = -jnp.abs(values)
+        order = jnp.argsort(criterion, stable=True)
+        selected_indices = order[: policy.count]
+        selected_values = jnp.real(values[selected_indices])
+        selected_vectors = vectors[:, selected_indices]
     mode_mask = jnp.ones((policy.count,), dtype=jnp.bool_)
     operator_vectors, operator_count = _operator_columns(
         problem.operator,
@@ -173,27 +183,40 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         state.reduced_operator,
         symmetrize_input=False,
     )
-    vectors = jsp.linalg.solve_triangular(
-        jnp.conj(jnp.swapaxes(state.metric_factor, -1, -2)),
-        reduced_vectors,
-        lower=False,
+    vectors = (
+        reduced_vectors
+        if isinstance(problem, Eigenproblem)
+        and _has_euclidean_pairing(problem.operator.source)
+        else jsp.linalg.solve_triangular(
+            jnp.conj(jnp.swapaxes(state.metric_factor, -1, -2)),
+            reduced_vectors,
+            lower=False,
+        )
     )
-    if policy.which == "smallest-algebraic":
-        criterion = values
-    elif policy.which == "largest-algebraic":
-        criterion = -values
-    elif policy.which == "smallest-magnitude":
-        criterion = jnp.abs(values)
+    if policy.which == "smallest-algebraic" and policy.count == problem.dimension:
+        selected_indices = jnp.broadcast_to(
+            jnp.arange(problem.dimension),
+            batch_shape + (problem.dimension,),
+        )
+        selected_values = jnp.real(values)
+        selected_vectors = vectors
     else:
-        criterion = -jnp.abs(values)
-    order = jnp.argsort(criterion, axis=-1, stable=True)
-    selected_indices = order[..., : policy.count]
-    selected_values = jnp.real(jnp.take_along_axis(values, selected_indices, axis=-1))
-    selected_vectors = jnp.take_along_axis(
-        vectors,
-        selected_indices[..., None, :],
-        axis=-1,
-    )
+        if policy.which == "smallest-algebraic":
+            criterion = values
+        elif policy.which == "largest-algebraic":
+            criterion = -values
+        elif policy.which == "smallest-magnitude":
+            criterion = jnp.abs(values)
+        else:
+            criterion = -jnp.abs(values)
+        order = jnp.argsort(criterion, axis=-1, stable=True)
+        selected_indices = order[..., : policy.count]
+        selected_values = jnp.real(jnp.take_along_axis(values, selected_indices, axis=-1))
+        selected_vectors = jnp.take_along_axis(
+            vectors,
+            selected_indices[..., None, :],
+            axis=-1,
+        )
     mode_mask = jnp.ones(batch_shape + (policy.count,), dtype=jnp.bool_)
     operator_vectors = _batched_operator_images(
         problem.operator,
@@ -223,7 +246,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         pairing,
         metric_vectors,
     )
-    identity = jnp.eye(policy.count, dtype=gram.dtype)
+    identity = jnp.broadcast_to(jnp.eye(policy.count, dtype=gram.dtype), gram.shape)
     orthogonality = jnp.max(
         jnp.abs(gram - identity),
         axis=(-2, -1),
@@ -317,9 +340,10 @@ def _batched_dense_isolation_gaps(
     distances = (
         distances - selected_uncertainty[..., :, None] - all_uncertainty[..., None, :]
     )
-    neighbors = (
-        selected_indices[..., :, None] != jnp.arange(all_values.shape[-1])[None, :]
+    candidates = jnp.arange(all_values.shape[-1]).reshape(
+        (1,) * selected_indices.ndim + (all_values.shape[-1],)
     )
+    neighbors = selected_indices[..., :, None] != candidates
     distances = jnp.where(neighbors, distances, jnp.asarray(jnp.inf))
     return jnp.min(distances, axis=-1)
 
