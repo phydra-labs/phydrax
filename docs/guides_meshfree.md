@@ -1281,6 +1281,11 @@ the native batched pseudoinverse (`z = C⁺c`, projector `I - C⁺C` per target)
 so the native rectangular `MinimumNormProblem` (`linear_policy`) only carries
 one conservation row per source; nonnegative requests use the native sparse
 conic program (`conic_policy`). An already feasible base is kept unchanged.
+Signed preparation also requests a bounded native QR-SVD rank and
+retained-spectrum certificate for the reduced conservation operator, using
+`linear_policy.materialization` and the local pseudoinverse's rank cutoff.
+If certification exceeds its native budgets, approximate-null residuals
+remain unresolved rather than becoming infeasibility claims.
 `PointTransferEvidence` audits every equation, sign and coverage on the host:
 conservation, constant and moment residuals, the correction and objective, the
 Lebesgue constant `max_r Σ_e |t_e|`, and `PointTransferStatus`. A degree-`p`
