@@ -844,6 +844,8 @@ def test_structural_condition_unions_dynamic_branch_jacobians() -> None:
         np.asarray(jax.jacfwd(branched)(negative, None)) != 0
     )
     assert np.array_equal(_traced_pattern(plan, (2, 4)), expected)
+
+
 @pytest.mark.parametrize("size", (0, 2), ids=("empty-constraints", "allocated-values"))
 def test_structural_trace_handles_input_independent_allocation(size: int) -> None:
     source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
