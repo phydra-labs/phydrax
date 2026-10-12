@@ -698,13 +698,16 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             0.0,
         )
 
-        def scatter_grid_force(_: None) -> tuple[Array, Array]:
-            result = self.dynamics.splat.scatter_route_payload(
-                routes, particle_grid_payload
-            )
+        def scatter_grid_force(
+            operands: tuple[ParticleGridSplatState, Array],
+        ) -> tuple[Array, Array]:
+            route_state, payload = operands
+            result = self.dynamics.splat.scatter_route_payload(route_state, payload)
             return result.values, result.successful
 
-        def reject_grid_force(_: None) -> tuple[Array, Array]:
+        def reject_grid_force(
+            _: tuple[ParticleGridSplatState, Array],
+        ) -> tuple[Array, Array]:
             output_dtype = self.dynamics.splat.plan.precision.output_dtype
             return (
                 jnp.zeros(
@@ -718,7 +721,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
             routes.successful,
             scatter_grid_force,
             reject_grid_force,
-            operand=None,
+            operand=(routes, particle_grid_payload),
         )
         flat_grid_force = grid_force.reshape(
             (self.dynamics.splat.target_size, self.ambient_dimension)
