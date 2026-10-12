@@ -282,6 +282,17 @@ refresh. Eisenstat--Walker forcing and remaining aggregate work limits are passe
 dynamic controls into the prepared native Krylov solve; they do not change its static
 loop or basis shape.
 
+These guards also apply to fixed-grid BDF and endpoint-theta stages, including
+event-enabled fixed-grid execution. A reused stage that lacks a certified root
+is retried once with fresh numerical preparation at the original predictor.
+The final certificate belongs to the retry; iteration, evaluation, linear-work,
+and refresh counters include both attempts, and `stale_jacobian_retries` records
+the retry explicitly. Setting `enabled=False` requests fresh preparation at every
+stage. The fixed-grid scan retains the last numerical preparation and its
+age/shift/work evidence internally; an event history reset invalidates reuse age.
+Fresh preparation is constructed only inside the selected branch, including on
+the adaptive route.
+
 `DAEStepHistory` records accepted times, step sizes, BDF orders, local error ratios,
 source attempt indices, and requested-time mappings. `DAEAttemptHistory` records every
 attempt and its nonlinear and linear work. Both histories have fixed capacity plus an
@@ -336,6 +347,13 @@ implicit-stage operator `F_y + shift * F_ydot` every `interval` accepted steps. 
 `condition_limit` classifies an otherwise full-rank operator as numerically singular.
 `failure="record"` preserves evidence without changing the solve; `"status"` promotes
 a probed singular stage to an explicit rejected attempt and terminal status.
+
+For fixed-grid periodic archives, `probe_batch_size=None` keeps the explicitly
+parallel batched route. A positive `probe_batch_size` selects bounded native
+`lax.map` batches. Interval-unrequested entries are not probed and remain ordered
+`NOT_RUN`/rank `-1`/condition `NaN`/invalid entries in the same full-length archive.
+The selector participates in the solve-plan identity. Adaptive and event-driven
+probes are already sequential; their archive order is unchanged.
 
 This evidence is local and numerical. It never claims a global differentiation index
 or regularity between probes.

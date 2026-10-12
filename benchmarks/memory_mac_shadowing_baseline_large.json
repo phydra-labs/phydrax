@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "capacity": 64,
+      "compilation_seconds": 0.090447334,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 16783360,
+        "bytes_accessed": 8081447424,
+        "flops": 403596096,
+        "generated_code_bytes": 0,
+        "output_bytes": 1568,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 2202224969028,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 503131,
+      "lowering_seconds": 0.021412833,
+      "rank": 3,
+      "retained_bytes": null,
+      "route": "baseline",
+      "samples": 8192,
+      "warm": null
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.113788042,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 33566720,
+        "bytes_accessed": 32275511296,
+        "flops": 1613342336,
+        "generated_code_bytes": 0,
+        "output_bytes": 3104,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 8808941848900,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 540548,
+      "lowering_seconds": 0.022937208,
+      "rank": 3,
+      "retained_bytes": null,
+      "route": "baseline",
+      "samples": 8192,
+      "warm": null
+    }
+  ],
+  "compiler_scaling_exponent": 2.0000068741601886,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "7a2b5f1367370c0ff3d2bc4c1af1fb39025a30e9763b9dfdce27998fa2dddc3a",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment"
+      ],
+      "signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c"
+    },
+    "fingerprint": "042c5383f35a32c9e0784f880e9b864530c05e27c17bd7fe3cd57f4d07204537",
+    "source_build_fingerprint": "ed300114c87460386c145256f95f154c27bc3124e872fa7375335e5bcfcf3d19"
+  },
+  "observed_peak_rss_bytes": 1590050816
+}

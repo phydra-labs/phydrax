@@ -29,11 +29,13 @@ from ._ilqr import (
     _flow_map,
     _local_model,
     _LocalModel,
+    _stage_model_factory,
     _trajectory_cost,
     _validate_solver_options,
     DifferentialControlFlow,
     ILQRDiagnostics,
     ILQRFlow,
+    ILQRLinearizationPolicy,
     ILQRPolicy,
     ILQRResult,
     ILQRStatus,
@@ -102,6 +104,7 @@ class ILQRPlan(StrictModule, NonTrainableState):
     line_search_decay: float = eqx.field(static=True)
     initial_step_size: float = eqx.field(static=True)
     armijo: float = eqx.field(static=True)
+    linearization_policy: ILQRLinearizationPolicy = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -121,6 +124,7 @@ def plan_ilqr(
     problem: ControlProblem,
     /,
     *,
+    linearization_policy: ILQRLinearizationPolicy | None = None,
     max_iterations: int = 100,
     regularization: float = 1.0e-6,
     gradient_tolerance: float = 1.0e-6,
@@ -144,6 +148,15 @@ def plan_ilqr(
         raise ValueError(
             "iLQR requires exact inverse-retraction and retraction-differential geometry."
         )
+    selected_linearization = (
+        ILQRLinearizationPolicy()
+        if linearization_policy is None
+        else linearization_policy
+    )
+    if not isinstance(selected_linearization, ILQRLinearizationPolicy):
+        raise TypeError(
+            "linearization_policy must be an ILQRLinearizationPolicy or None."
+        )
     values = _validate_solver_options(
         max_iterations=max_iterations,
         regularization=regularization,
@@ -162,12 +175,15 @@ def plan_ilqr(
             "maximum_iterations": values[0],
             "line_search_steps": values[4],
             "regularization": values[1],
+            "linearization_route": selected_linearization.route,
+            "max_batched_bytes": selected_linearization.max_batched_bytes,
         }
     )
     return ILQRPlan(
         *values[:4],
         values[4],
         *values[5:],
+        selected_linearization,
         problem.case_shape,
         problem.problem_id,
         plan_id,
@@ -196,6 +212,22 @@ def prepare_ilqr(
         )
     if not jnp.issubdtype(controls.dtype, jnp.inexact):
         controls = controls.astype("float64")
+    if plan.linearization_policy.route == "batched":
+        n = problem.dynamics.system.state_layout.local_size
+        m = prod(problem.control_shape)
+        t = problem.time_grid.num_steps
+        entries = t * (2 * n * n + 2 * n * m + m * m + n + 2 * m) + n * n + n
+        itemsize = max(
+            np.dtype(controls.dtype).itemsize,
+            np.dtype(problem.initial_state.dtype).itemsize,
+        )
+        required_bytes = prod(problem.case_shape) * entries * itemsize
+        if required_bytes > plan.linearization_policy.max_batched_bytes:
+            raise ValueError(
+                f"batched iLQR local models require {required_bytes} bytes, exceeding "
+                f"max_batched_bytes={plan.linearization_policy.max_batched_bytes}; select "
+                "'reverse-scan' or 'checkpointed-reverse-scan'."
+            )
     flow, discretization_id, backend_id = _flow_map(problem, differential_flow)
     prepared_id = canonical_fingerprint(
         {
@@ -527,76 +559,76 @@ def _select_transition_evidence(
     )
 
 
-def _backward(model: _LocalModel, regularization: float) -> _BackwardResult:
-    model.dynamics_state.shape[-1]
-    control_size = model.dynamics_control.shape[-1]
-    identity = jnp.eye(control_size, dtype=model.terminal_hessian.dtype)
+def _riccati_step(
+    carry: _BackwardCarry,
+    inputs: tuple[Array, ...],
+    regularization: float,
+) -> tuple[_BackwardCarry, tuple[Array, Array]]:
+    (
+        value_gradient,
+        value_hessian,
+        active,
+        linear,
+        quadratic,
+        curvature,
+        failed_step,
+    ) = carry
+    index, a, b, lx, lu, lxx, luu, lux = inputs
+    identity = jnp.eye(b.shape[-1], dtype=value_hessian.dtype)
+    index = jnp.asarray(index, dtype=jnp.int32)
+    qx = lx + ein.contract("ji,j->i", a, value_gradient)
+    qu = lu + ein.contract("ji,j->i", b, value_gradient)
+    qxx = lxx + ein.contract("ji,jk,kl->il", a, value_hessian, a)
+    quu = luu + ein.contract("ji,jk,kl->il", b, value_hessian, b)
+    qux = lux + ein.contract("ji,jk,kl->il", b, value_hessian, a)
+    qxx = 0.5 * (qxx + jnp.swapaxes(qxx, -1, -2))
+    regularized = 0.5 * (quu + jnp.swapaxes(quu, -1, -2)) + regularization * identity
+    factorization = prepare_local_block_factorization(
+        regularized[None], positive_definite=True
+    )
+    rhs = jnp.concatenate((qu[:, None], qux), axis=1)[None]
+    solved, failed = solve_local_blocks(factorization, rhs)
+    failed_ = jnp.ravel(failed)[0]
+    usable = active & (~failed_)
+    k = -solved[0, :, 0]
+    gain = -solved[0, :, 1:]
+    k = jnp.where(usable, k, 0)
+    gain = jnp.where(usable, gain, 0)
+    next_gradient = (
+        qx
+        + ein.contract("ji,j->i", gain, qu)
+        + ein.contract("ji,j->i", qux, k)
+        + ein.contract("ji,jk,k->i", gain, regularized, k)
+    )
+    next_hessian = (
+        qxx
+        + ein.contract("ji,jk->ik", gain, qux)
+        + ein.contract("ji,jk->ik", qux, gain)
+        + ein.contract("ji,jk,kl->il", gain, regularized, gain)
+    )
+    next_hessian = 0.5 * (next_hessian + jnp.swapaxes(next_hessian, -1, -2))
+    minimum = jnp.min(jnp.linalg.eigvalsh(regularized))
+    next_carry = (
+        jnp.where(usable, next_gradient, value_gradient),
+        jnp.where(usable, next_hessian, value_hessian),
+        usable,
+        linear + jnp.where(usable, ein.contract("i,i->", qu, k), 0),
+        quadratic
+        + jnp.where(usable, 0.5 * ein.contract("i,ij,j->", k, regularized, k), 0),
+        jnp.minimum(curvature, minimum),
+        jnp.where(active & failed_ & (failed_step < 0), index, failed_step).astype(
+            jnp.int32
+        ),
+    )
+    return next_carry, (k, gain)
 
+
+def _backward(model: _LocalModel, regularization: float) -> _BackwardResult:
     def step(
-        carry: _BackwardCarry, inputs: tuple[Array, ...]
+        carry: _BackwardCarry,
+        inputs: tuple[Array, ...],
     ) -> tuple[_BackwardCarry, tuple[Array, Array]]:
-        (
-            value_gradient,
-            value_hessian,
-            active,
-            linear,
-            quadratic,
-            curvature,
-            failed_step,
-        ) = carry
-        index, a, b, lx, lu, lxx, luu, lux = inputs
-        index = jnp.asarray(index, dtype=jnp.int32)
-        qx = lx + ein.contract("ji,j->i", a, value_gradient)
-        qu = lu + ein.contract("ji,j->i", b, value_gradient)
-        qxx = lxx + ein.contract("ji,jk,kl->il", a, value_hessian, a)
-        quu = luu + ein.contract("ji,jk,kl->il", b, value_hessian, b)
-        qux = lux + ein.contract("ji,jk,kl->il", b, value_hessian, a)
-        qxx = 0.5 * (qxx + jnp.swapaxes(qxx, -1, -2))
-        regularized = 0.5 * (quu + jnp.swapaxes(quu, -1, -2)) + regularization * identity
-        factorization = prepare_local_block_factorization(
-            regularized[None], positive_definite=True
-        )
-        rhs = jnp.concatenate((qu[:, None], qux), axis=1)[None]
-        solved, failed = solve_local_blocks(factorization, rhs)
-        failed_ = jnp.ravel(failed)[0]
-        usable = active & (~failed_)
-        k = -solved[0, :, 0]
-        gain = -solved[0, :, 1:]
-        k = jnp.where(usable, k, 0)
-        gain = jnp.where(usable, gain, 0)
-        next_gradient = (
-            qx
-            + ein.contract("ji,j->i", gain, qu)
-            + ein.contract("ji,j->i", qux, k)
-            + ein.contract("ji,jk,k->i", gain, regularized, k)
-        )
-        next_hessian = (
-            qxx
-            + ein.contract("ji,jk->ik", gain, qux)
-            + ein.contract("ji,jk->ik", qux, gain)
-            + ein.contract("ji,jk,kl->il", gain, regularized, gain)
-        )
-        next_hessian = 0.5 * (next_hessian + jnp.swapaxes(next_hessian, -1, -2))
-        minimum = jnp.min(jnp.linalg.eigvalsh(regularized))
-        next_carry = (
-            jnp.where(usable, next_gradient, value_gradient),
-            jnp.where(usable, next_hessian, value_hessian),
-            usable,
-            linear + jnp.where(usable, ein.contract("i,i->", qu, k), 0),
-            quadratic
-            + jnp.where(
-                usable,
-                0.5 * ein.contract("i,ij,j->", k, regularized, k),
-                0,
-            ),
-            jnp.minimum(curvature, minimum),
-            jnp.where(
-                active & failed_ & (failed_step < 0),
-                index,
-                failed_step,
-            ).astype(jnp.int32),
-        )
-        return next_carry, (k, gain)
+        return _riccati_step(carry, inputs, regularization)
 
     indices = jnp.arange(
         model.dynamics_state.shape[0] - 1,
@@ -634,6 +666,65 @@ def _backward(model: _LocalModel, regularization: float) -> _BackwardResult:
         final[5],
         final[2],
         final[6],
+    )
+
+
+def _backward_scan(
+    problem: ControlProblem,
+    states: Array,
+    controls: Array,
+    flow: ILQRFlow | None,
+    regularization: float,
+    checkpointed: bool,
+) -> tuple[_BackwardResult, Array]:
+    stage_model, terminal_gradient, terminal_hessian = _stage_model_factory(
+        problem,
+        states,
+        controls,
+        flow,
+    )
+    initial: _BackwardCarry = (
+        terminal_gradient,
+        terminal_hessian,
+        jnp.asarray(True),
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        jnp.asarray(jnp.inf),
+        jnp.asarray(-1, dtype=jnp.int32),
+    )
+
+    def step(
+        carry: tuple[_BackwardCarry, Array],
+        index: Array,
+    ) -> tuple[tuple[_BackwardCarry, Array], tuple[Array, Array, Array]]:
+        riccati, costate = carry
+        values = stage_model(index, states[index], states[index + 1], controls[index])
+        a, b, lx, lu, _, _, _ = values
+        reduced_gradient = lu + b.T @ costate
+        next_costate = lx + a.T @ costate
+        next_riccati, (feedforward, feedback) = _riccati_step(
+            riccati,
+            (index,) + values,
+            regularization,
+        )
+        return (next_riccati, next_costate), (feedforward, feedback, reduced_gradient)
+
+    (final, _), (feedforward, feedback, gradient) = jax.lax.scan(
+        jax.checkpoint(step) if checkpointed else step,
+        (initial, terminal_gradient),
+        jnp.arange(problem.time_grid.num_steps - 1, -1, -1, dtype=jnp.int32),
+    )
+    return (
+        (
+            jnp.flip(feedforward, axis=0),
+            jnp.flip(feedback, axis=0),
+            final[3],
+            final[4],
+            final[5],
+            final[2],
+            final[6],
+        ),
+        jnp.flip(gradient, axis=0),
     )
 
 
@@ -706,8 +797,32 @@ def _solve_case(
         ) = loop
 
         def advance(_: None) -> _ILQRLoop:
-            model = _local_model(problem, states_, controls_, prepared.flow)
-            gradient_norm = jnp.sqrt(jnp.sum(jnp.square(jnp.abs(model.control_gradient))))
+            match plan.linearization_policy.route:
+                case "batched":
+                    model = _local_model(problem, states_, controls_, prepared.flow)
+                    backward = _backward(model, plan.regularization)
+                    control_gradient = model.control_gradient
+                case "reverse-scan":
+                    backward, control_gradient = _backward_scan(
+                        problem,
+                        states_,
+                        controls_,
+                        prepared.flow,
+                        plan.regularization,
+                        False,
+                    )
+                case "checkpointed-reverse-scan":
+                    backward, control_gradient = _backward_scan(
+                        problem,
+                        states_,
+                        controls_,
+                        prepared.flow,
+                        plan.regularization,
+                        True,
+                    )
+                case _:
+                    raise ValueError("Unsupported iLQR linearization route.")
+            gradient_norm = jnp.sqrt(jnp.sum(jnp.square(jnp.abs(control_gradient))))
             (
                 feedforward,
                 feedback,
@@ -716,7 +831,7 @@ def _solve_case(
                 curvature,
                 backward_valid,
                 backward_failed,
-            ) = _backward(model, plan.regularization)
+            ) = backward
             gradient_converged = gradient_norm <= plan.gradient_tolerance
 
             search_initial = (
@@ -992,6 +1107,7 @@ def solve_prepared_ilqr(
         failed_step,
         status == int(ILQRStatus.SUCCESS),
         "iterative-lqr:prepared-fixed-capacity",
+        prepared.plan.linearization_policy.route,
     )
     return ILQRResult(control_result, policy, diagnostics)
 

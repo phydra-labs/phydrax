@@ -45,7 +45,21 @@ from ._assembly import (
     SparseAssemblyPolicy,
 )
 from ._auxiliary_space import hiptmair_xu_preconditioner_builder
+from ._banded_spectrum import (
+    banded_definiteness_certificate,
+    banded_eigenvalue_brackets,
+    banded_singular_value_brackets,
+    banded_singular_value_certificate,
+    BandedDefinitenessCertificate,
+    BandedEigenvalueBrackets,
+    BandedSingularValueBrackets,
+    BandedSpectrumStatus,
+)
 from ._binding import LinearSolveTemplate
+from ._block_banded_least_squares import (
+    BlockBandedLeastSquaresResult,
+    solve_block_banded_least_squares,
+)
 from ._block_preconditioning import (
     BlockFactorizationForm,
     BlockFactorizationPreconditioner,
@@ -222,6 +236,7 @@ from ._initial_guess import (
     HistoryInitialGuessStrategy,
     LearnedInitialGuess,
 )
+from ._inverse_residual import inverse_residual_certificate, InverseResidualCertificate
 from ._lanczos_resolvent import (
     lanczos_resolvent_form,
     LanczosResolventDiagnostics,
@@ -781,6 +796,8 @@ from .krylov import (
 
 
 __all__ = [
+    "BlockBandedLeastSquaresResult",
+    "solve_block_banded_least_squares",
     "compound_matrix",
     "ComplexMap",
     "ComplexMapEvidence",
@@ -867,6 +884,14 @@ __all__ = [
     "AdaptiveStochasticEstimate",
     "AdaptiveStochasticPolicy",
     "BandedLinearOperator",
+    "BandedDefinitenessCertificate",
+    "BandedEigenvalueBrackets",
+    "BandedSingularValueBrackets",
+    "BandedSpectrumStatus",
+    "banded_definiteness_certificate",
+    "banded_eigenvalue_brackets",
+    "banded_singular_value_brackets",
+    "banded_singular_value_certificate",
     "BiCGStab",
     "BaseNonsingularity",
     "BasePlusLowRankLinearOperator",
@@ -1263,6 +1288,8 @@ __all__ = [
     "solve_tridiagonal_lines",
     "adjoint",
     "assemble_diagonal",
+    "inverse_residual_certificate",
+    "InverseResidualCertificate",
     "assemble_block_operator",
     "select_block_operator",
     "assemble_sparse",

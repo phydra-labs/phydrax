@@ -1,0 +1,468 @@
+{
+  "baseline": false,
+  "cases": [
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.311094083,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 14113,
+        "flops": 1231,
+        "generated_code_bytes": 0,
+        "output_bytes": 856,
+        "source": "curvature",
+        "temporary_bytes": 8641,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 15968,
+      "logical_bytes": 600,
+      "lowering_seconds": 0.243979625,
+      "name": "curvature",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000516,
+        "mean_seconds": 0.000516,
+        "median_seconds": 0.000516,
+        "min_seconds": 0.000516,
+        "samples_seconds": [
+          0.000516
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.403422333,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 16694,
+        "flops": 1407,
+        "generated_code_bytes": 0,
+        "output_bytes": 856,
+        "source": "curvature-batch-1",
+        "temporary_bytes": 8792,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 15056,
+      "logical_bytes": 600,
+      "lowering_seconds": 1.25968825,
+      "name": "curvature-batch-1",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000370583,
+        "mean_seconds": 0.000370583,
+        "median_seconds": 0.000370583,
+        "min_seconds": 0.000370583,
+        "samples_seconds": [
+          0.000370583
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.813059916,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 82185,
+        "flops": 8372,
+        "generated_code_bytes": 0,
+        "output_bytes": 856,
+        "source": "curvature-batch-4",
+        "temporary_bytes": 33048,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 14984,
+      "logical_bytes": 600,
+      "lowering_seconds": 0.653963,
+      "name": "curvature-batch-4",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000363917,
+        "mean_seconds": 0.000363917,
+        "median_seconds": 0.000363917,
+        "min_seconds": 0.000363917,
+        "samples_seconds": [
+          0.000363917
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.022036959,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 1092,
+        "flops": 32,
+        "generated_code_bytes": 0,
+        "output_bytes": 576,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 12128,
+      "logical_bytes": 528,
+      "lowering_seconds": 0.019689958,
+      "name": "sensitivity",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000211375,
+        "mean_seconds": 0.000211375,
+        "median_seconds": 0.000211375,
+        "min_seconds": 0.000211375,
+        "samples_seconds": [
+          0.000211375
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.582151084,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 52961,
+        "flops": 2543,
+        "generated_code_bytes": 0,
+        "output_bytes": 1752,
+        "source": "curvature",
+        "temporary_bytes": 33729,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 26049,
+      "logical_bytes": 1240,
+      "lowering_seconds": 0.436542667,
+      "name": "curvature",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.002150208,
+        "mean_seconds": 0.002150208,
+        "median_seconds": 0.002150208,
+        "min_seconds": 0.002150208,
+        "samples_seconds": [
+          0.002150208
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.755543625,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 58118,
+        "flops": 2910,
+        "generated_code_bytes": 0,
+        "output_bytes": 1752,
+        "source": "curvature-batch-1",
+        "temporary_bytes": 33752,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 26096,
+      "logical_bytes": 1240,
+      "lowering_seconds": 1.626890625,
+      "name": "curvature-batch-1",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000966916,
+        "mean_seconds": 0.000966916,
+        "median_seconds": 0.000966916,
+        "min_seconds": 0.000966916,
+        "samples_seconds": [
+          0.000966916
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 2.587402541,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 307877,
+        "flops": 17367,
+        "generated_code_bytes": 0,
+        "output_bytes": 1752,
+        "source": "curvature-batch-4",
+        "temporary_bytes": 131160,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 26088,
+      "logical_bytes": 1240,
+      "lowering_seconds": 2.800891542,
+      "name": "curvature-batch-4",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.001179375,
+        "mean_seconds": 0.001179375,
+        "median_seconds": 0.001179375,
+        "min_seconds": 0.001179375,
+        "samples_seconds": [
+          0.001179375
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.023223875,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 2116,
+        "flops": 64,
+        "generated_code_bytes": 0,
+        "output_bytes": 1088,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 12080,
+      "logical_bytes": 1040,
+      "lowering_seconds": 0.009426125,
+      "name": "sensitivity",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000507583,
+        "mean_seconds": 0.000507583,
+        "median_seconds": 0.000507583,
+        "min_seconds": 0.000507583,
+        "samples_seconds": [
+          0.000507583
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 1.350646,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 204385,
+        "flops": 5167,
+        "generated_code_bytes": 0,
+        "output_bytes": 3544,
+        "source": "curvature",
+        "temporary_bytes": 133057,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 46977,
+      "logical_bytes": 2520,
+      "lowering_seconds": 1.5303235,
+      "name": "curvature",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.006066333,
+        "mean_seconds": 0.006066333,
+        "median_seconds": 0.006066333,
+        "min_seconds": 0.006066333,
+        "samples_seconds": [
+          0.006066333
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 2.454074083,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 214662,
+        "flops": 5918,
+        "generated_code_bytes": 0,
+        "output_bytes": 3544,
+        "source": "curvature-batch-1",
+        "temporary_bytes": 132760,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 46969,
+      "logical_bytes": 2520,
+      "lowering_seconds": 7.220783583,
+      "name": "curvature-batch-1",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.00234775,
+        "mean_seconds": 0.00234775,
+        "median_seconds": 0.00234775,
+        "min_seconds": 0.00234775,
+        "samples_seconds": [
+          0.00234775
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 12.345736625,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 1189189,
+        "flops": 35383,
+        "generated_code_bytes": 0,
+        "output_bytes": 3544,
+        "source": "curvature-batch-4",
+        "temporary_bytes": 523992,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 46961,
+      "logical_bytes": 2520,
+      "lowering_seconds": 8.197885458,
+      "name": "curvature-batch-4",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.005118792,
+        "mean_seconds": 0.005118792,
+        "median_seconds": 0.005118792,
+        "min_seconds": 0.005118792,
+        "samples_seconds": [
+          0.005118792
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 0.128776167,
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 4164,
+        "flops": 128,
+        "generated_code_bytes": 0,
+        "output_bytes": 2112,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 14744,
+      "logical_bytes": 2064,
+      "lowering_seconds": 0.061897167,
+      "name": "sensitivity",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000451375,
+        "mean_seconds": 0.000451375,
+        "median_seconds": 0.000451375,
+        "min_seconds": 0.000451375,
+        "samples_seconds": [
+          0.000451375
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "compiler_gates": {
+    "curvature": {
+      "baseline_bytes": 172865,
+      "candidate_bytes": 133057,
+      "capacity": 64,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    },
+    "curvature-batch-1": {
+      "baseline_bytes": 133057,
+      "candidate_bytes": 132760,
+      "capacity": 64,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    },
+    "curvature-batch-4": {
+      "baseline_bytes": 133057,
+      "candidate_bytes": 523992,
+      "capacity": 64,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    },
+    "sensitivity": {
+      "baseline_bytes": 131072,
+      "candidate_bytes": 0,
+      "capacity": 64,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5
+    }
+  },
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "6ff018740cbeb7e297bb1ce99b9d491f8c16047db76885a9a3424313874a61b6",
+    "evidence_fields": [
+      "cases",
+      "environment"
+    ],
+    "evidence_schema_signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c",
+    "fingerprint": "3779a226b42810af50124e45c3c07b353317e189f80beacccf2440474e3f1b5b",
+    "source_build_fingerprint": "26a1116e35d157f788a1a57a30eee62c82a7e9e610d172c51ddfc2f3785a66b9"
+  },
+  "logical_scaling_exponents": {
+    "curvature": 1.0351946639456993,
+    "curvature-batch-1": 1.0351946639456993,
+    "curvature-batch-4": 1.0351946639456993,
+    "sensitivity": 0.9834165680324006
+  },
+  "process_peak_rss_bytes": 3095969792
+}

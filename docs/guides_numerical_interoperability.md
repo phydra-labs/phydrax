@@ -1712,7 +1712,8 @@ Every existing consumer of `DiscreteControlDynamics` applies unchanged:
 - `linearize_discrete_dynamics` and `linear_quadratic_problem_from_discrete_dynamics`
   materialize dense stage Jacobians only under an explicit `MaterializationPolicy`,
   and refuse failed stages ("failed accepted-state transitions are not repaired").
-- `solve_receding_horizon_mpc`/`RecedingHorizonMPC` solve the dense LQ windows;
+- `solve_receding_horizon_mpc`/`RecedingHorizonMPC` solve sparse LQ windows by default;
+  differentiable controllers explicitly select `LinearControlCompilationPolicy("dense")`.
   `prepare_receding_horizon_mpc_sensitivity` keeps its regularity gate, so a
   weakly active (tied) control bound is refused, not differentiated.
 

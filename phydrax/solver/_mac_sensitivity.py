@@ -19,6 +19,10 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
+from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
+from ..linalg._block_banded_least_squares import solve_block_banded_least_squares
+from ..linalg._materialization import MaterializationPolicy
+from ..linalg.backends._jax_dense import DenseSVDState
 from ..typing import checked, parse
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._mac_adaptive import (
@@ -30,6 +34,7 @@ from ._mac_adaptive import (
 
 MACDerivativeMode: TypeAlias = Literal["smooth", "branchwise", "unsupported"]
 MACNeutralMode: TypeAlias = Literal["none", "flow"]
+MACShadowingSolveRoute: TypeAlias = Literal["block-banded", "dense-svd"]
 _SegmentCarry: TypeAlias = tuple[Array, Array, Array, Array]
 _SegmentInputs: TypeAlias = tuple[Array, Array, Array, Array]
 _SegmentOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
@@ -46,6 +51,91 @@ class MACShadowingStatus(IntEnum):
     CONTINUITY_RESIDUAL_FAILED = 6
     CONVERGENCE_FAILED = 7
     NEUTRAL_DIRECTION_FAILED = 8
+
+
+def _dense_shadowing_least_squares(
+    samples: Array,
+    targets: Array,
+    factors: Array,
+    offsets: Array,
+    continuity_weight: float,
+    regularization: float,
+    workspace_bytes: int,
+) -> tuple[Array, Array, Array, Array]:
+    count, rows, width = samples.shape
+    columns = count * width
+    weighted_rows = count * rows + (count - 1) * width
+    solve_rows = weighted_rows + (columns if regularization > 0.0 else 0)
+    required_bytes = (8 * solve_rows * columns + 4 * columns**2) * samples.dtype.itemsize
+    if required_bytes > workspace_bytes:
+        raise ValueError(
+            f"MAC dense-svd workspace requires {required_bytes} bytes, exceeding {workspace_bytes}; select block-banded."
+        )
+    segment_eye = jnp.eye(count, dtype=samples.dtype)
+    sample_design = contract("smk,sr->smrk", samples, segment_eye).reshape((-1, columns))
+    continuity = -contract("eij,er->eirj", factors[:-1], segment_eye[:-1]) + contract(
+        "ij,er->eirj", jnp.eye(width, dtype=samples.dtype), segment_eye[1:]
+    )
+    weighted = jnp.concatenate(
+        (
+            sample_design,
+            continuity_weight * continuity.reshape(((count - 1) * width, columns)),
+        ),
+        axis=0,
+    )
+    target = jnp.concatenate(
+        (targets.reshape((-1,)), continuity_weight * offsets[:-1].reshape((-1,)))
+    )
+    design = weighted
+    if regularization > 0.0:
+        design = jnp.concatenate(
+            (
+                weighted,
+                jnp.sqrt(jnp.asarray(regularization, dtype=samples.dtype))
+                * jnp.eye(columns, dtype=samples.dtype),
+            ),
+            axis=0,
+        )
+        target = jnp.concatenate((target, jnp.zeros((columns,), dtype=samples.dtype)))
+    policy = FactorizationPolicy(
+        "svd",
+        materialization=MaterializationPolicy(
+            max_entries=solve_rows * columns, max_bytes=workspace_bytes
+        ),
+    )
+    factor = factorize(DenseLinearOperator(design), policy)
+    state = factor.prepared_solve.state
+    if not isinstance(state, DenseSVDState):
+        raise TypeError("MAC dense-svd requires native dense SVD factors.")
+    tolerance = (
+        jnp.finfo(samples.dtype).eps
+        * max(design.shape)
+        * jnp.maximum(state.singular_values[0], 1.0)
+    )
+    inverse = jnp.where(
+        state.singular_values > tolerance, 1.0 / state.singular_values, 0.0
+    )
+    coefficients = state.vh.T @ (inverse * (state.u.T @ target))
+    diagnostic = state.singular_values
+    if regularization > 0.0:
+        diagnostic_factor = factorize(DenseLinearOperator(weighted), policy)
+        diagnostic_state = diagnostic_factor.prepared_solve.state
+        if not isinstance(diagnostic_state, DenseSVDState):
+            raise TypeError("MAC diagnostics require native dense SVD factors.")
+        diagnostic = diagnostic_state.singular_values
+    cutoff = (
+        jnp.finfo(samples.dtype).eps
+        * max(weighted.shape)
+        * jnp.maximum(diagnostic[0], 1.0)
+    )
+    full_rank = jnp.sum(diagnostic > cutoff, dtype=jnp.int32) == columns
+    minimum = jnp.min(diagnostic)
+    condition = jnp.where(
+        full_rank,
+        diagnostic[0] / jnp.maximum(minimum, jnp.finfo(samples.dtype).tiny),
+        jnp.inf,
+    )
+    return coefficients.reshape((count, width)), full_rank, minimum, condition
 
 
 def _zero_tangent(value: Any, /) -> Any:
@@ -331,6 +421,7 @@ class MACShadowingSensitivityResult(StrictModule):
     replay: MACFrozenGridReplayResult
     certification: MACReplayCertification
     neutral_mode: MACNeutralMode = eqx.field(static=True)
+    solve_route: MACShadowingSolveRoute = eqx.field(static=True)
     observable_id: str = eqx.field(static=True)
     shadowing_id: str = eqx.field(static=True)
 
@@ -344,6 +435,8 @@ class MACSegmentedShadowingPlan(StrictModule):
     neutral_mode: MACNeutralMode = eqx.field(static=True)
     continuity_weight: float = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
+    solve_route: MACShadowingSolveRoute = eqx.field(static=True)
+    dense_workspace_bytes: int = eqx.field(static=True)
     residual_tolerance: float = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
     qr_tolerance: float = eqx.field(static=True)
@@ -362,6 +455,8 @@ class MACSegmentedShadowingPlan(StrictModule):
         neutral_mode: MACNeutralMode = "flow",
         continuity_weight: float = 100.0,
         regularization: float = 0.0,
+        solve_route: MACShadowingSolveRoute = "block-banded",
+        dense_workspace_bytes: int = 512 * 1024 * 1024,
         residual_tolerance: float = 1e-6,
         condition_limit: float = 1e10,
         qr_tolerance: float = 1e-10,
@@ -374,6 +469,9 @@ class MACSegmentedShadowingPlan(StrictModule):
         if length <= 0 or dimension <= 0 or dimension > state_size:
             raise ValueError("MAC shadowing segment and tangent dimensions are invalid.")
         neutral_mode = parse(neutral_mode, MACNeutralMode, "neutral_mode")
+        solve_route = parse(solve_route, MACShadowingSolveRoute, "solve_route")
+        if dense_workspace_bytes < 1:
+            raise ValueError("dense_workspace_bytes must be positive.")
         if neutral_mode == "flow" and dimension >= state_size:
             raise ValueError(
                 "Flow-neutral shadowing needs tangent_dimension below state dimension."
@@ -400,6 +498,8 @@ class MACSegmentedShadowingPlan(StrictModule):
         self.neutral_mode = neutral_mode
         self.continuity_weight = numeric[0]
         self.regularization = numeric[1]
+        self.solve_route = solve_route
+        self.dense_workspace_bytes = dense_workspace_bytes
         self.residual_tolerance = numeric[2]
         self.condition_limit = numeric[3]
         self.qr_tolerance = numeric[4]
@@ -414,6 +514,8 @@ class MACSegmentedShadowingPlan(StrictModule):
                 "neutral_mode": neutral_mode,
                 "continuity_weight": numeric[0],
                 "regularization": numeric[1],
+                "solve_route": solve_route,
+                "dense_workspace_bytes": dense_workspace_bytes,
                 "residual_tolerance": numeric[2],
                 "condition_limit": numeric[3],
                 "qr_tolerance": numeric[4],
@@ -524,6 +626,7 @@ class MACSegmentedShadowingPlan(StrictModule):
                 replay,
                 certification,
                 self.neutral_mode,
+                self.solve_route,
                 observable_id_,
                 shadowing_id,
             )
@@ -729,75 +832,42 @@ class MACSegmentedShadowingPlan(StrictModule):
             neutral_valid = jnp.asarray(True)
             neutral_minimum = jnp.asarray(jnp.inf, dtype=dtype)
 
-        segment_eye = jnp.eye(segment_count, dtype=dtype)
-        sample_design = contract("slnk,sr->slnrk", projected_bases, segment_eye).reshape(
-            (-1, segment_count * tangent_dimension)
-        )
-        sample_target = -projected_inhomogeneous.reshape((-1,))
-        coefficient_eye = jnp.eye(tangent_dimension, dtype=dtype)
-        if segment_count > 1:
-            continuity_blocks = -contract(
-                "eij,er->eirj", qr_factors[:-1], segment_eye[:-1]
-            ) + contract("ij,er->eirj", coefficient_eye, segment_eye[1:])
-            continuity_design = continuity_blocks.reshape(
-                ((segment_count - 1) * tangent_dimension, -1)
-            )
-            continuity_target = offsets[:-1].reshape((-1,))
-        else:
-            continuity_design = jnp.zeros((0, tangent_dimension), dtype=dtype)
-            continuity_target = jnp.zeros((0,), dtype=dtype)
-        weighted_design = jnp.concatenate(
-            (
-                sample_design,
-                jnp.asarray(self.continuity_weight, dtype=dtype) * continuity_design,
-            ),
-            axis=0,
-        )
-        weighted_target = jnp.concatenate(
-            (
-                sample_target,
-                jnp.asarray(self.continuity_weight, dtype=dtype) * continuity_target,
-            )
-        )
-        if self.regularization > 0.0:
-            regularizer = jnp.sqrt(
-                jnp.asarray(self.regularization, dtype=dtype)
-            ) * jnp.eye(segment_count * tangent_dimension, dtype=dtype)
-            solve_design = jnp.concatenate((weighted_design, regularizer), axis=0)
-            solve_target = jnp.concatenate(
-                (
-                    weighted_target,
-                    jnp.zeros((segment_count * tangent_dimension,), dtype=dtype),
+        sample_blocks = projected_bases.reshape((segment_count, -1, tangent_dimension))
+        sample_targets = -projected_inhomogeneous.reshape((segment_count, -1))
+        weight = jnp.asarray(self.continuity_weight, dtype=dtype)
+        match self.solve_route:
+            case "block-banded":
+                banded = solve_block_banded_least_squares(
+                    sample_blocks,
+                    sample_targets,
+                    -weight * qr_factors[:-1],
+                    jnp.broadcast_to(
+                        weight * jnp.eye(tangent_dimension, dtype=dtype),
+                        qr_factors[:-1].shape,
+                    ),
+                    weight * offsets[:-1],
+                    regularization=self.regularization,
                 )
-            )
-        else:
-            solve_design = weighted_design
-            solve_target = weighted_target
-        solve_u, solve_s, solve_vh = jnp.linalg.svd(solve_design, full_matrices=False)
-        solve_tolerance = (
-            jnp.finfo(dtype).eps
-            * jnp.asarray(max(solve_design.shape), dtype=dtype)
-            * jnp.maximum(solve_s[0], 1.0)
-        )
-        inverse_singular = jnp.where(solve_s > solve_tolerance, 1.0 / solve_s, 0.0)
-        coefficients_flat = solve_vh.T @ (inverse_singular * (solve_u.T @ solve_target))
-        coefficients = coefficients_flat.reshape((segment_count, tangent_dimension))
-        diagnostic_singular = jnp.linalg.svd(
-            weighted_design, full_matrices=False, compute_uv=False
-        )
-        diagnostic_tolerance = (
-            jnp.finfo(dtype).eps
-            * jnp.asarray(max(weighted_design.shape), dtype=dtype)
-            * jnp.maximum(diagnostic_singular[0], 1.0)
-        )
-        rank = jnp.sum((diagnostic_singular > diagnostic_tolerance).astype(jnp.int32))
-        full_rank = rank == segment_count * tangent_dimension
-        minimum_singular = jnp.min(diagnostic_singular)
-        condition_number = jnp.where(
-            full_rank,
-            diagnostic_singular[0] / jnp.maximum(minimum_singular, jnp.finfo(dtype).tiny),
-            jnp.inf,
-        )
+                coefficients = banded.value
+                full_rank = (
+                    banded.rank_evidence.lower_bound == segment_count * tangent_dimension
+                )
+                minimum_singular = banded.minimum_singular_value
+                condition_number = banded.condition_number
+            case "dense-svd":
+                coefficients, full_rank, minimum_singular, condition_number = (
+                    _dense_shadowing_least_squares(
+                        sample_blocks,
+                        sample_targets,
+                        qr_factors,
+                        offsets,
+                        self.continuity_weight,
+                        self.regularization,
+                        self.dense_workspace_bytes,
+                    )
+                )
+            case _:
+                raise ValueError("Invalid MAC shadowing solve route.")
         if segment_count > 1:
             continuity_residual = (
                 contract("sij,sj->si", qr_factors[:-1], coefficients[:-1])
@@ -811,10 +881,12 @@ class MACSegmentedShadowingPlan(StrictModule):
         else:
             continuity_residual = jnp.zeros((0, tangent_dimension), dtype=dtype)
             continuity_residual_norm = jnp.zeros((), dtype=dtype)
-        least_squares_residual = sample_design @ coefficients_flat - sample_target
+        least_squares_residual = (
+            contract("smk,sk->sm", sample_blocks, coefficients) - sample_targets
+        )
         least_squares_residual_norm = jnp.linalg.norm(
             least_squares_residual
-        ) / jnp.maximum(jnp.linalg.norm(sample_target), 1.0)
+        ) / jnp.maximum(jnp.linalg.norm(sample_targets), 1.0)
         qr_singular = jax.vmap(lambda value: jnp.linalg.svd(value, compute_uv=False))(
             qr_factors
         )
@@ -966,6 +1038,7 @@ class MACSegmentedShadowingPlan(StrictModule):
             replay,
             certification,
             self.neutral_mode,
+            self.solve_route,
             observable_id_,
             shadowing_id,
         )
@@ -975,6 +1048,7 @@ __all__ = [
     "MACDerivativeMode",
     "MACFixedGridSensitivityPlan",
     "MACNeutralMode",
+    "MACShadowingSolveRoute",
     "MACReplayCertification",
     "MACSegmentedShadowingPlan",
     "MACShadowingSensitivityResult",

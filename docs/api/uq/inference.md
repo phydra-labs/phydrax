@@ -1702,6 +1702,16 @@ is the default; an explicit HMC sequential fallback remains recorded in
 `CausalNUTSConfig` with a fixed `2**max_num_doublings` trajectory capacity and
 ordinary generalized U-turn selection over only certified states.
 
+`CausalHMCConfig(adjoint=phx.nonlinear.CausalAdjointPolicy("action-scan"))`
+forwards the exact low-memory implicit derivative route to every trajectory block;
+`"checkpointed-action-scan"` is also selectable. The default remains byte-admitted
+`"dense-associative"` and names these alternatives when it refuses. This derivative
+selector does not alter the velocity-Verlet primal, RNG addresses, or Metropolis
+decision. Kernel receipts expose `info.causal_adjoint`, and sampled results retain
+the policy as `result.causal_config.adjoint` (or the recurrence field for NUTS).
+The serialized causal configuration includes route and policy identity, so
+checkpoint/configuration identity intentionally distinguishes these choices.
+
 ::: phydrax.uq.CausalHMCConfig
 
 ---
