@@ -689,21 +689,6 @@ def test_structural_trace_resolves_statically_passing_bounds_checks() -> None:
     assert plan.coloring.num_colors == 1
 
 
-def test_structural_trace_preserves_dependencies_beside_empty_allocations() -> None:
-    space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
-
-    def with_empty(value: jax.Array, _: None) -> jax.Array:
-        return jnp.concatenate((value**2, jnp.empty((0,), dtype=value.dtype)))
-
-    point = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float64)
-    plan = phx.sparse.compile_sparse_jacobian(
-        with_empty, point, source=space, target=space, compiler="auto"
-    )
-    expected = np.asarray(jax.jacfwd(with_empty)(point, None)) != 0
-    assert np.array_equal(_traced_pattern(plan, (3, 3)), expected)
-    assert plan.coloring.num_colors == 1
-
-
 @pytest.mark.parametrize("reverse", (False, True))
 def test_structural_scan_tracks_constants_tuple_carry_and_stacked_outputs(
     reverse: bool,
@@ -859,3 +844,18 @@ def test_structural_condition_unions_dynamic_branch_jacobians() -> None:
         np.asarray(jax.jacfwd(branched)(negative, None)) != 0
     )
     assert np.array_equal(_traced_pattern(plan, (2, 4)), expected)
+@pytest.mark.parametrize("size", (0, 2), ids=("empty-constraints", "allocated-values"))
+def test_structural_trace_handles_input_independent_allocation(size: int) -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((3 + size,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4])
+
+    def allocated(value: Any, _: Any) -> Any:
+        return jnp.concatenate((value**2, jnp.empty((size,), dtype=value.dtype)))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        allocated, point, source=source, target=target, compiler="auto"
+    )
+    expected = jax.jacfwd(allocated)(point, None)
+    assert np.array_equal(_traced_pattern(plan, (3 + size, 3)), expected != 0)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
