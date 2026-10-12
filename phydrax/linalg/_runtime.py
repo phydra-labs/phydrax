@@ -1207,7 +1207,9 @@ def _audit_minimum_norm(
     operator = problem.operator
     source, target = operator.source, operator.target
     positive = residual_norm > 0.0
-    residual_witness = residual / jnp.where(positive, residual_norm, 1.0)[..., None, :]
+    residual_witness = residual / jnp.where(positive, residual_norm, 1.0).astype(
+        residual.dtype
+    )[..., None, :]
     normal_residual = jnp.where(
         positive,
         residual_norm
@@ -1225,7 +1227,9 @@ def _audit_minimum_norm(
         direction, confirmed = left_null_candidate
         direction_norm = _coordinate_norm(target, direction)
         witness_valid = direction_norm > 0.0
-        witness = direction / jnp.where(witness_valid, direction_norm, 1.0)[..., None, :]
+        witness = direction / jnp.where(witness_valid, direction_norm, 1.0).astype(
+            direction.dtype
+        )[..., None, :]
         least_squares_stationary = _rhs_broadcast(confirmed, residual_norm.shape)
     left_null = jnp.where(
         witness_valid,

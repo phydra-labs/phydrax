@@ -2327,7 +2327,7 @@ def _lsmr_raw(
     )
     v = adjoint((u_operator, u_regularizer))
     alpha = _norm(v, source_inner)
-    v = v / jnp.where(alpha > 0.0, alpha, 1.0)
+    v = v / jnp.where(alpha > 0.0, alpha, 1.0).astype(v.dtype)
     norm_b = _target_norm(rhs, target_inner)
     state = _LSMRState(
         iteration=jnp.asarray(0, dtype=jnp.int32),
@@ -2388,16 +2388,27 @@ def _lsmr_raw(
     def step(index: Array, current: _LSMRState) -> _LSMRState:
         def execute(value: _LSMRState) -> _LSMRState:
             image_operator, image_regularizer = action(value.v)
-            next_u_operator = image_operator - value.alpha * value.u_operator
-            next_u_regularizer = image_regularizer - value.alpha * value.u_regularizer
+            next_u_operator = (
+                image_operator
+                - value.alpha.astype(value.u_operator.dtype) * value.u_operator
+            )
+            next_u_regularizer = (
+                image_regularizer
+                - value.alpha.astype(value.u_regularizer.dtype) * value.u_regularizer
+            )
             next_beta = _target_norm((next_u_operator, next_u_regularizer), target_inner)
             next_u_operator, next_u_regularizer = _target_scale(
                 (next_u_operator, next_u_regularizer),
                 1.0 / jnp.where(next_beta > 0.0, next_beta, 1.0),
             )
-            next_v = adjoint((next_u_operator, next_u_regularizer)) - next_beta * value.v
+            next_v = (
+                adjoint((next_u_operator, next_u_regularizer))
+                - next_beta.astype(value.v.dtype) * value.v
+            )
             next_alpha = _norm(next_v, source_inner)
-            next_v = next_v / jnp.where(next_alpha > 0.0, next_alpha, 1.0)
+            next_v = next_v / jnp.where(next_alpha > 0.0, next_alpha, 1.0).astype(
+                next_v.dtype
+            )
             chat, shat, alphahat = _symmetric_orthogonalization(
                 value.alphabar, jnp.asarray(damping, dtype=value.alphabar.dtype)
             )
@@ -2414,12 +2425,15 @@ def _lsmr_raw(
                 1.0,
                 value.rho * value.rhobar,
             )
-            hbar = value.h - value.hbar * (theta_bar * rho / safe_denominator)
-            x = (
-                value.x
-                + (zeta / jnp.where(rho * rho_bar == 0.0, 1.0, rho * rho_bar)) * hbar
+            hbar = value.h - value.hbar * (theta_bar * rho / safe_denominator).astype(
+                value.hbar.dtype
             )
-            h = next_v - value.h * (theta_new / jnp.where(rho == 0.0, 1.0, rho))
+            x = value.x + (
+                zeta / jnp.where(rho * rho_bar == 0.0, 1.0, rho * rho_bar)
+            ).astype(hbar.dtype) * hbar
+            h = next_v - value.h * (
+                theta_new / jnp.where(rho == 0.0, 1.0, rho)
+            ).astype(value.h.dtype)
             beta_acute = chat * value.betadd
             beta_check = -shat * value.betadd
             beta_hat = cosine * beta_acute
@@ -2831,7 +2845,10 @@ def _target_subtract(left: _TargetPair, right: _TargetPair) -> _TargetPair:
 
 
 def _target_scale(value: _TargetPair, scalar: Array) -> _TargetPair:
-    return scalar * value[0], scalar * value[1]
+    return (
+        scalar.astype(value[0].dtype) * value[0],
+        scalar.astype(value[1].dtype) * value[1],
+    )
 
 
 def _symmetric_orthogonalization(left: Array, right: Array) -> tuple[Array, Array, Array]:

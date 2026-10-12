@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Native LSMR and minimum-norm witness audits explicitly cast real
+  normalization and recurrence scalars to their vector dtype, preserving
+  complex Bloch seam projections under strict JAX dtype promotion.
 - Finite-element sparse assembly keeps traced DOF routes on device, allowing
   prepared mass actions inside mixed-method coupling scans without NumPy
   tracer conversion. Namespace and grouped-derivative refusal tests now reflect
