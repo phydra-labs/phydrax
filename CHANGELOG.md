@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Reacting-flow regressions distinguish exact source-process invariants from
+  roundoff in SSPRK transport and conservative-content reconstruction introduced
+  by the coupled finite-volume runtime (`c46ef0dd5`) and balance-law source
+  adapter (`06c97db0b`). Composed endpoint checks use eight dtype epsilons with
+  zero absolute tolerance; source energy/species invariants and rollback to
+  the initialized authoritative state remain bit-exact.
 - Modified Cam-Clay preserves its elastic/plastic branch boundary under mapped
   differentiation, preventing discarded singular plastic-root adjoints from
   contaminating elastic reverse-mode tangents; root refusal evidence is unchanged.
