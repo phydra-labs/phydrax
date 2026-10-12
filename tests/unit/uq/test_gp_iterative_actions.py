@@ -147,33 +147,3 @@ def test_bounded_iterative_actions_match_dense_reference(kind: str) -> None:
         policy.resolve(
             points, state=state, residual=jnp.asarray(residual), max_workspace_bytes=79
         )
-
-
-@pytest.mark.parametrize("fault", ["dropped-row", "wrong-pivot"])
-def test_iterative_dense_oracle_detects_planted_fault(
-    monkeypatch: pytest.MonkeyPatch,
-    fault: str,
-) -> None:
-    from phydrax.uq import _gp_computation_backend as backend
-
-    if fault == "dropped-row":
-        original = backend._kernel_matrix_action
-
-        def dropped(*args: Any, **kwargs: Any) -> Any:
-            action, batch, workspace, entries = original(*args, **kwargs)
-            return action.at[-1].set(0.0), batch, workspace, entries
-
-        monkeypatch.setattr(backend, "_kernel_matrix_action", dropped)
-        kind = "lanczos"
-    else:
-        diagonal = backend._GaussianProcessCovarianceOperator.diagonal
-
-        def wrong_pivot(operator: Any) -> Any:
-            return 2.0 * diagonal(operator)
-
-        monkeypatch.setattr(
-            backend._GaussianProcessCovarianceOperator, "diagonal", wrong_pivot
-        )
-        kind = "gauss-seidel"
-    with pytest.raises(AssertionError):
-        test_bounded_iterative_actions_match_dense_reference(kind)

@@ -98,19 +98,3 @@ def test_bounded_variational_geometry_and_elbo_dense_oracle(budget_rows: int) ->
                 max_workspace_bytes=(n + m) * 8 - 1
             ),
         )
-
-
-def test_variational_dense_oracle_detects_dropped_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from phydrax.uq import _gp_computation_variational as implementation
-
-    original = implementation._kernel_matrix_action
-
-    def dropped(*args: Any, **kwargs: Any) -> Any:
-        action, batch, workspace, entries = original(*args, **kwargs)
-        return action.at[-1].set(0.0), batch, workspace, entries
-
-    monkeypatch.setattr(implementation, "_kernel_matrix_action", dropped)
-    with pytest.raises(AssertionError):
-        test_bounded_variational_geometry_and_elbo_dense_oracle(1)

@@ -1,13 +1,13 @@
 {
   "diagonal_fit_latency": [
     {
-      "candidate_to_dev_warm_ratio": 0.20179348021421126,
+      "candidate_to_dev_warm_ratio": 0.18076762748761022,
       "dimension": 16,
       "routes": {
         "candidate": {
           "compilation": {
-            "compilation_seconds": 0.138716292,
-            "lowering_seconds": 0.012958459
+            "compilation_seconds": 0.058955917,
+            "lowering_seconds": 0.009424542
           },
           "compiler": {
             "argument_bytes": 2048,
@@ -21,34 +21,34 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 3.3208e-05,
-            "mean_seconds": 2.4219333333333334e-05,
-            "median_seconds": 2.2458e-05,
-            "min_seconds": 1.9917e-05,
+            "max_seconds": 3.1417e-05,
+            "mean_seconds": 2.3752733333333334e-05,
+            "median_seconds": 2.3417e-05,
+            "min_seconds": 1.7917e-05,
             "samples_seconds": [
-              2.6958e-05,
-              2.8625e-05,
-              2.1458e-05,
-              2.475e-05,
-              3.3208e-05,
-              2.1417e-05,
-              1.9917e-05,
-              3.0292e-05,
-              2.0791e-05,
-              2.6291e-05,
-              2.1708e-05,
-              2.0167e-05,
-              2.2167e-05,
-              2.2458e-05,
-              2.3083e-05
+              2.1875e-05,
+              3.1417e-05,
+              2.8292e-05,
+              2.3416e-05,
+              2.0708e-05,
+              2.2208e-05,
+              2.1917e-05,
+              2.5042e-05,
+              2.4042e-05,
+              2.3417e-05,
+              2.4208e-05,
+              2.425e-05,
+              1.7917e-05,
+              2.5416e-05,
+              2.2166e-05
             ],
-            "std_seconds": 3.8835757520901045e-06
+            "std_seconds": 3.051391168339815e-06
           }
         },
         "dev-dense": {
           "compilation": {
-            "compilation_seconds": 0.232404334,
-            "lowering_seconds": 0.347751042
+            "compilation_seconds": 0.163812542,
+            "lowering_seconds": 0.153488125
           },
           "compiler": {
             "argument_bytes": 2048,
@@ -62,40 +62,40 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 0.000153625,
-            "mean_seconds": 0.00011516953333333333,
-            "median_seconds": 0.000111292,
-            "min_seconds": 0.000105833,
+            "max_seconds": 0.000213125,
+            "mean_seconds": 0.00013770826666666664,
+            "median_seconds": 0.000129542,
+            "min_seconds": 0.000106917,
             "samples_seconds": [
-              0.000153625,
-              0.000119083,
-              0.000117584,
-              0.000105833,
-              0.000115334,
-              0.000107541,
-              0.0001165,
-              0.000117292,
-              0.000110208,
-              0.000114208,
-              0.000106709,
-              0.000111209,
-              0.000110042,
-              0.000111083,
-              0.000111292
+              0.000128541,
+              0.000129542,
+              0.000122166,
+              0.000131959,
+              0.000106917,
+              0.000108875,
+              0.000121167,
+              0.000180667,
+              0.000128291,
+              0.000213125,
+              0.000141333,
+              0.000134208,
+              0.00012575,
+              0.000147333,
+              0.00014575
             ],
-            "std_seconds": 1.1022612042927435e-05
+            "std_seconds": 2.6364031933593834e-05
           }
         }
       }
     },
     {
-      "candidate_to_dev_warm_ratio": 0.2251900981121701,
+      "candidate_to_dev_warm_ratio": 0.10406234961644953,
       "dimension": 64,
       "routes": {
         "candidate": {
           "compilation": {
-            "compilation_seconds": 0.151857333,
-            "lowering_seconds": 0.051993666
+            "compilation_seconds": 0.052236916,
+            "lowering_seconds": 0.009594042
           },
           "compiler": {
             "argument_bytes": 32768,
@@ -109,34 +109,34 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 0.012162959,
-            "mean_seconds": 0.0009594196,
-            "median_seconds": 0.000170375,
-            "min_seconds": 6.4958e-05,
+            "max_seconds": 0.000570208,
+            "mean_seconds": 0.00012622213333333333,
+            "median_seconds": 7.6334e-05,
+            "min_seconds": 6.1292e-05,
             "samples_seconds": [
-              0.000290833,
-              0.000182542,
-              0.012162959,
-              0.000237375,
-              6.9125e-05,
-              6.4958e-05,
-              9.6875e-05,
-              8.825e-05,
-              0.00010725,
-              0.000170375,
-              0.000220542,
-              0.000302917,
-              0.000198792,
-              0.000105834,
-              9.2667e-05
+              0.000570208,
+              0.000190458,
+              0.000209208,
+              0.000103041,
+              9.3125e-05,
+              8.3917e-05,
+              7.1458e-05,
+              6.8125e-05,
+              7.6334e-05,
+              7.15e-05,
+              6.1292e-05,
+              6.6875e-05,
+              7.45e-05,
+              6.8208e-05,
+              8.5083e-05
             ],
-            "std_seconds": 0.0029952288615729917
+            "std_seconds": 0.00012619768522064456
           }
         },
         "dev-dense": {
           "compilation": {
-            "compilation_seconds": 0.265919875,
-            "lowering_seconds": 0.265769542
+            "compilation_seconds": 0.148263625,
+            "lowering_seconds": 0.114419917
           },
           "compiler": {
             "argument_bytes": 32768,
@@ -150,40 +150,40 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 0.000768125,
-            "mean_seconds": 0.0007552722,
-            "median_seconds": 0.000756583,
-            "min_seconds": 0.00073925,
+            "max_seconds": 0.000784208,
+            "mean_seconds": 0.0007367945333333334,
+            "median_seconds": 0.000733541,
+            "min_seconds": 0.000716208,
             "samples_seconds": [
-              0.000764792,
+              0.000741042,
+              0.000733125,
+              0.000734292,
+              0.000744542,
+              0.000733541,
               0.00073925,
-              0.000748542,
-              0.000768125,
-              0.000765875,
-              0.00074175,
-              0.000741708,
-              0.000751833,
-              0.000764,
-              0.000767833,
-              0.00074675,
-              0.000767208,
-              0.000745042,
-              0.000756583,
-              0.000759792
+              0.000722416,
+              0.000729459,
+              0.000744625,
+              0.000784208,
+              0.000732959,
+              0.000716208,
+              0.000726709,
+              0.000739542,
+              0.00073
             ],
-            "std_seconds": 1.0407547288386443e-05
+            "std_seconds": 1.4783462304736177e-05
           }
         }
       }
     },
     {
-      "candidate_to_dev_warm_ratio": 0.14818227274391724,
+      "candidate_to_dev_warm_ratio": 0.18561884427302155,
       "dimension": 256,
       "routes": {
         "candidate": {
           "compilation": {
-            "compilation_seconds": 0.057113709,
-            "lowering_seconds": 0.009827875
+            "compilation_seconds": 0.048026375,
+            "lowering_seconds": 0.007719583
           },
           "compiler": {
             "argument_bytes": 524288,
@@ -197,34 +197,34 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 0.005762458,
-            "mean_seconds": 0.0037682276,
-            "median_seconds": 0.003706792,
-            "min_seconds": 0.00229625,
+            "max_seconds": 0.00402725,
+            "mean_seconds": 0.003149474933333333,
+            "median_seconds": 0.00336875,
+            "min_seconds": 0.002315958,
             "samples_seconds": [
-              0.003292041,
-              0.004112083,
-              0.004306459,
-              0.003402416,
-              0.003103042,
-              0.004254708,
-              0.003049125,
-              0.002624416,
-              0.00229625,
-              0.005576291,
-              0.002627875,
-              0.003827583,
-              0.004581875,
-              0.003706792,
-              0.005762458
+              0.003233,
+              0.002439542,
+              0.002315958,
+              0.002547791,
+              0.002482959,
+              0.003652708,
+              0.002321417,
+              0.003533458,
+              0.003793416,
+              0.003142,
+              0.00348875,
+              0.003424,
+              0.00402725,
+              0.00336875,
+              0.003471125
             ],
-            "std_seconds": 0.0009884513041567467
+            "std_seconds": 0.0005553126523898006
           }
         },
         "dev-dense": {
           "compilation": {
-            "compilation_seconds": 0.347100541,
-            "lowering_seconds": 0.29573125
+            "compilation_seconds": 0.151465042,
+            "lowering_seconds": 0.123367209
           },
           "compiler": {
             "argument_bytes": 524288,
@@ -238,28 +238,28 @@
           },
           "warm_execution": {
             "count": 15,
-            "max_seconds": 0.03547975,
-            "mean_seconds": 0.026122130533333333,
-            "median_seconds": 0.025015084,
-            "min_seconds": 0.017696458,
+            "max_seconds": 0.021816875,
+            "mean_seconds": 0.01815786386666667,
+            "median_seconds": 0.01814875,
+            "min_seconds": 0.0149745,
             "samples_seconds": [
-              0.022332708,
-              0.028455958,
-              0.026314459,
-              0.017696458,
-              0.022233333,
-              0.025015084,
-              0.033915833,
-              0.032946083,
-              0.03547975,
-              0.023905833,
-              0.02571125,
-              0.023764125,
-              0.025872584,
-              0.024836625,
-              0.023351875
+              0.02058325,
+              0.020307375,
+              0.018320958,
+              0.021816875,
+              0.016265583,
+              0.020107625,
+              0.017710083,
+              0.016899417,
+              0.019738333,
+              0.017903667,
+              0.015027792,
+              0.018362875,
+              0.0149745,
+              0.016200875,
+              0.01814875
             ],
-            "std_seconds": 0.004633839220073938
+            "std_seconds": 0.0019908109224235524
           }
         }
       }
@@ -311,14 +311,14 @@
       ],
       "signature": "8380f4d6a8b16ad698359012d184d89773c285357cddf22b48325ecef571a323"
     },
-    "fingerprint": "687d0cf30c203cd9923236d5ef30615b81a563a98896676bef0e722f403f137b",
-    "source_build_fingerprint": "845fa8c21ec14cec9fb0101d31ce0fd29fb3484a603bb795763e7d88dfbf5d78"
+    "fingerprint": "e39695ccc3a267921f30c79a9a6cd3b10be9131f5b9f0c95c6cd7a8711d8eaaa",
+    "source_build_fingerprint": "788f70b70989af0976c5d02521e5fd98e3ba6825f3be148b7e2518296fd87cbd"
   },
   "records": [
     {
       "compilation": {
-        "compilation_seconds": 0.024929625,
-        "lowering_seconds": 0.001752459
+        "compilation_seconds": 0.016478917,
+        "lowering_seconds": 0.001665167
       },
       "compiler": {
         "argument_bytes": 256,
@@ -337,8 +337,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.06518925,
-        "lowering_seconds": 0.004944792
+        "compilation_seconds": 0.035287625,
+        "lowering_seconds": 0.006081375
       },
       "compiler": {
         "argument_bytes": 768,
@@ -357,8 +357,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.125500125,
-        "lowering_seconds": 0.001894958
+        "compilation_seconds": 0.033678959,
+        "lowering_seconds": 0.001935583
       },
       "compiler": {
         "argument_bytes": 768,
@@ -377,8 +377,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.107965791,
-        "lowering_seconds": 0.005426334
+        "compilation_seconds": 0.056460542,
+        "lowering_seconds": 0.006337375
       },
       "compiler": {
         "argument_bytes": 2304,
@@ -397,8 +397,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.025504583,
-        "lowering_seconds": 0.007154459
+        "compilation_seconds": 0.018139875,
+        "lowering_seconds": 0.003816917
       },
       "compiler": {
         "argument_bytes": 512,
@@ -417,8 +417,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.060832375,
-        "lowering_seconds": 0.007175667
+        "compilation_seconds": 0.035917458,
+        "lowering_seconds": 0.003261125
       },
       "compiler": {
         "argument_bytes": 1536,
@@ -437,8 +437,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.048749167,
-        "lowering_seconds": 0.002201875
+        "compilation_seconds": 0.034797583,
+        "lowering_seconds": 0.001939584
       },
       "compiler": {
         "argument_bytes": 1536,
@@ -457,8 +457,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.100570584,
-        "lowering_seconds": 0.019299584
+        "compilation_seconds": 0.0520555,
+        "lowering_seconds": 0.00777975
       },
       "compiler": {
         "argument_bytes": 8704,
@@ -477,8 +477,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.055406917,
-        "lowering_seconds": 0.00159225
+        "compilation_seconds": 0.018941083,
+        "lowering_seconds": 0.001610083
       },
       "compiler": {
         "argument_bytes": 1024,
@@ -497,8 +497,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.03491725,
-        "lowering_seconds": 0.00999175
+        "compilation_seconds": 0.031335,
+        "lowering_seconds": 0.003809166
       },
       "compiler": {
         "argument_bytes": 3072,
@@ -517,8 +517,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.07530775,
-        "lowering_seconds": 0.00720925
+        "compilation_seconds": 0.032790333,
+        "lowering_seconds": 0.001962875
       },
       "compiler": {
         "argument_bytes": 3072,
@@ -537,8 +537,8 @@
     },
     {
       "compilation": {
-        "compilation_seconds": 0.087350834,
-        "lowering_seconds": 0.005843333
+        "compilation_seconds": 0.068868833,
+        "lowering_seconds": 0.006409167
       },
       "compiler": {
         "argument_bytes": 33792,

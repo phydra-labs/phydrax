@@ -1019,6 +1019,10 @@ the kernel diagonal plus observation variance for each pivot. Actions and
 projected features retain O(n m) storage for n observations and m actions; no
 n-by-n observation covariance is formed. The action-whitened variational ELBO
 accepts the same `computation` policy and builds its features with bounded rows.
+Direct action-policy `resolve()` calls accept `max_workspace_bytes` (64 MiB by
+default) and `checkpoint_kernel_blocks` (default `True`). Computation-aware factors
+forward both settings from their computation policy; checkpointing recomputes
+kernel blocks during differentiation instead of retaining their intermediates.
 
 If the kernel exposes the `AbstractFiniteFeatureKernel` capability and its rank is
 strictly smaller than the observation count, `ExactGaussianProcessDiscrepancy.factor`
