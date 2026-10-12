@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Taylor chains lower admitted scalar divergence in one dimension as the
+  coordinate derivative without vector-component indexing; multidimensional
+  scalar divergence remains refused. Quadrilateral field-view tests and
+  reconstruction documentation now exercise the native default point locator.
 - Dense fractional Gaussian regression coverage checks exact seeded replay and
   independent analytic covariance instead of a platform-specific byte hash of
   LAPACK-based samples; realization and coupling identifier pins remain intact.
