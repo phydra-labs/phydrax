@@ -11,6 +11,13 @@
 - Thermal/isothermal battery transport regression comparisons scale the
   separator's cancellation-roundoff floor by summed electrolyte transport
   magnitudes instead of applying a relative-only tolerance near zero.
+- Residual-penalty source refusal coverage now matches the checked-signature
+  diagnostic introduced by nominal-boundary migration; invalid integration
+  plans still raise `TypeError` rather than bypassing typed sources.
+- Function linear operators detach duplicate numerical constants from converted
+  JAX programs while retaining them as dynamic Equinox leaves; frozen spectral
+  closures and progressive MAC controls pass the unchanged hidden-state audit,
+  and callable updates preserve forward/transpose actions and operator IDs.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.

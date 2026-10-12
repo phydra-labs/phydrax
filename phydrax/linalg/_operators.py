@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.extend import core as jax_core
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
@@ -733,6 +734,24 @@ class IdentityLinearOperator(AbstractLinearOperator):
         return jnp.ones((self.source.size,), dtype=dtype)
 
 
+def _convert_operator_action(
+    function: Callable[[PyTree[Array]], PyTree[Array]],
+    structure: PyTree[Any],
+    /,
+) -> Callable[[PyTree[Array]], PyTree[Array]]:
+    converted = eqx.filter_closure_convert(function, structure)
+
+    def open_program(leaf: Any) -> Any:
+        # Equinox passes its dynamic consts to eval_jaxpr explicitly. Unified
+        # JAX Jaxprs also retain those values internally; detach that duplicate
+        # capture so only the visible leaves supply numerical state.
+        if isinstance(leaf, jax_core.Jaxpr) and leaf.consts:
+            return leaf.with_consts(())
+        return leaf
+
+    return jax.tree_util.tree_map(open_program, converted)
+
+
 class FunctionLinearOperator(AbstractLinearOperator):
     """Linear callable with declared source and target spaces."""
 
@@ -760,7 +779,7 @@ class FunctionLinearOperator(AbstractLinearOperator):
         ):
             raise TypeError("source and target must be AbstractVectorSpace values.")
         function_ = (
-            eqx.filter_closure_convert(function, source.structure())
+            _convert_operator_action(function, source.structure())
             if closure_convert
             else function
         )
@@ -770,7 +789,7 @@ class FunctionLinearOperator(AbstractLinearOperator):
             function_
             if same_action
             else (
-                eqx.filter_closure_convert(transpose_action, target.structure())
+                _convert_operator_action(transpose_action, target.structure())
                 if closure_convert and transpose_action is not None
                 else transpose_action
             )
