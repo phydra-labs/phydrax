@@ -238,6 +238,7 @@ class EigenSolvePlan(StrictModule):
             "materialization": {
                 "max_entries": policy.materialization.max_entries,
                 "max_bytes": policy.materialization.max_bytes,
+                "max_workspace_bytes": policy.materialization.max_workspace_bytes,
             },
             "resources": {
                 "preparation_bytes": policy.resources.preparation_bytes,

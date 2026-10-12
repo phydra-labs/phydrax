@@ -92,6 +92,7 @@ def _planned_setup_key(
                 else {
                     "max_entries": materialization.max_entries,
                     "max_bytes": materialization.max_bytes,
+                    "max_workspace_bytes": materialization.max_workspace_bytes,
                 }
             ),
         }

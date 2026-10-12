@@ -21,19 +21,23 @@ class MaterializationPolicy(StrictModule):
 
     max_entries: int = eqx.field(static=True)
     max_bytes: int = eqx.field(static=True)
+    max_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         max_entries: int = 1_000_000,
         max_bytes: int = 64 * 1024 * 1024,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         entries = int(max_entries)
         byte_count = int(max_bytes)
-        if entries < 1 or byte_count < 1:
+        workspace_bytes = int(max_workspace_bytes)
+        if entries < 1 or byte_count < 1 or workspace_bytes < 1:
             raise ValueError("Materialization limits must be positive.")
         self.max_entries = entries
         self.max_bytes = byte_count
+        self.max_workspace_bytes = workspace_bytes
 
     def require(self, entries: int, dtype: DTypeLike, /) -> None:
         """Refuse a dense materialization of ``entries`` values beyond this policy.
@@ -49,6 +53,13 @@ class MaterializationPolicy(StrictModule):
         if required_bytes > self.max_bytes:
             raise LinearCapabilityError(
                 f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {self.max_bytes}."
+            )
+
+    def require_workspace(self, required_bytes: int, /) -> None:
+        """Refuse temporary materialization storage before executing an action."""
+        if required_bytes > self.max_workspace_bytes:
+            raise LinearCapabilityError(
+                f"Materialization workspace requires {required_bytes} bytes, exceeding the policy limit {self.max_workspace_bytes}."
             )
 
 
@@ -67,7 +78,7 @@ def materialize(operator: object, policy: MaterializationPolicy, /) -> Array:
     target_dtypes = [spec.dtype for spec in jax.tree.leaves(operator.target.structure())]
     expected_dtype = jnp.dtype(jnp.result_type(*target_dtypes))
     policy.require(entries, expected_dtype)
-    matrix = jnp.asarray(operator._materialize())
+    matrix = jnp.asarray(operator._materialize_admitted(policy))
     if matrix.shape != expected or matrix.dtype != expected_dtype:
         raise ValueError(
             "Operator materialization must have shape and dtype "
