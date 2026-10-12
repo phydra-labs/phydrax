@@ -121,6 +121,7 @@ from ._entropy import (
     FiniteVolumeEntropyProductionDiagnostics,
     integrated_finite_volume_relative_entropy,
 )
+from ._face_conductance import StructuredFaceConductancePlan
 from ._field_view import (
     prepare_finite_volume_field_reconstruction,
     StructuredFiniteVolumeFieldReconstructionKernel,
@@ -702,6 +703,7 @@ __all__ = [
     "ViscousFluxPlan",
     "ViscousStabilityReport",
     "FaceCoefficientPlan",
+    "StructuredFaceConductancePlan",
     "FaceInterpolationKind",
     "PreparedConservativeAdvection",
     "PreparedConservativeDiffusion",

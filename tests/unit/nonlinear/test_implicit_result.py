@@ -3,12 +3,15 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import Array
 
 import phydrax as phx
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
+from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
+from phydrax.sparse._linear import _SparseStoragePlan
 
 
 def _termination(*, maximum_steps: Any = 20) -> Any:
@@ -361,6 +364,84 @@ def test_state_dependent_derivative_setups_use_converged_native_coordinates() ->
     assert jnp.allclose(value, jnp.sqrt(rhs), atol=1e-9)
     assert jnp.allclose(tangent, 0.5 / jnp.sqrt(rhs), atol=1e-9)
     assert jnp.allclose(gradient, tangent, atol=1e-9)
+
+
+def test_sparse_derivative_setups_preserve_factorization_storage() -> None:
+    size = 3
+    sources = np.asarray([0, 1, 2, 1, 2, 0], dtype=np.int32)
+    targets = np.asarray([0, 1, 2, 0, 1, 2], dtype=np.int32)
+    relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
+    transposed_relation = relation.transpose()
+    storage_plan = _SparseStoragePlan(relation)
+    transposed_storage_plan = _SparseStoragePlan(transposed_relation)
+    space = la.ArraySpace((size,), dtype=jnp.float64)
+    coefficients = jnp.asarray([2.0, 3.0, 4.0, -0.2, 0.3, 0.4], dtype=jnp.float64)
+    dense = np.asarray([[2.0, -0.2, 0.0], [0.0, 3.0, 0.3], [0.4, 0.0, 4.0]])
+    matrix = jnp.asarray(dense)
+
+    def residual(state: jax.Array, rhs: jax.Array) -> jax.Array:
+        return matrix @ state + 0.1 * state**3 - rhs
+
+    def setup(state: jax.Array, rhs: jax.Array) -> SparseCoordinateOperator:
+        del rhs
+        return SparseCoordinateOperator(
+            relation,
+            coefficients.at[:size].add(0.3 * state**2),
+            source=space,
+            target=space,
+            operator_id="sparse-implicit-tangent",
+            storage_plan=storage_plan,
+        )
+
+    def adjoint_setup(state: jax.Array, rhs: jax.Array) -> SparseCoordinateOperator:
+        del rhs
+        return SparseCoordinateOperator(
+            transposed_relation,
+            coefficients.at[:size].add(0.3 * state**2),
+            source=space,
+            target=space,
+            operator_id="sparse-implicit-adjoint",
+            storage_plan=transposed_storage_plan,
+        )
+
+    problem = nl.NonlinearSystemProblem(
+        residual,
+        state_space=space,
+        residual_space=space,
+        linear_setup=setup,
+        tangent_linear_setup=setup,
+        adjoint_linear_setup=adjoint_setup,
+        problem_id="sparse-implicit-derivative-setups",
+    )
+    policy = _one_step_preconditioned_policy(
+        la.SparseFactorizationPreconditionerBuilder(
+            la.SparseFactorizationPolicy("lu", ordering="approximate-minimum-degree")
+        )
+    )
+    method = nl.NewtonKrylov(linear_policy=policy)
+
+    def root(rhs: jax.Array) -> jax.Array:
+        return nl.implicit_root_result(
+            problem,
+            jnp.zeros_like(rhs),
+            method=method,
+            termination=_termination(),
+            args=rhs,
+        ).state
+
+    expected = np.asarray([0.5, 1.0, 1.5], dtype=np.float64)
+    rhs = jnp.asarray(dense @ expected + 0.1 * expected**3)
+    direction = jnp.asarray([0.2, -0.4, 0.3], dtype=jnp.float64)
+    weights = jnp.asarray([1.0, -0.5, 2.0], dtype=jnp.float64)
+    value, tangent = jax.jvp(root, (rhs,), (direction,))
+    gradient = jax.jit(jax.grad(lambda argument: jnp.vdot(weights, root(argument))))(rhs)
+    dense_jacobian = dense + np.diag(0.3 * expected**2)
+    expected_tangent = np.linalg.solve(dense_jacobian, np.asarray(direction))
+    expected_gradient = np.linalg.solve(dense_jacobian.T, np.asarray(weights))
+
+    np.testing.assert_allclose(value, expected, rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(gradient, expected_gradient, rtol=1e-9, atol=1e-11)
 
 
 def _structured_setup_root(target: Any) -> Any:

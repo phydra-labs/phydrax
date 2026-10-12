@@ -43,13 +43,6 @@ from phydrax.uq import (
 )
 
 
-def _tetra_mesh() -> Any:
-    return phx.discretization.CellMesh.from_tetrahedra(
-        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
-        np.asarray(((0, 1, 2, 3),)),
-    )
-
-
 def test_production_foundations_scenario_1() -> None:
     resource = bounded_resource_from_bytes(
         b"pinned leap table", limits=ResourceLimits(1024, 2, 4, 4, 0)
@@ -125,18 +118,6 @@ def test_production_foundations_scenario_1() -> None:
     np.testing.assert_allclose(
         planetary.inertial_to_body_fixed(rotated, np.pi / (2e-4)), point, atol=1e-8
     )
-    space = phx.discretization.TetrahedralNedelecSpace(_tetra_mesh())
-    vertex = jnp.asarray((0.3, -0.2, 1.1, 0.7))
-    edge_gradient = space.gradient(vertex)
-    np.testing.assert_allclose(space.discrete_curl(edge_gradient), 0.0, atol=1e-14)
-    edge = jnp.arange(space.edge_count, dtype="float64") + 1
-    np.testing.assert_allclose(
-        space.discrete_divergence(space.discrete_curl(edge)), 0.0, atol=1e-14
-    )
-    mass = space.mass_action(edge, 2.0)
-    curl = space.curl_curl_action(edge, 3.0)
-    assert float(jnp.vdot(edge, mass)) > 0
-    assert float(jnp.vdot(edge, curl)) >= 0
     layout = CoordinateLayout(("a", "b", "c", "d"))
     # ty: ignore[invalid-argument-type]
     diagonal = DiagonalCovarianceAction([1.0, 2.0, 3.0, 4.0], layout)

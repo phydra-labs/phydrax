@@ -494,9 +494,11 @@ class NonlinearSystemProblem(StrictModule):
             raise ValueError(
                 "Derivative setup target does not match the root coordinates."
             )
-        from ._linearization import _rebase_jacobian_coordinates
+        from ._linearization import _jacobian_solve_operator
 
-        return _rebase_jacobian_coordinates(operator)
+        # Like `linear_setup`: rebase only incompatible spaces, so a compatible
+        # endomorphism keeps the storage that sparse factor builders require.
+        return _jacobian_solve_operator(operator)
 
     def bind_spaces(
         self,

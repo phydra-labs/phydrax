@@ -6,11 +6,13 @@
 import json
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.interchange._geospatial import (
+    geospatial_cell_field,
     GeospatialContract,
     GeospatialTransform,
     QualifiedGeospatialGrid,
@@ -279,3 +281,92 @@ def test_geospatial_scenario_3() -> None:
         GeospatialContract(
             target.spatial, **(arguments | {"transformations": (invalid,)})
         )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("reverse_x", [False, True])
+def test_geospatial_cell_field_round_trip(reverse_x: bool) -> None:
+    x = np.asarray([10.0, 12.0, 14.0], dtype=np.float64)
+    if reverse_x:
+        x = x[::-1]
+    values = np.asarray([[11.0, 12.0, 19.0], [31.0, 38.0, 45.0]])
+    valid = np.asarray([[True, False, True], [True, True, True]], dtype=np.bool_)
+    grid = QualifiedGeospatialGrid(
+        x, [8.0, 5.0], values, _local(), value_unit=METER, valid=valid
+    )
+    field = geospatial_cell_field(grid, grid.contract.spatial)
+    expected = values[::-1, ::-1] if reverse_x else values[::-1]
+    np.testing.assert_array_equal(field.values, expected)
+    np.testing.assert_array_equal(field.tensor_to_raster(field.values), values)
+    np.testing.assert_array_equal(field.tensor_to_raster(field.valid), valid)
+    np.testing.assert_array_equal(
+        field.tensor_to_raster(field.raster_to_tensor(jnp.asarray(values))), values
+    )
+    assert field.grid.axis_names == ("north", "east")
+    assert field.row_reversed and field.column_reversed == reverse_x
+    np.testing.assert_allclose(field.grid.structured_axes[0].interval_widths, 3.0)
+    np.testing.assert_allclose(field.grid.structured_axes[1].interval_widths, 2.0)
+    np.testing.assert_allclose(field.grid.quadrature_weights, 6.0)
+    assert field.source_grid_id == grid.grid_id
+    assert field.value_unit == METER
+    nodes = QualifiedGeospatialGrid(
+        x, [8.0, 5.0], values, _local(registration="gridline"), value_unit=METER
+    )
+    with pytest.raises(ValueError, match="pixel registration"):
+        geospatial_cell_field(nodes, nodes.contract.spatial)
+    geographic = QualifiedGeospatialGrid(
+        [-1.0, 0.0, 1.0],
+        [0.0, 1.0],
+        values,
+        _geographic(registration="pixel"),
+        value_unit=METER,
+    )
+    with pytest.raises(ValueError):
+        geospatial_cell_field(geographic, geographic.contract.spatial)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    ("vertical_kind", "vertical_positive", "vertical_datum", "vertical_unit"),
+    [
+        ("unknown", "unknown", None, None),
+        ("depth", "down", "seafloor", METER),
+        ("orthometric_height", "up", "unrelated-datum", DEGREE),
+    ],
+)
+def test_geospatial_cell_field_qualifies_only_horizontal_axes(
+    vertical_kind: str,
+    vertical_positive: str,
+    vertical_datum: str | None,
+    vertical_unit: UnitDefinition | None,
+) -> None:
+    spatial = SpatialCoordinateContract(METER, reference_frame="survey-site")
+    contract = GeospatialContract(
+        spatial,
+        horizontal_crs="local:survey-site",
+        horizontal_kind="local_cartesian",
+        horizontal_axes=("east", "north"),
+        horizontal_units=(METER, METER),
+        horizontal_datum="local:survey-site",
+        epoch_required=False,
+        vertical_kind=vertical_kind,
+        vertical_positive=vertical_positive,
+        vertical_datum=vertical_datum,
+        vertical_unit=vertical_unit,
+        registration="pixel",
+        longitude_seam="none",
+        mask_semantics="valid_true",
+    )
+    values = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
+    valid = np.asarray([[True, False], [True, True]], dtype=np.bool_)
+    grid = QualifiedGeospatialGrid(
+        [2.0, 1.0], [4.0, 3.0], values, contract, value_unit=METER, valid=valid
+    )
+    with pytest.raises(ValueError):
+        contract.require_cartesian(spatial)
+    field = geospatial_cell_field(grid, spatial)
+    np.testing.assert_array_equal(field.values, values[::-1, ::-1])
+    np.testing.assert_array_equal(field.valid, valid[::-1, ::-1])
+    np.testing.assert_array_equal(field.tensor_to_raster(field.values), values)
+    assert field.grid.axis_names == ("north", "east")
+    assert field.value_unit == METER

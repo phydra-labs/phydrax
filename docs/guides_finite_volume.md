@@ -21,6 +21,25 @@ finite-volume time step or a claim that collocated SBP is a de Rham complex.
 Mapped free-surface face pairings use the kinetic-energy Hessian Riesz owner;
 native inverse-Hodge status reaches projection and stage evidence.
 
+## Conductance graphs
+
+`StructuredFaceConductancePlan(grid, active)` compacts active cells in C order and
+retains exactly the face-adjacent pairs with both endpoints active. Its `relation`
+uses canonical lower/upper compact ids; `node_indices(cells)` maps host cell
+multi-indices to those ids and refuses inactive or out-of-range cells.
+`conductances(coefficient)` is differentiable in scalar, isotropic-cell, or per-axis
+diagonal coefficients. Full tensors and upwind/callable interpolation are refused.
+Periodic axes need at least three cells, and wrap edges use the last/first widths.
+
+Coefficients represent conductivity integrated over omitted dimensions: in 2-D,
+sheet conductance equals conductivity times thickness. Conductance is `k_face A/d`;
+distance-weighted harmonic interpolation gives
+`T = A / (h_left/(2 k_left) + h_right/(2 k_right))`, including nonuniform cells.
+Zero coefficients give zero interface conductance. Boundary interpolation remains
+the adjacent cell value, and arithmetic interpolation remains unchanged.
+For fully active grids with homogeneous Neumann boundaries, the cell-volume-weighted
+conservative diffusion action is the negative graph Laplacian action.
+
 
 ## Scalar conservation law
 

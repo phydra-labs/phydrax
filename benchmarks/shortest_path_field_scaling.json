@@ -1,0 +1,215 @@
+{
+  "backend": "cpu",
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax/.venv/bin/python",
+    "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance/benchmarks/shortest_path_field_scaling.py",
+    "--sides",
+    "32",
+    "64",
+    "128",
+    "256",
+    "--repeats",
+    "3",
+    "--output",
+    "benchmarks/shortest_path_field_scaling.json"
+  ],
+  "configuration": {
+    "cwd": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance",
+    "driver": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance/benchmarks/shortest_path_field_scaling.py",
+    "dtype": "float64",
+    "edge_cost": 0.5,
+    "import_path": [
+      "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance",
+      "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance",
+      "/Users/lgleyzer/.local/share/uv/python/cpython-3.12.8-macos-aarch64-none/lib/python312.zip",
+      "/Users/lgleyzer/.local/share/uv/python/cpython-3.12.8-macos-aarch64-none/lib/python3.12",
+      "/Users/lgleyzer/.local/share/uv/python/cpython-3.12.8-macos-aarch64-none/lib/python3.12/lib-dynload",
+      "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax/.venv/lib/python3.12/site-packages",
+      "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax"
+    ],
+    "mode": "full",
+    "output": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/graph-effective-resistance/benchmarks/shortest_path_field_scaling.json",
+    "policy": "default",
+    "provider": "scipy-csgraph-dijkstra",
+    "pythonpath": ".",
+    "queries": [
+      0
+    ],
+    "repeats": 3,
+    "resource_policy": {
+      "maximum_host_bytes": 268435456,
+      "maximum_work": 100000000
+    },
+    "sides": [
+      32,
+      64,
+      128,
+      256
+    ],
+    "warmups": 1
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "f73d7112b58973019ad104f47acf4758fadfd14edf1f0b9f8c23824245aa1cb0",
+    "evidence_schema": {
+      "fields": [
+        "backend",
+        "command",
+        "configuration",
+        "environment",
+        "nonfinite_evidence",
+        "records"
+      ],
+      "signature": "13dc6bece2a65abfab6567457991c709545a7e08adeaae93ef4494a88d0dc727"
+    },
+    "fingerprint": "06a93423b565ecb1c628915036e8486ca0c8a34c03120602740b9b44ef073e58",
+    "source_build_fingerprint": "d32bda489bd0d672acc628c09fa9e58ab8b1b3e5a20383727e3d913b2a20c594"
+  },
+  "nonfinite_evidence": "Nonfinite scalar residuals or errors are serialized as null.",
+  "records": [
+    {
+      "baseline_compile_s": 0.02103504096157849,
+      "baseline_lowering_s": 0.004187167156487703,
+      "baseline_route_work": 4059264,
+      "baseline_warm_execution_s": 0.003425472260763248,
+      "bellman_residual": 0.0,
+      "compile_s": 0.09316770802251995,
+      "dual_residual": 0.0,
+      "host_synchronization": true,
+      "lowering_s": 0.04568566684611142,
+      "maximum_error": 0.0,
+      "memory_analysis": {
+        "alias_bytes": 0,
+        "argument_bytes": 31744,
+        "host_workspace_note": "SciPy callback allocations are not included in device compiler memory analysis.",
+        "output_bytes": 25737,
+        "temporary_bytes": 176504
+      },
+      "method": "host-dijkstra",
+      "provider_route_work": 3968,
+      "routes": 3968,
+      "scipy_dijkstra_s": 9.191688150167465e-05,
+      "side": 32,
+      "status": 0,
+      "vertices": 1024,
+      "warm_execution_s": 0.0038003610291828713
+    },
+    {
+      "baseline_compile_s": 0.022314166883006692,
+      "baseline_lowering_s": 0.004499957896769047,
+      "baseline_route_work": 66044160,
+      "baseline_warm_execution_s": 0.05719991664712628,
+      "bellman_residual": 0.0,
+      "compile_s": 0.0988484169356525,
+      "dual_residual": 0.0,
+      "host_synchronization": true,
+      "lowering_s": 0.03864658414386213,
+      "maximum_error": 0.0,
+      "memory_analysis": {
+        "alias_bytes": 0,
+        "argument_bytes": 129024,
+        "host_workspace_note": "SciPy callback allocations are not included in device compiler memory analysis.",
+        "output_bytes": 102537,
+        "temporary_bytes": 712760
+      },
+      "method": "host-dijkstra",
+      "provider_route_work": 16128,
+      "routes": 16128,
+      "scipy_dijkstra_s": 0.00027166702784597874,
+      "side": 64,
+      "status": 0,
+      "vertices": 4096,
+      "warm_execution_s": 0.0063663193335135775
+    },
+    {
+      "baseline_compile_s": 0.02928395802155137,
+      "baseline_lowering_s": 0.004417791962623596,
+      "baseline_route_work": 1065288192,
+      "baseline_warm_execution_s": 1.0179984303346525,
+      "bellman_residual": 0.0,
+      "compile_s": 0.14594849990680814,
+      "dual_residual": 0.0,
+      "host_synchronization": true,
+      "lowering_s": 0.0400992501527071,
+      "maximum_error": 0.0,
+      "memory_analysis": {
+        "alias_bytes": 0,
+        "argument_bytes": 520192,
+        "host_workspace_note": "SciPy callback allocations are not included in device compiler memory analysis.",
+        "output_bytes": 409737,
+        "temporary_bytes": 2867000
+      },
+      "method": "host-dijkstra",
+      "provider_route_work": 65024,
+      "routes": 65024,
+      "scipy_dijkstra_s": 0.001013290835544467,
+      "side": 128,
+      "status": 0,
+      "vertices": 16384,
+      "warm_execution_s": 0.015570444287732244
+    },
+    {
+      "baseline_compile_s": 0.05579450004734099,
+      "baseline_lowering_s": 0.006092125084251165,
+      "baseline_route_work": 17112499200,
+      "baseline_warm_execution_s": 15.431891541695222,
+      "bellman_residual": 0.0,
+      "compile_s": 0.2823407920077443,
+      "dual_residual": 0.0,
+      "host_synchronization": true,
+      "lowering_s": 0.04079679190181196,
+      "maximum_error": 0.0,
+      "memory_analysis": {
+        "alias_bytes": 0,
+        "argument_bytes": 2088960,
+        "host_workspace_note": "SciPy callback allocations are not included in device compiler memory analysis.",
+        "output_bytes": 1638537,
+        "temporary_bytes": 11500856
+      },
+      "method": "host-dijkstra",
+      "provider_route_work": 261120,
+      "routes": 261120,
+      "scipy_dijkstra_s": 0.004145541926845908,
+      "side": 256,
+      "status": 0,
+      "vertices": 65536,
+      "warm_execution_s": 0.05543656965407232
+    }
+  ]
+}

@@ -52,6 +52,12 @@ from ._set_packing import (
     SetPackingSpace,
 )
 from ._shortest_path import DAGShortestPath, PathDecision, ShortestPathSpace
+from ._shortest_path_field import (
+    ShortestPathFieldMethod,
+    ShortestPathFieldPlan,
+    ShortestPathFieldResult,
+    ShortestPathFieldStatus,
+)
 from ._types import (
     combinatorial_status_message,
     CombinatorialCertificate,
@@ -96,6 +102,10 @@ __all__ = [
     "DAGShortestPath",
     "PathDecision",
     "ShortestPathSpace",
+    "ShortestPathFieldMethod",
+    "ShortestPathFieldPlan",
+    "ShortestPathFieldResult",
+    "ShortestPathFieldStatus",
     "SetPackingDecision",
     "SetPackingSpace",
     "CombinatorialCertificate",

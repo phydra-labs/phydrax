@@ -210,8 +210,14 @@ def test_conservative_fd_scenario_2() -> None:
     rhs = (velocity_expression * u).divergence("x")
     problem = _conservative_problem(
         rhs,
-        parameters=(phx.equations.PDEParameter("velocity", functional=True),),
+        parameters=(
+            phx.equations.PDEParameter(
+                "velocity", functional=True, representation="vector"
+            ),
+        ),
     )
+    problem = phx.equations.pde_ir_from_json(phx.equations.pde_ir_to_json(problem))
+    assert problem.parameters[0].representation == "vector"
     compiled = phx.equations.compile_finite_difference_pde(problem, grid)
     x = grid.axes[0].nodes
     state = x * (1.0 - x)
@@ -315,3 +321,32 @@ def test_reduced_coefficient_forms_equal_the_full_tensor_under_strict_promotion(
     full = plan.prepare(tensor).mv(state)
 
     np.testing.assert_allclose(reduced, full, rtol=1e-14, atol=1e-14)
+
+
+def test_nonuniform_two_material_constant_flux() -> None:
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.NonuniformCellAxisSpec(
+                np.asarray([0.0, 0.1, 0.5, 0.7, 1.0], dtype=np.float64)
+            ),
+        ),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]], dtype=jnp.float64))
+    x = grid.structured_axes[0].interval_centers
+    coefficient = jnp.where(x < 0.5, 1.0, 10.0)
+    flux = 1.0 / (0.5 + 0.5 / 10.0)
+    exact = jnp.where(x < 0.5, flux * x, flux * (0.5 + (x - 0.5) / 10.0))
+    operator = phx.discretization.ConservativeDiffusionPlan(
+        grid, boundaries={"x": ("dirichlet", "dirichlet")}, interpolation="harmonic"
+    ).prepare(coefficient)
+    np.testing.assert_allclose(
+        operator.fluxes(exact, coefficient, {"x": (0.0, 1.0)})[0],
+        flux,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        operator.apply(exact, boundary_values={"x": (0.0, 1.0)}),
+        0.0,
+        atol=1e-11,
+    )

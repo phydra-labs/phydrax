@@ -539,38 +539,58 @@ def _duplicate_route_relation() -> phx.sparse.EdgeRelation:
 
 
 @pytest.mark.parametrize("block_shape", (None, (2, 3)), ids=("scalar", "block"))
+@pytest.mark.parametrize(
+    ("capacity", "source_size", "target_size"),
+    ((0, 3, 2), (2, 3, 2), (0, 0, 8), (0, 8, 0), (0, 0, 0)),
+    ids=("empty", "invalid-padding", "empty-source", "empty-target", "empty-both"),
+)
 def test_sparse_coordinate_operator_without_valid_routes_applies_zero(
     block_shape: tuple[int, int] | None,
+    capacity: int,
+    source_size: int,
+    target_size: int,
 ) -> None:
-    # Every route is invalid capacity, so each apply direction has no routes to
-    # reduce; the non-finite padding coefficients must stay inert.
+    # Empty support preserves both coordinate extents; non-finite coefficients
+    # on invalid padding routes must stay inert.
     target_fiber, source_fiber = (1, 1) if block_shape is None else block_shape
     relation = phx.sparse.EdgeRelation(
-        jnp.asarray([0, 2], dtype=jnp.int32),
-        jnp.asarray([1, 0], dtype=jnp.int32),
-        source_size=3,
-        target_size=2,
-        valid=jnp.asarray([False, False]),
+        jnp.zeros((capacity,), dtype=jnp.int32),
+        jnp.zeros((capacity,), dtype=jnp.int32),
+        source_size=source_size,
+        target_size=target_size,
+        valid=jnp.zeros((capacity,), dtype=jnp.bool_),
     )
     operator = phx.sparse.SparseCoordinateOperator(
         relation,
-        jnp.full((2,) + (() if block_shape is None else block_shape), jnp.nan),
-        source=ArraySpace((3 * source_fiber,), dtype=jnp.float64),
-        target=ArraySpace((2 * target_fiber,), dtype=jnp.float64),
+        jnp.full(
+            (capacity,) + (() if block_shape is None else block_shape),
+            jnp.nan,
+            dtype=jnp.float64,
+        ),
+        source=ArraySpace((source_size * source_fiber,), dtype=jnp.float64),
+        target=ArraySpace((target_size * target_fiber,), dtype=jnp.float64),
         block_shape=block_shape,
     )
-    source = jnp.ones((3 * source_fiber,))
-    target = jnp.ones((2 * target_fiber,))
+    source = jnp.ones((source_size * source_fiber,), dtype=jnp.float64)
+    target = jnp.ones((target_size * target_fiber,), dtype=jnp.float64)
 
-    np.testing.assert_array_equal(operator.mv(source), np.zeros(2 * target_fiber))
+    expected_source = np.zeros((source_size * source_fiber,), dtype=np.float64)
+    expected_target = np.zeros((target_size * target_fiber,), dtype=np.float64)
+    np.testing.assert_array_equal(operator.mv(source), expected_target)
     np.testing.assert_array_equal(
         eqx.filter_jit(lambda op, value: op.mv(value))(operator, source),
-        np.zeros(2 * target_fiber),
+        expected_target,
+    )
+    np.testing.assert_array_equal(operator.transpose_mv(target), expected_source)
+    np.testing.assert_array_equal(operator.adjoint_mv(target), expected_source)
+    np.testing.assert_array_equal(
+        eqx.filter_jit(lambda op, value: op.transpose_mv(value))(operator, target),
+        expected_source,
     )
     np.testing.assert_array_equal(
-        operator.transpose_mv(target), np.zeros(3 * source_fiber)
+        eqx.filter_jit(lambda op, value: op.adjoint_mv(value))(operator, target),
+        expected_source,
     )
-    np.testing.assert_array_equal(operator.adjoint_mv(target), np.zeros(3 * source_fiber))
 
 
 def test_host_topology_plans_sparse_solves_with_operator_as_jit_argument() -> None:

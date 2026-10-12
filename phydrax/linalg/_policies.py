@@ -694,12 +694,14 @@ class LinearDerivativeSolvePolicy(StrictModule):
 
     ``route`` selects how implicit tangent and cotangent linear solves execute:
 
-    - ``"krylov"`` runs an independent restarted GMRES bounded by
-      ``maximum_steps`` and accepted by the declared tolerances on the true
-      residual. For a ``LinearSystem`` the prepared primal preconditioner is
-      reused as a flexible right preconditioner of both the tangent and the
-      cotangent solve (it never changes the accepted derivative, only its
-      cost). Minimum-norm problems instead apply the pseudoinverse through
+    - ``"krylov"`` runs an independent preconditioned CG solve for prepared PCG
+      systems with Euclidean pairings (certified SPD operator and fixed SPD
+      preconditioner), or restarted GMRES for other square systems. Both are
+      bounded by ``maximum_steps`` and accepted by the declared tolerances on
+      the true residual. The stopped primal preconditioner is reused; GMRES
+      applies it as a flexible right preconditioner.
+      Neither accelerator changes the accepted derivative. Minimum-norm
+      problems instead apply the pseudoinverse through
       zero-start LSMR, accepted by its true residual or normal residual.
     - ``"primal-factors"`` reuses the primal square direct factorization
       (``DenseLU``, ``DenseCholesky``, or native bordered ``StructuredDirect``)

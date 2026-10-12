@@ -250,7 +250,8 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     order. A direction whose widest output would pad beyond twice its routes
     plus outputs, or a traced relation, keeps the route scatter. Routes are
     construction-time structure: coefficients may be replaced in place, but new
-    routes require a new operator.
+    routes require a new operator. Empty route sets preserve the output extent,
+    including zero-dimensional coordinate spaces.
     """
 
     relation: SparseRelation
@@ -630,6 +631,14 @@ class _RowGatherLayout(StrictModule):
         ``(routes, r_t, r_s)``, contracted on ``r_s`` forward or ``r_t`` when
         ``reverse``.
         """
+        if self.routes.shape[0] == 0:
+            # Empty gathers need no input access, even when that input is empty.
+            # Derive the output extent from the layout, not an empty take result.
+            fibers = coefficients.shape[2:] if reverse else coefficients.shape[1:2]
+            return jnp.zeros(
+                (self.routes.shape[1],) + fibers,
+                dtype=jnp.result_type(coefficients, values),
+            )
         valid = self.routes < self.route_count
         gathered = jnp.take(coefficients, self.routes, axis=0, mode="fill", fill_value=0)
         sources = values[self.inputs]
@@ -644,9 +653,6 @@ class _RowGatherLayout(StrictModule):
             products,
             jnp.zeros((), dtype=products.dtype),
         )
-        if products.shape[0] == 0:
-            # No valid routes: the loop body could not index an empty slot axis.
-            return jnp.zeros(products.shape[1:], dtype=products.dtype)
         # The loop-carried sum fixes route order per output; unrolled and
         # reduce-based sums were not bitwise route-ordered on CPU. A
         # module-level body keeps eager applies on one cached executable.
