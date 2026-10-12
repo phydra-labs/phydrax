@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Path-potential refusal coverage follows the checked-signature `TypeError`
+  contract for surrogate actions; only normalized stochastic actions remain
+  eligible for free-energy calculations.
 - Float32 Airy central-series accumulation uses widened working precision to
   prevent cancellation loss near the negative central/asymptotic boundary,
   while preserving float32 outputs and the existing derivative contracts.
