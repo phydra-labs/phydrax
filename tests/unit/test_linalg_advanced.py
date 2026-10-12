@@ -9,6 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -1414,3 +1415,52 @@ def test_preconditioner_setup_is_not_part_of_mathematical_solve_derivative() -> 
 
     assert jnp.allclose(system_gradient, -rhs / system_diagonal**2)
     assert jnp.allclose(setup_gradient, jnp.zeros_like(setup_diagonal))
+
+
+@pytest.mark.parametrize("batch_size", [1, 3, 8])
+def test_bounded_probe_actions_match_independent_samples(batch_size: int) -> None:
+    matrix = np.asarray([[3.0, 0.4], [0.4, 2.0]], dtype=np.float64)
+    operator = la.DenseLinearOperator(
+        jnp.asarray(matrix), properties=_positive_definite_properties()
+    )
+    key = jr.key(26)
+    probes = np.stack(
+        [
+            np.asarray(jr.rademacher(jr.fold_in(key, index), (2,), dtype=jnp.float64))
+            for index in range(8)
+        ]
+    )
+    trace = la.stochastic_trace(
+        operator, key=key, num_probes=8, max_dimension=2, batch_size=batch_size
+    )
+    inverse = la.estimate_inverse_diagonal(
+        operator, key=key, num_probes=8, batch_size=batch_size
+    )
+    np.testing.assert_allclose(
+        trace.samples,
+        np.sum(probes * (matrix @ probes.T).T, axis=-1),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        inverse.samples,
+        probes * np.linalg.solve(matrix, probes.T).T,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert jnp.all(inverse.probe_converged)
+    assert jnp.all(trace.probe_converged)
+
+
+def test_batched_inverse_diagonal_retains_solve_failure_evidence() -> None:
+    operator = la.DenseLinearOperator(
+        jnp.asarray([[[2.0, 0.0], [0.0, 3.0]], [[1.0, 0.0], [0.0, 0.0]]])
+    )
+    result = la.estimate_inverse_diagonal(
+        operator, key=jr.key(8), num_probes=5, batch_size=3
+    )
+    np.testing.assert_allclose(result.samples[:, 0], np.tile([0.5, 1 / 3], (5, 1)))
+    assert jnp.all(result.probe_converged[:, 0])
+    assert not jnp.any(result.probe_converged[:, 1])
+    assert not result.converged[1]
+    assert jnp.all(result.probe_statuses[:, 1] != int(la.StochasticProbeStatus.SUCCESS))

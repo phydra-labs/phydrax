@@ -45,6 +45,16 @@ from ._assembly import (
     SparseAssemblyPolicy,
 )
 from ._auxiliary_space import hiptmair_xu_preconditioner_builder
+from ._banded_spectrum import (
+    banded_definiteness_certificate,
+    banded_eigenvalue_brackets,
+    banded_singular_value_brackets,
+    banded_singular_value_certificate,
+    BandedDefinitenessCertificate,
+    BandedEigenvalueBrackets,
+    BandedSingularValueBrackets,
+    BandedSpectrumStatus,
+)
 from ._binding import LinearSolveTemplate
 from ._block_preconditioning import (
     BlockFactorizationForm,
@@ -692,6 +702,7 @@ from ._spectral import (
     stochastic_trace,
     StochasticEstimate,
     StochasticProbeDiagnostics,
+    StochasticProbeExecution,
     StochasticProbeStatus,
 )
 from ._structure_compiler import (
@@ -867,6 +878,14 @@ __all__ = [
     "AdaptiveStochasticEstimate",
     "AdaptiveStochasticPolicy",
     "BandedLinearOperator",
+    "BandedDefinitenessCertificate",
+    "BandedEigenvalueBrackets",
+    "BandedSingularValueBrackets",
+    "BandedSpectrumStatus",
+    "banded_definiteness_certificate",
+    "banded_eigenvalue_brackets",
+    "banded_singular_value_brackets",
+    "banded_singular_value_certificate",
     "BiCGStab",
     "BaseNonsingularity",
     "BasePlusLowRankLinearOperator",
@@ -1235,6 +1254,7 @@ __all__ = [
     "CompatibilityPolicy",
     "GaugePolicy",
     "StochasticProbeDiagnostics",
+    "StochasticProbeExecution",
     "StochasticProbeStatus",
     "StackedLinearOperator",
     "StochasticEstimate",

@@ -216,15 +216,21 @@ def _pseudoinverse_tangent(
     rows, columns = matrix.shape[-2:]
     pseudoinverse_adjoint = _adjoint(pseudoinverse)
     tangent_adjoint = _adjoint(tangent)
-    target_identity = jnp.eye(rows, dtype=matrix.dtype)
-    source_identity = jnp.eye(columns, dtype=matrix.dtype)
-    target_complement = target_identity - matrix @ pseudoinverse
-    source_complement = source_identity - pseudoinverse @ matrix
-    return (
-        -pseudoinverse @ tangent @ pseudoinverse
-        + pseudoinverse @ pseudoinverse_adjoint @ tangent_adjoint @ target_complement
-        + source_complement @ tangent_adjoint @ pseudoinverse_adjoint @ pseudoinverse
-    )
+    # Associate every square intermediate on the smaller coordinate side.
+    # Complements act on the tangent directly; no identity is materialized.
+    if columns <= rows:
+        leading = -(pseudoinverse @ tangent) @ pseudoinverse
+        target_term = (pseudoinverse @ pseudoinverse_adjoint) @ tangent_adjoint
+        target_term = target_term - (target_term @ matrix) @ pseudoinverse
+        source_term = (tangent_adjoint @ pseudoinverse_adjoint) @ pseudoinverse
+        source_term = source_term - (pseudoinverse @ matrix) @ source_term
+    else:
+        leading = -pseudoinverse @ (tangent @ pseudoinverse)
+        target_term = pseudoinverse @ (pseudoinverse_adjoint @ tangent_adjoint)
+        target_term = target_term - target_term @ (matrix @ pseudoinverse)
+        source_term = tangent_adjoint @ (pseudoinverse_adjoint @ pseudoinverse)
+        source_term = source_term - pseudoinverse @ (matrix @ source_term)
+    return leading + target_term + source_term
 
 
 @jax.custom_jvp

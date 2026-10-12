@@ -1,0 +1,313 @@
+{
+  "batch_size": 4,
+  "cases": [
+    {
+      "compilation_seconds": 0.44808625,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 1400969,
+        "flops": 240069,
+        "generated_code_bytes": 0,
+        "output_bytes": 64,
+        "source": "jax-spectral-probe-workspace",
+        "temporary_bytes": 266064,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.199691,
+      "probes": 8,
+      "temporary_bytes": 266064
+    },
+    {
+      "compilation_seconds": 0.353942917,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 1401689,
+        "flops": 240141,
+        "generated_code_bytes": 0,
+        "output_bytes": 256,
+        "source": "jax-spectral-probe-workspace",
+        "temporary_bytes": 266064,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.129948666,
+      "probes": 32,
+      "temporary_bytes": 266064
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "fourfold_workspace_ratio": 1.0,
+  "gate": {
+    "baseline_bytes": 2092224,
+    "candidate_bytes": 266064,
+    "capacity": 32,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "8cbe1545e3a14f26055db8a91c0497520cd0398df6b6ac88e4ab58dfe5cbc560",
+    "evidence_fields": [
+      "cases",
+      "inverse_cases",
+      "resolvent_cases",
+      "workspace_exponent"
+    ],
+    "evidence_schema_signature": "ee206a17a8b0c309ef42fb69b89baae4889fa7e1898b0f8796c3a96ae8c685c7",
+    "fingerprint": "577588a6c963129042c184fec5adb23f122c44648b6b8f1a4aaafcfaf09e43f1",
+    "source_build_fingerprint": "90df04d18792a4da36bdf926a2d3a6437575ba883822501c5f3c192b016a5eb9"
+  },
+  "inverse_cases": [
+    {
+      "compilation_seconds": 0.240855458,
+      "compiler": {
+        "argument_bytes": 32776,
+        "bytes_accessed": 509890,
+        "flops": 99899,
+        "generated_code_bytes": 0,
+        "output_bytes": 4096,
+        "source": "jax-prepared-inverse-diagonal-probe-chunks",
+        "temporary_bytes": 75936,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.307840958,
+      "probes": 8,
+      "retained_output_bytes": 4096,
+      "temporary_bytes": 75936,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000610459,
+        "mean_seconds": 0.000610459,
+        "median_seconds": 0.000610459,
+        "min_seconds": 0.000610459,
+        "samples_seconds": [
+          0.000610459
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation_seconds": 0.26844625,
+      "compiler": {
+        "argument_bytes": 32776,
+        "bytes_accessed": 522274,
+        "flops": 99947,
+        "generated_code_bytes": 0,
+        "output_bytes": 16384,
+        "source": "jax-prepared-inverse-diagonal-probe-chunks",
+        "temporary_bytes": 76000,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.805804708,
+      "probes": 32,
+      "retained_output_bytes": 16384,
+      "temporary_bytes": 76000,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.001271708,
+        "mean_seconds": 0.001271708,
+        "median_seconds": 0.001271708,
+        "min_seconds": 0.001271708,
+        "samples_seconds": [
+          0.001271708
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "inverse_fourfold_workspace_ratio": 1.0008428150021071,
+  "inverse_workspace_exponent": 0.0006077064558618951,
+  "peak_rss_bytes": 1564377088,
+  "resolvent_cases": [
+    {
+      "action_rhs_workspace_bytes": 33792,
+      "compilation_seconds": 0.118824667,
+      "compiler": {
+        "argument_bytes": 33792,
+        "bytes_accessed": 266410,
+        "flops": 45333,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax-resolvent-rhs-action",
+        "temporary_bytes": 65988,
+        "unavailable_reason": null
+      },
+      "factor_storage_bytes": 32768,
+      "lowering_seconds": 0.025513667,
+      "retained_output_bytes": 1024,
+      "rhs_count": 2,
+      "route": "inverse-reference",
+      "size": 64,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000365167,
+        "mean_seconds": 0.000365167,
+        "median_seconds": 0.000365167,
+        "min_seconds": 0.000365167,
+        "samples_seconds": [
+          0.000365167
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "action_rhs_workspace_bytes": 3072,
+      "compilation_seconds": 0.1075625,
+      "compiler": {
+        "argument_bytes": 33792,
+        "bytes_accessed": 205062,
+        "flops": 8620,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax-resolvent-rhs-action",
+        "temporary_bytes": 66088,
+        "unavailable_reason": null
+      },
+      "factor_storage_bytes": 32768,
+      "lowering_seconds": 0.035919,
+      "retained_output_bytes": 1024,
+      "rhs_count": 2,
+      "route": "rhs-action",
+      "size": 64,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000220209,
+        "mean_seconds": 0.000220209,
+        "median_seconds": 0.000220209,
+        "min_seconds": 0.000220209,
+        "samples_seconds": [
+          0.000220209
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "action_rhs_workspace_bytes": 133120,
+      "compilation_seconds": 0.072467125,
+      "compiler": {
+        "argument_bytes": 133120,
+        "bytes_accessed": 1056938,
+        "flops": 180757,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-resolvent-rhs-action",
+        "temporary_bytes": 262852,
+        "unavailable_reason": null
+      },
+      "factor_storage_bytes": 131072,
+      "lowering_seconds": 0.023898375,
+      "retained_output_bytes": 2048,
+      "rhs_count": 2,
+      "route": "inverse-reference",
+      "size": 128,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000325875,
+        "mean_seconds": 0.000325875,
+        "median_seconds": 0.000325875,
+        "min_seconds": 0.000325875,
+        "samples_seconds": [
+          0.000325875
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "action_rhs_workspace_bytes": 6144,
+      "compilation_seconds": 0.097164666,
+      "compiler": {
+        "argument_bytes": 133120,
+        "bytes_accessed": 803078,
+        "flops": 33580,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-resolvent-rhs-action",
+        "temporary_bytes": 262952,
+        "unavailable_reason": null
+      },
+      "factor_storage_bytes": 131072,
+      "lowering_seconds": 0.042031916,
+      "retained_output_bytes": 2048,
+      "rhs_count": 2,
+      "route": "rhs-action",
+      "size": 128,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000256792,
+        "mean_seconds": 0.000256792,
+        "median_seconds": 0.000256792,
+        "min_seconds": 0.000256792,
+        "samples_seconds": [
+          0.000256792
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "workspace_exponent": 0.0
+}
