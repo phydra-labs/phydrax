@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
 - Prepare compatible spline incidence, traces, and local-support quadrature Gram
   actions without global dense matrices; preserve realization and operator IDs.
 - Assemble only requested finite-element mass or stiffness tensors; paired assembly
