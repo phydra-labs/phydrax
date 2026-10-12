@@ -135,3 +135,19 @@ def test_cell_geometry_validity_scenario_2() -> None:
 
     with pytest.raises(phx.meshing.MeshingFailure, match="self_intersection"):
         phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+
+
+@pytest.mark.parametrize("ambient", (2, 3))
+def test_polygon_duplicate_vertices_match_dense_reference(ambient: int) -> None:
+    angles = np.arange(9, dtype=np.float64) * (2.0 * np.pi / 9.0)
+    points = np.column_stack((np.cos(angles), np.sin(angles)))
+    if ambient == 3:
+        points = np.column_stack((points, np.zeros(9, dtype=np.float64)))
+    for duplicate in (None, 3, 5, 7):
+        candidate = points.copy()
+        if duplicate is not None:
+            candidate[duplicate] = candidate[0]
+        coincident = np.all(candidate[:, None] == candidate[None, :], axis=-1)
+        repeated = np.any(coincident & ~np.eye(9, dtype=np.bool_))
+        expected = Status.INVALID if repeated else Status.CERTIFIED_VALID
+        assert _polygon_status(candidate) == expected

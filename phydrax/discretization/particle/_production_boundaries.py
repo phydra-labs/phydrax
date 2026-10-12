@@ -51,13 +51,35 @@ def classify_boundary_features(
     edge_angle: float = 0.35,
     corner_angle: float = 0.8,
 ) -> BoundaryFeatureState:
-    displacement = wall.positions[:, None, :] - wall.positions[None, :, :]
-    distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
-    neighbor = (distance > 0.0) & (distance < 2.5 * wall.quality.minimum_spacing)
-    normal_dot = jnp.sum(wall.normals[:, None, :] * wall.normals[None, :, :], axis=-1)
-    angle = jnp.arccos(jnp.clip(normal_dot, -1.0, 1.0))
-    variation = jnp.max(jnp.where(neighbor, angle, 0.0), axis=1)
-    minimum = jnp.min(jnp.where(distance > 0.0, distance, jnp.inf), axis=1)
+    def row(index: Array) -> tuple[Array, Array]:
+        displacement = wall.positions[index] - wall.positions
+        distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+        neighbor = (distance > 0.0) & (distance < 2.5 * wall.quality.minimum_spacing)
+        normal_dot = jnp.sum(wall.normals[index] * wall.normals, axis=-1)
+        angle = jnp.arccos(jnp.clip(normal_dot, -1.0, 1.0))
+        return (
+            jnp.max(jnp.where(neighbor, angle, 0.0)),
+            jnp.min(jnp.where(distance > 0.0, distance, jnp.inf)),
+        )
+
+    count, dimension = wall.positions.shape
+    if count == 0:
+        raise ValueError(
+            "zero-size array to reduction operation max which has no identity"
+        )
+    # Admit parallel rows within one MiB of conservative pair workspace. Keep
+    # every source in each row so distances/angles and reduction order are intact.
+    pair_itemsize = jnp.result_type(
+        wall.positions.dtype, wall.normals.dtype, 1.0
+    ).itemsize
+    row_bytes = count * ((3 * dimension + 4) * pair_itemsize + 2)
+    batch_size = max(1, 1_048_576 // max(1, row_bytes))
+    indices = jnp.arange(count, dtype=jnp.int32)
+    if count <= batch_size:
+        variation, minimum = jax.vmap(row)(indices)
+    else:
+        batch_size = 1 << (batch_size.bit_length() - 1)
+        variation, minimum = jax.lax.map(row, indices, batch_size=batch_size)
     kind = jnp.where(
         variation >= corner_angle,
         3,

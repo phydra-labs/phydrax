@@ -8,6 +8,7 @@ import abc
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -139,46 +140,53 @@ class ElasticHalfSpaceMulticontactPlan(AbstractDEMContactGraphCorrectionPlan):
         owner_material = jnp.asarray(material_ids, dtype=jnp.int32)[endpoint_owner]
         young = materials.young_modulus[owner_material].astype(points.dtype)
         poisson = materials.poisson_ratio[owner_material].astype(points.dtype)
-        displacement = endpoint_point[:, None, :] - endpoint_point[None, :, :]
-        distance = jnp.linalg.norm(displacement, axis=-1)
-        same_owner = endpoint_owner[:, None] == endpoint_owner[None, :]
-        distinct_contact = endpoint_edge[:, None] != endpoint_edge[None, :]
-        active = (
-            same_owner
-            & distinct_contact
-            & endpoint_valid[:, None]
-            & endpoint_valid[None, :]
-        )
-        alignment = 0.5 * (
-            1.0
-            + jnp.abs(
-                jnp.sum(
-                    endpoint_normal[:, None, :] * endpoint_normal[None, :, :],
-                    axis=-1,
+        if edge_count == 0:
+            raise ValueError(
+                "zero-size array to reduction operation min which has no identity"
+            )
+
+        def row(index: Array) -> tuple[Array, Array]:
+            displacement = endpoint_point[index] - endpoint_point
+            distance = jnp.linalg.norm(displacement, axis=-1)
+            same_owner = endpoint_owner[index] == endpoint_owner
+            distinct_contact = endpoint_edge[index] != endpoint_edge
+            active = (
+                same_owner & distinct_contact & endpoint_valid[index] & endpoint_valid
+            )
+            alignment = 0.5 * (
+                1.0 + jnp.abs(jnp.sum(endpoint_normal[index] * endpoint_normal, axis=-1))
+            )
+            compliance = (
+                self.geometric_prefactor
+                * (1.0 - poisson[index] ** 2)
+                / (
+                    jnp.pi
+                    * young[index]
+                    * jnp.maximum(distance, self.distance_regularization)
                 )
             )
-        )
-        compliance = (
-            self.geometric_prefactor
-            * (1.0 - poisson[:, None] ** 2)
-            / (
-                jnp.pi
-                * young[:, None]
-                * jnp.maximum(distance, self.distance_regularization)
+            influence = jnp.where(active, compliance * alignment * endpoint_force, 0.0)
+            # Keep the complete, left-then-right source axis in each reduction.
+            # Only target rows are tiled; summing source tiles would change order.
+            return jnp.sum(influence), jnp.min(jnp.where(active, distance, jnp.inf))
+
+        endpoint_count = endpoint_owner.shape[0]
+        # Conservative live-array admission: displacement/norm products, scalar
+        # pair fields, and masks. One row is the indivisible reduction workspace.
+        pair_itemsize = jnp.result_type(points.dtype, normal.dtype, 1.0).itemsize
+        row_bytes = endpoint_count * ((3 * points.shape[1] + 8) * pair_itemsize + 4)
+        batch_size = max(1, 1_048_576 // max(1, row_bytes))
+        indices = jnp.arange(endpoint_count, dtype=jnp.int32)
+        if endpoint_count <= batch_size:
+            endpoint_deformation, regularity = jax.vmap(row)(indices)
+        else:
+            # Binary row batches retain uniform vectorized reduction kernels.
+            batch_size = 1 << (batch_size.bit_length() - 1)
+            endpoint_deformation, regularity = jax.lax.map(
+                row, indices, batch_size=batch_size
             )
-        )
-        influence = jnp.where(
-            active,
-            compliance * alignment * endpoint_force[None, :],
-            0.0,
-        )
-        endpoint_deformation = jnp.sum(influence, axis=1)
         gap_correction = (
             endpoint_deformation[:edge_count] + endpoint_deformation[edge_count:]
-        )
-        regularity = jnp.min(
-            jnp.where(active, distance, jnp.inf),
-            axis=1,
         )
         regularity_margin = jnp.min(
             jnp.concatenate(
