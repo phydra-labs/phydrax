@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Dense fractional Gaussian regression coverage checks exact seeded replay and
+  independent analytic covariance instead of a platform-specific byte hash of
+  LAPACK-based samples; realization and coupling identifier pins remain intact.
 - Native LSMR and minimum-norm witness audits explicitly cast real
   normalization and recurrence scalars to their vector dtype, preserving
   complex Bloch seam projections under strict JAX dtype promotion.
