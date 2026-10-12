@@ -18,7 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, tree_where
-from ..discretization.particle import DEMRuntimeState, RigidSphereKinematics
+from ..discretization.particle import DEMRuntimeState, RigidBodyKinematics
 from ..equations._cfd_dem import (
     CFDEMCouplingEvaluation,
     evaluate_unresolved_cfd_dem,
@@ -68,16 +68,15 @@ def _hydrodynamic_kick(
     scale: Array,
     /,
 ) -> DEMRuntimeState:
-    mobile = (
-        plan.dynamics.bodies.particles.active_mask & ~plan.dynamics.bodies.fixed_mask
-    )[:, None]
+    mobile = (state.body_properties.active & ~plan.dynamics.bodies.fixed_mask)[:, None]
     velocity = state.kinematics.velocity + scale * (
-        plan.dynamics.bodies.inverse_masses[:, None] * force
+        state.body_properties.inverse_masses[:, None] * force
     )
     velocity = jnp.where(mobile, velocity, 0.0)
-    kinematics = RigidSphereKinematics(
+    kinematics = RigidBodyKinematics(
         state.kinematics.position,
         velocity,
+        state.kinematics.orientation,
         state.kinematics.angular_velocity,
     )
     return eqx.tree_at(lambda value: value.kinematics, state, kinematics)

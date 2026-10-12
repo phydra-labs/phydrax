@@ -4,6 +4,28 @@ Phydrax finite elements compile immutable meshes, reference elements, field spac
 and weak terms into native linear, nonlinear, and differential-algebraic problems.
 The discretization never owns a Newton method or time integrator.
 
+## Finite-strain material adapter
+
+`phydrax.applications.solid_mechanics.FiniteStrainConstitutiveModel(material,
+reference_density, model_id=None)` adapts an implicit-capable three-dimensional
+MPM material to the existing finite-element `AbstractConstitutiveModel` contract.
+Kinematics are the `3 x 3` deformation gradient; response is first Piola stress,
+state is the material's committed MPM history, and the algorithmic tangent comes
+from `evaluate_linearized`. MPM material slot IDs are unchanged.
+
+J2 and Drucker–Prager carry seven history entries: the packed plastic metric
+`(11, 22, 33, 23, 13, 12)` plus equivalent plastic strain. Initialize through the
+material, never a zero history buffer. For initial stress at `F = I`, use the
+material's `initialize_state_from_stress`; its `PrestressedMaterialState` exposes
+the initialized `state`, `admissible`, and `yield_value`.
+
+The adapter preserves material failure and tangent-validity evidence, and uses
+the existing `MaterialTransaction` candidate/commit lifecycle. Rejected updates
+must not replace committed history. The same material update is used in FEM
+and MPM; a nonassociated law does not imply a symmetric tangent or an
+incremental-potential formulation.
+
+
 ## Computational mesh
 
 `CellMesh` is the shared computational realization used by finite elements and

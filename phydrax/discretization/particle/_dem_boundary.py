@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,9 +31,20 @@ from ._pair_state import (
     IMPLICIT_BARRIER_INTERACTION,
     particle_wall_interaction_keys,
 )
+from ._rigid_body import PreparedRigidBodySet, RigidBodyKinematics
+from ._rigid_contact import RigidContactGeometry
+from ._rigid_shape import AbstractPreparedRigidContactShape
+from ._superquadric_wall import (
+    SuperquadricTriangleContactPlan,
+    SuperquadricWallContactResult,
+)
+from ._triangle_wall import PreparedTriangleWall, TriangleWallContactResult
+
+
+if TYPE_CHECKING:
+    from ._dem import CompliantDEMBodyProperties
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
-    RigidSphereKinematics,
     sphere_lever_torque,
     sphere_spin_velocity,
 )
@@ -427,6 +438,8 @@ class DEMBoundaryResponse(StrictModule):
     successful: Array
     material_id: int = eqx.field(static=True)
     barrier_id: str = eqx.field(static=True)
+    geometry: RigidContactGeometry
+    triangle_witness: TriangleWallContactResult | SuperquadricWallContactResult | None
 
     @property
     def capillary_births(self) -> Array:
@@ -462,7 +475,7 @@ class DEMBoundaryResponse(StrictModule):
 def evaluate_dem_barrier(
     barrier: ImplicitDEMBarrier,
     bodies: PreparedRigidSphereSet,
-    kinematics: RigidSphereKinematics,
+    kinematics: RigidBodyKinematics,
     contact_model: PreparedDEMContactModel,
     previous_history: DEMContactHistory,
     step_size: Array,
@@ -470,7 +483,7 @@ def evaluate_dem_barrier(
     *,
     time: Array = jnp.asarray(0.0),
     args: Any = None,
-    body_properties: Any = None,
+    body_properties: CompliantDEMBodyProperties | None = None,
     normal_tolerance: float = 1.0e-12,
     capillary_plan: DEMBarrierCapillaryPlan | None = None,
     frame_tolerance: float = 1.0e-10,
@@ -481,8 +494,8 @@ def evaluate_dem_barrier(
         raise TypeError("barrier must be an ImplicitDEMBarrier.")
     if not isinstance(bodies, PreparedRigidSphereSet):
         raise TypeError("bodies must be a PreparedRigidSphereSet.")
-    if not isinstance(kinematics, RigidSphereKinematics):
-        raise TypeError("kinematics must be RigidSphereKinematics.")
+    if not isinstance(kinematics, RigidBodyKinematics):
+        raise TypeError("kinematics must be RigidBodyKinematics.")
     if not isinstance(contact_model, PreparedDEMContactModel):
         raise TypeError("contact_model must be a PreparedDEMContactModel.")
     if capillary_plan is not None:
@@ -494,7 +507,11 @@ def evaluate_dem_barrier(
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("normal_tolerance must be finite and positive.")
     position = kinematics.position
-    radii = bodies.radii if body_properties is None else body_properties.radii
+    radii = (
+        bodies.radii
+        if body_properties is None
+        else bodies.radii * body_properties.shape_scale
+    )
     inverse_masses = (
         bodies.inverse_masses
         if body_properties is None
@@ -650,6 +667,9 @@ def evaluate_dem_barrier(
         kinematics.angular_velocity,
         angular_velocity,
         valid,
+        normal_gradient=jnp.where(valid[:, None], normal, 0.0),
+        surface_area_weight=jnp.ones_like(overlap),
+        normal_moment=False,
     )
     route_ids = jnp.zeros((bodies.capacity,), dtype=jnp.int64)
     keys = particle_wall_interaction_keys(
@@ -703,6 +723,37 @@ def evaluate_dem_barrier(
         & jnp.isfinite(wall_power)
         & (curvature_margin > 0.0)
     )
+    route_geometry = RigidContactGeometry(
+        batch.normal,
+        batch.gap,
+        batch.overlap,
+        batch.effective_radius,
+        contact_point,
+        batch.left_arm,
+        batch.right_arm,
+        batch.left_arm,
+        batch.right_arm,
+        relative_velocity,
+        batch.normal_velocity,
+        batch.tangential_velocity,
+        batch.left_angular_velocity,
+        batch.right_angular_velocity,
+        keys,
+        jnp.zeros_like(route_ids),
+        jnp.zeros_like(route_ids),
+        valid,
+        degenerate.astype(jnp.int32),
+        jnp.abs(batch.gap),
+        successful,
+        f"rigid-contact:implicit-barrier:{barrier.barrier_id}",
+        jnp.arange(bodies.capacity, dtype=jnp.int32),
+        -jnp.ones_like(route_ids, dtype=jnp.int32),
+        batch.normal_gradient,
+        batch.surface_area_weight,
+        jnp.isfinite(effective_radius) & (effective_radius > 0.0),
+        jnp.full_like(batch.gap, curvature_margin),
+        jnp.zeros_like(batch.gap),
+    )
     return DEMBoundaryResponse(
         particle_force,
         particle_torque,
@@ -716,6 +767,153 @@ def evaluate_dem_barrier(
         successful,
         barrier.material_id,
         barrier.barrier_id,
+        route_geometry,
+        None,
+    )
+
+
+def evaluate_dem_triangle_wall(
+    shapes: AbstractPreparedRigidContactShape,
+    bodies: PreparedRigidBodySet,
+    kinematics: RigidBodyKinematics,
+    wall: PreparedTriangleWall,
+    contact_model: PreparedDEMContactModel,
+    previous_history: DEMContactHistory,
+    properties: CompliantDEMBodyProperties,
+    step_size: Array,
+    wall_geometry: SuperquadricTriangleContactPlan,
+    /,
+    *,
+    frame_tolerance: float = 1.0e-10,
+) -> DEMBoundaryResponse:
+    """Evaluate stationary triangle witnesses through the common contact transaction."""
+    from ._dem_contact_state import remap_dem_contact_history
+    from ._pair_state import match_particle_pair_keys
+    from ._superquadric_contact import PreparedSuperquadricSet
+    from ._superquadric_wall import superquadric_triangle_contact_geometry
+    from ._triangle_wall import sphere_triangle_contact_geometry
+
+    if isinstance(shapes, PreparedRigidSphereSet):
+        witness = sphere_triangle_contact_geometry(
+            shapes,
+            kinematics,
+            wall,
+            radii=shapes.radii * properties.shape_scale,
+            active_mask=properties.active,
+        )
+        triangle_witness: TriangleWallContactResult | SuperquadricWallContactResult = (
+            witness
+        )
+        geometry = witness.geometry
+        owner = witness.owner_indices
+        particle_material = witness.particle_material
+        wall_material = witness.wall_material
+        query_successful = geometry.successful
+    elif isinstance(shapes, PreparedSuperquadricSet):
+        sq_witness = superquadric_triangle_contact_geometry(
+            wall_geometry,
+            shapes,
+            kinematics,
+            wall,
+            shape_scale=properties.shape_scale,
+            active_mask=properties.active,
+        )
+        triangle_witness = sq_witness
+        geometry = sq_witness.geometry
+        owner = sq_witness.owner_indices
+        particle_material = sq_witness.particle_material
+        wall_material = sq_witness.wall_material
+        query_successful = geometry.successful & jnp.all(
+            ~sq_witness.broadphase_valid | geometry.valid
+        )
+    else:
+        raise ValueError(
+            "Triangle DEM walls support sphere and superquadric contact shapes."
+        )
+    valid = geometry.valid
+    requires_curvature = isinstance(contact_model.plan.normal, HertzNormalContactPlan)
+    curvature_successful = (
+        jnp.all(~valid | geometry.curvature_valid)
+        if requires_curvature
+        else jnp.asarray(True)
+    )
+    if requires_curvature:
+        valid = valid & geometry.curvature_valid
+    remap = match_particle_pair_keys(
+        previous_history.pair_keys, previous_history.valid, geometry.contact_keys, valid
+    )
+    history = remap_dem_contact_history(
+        previous_history, remap, geometry.contact_keys, valid
+    )
+    geometry = eqx.tree_at(lambda value: value.valid, geometry, valid)
+    bounds = shapes.bounding_radii[owner] * properties.shape_scale[owner]
+    response = contact_model.evaluate(
+        geometry.as_contact_batch(normal_moment=shapes.shape_kind != "sphere"),
+        history,
+        DEMContactEvaluationContext(
+            geometry.contact_keys,
+            valid,
+            remap.continued,
+            properties.inverse_masses[owner],
+            jnp.zeros_like(bounds),
+            bounds,
+            bounds,
+            particle_material,
+            wall_material,
+            step_size,
+            -jnp.ones((), dtype=jnp.int32),
+        ),
+        frame_tolerance=frame_tolerance,
+    )
+    particle_force = (
+        jnp.zeros_like(kinematics.position).at[owner].add(response.pair_force)
+    )
+    route_torque = response.left_torque + sphere_lever_torque(
+        geometry.left_owner_arm - geometry.left_contact_arm,
+        response.pair_force,
+        bodies.ambient_dimension,
+    )
+    particle_torque = (
+        jnp.zeros_like(kinematics.angular_velocity).at[owner].add(route_torque)
+    )
+    reaction_force = -jnp.sum(response.pair_force, axis=0)
+    reaction_torque = jnp.sum(
+        sphere_lever_torque(
+            geometry.contact_point, -response.pair_force, bodies.ambient_dimension
+        )
+        + response.right_torque
+        + sphere_lever_torque(
+            geometry.right_owner_arm - geometry.right_contact_arm,
+            -response.pair_force,
+            bodies.ambient_dimension,
+        ),
+        axis=0,
+    )
+    zero_velocity = jnp.zeros_like(geometry.normal)
+    zero_angular = jnp.zeros_like(geometry.right_angular_velocity)
+    curvature_margin = (
+        jnp.min(jnp.where(geometry.valid, geometry.effective_radius, jnp.inf))
+        if requires_curvature
+        else jnp.asarray(jnp.inf, dtype=step_size.dtype)
+    )
+    successful = (
+        query_successful & curvature_successful & remap.successful & response.successful
+    )
+    return DEMBoundaryResponse(
+        particle_force,
+        particle_torque,
+        reaction_force,
+        reaction_torque,
+        response,
+        zero_velocity,
+        zero_angular,
+        jnp.zeros((), dtype=step_size.dtype),
+        curvature_margin,
+        successful,
+        -1,
+        wall.prepared_id,
+        geometry,
+        triangle_witness,
     )
 
 
@@ -731,4 +929,5 @@ __all__ = [
     "ServoDEMBarrierState",
     "StaticDEMBarrierMotionPlan",
     "evaluate_dem_barrier",
+    "evaluate_dem_triangle_wall",
 ]

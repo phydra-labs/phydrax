@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,20 +15,19 @@ from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.contact import (
-    ContactCandidateEpoch,
-    evaluate_contact_stencils,
-    point_edge_distance,
-    point_point_distance,
-    PreparedCollisionScene,
-)
+from ...discretization.contact._distance import point_edge_distance, point_point_distance
+from ...discretization.contact._participant import ContactParticipantScene
+from ...discretization.contact._search import ContactCandidateEpoch
+from ...discretization.contact._stencils import evaluate_contact_stencils
+from ...discretization.contact._surface import PreparedCollisionScene
 from ...typing import checked
 from ._barrier import physical_clamped_log_barrier
 
 
+@final
 class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
     """Area-weighted improved-max contact potential with a physical barrier."""
 
@@ -34,6 +36,7 @@ class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
     geometry_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         activation_distance: float,
@@ -72,14 +75,28 @@ class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
         self.geometry_tolerance = tolerance
         self.plan_id = identifier
 
+    @checked
     def prepare(
-        self, scene: PreparedCollisionScene, /
+        self,
+        scene: PreparedCollisionScene | ContactParticipantScene,
+        /,
+        *,
+        rest_positions: ArrayLike | None = None,
     ) -> PreparedConvergentContactPotential:
-        return PreparedConvergentContactPotential(self, scene)
+        """Prepare fixed topology and dynamic reference measures.
+
+        Independently parameterized participant scenes require explicit reference
+        positions in the same sample order as ``scene.positions(states)``.
+        """
+        return PreparedConvergentContactPotential(
+            self, scene, rest_positions=rest_positions
+        )
 
 
+@final
 class ContactPotentialEvaluation(StrictModule):
     energy: Array
+    # Physical force, not the positive energy-gradient contact residual.
     surface_force: Array
     state_force: PyTree[Array]
     minimum_gap: Array
@@ -95,11 +112,19 @@ class ContactPotentialEvaluation(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
+@final
 class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
-    """Prepared convergent node potential plus mollified edge barrier."""
+    """Canonical barrier with a current-state algebraic effort transpose.
+
+    ``evaluate(..., participant_states=states)`` returns ``state_force`` as an
+    ordered tuple of participant covectors for a participant scene. Differentiating
+    that evaluation through both positions and states retains geometric curvature;
+    ``hessian_action`` alone is only the sample-position energy Hessian action.
+    """
 
     plan: ConvergentContactPotentialPlan
-    scene: PreparedCollisionScene
+    scene: PreparedCollisionScene | ContactParticipantScene
+    reference_positions: Array
     face_edges: Array
     edge_face_count: Array
     vertex_edge_count: Array
@@ -109,8 +134,35 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
 
     @checked
     def __init__(
-        self, plan: ConvergentContactPotentialPlan, scene: PreparedCollisionScene, /
+        self,
+        plan: ConvergentContactPotentialPlan,
+        scene: PreparedCollisionScene | ContactParticipantScene,
+        /,
+        *,
+        rest_positions: ArrayLike | None = None,
     ) -> None:
+        if isinstance(scene, ContactParticipantScene):
+            if rest_positions is None:
+                raise ValueError("Participant scenes require explicit rest_positions.")
+            dtype = scene.participants[0].contact_velocity_space.dtype
+            if any(
+                participant.contact_velocity_space.dtype != dtype
+                for participant in scene.participants
+            ):
+                raise ValueError("Contact participant geometry dtypes must agree.")
+            reference = jnp.asarray(rest_positions, dtype=dtype)
+        else:
+            dtype = scene.surfaces[0].precision.geometry_dtype
+            reference = (
+                jnp.concatenate(
+                    tuple(surface.rest_positions for surface in scene.surfaces), axis=0
+                )
+                if rest_positions is None
+                else jnp.asarray(rest_positions, dtype=dtype)
+            )
+        expected = (scene.vertex_count, scene.ambient_dimension)
+        if reference.shape != expected or not bool(jnp.all(jnp.isfinite(reference))):
+            raise ValueError(f"rest_positions must be finite with shape {expected}.")
         edges = np.empty((scene.edge_count, 2), dtype=np.int32)
         edges[...] = np.asarray(scene.edges)
         faces = np.empty((scene.face_count, 3), dtype=np.int32)
@@ -141,6 +193,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             internal_vertex = ~boundary_vertex
         self.plan = plan
         self.scene = scene
+        self.reference_positions = reference
         self.face_edges = jnp.asarray(face_edges, dtype=jnp.int32)
         self.edge_face_count = jnp.asarray(edge_face_count, dtype=jnp.int32)
         self.vertex_edge_count = jnp.asarray(vertex_edge_count, dtype=jnp.int32)
@@ -151,13 +204,12 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
                 "kind": "prepared-convergent-contact-potential",
                 "plan": plan.plan_id,
                 "scene": scene.scene_id,
+                "reference_positions": array_tree_fingerprint(np.asarray(reference)),
             }
         )
 
     def _rest_positions(self) -> Array:
-        return jnp.concatenate(
-            tuple(surface.rest_positions for surface in self.scene.surfaces), axis=0
-        )
+        return self.reference_positions
 
     def _measures(self, rest_positions: Array, /) -> tuple[Array, Array]:
         edges = self.scene.edges
@@ -228,7 +280,9 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             (query_points[:, None, :] - endpoint_points) ** 2, axis=-1
         )
         endpoint_internal = self.internal_vertex[endpoints]
-        incidence = jnp.maximum(self.vertex_edge_count[endpoints], 1)
+        incidence = jnp.maximum(self.vertex_edge_count[endpoints], 1).astype(
+            positions.dtype
+        )
         correction = (
             self._barrier(
                 endpoint_squared,
@@ -295,11 +349,17 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             )
             edge_index = self.face_edges[safe_face, local]
             internal = self.edge_face_count[edge_index] == 2
-            value = self._barrier(
-                distance.squared_distance,
-                evaluation.minimum_separation,
-                evaluation.valid & distance.nondegenerate & internal,
-            ) / jnp.maximum(self.edge_face_count[edge_index], 1)
+            incidence = jnp.maximum(self.edge_face_count[edge_index], 1).astype(
+                positions.dtype
+            )
+            value = (
+                self._barrier(
+                    distance.squared_distance,
+                    evaluation.minimum_separation,
+                    evaluation.valid & distance.nondegenerate & internal,
+                )
+                / incidence
+            )
             edge_correction = edge_correction + value
         vertex_correction = jnp.zeros((batch.capacity,), dtype=positions.dtype)
         for local in range(3):
@@ -309,11 +369,17 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
                 positions[vertex],
                 tolerance=self.plan.geometry_tolerance,
             )
-            value = self._barrier(
-                distance.squared_distance,
-                evaluation.minimum_separation,
-                evaluation.valid & self.internal_vertex[vertex],
-            ) / jnp.maximum(self.vertex_face_count[vertex], 1)
+            incidence = jnp.maximum(self.vertex_face_count[vertex], 1).astype(
+                positions.dtype
+            )
+            value = (
+                self._barrier(
+                    distance.squared_distance,
+                    evaluation.minimum_separation,
+                    evaluation.valid & self.internal_vertex[vertex],
+                )
+                / incidence
+            )
             vertex_correction = vertex_correction + value
         weight = 0.5 * vertex_measure[query]
         energy = jnp.sum(weight * (base - edge_correction + vertex_correction))
@@ -406,9 +472,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         rest_positions: ArrayLike | None = None,
         stiffness: ArrayLike | None = None,
     ) -> Array:
-        current = jnp.asarray(
-            positions, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        current = jnp.asarray(positions, dtype=self.reference_positions.dtype)
         expected = (self.scene.vertex_count, self.scene.ambient_dimension)
         if current.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
@@ -435,6 +499,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             epoch.successful, value, jnp.asarray(jnp.inf, dtype=current.dtype)
         )
 
+    @checked
     def evaluate(
         self,
         positions: ArrayLike,
@@ -443,10 +508,16 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         *,
         rest_positions: ArrayLike | None = None,
         stiffness: ArrayLike | None = None,
+        participant_states: Sequence[PyTree[Array]] | None = None,
     ) -> ContactPotentialEvaluation:
-        current = jnp.asarray(
-            positions, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        if isinstance(self.scene, ContactParticipantScene):
+            if participant_states is None:
+                raise ValueError("Participant scenes require participant_states.")
+        elif participant_states is not None:
+            raise ValueError(
+                "Shared-state collision scenes do not accept participant_states."
+            )
+        current = jnp.asarray(positions, dtype=self.reference_positions.dtype)
         rest = (
             self._rest_positions()
             if rest_positions is None
@@ -463,7 +534,14 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
 
         energy, gradient = jax.value_and_grad(objective)(current)
         surface_effort = -gradient
-        state_force = self.scene.effort_pullback(surface_effort)
+        # Keep the current-state transpose in the differentiated expression:
+        # D(J(q)^T f(x(q))) includes both J^T Df J and (DJ)^T f.
+        if isinstance(self.scene, ContactParticipantScene):
+            if participant_states is None:
+                raise ValueError("Participant scenes require participant_states.")
+            state_force = self.scene.effort_pullback(participant_states, surface_effort)
+        else:
+            state_force = self.scene.effort_pullback(surface_effort)
         vertex_measure, edge_measure = self._measures(rest)
         ev = self._edge_vertex_energy(current, rest, epoch, vertex_measure)
         fv = self._face_vertex_energy(current, rest, epoch, vertex_measure)
@@ -486,6 +564,8 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(action_reaction))
             & jnp.all(jnp.isfinite(moment))
         )
+        for leaf in jax.tree.leaves(state_force):
+            finite = finite & jnp.all(jnp.isfinite(leaf))
         tolerance = jnp.finfo(current.dtype).eps * max(64, 8 * self.scene.vertex_count)
         nonnegative = energy >= -tolerance * jnp.maximum(1.0, jnp.abs(energy))
         successful = epoch.successful & finite & nonnegative & (minimum_gap > 0.0)
@@ -516,9 +596,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
         rest_positions: ArrayLike | None = None,
         stiffness: ArrayLike | None = None,
     ) -> Array:
-        current = jnp.asarray(
-            positions, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        current = jnp.asarray(positions, dtype=self.reference_positions.dtype)
         tangent = jnp.asarray(direction, dtype=current.dtype)
         if tangent.shape != current.shape:
             raise ValueError("direction must match positions.")

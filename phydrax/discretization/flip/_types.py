@@ -5,14 +5,19 @@
 from __future__ import annotations
 
 from enum import IntEnum, IntFlag
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 from jax import Array
 
 from ..._strict import StrictModule
+from ...nonlinear import NonlinearResult
 from ..finite_volume import FaceVelocity
 from ..splatting import ParticleGridSplatState
+
+
+if TYPE_CHECKING:
+    from ...solver._mac_variational_viscosity import MACVariationalViscosityResult
 
 
 class FLIPRunStatus(IntEnum):
@@ -26,6 +31,7 @@ class FLIPRunStatus(IntEnum):
     NONFINITE_STATE = 7
     GEOMETRY_FAILED = 8
     COLLISION_FAILED = 9
+    VISCOSITY_FAILED = 10
 
 
 class FLIPRejectionReason(IntFlag):
@@ -39,6 +45,8 @@ class FLIPRejectionReason(IntFlag):
     NONFINITE = 64
     GEOMETRY = 128
     COLLISION = 256
+    VISCOSITY = 512
+    VISCOSITY_CLOSURE = 1024
 
 
 class FLIPParticleState(StrictModule):
@@ -108,6 +116,26 @@ class FLIPDiagnostics(StrictModule):
     details: Any
 
 
+class FLIPViscousEvidence(StrictModule):
+    """Picard, closure, true momentum residual, and native Krylov evidence."""
+
+    shear_rate_s_inv: Array
+    viscosity_pa_s: Array
+    lagged_pressure_pa: Array
+    hadamard_margin: Array
+    hadamard_applicable: Array
+    pressure_admitted: Array
+    closure_successful: Array
+    residual_norm: Array
+    relative_residual: Array
+    iterations: Array
+    converged: Array
+    successful: Array
+    nonlinear: NonlinearResult
+    linear: MACVariationalViscosityResult
+    plan_id: str = eqx.field(static=True)
+
+
 class FLIPStepResult(StrictModule):
     candidate_state: FLIPRuntimeState
     accepted_state: FLIPRuntimeState
@@ -118,6 +146,7 @@ class FLIPStepResult(StrictModule):
     successful: Array
     solid: Any
     geometry_id: str = eqx.field(static=True)
+    viscous: FLIPViscousEvidence | None
 
 
 __all__ = [
@@ -130,4 +159,5 @@ __all__ = [
     "FLIPRuntimeState",
     "FLIPStepResult",
     "FLIPTransferState",
+    "FLIPViscousEvidence",
 ]

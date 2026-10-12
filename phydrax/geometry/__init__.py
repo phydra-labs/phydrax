@@ -77,6 +77,7 @@ from ._certificate import (
     ExactSDFEnclosureCertificate,
     FieldCertificate,
     FieldRegularity,
+    level_set_interpolation_certificate,
     SignReliability,
     ZeroSetAccuracy,
 )
@@ -706,6 +707,7 @@ __all__ = [
     "evaluate_fixed_topology_mesh",
     "exact_sharp_geometry",
     "exact_signed_distance_certificate",
+    "level_set_interpolation_certificate",
     "implicit",
     "import_brep",
     "incircle",

@@ -199,15 +199,22 @@ def _material_metrics() -> Any:
         0.0,
         0.01,
     )
+    a, b, c, d, e, f = plastic_response.trial_state[0, :6]
+    metric_determinant = a * b * c + 2 * d * e * f - a * d * d - b * e * e - c * f * f
     plastic_metrics = {
         "successful": bool(plastic_response.successful[0]),
+        "history_width": plastic_history.shape[-1],
+        "identity_metric": bool(
+            jnp.array_equal(
+                plastic_history[0, :6],
+                jnp.asarray((1.0, 1.0, 1.0, 0.0, 0.0, 0.0), dtype=jnp.float64),
+            )
+        ),
         "branch": int(plastic_response.branch_code[0]),
         "plastic_multiplier": float(
             plastic_response.diagnostics["plastic_multiplier"][0]
         ),
-        "plastic_determinant": float(
-            plastic_response.diagnostics["plastic_determinant"][0]
-        ),
+        "plastic_metric_determinant": float(metric_determinant),
         "dissipation": float(plastic_response.dissipation_increment[0]),
     }
     plane_passed = (
@@ -217,9 +224,11 @@ def _material_metrics() -> Any:
     )
     plastic_passed = (
         plastic_metrics["successful"]
+        and plastic_metrics["history_width"] == 7
+        and plastic_metrics["identity_metric"]
         and plastic_metrics["branch"] == 1
         and plastic_metrics["plastic_multiplier"] > 0.0
-        and abs(plastic_metrics["plastic_determinant"] - 1.0) < 1e-8
+        and abs(plastic_metrics["plastic_metric_determinant"] - 1.0) < 1e-8
         and plastic_metrics["dissipation"] >= 0.0
     )
     return (plane_metrics, plane_passed), (plastic_metrics, plastic_passed)

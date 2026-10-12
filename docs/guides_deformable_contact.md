@@ -7,7 +7,7 @@ hard-contact impulses.
 
 ## Supported contract
 
-The initial qualified surface contract covers:
+The surface contract includes:
 
 - piecewise-linear 2-D segment boundaries;
 - triangular 3-D collision surfaces;
@@ -18,15 +18,17 @@ The initial qualified surface contract covers:
 - an area-weighted physical clamped-log barrier;
 - conservative linear-trajectory inclusion CCD with minimum separation;
 - optional continuous T3/T4 orientation bounds;
-- conservative finite-element energies, static equilibrium, and implicit Newmark dynamics;
+- mechanics residual/JVP participants, static equilibrium, and implicit dynamics;
 - lagged isotropic Coulomb friction;
 - fixed-route implicit JVPs and VJPs.
 
-The original finite-element barrier workflow retains its T3/T4 and host-solve
-support boundary. The shared substrate now also exposes nonlinear participant
+The [monolithic implicit contact guide](guides_monolithic_contact.md) describes
+shared-unknown mechanics, affine bodies, conservative envelope preparation, and
+atomic acceptance. The shared substrate also exposes nonlinear participant
 kinematics, per-vertex separation, certified swept-AABB CCD, cone impact,
 mortar/Nitsche interfaces, hydroelastic/rough closure, multiphysics transport,
-distributed ownership, and remeshing/state-transfer contracts. See
+distributed ownership, and remeshing/state-transfer contracts. These are distinct
+formulations, not automatic extensions of one qualification profile. See
 [Contact formulations](guides_contact_formulations.md),
 [Multiphysics contact](guides_contact_multiphysics.md), and
 [Contact differentiation](guides_contact_differentiation.md).
@@ -48,8 +50,9 @@ f_state   = Aᵀ f_contact
 
 `prepare_cell_mesh_collision_surface` extracts a compact boundary from a nodal
 2-D polygonal mesh or 3-D tetrahedral mesh. High-order collision proxies can
-instead bind a caller-prepared interpolation operator. Several surfaces sharing
-one mechanics state compose through `PreparedCollisionScene`.
+instead bind a caller-prepared interpolation operator. Independent geometry maps
+compose through `ContactParticipantScene`, with explicit mechanics-block or fixed
+wall ownership in `MonolithicContactPlan`.
 
 ## Candidate epochs
 
@@ -110,31 +113,33 @@ alpha_safe = min(1, alpha_contact, alpha_inversion)
 
 Only float64 geometry/certification supports the conservative capability.
 
-## Finite-element dynamics
+## Monolithic mechanics
 
-The finite-element problem must be compiled from one
-`phydrax.variational.Functional`. Arbitrary residuals, nonsymmetric fluxes, and
-unlabeled nonconservative sources are not silently treated as potentials.
-`CompiledFiniteElementProblem.potential` evaluates the same terms, density, and
-quadrature whose discrete first variation is returned by `residual`.
+`prepare_finite_element_contact_participant` binds a compiled finite-element
+problem to the mechanics protocol. A conservative `phydrax.variational.Functional`
+can supply a consistent potential, but arbitrary residuals and nonsymmetric
+material tangents remain physical residual/JVP problems.
 
-For Newmark state `u`, the minimized functional contains the inertial quadratic,
-FE stored energy, normal contact energy, and a properly position-scaled lagged
-friction potential. A host Newton–CG/Steihaug loop evaluates JAX gradients and
-Hessian actions, applies the continuous safety limit, and then performs Armijo
-backtracking. Candidate search is refreshed at every accepted/trial geometry.
+The ordered coordinate/history tuple is solved by native `NewtonKrylov` and
+GMRES. Contact pullback includes mixed participant blocks and geometry curvature;
+no symmetric projection or independent participant solve replaces them.
+`ContactSolvePolicy.merit` is `"automatic"`, `"potential"`, or `"residual"`.
+Potential merit requires verified consistency of every active contribution.
 
-`ContactDynamicsState` wraps displacement, velocity, acceleration, optional
-material history, the final candidate epoch, and friction lag state. A failed
-search, CCD query, inversion bound, nonlinear solve, friction lag, or energy
-check preserves the complete previous state.
+Candidate discovery occurs only at the explicit preparation boundary. The
+candidate epoch remains frozen through Newton and friction refresh, and a
+conservative motion envelope plus participant step limits protects route
+completeness. `MonolithicContactState` stores accepted coordinates and histories.
+A failed search, CCD query, domain bound, root solve, or friction lag rejects
+every participant together; `result.commit()` preserves the previous state on
+failure and `result.rollback()` always returns it.
 
 ## Friction
 
 `LaggedCoulombFrictionPlan` accepts one scalar coefficient or a square body-pair
-table and a velocity threshold `epsilon_v`. A lag state freezes route keys,
+table and a `velocity_threshold`. A lag state freezes route keys,
 closest-point coefficients, tangent bases, and normal-force magnitudes for one
-incremental-potential solve. The smooth velocity potential has a zero force at
+inner root solve. The smooth velocity potential has a zero force at
 zero slip and a continuous force Jacobian through the regularized stick/slip
 transition.
 
@@ -143,19 +148,20 @@ the physical step; it does not fall back to frictionless contact.
 
 ## Differentiation
 
-Contact sensitivities differentiate the final fixed stationarity equation, not
+`monolithic_contact_solution_jvp` and `monolithic_contact_solution_vjp` differentiate
+the final fixed physical root on the result's retained candidate epoch, not
 the search or solver iterations. Differentiated quantities include selected
 branch geometry, collision maps, material-space measures, bulk parameters,
 reference shape, initial conditions, barrier stiffness, and friction
 coefficient. Search, compaction, feature choice, CCD, line-search rate,
 capacity growth, and lag refresh are stopped-gradient decisions.
 
-A derivative is qualified only when the primal/root linear solves succeed and
-gap, feature, route, CCD, and inversion margins remain positive. Crossing a
+A derivative certificate requires successful primal/root linear solves and
+positive gap, feature, route, CCD, and participant-domain margins. Crossing a
 contact route invalidates the local certificate.
 
 ## Failure semantics
 
-The contact result retains a rejection bitmask covering nonfinite data, search,
-CCD, inversion, nonlinear convergence, line search, contact evidence, energy,
-and friction lag. No failed category substitutes another physical model.
+The contact result retains rejection reasons, candidate evidence, participant
+evaluations, safety evidence, and nonlinear/lag diagnostics. No failed category
+substitutes another physical model or partially commits accepted history.

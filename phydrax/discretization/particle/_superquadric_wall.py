@@ -182,6 +182,9 @@ def superquadric_triangle_contact_geometry(
     kinematics: RigidBodyKinematics,
     wall: PreparedTriangleWall,
     /,
+    *,
+    shape_scale: Array | None = None,
+    active_mask: Array | None = None,
 ) -> SuperquadricWallContactResult:
     if not isinstance(plan, SuperquadricTriangleContactPlan):
         raise TypeError("plan must be SuperquadricTriangleContactPlan.")
@@ -197,7 +200,12 @@ def superquadric_triangle_contact_geometry(
     face = jnp.tile(jnp.arange(face_count, dtype=jnp.int32), particle_count)
     center = kinematics.position[owner]
     rotation = quaternion_rotation_matrix(kinematics.orientation[owner])
-    axes = shapes.semi_axes[owner]
+    scales = (
+        jnp.ones((particle_count,), dtype=shapes.semi_axes.dtype)
+        if shape_scale is None
+        else shape_scale
+    )
+    axes = shapes.semi_axes[owner] * scales[owner, None]
     first = shapes.first_blockiness[owner]
     second = shapes.second_blockiness[owner]
     vertices = wall.face_vertices[face]
@@ -348,9 +356,9 @@ def superquadric_triangle_contact_geometry(
         axis=-1,
     )
     broadphase = broadphase_distance <= (
-        shapes.bounding_radii[owner] + plan.interaction_range
+        shapes.bounding_radii[owner] * scales[owner] + plan.interaction_range
     )
-    active = shapes.particles.active_mask[owner]
+    active = (shapes.particles.active_mask if active_mask is None else active_mask)[owner]
     selected_valid = jnp.take_along_axis(valid_candidates, selected[:, None], axis=1)[
         :, 0
     ]
@@ -422,6 +430,13 @@ def superquadric_triangle_contact_geometry(
         ),
         ~jnp.any(active & broadphase & ~valid),
         "rigid-contact:superquadric-triangle-wall",
+        owner,
+        face,
+        jnp.where(valid[:, None], normal, 0.0),
+        jnp.ones_like(gap),
+        curvature_valid,
+        jnp.minimum(tie_margin, plan.residual_tolerance - residual),
+        residual,
     )
     return SuperquadricWallContactResult(
         geometry,

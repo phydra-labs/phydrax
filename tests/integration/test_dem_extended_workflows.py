@@ -35,7 +35,7 @@ def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence
         tangential=phx.discretization.MindlinTangentialContactPlan(),
         rotational=phx.discretization.ConstantRollingResistancePlan(),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         contact, maximum_overlap_fraction=0.3
     )
     problem = phx.equations.DiscreteElementProblemIR(

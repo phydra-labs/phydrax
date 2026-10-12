@@ -424,13 +424,10 @@ def evaluate_growth_kinematics(
     growth_result = hermitian_exp(
         state.log_growth_tensor, tolerance=prepared.plan.tensor_tolerance
     )
-    spectrum = growth_result.spectrum
-    inverse = ein.contract(
-        "pik,pk,pjk->pij",
-        spectrum.eigenvectors,
-        jnp.exp(-spectrum.eigenvalues),
-        spectrum.eigenvectors,
+    inverse_result = hermitian_exp(
+        -state.log_growth_tensor, tolerance=prepared.plan.tensor_tolerance
     )
+    inverse = inverse_result.value
     growth = growth_result.value
     elastic = ein.contract("pij,pjk->pik", total, inverse)
     reconstructed = ein.contract("pij,pjk->pik", elastic, growth)
@@ -438,11 +435,12 @@ def evaluate_growth_kinematics(
     growth_jacobian = jnp.linalg.det(growth)
     elastic_jacobian = jnp.linalg.det(elastic)
     total_jacobian = jnp.linalg.det(total)
-    positive = growth_result.valid & (growth_jacobian > 0.0)
+    positive = growth_result.valid & inverse_result.valid & (growth_jacobian > 0.0)
     finite = (
         jnp.all(jnp.isfinite(total), axis=(-2, -1))
         & jnp.all(jnp.isfinite(elastic), axis=(-2, -1))
         & jnp.all(jnp.isfinite(growth), axis=(-2, -1))
+        & jnp.all(jnp.isfinite(inverse), axis=(-2, -1))
     )
     return GrowthKinematics(
         total,

@@ -130,6 +130,11 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         plan_ = MPMPhaseFieldFracturePlan() if plan is None else plan
         if not isinstance(plan_, MPMPhaseFieldFracturePlan):
             raise TypeError("plan must be MPMPhaseFieldFracturePlan or None.")
+        if mechanics.geometry.kind == "axisymmetric":
+            raise ValueError(
+                "Axisymmetric MPM phase-field fracture requires a cylindrical "
+                "weak form; the Cartesian damage operator is unsupported."
+            )
         if mechanics.material.state_shape != (2,):
             raise ValueError(
                 "Phase-field dynamics require damage/history material state."
@@ -304,9 +309,10 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             state.mechanics, step_size, arguments
         )
         candidate_mechanics = mechanics_result.accepted_state
-        routes = self.mechanics.splat.build(
+        routes = self.mechanics._build_routes(
             candidate_mechanics.particles.position,
-            assignment_input=candidate_mechanics.assignment_input,
+            candidate_mechanics.assignment_input,
+            self.mechanics.particles.active_mask,
         )
         storage_state = candidate_mechanics.storage_state
         execution_routes = self.mechanics._mapped_routes(routes, storage_state)
@@ -359,6 +365,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             material.reference_energy_density,
             material.maximum_wave_speed,
             material.trial_state,
+            particles.physical_deformation_gradient,
         )
         updated_mechanics = MPMRuntimeState(
             updated_particles,
@@ -372,6 +379,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             candidate_mechanics.velocity_field_slots,
             candidate_mechanics.storage_state,
             candidate_mechanics.lifecycle_state,
+            candidate_mechanics.boundary_states,
         )
         candidate = MPMPhaseFieldRuntimeState(updated_mechanics, damage, history)
         irreversibility = jnp.all(damage >= state.damage - 1.0e-12) & jnp.all(

@@ -377,7 +377,7 @@ def test_stationary_compiler_refusals(case: str) -> None:
             True,
             64,
             2,
-            "1fd89ffb73d479782277a3e4a801ed9e4fe3b257ab508b95e7101dc79c466208",
+            "78d90504e63807254981b90e208b5e13a902d7bf2ff3145274cad8d2c46a8525",
         ),
         (
             False,
@@ -385,7 +385,7 @@ def test_stationary_compiler_refusals(case: str) -> None:
             False,
             33,
             4,
-            "cba56b38d80ca5bf039e618a4014b1e47ae777a3a4858feb2dc17800ba51704d",
+            "e640dac1bddddc4652bde8f77993cf64a0462d393ae9c899481d384ba700629e",
         ),
     ],
     ids=["periodic-cell-heat", "fourth-order-nodal-dirichlet"],

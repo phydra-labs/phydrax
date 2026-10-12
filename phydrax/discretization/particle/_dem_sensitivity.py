@@ -197,6 +197,10 @@ class DEMLocalValidityCertificate(StrictModule, NonTrainableState):
     torsional_yield_margin: Array
     acceptance_margin: Array
     neighborhood_margin: Array
+    shape_query_margin: Array
+    curvature_margin: Array
+    contact_capacity_margin: Array
+    rejection_reasons: Array
     forward_successful: Array
     locally_valid: Array
     policy_id: str = eqx.field(static=True)
@@ -232,6 +236,9 @@ def dem_local_validity_certificate(
         diagnostics.minimum_torsional_yield_margin,
         diagnostics.acceptance_margin,
         diagnostics.neighborhood_certificate_margin,
+        diagnostics.minimum_shape_query_margin,
+        diagnostics.minimum_curvature_margin,
+        diagnostics.contact_capacity_margin,
     )
     thresholds = (
         policy.activation_margin,
@@ -244,12 +251,16 @@ def dem_local_validity_certificate(
         policy.torsional_yield_margin,
         policy.acceptance_margin,
         policy.neighborhood_margin,
+        policy.neighborhood_margin,
+        0.0,
+        0.0,
     )
-    valid = diagnostics.successful
+    valid = diagnostics.successful & (diagnostics.rejection_reasons == 0)
     for margin, threshold in zip(margins, thresholds, strict=True):
         valid = valid & (margin >= threshold)
     return DEMLocalValidityCertificate(
         *margins,
+        diagnostics.rejection_reasons,
         diagnostics.successful,
         valid,
         policy.policy_id,

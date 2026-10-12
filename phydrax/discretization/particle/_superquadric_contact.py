@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import final
 
 import equinox as eqx
 import jax
@@ -18,18 +19,40 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import checked
+from ...typing import checked, parse
 from ._core import ParticleDiscretization
-from ._rigid_body import quaternion_rotation_matrix, RigidBodySetPlan
+from ._pair_state import ParticlePairKeySpace
+from ._pairwise import ParticlePairGeometry, ParticlePairRelation
+from ._rigid_body import (
+    PreparedRigidBodySet,
+    quaternion_rotation_matrix,
+    RigidBodyKinematics,
+    RigidBodySetPlan,
+)
+from ._rigid_contact import RigidContactGeometry
+from ._rigid_shape import (
+    AbstractPreparedRigidContactShape,
+    AbstractRigidContactShapePlan,
+    bounded_contact_geometry,
+    CompliantContactShapeKind,
+    RigidContactGeometryBatch,
+)
+from ._signed_field import (
+    posed_signed_field_coordinates,
+    PosedSignedFieldQueryResult,
+)
 
 
-class SuperquadricSetPlan(StrictModule, NonTrainableState):
+@final
+class SuperquadricSetPlan(AbstractRigidContactShapePlan):
     semi_axes: Array
     first_blockiness: Array
     second_blockiness: Array
     material_ids: Array
     fixed_mask: Array
     plan_id: str = eqx.field(static=True)
+    contact_geometry: SuperquadricContactPlan
+    shape_kind: CompliantContactShapeKind = eqx.field(static=True)
 
     def __init__(
         self,
@@ -40,6 +63,7 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         /,
         *,
         fixed_mask: ArrayLike | None = None,
+        contact_geometry: SuperquadricContactPlan | None = None,
         plan_id: str | None = None,
     ) -> None:
         axes = np.asarray(semi_axes, dtype=np.float64)
@@ -73,9 +97,15 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         )
         if fixed.shape != (count,):
             raise ValueError("fixed_mask must have body-capacity shape.")
+        geometry = (
+            SuperquadricContactPlan() if contact_geometry is None else contact_geometry
+        )
+        if not isinstance(geometry, SuperquadricContactPlan):
+            raise TypeError("contact_geometry must be a SuperquadricContactPlan.")
         generated = canonical_fingerprint(
             {
                 "kind": "superquadric-set-plan",
+                "contact_geometry": geometry.plan_id,
                 "values": array_tree_fingerprint(
                     {
                         "semi_axes": axes,
@@ -96,6 +126,8 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         self.material_ids = jnp.asarray(material, dtype=jnp.int32)
         self.fixed_mask = jnp.asarray(fixed)
         self.plan_id = identifier
+        self.contact_geometry = geometry
+        self.shape_kind = parse("superquadric", CompliantContactShapeKind, "shape_kind")
 
     def prepare(self, particles: ParticleDiscretization, /) -> PreparedSuperquadricSet:
         return PreparedSuperquadricSet(self, particles)
@@ -122,7 +154,8 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedSuperquadricSet(StrictModule, NonTrainableState):
+@final
+class PreparedSuperquadricSet(AbstractPreparedRigidContactShape):
     plan: SuperquadricSetPlan
     particles: ParticleDiscretization
     semi_axes: Array
@@ -131,6 +164,8 @@ class PreparedSuperquadricSet(StrictModule, NonTrainableState):
     bounding_radii: Array
     material_ids: Array
     prepared_id: str = eqx.field(static=True)
+    bodies: PreparedRigidBodySet
+    volumes: Array
 
     @checked
     def __init__(
@@ -151,12 +186,148 @@ class PreparedSuperquadricSet(StrictModule, NonTrainableState):
             active, jnp.linalg.norm(plan.semi_axes, axis=-1), 0.0
         )
         self.material_ids = jnp.where(active, plan.material_ids, 0)
+        self.bodies = plan.rigid_body_plan(particles).prepare(particles)
+        volumes = []
+        for axes, first, second in zip(
+            np.asarray(plan.semi_axes),
+            np.asarray(plan.first_blockiness),
+            np.asarray(plan.second_blockiness),
+            strict=True,
+        ):
+            area = 4.0 * math.exp(
+                2.0 * math.lgamma(1.0 + 1.0 / first) - math.lgamma(1.0 + 2.0 / first)
+            )
+            volumes.append(
+                2.0
+                * area
+                * _beta_integral(float(second), 0.0, 2.0)
+                * float(np.prod(axes))
+            )
+        self.volumes = jnp.where(
+            active, jnp.asarray(volumes, dtype=particles.safe_masses.dtype), 0.0
+        )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-superquadric-set",
                 "plan": plan.plan_id,
                 "particles": particles.prepared_id,
+                "bodies": self.bodies.prepared_id,
+                "contact_measure": "point_force",
             }
+        )
+
+    @property
+    def contact_material_ids(self) -> Array:
+        return self.material_ids
+
+    @property
+    def shape_kind(self) -> CompliantContactShapeKind:
+        return self.plan.shape_kind
+
+    @property
+    def shape_id(self) -> str:
+        return self.prepared_id
+
+    @property
+    def routes_per_pair(self) -> int:
+        return 1
+
+    def evaluate_signed_field_query(
+        self,
+        kinematics: RigidBodyKinematics,
+        body_indices: Array,
+        world_points: Array,
+        /,
+        *,
+        shape_scale: Array | None = None,
+    ) -> PosedSignedFieldQueryResult:
+        """Refuse certification: the support witness is not a bounded field oracle."""
+        _, _, scale, _ = posed_signed_field_coordinates(
+            kinematics,
+            body_indices,
+            world_points,
+            self.particles.active_mask,
+            shape_scale=shape_scale,
+        )
+        return PosedSignedFieldQueryResult(
+            jnp.full_like(scale, jnp.nan),
+            jnp.full_like(scale, jnp.inf),
+            jnp.full_like(scale, jnp.inf),
+            jnp.zeros_like(scale, dtype=jnp.bool_),
+            jnp.asarray(False, dtype=jnp.bool_),
+            self.shape_id,
+        )
+
+    def pair_geometry(
+        self,
+        kinematics: RigidBodyKinematics,
+        shape_scale: Array,
+        pairs: ParticlePairRelation,
+        pair_key_space: ParticlePairKeySpace,
+        /,
+        *,
+        maximum_contact_routes: int,
+        center_geometry: ParticlePairGeometry | None = None,
+        distance_tolerance: float = 1.0e-12,
+    ) -> RigidContactGeometryBatch:
+        del center_geometry, distance_tolerance
+        left, right = pairs.left_indices, pairs.right_indices
+        witness = superquadric_pair_contact(
+            self.plan.contact_geometry,
+            self,
+            kinematics.position,
+            kinematics.orientation,
+            left,
+            right,
+            shape_scale=shape_scale,
+        )
+        keys = pair_key_space.keys(pairs)
+        relative = (
+            kinematics.velocity[left]
+            + jnp.cross(kinematics.angular_velocity[left], witness.left_arm)
+            - kinematics.velocity[right]
+            - jnp.cross(kinematics.angular_velocity[right], witness.right_arm)
+        )
+        normal_velocity = jnp.sum(relative * witness.normal, axis=-1)
+        valid = pairs.valid & witness.valid
+        geometry = RigidContactGeometry(
+            witness.normal,
+            witness.gap,
+            jnp.where(valid, jnp.maximum(-witness.gap, 0.0), 0.0),
+            witness.effective_radius,
+            witness.contact_point,
+            witness.left_arm,
+            witness.right_arm,
+            witness.left_arm,
+            witness.right_arm,
+            relative,
+            normal_velocity,
+            relative - normal_velocity[:, None] * witness.normal,
+            kinematics.angular_velocity[left],
+            kinematics.angular_velocity[right],
+            keys.keys,
+            jnp.zeros_like(left),
+            jnp.zeros_like(right),
+            valid,
+            (~witness.valid).astype(jnp.int32),
+            witness.regularity_margin,
+            jnp.all(~pairs.valid | witness.valid),
+            "rigid-contact:superquadric-pair",
+            left,
+            right,
+            witness.normal,
+            jnp.ones_like(witness.gap),
+            witness.valid & (witness.effective_radius > 0.0),
+            witness.regularity_margin,
+            witness.residual,
+        )
+        return bounded_contact_geometry(
+            geometry,
+            keys,
+            maximum_contact_routes,
+            self.shape_id,
+            left_material_ids=self.material_ids[left],
+            right_material_ids=self.material_ids[right],
         )
 
 
@@ -223,6 +394,9 @@ def superquadric_pair_contact(
     left_indices: Array,
     right_indices: Array,
     /,
+    *,
+    shape_scale: Array | None = None,
+    active_mask: Array | None = None,
 ) -> SuperquadricContactResult:
     if not isinstance(plan, SuperquadricContactPlan):
         raise TypeError("plan must be a SuperquadricContactPlan.")
@@ -243,8 +417,13 @@ def superquadric_pair_contact(
     right_position = positions[right]
     left_rotation = quaternion_rotation_matrix(orientations[left])
     right_rotation = quaternion_rotation_matrix(orientations[right])
-    left_axes = shapes.semi_axes[left]
-    right_axes = shapes.semi_axes[right]
+    axes = (
+        shapes.semi_axes
+        if shape_scale is None
+        else shapes.semi_axes * shape_scale[:, None]
+    )
+    left_axes = axes[left]
+    right_axes = axes[right]
     left_first = shapes.first_blockiness[left]
     right_first = shapes.first_blockiness[right]
     left_second = shapes.second_blockiness[left]
@@ -313,9 +492,8 @@ def superquadric_pair_contact(
     )
     curvature_sum = 0.5 * jnp.sum(left_curvature + right_curvature, axis=-1)
     effective_radius = jnp.where(curvature_sum > 0.0, 1.0 / curvature_sum, 0.0)
-    active_shape = (
-        shapes.particles.active_mask[left] & shapes.particles.active_mask[right]
-    )
+    active = shapes.particles.active_mask if active_mask is None else active_mask
+    active_shape = active[left] & active[right]
     finite = (
         jnp.all(jnp.isfinite(direction), axis=-1)
         & jnp.isfinite(gap)

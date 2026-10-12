@@ -2,9 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+"""Finite-strain J2 radial return in principal elastic Hencky strains.
+
+With tension-positive tau, p=-tr(tau)/3 and q=sqrt(3 s:s/2), associated
+flow reduces the trial q by 3G delta_gamma. Linear isotropic hardening
+increases the strength by H delta_gamma, hence consistency gives
+delta_gamma=(q_trial-sigma_y-H alpha)/(3G+H). The returned elastic
+metric exp(2 epsilon_e) is pulled back by the shared multiplicative kernel.
+Stored hardening energy is H alpha²/2 and dissipation is sigma_y delta_gamma.
+"""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import final, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -12,8 +22,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-
-import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,14 +32,88 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
-from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
 from ...typing import checked
+from ._principal_hencky import (
+    elastic_principal_metric,
+    evaluate_principal_point,
+    initialize_metric_state,
+    initialize_state_from_stress,
+    PrestressedMaterialState,
+    principal_trial,
+)
 
 
 if TYPE_CHECKING:
     from ._mpm_plane_stress import PlaneStressMPMConstitutivePlan
 
 
+def _j2_principal_map(
+    eigenvalues: Array,
+    context: tuple[FiniteStrainJ2Parameters, Array],
+) -> tuple[Array, dict[str, Array]]:
+    parameters, scalars = context
+    alpha = scalars[0]
+    _, _, pressure, q, deviatoric = principal_trial(
+        eigenvalues, parameters.shear_modulus, parameters.bulk_modulus
+    )
+    strength = parameters.yield_stress + parameters.hardening_modulus * alpha
+    trial_yield = q - strength
+    stress_scale = jnp.maximum(
+        parameters.shear_modulus, jnp.maximum(q, jnp.abs(strength))
+    )
+    branch_tolerance = (
+        jnp.maximum(1e-10, 64 * jnp.finfo(eigenvalues.dtype).eps) * stress_scale
+    )
+    increment = jax.lax.cond(
+        trial_yield > 0.0,
+        lambda f: f / (3.0 * parameters.shear_modulus + parameters.hardening_modulus),
+        lambda f: jnp.zeros_like(f),
+        trial_yield,
+    )
+    scale = jax.lax.cond(
+        q > 0.0,
+        lambda value: 1.0 - 3.0 * parameters.shear_modulus * increment / value,
+        lambda value: jnp.ones_like(value),
+        q,
+    )
+    tau = scale * deviatoric - pressure
+    corrected = elastic_principal_metric(
+        tau, parameters.shear_modulus, parameters.bulk_modulus
+    )
+    next_alpha = alpha + increment
+    mean = jnp.mean(tau)
+    elastic_energy = jnp.sum((tau - mean) ** 2) / (
+        4.0 * parameters.shear_modulus
+    ) + mean**2 / (2.0 * parameters.bulk_modulus)
+    residual = (
+        q
+        - 3.0 * parameters.shear_modulus * increment
+        - parameters.yield_stress
+        - parameters.hardening_modulus * next_alpha
+    )
+    return jnp.stack((tau, corrected)), {
+        "scalars": next_alpha[None],
+        "branch_code": jnp.where(increment > 0.0, 1, 0).astype(jnp.int32),
+        "successful": (alpha >= 0.0) & jnp.isfinite(residual),
+        "strict_branch": jnp.abs(trial_yield) > branch_tolerance,
+        "energy": elastic_energy + 0.5 * parameters.hardening_modulus * next_alpha**2,
+        "dissipation": parameters.yield_stress * increment,
+        "yield_residual": residual,
+        "plastic_multiplier": increment,
+    }
+
+
+def _j2_yield(
+    stress: Array, parameters: FiniteStrainJ2Parameters, scalars: Array
+) -> Array:
+    mean = jnp.trace(stress, axis1=-2, axis2=-1) / 3.0
+    deviatoric = stress - mean[..., None, None] * jnp.eye(3, dtype=stress.dtype)
+    squared = 1.5 * jnp.sum(deviatoric**2, axis=(-2, -1))
+    q = jnp.sqrt(squared)
+    return q - parameters.yield_stress - parameters.hardening_modulus * scalars[..., 0]
+
+
+@final
 class FiniteStrainJ2Parameters(StrictModule, NonTrainableState):
     shear_modulus: Array
     bulk_modulus: Array
@@ -69,6 +151,7 @@ class FiniteStrainJ2Parameters(StrictModule, NonTrainableState):
         ) = values
 
 
+@final
 class FiniteStrainJ2MPMConstitutivePlan(
     AbstractImplicitMPMConstitutivePlan,
     NonTrainableState,
@@ -88,7 +171,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
             raise ValueError("yield_tolerance must be finite and positive.")
         self.dimension = 3
         self.kinematics = "three_dimensional"
-        self.state_shape = (10,)
+        self.state_shape = (7,)
         self.capabilities = MPMConstitutiveCapabilities(
             stateful=True,
             has_free_energy=True,
@@ -110,15 +193,31 @@ class FiniteStrainJ2MPMConstitutivePlan(
     def initialize_state(
         self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
     ) -> Array:
-        shape = tuple(batch_shape)
-        plastic = jnp.broadcast_to(jnp.eye(3, dtype=dtype), shape + (3, 3))
-        alpha = jnp.zeros(shape + (1,), dtype=dtype)
-        return jnp.concatenate((plastic.reshape(shape + (9,)), alpha), axis=-1)
+        return initialize_metric_state(batch_shape, dtype)
 
-    @staticmethod
-    def _inverse(value: Array) -> SmallLinearSolveResult:
-        identity = jnp.broadcast_to(jnp.eye(3, dtype=value.dtype), value.shape)
-        return solve_small_linear(SmallLinearSolvePlan(3), value, identity)
+    def initialize_state_from_stress(
+        self,
+        kirchhoff_stress: ArrayLike,
+        parameters: FiniteStrainJ2Parameters,
+        /,
+        *,
+        equivalent_plastic_strain: ArrayLike = 0.0,
+    ) -> PrestressedMaterialState:
+        stress = jnp.asarray(kirchhoff_stress)
+        if stress.shape[-2:] != (3, 3):
+            raise ValueError("Kirchhoff stress must end in 3x3.")
+        alpha = jnp.asarray(equivalent_plastic_strain, dtype=stress.dtype)
+        alpha = jnp.broadcast_to(alpha, stress.shape[:-2])
+        result = initialize_state_from_stress(
+            stress,
+            parameters,
+            alpha[..., None],
+            _j2_yield,
+            tolerance=self.yield_tolerance,
+        )
+        return PrestressedMaterialState(
+            result.state, result.admissible & (alpha >= 0.0), result.yield_value
+        )
 
     def _point(
         self,
@@ -126,96 +225,17 @@ class FiniteStrainJ2MPMConstitutivePlan(
         history: Array,
         density: Array,
         parameters: FiniteStrainJ2Parameters,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array]:
-        plastic = history[:9].reshape((3, 3))
-        alpha = history[9]
-        inverse_plastic = self._inverse(plastic)
-        elastic_trial = deformation @ inverse_plastic.value
-        left, stretches, right_transpose = jnp.linalg.svd(
-            elastic_trial, full_matrices=False
-        )
-        valid_stretch = jnp.all(jnp.isfinite(stretches)) & jnp.all(stretches > 0.0)
-        log_stretch = jnp.log(jnp.where(stretches > 0.0, stretches, 1.0))
-        mean_log = jnp.mean(log_stretch)
-        deviatoric_log = log_stretch - mean_log
-        trial_deviatoric = 2.0 * parameters.shear_modulus * deviatoric_log
-        trial_q = jnp.sqrt(1.5 * jnp.sum(trial_deviatoric**2))
-        yield_strength = parameters.yield_stress + parameters.hardening_modulus * alpha
-        yield_function = trial_q - yield_strength
-        plastic_branch = yield_function > self.yield_tolerance
-        denominator = 3.0 * parameters.shear_modulus + parameters.hardening_modulus
-        increment = jnp.where(
-            plastic_branch,
-            jnp.maximum(yield_function, 0.0) / denominator,
-            0.0,
-        )
-        scale = jnp.where(
-            trial_q > self.yield_tolerance,
-            jnp.maximum(
-                0.0,
-                1.0 - 3.0 * parameters.shear_modulus * increment / trial_q,
-            ),
-            1.0,
-        )
-        corrected_deviatoric = trial_deviatoric * scale
-        corrected_log = corrected_deviatoric / (2.0 * parameters.shear_modulus) + mean_log
-        corrected_elastic = (left * jnp.exp(corrected_log)[None, :]) @ right_transpose
-        inverse_elastic = self._inverse(corrected_elastic)
-        next_plastic = inverse_elastic.value @ deformation
-        inverse_next_plastic = self._inverse(next_plastic)
-        plastic_determinant = inverse_next_plastic.determinant
-        normalization = jnp.cbrt(
-            jnp.where(plastic_determinant > 0.0, plastic_determinant, 1.0)
-        )
-        next_plastic = next_plastic / normalization
-        next_alpha = alpha + increment
-        principal_tau = corrected_deviatoric + parameters.bulk_modulus * jnp.sum(
-            corrected_log
-        )
-        kirchhoff = (left * principal_tau[None, :]) @ left.T
-        inverse_deformation = self._inverse(deformation)
-        first_piola = kirchhoff @ inverse_deformation.value.T
-        energy = (
-            parameters.shear_modulus
-            * jnp.sum((corrected_log - jnp.mean(corrected_log)) ** 2)
-            + 0.5 * parameters.bulk_modulus * jnp.sum(corrected_log) ** 2
-            + 0.5 * parameters.hardening_modulus * next_alpha**2
-        )
-        dissipation = parameters.yield_stress * increment
-        inverse_transpose = inverse_deformation.value.T
-        absolute_inverse = jnp.abs(inverse_transpose)
-        norm_bound = jnp.sqrt(
-            jnp.max(jnp.sum(absolute_inverse, axis=0))
-            * jnp.max(jnp.sum(absolute_inverse, axis=1))
-        )
-        speed = jnp.sqrt(
-            (parameters.bulk_modulus + 4.0 * parameters.shear_modulus / 3.0)
-            / jnp.where(density > 0.0, density, 1.0)
-        ) * jnp.maximum(norm_bound, 1.0)
-        finite = (
-            inverse_plastic.successful
-            & inverse_elastic.successful
-            & inverse_next_plastic.successful
-            & inverse_deformation.successful
-            & valid_stretch
-            & jnp.all(jnp.isfinite(first_piola))
-            & jnp.isfinite(energy)
-            & jnp.isfinite(speed)
-            & (plastic_determinant > 0.0)
-            & (density > 0.0)
-        )
-        state = jnp.concatenate((next_plastic.reshape((9,)), next_alpha[None]))
-        return (
-            jnp.where(finite, first_piola, 0.0),
-            jnp.where(finite, state, history),
-            jnp.where(finite, energy, 0.0),
-            jnp.where(finite, speed, 0.0),
-            jnp.where(finite, dissipation, 0.0),
-            jnp.where(plastic_branch, 1, 0).astype(jnp.int32),
-            finite,
-            yield_function,
-            increment,
-            plastic_determinant,
+        step_size: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, dict[str, Array]]:
+        return evaluate_principal_point(
+            deformation,
+            history,
+            density,
+            parameters,
+            _j2_principal_map,
+            function_id="finite-strain-j2-hencky",
+            step_size=step_size,
+            wave_modulus=parameters.bulk_modulus + 4.0 * parameters.shear_modulus / 3.0,
         )
 
     @checked
@@ -236,13 +256,19 @@ class FiniteStrainJ2MPMConstitutivePlan(
         batch_shape = deformation.shape[:-2]
         history = jnp.asarray(committed_state, dtype=deformation.dtype)
         density = jnp.asarray(reference_density, dtype=deformation.dtype)
-        if history.shape != batch_shape + (10,) or density.shape != batch_shape:
+        if history.shape != batch_shape + (7,) or density.shape != batch_shape:
             raise ValueError("Finite-strain J2 state/density shape changed.")
         flat_f = deformation.reshape((-1, 3, 3))
-        flat_history = history.reshape((-1, 10))
+        flat_history = history.reshape((-1, 7))
         flat_density = density.reshape((-1,))
         outputs = jax.vmap(
-            lambda value, state, rho: self._point(value, state, rho, parameters)
+            lambda value, state, rho: self._point(
+                value,
+                state,
+                rho,
+                parameters,
+                jnp.asarray(step_size, dtype=deformation.dtype),
+            )
         )(flat_f, flat_history, flat_density)
         (
             stress,
@@ -252,10 +278,9 @@ class FiniteStrainJ2MPMConstitutivePlan(
             dissipation,
             branch,
             finite,
-            yield_value,
-            increment,
-            detp,
+            diagnostics,
         ) = outputs
+        diagnostics["tangent_successful"] &= diagnostics["strict_branch"]
         suggested = jnp.where(
             finite,
             jnp.asarray(jnp.inf, dtype=deformation.dtype),
@@ -263,7 +288,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
         )
         return MPMConstitutiveResponse(
             stress.reshape(batch_shape + (3, 3)),
-            trial.reshape(batch_shape + (10,)),
+            trial.reshape(batch_shape + (7,)),
             energy.reshape(batch_shape),
             speed.reshape(batch_shape),
             dissipation_increment=dissipation.reshape(batch_shape),
@@ -272,9 +297,8 @@ class FiniteStrainJ2MPMConstitutivePlan(
             successful=finite.reshape(batch_shape),
             admissible=finite.reshape(batch_shape),
             diagnostics={
-                "yield_function": yield_value.reshape(batch_shape),
-                "plastic_multiplier": increment.reshape(batch_shape),
-                "plastic_determinant": detp.reshape(batch_shape),
+                key: value.reshape(batch_shape + value.shape[1:])
+                for key, value in diagnostics.items()
             },
         )
 
@@ -301,33 +325,23 @@ class FiniteStrainJ2MPMConstitutivePlan(
         density = jnp.asarray(reference_density, dtype=deformation.dtype)
         batch_shape = deformation.shape[:-2]
         flat_f = deformation.reshape((-1, 3, 3))
-        flat_history = history.reshape((-1, 10))
+        flat_history = history.reshape((-1, 7))
         flat_density = density.reshape((-1,))
 
         def stress(value: Array, state: Array, rho: Array) -> Array:
-            return self._point(value, state, rho, parameters)[0]
+            return self._point(
+                value, state, rho, parameters, jnp.asarray(step_size, dtype=value.dtype)
+            )[0]
 
         tangent = jax.vmap(jax.jacfwd(stress, argnums=0))(
             flat_f, flat_history, flat_density
         )
         tangent = tangent.reshape(batch_shape + (3, 3, 3, 3))
-        finite_tangent = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
-        identity = jnp.eye(3, dtype=deformation.dtype)
-        lame = parameters.bulk_modulus - 2.0 * parameters.shear_modulus / 3.0
-        elastic_identity_tangent = lame * ein.contract(
-            "ij,kl->ijkl", identity, identity
-        ) + parameters.shear_modulus * (
-            ein.contract("ik,jl->ijkl", identity, identity)
-            + ein.contract("il,jk->ijkl", identity, identity)
+        successful = (
+            response.successful
+            & response.diagnostics["tangent_successful"]
+            & jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
         )
-        near_identity = jnp.linalg.norm(deformation - identity, axis=(-2, -1)) <= 1.0e-10
-        replace = (~finite_tangent) & near_identity & (response.branch_code == 0)
-        tangent = jnp.where(
-            replace[..., None, None, None, None],
-            elastic_identity_tangent,
-            tangent,
-        )
-        successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
         return MPMLinearizedConstitutiveResponse(response, tangent, successful)
 
 

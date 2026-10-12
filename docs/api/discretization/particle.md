@@ -287,11 +287,27 @@ inside one mapped owner region. Completeness over translations is the caller's
 
 ---
 
-::: phydrax.discretization.SoftSphereDEMMethodPlan
+::: phydrax.discretization.CompliantDEMMethodPlan
 
 ---
 
-::: phydrax.discretization.PreparedSoftSphereDEMDynamics
+::: phydrax.discretization.PreparedCompliantDEMDynamics
+
+---
+
+::: phydrax.discretization.CompliantDEMBodyProperties
+
+---
+
+::: phydrax.discretization.AbstractRigidContactShapePlan
+
+---
+
+::: phydrax.discretization.AbstractPreparedRigidContactShape
+
+---
+
+::: phydrax.discretization.RigidContactGeometryBatch
 
 ---
 
@@ -506,7 +522,15 @@ inside one mapped owner region. Completeness over translations is the caller's
 
 ---
 
-::: phydrax.discretization.SuperquadricDEMPlan
+::: phydrax.discretization.RigidSphereClumpSetPlan
+
+---
+
+::: phydrax.discretization.ConvexShapeSetPlan
+
+---
+
+::: phydrax.discretization.PreparedConvexShapeSet
 
 ### Internal particle state and processes
 
@@ -557,6 +581,39 @@ inside one mapped owner region. Completeness over translations is the caller's
 ::: phydrax.discretization.MassFlowSurfacePlan
 
 ### CFD--DEM
+
+The unresolved coupling owns conservative fluid–particle exchange and a typed
+`drag_law`; pressure-gradient force remains a separate
+`include_pressure_gradient` option. See the [CFD–DEM guide](../../guides_cfd_dem.md)
+for equations, source provenance, and the clean closure-to-drag cutover.
+
+`InterphaseDragLawPlan(correlation, /, *, maximum_reynolds=None)` selects
+`stokes`, `schiller_naumann`, `di_felice`, `ergun`, `wen_yu`, `gidaspow`,
+`huilin_gidaspow`, or `beetstra`. Its positional evaluation contract is
+`evaluate(porosity, relative_speed, particle_diameter, dynamic_viscosity,
+fluid_density, particle_volume, /)`.
+
+`beta` is bulk momentum exchange (kg m⁻³ s⁻¹), while
+`particle_drag_coefficient` multiplies one particle's slip velocity (kg s⁻¹).
+Do not infer one from the other using a supplied particle volume for the
+isolated-sphere laws. The reported Reynolds number is interstitial ρdw/μ;
+Di Felice, Wen–Yu, and Beetstra use ερdw/μ inside their fits, and a declared
+Reynolds cap applies to that fit convention. Porosity, regime, branch margin,
+derivative validity, admission, numerical success, and static law identity
+remain visible in `CFDEMCouplingEvaluation.drag`. Hard switches and zero-speed
+value limits do not automatically qualify derivatives.
+
+::: phydrax.equations.AbstractInterphaseDragLaw
+
+---
+
+::: phydrax.equations.InterphaseDragLawPlan
+
+---
+
+::: phydrax.equations.InterphaseDragEvaluation
+
+---
 
 ::: phydrax.discretization.PreparedMeshParticleGridSplat
 
@@ -869,3 +926,39 @@ also guarantees zero internal torque. A scalar flux conserves the exchanged
 scalar. None of these constructions alone guarantees energy conservation,
 dissipation, rotational equivariance, or smooth derivatives through a changed
 neighbor relation.
+
+## Level-set rigid grains and packing
+
+Level-set fields are approximate `LEVEL_SET` interpolants, not exact SDFs.
+The common compliant engine integrates symmetric two-sided half physical-area
+quadrature. Per-area normal/tangential stiffness is N/m³; point-force laws
+cannot be reused on these routes. See [the level-set guide](../../guides_level_set_dem.md)
+for mass-property evidence, source enclosures, history, and atomic refusal.
+
+::: phydrax.discretization.LevelSetShapeTemplatePlan
+
+::: phydrax.discretization.LevelSetRigidShapeSetPlan
+
+::: phydrax.discretization.PreparedLevelSetRigidShapeSet
+
+::: phydrax.discretization.LevelSetMassPropertyEvidence
+
+::: phydrax.discretization.LevelSetPenaltyNormalPlan
+
+::: phydrax.discretization.LevelSetTangentialContactPlan
+
+::: phydrax.discretization.evaluate_level_set_point_query
+
+::: phydrax.discretization.LevelSetPointQueryResult
+
+::: phydrax.discretization.PosedSignedFieldQueryResult
+
+::: phydrax.discretization.RandomSequentialPackingPlan
+
+::: phydrax.discretization.RigidDEMPackingResult
+
+::: phydrax.discretization.spatial.SparseVoxelDifferentialQueryResult
+
+::: phydrax.applications.contact.MPMLevelSetGrainContactParticipant
+
+::: phydrax.applications.contact.MPMLevelSetGrainContactEvaluation

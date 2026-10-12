@@ -19,7 +19,11 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from ...typing import PRNGKey
-from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
+from ._dem import (
+    CompliantDEMBodyProperties,
+    DEMRuntimeState,
+    PreparedCompliantDEMDynamics,
+)
 from ._particle_epoch import (
     grow_particle_execution_epoch,
     ParticleCapacityGrowthPolicy,
@@ -34,12 +38,12 @@ from ._particle_internal_mesh import (
 from ._particle_internal_state import ParticleInternalBatchState
 from ._particle_morphology import (
     fragment_particle_internal_batch,
-    ParticleDynamicBodyProperties,
     ThermochemicalFragmentationEvaluation,
     ThermochemicalFragmentationPlan,
 )
 from ._population import update_particle_population
-from ._rigid_sphere import RigidSphereKinematics
+from ._rigid_body import RigidBodyKinematics
+from ._rigid_sphere import PreparedRigidSphereSet
 
 
 class ReactiveParticleTemplatePlan(StrictModule, NonTrainableState):
@@ -270,7 +274,7 @@ class ParticleInsertionResult(StrictModule):
 def insert_reactive_particles(
     plan: ParticleInsertionPlan,
     distribution: ReactiveParticleTemplateDistributionPlan,
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     dem_state: DEMRuntimeState,
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
@@ -286,6 +290,9 @@ def insert_reactive_particles(
         raise TypeError("plan must be a ParticleInsertionPlan.")
     if not isinstance(distribution, ReactiveParticleTemplateDistributionPlan):
         raise TypeError("distribution must be a template distribution.")
+    shapes = dynamics.shapes
+    if not isinstance(shapes, PreparedRigidSphereSet):
+        raise ValueError("Particle insertion requires sphere contact shapes.")
     if plan.lower.shape[0] != dynamics.bodies.ambient_dimension:
         raise ValueError("Insertion region dimension does not match DEM.")
     if internal_batch.particles.prepared_id != dynamics.bodies.particles.prepared_id:
@@ -323,11 +330,11 @@ def insert_reactive_particles(
     angular = dem_state.kinematics.angular_velocity
     properties = dem_state.body_properties
     active = properties.active
-    radii = properties.radii
+    radii = shapes.radii * properties.shape_scale
     masses = properties.masses
     inverse_masses = properties.inverse_masses
-    inertias = properties.inertias
-    inverse_inertias = properties.inverse_inertias
+    inertias = properties.inertia_com
+    inverse_inertias = properties.inverse_inertia_com
     energy = internal_state.internal_energy
     species = internal_state.species_amount
     pore = internal_state.porosity
@@ -365,7 +372,7 @@ def insert_reactive_particles(
         )
         admissible = region_ok & overlap_free & (slots[insertion_index] >= 0)
         has_candidate = jnp.any(admissible)
-        attempt = jnp.argmax(admissible.astype(jnp.int32))
+        attempt = jnp.argmax(admissible.astype(jnp.int32)).astype(jnp.int32)
         chosen = candidate[attempt]
         use = capacity_available & has_candidate
         template_velocity = jnp.stack(tuple(value.velocity for value in template_values))[
@@ -388,9 +395,19 @@ def insert_reactive_particles(
         inertia = (
             (0.5 if dynamics.bodies.ambient_dimension == 2 else 0.4) * mass * radius**2
         )
-        inertias = inertias.at[slot].set(jnp.where(use, inertia, inertias[slot]))
+        inertia_value = (
+            inertia
+            if dynamics.bodies.ambient_dimension == 2
+            else inertia * jnp.eye(3, dtype=inertias.dtype)
+        )
+        inverse_value = (
+            1.0 / inertia
+            if dynamics.bodies.ambient_dimension == 2
+            else jnp.eye(3, dtype=inertias.dtype) / inertia
+        )
+        inertias = inertias.at[slot].set(jnp.where(use, inertia_value, inertias[slot]))
         inverse_inertias = inverse_inertias.at[slot].set(
-            jnp.where(use, 1.0 / inertia, inverse_inertias[slot])
+            jnp.where(use, inverse_value, inverse_inertias[slot])
         )
         local_matches = internal_batch.owner_indices == slot
         local_exists = jnp.any(local_matches)
@@ -438,15 +455,18 @@ def insert_reactive_particles(
     population = update_particle_population(
         dem_state.body_properties.population, active, masses
     )
-    body_properties = ParticleDynamicBodyProperties(
+    body_properties = CompliantDEMBodyProperties(
         population,
         inverse_masses,
-        radii,
+        radii / shapes.radii,
         inertias,
         inverse_inertias,
+        shapes.shape_id,
     )
     raw_dem = DEMRuntimeState(
-        RigidSphereKinematics(position, velocity, angular),
+        RigidBodyKinematics(
+            position, velocity, dem_state.kinematics.orientation, angular
+        ),
         body_properties,
         dem_state.particle_history,
         dem_state.boundary_histories,
@@ -713,6 +733,8 @@ def fragment_particle_with_growth(
     *,
     args: Any = None,
 ) -> ParticleEpochFragmentationResult:
+    if not isinstance(epoch.dynamics.shapes, PreparedRigidSphereSet):
+        raise ValueError("Particle fragmentation requires sphere contact shapes.")
     valid = jnp.asarray(child_valid, dtype=jnp.bool_)
     required = int(np.count_nonzero(np.asarray(valid)))
     available = ~epoch.ever_occupied & ~epoch.retired
@@ -774,20 +796,36 @@ def fragment_particle_with_growth(
     masses = masses.at[child_indices].set(
         jnp.where(valid, jnp.asarray(child_masses), masses[child_indices])
     )
-    radii = properties.radii.at[source].set(0.0)
+    shapes = current_epoch.dynamics.shapes
+    if not isinstance(shapes, PreparedRigidSphereSet):
+        raise ValueError("Particle fragmentation requires sphere contact shapes.")
+    original_radii = shapes.radii * properties.shape_scale
+    radii = original_radii.at[source].set(0.0)
     radii = radii.at[child_indices].set(
         jnp.where(valid, jnp.asarray(child_outer_scale), radii[child_indices])
     )
     inverse_masses = jnp.where(active, 1.0 / jnp.maximum(masses, 1.0e-30), 0.0)
-    inertias = jnp.where(active, 0.4 * masses * radii**2, 1.0)
-    inverse_inertias = jnp.where(active, 1.0 / inertias, 0.0)
+    dimension = current_epoch.dynamics.bodies.ambient_dimension
+    scalar_inertia = jnp.where(
+        active, (0.5 if dimension == 2 else 0.4) * masses * radii**2, 1.0
+    )
+    if dimension == 2:
+        inertias = scalar_inertia
+        inverse_inertias = jnp.where(active, 1.0 / scalar_inertia, 0.0)
+    else:
+        identity = jnp.eye(3, dtype=masses.dtype)
+        inertias = scalar_inertia[:, None, None] * identity
+        inverse_inertias = jnp.where(
+            active[:, None, None], identity / scalar_inertia[:, None, None], 0.0
+        )
     population = update_particle_population(properties.population, active, masses)
-    body_properties = ParticleDynamicBodyProperties(
+    body_properties = CompliantDEMBodyProperties(
         population,
         inverse_masses,
-        radii,
+        radii / shapes.radii,
         inertias,
         inverse_inertias,
+        shapes.shape_id,
     )
     position = current_epoch.state.kinematics.position
     velocity = current_epoch.state.kinematics.velocity
@@ -799,7 +837,7 @@ def fragment_particle_with_growth(
         sign = 1.0 if index % 2 == 0 else -1.0
         direction = jnp.zeros((dimension,), dtype=position.dtype).at[axis].set(sign)
         separation = 1.05 * (
-            properties.radii[source] + jnp.asarray(child_outer_scale)[index]
+            original_radii[source] + jnp.asarray(child_outer_scale)[index]
         )
         child_position = position[source] + separation * direction
         position = position.at[child].set(
@@ -812,7 +850,12 @@ def fragment_particle_with_growth(
             jnp.where(valid[index], angular_velocity[source], angular_velocity[child])
         )
     staged_state = DEMRuntimeState(
-        RigidSphereKinematics(position, velocity, angular_velocity),
+        RigidBodyKinematics(
+            position,
+            velocity,
+            current_epoch.state.kinematics.orientation,
+            angular_velocity,
+        ),
         body_properties,
         current_epoch.state.particle_history,
         current_epoch.state.boundary_histories,
@@ -987,7 +1030,7 @@ class ParticleRemovalResult(StrictModule):
 
 def remove_particles_in_region(
     region: ParticleRegionPlan,
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     dem_state: DEMRuntimeState,
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
@@ -999,6 +1042,8 @@ def remove_particles_in_region(
 ) -> ParticleRemovalResult:
     if not isinstance(region, ParticleRegionPlan):
         raise TypeError("region must be a ParticleRegionPlan.")
+    if not isinstance(dynamics.shapes, PreparedRigidSphereSet):
+        raise ValueError("Particle removal requires sphere contact shapes.")
     inside = region.contains(dem_state.kinematics.position)
     removed = (
         inside if bool(remove_inside) else ~inside
@@ -1041,17 +1086,29 @@ def remove_particles_in_region(
     population = update_particle_population(
         dem_state.body_properties.population, next_active, next_masses
     )
-    properties = ParticleDynamicBodyProperties(
+    properties = CompliantDEMBodyProperties(
         population,
         jnp.where(removed, 0.0, dem_state.body_properties.inverse_masses),
-        jnp.where(removed, 0.0, dem_state.body_properties.radii),
-        jnp.where(removed, 1.0, dem_state.body_properties.inertias),
-        jnp.where(removed, 0.0, dem_state.body_properties.inverse_inertias),
+        jnp.where(removed, 0.0, dem_state.body_properties.shape_scale),
+        jnp.where(
+            removed if dynamics.bodies.ambient_dimension == 2 else removed[:, None, None],
+            1.0
+            if dynamics.bodies.ambient_dimension == 2
+            else jnp.eye(3, dtype=dem_state.body_properties.inertia_com.dtype),
+            dem_state.body_properties.inertia_com,
+        ),
+        jnp.where(
+            removed if dynamics.bodies.ambient_dimension == 2 else removed[:, None, None],
+            0.0,
+            dem_state.body_properties.inverse_inertia_com,
+        ),
+        dynamics.shapes.shape_id,
     )
     raw_state = DEMRuntimeState(
-        RigidSphereKinematics(
+        RigidBodyKinematics(
             dem_state.kinematics.position,
             jnp.where(removed[:, None], 0.0, dem_state.kinematics.velocity),
+            dem_state.kinematics.orientation,
             jnp.where(
                 removed[:, None],
                 0.0,

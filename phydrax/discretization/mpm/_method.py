@@ -10,6 +10,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._geometry import MPMGeometryPlan
 from ._schedule import AbstractExplicitMPMSchedule, USLMPMSchedule
 from ._velocity_transfer import (
     AbstractMPMAdvectionPlan,
@@ -19,6 +20,7 @@ from ._velocity_transfer import (
     PICAdvectionPlan,
     TransferredVelocityAdvectionPlan,
 )
+from ._volumetric import MPMVolumetricStabilizationPlan
 
 
 class MPMResourcePolicy(StrictModule, NonTrainableState):
@@ -59,6 +61,8 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
     transfer: AbstractMPMVelocityTransferPlan
     advection: AbstractMPMAdvectionPlan
     schedule: AbstractExplicitMPMSchedule
+    volumetric_stabilization: MPMVolumetricStabilizationPlan
+    geometry: MPMGeometryPlan | None
     acoustic_cfl: float = eqx.field(static=True)
     advective_cfl: float = eqx.field(static=True)
     force_cfl: float = eqx.field(static=True)
@@ -72,6 +76,8 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         *,
         advection: AbstractMPMAdvectionPlan | None = None,
         schedule: AbstractExplicitMPMSchedule | None = None,
+        volumetric_stabilization: MPMVolumetricStabilizationPlan | None = None,
+        geometry: MPMGeometryPlan | None = None,
         acoustic_cfl: float = 0.4,
         advective_cfl: float = 0.4,
         force_cfl: float = 0.25,
@@ -93,6 +99,17 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         schedule_ = USLMPMSchedule() if schedule is None else schedule
         if not isinstance(schedule_, AbstractExplicitMPMSchedule):
             raise TypeError("schedule must be AbstractExplicitMPMSchedule or None.")
+        stabilization = (
+            MPMVolumetricStabilizationPlan()
+            if volumetric_stabilization is None
+            else volumetric_stabilization
+        )
+        if not isinstance(stabilization, MPMVolumetricStabilizationPlan):
+            raise TypeError(
+                "volumetric_stabilization must be MPMVolumetricStabilizationPlan or None."
+            )
+        if geometry is not None and not isinstance(geometry, MPMGeometryPlan):
+            raise TypeError("geometry must be MPMGeometryPlan or None.")
         values = tuple(
             float(value)
             for value in (
@@ -107,6 +124,8 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         self.transfer = transfer_
         self.advection = advection_
         self.schedule = schedule_
+        self.volumetric_stabilization = stabilization
+        self.geometry = geometry
         self.acoustic_cfl = values[0]
         self.advective_cfl = values[1]
         self.force_cfl = values[2]
@@ -119,6 +138,8 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
                 "deformation_update": "forward-euler",
                 "transfer": transfer_.plan_id,
                 "advection": advection_.plan_id,
+                "volumetric_stabilization": stabilization.plan_id,
+                "geometry": None if geometry is None else geometry.plan_id,
                 "acoustic_cfl": values[0],
                 "advective_cfl": values[1],
                 "force_cfl": values[2],

@@ -14,13 +14,28 @@ import numpy.typing as npt
 
 import phydrax as phx
 import phydrax.typing as pt
+from phydrax import (
+    equations as equations,
+    geometry as geometry,
+    linalg as linalg,
+    rheology as rheology,
+    solver as solver,
+)
+from phydrax.applications import contact as contact, solid_mechanics as solid
+from phydrax.applications.incompressible_flow import (
+    VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE,
+)
 from phydrax.discretization import (
     DistributedSpectralExecutionPlan,
+    mpm as mpm,
+    particle as particle,
+    spatial as spatial,
     SpectralExecutionResult,
     SpectralGlobalDiagnostics,
     SpectralMeshTopology,
     SpectralPrecisionPolicy,
 )
+from phydrax.discretization.flip import FLIPViscousEvidence
 from phydrax.equations import ChemicalComponentCatalog
 from phydrax.linalg.svd import (
     prepare_svd,
@@ -197,3 +212,184 @@ def distributed_spectral_consumer(
     diagnostics = plan.diagnostics(result.value)
     assert_type(diagnostics, SpectralGlobalDiagnostics)
     assert_type(diagnostics.total, jax.Array)
+
+
+def spectral_principal_map(
+    eigenvalues: jax.Array, coefficient: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    return (coefficient * eigenvalues)[None, :], jnp.sum(eigenvalues)
+
+
+def geomechanics_spectral(matrix: jax.Array, coefficient: jax.Array) -> None:
+    result = linalg.hermitian_spectral_map(
+        matrix, spectral_principal_map, coefficient, function_id="installed-principal-map"
+    )
+    assert_type(result, linalg.HermitianSpectralMapResult[jax.Array])
+    assert_type(result.derivative_valid, jax.Array)
+    assert_type(linalg.hermitian_log(matrix).derivative_valid, jax.Array)
+
+
+def geomechanics_materials(
+    mc: solid.MohrCoulombMPMConstitutivePlan,
+    mc_parameters: solid.MohrCoulombParameters,
+    mcc: solid.ModifiedCamClayMPMConstitutivePlan,
+    mu_parameters: rheology.MuIParameters,
+    stress: jax.Array,
+    deformation: jax.Array,
+) -> None:
+    mc_history = mc.initialize_state((1,), jnp.float64)
+    assert_type(mc_history, jax.Array)  # Packed metric plus hardening: width 7.
+    assert_type(
+        mc.initialize_state_from_stress(stress, mc_parameters),
+        solid.PrestressedMaterialState,
+    )
+    assert_type(
+        mc.evaluate_linearized(deformation, mc_history, 2000.0, mc_parameters, 0.0, 0.01),
+        equations.MPMLinearizedConstitutiveResponse,
+    )
+    parameters = solid.ModifiedCamClayParameters(1000.0, 0.0, 1.2, 0.2, 0.05)
+    assert_type(parameters, solid.ModifiedCamClayParameters)
+    assert_type(
+        mcc.initialize_state_from_stress(
+            stress, parameters, preconsolidation_pressure=200.0, initial_void_ratio=0.8
+        ),
+        solid.PrestressedMaterialState,
+    )
+    mu = solid.MuIMPMConstitutivePlan(1000.0, 2000.0)
+    history = mu.initialize_state((1,), jnp.float64)
+    assert_type(history, jax.Array)
+    assert_type(
+        mu.evaluate(deformation, history, 2000.0, mu_parameters, 0.0, 0.01),
+        equations.MPMConstitutiveResponse,
+    )
+    assert_type(
+        mu.evaluate_linearized(deformation, history, 2000.0, mu_parameters, 0.0, 0.01),
+        equations.MPMLinearizedConstitutiveResponse,
+    )
+    assert_type(
+        mu.initialize_state_from_stress(stress, mu_parameters),
+        solid.PrestressedMaterialState,
+    )
+
+
+def granular_rheology(
+    law: rheology.MuILaw,
+    parameters: rheology.MuIParameters,
+    generalized: rheology.GeneralizedNewtonianLaw,
+    packing: rheology.MuIPackingFractionLaw,
+) -> None:
+    assert_type(law.evaluate(1.0, 100.0, parameters), rheology.MuILawEvaluation)
+    assert_type(generalized.viscosity(1.0), rheology.GeneralizedNewtonianEvaluation)
+    assert_type(packing.evaluate(0.1), jax.Array)
+
+
+def geomechanics_public_surfaces() -> None:
+    # Canonical facade resolution also runs against the installed wheel.
+    surfaces = (
+        mpm.MPMVolumetricStabilizationKind,
+        mpm.MPMVolumetricStabilizationPlan,
+        mpm.MPMGeometryKind,
+        mpm.MPMGeometryPlan,
+        mpm.gather_apic,
+        mpm.build_apic_route_payload,
+        mpm.PreparedMPMBoundaryLoad,
+        mpm.MPMBoundaryState,
+        mpm.MPMBoundaryLoadResult,
+        mpm.LysmerKuhlemeyerDashpot,
+        mpm.MPMDashpotResult,
+        mpm.MPMPredictorResult,
+        solver.PreparedImplicitMPMResidual,
+        solver.ImplicitMPMResidualEvaluation,
+        solver.DoublePointMPMPlan,
+        solver.advance_double_point_mpm_step,
+        solver.project_double_point_velocity,
+        solid.FiniteStrainConstitutiveModel,
+        solid.NorSandParameters,
+        solid.NorSandMPMConstitutivePlan,
+        solid.MixedMPMPressureOperator,
+        solid.effective_pore_pressure_first_piola,
+        particle.CompliantDEMMethodPlan,
+        particle.PreparedCompliantDEMDynamics,
+        particle.CompliantDEMBodyProperties,
+        particle.CompliantContactShapeKind,
+        particle.AbstractRigidContactShapePlan,
+        particle.AbstractPreparedRigidContactShape,
+        particle.RigidContactGeometryBatch,
+        particle.ConvexShapeSetPlan,
+        particle.ContactMeasureKind,
+        particle.LevelSetShapeTemplatePlan,
+        particle.LevelSetRigidShapeSetPlan,
+        particle.PreparedLevelSetRigidShapeSet,
+        particle.LevelSetMassPropertyEvidence,
+        particle.LevelSetPointQueryResult,
+        particle.evaluate_level_set_point_query,
+        particle.LevelSetPenaltyNormalPlan,
+        particle.LevelSetTangentialContactPlan,
+        particle.PosedSignedFieldQueryResult,
+        particle.RandomSequentialPackingPlan,
+        particle.RigidDEMPackingResult,
+        spatial.SparseVoxelDifferentialQueryResult,
+        geometry.level_set_interpolation_certificate,
+        contact.MPMLevelSetGrainContactParticipant,
+        contact.MPMLevelSetGrainContactEvaluation,
+        contact.MonolithicContactPlan,
+        contact.MonolithicContactState,
+        contact.MonolithicContactResult,
+        contact.PreparedMonolithicContactStep,
+        contact.PreparedMonolithicContactEquilibrium,
+        contact.initialize_monolithic_contact_state,
+        contact.prepare_monolithic_contact_step,
+        contact.prepare_monolithic_contact_equilibrium,
+        contact.solve_monolithic_contact_step,
+        contact.solve_monolithic_contact_equilibrium,
+        contact.monolithic_contact_solution_jvp,
+        contact.monolithic_contact_solution_vjp,
+        contact.AbstractImplicitContactParticipant,
+        contact.FunctionalImplicitContactParticipant,
+        contact.make_implicit_contact_participant,
+        contact.AffineBodyPlan,
+        contact.prepare_affine_body_participant,
+        contact.prepare_finite_element_contact_participant,
+        contact.prepare_iga_contact_participant,
+        contact.prepare_implicit_mpm_contact_participant,
+        contact.prepare_reduced_rod_contact_participant,
+        contact.AffineBodyHistory,
+        contact.AffineBodyParticipant,
+        equations.AbstractInterphaseDragLaw,
+        equations.InterphaseDragLawPlan,
+        equations.InterphaseDragCorrelation,
+        equations.InterphaseDragEvaluation,
+        equations.FLIPViscousLaw,
+        FLIPViscousEvidence,
+        rheology.MuIRegularizationKind,
+        equations.MACSDFCutFractionPlan,
+        equations.MACVolumeFractionIBCFDEMCouplingPlan,
+        solver.advance_mac_volume_fraction_ib_cfd_dem,
+        VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE,
+    )
+    del surfaces
+
+
+def implicit_mpm_residual(
+    dynamics: solver.PreparedImplicitMPMDynamics,
+    state: mpm.MPMRuntimeState,
+    velocity: jax.Array,
+    arguments: equations.MaterialPointArguments,
+) -> None:
+    prepared = dynamics.prepare_residual(state, 0.01, arguments)
+    assert_type(prepared, solver.PreparedImplicitMPMResidual)
+    assert_type(
+        prepared.evaluate_detailed(velocity), solver.ImplicitMPMResidualEvaluation
+    )
+
+
+def incremental_flip_projection(
+    plan: solver.MACFreeSurfaceProjectionPlan,
+    velocity: phx.discretization.finite_volume.FaceVelocity,
+    liquid: jax.Array,
+    pressure: jax.Array,
+) -> None:
+    assert_type(
+        plan.project(velocity, liquid, 0.01, pressure=pressure, incremental=True),
+        solver.MACFreeSurfaceProjectionResult,
+    )

@@ -8,6 +8,8 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from jax.typing import DTypeLike
 
 import phydrax as phx
 
@@ -162,3 +164,26 @@ def test_mpm_fracture_scenario_1() -> None:
         jnp.where(incompatible[..., None], routed, 0.0),
         jnp.where(incompatible[..., None], expected_ghost, 0.0),
     )
+
+
+@pytest.mark.parametrize(
+    "dtype,strains",
+    (
+        pytest.param(jnp.float32, (2e-4, -5e-5, -1e-4), id="float32"),
+        pytest.param(jnp.float64, (4e-9, -1e-9, -2e-9), id="float64"),
+    ),
+)
+def test_at2_mixed_confluent_tangent_uncertified(
+    dtype: DTypeLike, strains: tuple[float, float, float]
+) -> None:
+    plan = phx.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan(3)
+    parameters = phx.applications.solid_mechanics.MPMPhaseFieldParameters(
+        phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(2.0, 8.0),
+        1.0,
+        0.1,
+    )
+    deformation = jnp.diag(jnp.exp(jnp.asarray(strains, dtype=dtype)))
+    state = plan.initialize_state((), dtype).at[0].set(0.4)
+    result = plan.evaluate_linearized(deformation, state, 1.0, parameters, 0.0, 0.01)
+    assert bool(result.response.successful)
+    assert not bool(result.tangent_successful)

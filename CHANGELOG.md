@@ -3,6 +3,46 @@
 ## Unreleased
 
 ### Fixed
+- Exact first-order Hermitian matrix-function and isotropic spectral-map
+  derivatives at repeated spectra; differentiable cardiovascular inverse growth
+  and relativistic tetrad derivative evidence.
+- Transposable `VectorLocalRootPlan` implicit derivatives and actual Newton-update
+  counts; preserved constant auxiliary arrays, float0-safe sensitivities, and
+  rematerialized prepared linearizations.
+- Drucker–Prager confinement/dilation signs and p–q coefficients, and
+  repeated-spectrum J2, Drucker–Prager, and fracture tangents.
+- Viscous FLIP incremental pressure correction, cancellation-aware backward-error
+  scaling, and viscosity-independent physical pressure support.
+- Strict dtype/rank promotion in Newton initialization, analytic sphere queries,
+  Morton addressing, FEM simplex facet frames/parameterization, and neo-Hookean tangents.
+- Tolerance-admitted roundoff-negative eigenvalues of PSD inputs again yield finite
+  `hermitian_sqrt` values while derivative certification stays invalid at singular
+  spectra; AT2 split tangents at mixed-sign confluent strains are uncertified.
+- Drucker–Prager rejects negative plastic history and misshaped histories; Drucker–
+  Prager, J2, and Modified Cam-Clay certify algorithmic tangents only on strict
+  scale-relative return branches.
+- μ(I) MPM history is the 15-entry relative-deformation form (packed elastic
+  metric and previous total deformation), avoiding O(γ⁴) plastic-metric conditioning
+  in long steady shear; adds stress-consistent prestress initialization.
+- Frozen-geometry axisymmetric B-bar routes carry no position derivatives; split
+  MPM predictors account nodal-force and stress-increment work in the energy ledger
+  and fold grid-constraint failures into their status.
+- Double-point MPM rejects pressure components without a datum
+  (`pressure_datum_supported`), solves the mixed pressure with symmetry-certified
+  MINRES, and reports `PREDICTOR_FAILED` separately from material failure.
+- Monolithic contact promotes accepted FEM material trials and participant
+  counters at commit; potential-merit line searches require descent; domain-invalid
+  trials report recoverable domain failure; CCD fails closed on degenerate
+  primitives; affine-body inversion margins scale with reference volume; empty
+  sweep-and-prune primitive sets return complete empty candidate evidence.
+- Viscous FLIP refuses embedded solid geometry at compilation until cut-cell
+  viscous wall constraints are supported.
+- MPM–grain level-set damping cannot produce tensile forces; Gidaspow and
+  Huilin–Gidaspow Reynolds caps cover every contributing fit; volume-fraction
+  immersed-boundary coupling rejects runtime DEM mass inconsistent with the
+  declared solid density and scaled shape volume.
+- Strict int/bool promotion in prepared root refresh and explicit reactive-insertion
+  attempt-index dtype.
 - Exact integer powers in finite-difference, semidiscrete, and spectral PDE
   evaluators lower through one native integer-power path, so JVPs at a zero state
   are finite and exact (including complex spectral states and exponent zero);
@@ -213,6 +253,43 @@
   before execution.
 
 ### Added
+- Shared principal-Hencky multiplicative constitutive updates, prestress
+  initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
+  FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
+- Canonical Mohr–Coulomb face/edge/apex returns with cohesion hardening and
+  consistent tangents; objective hypoelastic NorSand with Lode dependence,
+  prestress/OCR initialization, implicit returns, and attributed NorSand4AI
+  dense-curve comparisons with explicit workbook-parity limitations.
+- B-bar/F-bar explicit and implicit MPM locking control, separate physical and
+  assumed deformation histories, prepared implicit residuals, and full-ring
+  axisymmetric MPM with hoop forces, reflected B-splines, ring-weighted B-bar,
+  and fixed ring-averaged uGIMP.
+- MPM mechanical-load boundary quadrature and spring-free Lysmer–Kuhlemeyer
+  absorption with transactional impulse/work/dissipation ledgers.
+- Unified compliant DEM for spheres, clumps, superquadrics, convex and level-set
+  shapes: tensor center-of-mass inertia, keyed component routes, atomic overflow
+  refusal, common-point moments, physical half-area two-sided quadrature,
+  per-area contact laws, certified posed signed-field queries, mass-property
+  error evidence, stable-ID packing, and atomic force/moment-balanced MPM–grain contact.
+- Eight interphase drag correlations with bulk/particle distinctions,
+  superficial-Reynolds conventions, branch/admission/derivative evidence, and
+  reactive-transaction rejection propagation.
+- Differentiable μ(I) rheology with partial regularization and well-posedness
+  diagnostics, bounded dense viscous FLIP, and finite-strain elastic–viscoplastic
+  μ(I) MPM with disconnection resets, implicit derivatives, and relaxation evidence.
+- Cartesian saturated double-point MPM/FLIP with frozen same-attempt predictor
+  finalization, solid-assignment porosity, implicit drag, exact mixed pressure
+  adjoints, phase masks, effective pore-pressure stress, and atomic rollback.
+- Fixed-capacity volume-fraction immersed-boundary MAC/compliant-DEM coupling
+  with certified cut-fraction enclosures, external-fluid force/torque/work
+  ledgers, one-projection atomic steps, and a distinct candidate support tuple.
+- Heterogeneous monolithic implicit contact with residual/JVP Newton–GMRES,
+  FEM/MPM/IGA/rod participants, affine bodies, solution JVP/VJP sensitivities,
+  CCD/domain step safety, atomic transactions, and paired potential/step-limit
+  hooks in native nonlinear problems.
+- Bounded geomechanics qualification campaigns with independent equation
+  references, causal campaign evidence, full-solver Terzaghi, explicit gaps,
+  and candidate-only (nonapproval) status.
 - `phydrax.nonlinear.AitkenRelaxation` provides bounded Irons–Tuck relaxation for
   `FixedPointIteration` (and therefore native partitioned coupling) and for
   complete functional Schwarz sweeps, with safeguard retentions reported through
@@ -2428,6 +2505,20 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- PDE parameters record their value representation in the canonical problem IR;
+  problem hashes and finite-difference compilation IDs change accordingly, and
+  the pinned finite-difference dynamics compilation IDs are updated.
+- Breaking constitutive cutover: J2, Drucker–Prager, and Mohr–Coulomb histories
+  store six packed `C_p⁻¹` entries plus hardening (width 7). Canonical finite-strain
+  MCC replaces simplified MCC: `ModifiedCamClayParameters(mu0, alpha0, M, lambda,
+  kappa)` uses raw slopes, stress-based initialization, and width-9 history
+  (`C_p⁻¹`, `p_c`, `p0`, `e0`).
+- Breaking evidence cutover: `GeneralizedNewtonianLaw.viscosity` returns
+  `GeneralizedNewtonianEvaluation`, not an array; `HermitianFunctionResult`
+  includes `derivative_valid`. Spectrum diagnostics are nondifferentiable and
+  precision evidence is static metadata.
+- Contact geometry callbacks are dynamic PyTree leaves, intentionally changing
+  representation and fingerprints; array-bearing callbacks are not static.
 - `OperatorCorrectionBinding.binding_id` fingerprints the numerical contents of
   its residual and correction transfers; previous binding identities are not
   retained.
@@ -3305,6 +3396,34 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
+  `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
+  `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,
+  `PreparedSuperquadricDEMDynamics`, `SuperquadricDEMState`,
+  `SuperquadricDEMEvaluation`, `SuperquadricDEMStepResult`, and
+  `SuperquadricWallResponse` are removed in favor of unified compliant DEM
+  shape, state, evaluation, and wall-contact surfaces, without aliases.
+- `StokesDragPlan`, `AbstractHydrodynamicClosurePlan`, and
+  `HydrodynamicClosureResult` are replaced by `InterphaseDragLawPlan`,
+  `AbstractInterphaseDragLaw`, and `InterphaseDragEvaluation`.
+- Breaking contact cutover: `FiniteElementContactDynamicsPlan`,
+  `FiniteElementContactEquilibriumPlan`, `PreparedFiniteElementContactStep`,
+  `FiniteElementContactResult`, and `FiniteElementContactEquilibriumResult`
+  are replaced by `MonolithicContactPlan`, `PreparedMonolithicContactStep`,
+  `PreparedMonolithicContactEquilibrium`, and `MonolithicContactResult`.
+  `ContactDynamicsState`/`ContactEnergyLedger` move to monolithic state/result
+  evidence; `ContactSensitivityArguments`/`ContactDynamicsSensitivityArguments`
+  and `contact_{dynamics,equilibrium}_solution_{jvp,vjp}` are removed for
+  `monolithic_contact_solution_jvp`/`monolithic_contact_solution_vjp`.
+  `prepare_finite_element_contact_{dynamics,equilibrium,step}` and
+  `solve_finite_element_contact_{equilibrium,step}` are replaced by participant
+  factories and `prepare_monolithic_contact_{equilibrium,step}`/
+  `solve_monolithic_contact_{equilibrium,step}`, without wrappers.
+  `CoulombInterfaceResponse`, `coulomb_interface_response`,
+  `AxisymmetricInterfaceGeometry`, and `axisymmetric_interface_geometry`
+  are removed; contact geometry and laws belong to participant/route contracts.
+- Unused `GeomechanicalFailureEvidence`, `NonlocalSofteningPlan` parameters
+  `characteristic_length`/`minimum_modulus`, and legacy MPM constitutive helpers.
 - `AitkenTracePlan`, `AitkenTraceState`, and `aitken_relax_trace_state`; use
   `phydrax.nonlinear.AitkenRelaxation` with `SchwarzDecompositionTraining` or
   `FixedPointIteration`.
@@ -3434,10 +3553,16 @@
   QR-reduced low-rank core instead of a squared Gram trace, so exact
   low-rank ADI solutions are no longer reported as
   `RESIDUAL_TOLERANCE_NOT_MET`.
-- The strict documentation build renders runtime type aliases
-  (`Literal[...]`, parameterized generics, PEP 695 `type` aliases with
-  forward references) through the `RuntimeTypeAliases` griffe extension
-  instead of failing alias resolution.
+- The strict documentation build collects the API reference by static analysis
+  instead of importing Phydrax, so a clean strict build takes about 2 minutes
+  instead of about 17. Lazily exported facade names bind to their static
+  definitions through the checked public API manifest; `Name = Other` exports
+  document `Other`; Equinox module classes show their generated or inherited
+  constructor signatures. Module pages list every public export, and classes
+  list their methods, properties, class constants, enum members, and fields
+  (undocumented members inherit base docstrings; undocumented fields appear in
+  the constructor signature), instead of runtime dunder attributes carrying
+  builtin `frozenset`/`str` docstrings.
 - The PIC deposit↔Gauss preparation certificate no longer divides numerical
   roundoff by an almost-zero charge change when a high-capacity periodic probe
   uniformly fills the grid. It subtracts the same charge-scaled roundoff floor

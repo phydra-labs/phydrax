@@ -15,10 +15,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
 from ._pair_state import particle_wall_interaction_keys
+from ._rigid_body import RigidBodyKinematics
 from ._rigid_contact import RigidContactGeometry
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
-    RigidSphereKinematics,
     sphere_spin_velocity,
 )
 
@@ -193,12 +193,14 @@ def _segment_closest(point: Array, start: Array, end: Array, /) -> tuple[Array, 
 
 def sphere_triangle_contact_geometry(
     bodies: PreparedRigidSphereSet,
-    kinematics: RigidSphereKinematics,
+    kinematics: RigidBodyKinematics,
     wall: PreparedTriangleWall,
     /,
     *,
     feature_tolerance: float = 1.0e-10,
     distance_tolerance: float = 1.0e-12,
+    radii: Array | None = None,
+    active_mask: Array | None = None,
 ) -> TriangleWallContactResult:
     if bodies.ambient_dimension != 3:
         raise ValueError("Triangle wall contact currently requires 3-D spheres.")
@@ -207,7 +209,8 @@ def sphere_triangle_contact_geometry(
     owner = jnp.repeat(jnp.arange(count, dtype=jnp.int32), faces)
     face = jnp.tile(jnp.arange(faces, dtype=jnp.int32), count)
     center = kinematics.position[owner]
-    radius = bodies.radii[owner]
+    physical_radii = bodies.radii if radii is None else radii
+    radius = physical_radii[owner]
     vertices = wall.face_vertices[face]
     a, b, c = vertices[:, 0], vertices[:, 1], vertices[:, 2]
     face_normal = wall.normals[face]
@@ -269,7 +272,8 @@ def sphere_triangle_contact_geometry(
     front = wall.plan.two_sided | (signed_plane >= -feature_tolerance)
     gap = distance - radius
     overlap = jnp.maximum(-gap, 0.0)
-    active_owner = bodies.particles.active_mask[owner]
+    physical_active = bodies.particles.active_mask if active_mask is None else active_mask
+    active_owner = physical_active[owner]
     degenerate = active_owner & (overlap > 0.0) & ~positive
     edge_index = jnp.clip(feature - 1, 0, 2)
     vertex_local = jnp.clip(feature - 4, 0, 2)
@@ -332,6 +336,13 @@ def sphere_triangle_contact_geometry(
         ),
         ~jnp.any(degenerate),
         "rigid-contact:sphere-triangle-wall",
+        owner,
+        -jnp.ones_like(owner),
+        jnp.where(valid[:, None], normal, 0.0),
+        jnp.ones_like(gap),
+        jnp.ones_like(valid),
+        jnp.where(valid, jnp.abs(distance), jnp.inf),
+        jnp.zeros_like(gap),
     )
     return TriangleWallContactResult(
         geometry,

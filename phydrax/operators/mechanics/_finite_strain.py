@@ -514,10 +514,9 @@ def neo_hookean_tangent_from_moduli(
     )
     inverse_transpose = kinematics.inverse_transpose
     identity = jnp.eye(3, dtype=kinematics.deformation_gradient.dtype)
-    direct = shear[..., None, None, None, None] * ein.contract(
-        "ik,jl->ijkl",
-        identity,
-        identity,
+    direct = shear[..., None, None, None, None] * jnp.broadcast_to(
+        ein.contract("ik,jl->ijkl", identity, identity),
+        shear.shape + (3, 3, 3, 3),
     )
     volumetric = lambda_[..., None, None, None, None] * ein.contract(
         "...ij,...kl->...ijkl",

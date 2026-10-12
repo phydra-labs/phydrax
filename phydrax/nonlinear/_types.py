@@ -226,7 +226,14 @@ def _guarded_call(predicate: ArrayLike, function: Callable[..., _T], *args: obje
 
 
 class NonlinearSystemProblem(StrictModule):
-    """Residual equation ``F(state, args) = 0`` with explicit space semantics."""
+    """Residual equation ``F(state, args) = 0`` with explicit space semantics.
+
+    Optional identity-bound ``potential`` and ``step_limit`` actions are consumed
+    by :class:`RootLineSearch`. The potential must be consistent with the physical
+    residual. The bound certifies the complete linear state path, not just its
+    endpoint, and must be a finite scalar in ``(0, 1]`` to admit a direction.
+    Supplying neither action preserves residual-merit globalization.
+    """
 
     residual_function: Callable[[PyTree[Any], Any], Any]
     validity_function: Callable[[PyTree[Any], PyTree[Any], Any, Any], Any] | None
@@ -238,11 +245,15 @@ class NonlinearSystemProblem(StrictModule):
     adjoint_linear_setup_function: (
         Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
     )
+    potential_function: Callable[[PyTree[Array], Any], Array] | None
+    step_limit_function: Callable[[PyTree[Array], PyTree[Array], Any], Array] | None
     state_space: AbstractVectorSpace | None
     residual_space: AbstractVectorSpace | None
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     trial_validity_id: str | None = eqx.field(static=True)
+    potential_id: str | None = eqx.field(static=True)
+    step_limit_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -260,6 +271,10 @@ class NonlinearSystemProblem(StrictModule):
         | None = None,
         adjoint_linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator]
         | None = None,
+        potential: Callable[[PyTree[Array], Any], Array] | None = None,
+        potential_id: str | None = None,
+        step_limit: Callable[[PyTree[Array], PyTree[Array], Any], Array] | None = None,
+        step_limit_id: str | None = None,
         problem_id: str = "nonlinear-system",
     ) -> None:
         if not callable(residual):
@@ -284,6 +299,18 @@ class NonlinearSystemProblem(StrictModule):
             not isinstance(trial_validity_id, str) or not trial_validity_id
         ):
             raise ValueError("trial_validity_id must be a non-empty string.")
+        for name, callback, callback_id in (
+            ("potential", potential, potential_id),
+            ("step_limit", step_limit, step_limit_id),
+        ):
+            if (callback is None) != (callback_id is None):
+                raise ValueError(f"{name} and {name}_id must be supplied together.")
+            if callback is not None and not callable(callback):
+                raise TypeError(f"{name} must be callable or None.")
+            if callback_id is not None and (
+                not isinstance(callback_id, str) or not callback_id
+            ):
+                raise ValueError(f"{name}_id must be a non-empty string.")
         for setup in (tangent_linear_setup, adjoint_linear_setup):
             if setup is not None and not callable(setup):
                 raise TypeError("Derivative linear setup must be callable or None.")
@@ -297,6 +324,10 @@ class NonlinearSystemProblem(StrictModule):
         self.linear_setup_function = linear_setup
         self.tangent_linear_setup_function = tangent_linear_setup
         self.adjoint_linear_setup_function = adjoint_linear_setup
+        self.potential_function = potential
+        self.potential_id = potential_id
+        self.step_limit_function = step_limit
+        self.step_limit_id = step_limit_id
         self.state_space = state_space
         self.residual_space = residual_space
         self.has_aux = bool(has_aux)
@@ -349,6 +380,26 @@ class NonlinearSystemProblem(StrictModule):
 
     def residual(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         return self.evaluate(state, args)[0]
+
+    def potential(self, state: PyTree[Array], args: Any = None, /) -> Array:
+        """Evaluate the declared scalar merit; consistency is the caller's contract."""
+        if self.potential_function is None:
+            raise ValueError("This nonlinear problem has no declared potential.")
+        value = jnp.asarray(self.potential_function(state, args))
+        if value.shape != () or not jnp.issubdtype(value.dtype, jnp.floating):
+            raise ValueError("potential must return one real floating scalar.")
+        return value
+
+    def step_limit(
+        self, state: PyTree[Array], direction: PyTree[Array], args: Any = None, /
+    ) -> Array:
+        """Return the declared path bound without repairing invalid numerical values."""
+        if self.step_limit_function is None:
+            raise ValueError("This nonlinear problem has no declared step_limit.")
+        value = jnp.asarray(self.step_limit_function(state, direction, args))
+        if value.shape != () or not jnp.issubdtype(value.dtype, jnp.floating):
+            raise ValueError("step_limit must return one real floating scalar.")
+        return value
 
     def trial_valid(self, state: PyTree[Any], args: Any = None, /) -> Array:
         state_ = self.validate_state(state)
@@ -482,6 +533,10 @@ class NonlinearSystemProblem(StrictModule):
             linear_setup=self.linear_setup_function,
             tangent_linear_setup=self.tangent_linear_setup_function,
             adjoint_linear_setup=self.adjoint_linear_setup_function,
+            potential=self.potential_function,
+            potential_id=self.potential_id,
+            step_limit=self.step_limit_function,
+            step_limit_id=self.step_limit_id,
             problem_id=self.problem_id,
         )
 

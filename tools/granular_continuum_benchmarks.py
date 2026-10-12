@@ -46,6 +46,9 @@ def _cohesion_benchmark() -> Any:
         vector,
         vector,
         valid,
+        normal_gradient=normal,
+        surface_area_weight=jnp.ones((pair_count,), dtype=dtype),
+        measure_kind="point_force",
     )
     context = phx.discretization.DEMContactEvaluationContext(
         jnp.zeros((pair_count, 5), dtype=jnp.int64),
@@ -93,6 +96,9 @@ def _cohesion_benchmark() -> Any:
                 batch_template.left_angular_velocity,
                 batch_template.right_angular_velocity,
                 batch_template.valid,
+                normal_gradient=batch_template.normal_gradient,
+                surface_area_weight=batch_template.surface_area_weight,
+                measure_kind="point_force",
             )
             response, _ = plan.evaluate(batch, None, history, context, materials)
             return response.force_magnitude

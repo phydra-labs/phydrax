@@ -6,16 +6,18 @@
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
 
-def _dem_epoch() -> Any:
+def _dem_epoch(dimension: int = 2) -> Any:
     particles = phx.discretization.ParticleSetPlan(
-        jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=2
+        jnp.asarray([10, 20]), jnp.ones((2,)), ambient_dimension=dimension
     ).prepare()
     material = phx.equations.DEMMaterialTable(
         jnp.asarray([1.0e5]),
@@ -25,13 +27,13 @@ def _dem_epoch() -> Any:
     )
     compiled = phx.equations.compile_discrete_element_problem(
         phx.equations.DiscreteElementProblemIR(
-            "adaptive-runtime", material, gravity=jnp.zeros((2,))
+            "adaptive-runtime", material, gravity=jnp.zeros((dimension,))
         ),
         particles,
         phx.discretization.RigidSphereSetPlan(
             jnp.asarray([0.5, 0.5]), jnp.asarray([0, 0])
         ),
-        phx.discretization.SoftSphereDEMMethodPlan(
+        phx.discretization.CompliantDEMMethodPlan(
             phx.discretization.DEMContactModelPlan(
                 phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
             )
@@ -40,8 +42,8 @@ def _dem_epoch() -> Any:
     )
     state = compiled.initialize_state(
         0.0,
-        jnp.asarray([[0.0, 0.0], [0.99, 0.0]]),
-        jnp.zeros((2, 2)),
+        jnp.zeros((2, dimension)).at[1, 0].set(0.99),
+        jnp.zeros((2, dimension)),
     )
     return phx.discretization.initialize_particle_execution_epoch(
         compiled.dynamics, state
@@ -396,42 +398,48 @@ def test_superquadric_wall_sphere_limit_and_action_reaction() -> None:
         jnp.asarray([[0.8]]),
         jnp.asarray([[0.2]]),
     )
-    dynamics = phx.discretization.SuperquadricDEMPlan(
-        shapes,
-        phx.discretization.SuperquadricContactPlan(),
-        phx.discretization.DEMContactModelPlan(
-            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "superquadric-wall-limit", material, gravity=jnp.zeros((3,)), walls=(wall,)
         ),
-        walls=(wall,),
-        wall_geometry=phx.discretization.SuperquadricTriangleContactPlan(),
-    ).prepare(
         particles,
-        material,
-        phx.discretization.DenseParticleNeighborhoodPlan(0),
+        shapes,
+        phx.discretization.CompliantDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+            ),
+            wall_geometry=phx.discretization.SuperquadricTriangleContactPlan(),
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(0),
     )
-    state = dynamics.initialize_state(
+    dynamics = compiled.dynamics
+    state = compiled.initialize_state(
+        0.0,
         jnp.asarray([[0.0, 0.0, 0.4]]),
         jnp.zeros((1, 3)),
-        jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
         jnp.zeros((1, 3)),
+        orientation=jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
     )
-    evaluation = dynamics.evaluate(state, jnp.asarray(1.0e-4))
-    response = evaluation.walls[0]
+    evaluation = dynamics.evaluate(jnp.asarray(0.0), state, jnp.asarray(1.0e-4), None)
+    response = evaluation.boundaries[0]
     assert evaluation.successful
-    assert jnp.isclose(response.geometry.geometry.gap[0], -0.1, atol=1.0e-8)
+    assert jnp.isclose(response.geometry.gap[0], -0.1, atol=1.0e-8)
     assert (
         jnp.linalg.norm(
-            jnp.sum(response.particle_load.force, axis=0) + response.reaction_force
+            jnp.sum(response.particle_force, axis=0) + response.reaction_force
         )
         < 1.0e-12
     )
-    assert response.geometry.feature_tie_margin[0] > 0.0
+    assert isinstance(
+        response.triangle_witness, phx.discretization.SuperquadricWallContactResult
+    )
+    assert response.triangle_witness.feature_tie_margin[0] > 0.0
     observables = phx.discretization.evaluate_wall_facet_observables(
-        dynamics.walls[0], response.geometry, response.contact
+        dynamics.walls[0], response.triangle_witness, response.contact
     )
     wear = phx.discretization.FinnieWearPlan(
         jnp.asarray([[1.0e-6]]), jnp.asarray([[1.0e6]])
-    ).evaluate(dynamics.walls[0], response.geometry, response.contact)
+    ).evaluate(dynamics.walls[0], response.triangle_witness, response.contact)
     assert observables.successful
     assert wear.successful
 
@@ -468,3 +476,63 @@ def test_ellipsoid_plane_witness_recovers_analytic_axis_gap() -> None:
     assert result.geometry.valid[0]
     assert jnp.isclose(result.geometry.gap[0], -0.05, atol=1.0e-8)
     assert result.witness_residual[0] < 1.0e-10
+
+
+@pytest.mark.parametrize("dimension", [2, 3], ids=["planar", "spatial"])
+def test_epoch_pullback_preserves_physical_radius_covectors_and_rigid_payloads(
+    dimension: int,
+) -> None:
+    epoch = _dem_epoch(dimension)
+    properties = epoch.state.body_properties
+    scaled = eqx.tree_at(
+        lambda value: (value.shape_scale, value.inertia_com, value.inverse_inertia_com),
+        properties,
+        (
+            1.25 * properties.shape_scale,
+            1.25**2 * properties.inertia_com,
+            properties.inverse_inertia_com / 1.25**2,
+        ),
+    )
+    updated = epoch.dynamics.apply_body_properties(
+        jnp.asarray(0.0), epoch.state, scaled, jnp.asarray(True)
+    )
+    assert updated.successful
+    epoch = eqx.tree_at(lambda value: value.state, epoch, updated.accepted_state)
+    transition = phx.discretization.grow_particle_execution_epoch(
+        epoch,
+        phx.discretization.ParticleCapacityGrowthPolicy(
+            minimum_increment=2, maximum_capacity=8
+        ),
+        phx.discretization.ParticleCapacityRequest(1),
+        jnp.asarray(0.0),
+    )
+    assert transition.successful
+    target = transition.candidate_epoch.state
+    cotangent = jax.tree.map(
+        lambda leaf: jnp.ones_like(leaf) if eqx.is_inexact_array(leaf) else leaf,
+        target,
+    )
+    pulled = phx.solver.pullback_particle_epoch_transition(transition, cotangent)
+    capacity = epoch.dynamics.bodies.capacity
+    np.testing.assert_allclose(pulled.body_properties.shape_scale, 0.8)
+    np.testing.assert_allclose(pulled.kinematics.orientation, 1.0)
+    np.testing.assert_allclose(pulled.body_properties.inertia_com, 1.0)
+    np.testing.assert_allclose(pulled.body_properties.inverse_inertia_com, 1.0)
+    np.testing.assert_allclose(pulled.loads.total.force, 1.0)
+    np.testing.assert_allclose(pulled.loads.total.torque, 1.0)
+    assert pulled.kinematics.orientation.shape == epoch.state.kinematics.orientation.shape
+    assert (
+        pulled.body_properties.inertia_com.shape
+        == epoch.state.body_properties.inertia_com.shape
+    )
+    assert pulled.body_properties.shape_id == epoch.state.body_properties.shape_id
+    np.testing.assert_array_equal(
+        pulled.particle_history.pair_keys, epoch.state.particle_history.pair_keys
+    )
+    np.testing.assert_allclose(pulled.particle_history.normal.previous_overlap, 1.0)
+    source_direction = jnp.arange(capacity, dtype=jnp.float64) + 0.25
+    target_direction = 0.8 * source_direction
+    np.testing.assert_allclose(
+        jnp.sum(pulled.body_properties.shape_scale * source_direction),
+        jnp.sum(cotangent.body_properties.shape_scale[:capacity] * target_direction),
+    )

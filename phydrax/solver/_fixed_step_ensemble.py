@@ -63,7 +63,17 @@ def _solve_members(
     initial_states = jax.tree.map(
         lambda leaf: leaf[jnp.minimum(lanes, member_count - 1)], initial_states
     )
-    solutions = jax.lax.map(one, initial_states, batch_size=member_chunk_size)
+    # JAX's batched lax.map reshaping divides by the mapped inner size and does
+    # not admit zero-width fixed-capacity leaves. Sequential lax.map preserves
+    # those legitimate empty state fields while retaining a bounded working set.
+    empty_inner_leaf = any(
+        0 in leaf.shape[1:] for leaf in jax.tree.leaves(initial_states)
+    )
+    solutions = (
+        jax.lax.map(one, initial_states)
+        if empty_inner_leaf
+        else jax.lax.map(one, initial_states, batch_size=member_chunk_size)
+    )
     solutions = eqx.tree_at(
         lambda s: (s.valid, s.successful),
         solutions,

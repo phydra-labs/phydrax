@@ -120,9 +120,9 @@ def _coordinates(
         raise ValueError(
             "Reference and current coordinates must have one identical shape."
         )
-    if reference.shape[-1] not in (2, 3):
+    if reference.shape[-1] not in (1, 2, 3):
         raise ValueError(
-            "Mechanical loads require two- or three-dimensional coordinates."
+            "Mechanical loads require one-, two-, or three-dimensional coordinates."
         )
     if measure.reference_measure.shape != reference.shape[:-1]:
         raise ValueError(

@@ -21,6 +21,7 @@ from ._certificate import (
     ExactSDFEnclosureCertificate,
     FieldCertificate,
     FieldRegularity,
+    level_set_interpolation_certificate,
     SignReliability,
     ZeroSetAccuracy,
 )
@@ -238,6 +239,34 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                     "kind": "prepared-voxel-geometry-samples",
                     "plan": self.plan_id,
                     "geometry_kernel": type(geometry.kernel).__name__,
+                }
+            ),
+        )
+
+    @checked
+    def sample_level_set(
+        self, geometry: CompiledGeometry, /
+    ) -> PreparedVoxelGeometrySamples:
+        """Sample a field expressly for piecewise-smooth level-set queries.
+
+        Sample values, narrow-band selection and exact-source sign enclosures
+        retain the semantics of :meth:`sample`. The interpolated field has
+        ``LEVEL_SET`` magnitude semantics regardless of the source certificate;
+        source enclosures do not authorize an interpolant safe-step factor.
+        """
+        samples = self.sample(geometry)
+        return PreparedVoxelGeometrySamples(
+            field=samples.field,
+            lower_bounds=samples.lower_bounds,
+            upper_bounds=samples.upper_bounds,
+            sign_certified=samples.sign_certified,
+            narrow_band=samples.narrow_band,
+            evidence=samples.evidence,
+            certificate=level_set_interpolation_certificate(samples.certificate),
+            sampling_id=canonical_fingerprint(
+                {
+                    "kind": "prepared-voxel-level-set-samples",
+                    "source_sampling_id": samples.sampling_id,
                 }
             ),
         )

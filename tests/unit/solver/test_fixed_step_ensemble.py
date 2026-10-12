@@ -169,13 +169,23 @@ def test_member_fault_is_exposed_without_poisoning_reducer(
 def _tree_step(
     step_index: Array,
     time: Array,
-    state: dict[str, Array],
+    state: Any,
     step_size: Array,
     args: Any,
     /,
 ) -> phx.solver.FixedStepResult:
     del step_index, time, step_size, args
-    candidate = {"position": state["position"] + 1.0, "route": state["route"] + 1}
+    candidate = eqx.tree_at(
+        lambda value: (
+            value.kinematics.position,
+            value.particle_history.pair_keys,
+        ),
+        state,
+        (
+            state.kinematics.position + 1.0,
+            state.particle_history.pair_keys + 1,
+        ),
+    )
     return phx.solver.FixedStepResult(
         candidate,
         candidate,
@@ -189,29 +199,76 @@ def _tree_step(
 
 
 def test_structured_mixed_dtype_states_match_standalone() -> None:
-    state = {
-        "position": jnp.zeros((2,), dtype=jnp.float64),
-        "route": jnp.asarray([4, 7], dtype=jnp.int32),
-    }
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.asarray([0, 1], dtype=jnp.int64),
+        jnp.ones((2,), dtype=jnp.float64),
+        ambient_dimension=2,
+    ).prepare()
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "ensemble-tree",
+            phx.equations.DEMMaterialTable(
+                jnp.asarray([1.0e5]),
+                jnp.asarray([0.25]),
+                jnp.asarray([[1.0]]),
+                jnp.asarray([[0.0]]),
+            ),
+            gravity=jnp.zeros((2,), dtype=jnp.float64),
+        ),
+        particles,
+        phx.discretization.RigidSphereSetPlan(
+            jnp.full((2,), 0.1, dtype=jnp.float64),
+            jnp.zeros((2,), dtype=jnp.int32),
+        ),
+        phx.discretization.CompliantDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0),
+                tangential=phx.discretization.CundallStrackTangentialPlan(1.0),
+            )
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
+    )
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [1.0, 0.0]]),
+        jnp.zeros((2, 2)),
+    )
+    second = eqx.tree_at(
+        lambda value: (
+            value.kinematics.position,
+            value.particle_history.pair_keys,
+        ),
+        state,
+        (
+            state.kinematics.position + 1.0,
+            state.particle_history.pair_keys + 1,
+        ),
+    )
     problem = phx.solver.FixedStepProblem(
         phx.solver.CallableFixedStepMethod(_tree_step, "tree-addition"),
         state,
         t0=0.0,
         t1=0.03,
         step_size=0.01,
-        state_geometry=phx.discretization.DEMStateGeometry("ensemble-tree"),
+        state_geometry=compiled.dynamics.state_geometry,
     )
-    states = jax.tree.map(lambda leaf: jnp.stack([leaf, leaf + 1]), state)
+    states = jax.tree.map(lambda left, right: jnp.stack((left, right)), state, second)
     result = phx.solver.execute_fixed_step_ensemble(
         phx.solver.FixedStepEnsemblePlan(problem, states, ("a", "b")).prepare()
     )
     standalone = eqx.filter_jit(phx.solver.solve_fixed_step)
     expected = standalone(problem)
     np.testing.assert_array_equal(
-        result.states["position"][0], expected.states["position"]
+        result.states.kinematics.position[0], expected.states.kinematics.position
     )
-    np.testing.assert_array_equal(result.states["route"][0], expected.states["route"])
-    assert result.states["route"].dtype == jnp.int32
+    np.testing.assert_array_equal(
+        result.states.particle_history.pair_keys[0],
+        expected.states.particle_history.pair_keys,
+    )
+    assert (
+        result.states.particle_history.pair_keys.dtype
+        == state.particle_history.pair_keys.dtype
+    )
     assert bool(result.evidence.successful)
 
 

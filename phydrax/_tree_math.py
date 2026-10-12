@@ -64,8 +64,17 @@ def tree_norm(vector: PyTree[Any], /) -> Array:
 
 
 def tree_allfinite(vector: PyTree[Any], /) -> Array:
-    """Return whether every array element in a nonempty PyTree is finite."""
-    values = tuple(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(vector))
+    """Return whether every array element in a nonempty PyTree is finite.
+
+    JAX ``float0`` leaves represent trivial tangent spaces and have no nonfinite
+    elements; they are retained rather than converted to ordinary numeric zeros.
+    """
+    values = tuple(
+        jnp.asarray(True, dtype=jnp.bool_)
+        if eqx.is_array(leaf) and leaf.dtype == jax.dtypes.float0
+        else jnp.all(jnp.isfinite(leaf))
+        for leaf in jax.tree.leaves(vector)
+    )
     if not values:
         return jnp.asarray(False)
     finite = values[0]

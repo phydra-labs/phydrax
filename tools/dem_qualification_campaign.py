@@ -26,7 +26,7 @@ def _compiled(restitution: Any) -> Any:
         jnp.asarray([[restitution]]),
         jnp.asarray([[0.0]]),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
         ),

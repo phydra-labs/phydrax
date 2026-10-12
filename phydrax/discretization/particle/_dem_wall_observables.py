@@ -65,7 +65,15 @@ def evaluate_wall_facet_observables(
     reference = jnp.asarray(reference_point, dtype=point.dtype)
     if reference.shape != (3,):
         raise ValueError("reference_point must be a three-vector.")
-    edge_torque = jnp.cross(point - reference, reaction) - contact.right_torque
+    route_geometry = geometry.geometry
+    edge_torque = (
+        jnp.cross(point - reference, reaction)
+        + contact.right_torque
+        + jnp.cross(
+            route_geometry.right_owner_arm - route_geometry.right_contact_arm,
+            reaction,
+        )
+    )
     facet_force = jnp.zeros((faces, 3), dtype=point.dtype).at[face].add(reaction)
     facet_torque = (
         jnp.zeros((faces, 3), dtype=point.dtype)

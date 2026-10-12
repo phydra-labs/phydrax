@@ -19,7 +19,7 @@ materials = phx.equations.DEMMaterialTable(
     jnp.asarray([[0.9]]),
     jnp.asarray([[0.0]]),
 )
-method = phx.discretization.SoftSphereDEMMethodPlan(
+method = phx.discretization.CompliantDEMMethodPlan(
     phx.discretization.DEMContactModelPlan(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e3)
     )
@@ -54,7 +54,7 @@ transfer = phx.discretization.MeshCompactKernelSplatAssignment(0.5, 1).prepare(
 coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
     compiled.dynamics,
     transfer,
-    phx.equations.StokesDragPlan(maximum_reynolds=1.0),
+    phx.equations.InterphaseDragLawPlan("stokes", maximum_reynolds=1.0),
 )
 evaluation = phx.equations.evaluate_unresolved_cfd_dem(
     coupling,

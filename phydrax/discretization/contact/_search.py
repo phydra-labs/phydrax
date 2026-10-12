@@ -269,6 +269,8 @@ def _bipartite_pairs(
     method: str,
     /,
 ) -> list[tuple[int, int]]:
+    if left_min.shape[0] == 0 or right_min.shape[0] == 0:
+        return []
     if method == "dense":
         return [
             (left, right)
@@ -311,6 +313,8 @@ def _same_set_pairs(
     method: str,
     /,
 ) -> list[tuple[int, int]]:
+    if lower.shape[0] < 2:
+        return []
     if method == "dense":
         return [
             (left, right)
@@ -432,6 +436,7 @@ def _pack_batch(
         right,
         capacity=capacity,
         feature_indices=feature_indices,
+        weights=np.ones((capacity,), dtype=dtype),
         minimum_separation=separation,
         valid=valid,
         actual_count=actual,

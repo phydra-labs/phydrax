@@ -33,8 +33,10 @@ splat = phx.discretization.ParticleGridSplatPlan(
 ).prepare(particles)
 ```
 
-The target must be nodal, uniform, and degree-two. Closed-domain MPM rejects truncated
-support; it never renormalizes or drops an unreported fraction.
+The target must be nodal and uniform. The assignment must provide conservative
+first-order reproduction, physical gradients, and APIC-compatible particle
+moments; quadratic point B-splines are the baseline choice. Closed-domain MPM
+rejects truncated support; it never renormalizes or drops an unreported fraction.
 
 ## Physical domain and halo
 
@@ -119,6 +121,194 @@ candidate material state is committed only when the whole step succeeds.
 
 The APIC moment solve uses `phydrax.linalg.solve_small_linear` and reports conditioning.
 The qualified baseline rejects a singular or over-conditioned particle moment.
+
+## Axisymmetric full-ring mechanics
+
+Choose geometry explicitly; a two-dimensional grid does **not** by itself imply
+axisymmetry:
+
+```python
+method = phx.discretization.ExplicitMPMMethodPlan(
+    geometry=phx.discretization.MPMGeometryPlan(
+        "axisymmetric", spatial_dimension=2
+    ),
+    volumetric_stabilization=phx.discretization.MPMVolumetricStabilizationPlan(
+        "f_bar"
+    ),
+)
+material = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
+```
+
+Particles, positions, velocities, grid coordinates, and APIC affine state use
+the spatial order `(r, z)` and two components. The material must have
+`"three_dimensional"` kinematics. Its deformation and first-Piola stress are
+three-dimensional in the order **`(r, z, theta)`**, with
+
+```text
+F = [[Frr, Frz, 0],
+     [Fzr, Fzz, 0],
+     [0,   0,   Ftt]]
+Ltt = sum_routes H_ip * parity_ip * vr_i
+F_new = (I_3 + dt * L) F
+```
+
+In particular, uniform radial expansion `vr = a*r` gives
+`Frr_new = Ftt_new = 1 + dt*a` from the identity; this is not Cartesian
+plane strain with a frozen hoop stretch. `PreparedMPMDynamics.dimension` stays
+spatial (two); `constitutive_dimension` is three, and `geometry` exposes the
+resolved geometry owner. Omitting geometry keeps Cartesian behavior; an explicit
+Cartesian plan uses the corresponding spatial dimension.
+
+All supplied masses, reference volumes, momenta, and forces represent a **complete
+ring**, not a unit-radian slice or meridional area. For a small rectangular
+meridional particle at positive radius, supply
+`V0 = 2*pi*r0*dr*dz` and `mass = density0*V0`. The kernel adds **no hidden
+`2*pi` or radius multiplier**. Reference volumes remain unchanged during
+deformation. The cylindrical weak form, using `tau = P F^T`, gives
+
+```text
+delta W_internal =
+    sum_p V0_p [tau_ab * d_b(delta v_a) + tau_tt * delta Ltt]
+
+f_ir_internal =
+    -sum_routes V0_p parity_ip [tau_rb * G_ipb + tau_tt * H_ip]
+f_iz_internal = -sum_routes V0_p tau_zb * G_ipb
+```
+
+Here `a,b` run over `(r,z)`. The hoop force is the exact virtual-work adjoint
+of the route velocity gradient. For point routes, `G = grad N` and
+`H = N/r_p`; fixed particle domains use the ring averages below. The equations
+shown are unstabilized; B-bar adds the adjoint of its trace projection.
+Using current volume and Cauchy stress is equivalent because
+`V_current/J = V0`. These equations follow directly from cylindrical virtual
+work. The primary method-origin reference is
+[Sulsky and Schreyer (1996), *Axisymmetric form of the material point method
+with applications to upsetting and Taylor impact problems*, CMAME 139:409–429](https://doi.org/10.1016/S0045-7825(96)01091-2).
+This citation establishes the method's origin, not an equation-by-equation
+verification of the original article.
+
+### Axis and supported routes
+
+Active particles require **`r > 0`**, including at initialization; nonpositive
+radius is a clear refusal, not a division-floor repair. Axis nodes enforce
+`vr = 0`. Grid nodes at negative radius and radial periodicity are refused
+during preparation. Linear, quadratic, and cubic point B-splines admit support
+crossing the axis: a ghost radial integer node `k < 0` maps to physical node
+`abs(k)`. Scalar basis weights retain the full positive stencil. Axial velocity
+is even and radial velocity is odd, so reflected routes multiply radial
+velocity, momentum, and force by `-1`. Distinct ghost routes remain distinct
+even when their physical node indices coincide; APIC offsets are measured from
+the **ghost** node, not its reflected physical location. This preserves affine
+reproduction and exact force/gradient virtual-work adjointness.
+
+Fixed **uGIMP** uses the physical meridional domain
+`[max(0,r_p-l_r),r_p+l_r] × [z_p-l_z,z_p+l_z]` and the ring measure `r dr dz`:
+
+```text
+M = integral_D r dr dz
+Nbar_i = integral_D N_i r dr dz / M
+G_i = integral_D grad(N_i) r dr dz / M
+H_i = integral_D (N_i/r) r dr dz / M = integral_D N_i dr dz / M
+```
+
+The hoop operator is **not** `Nbar_i/r_p`. Axis clipping is an admitted
+physical-domain operation, not stencil truncation or weight renormalization.
+Ring averaging generally gives a nonzero weighted first moment about the
+particle point. APIC therefore fits the centered weighted covariance and an
+intercept: with offsets `d_i`, weighted means `dbar` and `vbar`,
+`C = [sum_i w_i (v_i-vbar)(d_i-dbar)^T] [sum_i w_i (d_i-dbar)(d_i-dbar)^T]^-1`
+and `v_p = vbar-C*dbar`. The runtime uses a solve, not an explicit inverse.
+This recovers both particle-point velocity and affine state for uniform
+expansion; assuming a zero first moment would introduce a radial drift.
+Evolving cpGIMP/AABB, CPDI, and CPDI2 remain explicitly unsupported for this
+geometry because their cylindrical moving-domain operators are not supplied.
+
+A radial physical-domain lower bound of zero needs no negative radial halo;
+axial and outer-radial full-support promises still apply. Axisymmetric **B-bar**
+replaces the full three-dimensional trace `Lrr+Lzz+Ltt` by its background-cell
+average with ring measure `r dr dz`, retaining deviatoric kinematics. Its
+internal force is the exact matching adjoint, including the projected hoop
+stress. F-bar uses the full three-dimensional trial determinant, including the
+hoop increment, with the physical-volume projection convention.
+Dense/block-sparse storage, independent nodal fields, and fixed-route implicit
+residuals support these reflected and stabilized operators while retaining
+two-component spatial layouts. Cartesian angular-momentum diagnostics are
+not applicable and must not be interpreted as a cylindrical conservation proof.
+Mass remains a full-ring ledger; transfer momentum compares the parity-aware
+route deposition rather than incorrectly equating odd-reflected nodal radial
+momentum with an unreflected particle sum.
+
+### Pressurized-cylinder relaxation
+
+Run `python -m examples.material_point_axisymmetric` for an initially unstressed
+thick cylinder with inner/outer radii 1 and 2, 3D Neo-Hookean material, zero axial
+grid velocity, and physical linear body drag. Equivalent full-ring pressure
+forces act on the innermost particle layer. Accepted explicit steps build stress
+and deformation dynamically; this is not an analytically prestressed force
+cancellation.
+
+For the independent small-strain, plane-strain reference, radial equilibrium
+`d(sigma_r)/dr + (sigma_r-sigma_theta)/r = 0` gives
+`sigma_r = A-B/r^2`, `sigma_theta = A+B/r^2`, where
+`A=(pi*a^2-po*b^2)/(b^2-a^2)` and
+`B=(pi-po)*a^2*b^2/(b^2-a^2)`. With shear modulus `mu` and Lamé parameter
+`lambda`, displacement is
+`u=A*r/[2*(mu+lambda)] + B/[2*mu*r]`. Here `pi` and `po` denote the inner
+and outer pressures, not the circle constant.
+
+The integration test checks relaxation, full-ring volume, displacement over all
+particles, and recovered radial/hoop stresses away from two boundary cells.
+Its 10% relative weighted-L2 spatial tolerance is specific to a 24-cell wall
+and pressure smeared onto the innermost particle layer; `pressure/mu=1e-3`
+keeps finite-strain corrections subordinate. This is a bounded regression
+criterion, not an established general accuracy or convergence guarantee.
+
+## Volumetric stabilization
+
+Nearly incompressible materials may lock even when ordinary affine patch tests
+pass. Select the treatment explicitly:
+
+```python
+stabilization = phx.discretization.MPMVolumetricStabilizationPlan(
+    "f_bar", f_bar_blend=1.0
+)
+method = phx.discretization.ExplicitMPMMethodPlan(
+    volumetric_stabilization=stabilization
+)
+```
+
+`"none"` is the unchanged default. `"b_bar"` replaces only the particle
+velocity-gradient trace by a background-cell quadrature average and uses its exact
+adjoint in internal force. It is a cell adaptation of
+[Hughes' mean-dilatation construction](https://doi.org/10.1002/nme.1620150914);
+the [Coombs et al. locking paper](https://doi.org/10.1016/j.cma.2018.01.010)
+instead develops a cell F-bar formulation.
+
+`"f_bar"` projects the **total assumed trial Jacobian** from particles to nodes
+and back using current physical particle volumes, following
+[Zhao–Jiang–Choo Eq. (27) and Algorithm 1](https://arxiv.org/html/2209.02466v3).
+It maintains both the assumed deformation used by the material and the raw
+physical deformation used to update the projection volume. The optional blend
+interpolates local and projected determinants; zero blend is the local increment,
+not a reset to the physical deformation. Internal-force gradients remain
+unmodified. Neither mode is pressure smoothing. See the
+[API formulas and support boundaries](api/discretization/material_point.md#volumetric-stabilization).
+
+Dense/block-sparse nodal storage and per-field projection are supported locally.
+Nontrivial distributed/AMR stabilization is explicitly refused. B-bar requires
+the entire quadrature stencil to fit the admitted grid support; boundary
+truncation is not silently repaired.
+
+Run the dynamic example with
+`python -m examples.material_point_volumetric_stabilization --mode f_bar`.
+The phase-separated benchmark is
+`python -m benchmarks.mpm_volumetric_stabilization --particles 64 1024 16384`.
+The independent plane-strain test samples a divergence-free bending displacement
+at `nu=0.499` and compares restoring-work modal compliance with its analytic
+elastic value. It is **not** a converged cantilever equilibrium calculation.
+The coarse Q1 grid has noticeable F-bar boundary-projection error (20–45% in
+compliance), while still resolving the much larger unstabilized locking error.
+This bounded diagnostic does not establish universal accuracy tolerances.
 
 ## Stability and transactional rejection
 

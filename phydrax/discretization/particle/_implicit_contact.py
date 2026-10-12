@@ -198,6 +198,13 @@ def sphere_implicit_contact(
         certificate_margin[None],
         valid,
         "rigid-contact:sphere-implicit",
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+        world_normal[None, :],
+        jnp.ones((1,), dtype=gap.dtype),
+        jnp.zeros((1,), dtype=jnp.bool_),
+        certificate_margin[None],
+        jnp.zeros((1,), dtype=gap.dtype),
     )
     return ImplicitContactResult(
         geometry,
