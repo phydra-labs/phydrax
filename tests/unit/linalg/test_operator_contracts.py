@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -202,7 +203,18 @@ def test_operator_contracts_scenario_1() -> None:
     assert jnp.allclose(tree_dual.pair(tree_covector, tree_vector), -9.0)
 
 
-def test_block_actions_preserve_columns_and_fusion_declarations() -> None:
+def test_materialization_policy_require_admits_limits_and_refuses_beyond() -> None:
+    policy = la.MaterializationPolicy(max_entries=4, max_bytes=24)
+    policy.require(4, np.float32)
+    policy.require(3, np.float64)
+    with pytest.raises(la.LinearCapabilityError, match="5 entries"):
+        policy.require(5, np.float32)
+    with pytest.raises(la.LinearCapabilityError, match="32 bytes"):
+        policy.require(4, np.float64)
+
+
+@pytest.mark.parametrize("block_size", (1, 3), ids=["single-column", "multiple-columns"])
+def test_block_actions_preserve_columns_and_fusion_declarations(block_size: int) -> None:
     matrix = jnp.asarray([[2.0, -1.0], [0.5, 3.0]])
     space = la.ArraySpace((2,), dtype=matrix.dtype)
     generic = la.FunctionLinearOperator(
@@ -211,7 +223,7 @@ def test_block_actions_preserve_columns_and_fusion_declarations() -> None:
         target=space,
         transpose_action=lambda vector: matrix.T @ vector,
     )
-    block = jnp.asarray([[1.0, 2.0, -3.0], [4.0, -5.0, 6.0]])
+    block = jnp.asarray([[1.0, 2.0, -3.0], [4.0, -5.0, 6.0]])[:, :block_size]
     assert not generic.supports_fused_block_action
     np.testing.assert_allclose(generic.mv_block(block), matrix @ block)
     np.testing.assert_allclose(generic.transpose_mv_block(block), matrix.T @ block)
@@ -222,4 +234,71 @@ def test_block_actions_preserve_columns_and_fusion_declarations() -> None:
     np.testing.assert_array_equal(
         diagonal.mv_block(block),
         jnp.asarray([2.0, -3.0])[:, None] * block,
+    )
+
+
+def test_function_operator_same_callable_preserves_distinct_space_actions() -> None:
+    reference = np.asarray([[1.0, 2.0], [-0.5, 3.0], [2.0, -1.0]], dtype=np.float64)
+    matrix = jnp.asarray(reference)
+    source = la.ArraySpace((2,), dtype=jnp.float64, space_id="polymorphic-source")
+    target = la.ArraySpace((3,), dtype=jnp.float64, space_id="polymorphic-target")
+
+    def action(vector: jax.Array) -> jax.Array:
+        return matrix @ vector if vector.shape == (2,) else matrix.T @ vector
+
+    operator = la.FunctionLinearOperator(
+        action, source=source, target=target, transpose_action=action
+    )
+    primal = jnp.asarray([0.4, -0.6], dtype=jnp.float64)
+    cotangent = jnp.asarray([0.8, -0.3, 0.2], dtype=jnp.float64)
+    np.testing.assert_allclose(
+        eqx.filter_jit(lambda owner, value: owner.mv(value))(operator, primal),
+        reference @ np.asarray(primal),
+        rtol=1e-13,
+    )
+    np.testing.assert_allclose(
+        eqx.filter_jit(lambda owner, value: owner.transpose_mv(value))(
+            operator, cotangent
+        ),
+        reference.T @ np.asarray(cotangent),
+        rtol=1e-13,
+    )
+
+
+@pytest.mark.parametrize("block_size", (1, 3), ids=["single-column", "multiple-columns"])
+def test_generic_block_actions_preserve_tree_coordinates(block_size: int) -> None:
+    reference = np.asarray([[2.0, -1.0], [0.5, 3.0]], dtype=np.float64)
+    matrix = jnp.asarray(reference)
+    source = la.PyTreeSpace(
+        {
+            "head": jnp.zeros((1,), dtype=jnp.float64),
+            "tail": jnp.zeros((1,), dtype=jnp.float64),
+        }
+    )
+    target = la.PyTreeSpace((jnp.zeros((2,), dtype=jnp.float64),))
+
+    def forward(value: dict[str, jax.Array]) -> tuple[jax.Array]:
+        return (matrix @ jnp.concatenate((value["head"], value["tail"])),)
+
+    def transpose(value: tuple[jax.Array]) -> dict[str, jax.Array]:
+        result = matrix.T @ value[0]
+        return {"head": result[:1], "tail": result[1:]}
+
+    operator = la.FunctionLinearOperator(
+        forward, source=source, target=target, transpose_action=transpose
+    )
+    columns = jnp.asarray([[1.0, 2.0, -3.0], [4.0, -5.0, 6.0]], dtype=jnp.float64)[
+        :, :block_size
+    ]
+    forward_result = eqx.filter_jit(lambda owner, value: owner.mv_block(value))(
+        operator, columns
+    )
+    transpose_result = eqx.filter_jit(
+        lambda owner, value: owner.transpose_mv_block(value)
+    )(operator, columns)
+    np.testing.assert_allclose(
+        forward_result, reference @ np.asarray(columns), rtol=1e-13
+    )
+    np.testing.assert_allclose(
+        transpose_result, reference.T @ np.asarray(columns), rtol=1e-13
     )

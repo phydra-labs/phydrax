@@ -1,0 +1,561 @@
+{
+  "artifact_id": "72d47b3c91f23d79d7d8839c7e2c22195f3756803622839cc715bc5dccc683c9",
+  "configuration": {
+    "configuration_id": "8871b3ad3b03e370cd1c806e90aecd5f97948d9b021f08193797d51d34800c4b",
+    "cutoff_exponent": 0.25,
+    "cutoff_scale": 0.5,
+    "fixed_low_mode": 1,
+    "highpass_exponent": null,
+    "invariant_tolerance": 1e-09,
+    "kernel": "tadmor_step",
+    "kind": "qualification-configuration",
+    "low_mode_counts": [
+      12,
+      24,
+      48
+    ],
+    "mode_count": 12,
+    "order": 1.0,
+    "solution_tolerance": 1e-08,
+    "step_size": 0.025,
+    "steps": 4,
+    "strength": 0.1,
+    "timing_gate": false
+  },
+  "external_reference": null,
+  "failed_reasons": [],
+  "gates": [
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "energy-identity-2d:dissipation",
+      "gate_outcome_id": "e42b4ce7c068304bf4ed241b0d2e195a96a31b27fcfd912e5a872b9b1c9c17ff",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.positive_dissipation",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.positive_dissipation was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "energy-identity-2d:finite",
+      "gate_outcome_id": "65940a00cbbc4c5aea26667e737cf6beac5fea158a12effa8a7ed34fc416913e",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.diagnostics_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.diagnostics_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-2d:maximum_dissipation_error",
+      "gate_outcome_id": "3e54ab8f8efe1b302cfaea5b700dc914b492200928eadf2777744d50aa275347",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.maximum_dissipation_error",
+      "observed": 3.3306690738754696e-16,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.maximum_dissipation_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-2d:maximum_energy_balance_defect",
+      "gate_outcome_id": "c5ca45d839317092d2df8fdbb86c4b97fbf603c6eb9d6da8fed55381bde979db",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.maximum_energy_balance_defect",
+      "observed": 2.220446049250313e-16,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.maximum_energy_balance_defect satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-2d:maximum_energy_error",
+      "gate_outcome_id": "95c3a3e0fb258245c86a420094a8abca0421e32fa2e0b97c1360566bf0319ef5",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.maximum_energy_error",
+      "observed": 1.0658141036401503e-14,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.maximum_energy_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-2d:maximum_energy_rate_error",
+      "gate_outcome_id": "d9528ba644432ffebe1db5ec4f20dfba70722c701f89a473c652eb86776c81f1",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-2d.maximum_energy_rate_error",
+      "observed": 3.3306690738754696e-16,
+      "outcome": "passed",
+      "reason": "energy-identity-2d.maximum_energy_rate_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "energy-identity-3d:dissipation",
+      "gate_outcome_id": "bac453bcb62b0593db87f78e55b311e7dd5092116c19a71c31763808ccf9e08b",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.positive_dissipation",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.positive_dissipation was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "energy-identity-3d:finite",
+      "gate_outcome_id": "66558ba5be56d51c063590131f4287d1fe02e54cdc2a5d352631368a88fe7760",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.diagnostics_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.diagnostics_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-3d:maximum_dissipation_error",
+      "gate_outcome_id": "d89722e636f0659100c28431903feaec29429ccf4037d72143ce889c0f6af582",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.maximum_dissipation_error",
+      "observed": 2.6645352591003757e-15,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.maximum_dissipation_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-3d:maximum_energy_balance_defect",
+      "gate_outcome_id": "d2da3320fef778da189bdafabb6feaa153d7e8e610bec1c2b852b76eb2c01f65",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.maximum_energy_balance_defect",
+      "observed": 1.8207657603852567e-14,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.maximum_energy_balance_defect satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-3d:maximum_energy_error",
+      "gate_outcome_id": "910d5660dcb1a1428c354f78e67c24d49a27d151d662afcb901508a24073d6c9",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.maximum_energy_error",
+      "observed": 1.1795009413617663e-12,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.maximum_energy_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-identity-3d:maximum_energy_rate_error",
+      "gate_outcome_id": "41d38953809f467d3926d6914921c1963bdda97b5fc281cd7eee603516ea492c",
+      "kind": "qualification-gate-outcome",
+      "metric": "energy-identity-3d.maximum_energy_rate_error",
+      "observed": 2.6645352591003757e-15,
+      "outcome": "passed",
+      "reason": "energy-identity-3d.maximum_energy_rate_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "fixed-low-mode-vanishing:bound",
+      "gate_outcome_id": "176976bfda4d6ae66362d3c843f66490a2c600f5c738775dbc22df2aa7c58092",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.maximum_upper_bound_excess",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.maximum_upper_bound_excess satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "fixed-low-mode-vanishing:finite",
+      "gate_outcome_id": "5bf4bfcffaef03f89e6c1c2c3944d2a8ff4f82d798b5d7caf2037c6aea33b1d3",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "fixed-low-mode-vanishing:nonincreasing_absolute_rate",
+      "gate_outcome_id": "a507b39341a1d4e6dec41337ed6e366457dccade1adac5e13d648cf9ac2907df",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.nonincreasing_absolute_rate",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.nonincreasing_absolute_rate was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "fixed-low-mode-vanishing:oracle",
+      "gate_outcome_id": "1ff1d7afa74e4364235385d6bc5396259f2ec2cf5b58bdad483a29a97ac89aaa",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.maximum_rate_error",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.maximum_rate_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "fixed-low-mode-vanishing:resolution-oracle",
+      "gate_outcome_id": "743648c44cb3866589f9e02e21b161040339c12fbf825201594c3e7617b2757f",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.prepared_resolution_matches_oracle",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.prepared_resolution_matches_oracle was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "fixed-low-mode-vanishing:upper_bound_decreases",
+      "gate_outcome_id": "4d2e5741ca4a20c01c4e5747b972c01d7746f1faeea3d21495228a358b849e75",
+      "kind": "qualification-gate-outcome",
+      "metric": "fixed-low-mode-vanishing.upper_bound_decreases",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "fixed-low-mode-vanishing.upper_bound_decreases was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "shear-decay-2d:divergence",
+      "gate_outcome_id": "2bc151d14f3797b2b4db27980f2964d940d875da36e1ac877b39218e9e5440d7",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-2d.divergence_norm",
+      "observed": 3.465931559901278e-32,
+      "outcome": "passed",
+      "reason": "shear-decay-2d.divergence_norm satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "shear-decay-2d:rate-oracle",
+      "gate_outcome_id": "e938908025d8f676d14acc21750900b6652632259162abce8dcc83ab3c43bd1b",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-2d.prepared_rate_error",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "shear-decay-2d.prepared_rate_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "shear-decay-2d:resolution-oracle",
+      "gate_outcome_id": "f7e0993e6072dcb45ab528471e3480fd4dc185f9ff9a1646428947155ec95579",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-2d.prepared_resolution_matches_oracle",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "shear-decay-2d.prepared_resolution_matches_oracle was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-08
+      },
+      "gate": "shear-decay-2d:solution",
+      "gate_outcome_id": "ff313d650eeff5a0a18d2b4d36e9455b3609596de4fca6328fe3deaadb2d1e94",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-2d.maximum_velocity_error",
+      "observed": 2.220446049250313e-16,
+      "outcome": "passed",
+      "reason": "shear-decay-2d.maximum_velocity_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "shear-decay-2d:solver",
+      "gate_outcome_id": "6b82b29e3912634cc2b3a69477985b5640cb8b52fc367e145d05bd00e7345428",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-2d.solver_successful",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "shear-decay-2d.solver_successful was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "shear-decay-3d:divergence",
+      "gate_outcome_id": "3e6f537f343b10181b0532b2a789be7ed77bdb17ea5ce9f7ec92a4288b5885d2",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-3d.divergence_norm",
+      "observed": 5.821223268695121e-32,
+      "outcome": "passed",
+      "reason": "shear-decay-3d.divergence_norm satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "shear-decay-3d:rate-oracle",
+      "gate_outcome_id": "ca2c7d29d932b14d7fd444d6f8525e0a483e31014d7aca077131dcb3da981027",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-3d.prepared_rate_error",
+      "observed": 0.0,
+      "outcome": "passed",
+      "reason": "shear-decay-3d.prepared_rate_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "shear-decay-3d:resolution-oracle",
+      "gate_outcome_id": "d66ef60409b2752351e4c10ff518606b565e7a54b7dd07e0f35d216109f50392",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-3d.prepared_resolution_matches_oracle",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "shear-decay-3d.prepared_resolution_matches_oracle was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-08
+      },
+      "gate": "shear-decay-3d:solution",
+      "gate_outcome_id": "1c121de8894e8ff04fa70c0c494cefd05ae37ebbe27f4c1e39ab352c3626c080",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-3d.maximum_velocity_error",
+      "observed": 5.551115123125783e-16,
+      "outcome": "passed",
+      "reason": "shear-decay-3d.maximum_velocity_error satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "shear-decay-3d:solver",
+      "gate_outcome_id": "e44dd3f98d555cbc2652e52011b8fed73332210ce5ff76ce07cd1802793f5b73",
+      "kind": "qualification-gate-outcome",
+      "metric": "shear-decay-3d.solver_successful",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "shear-decay-3d.solver_successful was true."
+    }
+  ],
+  "inconclusive_reasons": [],
+  "input": {
+    "domain": "isotropic [0,2*pi)^d",
+    "initial_condition": "u=a*cos(n.x); |a|=1; a.n=0; smallest damped retained |n|",
+    "input_id": "453b00e22ad9c562d6c37bbc8d01aaf878a8ad5e21ff043a77af779d9e6675fa",
+    "kind": "qualification-input",
+    "molecular_viscosity": 0.0,
+    "spectral_viscosity_plan_id": "91d93de3e4ec9cb21873f4e0b33473b244e2cb751c66ab44a9c12586c1d45151"
+  },
+  "kind": "incompressible-flow-qualification-artifact",
+  "metrics": {
+    "energy-identity-2d": {
+      "cited_convergence_supported": false,
+      "diagnostics_finite": true,
+      "maximum_dissipation_error": 3.3306690738754696e-16,
+      "maximum_energy_balance_defect": 2.220446049250313e-16,
+      "maximum_energy_error": 1.0658141036401503e-14,
+      "maximum_energy_rate_error": 3.3306690738754696e-16,
+      "operator_scaling_admissible": true,
+      "positive_dissipation": true,
+      "spectral_viscosity_dissipation": 0.39320819340598523,
+      "spectral_viscosity_energy_rate": -0.39320819340598523,
+      "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified."
+    },
+    "energy-identity-3d": {
+      "cited_convergence_supported": false,
+      "diagnostics_finite": true,
+      "maximum_dissipation_error": 2.6645352591003757e-15,
+      "maximum_energy_balance_defect": 1.8207657603852567e-14,
+      "maximum_energy_error": 1.1795009413617663e-12,
+      "maximum_energy_rate_error": 2.6645352591003757e-15,
+      "operator_scaling_admissible": true,
+      "positive_dissipation": true,
+      "spectral_viscosity_dissipation": 2.470599943471116,
+      "spectral_viscosity_energy_rate": -2.470599943471116,
+      "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified."
+    },
+    "fixed-low-mode-vanishing": {
+      "cited_convergence_supported": false,
+      "finite": true,
+      "integer_mode": [
+        0,
+        1
+      ],
+      "interpretation": "Finite-resolution fixed-mode operator evidence, not full-method or rough-data convergence.",
+      "last_absolute_rate": 0.0,
+      "maximum_rate_error": 0.0,
+      "maximum_upper_bound_excess": 0.0,
+      "nonincreasing_absolute_rate": true,
+      "operator_scaling_admissible": true,
+      "resolutions": [
+        {
+          "absolute_rate_upper_bound": 0.020000000000000004,
+          "analytic_decay_rate": -0.020000000000000004,
+          "cited_convergence_supported": false,
+          "cutoff_mode": 0.7476743906106103,
+          "decay_rate": -0.020000000000000004,
+          "mode_count": 12,
+          "operator_scaling_admissible": true,
+          "oracle_resolution": 5,
+          "prepared_id": "767b2faa65caf224a6483c27ce124de0ef50f62493d75c9666d44b2c9ed2f893",
+          "resolution": 5,
+          "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified."
+        },
+        {
+          "absolute_rate_upper_bound": 0.009090909090909092,
+          "analytic_decay_rate": -0.009090909090909092,
+          "cited_convergence_supported": false,
+          "cutoff_mode": 0.9105801434189359,
+          "decay_rate": -0.009090909090909092,
+          "mode_count": 24,
+          "operator_scaling_admissible": true,
+          "oracle_resolution": 11,
+          "prepared_id": "0978f3ece454d5224ec50b66b7ed3a599c456e5a25737c66a4fa0d7c8af4bd79",
+          "resolution": 11,
+          "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified."
+        },
+        {
+          "absolute_rate_upper_bound": 0.004347826086956522,
+          "analytic_decay_rate": -0.0,
+          "cited_convergence_supported": false,
+          "cutoff_mode": 1.094969351547421,
+          "decay_rate": -0.0,
+          "mode_count": 48,
+          "operator_scaling_admissible": true,
+          "oracle_resolution": 23,
+          "prepared_id": "fab3bfcd0e9ee08fd3ee887d67eb20ddc87924ea416aae489335f9d9aaeb83d3",
+          "resolution": 23,
+          "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified."
+        }
+      ],
+      "spatial_dimension": 2,
+      "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified.",
+      "upper_bound_decreases": true,
+      "vanishing_upper_bound_exponent": -1.0
+    },
+    "shear-decay-2d": {
+      "analytic_decay_rate": -0.020000000000000004,
+      "cited_convergence_supported": false,
+      "compilation_id": "b02a874ef7ba4d7d9a3982edf48e7a6ab04bc14067e9d3c8046b2a905cf2467c",
+      "discretization_prepared_id": "56e073b9f7a8b25139acc2fd49386f54ac5ede614eb38501ce0fe448f3434d03",
+      "divergence_norm": 3.465931559901278e-32,
+      "integer_mode": [
+        0,
+        1
+      ],
+      "maximum_velocity_error": 2.220446049250313e-16,
+      "operator_scaling_admissible": true,
+      "oracle_resolution": 5,
+      "prepared_rate_error": 0.0,
+      "prepared_resolution": 5,
+      "solver_successful": true,
+      "spatial_method_id": "58fdf5bc85bba5c753235a6963996144aab1759d06c515cb8cb74095a44e9311",
+      "spectral_viscosity_id": "767b2faa65caf224a6483c27ce124de0ef50f62493d75c9666d44b2c9ed2f893",
+      "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified.",
+      "temporal_method_id": "5d87150b84f5fc4788ccfb285380e2fda84fcadece2151995f8203ffa1efa58e"
+    },
+    "shear-decay-3d": {
+      "analytic_decay_rate": -0.020000000000000004,
+      "cited_convergence_supported": false,
+      "compilation_id": "c4e0169f9c965a93eecab74ee6e437a86cf12374ea058f9d8fe88e0de8c611cc",
+      "discretization_prepared_id": "60b3d1d932d469d932671ad773c196c451559ba0fabd9a61ad4706588a613ffa",
+      "divergence_norm": 5.821223268695121e-32,
+      "integer_mode": [
+        0,
+        0,
+        1
+      ],
+      "maximum_velocity_error": 5.551115123125783e-16,
+      "operator_scaling_admissible": true,
+      "oracle_resolution": 5,
+      "prepared_rate_error": 0.0,
+      "prepared_resolution": 5,
+      "solver_successful": true,
+      "spatial_method_id": "58fdf5bc85bba5c753235a6963996144aab1759d06c515cb8cb74095a44e9311",
+      "spectral_viscosity_id": "71daaf62cc8de802e222acd0ebb78d1fb2c170054767b33ebf487a7ad9c9df3b",
+      "support_reason": "Operator scaling alone does not establish cited rough-data convergence: the initial-data mollification and full-method hypotheses are not certified.",
+      "temporal_method_id": "5d87150b84f5fc4788ccfb285380e2fda84fcadece2151995f8203ffa1efa58e"
+    }
+  },
+  "reference": {
+    "decay": "exp(lambda_n*t)",
+    "dissipation": "-2*lambda_n*energy",
+    "energy": "(2*pi)^d/4 * exp(2*lambda_n*t)",
+    "fixed_mode_bound": "|lambda_n| <= strength*K^(1-2*order)*|n|^(2*order)",
+    "kind": "qualification-reference",
+    "nonclaim": "Operator scaling does not certify initialization or full-method rough-data convergence.",
+    "publication": "https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf",
+    "reference_id": "f501e93d520cba151d1f8214fc01a72cecf755379b94f2f5f676781ec0d5cb3a",
+    "section": "2 (spectral hyperviscosity approximation)",
+    "source": "native-analytic"
+  },
+  "release_ready": false,
+  "route": "periodic-spectral-vanishing-viscosity",
+  "status": "passed",
+  "support_tuple": {
+    "attributes": {
+      "cited_convergence_supported": "false",
+      "kernel": "tadmor_step",
+      "route": "periodic-spectral-vanishing-viscosity",
+      "spatial_dimensions": "2,3",
+      "spatial_method": "periodic-incompressible-rotational-svv-diagonal",
+      "temporal_method": "etdrk4"
+    },
+    "capability": "incompressible-flow",
+    "kind": "capability-support-tuple",
+    "support_tuple_id": "35f6f47639e79a64400e572e22b8a52cb1594b2bee913e0b1fdf48a27ff077a8"
+  }
+}

@@ -28,6 +28,12 @@ from ._energy import (
     EnergyGroupStructure,
     PreparedEnergyGroupStructure,
 )
+from ._exposure import advance_exposure, ExposureState, HeavyMetalReference
+from ._fission_products import (
+    FissionGasYieldTable,
+    FISSIONING_NUCLIDES,
+    FissioningNuclide,
+)
 from ._fusion import (
     FusionProductSource,
     ReactivityEvaluation,
@@ -35,6 +41,7 @@ from ._fusion import (
     ThermalFusionReactionPlan,
     ThermalFusionReactionResult,
 )
+from ._helium_production import HeliumProductionPlan, HeliumProductionRates
 from ._identity import (
     NuclearParticleKind,
     NuclearSpeciesKey,
@@ -75,6 +82,14 @@ __all__ = [
     "SlabSNTransportPlan",
     "nuclear_transport_candidate_profiles",
     "SNTransportResult",
+    "advance_exposure",
+    "ExposureState",
+    "FISSIONING_NUCLIDES",
+    "FissionGasYieldTable",
+    "FissioningNuclide",
+    "HeavyMetalReference",
+    "HeliumProductionPlan",
+    "HeliumProductionRates",
     "AVOGADRO_PER_MOL",
     "ActivationLedger",
     "ActivationNetworkPlan",

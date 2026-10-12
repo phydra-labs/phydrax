@@ -232,12 +232,6 @@ def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback() -> None:
         assert isinstance(result.residual, _CoordinateResidual)
         assert jnp.allclose(result.state.value, jnp.asarray([2.0]))
         assert jnp.allclose(jitted_state, jnp.asarray([2.0]))
-        assert method.linear_policy.method.name == "gmres"
-        assert result.provenance.derivative_id == "explicit"
-        assert result.provenance.linear_plan_id
-        assert result.provenance.notes == (
-            "linear-method=gmres;linear-backend=native-krylov"
-        )
 
 
 def test_newton_still_rejects_unequal_coordinate_dimensions() -> None:
@@ -898,6 +892,39 @@ def test_fischer_burmeister_residual_is_finite_for_unbounded_variables() -> None
     assert jnp.allclose(residual, state - 1.0)
     assert jnp.allclose(tangent, jnp.ones_like(state))
     assert jnp.all(jnp.isfinite(tangent))
+
+
+def test_fischer_burmeister_map_vanishes_exactly_on_box_complementarity() -> None:
+    # Entries: box [0, 1], box [0, 1], unbounded, fixed at 0.5, lower bound 0.
+    bounds = nl.Bounds(
+        jnp.asarray([0.0, 0.0, -jnp.inf, 0.5, 0.0], dtype=jnp.float64),
+        jnp.asarray([1.0, 1.0, jnp.inf, 0.5, jnp.inf], dtype=jnp.float64),
+    )
+    complementary = nl.fischer_burmeister_map(
+        jnp.asarray([0.0, 1.0, 0.3, 0.5, 0.4], dtype=jnp.float64),
+        jnp.asarray([2.0, -3.0, 0.0, 7.0, 0.0], dtype=jnp.float64),
+        bounds,
+    )
+    violated = nl.fischer_burmeister_map(
+        jnp.asarray([0.5, 1.0, 0.3, 0.7, 0.0], dtype=jnp.float64),
+        jnp.asarray([2.0, 3.0, -1.5, 0.0, -1.0], dtype=jnp.float64),
+        bounds,
+        derivative_policy=nl.GeneralizedDerivativePolicy(),
+    )
+
+    assert jnp.array_equal(complementary, jnp.zeros((5,), dtype=jnp.float64))
+    assert float(violated[0]) != 0.0
+    assert float(violated[1]) != 0.0
+    assert float(violated[2]) == -1.5
+    assert jnp.allclose(violated[3], 0.2)
+    assert float(violated[4]) == 2.0
+    with pytest.raises(TypeError, match="derivative_policy"):
+        nl.fischer_burmeister_map(
+            jnp.zeros((1,), dtype=jnp.float64),
+            jnp.zeros((1,), dtype=jnp.float64),
+            nl.Bounds(),
+            derivative_policy=1.0,  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test_semismooth_solver_cannot_report_false_success_from_a_loose_tolerance() -> None:

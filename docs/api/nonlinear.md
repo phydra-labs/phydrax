@@ -87,6 +87,15 @@ coordinate dimensions are rejected; large structured problems may instead expose
 compatible state/residual spaces or supply a deliberate sparse or preconditioned
 linear policy.
 
+Automatic Jacobian actions accept the native linearization storage policy:
+`JacobianPolicy(linearization_policy=phx.linalg.LinearizationPolicy("rematerialize"))`.
+The default `"store"` retains derivative intermediates; `"rematerialize"` recomputes
+the same automatic derivative to keep prepared and refreshed root storage small.
+Neither choice changes the physical residual or switches derivative sources.
+`policy_id` is a deterministic fingerprint of the derivative source, applicable
+finite-difference step or sparse plan, explicit provider's qualified source location,
+and linearization storage policy; dynamic provider/state arrays remain numerical data.
+
 `RootLineSearch` and `RootTrustRegion` expose every globalization constant. Domain
 rejections, nonfinite trials, accepted/rejected steps, Jacobian preparations, linear
 iterations, and refresh counts are returned in `NonlinearDiagnostics`.
@@ -328,6 +337,13 @@ Fischer--Burmeister residual, active sets, and finiteness separately. A loose
 nonlinear residual tolerance cannot turn an infeasible point into a successful
 VI result; final success requires the complementarity certificate as well.
 
+`fischer_burmeister_map(value, operator_value, bounds, derivative_policy=...)`
+evaluates the box Fischer--Burmeister residual directly, for callers that
+assemble their own complementarity rows. A leaf is zero exactly where the value
+is feasible and the operator value is nonnegative at an active lower bound,
+nonpositive at an active upper bound, and zero in the interior. Fixed entries map
+to `value - lower` and unbounded entries map to the operator value.
+
 ## General root selection
 
 Scalar equations use `ScalarRootProblem`. Certified bracket methods include
@@ -407,6 +423,12 @@ Its embedded `MixedPrecisionPolicy` is composed into native linear plans rather
 than bypassing `phydrax.linalg`. `MixedPrecisionRootExecution` iterates in model
 precision, re-evaluates the original problem in certificate precision, and
 retains the model solve as nested precision and transformation evidence.
+
+Pure guarded residual batching substitutes a valid lane reference only for
+declared mapped operands. Shared numerical parameters remain unmapped, explicit,
+and active in forward and transpose derivatives; they acquire no broadcast axis
+or reference-index operations. Empty branches remain guarded, and effectful
+refusal callbacks retain native selected-lane ordering.
 
 `SmallRootKernel` is a fixed-work, masked, batched dense-Newton kernel for small
 array systems. Completed batch members stop updating independently.
@@ -520,6 +542,27 @@ regularity and randomness admission, and an opaque mapping closure is recorded a
 diagnostics, provenance, and precision evidence are those of the primal iteration;
 derivatives are meaningful only for a successful result, and differentiating a
 failed iteration or an unresolved `I - d mapping/d state` system raises.
+
+`implicit_root_output` attaches endpoint derivatives to an already-computed root
+and output receipt. It returns the supplied `(root_state, receipt)` unchanged:
+no second primal solve, output reconstruction, or numerical repair runs at this
+boundary. The caller supplies the actual success evidence and owns the certified
+endpoint and its physical/branchwise validity.
+
+`arguments` carries active history and physical inputs. `residual_and_output`
+evaluates the endpoint equations and output map together; one native
+`PreparedLinearization` supplies both derivative actions at that point.
+`root_space` declares the canonical coordinate-vector identity, and
+`prepare_linear_solve` binds the owning prepared native solve to the resulting
+operator. Forward and transpose actions reuse that preparation. A failed primal
+or derivative solve refuses differentiation rather than returning zero or a
+plausible tangent.
+
+This boundary is appropriate when a partitioned primal has already converged
+but sensitivities belong to different, jointly coupled endpoint equations.
+Algorithmic tangents of the primal root/receipt are not the physical derivative;
+the receipt's floating-point output tangent follows the supplied output map.
+Array-bearing callbacks and spaces remain conditioned dynamic structure.
 
 ## Causal nonlinear recurrence
 
@@ -722,6 +765,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 ---
 
+::: phydrax.nonlinear.fischer_burmeister_map
+
+---
+
 ::: phydrax.nonlinear.VariationalInequalityProblem
 
 ---
@@ -759,6 +806,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 ---
 
+::: phydrax.nonlinear.implicit_root_output
+
+---
+
 
 ::: phydrax.nonlinear.implicit_root
 
@@ -772,6 +823,22 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 with device-side work limits and implicit-function derivatives. Dimensions one through
 three use the tiny linear substrate; larger declared local systems use the native dense
 linear runtime.
+
+An implicit derivative requires an invertible local Jacobian. Scalar derivatives
+below the declared `minimum_derivative`, and failed vector tangent solves, produce
+nonfinite JVP/VJP values rather than a floored finite sensitivity. Root diagnostics
+remain the owning convergence and conditioning evidence; finite primal values
+alone do not certify an implicit derivative.
+
+`VectorLocalRootPlan.solve_with_diagnostics(..., has_aux=True)` accepts a
+residual returning `(residual, auxiliary)`. Newton and the implicit root remain
+residual-only. One ordinary terminal evaluation supplies the diagnostic residual
+and retains the auxiliary PyTree with its normal outer JVP/VJP/HVP; the diagnostic
+Jacobian remains a separate residual-only forward derivative. This is suitable
+for complete local constitutive candidate output that would otherwise be
+recomputed again by the caller.
+The callback must have one fixed output structure. The default remains the
+two-result `(root, diagnostics)` interface.
 
 ::: phydrax.nonlinear.LocalRootPlan
 

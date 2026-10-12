@@ -219,6 +219,14 @@ the policy's static attempt axis; `evidence` is that of the selected attempt
 `inactive_fixed_step_retry` returns a held transition with the identical PyTree
 structure for branches that execute no attempt.
 
+For nonzero retry capacity, the initial attempt and subsequent retries share one
+bounded scan body; abstract preparation determines buffer structure without
+executing a numerical attempt. Every active attempt starts from the same original
+accepted state. Success or terminal refusal stops further method execution, and
+`attempt_executed` distinguishes zero-masked unused capacity from actual refusal.
+Zero retry capacity keeps the direct single-attempt host boundary. Candidate,
+selected receipt, stacked evidence, and ordered effects retain their ownership.
+
 ::: phydrax.solver.FixedStepRolloutPlan
 
 ---
@@ -239,6 +247,68 @@ structure for branches that execute no attempt.
 `granularity="output"` for explicitly requested save times. They do not present
 Diffrax's internal adaptive steps or progress callbacks as audited Phydrax
 iterations.
+
+## Fixed-step deterministic ensembles
+
+`FixedStepEnsemblePlan` accepts any `FixedStepProblem` and a matching array or
+PyTree of arrays with a leading member axis. Labels must be unique after trimming;
+initial states must be finite, and weights must have positive finite total mass.
+Uniform weights default to the empirical measure. Preparation pads lanes with a
+valid member and an explicit validity mask, then lowers and compiles one stable
+chunked `lax.map` executable. Execution reuses that executable.
+
+```python
+plan = phx.solver.FixedStepEnsemblePlan(
+    problem, stacked_initial_states, ("member-a", "member-b", "member-c"),
+    member_chunk_size=2,
+    maximum_output_bytes=2**28,
+)
+prepared = plan.prepare(save_every=2)
+result = phx.solver.execute_fixed_step_ensemble(prepared)
+mean_trajectory = result.mean()
+```
+
+`result.times` is the common one-dimensional save grid, including the initial
+and final times. State leaves have shape `(members, saves, *state_shape)`;
+`valid` has shape `(members, saves)`. `solutions` is a batched native
+`FixedStepSolution`, including per-member terminal `FixedStepEvidence`.
+Padding lanes never appear in result arrays, identities, evidence, or reductions.
+The admitted executable builds padded lanes by gathering the last valid member,
+then unpads all solution buffers and computes member finiteness and status before
+returning. Preparation retains only the plan's unpadded initial states; it does
+not keep a second padded state copy or slice trajectories outside compilation.
+Solver failure takes precedence over nonfinite-trajectory status, and the
+weighted reducer excludes unsuccessful members. Overall evidence succeeds only
+when every member succeeds and positive valid weight mass remains.
+
+Semantic path IDs and realization IDs reuse `DeterministicInitialCondition`:
+labels own semantic identity, while initial-state values and weights own realization
+identity. Fingerprints are computed once during plan construction. Chunk size
+and resource caps change plan/prepared/result execution identities, never path
+or realization IDs; existing deterministic-ensemble IDs are unchanged.
+`result.discretization_ids` retains the problem bundle's ordered artifact IDs
+(an empty tuple for problems without a discretization bundle), so consumers can
+bind trajectories to their declared spatial discretization rather than shape.
+
+`maximum_output_bytes` admits both retained trajectories and compiler memory.
+The retained estimate includes states, validity masks, times, and member status
+and success masks. Required bytes are the greater of the compiler-reported peak
+and `max(retained_bytes, compiler_output_bytes) + argument_bytes - alias_bytes
++ temporary_bytes + generated_code_bytes`. This is a compiler estimate, not an
+allocator or unrelated-live-buffer measurement. Preparation refuses providers
+without compiler memory analysis. `phydrax.execution.MemoryBudgetError` exposes
+`budget="maximum_output_bytes"`, `required_bytes`, and `limit_bytes` before
+execution. Chunk sizes, member limits, byte limits, and save strides require
+positive integers (booleans and non-integral kinds are refused). The prepared
+executable is process-local and is not a persistence payload.
+
+::: phydrax.solver.FixedStepEnsemblePlan
+
+::: phydrax.solver.PreparedFixedStepEnsemble
+
+::: phydrax.solver.FixedStepEnsembleResult
+
+::: phydrax.solver.execute_fixed_step_ensemble
 
 ## Accepted-step transforms and learned step correction
 
@@ -357,6 +427,11 @@ and checkpoint boundaries together. `ExactTimeSchedule` emits accepted-endpoint
 snapshots at declared targets; typed trigger bindings request checkpoint,
 publication, or stop actions. Output is immutable and count/byte bounded, writer
 failures fail the run, and checkpoint commit drains earlier publications.
+An optional `step_controller` makes the accepted step adaptive within its
+`minimum_step`/`maximum_step` bounds while output targets and `end_time` still land
+exactly. The controller state lives in `ProductionRunState.controller_state` and is
+checkpointed, so restart reproduces the uninterrupted run bitwise. See
+[Runtime lifecycle](../../guides_solver_substrates.md#runtime-lifecycle).
 
 `PreparedProductionRun(..., session=session)` emits accepted or rejected step
 records after each compiled segment transaction. Session cursors and stop requests
@@ -440,6 +515,14 @@ run/resume/step/checkpoint lifecycle and an instantaneous statistics snapshot.
 ---
 
 ::: phydrax.solver.ProductionRunPlan
+
+---
+
+::: phydrax.solver.AbstractStepSizeController
+
+---
+
+::: phydrax.solver.IncrementLimitedStepController
 
 ---
 

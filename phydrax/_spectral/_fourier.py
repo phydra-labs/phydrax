@@ -67,14 +67,18 @@ def resize_fourier_axis(
 
     moved = jnp.moveaxis(coefficients, axis, 0)
     weight_shape = (source_size,) + (1,) * (moved.ndim - 1)
-    # Real weights are carried in the coefficient dtype so complex coefficients
-    # need no implicit real-to-complex promotion.
     output = jnp.zeros((target, *moved.shape[1:]), dtype=coefficients.dtype)
+    # Real weights are converted in-graph, matching default promotion without
+    # materializing complex constants.
+    primary = jnp.asarray(primary_weights, dtype=moved.real.dtype).reshape(weight_shape)
+    secondary = jnp.asarray(secondary_weights, dtype=moved.real.dtype).reshape(
+        weight_shape
+    )
     output = output.at[jnp.asarray(primary_indices)].add(
-        moved * jnp.asarray(primary_weights, dtype=moved.dtype).reshape(weight_shape)
+        moved * primary.astype(moved.dtype)
     )
     output = output.at[jnp.asarray(secondary_indices)].add(
-        moved * jnp.asarray(secondary_weights, dtype=moved.dtype).reshape(weight_shape)
+        moved * secondary.astype(moved.dtype)
     )
     return jnp.moveaxis(output, 0, axis)
 

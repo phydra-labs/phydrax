@@ -18,7 +18,8 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ...typing import parse
 from .._policies import FailurePolicy
-from ._problems import EigenproblemLike
+from .._spaces import _has_euclidean_pairing
+from ._problems import Eigenproblem, EigenproblemLike
 from ._self_adjoint_spectrum import (
     prepare_self_adjoint_spectrum,
     PreparedSelfAdjointSpectrum,
@@ -421,7 +422,14 @@ def self_adjoint_spectral_operator(
         spectrum.eigenvectors
         * function_values.astype(spectrum.eigenvectors.dtype)[..., None, :]
     ) @ spectrum.inverse_basis
-    density = density_from_projector(operator, spectrum.paired_metric)
+    standard_euclidean = isinstance(
+        spectrum.problem, Eigenproblem
+    ) and _has_euclidean_pairing(spectrum.problem.operator.source)
+    density = (
+        operator
+        if standard_euclidean
+        else density_from_projector(operator, spectrum.paired_metric)
+    )
     diagnostics, status = _spectral_operator_evidence(
         spectrum,
         function_values,
@@ -442,16 +450,20 @@ def self_adjoint_spectral_operator(
             spectrum.inverse_basis,
             derivative_valid,
         )
-        density = _attach_spectral_density_derivative(
-            spectrum.problem,
-            function,
-            jax.lax.stop_gradient(density),
-            jax.lax.stop_gradient(operator),
-            spectrum.paired_metric,
-            spectrum.eigenvalues,
-            spectrum.eigenvectors,
-            spectrum.inverse_basis,
-            derivative_valid,
+        density = (
+            operator
+            if standard_euclidean
+            else _attach_spectral_density_derivative(
+                spectrum.problem,
+                function,
+                jax.lax.stop_gradient(density),
+                jax.lax.stop_gradient(operator),
+                spectrum.paired_metric,
+                spectrum.eigenvalues,
+                spectrum.eigenvectors,
+                spectrum.inverse_basis,
+                derivative_valid,
+            )
         )
     else:
         operator = jax.lax.stop_gradient(operator)
@@ -653,9 +665,13 @@ def _spectral_operator_tangent(
     )
     if parameter_tangent is None:
         parameter_tangent = jnp.zeros_like(function_values)
-    derivative_in_basis = loewner * perturbation + parameter_tangent.astype(
-        eigenvectors.dtype
-    )[..., None, :] * jnp.eye(eigenvalues.shape[-1], dtype=eigenvectors.dtype)
+    identity = jnp.broadcast_to(
+        jnp.eye(eigenvalues.shape[-1], dtype=eigenvectors.dtype), perturbation.shape
+    )
+    derivative_in_basis = (
+        loewner * perturbation
+        + parameter_tangent.astype(eigenvectors.dtype)[..., None, :] * identity
+    )
     derivative = eigenvectors @ derivative_in_basis @ inverse_basis
     return derivative, paired_metric_tangent, derivative_in_basis
 

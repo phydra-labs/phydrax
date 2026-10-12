@@ -213,6 +213,8 @@ def _requirement(
 def builtin_omniphysics_closure_matrices(
     catalog: CapabilityCatalog,
 ) -> tuple[CapabilityClosureMatrix, ...]:
+    from ._nuclear_fuel_release_matrix import nuclear_fuel_closure_matrices
+
     matrices = []
     for family, (fields, carriers, source_ids) in _FAMILIES.items():
         declarations = tuple(
@@ -290,7 +292,7 @@ def builtin_omniphysics_closure_matrices(
                 (resolution(semantic), resolution(implementation)),
             )
         )
-    return tuple(matrices)
+    return (*matrices, *nuclear_fuel_closure_matrices())
 
 
 __all__ = ["builtin_omniphysics_closure_matrices"]

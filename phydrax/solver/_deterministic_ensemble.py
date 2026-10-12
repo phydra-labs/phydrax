@@ -43,6 +43,14 @@ def _identifier(value: str, name: str, /) -> str:
     return value.strip()
 
 
+def deterministic_semantic_path_id(semantic_label: str, /) -> str:
+    """Own the normalized semantic identity of a deterministic initial path."""
+    label = _identifier(semantic_label, "semantic_label")
+    return canonical_fingerprint(
+        {"kind": "deterministic-initial-condition", "semantic_label": label}
+    )
+
+
 def _state_signature(state: Any, /) -> tuple[tuple[tuple[int, ...], str], ...]:
     return tuple(
         (tuple(jnp.asarray(leaf).shape), str(jnp.asarray(leaf).dtype))
@@ -109,10 +117,7 @@ class DeterministicInitialCondition(StrictModule):
             or float(path_weight) < 0.0
         ):
             raise ValueError("Deterministic path weight must be finite and non-negative.")
-        label = _identifier(semantic_label, "semantic_label")
-        semantic_path_id = canonical_fingerprint(
-            {"kind": "deterministic-initial-condition", "semantic_label": label}
-        )
+        semantic_path_id = deterministic_semantic_path_id(semantic_label)
         self.initial_state = state
         self.weight = jnp.asarray(path_weight)
         self.semantic_path_id = semantic_path_id

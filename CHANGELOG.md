@@ -10,9 +10,8 @@
 - Strict dtype and rank promotion: `Linear` broadcasts random-weight-factorization
   scales and biases explicitly over batched inputs; finite-volume scalar and
   cell-diagonal diffusion coefficients expand to tensors with explicit cell axes;
-  Fourier axis resizing carries its real transfer weights and the Fourier/sine/
-  cosine modal derivative multiplier carries its wavenumber scale in the
-  coefficient dtype. Numerical values are unchanged.
+  the Fourier/sine/cosine modal derivative multiplier carries its wavenumber
+  scale in the coefficient dtype. Numerical values are unchanged.
 - Bounded `AntiAliasedConvND` (and therefore bounded CNO/UNO) extends only field
   values oddly for `"dirichlet_sine"` axes; source masks and physical quadrature
   reflect evenly instead of producing negative measure.
@@ -20,6 +19,58 @@
   (for example SIPG diffusivity and Dirichlet data) execute again: workset
   signatures and kernel bindings now agree on the canonical set of coefficient
   layouts. Identities of actions without repeated layouts are unchanged.
+- `tools/incompressible_spectral_benchmarks.py` reads the periodic
+  `advective_energy_rate` diagnostic instead of a nonexistent attribute that a
+  type-checker suppression had hidden; the emitted invariant key is renamed
+  accordingly.
+- `resize_fourier_axis` converts its real transfer weights to the coefficient
+  dtype explicitly, so Fourier resampling and padded dealiasing run under strict
+  dtype promotion. Results, compiled argument bytes, and temporaries are unchanged.
+- ETDRK-family fixed-step methods (plain, LES- and Courant-guarded, OU-forced,
+  dynamic-LES production, distributed LES) extract the real part of the
+  state-dtype time and step explicitly, so complex modal states no longer emit a
+  `ComplexWarning`. Results and compiled storage are unchanged.
+- `HeliumGasModel.initial_state` and `FiniteElementDiscretization.axis_dof_mask`
+  no longer carry `checked` decorators whose static-only signatures enforced no
+  input contract; their owners' shape, radius, and field-name validation is
+  unchanged.
+- Bordered block assembly now distinguishes resolved structural coupling from
+  dimension-scaled floating-point JVP roundoff under an explicit, default-zero
+  policy. It records maximum absolute/relative omitted coupling, the roundoff
+  limit, exactness and acceptance. Resolved off-band coupling still refuses.
+- `VectorLocalRootPlan.solve_with_diagnostics` can retain a terminal auxiliary
+  PyTree from the same root-point residual evaluation while keeping Newton and
+  implicit differentiation residual-only.
+- Dense self-adjoint standard eigenproblems in an explicitly Euclidean pairing
+  bypass identity-metric reduction/backsolves, reuse the native ascending order
+  for a complete smallest-algebraic spectrum, and identify the density kernel
+  with the spectral operator. Non-Euclidean/generalized routes retain metric
+  preparation; all routes retain residual, orthogonality, normalization, status,
+  resource, provenance and Fréchet derivative evidence.
+- Composite least squares can consume an owner-supplied canonical
+  `PreparedLinearization` at the current parameters and arguments. Dynamic
+  provider arrays remain visible; changed compiler/PyTree preparation identities
+  require fresh receipts. Default generic preparation is unchanged.
+- Composite least-squares execution separates its native iterative recurrence
+  from exact final-point evidence/result construction. The public solver composes
+  both unchanged; qualification can compile the two lifecycle phases separately
+  without host synchronization inside iterations or duplicating the final model
+  in the recurrent executable.
+- `GeneralizedGaussNewton` accepts an explicit native `MaterializationPolicy`
+  for bounded exact current-point curvature. Damping trials reuse its matrix
+  while preserving signed scalar Hessians, MINRES, Armijo, failure evidence,
+  and physical derivative-work counts. The default remains matrix-free; the
+  opted-in route has distinct provenance and intentionally changes operator,
+  PyTree/compiler representation, and reduction order.
+- Native block-factorization preconditioners retain only prepared pivot/Schur
+  actions and form-required dynamic couplings, not unused Schur setup graphs.
+  The user-approved action-only representation changes default/generated and
+  whole-prepared/PyTree/runtime/persistence identities; old prepared field
+  inventories require fresh current constructors rather than compatibility
+  restores. Explicitly declared action IDs retain their existing meaning.
+  Factor preparation, application order, scientific provenance, native failures,
+  and properties are preserved; setup-only storage remains charged during
+  preparation instead of as retained execution state.
 - Distributed spectral execution now requires an explicit scientific owner, one
   `SpectralPrecisionPolicy`, and exact admitted payload shapes. Separate numerical,
   execution, and owner-bound plan identities cover transform semantics, ordered
@@ -125,6 +176,49 @@
   `coordinate_embedding=False` they are linear in input values for fixed masks
   and quadrature. Default configurations keep their recipe and artifact
   identities.
+- Resolution-dependent spectral vanishing viscosity for isotropic periodic boxes:
+  `SpectralVanishingViscosityPlan` prepares λ_n = −ε_K|k|^(2s)Q(|n|/m_K) with
+  ε_K = εK^(1−2s), m_K = m₀K^θ and `tadmor_step` or `exponential_highpass` kernels.
+  Prepared evidence reports the resolved scaling, active modes, maximum decay
+  rate, scaling admissibility, and an explicit convergence nonclaim. Periodic
+  incompressible flow (`compile_periodic_incompressible_flow(...,
+  spectral_viscosity=...)`) and `BarotropicBetaPlane` integrate it exactly in the
+  ETDRK diagonal, keep it separate from molecular viscosity in stage rates,
+  diagnostics, budgets and turbulence statistics, and refuse it with LES closures.
+  When it is absent, compilation, linear-operator, nonlinear, drift, bundle, and
+  method identities are unchanged; turbulence-statistics identities change (see
+  Changed).
+- `CourantGuardedETDRKMethod` and `PeriodicAdvectiveCourantRestriction` reject
+  ETDRK4 DNS steps above a declared Courant number (at most 2√2/π, the frozen
+  uniform-advection RK4 reference) without claiming nonlinear stability.
+  Production accepts it; OU and constant-power adapter forcing refuse it.
+- Exact periodic increment moments: second-order moments at every lattice
+  displacement, sphere/ball-averaged radial moments from prepared Bessel kernels,
+  longitudinal-cube and energy-flux third moments from degree-2 dealiased
+  cross-spectra, and a bounded native-grid estimator for general orders.
+- `PeriodicPowerLawFieldPlan` samples Hermitian power-law Fourier fields
+  (normal or uniform laws, complex-exponential or tensor-trigonometric bases,
+  optional Leray projection) with member-addressed randomness and exact nested
+  retained-band restriction via `RetainedBandRestrictionPlan`, a prepared
+  jit-safe gather owner.
+- Periodic flow initial measures (Taylor–Green, displaced shear layers, vortex
+  patch, piecewise-constant vorticity, mollified sinusoidal vortex sheet,
+  power-law velocity) with explicit mean neutralization, projection and
+  quadrature evidence, planar 3D embedding with resolution-independent coupling
+  identity, `restrict_periodic_flow_initial_state`, and strict
+  `PeriodicLerayProjector.velocity_from_vorticity`/`vorticity_from_velocity`.
+- `FixedStepEnsemblePlan` executes padded member chunks of one fixed-step problem
+  under a single compiled program with per-member status, weighted reductions,
+  and compiler-memory admission covering unpadding and evidence.
+- `phydrax.execution.MemoryBudgetError` is the typed refusal for work whose
+  admitted bytes exceed a declared cap; the new statistical-flow owners raise it.
+- Coupled-ensemble evidence for statistical solutions: identity-bound
+  `PeriodicFlowEnsembleResult` campaigns, componentwise empirical Wasserstein
+  diagnostics, sliced joint-marginal distances, paired coupling upper bounds,
+  jackknifed structure-function scaling evidence, the
+  `periodic-spectral-vanishing-viscosity` and `periodic-statistical-solution`
+  qualification routes, a leakage-safe `periodic_flow_operator_dataset`
+  adapter, and the statistical incompressible-flow guide.
 - Prepared bounded streamed relation execution, seeded reductions, fragment
   replay, receiver epilogues, resource admission, and failure evidence. PaiNN,
   NequIP, selected graph operators, and meshfree constitutive/conservation
@@ -351,6 +445,12 @@
 - Operation-specific ML derivative admission with resolved numerical evidence.
   Stopped fit basis representatives remain independently trainable; projection
   responses and current-basis encoder/decoder behavior remain distinct.
+- Shared correctness fixes retain native form/proxy identities in execution
+  worksets and keep immutable spline-span route metadata off device/static array
+  leaves.
+- Workset identity retains bound recursive custom-JVP declarations without
+  enumerating symbolic-zero masks, includes imported helper bindings, and
+  rejects unowned custom-JVP subclass behavior.
 - Native exterior calculus in `phydrax.exterior`: explicit form degree, twist, fiber,
   and proxy semantics; shared exterior algebra; de Rham integration, Whitney chains,
   induced boundary traces, numerical form products, and coefficient systems.
@@ -363,6 +463,119 @@
   with executable Hodge–Laplace, cavity, learned-Hodge, and solenoidal-field examples.
 - Phase-separated exterior, cochain, FE, Maxwell, spectral, spline, MAC, and PIC
   benchmarks with compiler-memory and retained-state evidence.
+- Nuclear-fuel performance application `phydrax.applications.nuclear_fuel`
+  (`docs/guides_nuclear_fuel.md`, `docs/nuclear_fuel_sources.md`). The capability
+  is candidate-unreleased: its verification is synthetic and numerical, and IFPE
+  data rights and an independent locked evaluation remain release gates.
+  - Rod model: UO₂ pellets in stress-relief-annealed Zircaloy-4 cladding under
+    PWR conditions, as layered-radial or axisymmetric RZ finite elements, with
+    finite-strain thermomechanics, frictionless or Coulomb pellet-cladding
+    contact, mechanistic fission gas (intragranular diffusion, grain-face
+    bubbles, grain growth, microcracking, HBS pore moments, passive Kr/Xe
+    tracers), helium transport on spherical shells, communicating free volume
+    and rod pressure, and cladding corrosion and hydrogen pickup.
+  - Inputs: `PelletSpecification`, `CladdingSpecification`, `RodSpecification`,
+    `FuelRodSpecification`, `IrradiationHistory`, and the coolant boundaries
+    `PrescribedWallTemperature`, `SingleChannelCoolant`, and
+    `CoupledChannelCoolant` (through
+    `phydrax.applications.thermofluids.LiquidChannelHeatBalance`).
+  - `FuelModelBundle` with a required `applicability`
+    (`"strict-source-support"` or `"equation-reproduction"`) and closure records
+    carrying their sources: `HeliumSource`, `RelocationHistory`,
+    `BoreEmissivity`, `PlenumTemperatureClosure`, `EnergyDeposition`, and
+    optional `CoulombFriction`. Strict source support refuses construction while
+    the relocation-history and plenum-temperature closures have no source.
+  - Workflow: `admit_fuel_rod`, `prepare_fuel_rod`, and `FuelRodSimulation` on
+    the production runtime (exact history breakpoints, adaptive steps with
+    retries, durable checkpoints, restart). `FuelRodResult` returns accepted
+    states and one `FuelStepEvidence` per attempt (`FuelStepStatus`, solver,
+    physics, and balance records, `FuelSourceSupport`).
+    `FuelNumericalExecution` shares one compiled step across structurally
+    identical rods.
+  - Each step is partitioned implicit backward Euler: bounded fixed-point
+    coupling of the gas and thermomechanical blocks, then endpoint
+    certification of the scaled coupled residual with the gas recomputed at the
+    endpoint, the same system the implicit sensitivities linearize.
+  - Inference: `FuelObservationPlan` sensors, fixed-grid replay and forward
+    sensitivities (`FuelSensitivityPlan`), calibration
+    (`prepare_fuel_least_squares` with `FuelSignalJacobianActions` or a bounded
+    `FuelDenseSignalJacobian`, and `prepare_fuel_posterior`), identifiability
+    reports, and `FuelEnsemblePlan`.
+  - Qualification: `nuclear_fuel_profiles`, `nuclear_fuel_execution_profile`,
+    and the `nuclear-fuel.release-matrix` closure in `phydrax.qualification`;
+    `tools/nuclear_fuel_qualification.py` runs the V1–V15 numerical cases with
+    deliberate-fault detection and the supplemental `contact-coolant` case;
+    `benchmarks/nuclear_fuel_performance.py` measures capacity scaling; the
+    examples `nuclear_fuel_base_irradiation.py` and
+    `nuclear_fuel_calibration.py` use synthetic inputs.
+- `phydrax.linalg.MaterializationPolicy.require(entries, dtype)` refuses a dense
+  allocation beyond the policy's entry or byte limit with
+  `LinearCapabilityError`; `materialize`, bordered solves, and control
+  linearization use it.
+- `phydrax.nonlinear.fischer_burmeister_map(value, operator_value, bounds,
+  derivative_policy=...)` evaluates the box Fischer–Burmeister complementarity
+  residual used by the variational-inequality solvers.
+- Native `phydrax.nonlinear.implicit_root_output` attaches coupled endpoint/output
+  derivatives to an existing primal receipt without solving again or replacing
+  its values. History and physical inputs remain active; forward/transpose native
+  preparation is reused, and failed roots or derivative solves refuse explicitly.
+- Native stored-linearization and callable-operator transformation boundaries
+  use named dynamic applications so debug labeling does not stringify complete
+  stored Jaxprs. One-tape, lazy-transpose, numerical/status/effect semantics
+  remain; callback/compiler identities intentionally change and old executable
+  templates are not reused.
+- Native implicit-root shape preparation names its converted residual
+  application instead of pretty-printing the complete Jaxpr for debug metadata.
+  Original JAX shape/refusal, dynamic capture, auxiliary derivative, higher-order
+  differentiation, and ordered-effect contracts remain unchanged.
+- Native `FunctionLinearOperator` avoids duplicate conversion and shape tracing
+  for an explicitly identical forward/transpose callable on one space owner.
+  Distinct actions and space owners retain independent validation; dynamic
+  captures, ordered application effects, and derivative semantics remain.
+- Native generic operator block actions avoid size-one batching for a single
+  coordinate column while preserving the column axis, fused routes,
+  multicolumn execution, pairings, dynamic captures, and ordered effects.
+- Native implicit linear derivative solves avoid singleton outer batching and
+  full right-hand-side zero embedding for one independent lane. Canonical
+  shapes, mathematical derivatives, preconditioning, tolerance/status/effect
+  contracts, empty inputs, and multibatch/multicolumn routing remain.
+- Learned atomistic deployment recipes/providers and conditioned finite-volume
+  components explicitly freeze embedded models and reconstructions while keeping
+  numerical arrays dynamic and existing revision, force/stress, and binding
+  semantics intact.
+- Public meshfree conservation problems expose the constitutive law's native
+  parameter roles without selecting geometry, loads, boundary data, or binding
+  declarations. Residual references and prepared execution templates remain
+  explicitly fixed; declared runtime parameter coordinates are unchanged.
+- Native `TruncatedNormal` supports broadcast batch parameters and per-member
+  support validation so independent vector-leaf priors need no private density
+  implementation.
+- Shared substrate support for explicit cylindrical/spherical coordinate
+  measures, axisymmetric mechanics, correlation validity, IAPWS liquid water,
+  declared helium production, and conservative through-flow channel heat
+  balances. Adaptive production step control retains its continuation state.
+- Native retries expose one canonical `attempt_executed` mask and zero-mask
+  unused capacity after the first success or terminal model failure. Per-attempt
+  evidence, the selected refusal/acceptance receipt, and production-observer
+  failures remain distinct; retries cannot turn a terminal exit into success.
+  Nonzero retry capacity uses one numerical scan body including the first
+  attempt, avoiding duplicate whole-model compiler graphs. Zero-capacity host
+  execution, transactional state, native receipts, and ordered effects remain.
+- Native compact banded bordered solves and bounded matrix-free local/block
+  preconditioner preparation retain factor reuse, transpose/adjoint actions,
+  derivative and failure evidence. Failed preparation cannot become successful
+  merely because the right-hand side is zero.
+- Guarded native differentiation preserves JAX's partial-evaluation cache
+  identity and outlined call boundaries through rematerialization, nested
+  batching, and ordered effects without evaluating refused physical branches.
+- Native guarded calls delegate dead-code elimination to JAX's effect-preserving
+  closed-call owner. Unused dynamic operands and saved derivative outputs can be
+  pruned without hiding arrays, changing primitive identity, suppressing selected
+  scientific errors, or discarding ordered effects when all outputs are unused.
+- Native pure guard reference batching keeps declared shared numerical operands
+  unmapped instead of broadcasting and reference-indexing every leaf. Mapped
+  operands retain inactive-lane protection; shared-parameter derivatives, empty
+  branches, selected scientific refusal, and ordered effects remain intact.
 - Numerical interoperability across methods and pipelines
   (`docs/guides_numerical_interoperability.md`). Existing scientific owners
   stay authoritative; prepared bindings connect them.
@@ -2128,6 +2341,13 @@
   subexpressions have degree zero (including non-integer powers of coefficients),
   `u**0` is affine, and field-dependent exponents or unknown field-dependent
   operations are nonlinear rather than misclassified as field-free.
+- Periodic production turbulence statistics include spectral-viscosity
+  dissipation shells, totals, and the numerical-dissipation fraction. The
+  streamed statistics vector grows from 6 shell arrays plus 51 scalars to 7 shell
+  arrays plus 54 scalars, so production plan, runtime, and manifest identities
+  change and checkpoints written before this change are refused at restore.
+  `IncompressibleSpectralDiagnostics` and `BetaPlaneBudgets` gain always-present
+  spectral-viscosity terms.
 - `phydrax.special.dawsn` evaluates real arguments with
   `jax.scipy.special.dawsn`, public since JAX 0.11.0, instead of a vendored copy
   of the same Cody--Paciorek--Thacher kernel. Finite values and derivatives are

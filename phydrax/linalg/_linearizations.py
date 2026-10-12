@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -29,6 +29,22 @@ class LinearizationPolicy(StrictModule):
             rematerialization, RematerializationPolicy, "rematerialization"
         )
         self.rematerialization = rematerialization
+
+
+@final
+class _LinearizedPullback(StrictModule):
+    """Transpose the one prepared tangent only when an adjoint is requested."""
+
+    source: AbstractVectorSpace
+    pushforward: Callable[[PyTree[Any]], PyTree[Array]]
+
+    def __call__(self, cotangent: PyTree[Any], /) -> PyTree[Array]:
+        # A named boundary keeps JAX debug metadata independent of the stored tape.
+        def evaluate_pushforward(tangent: PyTree[Any]) -> PyTree[Array]:
+            return self.pushforward(tangent)
+
+        transposed = jax.linear_transpose(evaluate_pushforward, self.source.zeros())
+        return transposed(cotangent)[0]
 
 
 class PreparedLinearization(StrictModule):
@@ -96,10 +112,14 @@ def prepare_linearization(
         raise TypeError("source must be an AbstractVectorSpace or None.")
     point_ = source_.validate(point)
     converted = eqx.filter_closure_convert(function, source_.structure())
+
+    def evaluate_converted(value: PyTree[Any]) -> PyTree[Any]:
+        return converted(value)
+
     executed = (
-        jax.checkpoint(converted)
+        jax.checkpoint(evaluate_converted)
         if policy_.rematerialization == "rematerialize"
-        else converted
+        else evaluate_converted
     )
     if has_aux:
         primal, pushforward, auxiliary = jax.linearize(executed, point_, has_aux=True)
@@ -111,12 +131,7 @@ def prepare_linearization(
     if not isinstance(target_, AbstractVectorSpace):
         raise TypeError("target must be an AbstractVectorSpace or None.")
     primal_ = target_.validate(primal)
-    transposed = jax.linear_transpose(pushforward, source_.zeros())
-
-    def apply_transpose(cotangent: PyTree[Any]) -> PyTree[Array]:
-        return transposed(cotangent)[0]
-
-    pullback = eqx.filter_closure_convert(apply_transpose, target_.structure())
+    pullback = _LinearizedPullback(source_, pushforward)
 
     identifier = (
         canonical_fingerprint(

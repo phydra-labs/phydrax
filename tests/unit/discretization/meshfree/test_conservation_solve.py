@@ -15,6 +15,8 @@ from phydrax.discretization.meshfree._conservation_solve import (
     MeshfreeCoupledConservationProblem,
     prepare_meshfree_conservation_solve,
     prepare_meshfree_coupled_conservation_solve,
+    PreparedMeshfreeConservationSolve,
+    PreparedMeshfreeCoupledConservationSolve,
 )
 from phydrax.discretization.meshfree._constitutive import (
     AbstractCoupledEdgeConstitutiveLaw,
@@ -36,6 +38,7 @@ from phydrax.discretization.meshfree._exterior import (
 from phydrax.nn.layers import Linear
 from phydrax.nn.models import PartiallyInputConvexNetwork
 from phydrax.nn.operator.representations import O3Representation
+from phydrax.nn.parameters import ParameterSubspace
 from phydrax.nonlinear import NonlinearStatus, NonlinearTermination
 from phydrax.solver.coupling import ParameterBinding, RuntimeInput
 from phydrax.units import DIMENSIONLESS
@@ -45,6 +48,30 @@ from phydrax.units import DIMENSIONLESS
 def _double_precision() -> Iterator[None]:
     with jax.enable_x64(True):
         yield
+
+
+def _assert_conservation_roles(
+    problem: MeshfreeConservationProblem | MeshfreeCoupledConservationProblem,
+    prepared: PreparedMeshfreeConservationSolve
+    | PreparedMeshfreeCoupledConservationSolve,
+) -> None:
+    resolution = phx.resolve_array_roles(problem)
+    assert not resolution.violations and not resolution.unclassified
+    law_paths = phx.resolve_array_roles(problem.law).selectable_paths
+    assert law_paths
+    assert resolution.selectable_paths == tuple(f".law{path}" for path in law_paths)
+    parameters, model_state, _ = phx.partition_parameters(problem)
+    assert jax.tree_util.tree_leaves(parameters)
+    assert not jax.tree_util.tree_leaves(model_state)
+    for path in (".exterior", ".features", ".source", ".boundary_values"):
+        with pytest.raises(ValueError, match="cannot select FIXED"):
+            ParameterSubspace.from_subtree_paths(problem, (path,))
+    for template in (prepared, prepared.residual):
+        roles = phx.resolve_array_roles(template)
+        assert not roles.violations and not roles.unclassified
+        assert set(roles.roles) == {phx.ArrayRole.FIXED}
+        parameters, model_state, _ = phx.partition_parameters(template)
+        assert parameters is None and model_state is None
 
 
 @pytest.mark.parametrize("dimension,size", [(1, 5), (2, 9), (3, 15)])
@@ -144,16 +171,20 @@ def test_model_bound_convex_potential_parameter_has_implicit_gradient_and_fixed_
     prepared = prepare_meshfree_conservation_solve(
         problem, parameters={"edge-law": initial}
     )
+    _assert_conservation_roles(problem, prepared)
+    with pytest.raises(ValueError, match="must be bound at every solve"):
+        problem.runtime()
+    with pytest.raises(ValueError, match="not bound by the plan"):
+        problem.runtime(parameters={"edge-law": initial, "source": problem.source})
+    with pytest.raises(ValueError, match="same physical input"):
+        problem.runtime(parameters={"edge-law": initial}, law=original.law)
+    subspace = ParameterSubspace.from_leaf_paths(
+        problem, (".law.potential.state_layers[0].weight",)
+    )
+    assert subspace.total_dimension == 1
 
     def solve(raw_weight: jax.Array) -> jax.Array:
-        updated_potential = eqx.tree_at(
-            lambda model: model.state_layers[0].weight,
-            potential,
-            raw_weight.reshape((1, 1)),
-        )
-        learned = eqx.tree_at(
-            lambda constitutive: constitutive.potential, original.law, updated_potential
-        )
+        learned = subspace.reconstruct_vector(raw_weight.reshape((1,))).law
         component = phx.bind_component(
             learned, phx.ComponentAuthority.MODEL, owner_ports=ports
         )
@@ -453,6 +484,7 @@ def test_coupled_monotone_law_block_solve_ledgers_and_implicit_adjoint() -> None
     prepared = prepare_meshfree_coupled_conservation_solve(
         problem, parameters={"strength": jnp.asarray(1.0)}, termination=_TIGHT
     )
+    _assert_conservation_roles(problem, prepared)
     free = prepared.residual.free_indices
     assert free.size == 19
     coefficient = jnp.asarray(1.3)

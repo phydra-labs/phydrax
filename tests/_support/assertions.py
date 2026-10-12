@@ -75,6 +75,26 @@ def assert_tree_equal(left: object, right: object) -> None:
     raise AssertionError("PyTrees differ:\n" + "\n".join(differences))
 
 
+def assert_tree_values_equal(left: object, right: object) -> None:
+    """Assert equal PyTree structure and exactly equal array leaves.
+
+    Host and device arrays compare by value, shape, and dtype, and NaN equals
+    NaN at the same position, so restored host checkpoints compare with live
+    device states including unavailable (NaN) diagnostics.
+    """
+    left_leaves, left_tree = jax.tree_util.tree_flatten_with_path(left)
+    right_leaves, right_tree = jax.tree.flatten(right)
+    if left_tree != right_tree:
+        raise AssertionError(f"PyTree structures differ: {left_tree!r} != {right_tree!r}")
+    for (path, left_leaf), right_leaf in zip(left_leaves, right_leaves, strict=True):
+        np.testing.assert_array_equal(
+            np.asarray(left_leaf),
+            np.asarray(right_leaf),
+            strict=True,
+            err_msg=jax.tree_util.keystr(path),
+        )
+
+
 def assert_tree_close(
     left: object,
     right: object,

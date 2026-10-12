@@ -18,6 +18,12 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscretizationBundle
 from ..discretization.spectral import HermitianSpectralCoordinates
+from ..equations._incompressible import (
+    CompiledIncompressibleSpectralDynamics,
+    PERIODIC_ADVECTIVE_COURANT_REFERENCE_MODEL,
+    PeriodicAdvectiveCourantRestriction,
+    validate_maximum_courant_number,
+)
 from ..linalg import DiagonalLinearOperator
 from ..linalg._matrix_functions import _phi_function_value
 from ..typing import checked
@@ -33,6 +39,17 @@ if TYPE_CHECKING:
 
 class _NonlinearDrift(Protocol):
     def nonlinear(self, time: Array, state: Array, args: Any, /) -> Array: ...
+
+
+def _real_temporal(value: Array | float, dtype: jnp.dtype, /) -> Array:
+    """Return a fixed-step time or step size as a real scalar.
+
+    Fixed-step drivers carry time in the state dtype, which is complex for modal
+    states; its imaginary part is identically zero, so the real part is extracted
+    explicitly rather than through an implicit complex-to-real conversion.
+    """
+
+    return jnp.real(jnp.asarray(value)).astype(dtype).reshape(())
 
 
 def _etdrk_update(
@@ -246,13 +263,13 @@ class PreparedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
     ) -> FixedStepResult:
         del step_index
         value = self._validate_state(state)
-        step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
+        step = _real_temporal(step_size, value.real.dtype)
         step = eqx.error_if(
             step,
             ~(jnp.isfinite(step) & (step > 0)),
             "ETDRK step size must be finite and positive.",
         )
-        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        start = _real_temporal(time, step.dtype)
         _, incoming_valid, incoming_defect = self._boundary_evidence(value)
         candidate = _etdrk_update(
             self.order,
@@ -310,6 +327,49 @@ class PreparedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
             args,
             None,
         )
+
+
+def _guarded_etdrk_transition(
+    base_method: PreparedETDRKMethod,
+    step_index: Array,
+    start: Array,
+    value: Array,
+    step: Array,
+    args: Any,
+    first_nonlinear: Array | None,
+    allowed: Array,
+    transition_finite: Array,
+    /,
+) -> FixedStepResult:
+    """Commit or reject one guarded transition without changing guard semantics."""
+    stable = transition_finite & (allowed > 0.0) & (step <= allowed)
+
+    def advance(_: None) -> FixedStepResult:
+        return base_method._step_with_first_nonlinear(
+            step_index, start, value, step, args, first_nonlinear
+        )
+
+    def reject(_: None) -> FixedStepResult:
+        finite_limit = jnp.isfinite(allowed) & (allowed > 0.0)
+        safe_limit = jnp.where(finite_limit, allowed, jnp.ones_like(allowed))
+        violation = jnp.maximum(step / safe_limit - 1.0, 0.0)
+        residual = jnp.where(
+            transition_finite,
+            jnp.where(finite_limit, violation, jnp.zeros_like(violation)),
+            jnp.asarray(jnp.inf, dtype=step.dtype),
+        )
+        return FixedStepResult(
+            candidate_state=value,
+            accepted_state=value,
+            successful=jnp.asarray(False),
+            residual=residual,
+            iterations=jnp.asarray(0, dtype=jnp.int32),
+            work=jnp.asarray(1, dtype=jnp.int32),
+            transform_applied=jnp.asarray(False),
+            transform_correction_norm=jnp.zeros((), dtype=step.dtype),
+        )
+
+    return jax.lax.cond(stable, advance, reject, operand=None)
 
 
 class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
@@ -470,13 +530,13 @@ class PreparedLESStabilityGuardedETDRKMethod(
         /,
     ) -> FixedStepResult:
         value = self.base_method._validate_state(state)
-        step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
+        step = _real_temporal(step_size, value.real.dtype)
         step = eqx.error_if(
             step,
             ~(jnp.isfinite(step) & (step > 0.0)),
             "ETDRK step size must be finite and positive.",
         )
-        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        start = _real_temporal(time, step.dtype)
         stage = self.dynamics.stage(start, value, args)
         restriction = self.dynamics.step_restriction(
             value,
@@ -487,39 +547,145 @@ class PreparedLESStabilityGuardedETDRKMethod(
         allowed = jnp.asarray(self.safety_factor, dtype=step.dtype) * selected
         first_nonlinear_finite = jnp.all(jnp.isfinite(first_nonlinear))
         transition_finite = restriction.finite & first_nonlinear_finite
-        stable = transition_finite & (allowed > 0.0) & (step <= allowed)
+        return _guarded_etdrk_transition(
+            self.base_method,
+            step_index,
+            start,
+            value,
+            step,
+            args,
+            first_nonlinear,
+            allowed,
+            transition_finite,
+        )
 
-        def advance(_: None) -> FixedStepResult:
-            return self.base_method._step_with_first_nonlinear(
-                step_index,
-                start,
-                value,
-                step,
-                args,
-                first_nonlinear,
-            )
 
-        def reject(_: None) -> FixedStepResult:
-            finite_limit = jnp.isfinite(allowed) & (allowed > 0.0)
-            safe_limit = jnp.where(finite_limit, allowed, jnp.ones_like(allowed))
-            violation = jnp.maximum(step / safe_limit - 1.0, 0.0)
-            residual = jnp.where(
-                transition_finite,
-                jnp.where(finite_limit, violation, jnp.zeros_like(violation)),
-                jnp.asarray(jnp.inf, dtype=step.dtype),
-            )
-            return FixedStepResult(
-                candidate_state=value,
-                accepted_state=value,
-                successful=jnp.asarray(False),
-                residual=residual,
-                iterations=jnp.asarray(0, dtype=jnp.int32),
-                work=jnp.asarray(1, dtype=jnp.int32),
-                transform_applied=jnp.asarray(False),
-                transform_correction_norm=jnp.zeros((), dtype=step.dtype),
-            )
+class CourantGuardedETDRKMethod(StrictModule, NonTrainableState):
+    """ETDRK4 with a declared frozen-advection reference Courant guard."""
 
-        return jax.lax.cond(stable, advance, reject, operand=None)
+    base_method: ETDRKMethod
+    capabilities: TemporalMethodCapabilities
+    maximum_courant_number: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(self, base: ETDRKMethod, /, *, maximum_courant_number: float) -> None:
+        if base.order != 4:
+            raise ValueError("Courant-guarded ETDRK requires ETDRK4.")
+        maximum = validate_maximum_courant_number(maximum_courant_number)
+        self.base_method = base
+        self.capabilities = base.capabilities
+        self.maximum_courant_number = maximum
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "courant-guarded-etdrk-method",
+                "base_method": base.method_id,
+                "maximum_courant_number": maximum,
+                "reference_model": PERIODIC_ADVECTIVE_COURANT_REFERENCE_MODEL,
+            }
+        )
+
+    @checked
+    def prepare(
+        self,
+        dynamics: CompiledIncompressibleSpectralDynamics,
+        /,
+        *,
+        coordinates: HermitianSpectralCoordinates,
+    ) -> PreparedCourantGuardedETDRKMethod:
+        if dynamics.algebraic_les is not None or dynamics.dynamic_les is not None:
+            raise ValueError("Courant-guarded ETDRK requires DNS, not LES.")
+        if (
+            coordinates.discretization.prepared_id != dynamics.discretization.prepared_id
+            or coordinates.state_shape != dynamics.state_shape
+        ):
+            raise ValueError(
+                "Courant ETDRK coordinates must bind the compiled velocity space."
+            )
+        base = self.base_method.prepare(
+            dynamics.semilinear_drift, coordinates=coordinates
+        )
+        return PreparedCourantGuardedETDRKMethod(self, base, dynamics)
+
+
+class PreparedCourantGuardedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
+    """DNS transition with fail-closed current-state Courant evidence."""
+
+    plan: CourantGuardedETDRKMethod
+    base_method: PreparedETDRKMethod
+    dynamics: CompiledIncompressibleSpectralDynamics
+    capabilities: TemporalMethodCapabilities
+    order: Literal[2, 4] = eqx.field(static=True)
+    maximum_courant_number: float = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        plan: CourantGuardedETDRKMethod,
+        base_method: PreparedETDRKMethod,
+        dynamics: CompiledIncompressibleSpectralDynamics,
+        /,
+    ) -> None:
+        if (
+            base_method.order != 4
+            or base_method.drift.drift_id != dynamics.semilinear_drift.drift_id
+        ):
+            raise ValueError("Prepared ETDRK4 and compiled DNS dynamics must agree.")
+        if dynamics.algebraic_les is not None or dynamics.dynamic_les is not None:
+            raise ValueError("Prepared Courant guard requires DNS, not LES.")
+        self.plan = plan
+        self.base_method = base_method
+        self.dynamics = dynamics
+        self.capabilities = base_method.capabilities
+        self.order = base_method.order
+        self.maximum_courant_number = plan.maximum_courant_number
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "prepared-courant-guarded-etdrk-method",
+                "plan": plan.method_id,
+                "base_method": base_method.method_id,
+                "compiled_dynamics": dynamics.compilation_id,
+            }
+        )
+
+    def step_restriction(
+        self, state: ArrayLike, /
+    ) -> PeriodicAdvectiveCourantRestriction:
+        return self.dynamics.advective_courant_restriction(
+            self.base_method._validate_state(state),
+            maximum_courant_number=self.maximum_courant_number,
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        value = self.base_method._validate_state(state)
+        step = _real_temporal(step_size, value.real.dtype)
+        step = eqx.error_if(
+            step,
+            ~(jnp.isfinite(step) & (step > 0.0)),
+            "ETDRK step size must be finite and positive.",
+        )
+        start = _real_temporal(time, step.dtype)
+        restriction = self.step_restriction(value)
+        return _guarded_etdrk_transition(
+            self.base_method,
+            step_index,
+            start,
+            value,
+            step,
+            args,
+            None,
+            restriction.maximum_step.astype(step.dtype),
+            restriction.finite,
+        )
 
 
 def solve_etdrk(
@@ -598,8 +764,10 @@ def solve_etdrk(
 
 __all__ = [
     "ETDRKMethod",
+    "CourantGuardedETDRKMethod",
     "LESStabilityGuardedETDRKMethod",
     "PreparedETDRKMethod",
+    "PreparedCourantGuardedETDRKMethod",
     "PreparedLESStabilityGuardedETDRKMethod",
     "solve_etdrk",
 ]

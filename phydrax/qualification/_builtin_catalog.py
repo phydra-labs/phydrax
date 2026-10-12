@@ -186,6 +186,11 @@ _PROFILE_PROVIDERS = (
         "phydrax.qualification._radiation_release_matrix",
         "radiation_release_matrix_candidate_profiles",
     ),
+    ("phydrax.applications.nuclear_fuel._qualification", "nuclear_fuel_profiles"),
+    (
+        "phydrax.qualification._nuclear_fuel_release_matrix",
+        "nuclear_fuel_release_matrix_candidate_profiles",
+    ),
     ("phydrax.applications._biophysical_qualification", "biophysical_candidate_profiles"),
     ("phydrax.applications._soft_matter_qualification", "soft_matter_candidate_profiles"),
     (

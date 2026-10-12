@@ -89,6 +89,7 @@ from ._runtime_lifecycle import (
     verify_runtime_checkpoint_envelope,
     write_runtime_checkpoint,
 )
+from ._step_control import AbstractStepSizeController
 
 
 RunStatus = Literal["ready", "running", "completed", "failed", "canceled"]
@@ -2426,6 +2427,7 @@ class ProductionRunPlan(StrictModule):
     moments: tuple[StreamingMomentPlan, ...]
     trigger_bindings: tuple[ProductionTriggerBinding, ...]
     archive: ProductionArchivePolicy | None
+    step_controller: AbstractStepSizeController | None
     validator: Callable = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     end_time: float = eqx.field(static=True)
@@ -2456,6 +2458,7 @@ class ProductionRunPlan(StrictModule):
         device_resident: bool = False,
         evidence_retention: FixedStepEvidenceRetention = "terminal",
         archive: ProductionArchivePolicy | None = None,
+        step_controller: AbstractStepSizeController | None = None,
     ) -> None:
         step = float(step_size)
         end = float(end_time)
@@ -2547,12 +2550,26 @@ class ProductionRunPlan(StrictModule):
                     "Checkpoint interval exceeds the participant's declared live-"
                     "history window; acknowledged history would be refused."
                 )
+        if step_controller is not None:
+            if not isinstance(step_controller, AbstractStepSizeController):
+                raise TypeError(
+                    "step_controller must be AbstractStepSizeController or None."
+                )
+            if required is not None or not method.allows_step_reduction:
+                raise ValueError(
+                    "Adaptive step control requires a method without an exact step."
+                )
+            if not (step_controller.minimum_step <= step <= step_controller.maximum_step):
+                raise ValueError(
+                    "Production step_size must lie within the step-controller bounds."
+                )
         self.method = method
         self.retry_policy = retry_policy
         self.output_schedule = output_schedule
         self.moments = moments_
         self.trigger_bindings = bindings
         self.archive = archive
+        self.step_controller = step_controller
         self.validator = validator_
         self.step_size = step
         self.end_time = end
@@ -2582,13 +2599,61 @@ class ProductionRunPlan(StrictModule):
         }
         if device_resident:
             identity["device_resident"] = True
+        if step_controller is not None:
+            identity["step_controller"] = step_controller.controller_id
         self.plan_id = canonical_fingerprint(identity)
+
+
+def _controller_proposal(
+    controller: AbstractStepSizeController,
+    controller_state: PyTree[Array],
+    time: Array,
+    /,
+) -> Array:
+    proposal = jnp.asarray(controller.propose(controller_state, time))
+    if proposal.shape != () or not jnp.issubdtype(proposal.dtype, jnp.floating):
+        raise TypeError("Step controllers must propose a real scalar step.")
+    return proposal.astype(time.dtype)
+
+
+def _controller_update(
+    controller: AbstractStepSizeController,
+    controller_state: PyTree[Array],
+    previous_state: PyTree[Array],
+    result: RetriedFixedStepResult,
+    args: Any,
+    /,
+) -> PyTree[Array]:
+    # Evaluated for every attempted or inactive scan slot; the caller commits it
+    # only for accepted steps, so the carried state never observes a rejection.
+    updated = controller.update(
+        controller_state,
+        previous_state,
+        result.accepted_state,
+        result.accepted_step_size,
+        result.retry_count,
+        args,
+    )
+    current_leaves, current_structure = jax.tree.flatten(controller_state)
+    updated_leaves, updated_structure = jax.tree.flatten(updated)
+    if updated_structure != current_structure or any(
+        not eqx.is_array(new)
+        or jnp.shape(new) != jnp.shape(old)
+        or jnp.result_type(new) != jnp.result_type(old)
+        for new, old in zip(updated_leaves, current_leaves, strict=True)
+    ):
+        raise TypeError(
+            "Step-controller update must preserve the controller state structure, "
+            "shapes, and dtypes."
+        )
+    return updated
 
 
 class _SegmentState(StrictModule):
     step_index: Array
     time: Array
     accepted_state: PyTree[Array]
+    controller_state: PyTree[Array]
     schedule_cursor: Array
     moment_states: tuple[StreamingMomentState, ...]
     trigger_states: tuple[AcceptedStepTriggerGraphState, ...]
@@ -2610,6 +2675,22 @@ class _SegmentRecord(StrictModule):
     trigger_fires: tuple[Array, ...]
 
 
+@eqx.filter_jit
+def _execute_compiled_segment(
+    scan_step: Callable[[_SegmentState, None], tuple[_SegmentState, _SegmentRecord]],
+    initial: _SegmentState,
+    length: int,
+    /,
+) -> tuple[_SegmentState, _SegmentRecord]:
+    def advance(
+        carry: _SegmentState,
+        unused: None,
+    ) -> tuple[_SegmentState, _SegmentRecord]:
+        return scan_step(carry, unused)
+
+    return jax.lax.scan(advance, initial, xs=None, length=length)
+
+
 class PreparedProductionRun:
     """Bound production runtime with bounded compiled scan segments."""
 
@@ -2627,6 +2708,11 @@ class PreparedProductionRun:
         resolved_run_spec: ResolvedRunSpec | None = None,
         restart_relation: RuntimeRestartRelation | None = None,
         migration_report: MigrationReport | None = None,
+        attempt_observer: Callable[
+            [RetriedFixedStepResult, PyTree[Array], Array, Array], None
+        ]
+        | None = None,
+        attempt_observer_id: str | None = None,
     ) -> None:
         if (
             not isinstance(manifest, ProductionCaseManifest)
@@ -2652,6 +2738,11 @@ class PreparedProductionRun:
             raise TypeError("publisher must be ByteBoundedAsyncPublisher or None.")
         if session is not None and not isinstance(session, IterationSession):
             raise TypeError("session must be IterationSession or None.")
+        if attempt_observer is None:
+            if attempt_observer_id is not None:
+                raise ValueError("attempt_observer_id requires an observer.")
+        elif not callable(attempt_observer) or not attempt_observer_id:
+            raise ValueError("An attempt observer requires a stable observer ID.")
         if publisher is None and (
             plan.output_schedule is not None
             or any(value.action == "publish" for value in plan.trigger_bindings)
@@ -2737,6 +2828,8 @@ class PreparedProductionRun:
         self.restart_relation = relation
         self.migration_report = migration_report
         self._terminal_iteration_emitted = False
+        self.attempt_observer = attempt_observer
+        self.attempt_observer_id = attempt_observer_id
         identity = {
             "kind": "prepared-production-run",
             "manifest": manifest.manifest_id,
@@ -2747,6 +2840,8 @@ class PreparedProductionRun:
             "iteration_session": None if session is None else session.session_id,
             "iteration_control": None if session is None else session.control_id,
         }
+        if attempt_observer is not None:
+            identity["attempt_observer"] = attempt_observer_id
         if persistence_identity is not None:
             identity["persistence"] = persistence_identity
         elif resolved is not None:
@@ -2761,7 +2856,11 @@ class PreparedProductionRun:
         self.last_replay_classification: str | None = None
         self._last_checkpoint_receipt: CheckpointCommitReceipt | None = None
         self._compiled_segment = self._compile_segment(plan.segment_steps)
-        self._compiled_one_step = self._compile_segment(1)
+        self._compiled_one_step = (
+            self._compiled_segment
+            if plan.segment_steps == 1
+            else self._compile_segment(1)
+        )
 
     def _compile_segment(
         self, length: int, /
@@ -2782,8 +2881,14 @@ class PreparedProductionRun:
                 & (carry.step_index < plan.maximum_steps)
                 & (carry.time < plan.end_time - tolerance)
             )
+            if plan.step_controller is None:
+                nominal_step = jnp.asarray(plan.step_size, dtype=carry.time.dtype)
+            else:
+                nominal_step = _controller_proposal(
+                    plan.step_controller, carry.controller_state, carry.time
+                )
             proposed_step = jnp.minimum(
-                jnp.asarray(plan.step_size, dtype=carry.time.dtype),
+                nominal_step,
                 jnp.asarray(plan.end_time, dtype=carry.time.dtype) - carry.time,
             )
             if plan.output_schedule is not None:
@@ -2828,6 +2933,20 @@ class PreparedProductionRun:
                 # The scheduled checkpoint commits exactly this acknowledged state.
                 next_state = tree_where(
                     checkpoint_due, plan.archive.acknowledge(next_state), next_state
+                )
+            if plan.step_controller is None:
+                controller_state = carry.controller_state
+            else:
+                controller_state = tree_where(
+                    accepted,
+                    _controller_update(
+                        plan.step_controller,
+                        carry.controller_state,
+                        carry.accepted_state,
+                        result,
+                        args,
+                    ),
+                    carry.controller_state,
                 )
             proposed_moments = tuple(
                 moment.update(
@@ -2899,6 +3018,7 @@ class PreparedProductionRun:
                 next_step,
                 next_time,
                 next_state,
+                controller_state,
                 schedule_cursor,
                 moment_states,
                 tuple(trigger_states),
@@ -2922,9 +3042,18 @@ class PreparedProductionRun:
             )
             return next_carry, record
 
-        @jax.jit
+        converted_step: (
+            Callable[[_SegmentState, None], tuple[_SegmentState, _SegmentRecord]] | None
+        ) = None
+
         def execute(initial: _SegmentState) -> tuple[_SegmentState, _SegmentRecord]:
-            return jax.lax.scan(scan_step, initial, xs=None, length=length)
+            nonlocal converted_step
+            if converted_step is None:
+                # The first real state supplies shape/role metadata, not a
+                # numerical evaluation. Hoist method/configuration arrays so
+                # they remain dynamic operands rather than folded constants.
+                converted_step = eqx.filter_closure_convert(scan_step, initial, None)
+            return _execute_compiled_segment(converted_step, initial, length)
 
         return execute
 
@@ -2937,9 +3066,14 @@ class PreparedProductionRun:
         if step < 0 or step > self.plan.maximum_steps:
             raise ValueError("Production step index exceeds absolute step capacity.")
         remaining = max(self.plan.end_time - start, 0.0)
-        nominal_steps = int(
-            math.ceil(max(remaining - tolerance, 0.0) / self.plan.step_size)
+        # An adaptive controller never proposes more than maximum_step, so the
+        # nominal count is a lower bound on the accepted steps still required.
+        step_bound = (
+            self.plan.step_size
+            if self.plan.step_controller is None
+            else self.plan.step_controller.maximum_step
         )
+        nominal_steps = int(math.ceil(max(remaining - tolerance, 0.0) / step_bound))
         if step + nominal_steps > self.plan.maximum_steps:
             raise ValueError(
                 "Absolute step capacity cannot reach end_time from this state."
@@ -2999,11 +3133,22 @@ class PreparedProductionRun:
             if self.plan.output_schedule is None
             else self.plan.output_schedule.initial_cursor(time_).astype(jnp.int64)
         )
+        controller = self.plan.step_controller
+        if controller is None:
+            controller_state_ = controller_state
+        elif jax.tree.leaves(controller_state):
+            raise ValueError(
+                "A plan step controller owns the production controller state."
+            )
+        else:
+            controller_state_ = controller.initial_state(
+                jnp.asarray(self.plan.step_size, dtype=time_dtype)
+            )
         return ProductionRunState(
             jnp.asarray(0, dtype=jnp.int64),
             time_,
             value,
-            _canonical_auxiliary_tree(controller_state, "controller state"),
+            _canonical_auxiliary_tree(controller_state_, "controller state"),
             _canonical_auxiliary_tree(rng_state, "RNG state"),
             schedule_cursor,
             tuple(moment.initial_state(time_dtype) for moment in self.plan.moments),
@@ -3248,6 +3393,9 @@ class PreparedProductionRun:
             state.step_index,
             state.time,
             state.accepted_state,
+            # Without a plan controller the auxiliary controller state is host-owned
+            # and never enters the compiled carry.
+            () if self.plan.step_controller is None else state.controller_state,
             state.schedule_cursor,
             state.moment_states,
             state.trigger_states,
@@ -3273,7 +3421,11 @@ class PreparedProductionRun:
             segment.step_index,
             segment.time,
             segment.accepted_state,
-            source.controller_state,
+            (
+                source.controller_state
+                if self.plan.step_controller is None
+                else segment.controller_state
+            ),
             source.rng_state,
             segment.schedule_cursor,
             segment.moment_states,
@@ -3387,6 +3539,56 @@ class PreparedProductionRun:
         )
         self._terminal_iteration_emitted = True
 
+    def _observe_attempt(
+        self,
+        transition: RetriedFixedStepResult,
+        previous_state: PyTree[Array],
+        previous_step: Array,
+        previous_time: Array,
+        snapshot: ProductionRunState,
+        checkpoint_id: str,
+        /,
+    ) -> ProductionFailureRecord | None:
+        if self.attempt_observer is None:
+            return None
+        try:
+            self.attempt_observer(
+                transition, previous_state, previous_step, previous_time
+            )
+        except Exception as error:
+            # External host observers must fail visibly, never drop evidence
+            # while reporting a successful production run.
+            return ProductionFailureRecord(
+                snapshot.step_index,
+                snapshot.time,
+                "attempt-observer-failed",
+                f"PRODUCTION_ATTEMPT_OBSERVER_FAILED:{type(error).__name__}:{error}",
+                checkpoint_id,
+            )
+        return None
+
+    def _rejected_attempt_failure(
+        self,
+        snapshot: ProductionRunState,
+        transition: RetriedFixedStepResult,
+        method_successful: bool,
+        checkpoint_id: str,
+        /,
+    ) -> ProductionFailureRecord:
+        terminal = bool(np.asarray(transition.terminal_failure))
+        if terminal:
+            category = "terminal-method-failure"
+            error_code = "PRODUCTION_TERMINAL_METHOD_FAILURE"
+        elif method_successful:
+            category = "state-invalid"
+            error_code = "PRODUCTION_STATE_INVALID"
+        else:
+            category = "step-rejected"
+            error_code = "PRODUCTION_STEP_REJECTED"
+        return ProductionFailureRecord(
+            snapshot.step_index, snapshot.time, category, error_code, checkpoint_id
+        )
+
     def _process_segment(
         self,
         source: ProductionRunState,
@@ -3404,6 +3606,9 @@ class PreparedProductionRun:
         )
         last_checkpoint = source.last_checkpoint_id
         event_cursor = int(np.asarray(source.output_cursor))
+        previous_state = source.accepted_state
+        previous_time = source.time
+        previous_step = source.step_index
         for index in np.flatnonzero(attempted):
             snapshot_segment = self._index_tree(records.state, int(index))
             snapshot = self._production_state(
@@ -3412,6 +3617,19 @@ class PreparedProductionRun:
             if self.plan.device_resident:
                 snapshot = self._place_production_state_like(snapshot, source)
             transition = self._index_tree(records.result, int(index))
+            observer_failure = self._observe_attempt(
+                transition,
+                previous_state,
+                previous_step,
+                previous_time,
+                snapshot,
+                last_checkpoint,
+            )
+            if observer_failure is not None:
+                return _replace_run_metadata(snapshot, status="failed"), observer_failure
+            previous_state = snapshot.accepted_state
+            previous_time = snapshot.time
+            previous_step = snapshot.step_index
             host_stop = False
             if self.iteration_session is not None:
                 assert self.iteration_scope is not None
@@ -3438,21 +3656,9 @@ class PreparedProductionRun:
                     ),
                 )
             if not accepted[index]:
-                category = (
-                    "state-invalid" if method_successful[index] else "step-rejected"
-                )
-                error_code = (
-                    "PRODUCTION_STATE_INVALID"
-                    if method_successful[index]
-                    else "PRODUCTION_STEP_REJECTED"
-                )
                 failed = _replace_run_metadata(snapshot, status="failed")
-                return failed, ProductionFailureRecord(
-                    failed.step_index,
-                    failed.time,
-                    category,
-                    error_code,
-                    last_checkpoint,
+                return failed, self._rejected_attempt_failure(
+                    failed, transition, bool(method_successful[index]), last_checkpoint
                 )
             if output_due[index]:
                 schedule = self.plan.output_schedule
@@ -3625,6 +3831,7 @@ class PreparedProductionRun:
                 evidence=transition.evidence,
                 attempt_evidence=transition.attempt_evidence,
                 decision_id=transition.decision_id,
+                terminal_failure=transition.terminal_failure,
             )
         return current, transition
 

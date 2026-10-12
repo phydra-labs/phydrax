@@ -959,9 +959,20 @@ do not make the ETDRK quadrature of a time-varying acceleration exact.
 
 `PeriodicModalTurbulenceStatisticsPlan(dynamics, bin_edges, /, *, ...)` consumes the
 live full-complex velocity and typed stage from that exact static or dynamic
-compilation. Unit weight is used per admissible stored mode. Energy, molecular
+compilation. Unit weight is used per admissible stored mode. Energy, molecular/SVV
 dissipation, advective/SGS/forcing transfer, and resolved flux retain conservative
-shell totals. Dynamic output additionally binds filter-pair/averaging/
+shell totals. SVV shells and total/volume-normalized mean are zero when absent.
+The numerical-dissipation fraction is SVV divided by molecular + SVV − SGS energy
+transfer; a nonpositive denominator reports zero and a false validity status.
+SVV invalidates Taylor/Kolmogorov-scale evidence even with molecular viscosity.
+Streaming production now stores seven shell arrays plus 54 scalars (SVV total,
+mean, fraction added after molecular total/mean). The runtime inventory's `program`
+identity binds the evaluator and its value shape. A changed layout or payload raises
+`StaleRuntimeCheckpointError` with `roles=("program",)` before checkpoint arrays
+are decoded. Manifests, topology/geometry digests, stores, and production-plan
+identities change at this cutover; missing inventories also receive typed stale-role
+refusal. No compatibility shim or old-layout decoder is installed.
+Dynamic output additionally binds filter-pair/averaging/
 regularization/backscatter identities and reports coefficient extrema and update
 counts. `StreamingMomentPlan` owns accepted-step sample/time weighting and
 completed-block uncertainty.
@@ -989,6 +1000,10 @@ the transactional dynamic wrapper, including Lagrangian continuation when requir
 The two paths are mutually exclusive. Constant-power wiring remains identity-bound;
 OU forcing is not composable with dynamic continuation. Checkpoint encoding
 compresses only velocity while retaining all continuation.
+No-LES production accepts Courant-guarded ETDRK4 without dropping its guard, including
+SVV dynamics. OU forcing accepts plain or LES-stability-guarded ETDRK; constant-power
+adapter forcing accepts only plain ETDRK. Both explicitly refuse Courant-guarded
+methods with `TypeError`, rather than advertising those variants as supported.
 
 `SpectralChannelProductionPlan` instead accepts a prepared channel SBDF2 method,
 matching velocity and pressure Hermitian coordinates, channel statistics, and required
@@ -1027,6 +1042,36 @@ qualification contracts. Generated LES profiles remain candidate/unreleased and
 retain the base incompressible profile as an external release dependency. A tool,
 output path, passed matrix, or local parity result is not a signed release,
 distributed-scaling claim, or global DNS/LES badge.
+
+The separate `periodic-spectral-vanishing-viscosity` qualification route checks
+exact single-mode decay under ETDRK4 in 2D and 3D, analytic integrated energy and
+SVV dissipation, and the diagnostics' energy-balance defect. It chooses a retained
+mode the prepared operator actually damps and uses a unit polarization perpendicular
+to it, so even diagonal modes remain exact steady Euler solutions before damping.
+Its low-mode case
+holds the integer mode fixed while increasing `N` over at least three declared
+resolutions; it records rate agreement, nonincreasing damping, and the vanishing
+upper bound from [Rohner–Mishra (2024), Section 2](https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf).
+It does not infer full-method convergence from those finite-resolution checks.
+Every case reports `operator_scaling_admissible`,
+`cited_convergence_supported=false`, and the explicit `support_reason`.
+The smooth `exponential_highpass` route remains practical high-pass
+hyperviscosity, not theorem-admissible SVV.
+
+Scientific inputs must be declared explicitly. This example is a qualification
+campaign configuration, not a universal strength or cutoff recommendation:
+
+```bash
+.venv/bin/python -m tools.incompressible_flow_qualification \
+  periodic-spectral-vanishing-viscosity \
+  --strength 0.1 --order 1 --cutoff-scale 0.5 --cutoff-exponent 0.25 \
+  --kernel tadmor_step --mode-count 12 --low-mode-counts 12 24 48 \
+  --output benchmarks/incompressible_svv_qualification.json
+```
+
+To qualify the smooth profile, declare `--kernel exponential_highpass` and
+`--highpass-exponent 4` instead. Both artifacts remain unreleased; neither checks
+rough-data initialization hypotheses or certifies nonlinear stability.
 
 
 ## Bounded Galerkin spaces

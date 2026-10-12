@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -85,6 +86,82 @@ def _wilke_mixture(
     )
     denominator = contract("...j,...ij->...i", mole_fractions, phi, backend="jax")
     return jnp.sum(mole_fractions * properties / denominator, axis=-1)
+
+
+def brokaw_mixture_conductivity(
+    mole_fractions: ArrayLike,
+    species_conductivity: ArrayLike,
+    molar_masses: ArrayLike,
+    /,
+) -> Array:
+    """Thermal conductivity of a dilute gas mixture by Brokaw's rule (MATPRO GTHCON).
+
+    ``k_mix = sum_i x_i k_i / sum_j x_j psi_ij`` with
+    ``psi_ij = phi_ij [1 + 2.41 (M_i - M_j)(M_i - 0.142 M_j) / (M_i + M_j)^2]`` and
+    ``phi_ij = [1 + (k_i/k_j)^(1/2) (M_i/M_j)^(1/4)]^2 / [2^(3/2) (1 + M_i/M_j)^(1/2)]``
+    (Brokaw, NASA TR R-81, 1960; MATPRO-11 Rev. 1 GTHCON Eqs. C-1.2 to C-1.3;
+    PNNL-19417 Rev. 2 Eqs. 4.4 to 4.6). ``psi_ii = 1`` exactly, so the self term of
+    the denominator is ``x_i``. Species with zero mole fraction contribute exactly
+    nothing, as in GTHCON, which skips them.
+
+    Args:
+        mole_fractions: ``(..., S)`` nonnegative mole fractions.
+        species_conductivity: ``(..., S)`` positive pure-species conductivities.
+        molar_masses: ``(S,)`` positive molar masses in any one consistent unit.
+
+    Returns:
+        ``(...)`` mixture conductivity in the unit of ``species_conductivity``.
+    """
+    mole = jnp.asarray(mole_fractions)
+    conductivity = jnp.asarray(species_conductivity)
+    masses = jnp.asarray(molar_masses)
+    if masses.ndim != 1 or masses.shape[0] == 0:
+        raise ValueError("molar_masses must be a nonempty one-dimensional array.")
+    species = masses.shape[0]
+    if mole.ndim == 0 or mole.shape[-1] != species:
+        raise ValueError("mole_fractions must end with the species axis.")
+    if conductivity.ndim == 0 or conductivity.shape[-1] != species:
+        raise ValueError("species_conductivity must end with the species axis.")
+    dtype = inexact_result_type(mole, conductivity, masses)
+    leading = jnp.broadcast_shapes(mole.shape[:-1], conductivity.shape[:-1])
+    mole = jnp.broadcast_to(mole.astype(dtype), (*leading, species))
+    conductivity = jnp.broadcast_to(conductivity.astype(dtype), (*leading, species))
+    masses = masses.astype(dtype)
+    tolerance = 64.0 * jnp.finfo(dtype).eps
+    mole = eqx.error_if(
+        mole,
+        jnp.any(~jnp.isfinite(mole))
+        | jnp.any(mole < 0.0)
+        | jnp.any(jnp.abs(jnp.sum(mole, axis=-1) - 1.0) > tolerance),
+        "mole_fractions must be finite, nonnegative, and sum to one.",
+    )
+    conductivity = eqx.error_if(
+        conductivity,
+        jnp.any(~jnp.isfinite(conductivity)) | jnp.any(conductivity <= 0.0),
+        "species_conductivity must be finite and positive.",
+    )
+    masses = eqx.error_if(
+        masses,
+        jnp.any(~jnp.isfinite(masses)) | jnp.any(masses <= 0.0),
+        "molar_masses must be finite and positive.",
+    )
+    mass_ratio = (masses[:, None] / masses[None, :]).reshape(
+        (1,) * len(leading) + (species, species)
+    )
+    conductivity_ratio = conductivity[..., :, None] / conductivity[..., None, :]
+    phi = (1.0 + jnp.sqrt(conductivity_ratio) * mass_ratio**0.25) ** 2 / jnp.sqrt(
+        8.0 * (1.0 + mass_ratio)
+    )
+    mass_factor = (
+        1.0 + 2.41 * (mass_ratio - 1.0) * (mass_ratio - 0.142) / (1.0 + mass_ratio) ** 2
+    )
+    psi = phi * jnp.broadcast_to(mass_factor, phi.shape)
+    denominator = contract("...j,...ij->...i", mole, psi, backend="jax")
+    present = mole > 0.0
+    safe_denominator = jnp.where(present, denominator, 1.0)
+    return jnp.sum(
+        jnp.where(present, mole * conductivity / safe_denominator, 0.0), axis=-1
+    )
 
 
 def _ideal_pressure_state(
@@ -473,4 +550,5 @@ __all__ = [
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",
+    "brokaw_mixture_conductivity",
 ]

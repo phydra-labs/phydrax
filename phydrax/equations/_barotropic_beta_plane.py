@@ -25,6 +25,10 @@ from ..discretization.spectral._dealias import (
     PreparedDealiasingPlan,
 )
 from ..discretization.spectral._space import TensorSpectralDiscretization
+from ..discretization.spectral._vanishing_viscosity import (
+    PreparedSpectralVanishingViscosity,
+    SpectralVanishingViscosityPlan,
+)
 from ..linalg import ArraySpace, DiagonalLinearOperator
 from ..solver._etdrk import ETDRKMethod, PreparedETDRKMethod
 from ..solver._semilinear_drift import SemilinearDrift
@@ -81,6 +85,8 @@ class BetaPlaneBudgets(StrictModule):
     enstrophy_rate: Array
     nonlinear_energy_rate: Array
     nonlinear_enstrophy_rate: Array
+    spectral_viscosity_energy_rate: Array
+    spectral_viscosity_enstrophy_rate: Array
     reality_defect: Array
     finite: Array
     successful: Array
@@ -104,6 +110,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
     inverse_wavenumber_squared: Array
     admissibility_mask: Array
     linear_diagonal: Array
+    spectral_viscosity: PreparedSpectralVanishingViscosity | None
     beta: float = eqx.field(static=True)
     linear_drag: float = eqx.field(static=True)
     viscosity: float = eqx.field(static=True)
@@ -125,6 +132,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         dealiasing: PreparedDealiasingPlan | None = None,
         reality_tolerance: float = 1.0e-10,
         maximum_coordinate_size: int = 10_000_000,
+        spectral_viscosity: SpectralVanishingViscosityPlan | None = None,
     ) -> None:
         beta_ = float(beta)
         drag = float(linear_drag)
@@ -168,20 +176,28 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
             jnp.dtype(discretization.plan.precision.coefficient_dtype)
         )
         linear = jnp.where(admissible, linear, 0.0)
-        identifier = canonical_fingerprint(
-            {
-                "kind": "barotropic-beta-plane",
-                "discretization": discretization.prepared_id,
-                "dealiasing": prepared_dealiasing.prepared_id,
-                "beta": beta_,
-                "linear_drag": drag,
-                "viscosity": viscosity_,
-                "dissipation_order": order,
-                "reality_tolerance": tolerance,
-                "zero_mode": "mean-vorticity-zero",
-                "velocity": "minus-psi-y,psi-x",
-            }
+        prepared_svv = (
+            None
+            if spectral_viscosity is None
+            else spectral_viscosity.prepare(discretization)
         )
+        if prepared_svv is not None:
+            linear = linear + jnp.where(admissible, prepared_svv.decay_rate, 0.0)
+        payload = {
+            "kind": "barotropic-beta-plane",
+            "discretization": discretization.prepared_id,
+            "dealiasing": prepared_dealiasing.prepared_id,
+            "beta": beta_,
+            "linear_drag": drag,
+            "viscosity": viscosity_,
+            "dissipation_order": order,
+            "reality_tolerance": tolerance,
+            "zero_mode": "mean-vorticity-zero",
+            "velocity": "minus-psi-y,psi-x",
+        }
+        if prepared_svv is not None:
+            payload["spectral_viscosity"] = prepared_svv.prepared_id
+        identifier = canonical_fingerprint(payload)
         self.discretization = discretization
         self.dealiasing = prepared_dealiasing
         self.coordinates = coordinates
@@ -190,6 +206,7 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         self.inverse_wavenumber_squared = inverse
         self.admissibility_mask = admissible
         self.linear_diagonal = linear
+        self.spectral_viscosity = prepared_svv
         self.beta = beta_
         self.linear_drag = drag
         self.viscosity = viscosity_
@@ -443,6 +460,18 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
         nonlinear_enstrophy_rate = (
             self.discretization.integral(zeta_values * nonlinear_values) / self.volume
         )
+        if self.spectral_viscosity is None:
+            spectral_energy_rate = jnp.zeros_like(energy)
+            spectral_enstrophy_rate = jnp.zeros_like(enstrophy)
+        else:
+            # Orthonormal coefficients: Parseval divided by the beta-plane area.
+            modal_work = self.spectral_viscosity.decay_rate * jnp.real(
+                jnp.conj(value) * value
+            )
+            spectral_energy_rate = (
+                jnp.sum(modal_work * self.inverse_wavenumber_squared) / self.volume
+            )
+            spectral_enstrophy_rate = jnp.sum(modal_work) / self.volume
         values = jnp.stack(
             (
                 energy,
@@ -451,6 +480,8 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
                 enstrophy_rate,
                 nonlinear_energy_rate,
                 nonlinear_enstrophy_rate,
+                spectral_energy_rate,
+                spectral_enstrophy_rate,
             )
         )
         reality = self.reality_defect(value)
@@ -463,6 +494,8 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
             enstrophy_rate=enstrophy_rate,
             nonlinear_energy_rate=nonlinear_energy_rate,
             nonlinear_enstrophy_rate=nonlinear_enstrophy_rate,
+            spectral_viscosity_energy_rate=spectral_energy_rate,
+            spectral_viscosity_enstrophy_rate=spectral_enstrophy_rate,
             reality_defect=reality,
             finite=finite,
             successful=successful,

@@ -1,0 +1,961 @@
+{
+ "extraction": {
+  "cumulative_yield_section": "MF8/MT459 ground states (FPS=0)",
+  "energy_release_section": "MF1/MT458 NPLY=0 LIST: thermal point (fissile) or threshold (fertile)",
+  "excluded_nuclides": [
+   {
+    "in_reactor_yield": "independent yield (verified zero)",
+    "long_lived_precursor": "I-129",
+    "nuclide": "Xe-129"
+   }
+  ],
+  "gas_nuclides": [
+   "Kr-78",
+   "Kr-80",
+   "Kr-81",
+   "Kr-82",
+   "Kr-83",
+   "Kr-84",
+   "Kr-85",
+   "Kr-86",
+   "Xe-124",
+   "Xe-126",
+   "Xe-128",
+   "Xe-130",
+   "Xe-131",
+   "Xe-132",
+   "Xe-134",
+   "Xe-136"
+  ],
+  "half_life_threshold_years": 1.0,
+  "independent_yield_section": "MF8/MT454 (exclusion verification only)",
+  "recoverable_energy_component": "ER = ET - ENU (includes END, EGD, EB)"
+ },
+ "extractor": "tools/extract_fission_gas_yields.py",
+ "extractor_sha256": "453a145cf2d82856bdbdaaf4e573fd8c7daac7bc5af4e6a48ce433072b69d710",
+ "fission_systems": [
+  {
+   "energy_release_ev": {
+    "EB": [
+     6500000.0,
+     50000.0
+    ],
+    "EFR": [
+     169130000.0,
+     0.0
+    ],
+    "EGD": [
+     6330000.0,
+     50000.0
+    ],
+    "EGP": [
+     7281253.0,
+     0.0
+    ],
+    "END": [
+     8074.267,
+     0.0
+    ],
+    "ENP": [
+     4827645.0,
+     0.0
+    ],
+    "ENU": [
+     8750000.0,
+     70000.0
+    ],
+    "ER": [
+     194077000.0,
+     0.0
+    ],
+    "ET": [
+     202827000.0,
+     0.0
+    ]
+   },
+   "energy_release_evaluation": "92-U -235 IAEA EVAL-NOV17 IAEA CIELO Collaboration",
+   "fissioning_nuclide": "U235",
+   "incident_energy_ev": 0.0253,
+   "incident_energy_selection": "thermal point (0.0253 eV)",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     1.4799e-09,
+     9.47133e-10
+    ],
+    [
+     81,
+     1.07992e-11,
+     6.91151e-12
+    ],
+    [
+     82,
+     5.46961e-07,
+     6.01657e-08
+    ],
+    [
+     83,
+     0.00536203,
+     2.68102e-05
+    ],
+    [
+     84,
+     0.0100192,
+     7.01346e-05
+    ],
+    [
+     85,
+     0.00283404,
+     9.91914e-06
+    ],
+    [
+     86,
+     0.0196497,
+     9.82487e-05
+    ]
+   ],
+   "mat": 9228,
+   "tabulated_incident_energies_ev": [
+    0.0253,
+    500000.0,
+    14000000.0
+   ],
+   "target": "U-235",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     7.49947e-13,
+     4.79966e-13
+    ],
+    [
+     128,
+     9.70931e-09,
+     6.21396e-09
+    ],
+    [
+     130,
+     2.21984e-06,
+     3.55175e-07
+    ],
+    [
+     131,
+     0.0289069,
+     0.000144535
+    ],
+    [
+     132,
+     0.043131,
+     0.000150959
+    ],
+    [
+     134,
+     0.0787208,
+     0.000393604
+    ],
+    [
+     136,
+     0.0631272,
+     0.000220945
+    ]
+   ],
+   "yield_evaluation": "92-U -235 EVAL-JUL89 T.R. ENGLAND ET AL"
+  },
+  {
+   "energy_release_ev": {
+    "EB": [
+     8480000.0,
+     80000.0
+    ],
+    "EFR": [
+     169542000.0,
+     0.0
+    ],
+    "EGD": [
+     8250000.0,
+     70000.0
+    ],
+    "EGP": [
+     5609757.0,
+     0.0
+    ],
+    "END": [
+     22894.66,
+     0.0
+    ],
+    "ENP": [
+     4630745.0,
+     0.0
+    ],
+    "ENU": [
+     11390000.0,
+     110000.0
+    ],
+    "ER": [
+     196535400.0,
+     0.0
+    ],
+    "ET": [
+     207925400.0,
+     0.0
+    ]
+   },
+   "energy_release_evaluation": "92-U -238 IAEA EVAL-DEC14 IAEA Consortium",
+   "fissioning_nuclide": "U238",
+   "incident_energy_ev": 500000.0,
+   "incident_energy_selection": "lowest incident energy tabulated in the NFY sublibrary",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     3.75002e-11,
+     2.40002e-11
+    ],
+    [
+     81,
+     1.26001e-13,
+     8.06405e-14
+    ],
+    [
+     82,
+     1.22001e-07,
+     7.80805e-08
+    ],
+    [
+     83,
+     0.00395856,
+     5.54198e-05
+    ],
+    [
+     84,
+     0.00825579,
+     0.000115581
+    ],
+    [
+     85,
+     0.00148615,
+     2.9723e-05
+    ],
+    [
+     86,
+     0.0129645,
+     0.000129645
+    ]
+   ],
+   "mat": 9237,
+   "tabulated_incident_energies_ev": [
+    500000.0,
+    14000000.0
+   ],
+   "target": "U-238",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     0.0,
+     0.0
+    ],
+    [
+     128,
+     0.0,
+     0.0
+    ],
+    [
+     130,
+     4.24003e-14,
+     2.71362e-14
+    ],
+    [
+     131,
+     0.0329082,
+     0.000329082
+    ],
+    [
+     132,
+     0.0514751,
+     0.000720651
+    ],
+    [
+     134,
+     0.0760945,
+     0.00213065
+    ],
+    [
+     136,
+     0.0697892,
+     0.00139578
+    ]
+   ],
+   "yield_evaluation": "92-U -238 EVAL-JUL89 T.R. ENGLAND ET AL"
+  },
+  {
+   "energy_release_ev": {
+    "EB": [
+     5310000.0,
+     60000.0
+    ],
+    "EFR": [
+     175655000.0,
+     0.0
+    ],
+    "EGD": [
+     5170000.0,
+     60000.0
+    ],
+    "EGP": [
+     6369143.0,
+     0.0
+    ],
+    "END": [
+     3136.942,
+     0.0
+    ],
+    "ENP": [
+     6071187.0,
+     0.0
+    ],
+    "ENU": [
+     7140000.0,
+     90000.0
+    ],
+    "ER": [
+     198578500.0,
+     0.0
+    ],
+    "ET": [
+     205718500.0,
+     0.0
+    ]
+   },
+   "energy_release_evaluation": "94-Pu-239 LANL EVAL-DEC17 LANL, ORNL, et al.",
+   "fissioning_nuclide": "Pu239",
+   "incident_energy_ev": 0.0253,
+   "incident_energy_selection": "thermal point (0.0253 eV)",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     1.46998e-08,
+     9.40788e-09
+    ],
+    [
+     81,
+     2.36997e-09,
+     1.51678e-09
+    ],
+    [
+     82,
+     1.28898e-05,
+     2.57797e-07
+    ],
+    [
+     83,
+     0.00296731,
+     1.48366e-05
+    ],
+    [
+     84,
+     0.00480323,
+     4.80323e-05
+    ],
+    [
+     85,
+     0.00122705,
+     8.58938e-06
+    ],
+    [
+     86,
+     0.00766008,
+     3.83004e-05
+    ]
+   ],
+   "mat": 9437,
+   "tabulated_incident_energies_ev": [
+    0.0253,
+    500000.0,
+    2000000.0,
+    14000000.0
+   ],
+   "target": "Pu-239",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     0.0,
+     0.0
+    ],
+    [
+     128,
+     8.60989e-07,
+     3.44396e-08
+    ],
+    [
+     130,
+     4.69394e-05,
+     6.57152e-07
+    ],
+    [
+     131,
+     0.0385639,
+     0.00019282
+    ],
+    [
+     132,
+     0.0540679,
+     0.00027034
+    ],
+    [
+     134,
+     0.0767612,
+     0.000383806
+    ],
+    [
+     136,
+     0.0704591,
+     0.000704591
+    ]
+   ],
+   "yield_evaluation": "94-Pu-239 EVAL-Nov11 M.B. Chadwick, T. Kawano"
+  },
+  {
+   "energy_release_ev": {
+    "EB": [
+     6620000.0,
+     500000.0
+    ],
+    "EFR": [
+     173700000.0,
+     2000000.0
+    ],
+    "EGD": [
+     6490000.0,
+     750000.0
+    ],
+    "EGP": [
+     6180000.0,
+     1000000.0
+    ],
+    "END": [
+     4400.0,
+     800.0002
+    ],
+    "ENP": [
+     6480000.0,
+     360000.0
+    ],
+    "ENU": [
+     8880000.0,
+     1100000.0
+    ],
+    "ER": [
+     199470000.0,
+     1123800.0
+    ],
+    "ET": [
+     208350000.0,
+     230000.0
+    ]
+   },
+   "energy_release_evaluation": "94-Pu-240 LANL EVAL-SEP09 YOUNG,TALOU,CHADWICK,KAHLER,KAWAN",
+   "fissioning_nuclide": "Pu240",
+   "incident_energy_ev": 0.0253,
+   "incident_energy_selection": "lowest incident energy tabulated in the NFY sublibrary",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     3.31e-09,
+     2.1184e-09
+    ],
+    [
+     81,
+     5.4e-11,
+     3.456e-11
+    ],
+    [
+     82,
+     2.09e-06,
+     1.3376e-06
+    ],
+    [
+     83,
+     0.0024967,
+     0.000574241
+    ],
+    [
+     84,
+     0.00421724,
+     0.00134952
+    ],
+    [
+     85,
+     0.00095998,
+     0.000307194
+    ],
+    [
+     86,
+     0.00684051,
+     0.00218896
+    ]
+   ],
+   "mat": 9440,
+   "tabulated_incident_energies_ev": [
+    0.0253,
+    500000.0,
+    14000000.0
+   ],
+   "target": "Pu-240",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     0.0,
+     0.0
+    ],
+    [
+     128,
+     0.0,
+     0.0
+    ],
+    [
+     130,
+     2e-06,
+     1.28e-06
+    ],
+    [
+     131,
+     0.0333971,
+     0.00534354
+    ],
+    [
+     132,
+     0.0481515,
+     0.00770424
+    ],
+    [
+     134,
+     0.0763092,
+     0.0122095
+    ],
+    [
+     136,
+     0.0699658,
+     0.00769623
+    ]
+   ],
+   "yield_evaluation": "94-Pu-240 EVAL-JUL89 T.R. ENGLAND ET AL"
+  },
+  {
+   "energy_release_ev": {
+    "EB": [
+     6580001.0,
+     90000.01
+    ],
+    "EFR": [
+     175360000.0,
+     680000.1
+    ],
+    "EGD": [
+     6400001.0,
+     90000.01
+    ],
+    "EGP": [
+     7640002.0,
+     690000.1
+    ],
+    "END": [
+     5000.0,
+     1000.0
+    ],
+    "ENP": [
+     5990001.0,
+     130000.0
+    ],
+    "ENU": [
+     8850002.0,
+     120000.0
+    ],
+    "ER": [
+     201980100.0,
+     277300.0
+    ],
+    "ET": [
+     210830100.0,
+     250000.0
+    ]
+   },
+   "energy_release_evaluation": "94-Pu-241 ORNL EVAL-OCT03 L.Weston,R.Wright,H.Derrien +",
+   "fissioning_nuclide": "Pu241",
+   "incident_energy_ev": 0.0253,
+   "incident_energy_selection": "thermal point (0.0253 eV)",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     3.73e-09,
+     2.3872e-09
+    ],
+    [
+     81,
+     3.22e-11,
+     2.0608e-11
+    ],
+    [
+     82,
+     3.23e-06,
+     2.0672e-06
+    ],
+    [
+     83,
+     0.00201459,
+     2.82042e-05
+    ],
+    [
+     84,
+     0.00351281,
+     7.02561e-05
+    ],
+    [
+     85,
+     0.000831139,
+     2.32719e-05
+    ],
+    [
+     86,
+     0.00594472,
+     0.000118894
+    ]
+   ],
+   "mat": 9443,
+   "tabulated_incident_energies_ev": [
+    0.0253,
+    500000.0
+   ],
+   "target": "Pu-241",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     0.0,
+     0.0
+    ],
+    [
+     128,
+     0.0,
+     0.0
+    ],
+    [
+     130,
+     8.40999e-12,
+     5.3824e-12
+    ],
+    [
+     131,
+     0.0310083,
+     0.000434117
+    ],
+    [
+     132,
+     0.0456434,
+     0.000639007
+    ],
+    [
+     134,
+     0.0791734,
+     0.00110843
+    ],
+    [
+     136,
+     0.07091,
+     0.00099274
+    ]
+   ],
+   "yield_evaluation": "94-Pu-241 EVAL-JUL89 T.R. ENGLAND ET AL"
+  },
+  {
+   "energy_release_ev": {
+    "EB": [
+     7478000.0,
+     0.0
+    ],
+    "EFR": [
+     174487000.0,
+     0.0
+    ],
+    "EGD": [
+     6826000.0,
+     0.0
+    ],
+    "EGP": [
+     6979000.0,
+     0.0
+    ],
+    "END": [
+     8000.0,
+     0.0
+    ],
+    "ENP": [
+     7000000.0,
+     0.0
+    ],
+    "ENU": [
+     10144000.0,
+     0.0
+    ],
+    "ER": [
+     202778000.0,
+     0.0
+    ],
+    "ET": [
+     212922000.0,
+     0.0
+    ]
+   },
+   "energy_release_evaluation": "94-Pu-242 BNL+JAEA EVAL-AUG11 S.F. MUGHABGHAB + O.Iwamoto,etal",
+   "fissioning_nuclide": "Pu242",
+   "incident_energy_ev": 0.0253,
+   "incident_energy_selection": "lowest incident energy tabulated in the NFY sublibrary",
+   "krypton": [
+    [
+     78,
+     0.0,
+     0.0
+    ],
+    [
+     80,
+     1.31e-10,
+     8.384e-11
+    ],
+    [
+     81,
+     7.46e-13,
+     4.7744e-13
+    ],
+    [
+     82,
+     1.56e-07,
+     9.984e-08
+    ],
+    [
+     83,
+     0.00139468,
+     0.000320776
+    ],
+    [
+     84,
+     0.00286237,
+     0.000915959
+    ],
+    [
+     85,
+     0.00066011,
+     0.000211235
+    ],
+    [
+     86,
+     0.00501329,
+     0.00160425
+    ]
+   ],
+   "mat": 9446,
+   "tabulated_incident_energies_ev": [
+    0.0253,
+    500000.0,
+    14000000.0
+   ],
+   "target": "Pu-242",
+   "xenon": [
+    [
+     124,
+     0.0,
+     0.0
+    ],
+    [
+     126,
+     0.0,
+     0.0
+    ],
+    [
+     128,
+     0.0,
+     0.0
+    ],
+    [
+     130,
+     3.8e-13,
+     2.432e-13
+    ],
+    [
+     131,
+     0.0261664,
+     0.00418663
+    ],
+    [
+     132,
+     0.0396956,
+     0.0063513
+    ],
+    [
+     134,
+     0.0746901,
+     0.0119504
+    ],
+    [
+     136,
+     0.0738672,
+     0.00812539
+    ]
+   ],
+   "yield_evaluation": "94-Pu-242 EVAL-JUL89 T.R. ENGLAND ET AL"
+  }
+ ],
+ "library": "ENDF/B-VIII.0",
+ "release": "DIST-FEB18",
+ "sources": [
+  {
+   "member": null,
+   "member_sha256": null,
+   "role": "nubase2020-half-lives",
+   "sha256": "1585a5eea86c5e17e90307c7e6e786d060049c4039e392a261ff6db977df9859",
+   "size_bytes": 761906,
+   "url": "https://www-nds.iaea.org/amdc/ame2020/nubase_4.mas20.txt"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-092_U_235.endf",
+   "member_sha256": "9e1320293a544fc03f33f804a15a9e3ccc3be026552ee6dbc03b8d3e24615e41",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9228_92-U-235.dat",
+   "member_sha256": "c9a73ec7ad682ad968f36a65b4fb86a07b4a8ee9cb447014c3b3972ec2dd93fa",
+   "role": "neutron-sublibrary",
+   "sha256": "6b06f87d01736faa31ee582504c8615cb904745c09b46adceae9168285e8ef28",
+   "size_bytes": 13590400,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9228_92-U-235.zip"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-092_U_238.endf",
+   "member_sha256": "05598b1c16117a729a3314842a2de574ffb7c992f679f6e1505c1d566164791c",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9237_92-U-238.dat",
+   "member_sha256": "8bb40a09c758b135751b6bc0a0110a6c953ce3c20962ff013252ed4a9a035b1c",
+   "role": "neutron-sublibrary",
+   "sha256": "5bbb4b6c1a46c9634c452eed028d70cf3226b2d5d5e893d34bae163b4d66afef",
+   "size_bytes": 4576541,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9237_92-U-238.zip"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-094_Pu_239.endf",
+   "member_sha256": "a2713aa6d0283b879040a07fa29d3e99b2d660b619c6d11a2a71aa9d5c5a2605",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9437_94-Pu-239.dat",
+   "member_sha256": "1d57b6c90f43c1704c8ca34d6ea6e7edd2960adbe86941be0fa24c0a70de1e13",
+   "role": "neutron-sublibrary",
+   "sha256": "00dc580cae355607d16b275f2ab17233772054ef9a7c4abc23386caa6087d011",
+   "size_bytes": 5391913,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9437_94-Pu-239.zip"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-094_Pu_240.endf",
+   "member_sha256": "7034b91a9966e1e493513f2bf902ab349cddfd79313c690ceec28fb82e435971",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9440_94-Pu-240.dat",
+   "member_sha256": "96a79e32d242512205ce8808f6c06e34d6afb44c3a56ce305e88c9a898b78ee0",
+   "role": "neutron-sublibrary",
+   "sha256": "f85604f48a6f581671ee1d9660f87f4242b8e8bad61a322115b1ead2da97e07c",
+   "size_bytes": 13099106,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9440_94-Pu-240.zip"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-094_Pu_241.endf",
+   "member_sha256": "cc8b16b267a89502989be7bda5b068a480d93a24da16ca95285915910a30e393",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9443_94-Pu-241.dat",
+   "member_sha256": "ac502c7a9b153a5920a6bffa1c7ea2ef602976901f238b3fe554f91cb7810fa7",
+   "role": "neutron-sublibrary",
+   "sha256": "27387f9f8bde5a551cd1eb253c8df31107521b6cbdaa1ea0c00c4a1316e0e5ff",
+   "size_bytes": 81869,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9443_94-Pu-241.zip"
+  },
+  {
+   "member": "ENDF-B-VIII.0_nfy/nfy-094_Pu_242.endf",
+   "member_sha256": "30652ec2f7530e1a0a92fe5ed21aa2eb928629c1ca347acf30b5dfdb2e3167c3",
+   "role": "fission-product-yield-sublibrary",
+   "sha256": "92c5371fdb21eecf4989f48828671b904186abc6386b3d7510c8fcee2ee5ffcf",
+   "size_bytes": 2922601,
+   "url": "https://www.nndc.bnl.gov/endf-b8.0/zips/ENDF-B-VIII.0_nfy.zip"
+  },
+  {
+   "member": "n_9446_94-Pu-242.dat",
+   "member_sha256": "9f4c7b6bd42552f7d1f4998ee9169cd4b591facfa15a9b717524259e9855d4f5",
+   "role": "neutron-sublibrary",
+   "sha256": "a7ab770daf48b8c979675d27f8bf959cd20f712a55ab7a9104f63b7f235d9943",
+   "size_bytes": 685196,
+   "url": "https://www-nds.iaea.org/public/download-endf/ENDF-B-VIII.0/n/n_9446_94-Pu-242.zip"
+  }
+ ]
+}

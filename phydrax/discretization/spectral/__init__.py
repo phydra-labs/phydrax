@@ -132,6 +132,16 @@ from ._incompressible import (
     IncompressibleSpectralDiagnostics,
     PeriodicLerayProjector,
 )
+from ._increment_moments import (
+    IncrementAverage,
+    IncrementProjection,
+    PeriodicIncrementMomentEstimatorPlan,
+    PeriodicIncrementMomentResult,
+    PeriodicLatticeIncrementMomentPlan,
+    PeriodicRadialIncrementMomentPlan,
+    PeriodicThirdIncrementMomentPlan,
+    ThirdIncrementStatistic,
+)
 from ._lattice import (
     BrillouinZonePlan,
     HarmonicTruncationKind,
@@ -211,10 +221,17 @@ from ._symmetry import (
 from ._tau import GeneralizedTauPlan, PreparedTauSystem, TauSolveResult
 from ._transfer import (
     prepare_spectral_modal_transfer,
+    PreparedRetainedBandRestriction,
     PreparedSpectralModalTransfer,
+    RetainedBandRestrictionPlan,
     SpectralModalTransferPlan,
     SpectralModalTransferReport,
     SpectralModalTransferResult,
+)
+from ._vanishing_viscosity import (
+    PreparedSpectralVanishingViscosity,
+    SpectralVanishingViscosityPlan,
+    SpectralViscosityKernel,
 )
 
 
@@ -237,6 +254,9 @@ __all__ = [
     "CylindricalHankelPlan",
     "CylindricalHankelStatus",
     "DCPolicy",
+    "PreparedSpectralVanishingViscosity",
+    "SpectralVanishingViscosityPlan",
+    "SpectralViscosityKernel",
     "FinalEdgePolicy",
     "FourierShellStatisticResult",
     "DealiasingKind",
@@ -287,6 +307,8 @@ __all__ = [
     "PreparedSphericalSpinOperator",
     "PreparedSpectralSplitForm",
     "PreparedSpectralModalTransfer",
+    "PreparedRetainedBandRestriction",
+    "RetainedBandRestrictionPlan",
     "PreparedSpectralAxis",
     "PreparedSpectralConservationDynamics",
     "PreparedSpectralConservationMethod",
@@ -382,4 +404,12 @@ __all__ = [
     "PreparedDistributedPeriodicLES",
     "WignerLaguerrePlan",
     "WignerTransformPlan",
+    "IncrementAverage",
+    "IncrementProjection",
+    "PeriodicIncrementMomentEstimatorPlan",
+    "PeriodicIncrementMomentResult",
+    "PeriodicLatticeIncrementMomentPlan",
+    "PeriodicRadialIncrementMomentPlan",
+    "PeriodicThirdIncrementMomentPlan",
+    "ThirdIncrementStatistic",
 ]

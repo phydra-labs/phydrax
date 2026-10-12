@@ -21,6 +21,7 @@ from .._trainable import fixed_field
 from .._tree_math import (
     tree_add_scaled,
     tree_allfinite,
+    tree_where,
     validate_inexact_tree,
 )
 from ..linalg import (
@@ -55,6 +56,24 @@ def _validate_fixed_point_iteration(iteration: IterationPlan | None, /) -> None:
         raise ValueError(
             "Fixed-point methods currently support terminal iteration evidence."
         )
+
+
+def _validate_auxiliary_output_precision(
+    problem: FixedPointProblem,
+    state: PyTree[Array],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> None:
+    if problem.has_aux and precision.output_dtype is not None:
+        for leaf in jax.tree.leaves(state):
+            output = jax.eval_shape(
+                precision.output, jax.ShapeDtypeStruct(leaf.shape, leaf.dtype)
+            )
+            if output.dtype != leaf.dtype:
+                raise ValueError(
+                    "Auxiliary fixed-point results require output precision to "
+                    "preserve the evaluated state dtype."
+                )
 
 
 def _attach_fixed_point_iteration(
@@ -191,6 +210,7 @@ class AndersonAcceleration(StrictModule):
 class _FixedPointRun(StrictModule):
     state: Array
     residual: Array
+    auxiliary: Any
     initial_residual_norm: Array
     residual_norm: Array
     step_norm: Array
@@ -337,7 +357,12 @@ def _anderson_candidate(
 
 
 class FixedPointIteration(StrictModule):
-    """Damped fixed-point iteration with safeguarded Anderson or Aitken acceleration."""
+    """Damped fixed-point iteration with safeguarded Anderson or Aitken acceleration.
+
+    The dynamic ``jax.lax.while_loop`` supports forward differentiation, not
+    reverse differentiation. Implicit derivatives require the explicit
+    ``implicit_fixed_point_result`` API.
+    """
 
     damping: float = eqx.field(static=True)
     acceleration: AndersonAcceleration | AitkenRelaxation | None
@@ -370,7 +395,9 @@ class FixedPointIteration(StrictModule):
         self.acceleration = acceleration
         self.precision = precision_
 
-    def _method_id(self, effective_history: int | None, /) -> str:
+    def _method_id(
+        self, effective_history: int | None, /, *, has_aux: bool = False
+    ) -> str:
         acceleration_payload: dict[str, object] | None
         match self.acceleration:
             case None:
@@ -402,6 +429,8 @@ class FixedPointIteration(StrictModule):
             "damping": float(self.damping).hex(),
             "acceleration": acceleration_payload,
         }
+        if has_aux:
+            payload["has_aux"] = True
         return f"{prefix}:{canonical_fingerprint(payload)}"
 
     @property
@@ -435,9 +464,10 @@ class FixedPointIteration(StrictModule):
         _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
+        _validate_auxiliary_output_precision(problem, initial, self.precision)
         space = PyTreeSpace(initial)
         flat_initial = space.flatten(initial)
-        mapped, initial_work = problem.evaluate(initial, args)
+        mapped, initial_auxiliary, initial_work = problem.evaluate(initial, args)
         flat_mapped = space.flatten(mapped)
         residual = flat_mapped - flat_initial
         self.precision.validate_trees(initial, residual)
@@ -507,6 +537,7 @@ class FixedPointIteration(StrictModule):
         run = _FixedPointRun(
             state=flat_initial,
             residual=residual,
+            auxiliary=initial_auxiliary,
             initial_residual_norm=residual_norm,
             residual_norm=residual_norm,
             step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
@@ -554,9 +585,11 @@ class FixedPointIteration(StrictModule):
                 & within_evaluations
             )
 
-        def evaluate_flat(candidate: Array) -> tuple[Array, PyTree[Array] | None]:
-            mapped, work = problem.evaluate(space.unflatten(candidate), args)
-            return space.flatten(mapped), work
+        def evaluate_flat(
+            candidate: Array,
+        ) -> tuple[Array, Any, PyTree[Array] | None]:
+            mapped, auxiliary, work = problem.evaluate(space.unflatten(candidate), args)
+            return space.flatten(mapped), auxiliary, work
 
         unexecuted_work = jax.tree.map(jnp.zeros_like, initial_work)
 
@@ -645,22 +678,25 @@ class FixedPointIteration(StrictModule):
                     pass
                 case _ as unreachable:
                     assert_never(unreachable)
-            next_mapped, next_work = evaluate_flat(proposed)
+            next_mapped, next_auxiliary, next_work = evaluate_flat(proposed)
             next_residual = next_mapped - proposed
             next_norm = _coordinate_norm(next_residual, self.precision)
             evaluation_work = jax.tree.map(jnp.add, current.evaluation_work, next_work)
             if isinstance(self.acceleration, AndersonAcceleration):
-                # Only Anderson evaluates the unaccelerated fallback map.
-                raw_mapped, raw_work = jax.lax.cond(
+                # Only Anderson evaluates the unaccelerated fallback map, and only
+                # for an accelerated proposal; only that executed evaluation adds work.
+                raw_mapped, raw_auxiliary, raw_work = jax.lax.cond(
                     accelerated,
                     lambda _: evaluate_flat(raw),
-                    lambda _: (next_mapped, unexecuted_work),
+                    lambda _: (next_mapped, next_auxiliary, unexecuted_work),
                     operand=None,
                 )
                 evaluation_work = jax.tree.map(jnp.add, evaluation_work, raw_work)
             else:
+                # Without Anderson the evaluated proposal is the only trial.
                 raw = proposed
                 raw_mapped = next_mapped
+                raw_auxiliary = next_auxiliary
             raw_residual = raw_mapped - raw
             raw_norm = _coordinate_norm(raw_residual, self.precision)
             safeguard = (
@@ -671,6 +707,7 @@ class FixedPointIteration(StrictModule):
             )
             accepted_state = jnp.where(safeguard, proposed, raw)
             accepted_residual = jnp.where(safeguard, next_residual, raw_residual)
+            accepted_auxiliary = tree_where(safeguard, next_auxiliary, raw_auxiliary)
             accepted_norm = jnp.where(safeguard, next_norm, raw_norm)
             finite = jnp.all(jnp.isfinite(accepted_state)) & jnp.all(
                 jnp.isfinite(accepted_residual)
@@ -742,6 +779,7 @@ class FixedPointIteration(StrictModule):
             )
             stored_state = jnp.where(finite, accepted_state, current.state)
             stored_residual = jnp.where(finite, accepted_residual, current.residual)
+            stored_auxiliary = tree_where(finite, accepted_auxiliary, current.auxiliary)
             if current.history_states is None or current.history_residuals is None:
                 next_states = None
                 next_residuals = None
@@ -767,6 +805,7 @@ class FixedPointIteration(StrictModule):
             return _FixedPointRun(
                 state=stored_state,
                 residual=stored_residual,
+                auxiliary=stored_auxiliary,
                 initial_residual_norm=current.initial_residual_norm,
                 residual_norm=jnp.where(finite, accepted_norm, current.residual_norm),
                 step_norm=jnp.where(finite, step_norm, current.step_norm),
@@ -854,7 +893,7 @@ class FixedPointIteration(StrictModule):
             final_linear_converged=run.final_linear_converged,
         )
         output_state = jax.tree.map(self.precision.output, final_state)
-        method_id = self._method_id(effective_history)
+        method_id = self._method_id(effective_history, has_aux=problem.has_aux)
         match self.acceleration:
             case None:
                 notes = (
@@ -883,7 +922,7 @@ class FixedPointIteration(StrictModule):
         result = NonlinearResult(
             state=output_state,
             residual=final_residual,
-            auxiliary=None,
+            auxiliary=run.auxiliary,
             status=status,
             diagnostics=diagnostics,
             provenance=NonlinearProvenance(
@@ -907,6 +946,7 @@ class FixedPointIteration(StrictModule):
 class _SteffensenRun(StrictModule):
     state: Array
     residual: Array
+    auxiliary: Any
     initial_norm: Array
     norm: Array
     step_norm: Array
@@ -917,6 +957,7 @@ class _SteffensenRun(StrictModule):
     restarts: Array
     nonfinite: Array
     status: Array
+    evaluation_work: PyTree[Array] | None
 
 
 class SteffensenIteration(StrictModule):
@@ -977,9 +1018,11 @@ class SteffensenIteration(StrictModule):
         _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
+        _validate_auxiliary_output_precision(problem, initial, self.precision)
         space = PyTreeSpace(initial)
         state = space.flatten(initial)
-        first = space.flatten(problem.mapping(initial, args))
+        mapped_initial, initial_auxiliary, initial_work = problem.evaluate(initial, args)
+        first = space.flatten(mapped_initial)
         residual = first - state
         self.precision.validate_trees(initial, residual)
         norm = _coordinate_norm(residual, self.precision)
@@ -987,6 +1030,7 @@ class SteffensenIteration(StrictModule):
         run = _SteffensenRun(
             state=state,
             residual=residual,
+            auxiliary=initial_auxiliary,
             initial_norm=jnp.maximum(norm, 1e-30),
             norm=norm,
             step_norm=jnp.asarray(0.0, dtype=norm.dtype),
@@ -1005,6 +1049,7 @@ class SteffensenIteration(StrictModule):
                     int(NonlinearStatus.NONFINITE_INPUT),
                 ),
             ).astype(jnp.int32),
+            evaluation_work=initial_work,
         )
 
         def condition(current: _SteffensenRun) -> Array:
@@ -1021,9 +1066,13 @@ class SteffensenIteration(StrictModule):
 
         def body(current: _SteffensenRun) -> _SteffensenRun:
             current_tree = space.unflatten(current.state)
-            first_coordinates = space.flatten(problem.mapping(current_tree, args))
+            mapped_first, _, first_work = problem.evaluate(current_tree, args)
+            first_coordinates = space.flatten(mapped_first)
             first_tree = space.unflatten(first_coordinates)
-            second_coordinates = space.flatten(problem.mapping(first_tree, args))
+            mapped_second, plain_auxiliary, second_work = problem.evaluate(
+                first_tree, args
+            )
+            second_coordinates = space.flatten(mapped_second)
             second_ = self.precision.accumulation(second_coordinates)
             first_ = self.precision.accumulation(first_coordinates)
             current_ = self.precision.accumulation(current.state)
@@ -1039,7 +1088,10 @@ class SteffensenIteration(StrictModule):
                 dtype=current.state.dtype,
             )
             accelerated_tree = space.unflatten(accelerated)
-            mapped_accelerated = space.flatten(problem.mapping(accelerated_tree, args))
+            mapped_accelerated_tree, accelerated_auxiliary, accelerated_work = (
+                problem.evaluate(accelerated_tree, args)
+            )
+            mapped_accelerated = space.flatten(mapped_accelerated_tree)
             accelerated_residual = mapped_accelerated - accelerated
             plain_residual = second_coordinates - first_coordinates
             accelerated_norm = _coordinate_norm(
@@ -1064,6 +1116,9 @@ class SteffensenIteration(StrictModule):
                 take_accelerated,
                 accelerated_residual,
                 plain_residual,
+            )
+            candidate_auxiliary = tree_where(
+                take_accelerated, accelerated_auxiliary, plain_auxiliary
             )
             candidate_norm = _coordinate_norm(candidate_residual, self.precision)
             step_norm = _coordinate_norm(
@@ -1098,6 +1153,7 @@ class SteffensenIteration(StrictModule):
             return _SteffensenRun(
                 state=candidate,
                 residual=candidate_residual,
+                auxiliary=candidate_auxiliary,
                 initial_norm=current.initial_norm,
                 norm=candidate_norm,
                 step_norm=step_norm,
@@ -1109,6 +1165,15 @@ class SteffensenIteration(StrictModule):
                 restarts=current.restarts + (~take_accelerated).astype(jnp.int32),
                 nonfinite=current.nonfinite + (~finite_accelerated).astype(jnp.int32),
                 status=status,
+                evaluation_work=jax.tree.map(
+                    lambda total, first, second, accelerated: (
+                        total + first + second + accelerated
+                    ),
+                    current.evaluation_work,
+                    first_work,
+                    second_work,
+                    accelerated_work,
+                ),
             )
 
         run = jax.lax.while_loop(condition, body, run)
@@ -1128,16 +1193,25 @@ class SteffensenIteration(StrictModule):
         ).astype(jnp.int32)
         final_state = space.unflatten(run.state)
         final_residual = space.unflatten(run.residual)
-        final_mapped = jax.tree.map(
-            lambda value, residual_value: value + residual_value,
-            final_state,
-            final_residual,
-        )
         output_state = jax.tree.map(self.precision.output, final_state)
+        method_id = (
+            f"{self.method_id}:"
+            f"{canonical_fingerprint({'kind': self.method_id, 'has_aux': True})}"
+            if problem.has_aux
+            else self.method_id
+        )
         result = NonlinearResult(
             state=output_state,
             residual=final_residual,
-            auxiliary=final_mapped,
+            auxiliary=(
+                run.auxiliary
+                if problem.has_aux
+                else jax.tree.map(
+                    lambda value, residual_value: value + residual_value,
+                    final_state,
+                    final_residual,
+                )
+            ),
             status=status,
             diagnostics=NonlinearDiagnostics(
                 initial_residual_norm=run.initial_norm,
@@ -1152,7 +1226,7 @@ class SteffensenIteration(StrictModule):
             ),
             provenance=NonlinearProvenance(
                 problem_id=problem.problem_id,
-                method_id=self.method_id,
+                method_id=method_id,
                 derivative_id="none",
                 globalization_id="residual-safeguard",
                 precision_policy_id=self.precision.policy_id,
@@ -1162,8 +1236,9 @@ class SteffensenIteration(StrictModule):
                 final_residual,
                 output_value=output_state,
             ),
+            evaluation_work=run.evaluation_work,
         )
-        return _attach_fixed_point_iteration(result, iteration, self.method_id)
+        return _attach_fixed_point_iteration(result, iteration, method_id)
 
 
 def _picard_candidate(

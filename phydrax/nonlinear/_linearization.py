@@ -14,11 +14,13 @@ import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import (
     AbstractLinearOperator,
     FunctionLinearOperator,
     JacobianLinearOperator,
+    LinearizationPolicy,
     prepare_linearization,
     PyTreeSpace,
 )
@@ -44,6 +46,11 @@ class JacobianPolicy(StrictModule):
     sparse_plan: SparseDerivativePlan | None
     operator_function: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
     finite_difference_step: float = eqx.field(static=True)
+    linearization_policy: LinearizationPolicy
+    operator_transform: (
+        Callable[[AbstractLinearOperator], tuple[AbstractLinearOperator, int]] | None
+    )
+    operator_transform_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -53,6 +60,12 @@ class JacobianPolicy(StrictModule):
         sparse_plan: SparseDerivativePlan | None = None,
         operator: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
         finite_difference_step: float = 1e-6,
+        linearization_policy: LinearizationPolicy | None = None,
+        operator_transform: Callable[
+            [AbstractLinearOperator], tuple[AbstractLinearOperator, int]
+        ]
+        | None = None,
+        operator_transform_id: str | None = None,
     ) -> None:
         mode = parse(mode, JacobianMode, "mode")
         if mode == "sparse" and not isinstance(sparse_plan, SparseDerivativePlan):
@@ -66,14 +79,62 @@ class JacobianPolicy(StrictModule):
         step = float(finite_difference_step)
         if not isfinite(step) or step <= 0.0:
             raise ValueError("finite_difference_step must be finite and positive.")
+        linearization = (
+            LinearizationPolicy()
+            if linearization_policy is None
+            else linearization_policy
+        )
+        if not isinstance(linearization, LinearizationPolicy):
+            raise TypeError("linearization_policy must be a LinearizationPolicy or None.")
+        if mode != "autodiff" and linearization.rematerialization != "store":
+            raise ValueError("Rematerialization requires the autodiff Jacobian source.")
+        if operator_transform is None:
+            if operator_transform_id is not None:
+                raise ValueError("operator_transform_id requires an operator transform.")
+        elif not callable(operator_transform):
+            raise TypeError("operator_transform must be callable.")
+        elif mode != "autodiff":
+            raise ValueError(
+                "Operator transformation requires the autodiff Jacobian source."
+            )
+        elif not isinstance(operator_transform_id, str) or not operator_transform_id:
+            raise ValueError(
+                "An operator transform requires an explicit nonempty identity."
+            )
         self.mode = mode
         self.sparse_plan = sparse_plan
         self.operator_function = operator
         self.finite_difference_step = step
+        self.linearization_policy = linearization
+        self.operator_transform = operator_transform
+        self.operator_transform_id = operator_transform_id
 
     @property
     def policy_id(self) -> str:
-        return self.mode
+        provider = self.operator_function
+        provider_type = type(provider)
+        code = getattr(provider, "__code__", None)
+        payload = {
+            "kind": "nonlinear-jacobian-policy",
+            "source": self.mode,
+            "finite_difference_step": (
+                self.finite_difference_step
+                if self.mode == "directional-finite-difference"
+                else None
+            ),
+            "sparse_plan": None if self.sparse_plan is None else self.sparse_plan.plan_id,
+            "explicit_provider": None
+            if provider is None
+            else {
+                "module": getattr(provider, "__module__", provider_type.__module__),
+                "name": getattr(provider, "__qualname__", provider_type.__qualname__),
+                "source_line": None if code is None else code.co_firstlineno,
+            },
+            "rematerialization": self.linearization_policy.rematerialization,
+        }
+        if self.operator_transform is not None:
+            payload["operator_transform"] = self.operator_transform_id
+        return canonical_fingerprint(payload)
 
 
 class PreparedJacobian(StrictModule):
@@ -85,6 +146,7 @@ class PreparedJacobian(StrictModule):
     sparse_derivative: PreparedSparseDerivative | None
     derivative_id: str = eqx.field(static=True)
     residual_evaluations: int = eqx.field(static=True)
+    setup_jvp_evaluations: Array
 
     @checked
     def __init__(
@@ -97,6 +159,7 @@ class PreparedJacobian(StrictModule):
         sparse_derivative: PreparedSparseDerivative | None = None,
         derivative_id: str,
         residual_evaluations: int = 1,
+        setup_jvp_evaluations: int = 0,
     ) -> None:
         if sparse_derivative is not None and not isinstance(
             sparse_derivative, PreparedSparseDerivative
@@ -105,6 +168,12 @@ class PreparedJacobian(StrictModule):
         identifier = str(derivative_id)
         if not identifier:
             raise ValueError("derivative_id must be non-empty.")
+        if not isinstance(setup_jvp_evaluations, int) or isinstance(
+            setup_jvp_evaluations, bool
+        ):
+            raise TypeError("setup_jvp_evaluations must be an exact integer.")
+        if setup_jvp_evaluations < 0:
+            raise ValueError("setup_jvp_evaluations must be nonnegative.")
         self.residual = residual
         evaluations = int(residual_evaluations)
         if evaluations < 1:
@@ -114,6 +183,18 @@ class PreparedJacobian(StrictModule):
         self.auxiliary = auxiliary
         self.derivative_id = identifier
         self.residual_evaluations = evaluations
+        self.setup_jvp_evaluations = jnp.asarray(setup_jvp_evaluations, dtype=jnp.int32)
+
+
+def _jacobian_jvp_actions(operator: AbstractLinearOperator, actions: Array, /) -> Array:
+    """Count global JVPs, not arithmetic actions on an assembled Jacobian."""
+    if isinstance(operator, _CoordinateRebasedLinearOperator):
+        return _jacobian_jvp_actions(operator.operator, actions)
+    return (
+        actions
+        if isinstance(operator, JacobianLinearOperator)
+        else jnp.zeros_like(actions)
+    )
 
 
 def _rebase_jacobian_coordinates(
@@ -178,17 +259,33 @@ def prepare_jacobian(
             source=source,
             has_aux=problem.has_aux,
             target=problem.residual_space,
+            policy=policy.linearization_policy,
             linearization_id=f"{problem.problem_id}/jacobian/autodiff",
         )
-        operator = JacobianLinearOperator(
+        operator: AbstractLinearOperator = JacobianLinearOperator(
             linearization,
             operator_id=f"{problem.problem_id}/jacobian",
         )
+        setup_work = 0
+        if policy.operator_transform is not None:
+            transformed, setup_work = policy.operator_transform(operator)
+            if not isinstance(transformed, AbstractLinearOperator):
+                raise TypeError(
+                    "An operator transform must return a native linear operator."
+                )
+            if not transformed.source.compatible(
+                operator.source
+            ) or not transformed.target.compatible(operator.target):
+                raise ValueError(
+                    "An operator transform must preserve source and target identities."
+                )
+            operator = transformed
         return PreparedJacobian(
             linearization.primal,
             operator,
             auxiliary=linearization.auxiliary,
             derivative_id="autodiff",
+            setup_jvp_evaluations=setup_work,
         )
 
     if policy.mode == "sparse":
