@@ -149,3 +149,30 @@ def test_constraint_certification_refuses_single_column_workspace() -> None:
             require_full_row_rank=False,
             materialization=la.MaterializationPolicy(max_workspace_bytes=215),
         )
+
+
+def test_duplicate_generalized_constraints_match_dense_minimum_norm_reference() -> None:
+    matrix = np.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
+    operator = la.DenseLinearOperator(jnp.asarray(matrix))
+    prepared = la.prepare_constraint_operator(operator, require_full_row_rank=False)
+    reference = np.linalg.pinv(matrix)
+    np.testing.assert_allclose(prepared.right_inverse, reference, atol=1e-12)
+    assert prepared.rank == 1
+    assert prepared.nullity == 3
+    assert not prepared.evidence.full_row_rank
+    assert (
+        prepared.evidence.generalized_right_inverse_residual_norm
+        <= prepared.evidence.residual_tolerance
+    )
+    residual = matrix @ np.asarray(prepared.right_inverse) - np.eye(2, dtype=np.float64)
+    np.testing.assert_allclose(matrix.T @ residual, 0.0, atol=1e-12)
+    compatible = jnp.asarray([2.0, 2.0], dtype=jnp.float64)
+    np.testing.assert_allclose(
+        prepared.minimum_norm_lift(compatible), reference @ compatible, atol=1e-12
+    )
+    assert bool(prepared.is_compatible(compatible))
+    assert not bool(prepared.is_compatible(jnp.asarray([1.0, -1.0], dtype=jnp.float64)))
+    with pytest.raises(ValueError, match="full-row-rank"):
+        prepared.strict_right_inverse(compatible)
+    with pytest.raises(ValueError, match="full row rank"):
+        la.prepare_constraint_operator(operator)
