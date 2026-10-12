@@ -273,12 +273,19 @@ def _normalize_tensor_coefficient(
 ) -> Array:
     dimension = len(grid.shape)
     value = jnp.asarray(coefficient)
+    # The identity carries explicit singleton cell axes so strict rank
+    # promotion admits the cellwise product.
+    cell_axes = (1,) * dimension
     if value.shape == () or value.shape == grid.shape:
         scalar = jnp.broadcast_to(value, grid.shape)
-        identity = jnp.eye(dimension, dtype=scalar.dtype)
+        identity = jnp.eye(dimension, dtype=scalar.dtype).reshape(
+            cell_axes + (dimension, dimension)
+        )
         return scalar[..., None, None] * identity
     if value.shape == grid.shape + (dimension,):
-        identity = jnp.eye(dimension, dtype=value.dtype)
+        identity = jnp.eye(dimension, dtype=value.dtype).reshape(
+            cell_axes + (dimension, dimension)
+        )
         return value[..., :, None] * identity
     if value.shape == (dimension, dimension):
         return jnp.broadcast_to(value, grid.shape + (dimension, dimension))

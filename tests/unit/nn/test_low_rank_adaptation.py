@@ -89,6 +89,20 @@ def test_low_rank_linear_preserves_initial_function_and_factorizes_batches() -> 
     assert jnp.array_equal(base.weight, changed.weight.base)
 
 
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("use_bias", (False, True), ids=("bias-free", "biased"))
+def test_rwf_linear_multidimensional_batches_match_vector_evaluation(
+    use_bias: bool,
+) -> None:
+    layer = phx.nn.layers.Linear(
+        in_size=3, out_size=2, rwf=True, use_bias=use_bias, key=jr.key(37)
+    )
+    inputs = jnp.arange(24, dtype=jnp.float64).reshape((2, 4, 3))
+    expected = jax.vmap(jax.vmap(layer))(inputs)
+    assert jnp.array_equal(layer(inputs), expected)
+    assert jnp.allclose(eqx.filter_jit(layer)(inputs), expected, atol=1e-12, rtol=1e-12)
+
+
 def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors() -> None:
     adapted, _ = _adapt(_linear())
     update = adapted.weight
