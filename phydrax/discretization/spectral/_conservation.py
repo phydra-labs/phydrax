@@ -95,10 +95,8 @@ class SpectralSplitFormReport(StrictModule, NonTrainableState):
 
 class PreparedSpectralSplitForm(StrictModule):
     plan: SpectralSplitFormPlan
-    differentiation_matrices: tuple[Array, ...] = fixed_field()
-    quadrature_norms: tuple[Array, ...] = fixed_field()
-    pair_rows: tuple[Array, ...] = fixed_field()
-    pair_columns: tuple[Array, ...] = fixed_field()
+    difference_weights: tuple[Array, ...] = fixed_field()
+    pair_row_offsets: tuple[Array, ...] = fixed_field()
     report: SpectralSplitFormReport
     prepared_id: str = eqx.field(static=True)
 
@@ -241,7 +239,7 @@ def _prepare_split_form(
 ) -> PreparedSpectralSplitForm:
     if discretization.plan.precision.physical_dtype.startswith("complex"):
         raise ValueError("Certified split forms require a real physical state.")
-    matrices = []
+    weights = []
     cell = discretization.periodic_cell
     if cell is None or cell.rank != len(discretization.axes) or not cell.fully_periodic:
         raise ValueError(
@@ -256,9 +254,7 @@ def _prepare_split_form(
     )
     if reciprocal_defect > plan.certification_tolerance:
         raise ValueError("PeriodicCell reciprocal geometry certification failed.")
-    norms = []
-    rows = []
-    columns = []
+    offsets = []
     pair_count = 0
     maximum_defect = 0.0
     maximum_workspace = 0
@@ -266,31 +262,35 @@ def _prepare_split_form(
     itemsize = np.dtype(discretization.plan.precision.physical_dtype).itemsize
     for axis_index, axis in enumerate(discretization.axes):
         count = axis.mode_count
-        indices = np.arange(count)
-        difference = indices[:, None] - indices[None, :]
+        indices = np.arange(count, dtype=np.int64)
+        difference = np.arange(1 - count, count, dtype=np.int64)
         angle = np.pi * difference / count
         sign = (-1.0) ** difference
-        if count % 2:
-            denominator = np.sin(angle)
-        else:
-            denominator = np.tan(angle)
+        denominator = np.sin(angle) if count % 2 else np.tan(angle)
         derivative = np.where(
             difference == 0,
             0.0,
             0.5 * sign / np.where(difference == 0, 1.0, denominator),
         )
         derivative *= 2.0 * np.pi / float(axis.length)
-        norm = np.full((count,), float(axis.length) / count)
-        q_matrix = norm[:, None] * derivative
-        skew = float(np.max(np.abs(q_matrix + q_matrix.T), initial=0.0))
-        constant = float(np.max(np.abs(derivative @ np.ones(count)), initial=0.0))
+        norm = float(axis.length) / count
+        q_weights = norm * derivative
+        skew = float(np.max(np.abs(q_weights + q_weights[::-1]), initial=0.0))
+        # Certify each dense Fourier row without materializing the matrix.
+        # The row's signed differences are contiguous in this O(n) table.
+        ones = np.ones(count, dtype=np.float64)
+        constant = max(
+            (
+                abs(float(derivative[row : row + count][::-1] @ ones))
+                for row in range(count)
+            ),
+            default=0.0,
+        )
         maximum_defect = max(maximum_defect, skew, constant)
         if maximum_defect > plan.certification_tolerance:
             raise ValueError("Fourier split-form SBP/skew certification failed.")
-        pair_row, pair_column = np.triu_indices(count, k=1)
-        nonzero = np.abs(q_matrix[pair_row, pair_column]) > 0.0
-        pair_row = pair_row[nonzero]
-        pair_column = pair_column[nonzero]
+        axis_pair_count = count * (count - 1) // 2
+        row_offsets = indices * (2 * count - indices - 1) // 2
         transverse_line_count = int(
             np.prod(
                 tuple(
@@ -300,19 +300,18 @@ def _prepare_split_form(
                 )
             )
         )
-        pair_count += pair_row.size * transverse_line_count
+        pair_count += axis_pair_count * transverse_line_count
         maximum_workspace = max(
             maximum_workspace,
-            min(plan.pair_chunk_size, pair_row.size)
+            min(plan.pair_chunk_size, axis_pair_count)
             * transverse_line_count
             * components
             * 3
             * itemsize,
         )
-        matrices.append(jnp.asarray(q_matrix))
-        norms.append(jnp.asarray(norm))
-        rows.append(jnp.asarray(pair_row, dtype=jnp.int32))
-        columns.append(jnp.asarray(pair_column, dtype=jnp.int32))
+        # Keep the original Q/H rounding, not merely the algebraic derivative.
+        weights.append(jnp.asarray(q_weights / norm))
+        offsets.append(jnp.asarray(row_offsets, dtype=jnp.int64))
     workspace = maximum_workspace
     if workspace > plan.maximum_pair_workspace_bytes:
         raise ValueError("Split-form pair workspace exceeds the declared budget.")
@@ -336,10 +335,8 @@ def _prepare_split_form(
     )
     return PreparedSpectralSplitForm(
         plan=plan,
-        differentiation_matrices=tuple(matrices),
-        quadrature_norms=tuple(norms),
-        pair_rows=tuple(rows),
-        pair_columns=tuple(columns),
+        difference_weights=tuple(weights),
+        pair_row_offsets=tuple(offsets),
         report=report,
         prepared_id=canonical_fingerprint(
             {
@@ -503,34 +500,45 @@ class PreparedSpectralConservationDynamics(StrictModule):
         if jnp.iscomplexobj(physical):
             raise TypeError("Certified split-form physical state must be real.")
         physical_residual = jnp.zeros_like(physical)
-        for axis, (q_matrix, norm, pair_rows, pair_columns) in enumerate(
-            zip(
-                split.differentiation_matrices,
-                split.quadrature_norms,
-                split.pair_rows,
-                split.pair_columns,
-                strict=True,
-            )
+        for axis, (difference_weights, row_offsets) in enumerate(
+            zip(split.difference_weights, split.pair_row_offsets, strict=True)
         ):
             lines = jnp.moveaxis(physical, axis, 0)
+            count = lines.shape[0]
+            pair_count = count * (count - 1) // 2
+            chunk = min(split.plan.pair_chunk_size, pair_count)
             line_residual = jnp.zeros_like(lines)
-            pair_count = pair_rows.size
-            for start in range(0, pair_count, split.plan.pair_chunk_size):
-                stop = min(start + split.plan.pair_chunk_size, pair_count)
-                rows = pair_rows[start:stop]
-                columns = pair_columns[start:stop]
+            if chunk == 0:
+                continue
+            full_chunks, remainder = divmod(pair_count, chunk)
+
+            def accumulate(start: Array, ranks: Array, residual: Array) -> Array:
+                pair_indices = start + ranks
+                # Offsets describe lexicographic upper-triangle enumeration:
+                # (0,1), ... (0,n-1), (1,2), ... . No pair routes persist.
+                rows = jnp.searchsorted(row_offsets, pair_indices, side="right") - 1
+                columns = rows + 1 + pair_indices - row_offsets[rows]
                 pair_flux = split.plan.volume_flux.two_point_flux(
-                    self.system,
-                    lines[rows],
-                    lines[columns],
-                    axis,
-                    args,
+                    self.system, lines[rows], lines[columns], axis, args
                 )
-                weights = q_matrix[rows, columns] / norm[rows]
-                weight_shape = (weights.size,) + (1,) * (pair_flux.ndim - 1)
-                contribution = 2.0 * weights.reshape(weight_shape) * pair_flux
-                line_residual = line_residual.at[rows].add(-contribution)
-                line_residual = line_residual.at[columns].add(contribution)
+                pair_weights = difference_weights[rows - columns + count - 1]
+                weight_shape = (pair_weights.size,) + (1,) * (pair_flux.ndim - 1)
+                contribution = 2.0 * pair_weights.reshape(weight_shape) * pair_flux
+                residual = residual.at[rows].add(-contribution)
+                return residual.at[columns].add(contribution)
+
+            ranks = jnp.arange(chunk, dtype=jnp.int64)
+
+            def body(block: Array, residual: Array) -> Array:
+                return accumulate(block * chunk, ranks, residual)
+
+            line_residual = jax.lax.fori_loop(0, full_chunks, body, line_residual)
+            if remainder:
+                line_residual = accumulate(
+                    jnp.asarray(full_chunks * chunk, dtype=jnp.int64),
+                    jnp.arange(remainder, dtype=jnp.int64),
+                    line_residual,
+                )
             physical_residual = physical_residual + jnp.moveaxis(line_residual, 0, axis)
         convective = self.discretization.project(physical_residual)
         return convective, jnp.zeros_like(convective)

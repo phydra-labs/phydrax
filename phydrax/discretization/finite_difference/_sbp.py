@@ -122,11 +122,51 @@ class SBPFamily(StrictModule, NonTrainableState):
         )
 
 
-def _normalized_sbp_matrix(
+def _sparse_sbp_identity_residual(
+    indices: np.ndarray,
+    weights: np.ndarray,
+    valid: np.ndarray,
+    norm: np.ndarray,
+    boundary: np.ndarray,
+    /,
+) -> float:
+    """Audit every supported coefficient and its transpose, including diagonals."""
+    count = norm.size
+    rows = np.broadcast_to(np.arange(count, dtype=np.int64)[:, None], indices.shape)[
+        valid
+    ]
+    columns = indices[valid].astype(np.int64)
+    keys = rows * count + columns
+    permutation = np.argsort(keys)
+    keys = keys[permutation]
+    values = (norm[rows] * weights[valid])[permutation]
+    reverse_keys = columns[permutation] * count + rows[permutation]
+    locations = np.searchsorted(keys, reverse_keys)
+    safe_locations = np.minimum(locations, keys.size - 1)
+    reverse = np.where(
+        (locations < keys.size) & (keys[safe_locations] == reverse_keys),
+        values[safe_locations],
+        0.0,
+    )
+    defect = values + reverse
+    diagonal = rows[permutation] == columns[permutation]
+    defect[diagonal] -= boundary[rows[permutation][diagonal]]
+    # A missing diagonal with nonzero boundary must also fail certification.
+    represented_diagonal = np.zeros(count, dtype=np.bool_)
+    represented_diagonal[rows[permutation][diagonal]] = True
+    return float(
+        max(
+            np.max(np.abs(defect)),
+            np.max(np.abs(boundary[~represented_diagonal]), initial=0.0),
+        )
+    )
+
+
+def _normalized_sbp_rows(
     family: SBPFamily,
     count: int,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     order = family.interior_order
     half_order = order // 2
     boundary_width = family.boundary_width
@@ -134,21 +174,16 @@ def _normalized_sbp_matrix(
     if count < minimum_count:
         raise ValueError(f"SBP order {order} requires at least {minimum_count} nodes.")
     norm = np.ones((count,), dtype=np.float64)
-    boundary_norm = np.asarray(family.norm_boundary_weights)
+    boundary_norm = np.asarray(family.norm_boundary_weights, dtype=np.float64)
     norm[:boundary_width] = boundary_norm
     norm[-boundary_width:] = boundary_norm[::-1]
-    q_matrix = np.zeros((count, count), dtype=np.float64)
-    interior = np.asarray(_INTERIOR_FIRST_DERIVATIVE[order])
-    for row in range(boundary_width, count - boundary_width):
-        q_matrix[row, row - half_order : row + half_order + 1] = interior
-    boundary_indices = tuple(range(boundary_width)) + tuple(
-        range(count - boundary_width, count)
-    )
-    for row in range(boundary_width, count - boundary_width):
-        for column in boundary_indices:
-            q_matrix[column, row] = -q_matrix[row, column]
-    q_matrix[0, 0] = -0.5
-    q_matrix[-1, -1] = 0.5
+    interior = np.asarray(_INTERIOR_FIRST_DERIVATIVE[order], dtype=np.float64)
+    closure_extent = boundary_width + half_order
+    closure = np.zeros((boundary_width, closure_extent), dtype=np.float64)
+    for row in range(boundary_width, closure_extent):
+        for column in range(max(0, row - half_order), boundary_width):
+            closure[column, row] = -interior[column - row + half_order]
+    closure[0, 0] = -0.5
     pairs = tuple(
         (left, right)
         for left in range(boundary_width)
@@ -157,11 +192,14 @@ def _normalized_sbp_matrix(
     if pairs:
         equations = []
         targets = []
+        # Preserve the historical full-row dot reduction without a dense operator.
         coordinates = np.arange(count, dtype=np.float64)
+        known_row = np.zeros(count, dtype=np.float64)
         for row in range(boundary_width):
+            known_row[:closure_extent] = closure[row]
             for degree in range(family.closure_order + 1):
                 monomial = coordinates**degree
-                known = float(q_matrix[row] @ monomial)
+                known = float(known_row @ monomial)
                 target = norm[row] * (
                     0.0 if degree == 0 else degree * coordinates[row] ** (degree - 1)
                 )
@@ -176,8 +214,8 @@ def _normalized_sbp_matrix(
                     ]
                 )
                 targets.append(target - known)
-        system = np.asarray(equations)
-        right_hand_side = np.asarray(targets)
+        system = np.asarray(equations, dtype=np.float64)
+        right_hand_side = np.asarray(targets, dtype=np.float64)
         solution, _, _, _ = np.linalg.lstsq(system, right_hand_side, rcond=None)
         residual = np.max(np.abs(system @ solution - right_hand_side))
         if residual > 5e-10:
@@ -185,28 +223,44 @@ def _normalized_sbp_matrix(
                 "SBP boundary closure construction failed its constraints."
             )
         for value, (left, right) in zip(solution, pairs, strict=True):
-            q_matrix[left, right] = value
-            q_matrix[right, left] = -value
-    for row in range(boundary_width):
-        for column in range(boundary_width):
-            q_matrix[count - 1 - row, count - 1 - column] = -q_matrix[row, column]
-    derivative = q_matrix / norm[:, None]
-    boundary = np.zeros((count, count), dtype=np.float64)
-    boundary[0, 0] = -1.0
-    boundary[-1, -1] = 1.0
-    identity_residual = np.max(
-        np.abs(np.diag(norm) @ derivative + derivative.T @ np.diag(norm) - boundary)
-    )
-    if identity_residual > 5e-12:
+            closure[left, right] = value
+            closure[right, left] = -value
+    capacity = max(closure_extent, order)
+    indices = np.zeros((count, capacity), dtype=np.int32)
+    weights = np.full((count, capacity), np.nan, dtype=np.float64)
+    valid = np.zeros((count, capacity), dtype=np.bool_)
+    maximum_width = 0
+    for row in range(count):
+        if row < boundary_width:
+            columns = np.arange(closure_extent, dtype=np.int32)
+            values = closure[row] / norm[row]
+        elif row >= count - boundary_width:
+            columns = np.arange(count - closure_extent, count, dtype=np.int32)
+            values = -closure[count - 1 - row, ::-1] / norm[row]
+        else:
+            columns = np.arange(row - half_order, row + half_order + 1, dtype=np.int32)
+            values = interior
+        active = np.abs(values) > 5e-14
+        width = np.count_nonzero(active)
+        maximum_width = max(maximum_width, width)
+        indices[row, :width] = columns[active]
+        weights[row, :width] = values[active]
+        valid[row, :width] = True
+    indices = indices[:, :maximum_width].copy()
+    weights = weights[:, :maximum_width].copy()
+    valid = valid[:, :maximum_width].copy()
+    boundary = np.zeros(count, dtype=np.float64)
+    boundary[0], boundary[-1] = -1.0, 1.0
+    if _sparse_sbp_identity_residual(indices, weights, valid, norm, boundary) > 5e-12:
         raise RuntimeError("Constructed SBP derivative violates its norm identity.")
-    return derivative, norm
+    return indices, weights, valid, norm
 
 
-def _normalized_periodic_sbp_matrix(
+def _normalized_periodic_sbp_rows(
     family: SBPFamily,
     count: int,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     order = family.interior_order
     half_order = order // 2
     minimum_count = 2 * half_order + 1
@@ -215,14 +269,15 @@ def _normalized_periodic_sbp_matrix(
             f"Periodic SBP order {order} requires at least {minimum_count} nodes."
         )
     relative = np.arange(-half_order, half_order + 1, dtype=np.int32)
-    coefficients = np.asarray(_INTERIOR_FIRST_DERIVATIVE[order])
-    derivative = np.zeros((count, count), dtype=np.float64)
-    for row in range(count):
-        derivative[row, (row + relative) % count] = coefficients
-    residual = np.max(np.abs(derivative + derivative.T))
-    if residual > 5e-14:
+    coefficients = np.asarray(_INTERIOR_FIRST_DERIVATIVE[order], dtype=np.float64)
+    indices = (np.arange(count, dtype=np.int32)[:, None] + relative) % count
+    weights = np.broadcast_to(coefficients, indices.shape).copy()
+    valid = np.ones(indices.shape, dtype=np.bool_)
+    norm = np.ones(count, dtype=np.float64)
+    boundary = np.zeros(count, dtype=np.float64)
+    if _sparse_sbp_identity_residual(indices, weights, valid, norm, boundary) > 5e-14:
         raise RuntimeError("Periodic SBP derivative is not skew-symmetric.")
-    return derivative, np.ones((count,), dtype=np.float64)
+    return indices, weights, valid, norm
 
 
 def _tensor_norm_weights(
@@ -415,12 +470,14 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
         delta = float(spacing[0])
         periodic = bool(structured_axis.periodic)
         if periodic:
-            normalized, normalized_norm = _normalized_periodic_sbp_matrix(
+            indices, weights, valid, normalized_norm = _normalized_periodic_sbp_rows(
                 plan.family, nodes.size
             )
         else:
-            normalized, normalized_norm = _normalized_sbp_matrix(plan.family, nodes.size)
-        matrix = normalized / delta
+            indices, weights, valid, normalized_norm = _normalized_sbp_rows(
+                plan.family, nodes.size
+            )
+        weights /= delta
         axis_norm = jnp.asarray(delta * normalized_norm)
         row_plans = []
         row_kinds: list[StencilRowKind] = []
@@ -430,13 +487,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
             coefficients = (
                 np.asarray(_INTERIOR_FIRST_DERIVATIVE[plan.family.interior_order]) / delta
             )
-            maximum_width = relative.size
-            indices = np.zeros((nodes.size, maximum_width), dtype=np.int32)
-            weights = np.zeros((nodes.size, maximum_width), dtype=np.float64)
-            valid = np.ones((nodes.size, maximum_width), dtype=np.bool_)
             for row in range(nodes.size):
-                indices[row] = (row + relative) % nodes.size
-                weights[row] = coefficients
                 row_plans.append(
                     StencilCoefficientPlan(
                         relative.astype("float64") * delta,
@@ -454,16 +505,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
             boundary_kind = "periodic"
             boundary_diagonal = jnp.zeros((nodes.size,))
         else:
-            maximum_width = 0
-            active_rows = []
-            threshold = 5e-14 / delta
-            for row in range(nodes.size):
-                active = np.flatnonzero(np.abs(matrix[row]) > threshold)
-                active_rows.append(active)
-                maximum_width = max(maximum_width, active.size)
-            indices = np.zeros((nodes.size, maximum_width), dtype=np.int32)
-            weights = np.full((nodes.size, maximum_width), np.nan)
-            valid = np.zeros((nodes.size, maximum_width), dtype=np.bool_)
+            active_rows = [indices[row, valid[row]] for row in range(nodes.size)]
             boundary_width = plan.family.boundary_width
             for row, active in enumerate(active_rows):
                 row_accuracy = (
@@ -471,16 +513,14 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
                     if row < boundary_width or row >= nodes.size - boundary_width
                     else plan.family.interior_order
                 )
-                indices[row, : active.size] = active
-                weights[row, : active.size] = matrix[row, active]
-                valid[row, : active.size] = True
+                row_weights = weights[row, valid[row]]
                 row_plans.append(
                     StencilCoefficientPlan(
                         nodes[active],
                         nodes[row],
                         1,
                         row_accuracy,
-                        weights=matrix[row, active],
+                        weights=row_weights,
                         residual_tolerance=2e-7,
                     )
                 )
@@ -546,14 +586,12 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
             conformity=base_field.conformity,
         )
         operator = PreparedStencilOperator(stencil_set, field, field)
-        residual = float(
-            np.max(
-                np.abs(
-                    np.diag(np.asarray(axis_norm)) @ matrix
-                    + matrix.T @ np.diag(np.asarray(axis_norm))
-                    - np.diag(np.asarray(boundary_diagonal))
-                )
-            )
+        residual = _sparse_sbp_identity_residual(
+            indices,
+            weights,
+            valid,
+            delta * normalized_norm,
+            np.asarray(boundary_diagonal),
         )
         prepared_id = canonical_fingerprint(
             {
@@ -655,13 +693,13 @@ class SBPClosureEvidence(StrictModule, NonTrainableState):
         if derivative.grid.structured_axes[derivative.axis_index].periodic:
             norm_kind = "periodic-uniform"
             count = family.interior_order + 1
-            _, reference = _normalized_periodic_sbp_matrix(family, count)
+            _, _, _, reference = _normalized_periodic_sbp_rows(family, count)
             exact_degree = _norm_exact_degree(reference, float(count))
             closure_order = family.interior_order
         else:
             norm_kind = "diagonal-closure"
             count = 2 * family.boundary_width + family.interior_order + 1
-            _, reference = _normalized_sbp_matrix(family, count)
+            _, _, _, reference = _normalized_sbp_rows(family, count)
             exact_degree = _norm_exact_degree(reference, float(count - 1))
             closure_order = family.closure_order
         minimum = float(np.min(np.asarray(derivative.axis_norm_weights)))

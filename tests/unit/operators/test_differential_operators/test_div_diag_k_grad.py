@@ -3,8 +3,6 @@
 #
 
 
-from typing import Any
-
 import jax.numpy as jnp
 import pytest
 
@@ -155,3 +153,5 @@ def test_div_diag_k_grad_ad_engine_requires_ad_backend() -> None:
 
     with pytest.raises(ValueError, match="backend='ad'"):
         div_diag_k_grad(u, k_vec, backend="jet", ad_engine="jvp")
+
+

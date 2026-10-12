@@ -1,0 +1,896 @@
+{
+  "cases": {
+    "D10": [
+      {
+        "capacity": 8,
+        "chunk_routes": [],
+        "compilation_seconds": 0.047935084,
+        "compiler": {
+          "argument_bytes": 576,
+          "bytes_accessed": 5296,
+          "flops": 1375,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 1152,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 271850,
+        "logical_candidate_workspace_bytes": 64,
+        "lowering_seconds": 0.051782125,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000970292,
+          "mean_seconds": 0.000638188,
+          "median_seconds": 0.000638188,
+          "min_seconds": 0.000306084,
+          "samples_seconds": [
+            0.000970292,
+            0.000306084
+          ],
+          "std_seconds": 0.000332104
+        },
+        "width": 8
+      },
+      {
+        "capacity": 16,
+        "chunk_routes": [],
+        "compilation_seconds": 0.048351125,
+        "compiler": {
+          "argument_bytes": 2176,
+          "bytes_accessed": 19760,
+          "flops": 9535,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 4352,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 276856,
+        "logical_candidate_workspace_bytes": 128,
+        "lowering_seconds": 0.085172333,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000321541,
+          "mean_seconds": 0.000242437,
+          "median_seconds": 0.000242437,
+          "min_seconds": 0.000163333,
+          "samples_seconds": [
+            0.000163333,
+            0.000321541
+          ],
+          "std_seconds": 7.910400000000001e-05
+        },
+        "width": 16
+      },
+      {
+        "capacity": 32,
+        "chunk_routes": [],
+        "compilation_seconds": 0.10664675,
+        "compiler": {
+          "argument_bytes": 8448,
+          "bytes_accessed": 76336,
+          "flops": 70783,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 16896,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 340517,
+        "logical_candidate_workspace_bytes": 256,
+        "lowering_seconds": 0.122043625,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 9.5458e-05,
+          "mean_seconds": 6.45415e-05,
+          "median_seconds": 6.45415e-05,
+          "min_seconds": 3.3625e-05,
+          "samples_seconds": [
+            9.5458e-05,
+            3.3625e-05
+          ],
+          "std_seconds": 3.091650000000001e-05
+        },
+        "width": 32
+      },
+      {
+        "capacity": 64,
+        "chunk_routes": [],
+        "compilation_seconds": 0.096993292,
+        "compiler": {
+          "argument_bytes": 33280,
+          "bytes_accessed": 300080,
+          "flops": 545023,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 66560,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 470677,
+        "logical_candidate_workspace_bytes": 512,
+        "lowering_seconds": 0.175006541,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.001235,
+          "mean_seconds": 0.000838917,
+          "median_seconds": 0.000838917,
+          "min_seconds": 0.000442834,
+          "samples_seconds": [
+            0.000442834,
+            0.001235
+          ],
+          "std_seconds": 0.000396083
+        },
+        "width": 64
+      }
+    ],
+    "D11": [
+      {
+        "capacity": 8,
+        "chunk_routes": [],
+        "compilation_seconds": 0.158817333,
+        "compiler": {
+          "argument_bytes": 576,
+          "bytes_accessed": 7216,
+          "flops": 3135,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 1600,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 361183,
+        "logical_candidate_workspace_bytes": 128,
+        "lowering_seconds": 0.104130958,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.001794041,
+          "mean_seconds": 0.0010271034999999999,
+          "median_seconds": 0.0010271034999999999,
+          "min_seconds": 0.000260166,
+          "samples_seconds": [
+            0.001794041,
+            0.000260166
+          ],
+          "std_seconds": 0.0007669374999999999
+        },
+        "width": 8
+      },
+      {
+        "capacity": 16,
+        "chunk_routes": [],
+        "compilation_seconds": 0.077790042,
+        "compiler": {
+          "argument_bytes": 2176,
+          "bytes_accessed": 27696,
+          "flops": 20607,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 6272,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 359647,
+        "logical_candidate_workspace_bytes": 256,
+        "lowering_seconds": 0.162905417,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000108875,
+          "mean_seconds": 7.28335e-05,
+          "median_seconds": 7.28335e-05,
+          "min_seconds": 3.6792e-05,
+          "samples_seconds": [
+            0.000108875,
+            3.6792e-05
+          ],
+          "std_seconds": 3.60415e-05
+        },
+        "width": 16
+      },
+      {
+        "capacity": 32,
+        "chunk_routes": [],
+        "compilation_seconds": 0.087418583,
+        "compiler": {
+          "argument_bytes": 8448,
+          "bytes_accessed": 108592,
+          "flops": 147711,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 24832,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 359570,
+        "logical_candidate_workspace_bytes": 512,
+        "lowering_seconds": 0.128370458,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000440375,
+          "mean_seconds": 0.000285125,
+          "median_seconds": 0.000285125,
+          "min_seconds": 0.000129875,
+          "samples_seconds": [
+            0.000440375,
+            0.000129875
+          ],
+          "std_seconds": 0.00015525
+        },
+        "width": 32
+      },
+      {
+        "capacity": 64,
+        "chunk_routes": [],
+        "compilation_seconds": 0.078137042,
+        "compiler": {
+          "argument_bytes": 33280,
+          "bytes_accessed": 771240,
+          "flops": 1118911,
+          "generated_code_bytes": 0,
+          "output_bytes": 32,
+          "source": "operator-workspace",
+          "temporary_bytes": 165888,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 359585,
+        "logical_candidate_workspace_bytes": 1024,
+        "lowering_seconds": 0.065593791,
+        "output_bytes": 8,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000756084,
+          "mean_seconds": 0.0006423959999999999,
+          "median_seconds": 0.0006423959999999999,
+          "min_seconds": 0.000528708,
+          "samples_seconds": [
+            0.000756084,
+            0.000528708
+          ],
+          "std_seconds": 0.00011368799999999997
+        },
+        "width": 64
+      }
+    ],
+    "D12": [
+      {
+        "capacity": 8,
+        "chunk_routes": [],
+        "compilation_seconds": 0.033742583,
+        "compiler": {
+          "argument_bytes": 576,
+          "bytes_accessed": 1688,
+          "flops": 296,
+          "generated_code_bytes": 0,
+          "output_bytes": 88,
+          "source": "operator-workspace",
+          "temporary_bytes": 128,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 91890,
+        "logical_candidate_workspace_bytes": 64,
+        "lowering_seconds": 0.013486917,
+        "output_bytes": 64,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 4.6e-05,
+          "mean_seconds": 3.6396e-05,
+          "median_seconds": 3.6396e-05,
+          "min_seconds": 2.6792e-05,
+          "samples_seconds": [
+            4.6e-05,
+            2.6792e-05
+          ],
+          "std_seconds": 9.604e-06
+        },
+        "width": 8
+      },
+      {
+        "capacity": 16,
+        "chunk_routes": [],
+        "compilation_seconds": 0.047240958,
+        "compiler": {
+          "argument_bytes": 2176,
+          "bytes_accessed": 5400,
+          "flops": 1104,
+          "generated_code_bytes": 0,
+          "output_bytes": 152,
+          "source": "operator-workspace",
+          "temporary_bytes": 256,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 91154,
+        "logical_candidate_workspace_bytes": 128,
+        "lowering_seconds": 0.038699125,
+        "output_bytes": 128,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000446917,
+          "mean_seconds": 0.00036864600000000003,
+          "median_seconds": 0.00036864600000000003,
+          "min_seconds": 0.000290375,
+          "samples_seconds": [
+            0.000290375,
+            0.000446917
+          ],
+          "std_seconds": 7.827100000000001e-05
+        },
+        "width": 16
+      },
+      {
+        "capacity": 32,
+        "chunk_routes": [],
+        "compilation_seconds": 0.025681291,
+        "compiler": {
+          "argument_bytes": 8448,
+          "bytes_accessed": 18968,
+          "flops": 4256,
+          "generated_code_bytes": 0,
+          "output_bytes": 280,
+          "source": "operator-workspace",
+          "temporary_bytes": 512,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 91146,
+        "logical_candidate_workspace_bytes": 256,
+        "lowering_seconds": 0.019499208,
+        "output_bytes": 256,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.00036925,
+          "mean_seconds": 0.00033187500000000003,
+          "median_seconds": 0.00033187500000000003,
+          "min_seconds": 0.0002945,
+          "samples_seconds": [
+            0.00036925,
+            0.0002945
+          ],
+          "std_seconds": 3.7375e-05
+        },
+        "width": 32
+      },
+      {
+        "capacity": 64,
+        "chunk_routes": [],
+        "compilation_seconds": 0.030513958,
+        "compiler": {
+          "argument_bytes": 33280,
+          "bytes_accessed": 70680,
+          "flops": 16704,
+          "generated_code_bytes": 0,
+          "output_bytes": 536,
+          "source": "operator-workspace",
+          "temporary_bytes": 1024,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 91306,
+        "logical_candidate_workspace_bytes": 512,
+        "lowering_seconds": 0.013219875,
+        "output_bytes": 512,
+        "parity_chunk_sizes": [],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000343041,
+          "mean_seconds": 0.000235708,
+          "median_seconds": 0.000235708,
+          "min_seconds": 0.000128375,
+          "samples_seconds": [
+            0.000343041,
+            0.000128375
+          ],
+          "std_seconds": 0.000107333
+        },
+        "width": 64
+      }
+    ],
+    "D13": [
+      {
+        "capacity": 64,
+        "chunk_routes": [
+          {
+            "chunk_size": 8,
+            "compilation_seconds": 0.096055583,
+            "compiler": {
+              "argument_bytes": 33792,
+              "bytes_accessed": 722516,
+              "flops": 140290,
+              "generated_code_bytes": 0,
+              "output_bytes": 536,
+              "source": "operator-workspace",
+              "temporary_bytes": 213360,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 670755,
+            "lowering_seconds": 0.375157166,
+            "output_bytes": 512,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.000796042,
+              "mean_seconds": 0.000766729,
+              "median_seconds": 0.000766729,
+              "min_seconds": 0.000737416,
+              "samples_seconds": [
+                0.000796042,
+                0.000737416
+              ],
+              "std_seconds": 2.9312999999999995e-05
+            }
+          },
+          {
+            "chunk_size": 32,
+            "compilation_seconds": 0.083030166,
+            "compiler": {
+              "argument_bytes": 33792,
+              "bytes_accessed": 2740244,
+              "flops": 558082,
+              "generated_code_bytes": 0,
+              "output_bytes": 536,
+              "source": "operator-workspace",
+              "temporary_bytes": 828144,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 273178,
+            "lowering_seconds": 0.127531709,
+            "output_bytes": 512,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.004295833,
+              "mean_seconds": 0.003061,
+              "median_seconds": 0.003061,
+              "min_seconds": 0.001826167,
+              "samples_seconds": [
+                0.004295833,
+                0.001826167
+              ],
+              "std_seconds": 0.0012348329999999999
+            }
+          },
+          {
+            "chunk_size": 64,
+            "compilation_seconds": 0.073371125,
+            "compiler": {
+              "argument_bytes": 33792,
+              "bytes_accessed": 5428931,
+              "flops": 1115136,
+              "generated_code_bytes": 0,
+              "output_bytes": 536,
+              "source": "operator-workspace",
+              "temporary_bytes": 1647624,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 275492,
+            "lowering_seconds": 0.118510333,
+            "output_bytes": 512,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.004603334,
+              "mean_seconds": 0.0032746249999999998,
+              "median_seconds": 0.0032746249999999998,
+              "min_seconds": 0.001945916,
+              "samples_seconds": [
+                0.001945916,
+                0.004603334
+              ],
+              "std_seconds": 0.001328709
+            }
+          }
+        ],
+        "compilation_seconds": 0.096055583,
+        "compiler": {
+          "argument_bytes": 33792,
+          "bytes_accessed": 722516,
+          "flops": 140290,
+          "generated_code_bytes": 0,
+          "output_bytes": 536,
+          "source": "operator-workspace",
+          "temporary_bytes": 213360,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 670755,
+        "logical_candidate_workspace_bytes": 65536,
+        "lowering_seconds": 0.375157166,
+        "output_bytes": 512,
+        "parity_chunk_sizes": [
+          1,
+          3,
+          8,
+          32,
+          64,
+          65
+        ],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000796042,
+          "mean_seconds": 0.000766729,
+          "median_seconds": 0.000766729,
+          "min_seconds": 0.000737416,
+          "samples_seconds": [
+            0.000796042,
+            0.000737416
+          ],
+          "std_seconds": 2.9312999999999995e-05
+        },
+        "width": 1024
+      },
+      {
+        "capacity": 128,
+        "chunk_routes": [
+          {
+            "chunk_size": 8,
+            "compilation_seconds": 0.185304333,
+            "compiler": {
+              "argument_bytes": 133120,
+              "bytes_accessed": 2885917,
+              "flops": 561154,
+              "generated_code_bytes": 0,
+              "output_bytes": 1048,
+              "source": "operator-workspace",
+              "temporary_bytes": 852336,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 536038,
+            "lowering_seconds": 0.53842375,
+            "output_bytes": 1024,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.013290334,
+              "mean_seconds": 0.012867209,
+              "median_seconds": 0.012867209,
+              "min_seconds": 0.012444084,
+              "samples_seconds": [
+                0.012444084,
+                0.013290334
+              ],
+              "std_seconds": 0.0004231249999999999
+            }
+          },
+          {
+            "chunk_size": 32,
+            "compilation_seconds": 0.090861334,
+            "compiler": {
+              "argument_bytes": 133120,
+              "bytes_accessed": 10949341,
+              "flops": 2232322,
+              "generated_code_bytes": 0,
+              "output_bytes": 1048,
+              "source": "operator-workspace",
+              "temporary_bytes": 3310320,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 531148,
+            "lowering_seconds": 0.240665,
+            "output_bytes": 1024,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.011667792,
+              "mean_seconds": 0.0116165835,
+              "median_seconds": 0.0116165835,
+              "min_seconds": 0.011565375,
+              "samples_seconds": [
+                0.011565375,
+                0.011667792
+              ],
+              "std_seconds": 5.120850000000024e-05
+            }
+          },
+          {
+            "chunk_size": 64,
+            "compilation_seconds": 0.177352833,
+            "compiler": {
+              "argument_bytes": 133120,
+              "bytes_accessed": 21700828,
+              "flops": 4460546,
+              "generated_code_bytes": 0,
+              "output_bytes": 1048,
+              "source": "operator-workspace",
+              "temporary_bytes": 6587632,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 517473,
+            "lowering_seconds": 0.383220416,
+            "output_bytes": 1024,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.005451459,
+              "mean_seconds": 0.005170292,
+              "median_seconds": 0.005170292,
+              "min_seconds": 0.004889125,
+              "samples_seconds": [
+                0.005451459,
+                0.004889125
+              ],
+              "std_seconds": 0.0002811669999999997
+            }
+          }
+        ],
+        "compilation_seconds": 0.185304333,
+        "compiler": {
+          "argument_bytes": 133120,
+          "bytes_accessed": 2885917,
+          "flops": 561154,
+          "generated_code_bytes": 0,
+          "output_bytes": 1048,
+          "source": "operator-workspace",
+          "temporary_bytes": 852336,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 536038,
+        "logical_candidate_workspace_bytes": 262144,
+        "lowering_seconds": 0.53842375,
+        "output_bytes": 1024,
+        "parity_chunk_sizes": [
+          1,
+          3,
+          8,
+          32,
+          64,
+          129
+        ],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.013290334,
+          "mean_seconds": 0.012867209,
+          "median_seconds": 0.012867209,
+          "min_seconds": 0.012444084,
+          "samples_seconds": [
+            0.012444084,
+            0.013290334
+          ],
+          "std_seconds": 0.0004231249999999999
+        },
+        "width": 4096
+      },
+      {
+        "capacity": 256,
+        "chunk_routes": [
+          {
+            "chunk_size": 8,
+            "compilation_seconds": 0.090250542,
+            "compiler": {
+              "argument_bytes": 528384,
+              "bytes_accessed": 11538485,
+              "flops": 2244610,
+              "generated_code_bytes": 0,
+              "output_bytes": 2072,
+              "source": "operator-workspace",
+              "temporary_bytes": 3408240,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 1507778,
+            "lowering_seconds": 0.973354125,
+            "output_bytes": 2048,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.051763875,
+              "mean_seconds": 0.0443967085,
+              "median_seconds": 0.0443967085,
+              "min_seconds": 0.037029542,
+              "samples_seconds": [
+                0.051763875,
+                0.037029542
+              ],
+              "std_seconds": 0.007367166500000001
+            }
+          },
+          {
+            "chunk_size": 32,
+            "compilation_seconds": 0.10976925,
+            "compiler": {
+              "argument_bytes": 528384,
+              "bytes_accessed": 43784688,
+              "flops": 8929282,
+              "generated_code_bytes": 0,
+              "output_bytes": 2072,
+              "source": "operator-workspace",
+              "temporary_bytes": 13239024,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 1505421,
+            "lowering_seconds": 0.452685791,
+            "output_bytes": 2048,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.022398416,
+              "mean_seconds": 0.021982854,
+              "median_seconds": 0.021982854,
+              "min_seconds": 0.021567292,
+              "samples_seconds": [
+                0.021567292,
+                0.022398416
+              ],
+              "std_seconds": 0.00041556200000000126
+            }
+          },
+          {
+            "chunk_size": 64,
+            "compilation_seconds": 0.083470708,
+            "compiler": {
+              "argument_bytes": 528384,
+              "bytes_accessed": 86780656,
+              "flops": 17842176,
+              "generated_code_bytes": 0,
+              "output_bytes": 2072,
+              "source": "operator-workspace",
+              "temporary_bytes": 26346736,
+              "unavailable_reason": null
+            },
+            "host_peak_bytes": 1508006,
+            "lowering_seconds": 0.558190042,
+            "output_bytes": 2048,
+            "warm": {
+              "count": 2,
+              "max_seconds": 0.026451708,
+              "mean_seconds": 0.024415687499999998,
+              "median_seconds": 0.024415687499999998,
+              "min_seconds": 0.022379667,
+              "samples_seconds": [
+                0.026451708,
+                0.022379667
+              ],
+              "std_seconds": 0.002036020500000001
+            }
+          }
+        ],
+        "compilation_seconds": 0.090250542,
+        "compiler": {
+          "argument_bytes": 528384,
+          "bytes_accessed": 11538485,
+          "flops": 2244610,
+          "generated_code_bytes": 0,
+          "output_bytes": 2072,
+          "source": "operator-workspace",
+          "temporary_bytes": 3408240,
+          "unavailable_reason": null
+        },
+        "host_peak_bytes": 1507778,
+        "logical_candidate_workspace_bytes": 1048576,
+        "lowering_seconds": 0.973354125,
+        "output_bytes": 2048,
+        "parity_chunk_sizes": [
+          1,
+          3,
+          8,
+          32,
+          64,
+          257
+        ],
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.051763875,
+          "mean_seconds": 0.0443967085,
+          "median_seconds": 0.0443967085,
+          "min_seconds": 0.037029542,
+          "samples_seconds": [
+            0.051763875,
+            0.037029542
+          ],
+          "std_seconds": 0.007367166500000001
+        },
+        "width": 16384
+      }
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": {
+    "D10": {
+      "baseline_bytes": 33280,
+      "candidate_bytes": 66560,
+      "capacity": 64,
+      "compiler_scaling_exponent": 1.9514259712866544,
+      "decision": "retain-baseline",
+      "declared_formula": "8*d",
+      "fraction_decision": "retain-baseline",
+      "logical_scaling_exponent": 1.0000000000000002,
+      "maximum_candidate_fraction": 0.5,
+      "scaling_matches_declared_formula": false
+    },
+    "D11": {
+      "baseline_bytes": 99840,
+      "candidate_bytes": 165888,
+      "capacity": 64,
+      "compiler_scaling_exponent": 2.2073184437401627,
+      "decision": "retain-baseline",
+      "declared_formula": "16*d",
+      "fraction_decision": "retain-baseline",
+      "logical_scaling_exponent": 1.0000000000000002,
+      "maximum_candidate_fraction": 0.5,
+      "scaling_matches_declared_formula": false
+    },
+    "D12": {
+      "baseline_bytes": 66048,
+      "candidate_bytes": 1024,
+      "capacity": 64,
+      "compiler_scaling_exponent": 1.0000000000000002,
+      "decision": "adopt",
+      "declared_formula": "8*d",
+      "fraction_decision": "adopt",
+      "logical_scaling_exponent": 1.0000000000000002,
+      "maximum_candidate_fraction": 0.5,
+      "scaling_matches_declared_formula": true
+    },
+    "D13": {
+      "baseline_bytes": 104861704,
+      "candidate_bytes": 3408240,
+      "capacity": 256,
+      "compiler_scaling_exponent": 1.9988326475573583,
+      "decision": "adopt",
+      "declared_formula": "8*min(T,8)*S",
+      "fraction_decision": "adopt",
+      "logical_scaling_exponent": 2.0,
+      "maximum_candidate_fraction": 0.5,
+      "scaling_matches_declared_formula": true
+    }
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "ef5f7534281a66da72f1082200becb751826d3d9e5729f0949491d6cab32999d",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment",
+        "gates",
+        "phase",
+        "process_peak_rss_bytes"
+      ],
+      "signature": "e62ce185298b47bddeb1cd84728de3d3d0fef9c2cb62806359842662506df09c"
+    },
+    "fingerprint": "e6a98bbe0860e1f856597496fbc686b618ed621baa1e96ba3c306ddf17f6cc3f",
+    "source_build_fingerprint": "9f3cbfc55d88e6be2a537b8469bca6431fffb9146a4eb982062c9fe5571d6c1c"
+  },
+  "phase": "candidate",
+  "process_peak_rss_bytes": 1845952512
+}

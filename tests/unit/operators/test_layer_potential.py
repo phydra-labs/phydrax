@@ -242,3 +242,96 @@ def test_layer_potential_scenario_1() -> None:
     assert bool(report.pde_membership_valid)
     assert bool(report.accuracy_supported)
     assert jnp.allclose(values, 1.0, atol=3e-3, rtol=3e-3)
+
+
+@pytest.mark.parametrize("kind", ["single", "double"])
+@pytest.mark.parametrize(
+    "chunk_size",
+    [None, 1, 3, 8, 16],
+    ids=["parallel", "one", "ragged", "eight", "oversized"],
+)
+def test_direct_layer_independent_dense_sum_and_evidence(
+    kind: Any, chunk_size: int | None
+) -> None:
+    panelization = _circle_panelization(panels=3, order=4)
+    density = jnp.linspace(-0.7, 1.1, panelization.node_count)
+    potential = phx.operators.LaplaceLayerPotential2D(
+        panelization, kind=kind, density=density
+    )
+    targets = jnp.asarray(
+        [[0.15, -0.25], [-0.1, 0.3], [0.4, 0.1], [-0.3, -0.2], [0.0, 0.0]]
+    )
+    difference = targets[:, None, :] - panelization.points[None, :, :]
+    squared_distance = jnp.sum(difference**2, axis=-1)
+    if kind == "single":
+        kernels = -jnp.log(squared_distance) / (4.0 * jnp.pi)
+    else:
+        kernels = jnp.sum(difference * panelization.normals[None, :, :], axis=-1) / (
+            2.0 * jnp.pi * squared_distance
+        )
+    expected = jnp.sum(kernels * (density * panelization.weights)[None, :], axis=-1)
+    plan = (
+        phx.operators.LayerEvaluationPlan2D()
+        if chunk_size is None
+        else phx.operators.LayerEvaluationPlan2D(
+            target_execution="chunked", target_chunk_size=chunk_size
+        )
+    )
+    result = phx.operators.evaluate_layer_potential(
+        potential, targets, plan, target_side="interior"
+    )
+    assert jnp.allclose(result.values, expected, rtol=2e-12, atol=2e-12)
+    assert bool(result.target_report.pde_membership_valid)
+    assert bool(result.evaluation_report.finite)
+    assert not bool(result.evaluation_report.accuracy_supported)
+    assert result.evaluation_report.error_kind == "unestimated-direct"
+    assert (
+        int(result.evaluation_report.num_evaluations)
+        == targets.shape[0] * panelization.node_count
+    )
+    report = result.evaluation_report
+    assert report.target_execution == ("parallel" if chunk_size is None else "chunked")
+    assert report.direct_target_chunk_size == (
+        targets.shape[0] if chunk_size is None else min(targets.shape[0], chunk_size)
+    )
+    assert report.direct_source_count == panelization.node_count
+    assert (
+        report.direct_workspace_pairs
+        == report.direct_target_chunk_size * panelization.node_count
+    )
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1])
+def test_layer_target_chunk_size_refuses_nonpositive(chunk_size: int) -> None:
+    with pytest.raises(ValueError, match="target_chunk_size must be positive"):
+        phx.operators.LayerEvaluationPlan2D(target_chunk_size=chunk_size)
+
+
+def test_layer_target_policy_identity_and_representation_independence() -> None:
+    parallel = phx.operators.LayerEvaluationPlan2D()
+    chunked = phx.operators.LayerEvaluationPlan2D(
+        target_execution="chunked", target_chunk_size=3
+    )
+    different = phx.operators.LayerEvaluationPlan2D(
+        target_execution="chunked", target_chunk_size=8
+    )
+    assert len({parallel.plan_id, chunked.plan_id, different.plan_id}) == 3
+    panelization = _circle_panelization(panels=2, order=2)
+    potential = phx.operators.LaplaceLayerPotential2D(
+        panelization, density=jnp.ones(panelization.node_count)
+    )
+    targets = jnp.asarray([[0.1, 0.2], [-0.2, 0.3]])
+    original = phx.operators.evaluate_layer_potential(
+        potential, targets, parallel, target_side="interior"
+    )
+    tiled = phx.operators.evaluate_layer_potential(
+        potential, targets, chunked, target_side="interior"
+    )
+    assert original.target_report.report_id == tiled.target_report.report_id
+    assert (
+        original.evaluation_report.representation_id
+        == tiled.evaluation_report.representation_id
+    )
+    assert (
+        original.evaluation_report.evaluation_id != tiled.evaluation_report.evaluation_id
+    )

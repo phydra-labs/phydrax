@@ -1,0 +1,21 @@
+{
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/discretization-preparation-bounds/benchmarks/_field_view_loop_compile.py",
+    "baseline"
+  ],
+  "comparison": "Same prepared band arrays, dtype, RHS and entry; baseline uses the observed original solve-loop body in memory only.",
+  "compilation_seconds": 23.70702491584234,
+  "compiler": {
+    "argument_bytes": 3969,
+    "bytes_accessed": 1121430,
+    "flops": 110971,
+    "generated_code_bytes": 0,
+    "output_bytes": 792,
+    "source": "isolated-native-banded-forward-loop-comparison",
+    "temporary_bytes": 94152,
+    "unavailable_reason": null
+  },
+  "lowering_seconds": 1.1038430829066783,
+  "mode": "baseline",
+  "size": 32
+}
