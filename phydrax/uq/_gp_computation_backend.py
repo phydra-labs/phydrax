@@ -16,6 +16,7 @@ import phydrax.ein as ein
 from ..kernels import AbstractPositiveDefiniteKernel
 from ..linalg import (
     AbstractLinearOperator,
+    ArraySpace,
     DenseCholesky,
     DenseLinearOperator,
     DifferentiationPolicy,
@@ -24,6 +25,7 @@ from ..linalg import (
     LinearSolvePolicy,
     LinearSystem,
     MaterializationPolicy,
+    OperatorCapabilities,
     OperatorProperties,
     prepare,
     PreparedLinearSolve,
@@ -62,6 +64,75 @@ class _PredictiveGeometry(NamedTuple):
     row_batch_size: int
     workspace_bytes: int
     kernel_entry_count: int
+
+
+class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
+    """Exact observation covariance with a bounded kernel-row workspace."""
+
+    kernel: AbstractPositiveDefiniteKernel
+    points: Array
+    variance: Array
+    max_workspace_bytes: int = eqx.field(static=True)
+    checkpoint: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kernel: AbstractPositiveDefiniteKernel,
+        points: Array,
+        variance: Array,
+        *,
+        max_workspace_bytes: int,
+        checkpoint: bool,
+    ) -> None:
+        if max_workspace_bytes < (points.shape[0] + 1) * points.dtype.itemsize:
+            raise ValueError(
+                "Kernel-action workspace cannot hold one kernel row and action output."
+            )
+        self.kernel = kernel
+        self.points = points
+        self.variance = variance
+        self.max_workspace_bytes = max_workspace_bytes
+        self.checkpoint = checkpoint
+        self.source = ArraySpace((points.shape[0],), dtype=points.dtype)
+        self.target = self.source
+        self.properties = OperatorProperties(
+            self_adjoint=True,
+            evidence={"self_adjoint": "construction"},
+        )
+        self.capabilities = OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=False,
+        )
+        self.batch_shape = ()
+        self.operator_id = f"gp-covariance:{points.shape[0]}"
+
+    def mv(self, vector: Array, /) -> Array:
+        vector = self.source.validate(vector)
+        action, _, _, _ = _kernel_matrix_action(
+            self.kernel,
+            self.points,
+            self.points,
+            DenseLinearOperator(vector[:, None]),
+            max_workspace_bytes=self.max_workspace_bytes,
+            checkpoint=self.checkpoint,
+            require_finite=True,
+        )
+        return action[:, 0] + self.variance * vector
+
+    def transpose_mv(self, vector: Array, /) -> Array:
+        return self.mv(vector)
+
+    def adjoint_mv(self, vector: Array, /) -> Array:
+        return self.mv(vector)
+
+    def diagonal(self) -> Array:
+        return self.kernel.diagonal(self.points) + self.variance
+
+    def _materialize(self) -> Array:
+        raise ValueError(
+            "GP covariance is action-only; dense materialization is disabled."
+        )
 
 
 def _build_projected_state(
@@ -141,6 +212,7 @@ def _kernel_matrix_action(
     *,
     max_workspace_bytes: int,
     checkpoint: bool,
+    require_finite: bool = False,
 ) -> tuple[Array, int, int, int]:
     left_count = left_points.shape[0]
     right_count = right_points.shape[0]
@@ -155,6 +227,12 @@ def _kernel_matrix_action(
 
     def one(point: Array) -> Array:
         kernel_row = kernel.matrix(point[None, ...], right_points)[0]
+        if require_finite:
+            kernel_row = eqx.error_if(
+                kernel_row,
+                jnp.any(~jnp.isfinite(kernel_row)),
+                "Iterative GP actions require finite covariance entries.",
+            )
         return actions.transpose_mv(kernel_row)
 
     body = jax.checkpoint(one) if checkpoint else one

@@ -39,10 +39,10 @@ LikelihoodCurvature: TypeAlias = Literal["hessian", "ggn"]
 class StructuredCurvatureEstimate(StrictModule):
     """Native curvature representation and retained spectral evidence."""
 
-    matrix: Array
-    diagonal: Array
-    eigenvalues: Array
-    eigenvectors: Array
+    matrix: Array | None
+    diagonal: Array | None
+    eigenvalues: Array | None
+    eigenvectors: Array | None
     successful: Array
     representation: str = eqx.field(static=True)
     rank: int | None = eqx.field(static=True)
@@ -51,9 +51,10 @@ class StructuredCurvatureEstimate(StrictModule):
 class StructuredPosteriorState(StrictModule):
     """Spectral posterior-precision state used by covariance and scale actions."""
 
-    precision: Array
-    eigenvalues: Array
-    eigenvectors: Array
+    precision: Array | None
+    diagonal_precision: Array | None
+    baseline_precision: Array
+    eigenvalues: Array | None
     successful: Array
 
 
@@ -365,39 +366,73 @@ def fit_structured_laplace(
         retained_values = spectrum.eigenvalues
         retained_vectors = spectrum.eigenvectors
         full_successful = spectrum.successful
-        matrix = jnp.zeros((0, 0), dtype=flat_position.dtype)
-        diagonal = jnp.zeros((dimension,), dtype=jnp.real(flat_position).dtype)
-        approximation = (retained_vectors * retained_values[None, :]) @ jnp.conj(
-            retained_vectors.T
-        )
+        matrix = None
+        diagonal = None
+    elif curvature == "diagonal":
+
+        def diagonal_entry(index: Array) -> Array:
+            unit = jnp.zeros_like(flat_position).at[index].set(1)
+            return jnp.real(curvature_mv(unit)[index])
+
+        diagonal = jax.lax.map(diagonal_entry, jnp.arange(dimension, dtype=jnp.int32))
+        matrix = None
+        retained_values = None
+        retained_vectors = None
+        full_successful = jnp.all(jnp.isfinite(diagonal))
     else:
         basis = jnp.eye(dimension, dtype=flat_position.dtype)
         matrix = jax.vmap(curvature_mv)(basis).T
         matrix = 0.5 * (matrix + jnp.conj(matrix.T))
-        diagonal = jnp.real(jnp.diag(matrix))
-        full_values, full_vectors, full_successful = _native_eigh(matrix)
-        if curvature == "full":
-            approximation = matrix
-            retained_values = full_values
-            retained_vectors = full_vectors
-        else:
-            approximation = jnp.diag(diagonal)
-            retained_values = diagonal
-            retained_vectors = jnp.eye(dimension, dtype=matrix.dtype)
+        diagonal = None
+        retained_values, retained_vectors, full_successful = _native_eigh(matrix)
 
-    precision = approximation + prior_value * jnp.eye(dimension, dtype=matrix.dtype)
-    precision = 0.5 * (precision + jnp.conj(precision.T))
-    precision_values, precision_vectors, precision_successful = _native_eigh(precision)
-    positive = jnp.min(precision_values) > tolerance_
-    precision_values = eqx.error_if(
-        precision_values,
-        ~(precision_successful & positive),
-        "Structured Laplace posterior precision is not positive definite.",
-    )
+    baseline_precision = jnp.asarray(prior_value, dtype=jnp.real(flat_position).dtype)
+    precision = None
+    diagonal_precision = None
+    precision_values = None
+    if curvature == "diagonal":
+        if diagonal is None:
+            raise RuntimeError("Diagonal curvature state is missing.")
+        diagonal_precision = diagonal + baseline_precision
+        positive = jnp.all(diagonal_precision > tolerance_)
+        precision_successful = full_successful & jnp.all(jnp.isfinite(diagonal_precision))
+        diagonal_precision = eqx.error_if(
+            diagonal_precision,
+            ~(precision_successful & positive),
+            "Structured Laplace posterior precision is not positive definite.",
+        )
+    else:
+        if retained_values is None or retained_vectors is None:
+            raise RuntimeError("Spectral curvature state is missing.")
+        precision_values = retained_values + baseline_precision
+        positive = jnp.all(precision_values > tolerance_)
+        if curvature != "full":
+            positive = positive & (baseline_precision > tolerance_)
+        precision_successful = full_successful & jnp.all(jnp.isfinite(precision_values))
+        precision_values = eqx.error_if(
+            precision_values,
+            ~(precision_successful & positive),
+            "Structured Laplace posterior precision is not positive definite.",
+        )
+        if curvature == "full":
+            if matrix is None:
+                raise RuntimeError("Full curvature state is missing.")
+            precision = matrix + baseline_precision * jnp.eye(
+                dimension, dtype=matrix.dtype
+            )
 
     def apply_spectral(vector: Array, power: float) -> Array:
-        projected = jnp.conj(precision_vectors.T) @ vector
-        return precision_vectors @ (projected * precision_values**power)
+        if diagonal_precision is not None:
+            return diagonal_precision**power * vector
+        if precision_values is None or retained_vectors is None:
+            raise RuntimeError("Spectral posterior state is missing.")
+        projected = jnp.conj(retained_vectors.T) @ vector
+        if curvature == "full":
+            return retained_vectors @ (projected * precision_values**power)
+        baseline_power = baseline_precision**power
+        return baseline_power * vector + retained_vectors @ (
+            projected * (precision_values**power - baseline_power)
+        )
 
     def scale_mv(vector: PyTree[Array]) -> PyTree[Array]:
         flat, restore = ravel_pytree(vector)
@@ -444,8 +479,9 @@ def fit_structured_laplace(
     )
     posterior_state = StructuredPosteriorState(
         precision,
+        diagonal_precision,
+        baseline_precision,
         precision_values,
-        precision_vectors,
         precision_successful & positive,
     )
     memory = _tree_nbytes((estimate, posterior_state))

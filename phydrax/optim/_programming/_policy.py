@@ -457,6 +457,7 @@ class ConvexSolvePolicy(StrictModule):
                 "materialization": {
                     "max_entries": materialization_.max_entries,
                     "max_bytes": materialization_.max_bytes,
+                    "max_workspace_bytes": materialization_.max_workspace_bytes,
                 },
                 "resources": {
                     "factorization_bytes": resources_.factorization_bytes,

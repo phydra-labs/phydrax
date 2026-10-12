@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "d2b9f891205f7851b9c594d643c7f9c1d67eb03ac138cea76d8ea8ca89fd925f",
+  "manifest_id": "f79b044066603d77b5d740a130fd7507ef3ebf8fe36f36e0643c4eec0fd00fca",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -24047,7 +24047,11 @@
       "phydrax.linalg.ArraySpace",
       "phydrax.linalg.AutoLinearMethod",
       "phydrax.linalg.AxisArraySpace",
+      "phydrax.linalg.BandedDefinitenessCertificate",
+      "phydrax.linalg.BandedEigenvalueBrackets",
       "phydrax.linalg.BandedLinearOperator",
+      "phydrax.linalg.BandedSingularValueBrackets",
+      "phydrax.linalg.BandedSpectrumStatus",
       "phydrax.linalg.BaseNonsingularity",
       "phydrax.linalg.BasePlusLowRankLinearOperator",
       "phydrax.linalg.BiCGStab",
@@ -24449,6 +24453,7 @@
       "phydrax.linalg.StackedLinearOperator",
       "phydrax.linalg.StochasticEstimate",
       "phydrax.linalg.StochasticProbeDiagnostics",
+      "phydrax.linalg.StochasticProbeExecution",
       "phydrax.linalg.StochasticProbeStatus",
       "phydrax.linalg.StructureCandidate",
       "phydrax.linalg.StructureCompilationPolicy",
@@ -24506,6 +24511,10 @@
       "phydrax.linalg.assemble_sparse",
       "phydrax.linalg.assemble_uniform_blocks",
       "phydrax.linalg.available_sparse_providers",
+      "phydrax.linalg.banded_definiteness_certificate",
+      "phydrax.linalg.banded_eigenvalue_brackets",
+      "phydrax.linalg.banded_singular_value_brackets",
+      "phydrax.linalg.banded_singular_value_certificate",
       "phydrax.linalg.bind_numeric",
       "phydrax.linalg.certify_interval_psd",
       "phydrax.linalg.certify_rectangular_rank",

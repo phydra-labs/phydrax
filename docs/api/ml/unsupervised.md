@@ -51,6 +51,15 @@ Its finite-difference reference is that merge algorithm, not full batch PCA.
 
 ## Covariance estimation
 
+Covariance estimators share one native prepared Cholesky factor between the
+requested precision matrix and covariance log-determinant. A precision override
+uses its factor for covariance and the negated precision log-determinant. Failed
+positive-definite preparation produces nonfinite geometry and the existing
+nonfinite fit status rather than a valid determinant.
+Robust fitting applies the prepared precision solve to centered samples rather
+than materializing an inverse for intermediate Mahalanobis distances. Dense
+precision remains a requested field of the final fitted covariance model.
+
 ::: phydrax.ml.covariance
     options:
         filters: ["!^_"]

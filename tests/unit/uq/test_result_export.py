@@ -13,6 +13,7 @@ import pytest
 import phydrax as phx
 from phydrax.uq._checkpoint import _json_value, _read_array_archive
 from phydrax.uq._result_export import _adapt_result
+from phydrax.uq._structured_laplace import StructuredCurvature
 
 
 def _problem() -> Any:
@@ -454,3 +455,19 @@ def test_bellman_and_rao_blackwellized_results_have_portable_archives(
     assert "initial_nonlinear_particles" in archives[2].fields
     assert "particle_indices" in archives[3].fields
     assert "lag_one_covariances" in archives[4].fields
+
+
+@pytest.mark.parametrize("curvature", ["full", "diagonal", "lanczos", "lobpcg"])
+def test_structured_route_archive_roundtrip(
+    tmp_path: Any, curvature: StructuredCurvature
+) -> None:
+    space = phx.uq.ParameterSpace(
+        jnp.zeros(6, dtype=jnp.float64), priors=phx.uq.Normal(0.0, 1.0)
+    )
+    weights = jnp.arange(1, 7, dtype=jnp.float64)
+    problem = phx.uq.PosteriorProblem(
+        space, lambda value: -0.5 * jnp.sum(weights * value**2)
+    )
+    result = phx.uq.fit_laplace(problem, curvature=curvature, rank=2, key=jr.key(32))
+    archive = _assert_archive_matches_adapter(result, tmp_path / f"{curvature}.phxuq")
+    assert archive.kind == "structured_laplace"

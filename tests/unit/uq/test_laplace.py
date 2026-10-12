@@ -5,12 +5,14 @@
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
+from phydrax.uq._structured_laplace import StructuredCurvature
 
 
 def _gaussian_problem() -> Any:
@@ -230,4 +232,106 @@ def test_laplace_scenario_1() -> None:
             curvature="diagonal",
             prior_precision=1.0,
             stationarity_tolerance=None,
+        )
+
+
+@pytest.mark.parametrize("curvature", ["full", "diagonal", "lanczos", "lobpcg"])
+@pytest.mark.parametrize("whitened", [False, True])
+def test_structured_actions_dense_reference(
+    curvature: StructuredCurvature, whitened: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import equinox as eqx
+    import numpy as np
+
+    from phydrax.linalg import eigen as eigen_api
+
+    original = eigen_api.eigensolve
+
+    def complex_phase_spectrum(*args: Any, **kwargs: Any) -> Any:
+        spectrum = original(*args, **kwargs)
+        return eqx.tree_at(
+            lambda value: value.eigenvectors,
+            spectrum,
+            spectrum.eigenvectors * jnp.asarray(1j, dtype=jnp.complex128),
+        )
+
+    monkeypatch.setattr(eigen_api, "eigensolve", complex_phase_spectrum)
+
+    scales = np.asarray([0.7, 1.1, 1.4, 0.9, 1.8, 1.2], dtype=np.float64)
+    hessian = np.diag(np.asarray([7, 5, 3, 2, 1, 0.5], dtype=np.float64))
+    hessian[0, 1] = hessian[1, 0] = 0.4
+    space = phx.uq.ParameterSpace(
+        jnp.zeros(6, dtype=jnp.float64),
+        priors=phx.uq.Normal(0.0, jnp.asarray(scales)),
+    )
+    problem = phx.uq.PosteriorProblem(
+        space, lambda value: -0.5 * value @ jnp.asarray(hessian) @ value
+    )
+    result = phx.uq.fit_laplace(
+        problem,
+        curvature=curvature,
+        prior_precision=None if whitened else 1.3,
+        rank=2,
+        key=jr.key(42),
+        tolerance=1e-5,
+    )
+    assert isinstance(result, phx.uq.StructuredLaplaceResult)
+    transform = np.diag(scales) if whitened else np.eye(6)
+    working_hessian = transform @ hessian @ transform
+    if curvature == "diagonal":
+        approximation = np.diag(np.diag(working_hessian))
+    elif curvature == "full":
+        approximation = working_hessian
+    else:
+        values, vectors = np.linalg.eigh(working_hessian)
+        selected = np.argsort(np.abs(values))[-2:]
+        approximation = (vectors[:, selected] * values[selected]) @ vectors[:, selected].T
+    precision = approximation + (1.0 if whitened else 1.3) * np.eye(6)
+    values, vectors = np.linalg.eigh(precision)
+    covariance = transform @ np.linalg.solve(precision, transform.T)
+    scale = transform @ (vectors * values**-0.5) @ vectors.T
+    probe = np.asarray([1, -2, 3, -4, 5, -6], dtype=np.float64)
+    np.testing.assert_allclose(
+        result.covariance_vector_product(jnp.asarray(probe)),
+        covariance @ probe,
+        rtol=2e-4,
+        atol=2e-5,
+    )
+    np.testing.assert_allclose(
+        result.scale_mv(jnp.asarray(probe)),
+        scale @ probe,
+        rtol=2e-4,
+        atol=2e-5,
+    )
+    key = jr.key(9)
+    noise = jr.normal(jr.split(key, 1)[0], (5, 6), dtype=jnp.float64)
+    np.testing.assert_allclose(
+        result.sample_unconstrained(key, num_samples=5),
+        np.asarray(noise) @ scale.T,
+        rtol=2e-4,
+        atol=2e-5,
+    )
+    expected_bytes = sum(
+        leaf.nbytes
+        for leaf in jax.tree.leaves((result.curvature_estimate, result.posterior_state))
+    )
+    assert result.approximate_memory_bytes == expected_bytes
+
+
+@pytest.mark.parametrize("curvature", ["full", "diagonal", "lanczos", "lobpcg"])
+def test_structured_indefinite_precision_refuses(curvature: StructuredCurvature) -> None:
+    space = phx.uq.ParameterSpace(
+        jnp.zeros(6, dtype=jnp.float64), priors=phx.uq.Normal(0.0, 1.0)
+    )
+    weights = jnp.asarray([-10.0, -9.0, 2.0, 1.0, 0.5, 0.1])
+    problem = phx.uq.PosteriorProblem(
+        space, lambda value: -0.5 * jnp.sum(weights * value**2)
+    )
+    with pytest.raises(Exception, match="not positive definite"):
+        phx.uq.fit_laplace(
+            problem,
+            curvature=curvature,
+            prior_precision=1.0,
+            rank=2,
+            key=jr.key(42),
         )
