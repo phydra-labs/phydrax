@@ -42,7 +42,7 @@ from ._fd_boundary_lowering import (
     PreparedFDBoundaryProgram,
     PreparedFDInterface,
 )
-from ._ir import PDEExpression, PDEProblemIR
+from ._ir import _evaluate_power, PDEExpression, PDEProblemIR
 from ._stencil_compile import StencilStateLayout
 from ._validate import validate_pde_ir
 
@@ -562,7 +562,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         if op == "divide":
             return values[0] / values[1]
         if op == "power":
-            return values[0] ** values[1]
+            return _evaluate_power(expression, values[0], values[1])
         if op == "sin":
             return jnp.sin(values[0])
         if op == "cos":
@@ -826,34 +826,14 @@ def _conservative_boundaries(
     return output
 
 
-def compile_finite_difference_pde(
+def _prepare_fd_lowering(
     problem: PDEProblemIR,
     grid: PreparedTensorGrid,
+    equations: tuple[tuple[str, PDEExpression], ...],
+    policy_: FiniteDifferenceCompilationPolicy,
     /,
-    *,
-    policy: FiniteDifferenceCompilationPolicy | None = None,
-) -> CompiledFiniteDifferenceDynamics:
-    """Compile a scalar/tensor strong PDE directly through prepared FD operators."""
-    if not isinstance(problem, PDEProblemIR) or not isinstance(grid, PreparedTensorGrid):
-        raise TypeError("problem and grid must be PDEProblemIR/PreparedTensorGrid.")
-    validate_pde_ir(problem)
-    unsupported_fields = tuple(
-        field.name
-        for field in problem.fields
-        if field.components != 1 or field.representation not in ("scalar", "pseudoscalar")
-    )
-    if unsupported_fields:
-        raise ValueError(
-            "Native FD compilation supports only scalar fields; "
-            f"component-valued fields={unsupported_fields!r}."
-        )
-    policy_ = FiniteDifferenceCompilationPolicy() if policy is None else policy
-    if not isinstance(policy_, FiniteDifferenceCompilationPolicy):
-        raise TypeError("policy must be FiniteDifferenceCompilationPolicy.")
-    equations = _evolution_rhs(problem)
+) -> _FiniteDifferenceExpressionEvaluator:
     field_names = tuple(field.name for field in problem.fields)
-    if set(name for name, _ in equations) != set(field_names):
-        raise ValueError("Native FD compiler requires one evolution equation per field.")
     spatial_coordinates = tuple(
         coordinate for coordinate in problem.coordinates if coordinate.kind == "space"
     )
@@ -970,6 +950,38 @@ def compile_finite_difference_pde(
         coordinate_axes,
         policy_,
     )
+    return evaluator
+
+
+def compile_finite_difference_pde(
+    problem: PDEProblemIR,
+    grid: PreparedTensorGrid,
+    /,
+    *,
+    policy: FiniteDifferenceCompilationPolicy | None = None,
+) -> CompiledFiniteDifferenceDynamics:
+    """Compile a scalar/tensor strong PDE directly through prepared FD operators."""
+    if not isinstance(problem, PDEProblemIR) or not isinstance(grid, PreparedTensorGrid):
+        raise TypeError("problem and grid must be PDEProblemIR/PreparedTensorGrid.")
+    validate_pde_ir(problem)
+    unsupported_fields = tuple(
+        field.name
+        for field in problem.fields
+        if field.components != 1 or field.representation not in ("scalar", "pseudoscalar")
+    )
+    if unsupported_fields:
+        raise ValueError(
+            "Native FD compilation supports only scalar fields; "
+            f"component-valued fields={unsupported_fields!r}."
+        )
+    policy_ = FiniteDifferenceCompilationPolicy() if policy is None else policy
+    if not isinstance(policy_, FiniteDifferenceCompilationPolicy):
+        raise TypeError("policy must be FiniteDifferenceCompilationPolicy.")
+    equations = _evolution_rhs(problem)
+    field_names = tuple(field.name for field in problem.fields)
+    if set(name for name, _ in equations) != set(field_names):
+        raise ValueError("Native FD compiler requires one evolution equation per field.")
+    evaluator = _prepare_fd_lowering(problem, grid, equations, policy_)
     return CompiledFiniteDifferenceDynamics(evaluator)
 
 
