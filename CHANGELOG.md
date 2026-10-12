@@ -253,6 +253,8 @@
   before execution.
 
 ### Added
+- Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
+  explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -2505,6 +2507,30 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Geometry queries stream polygon validity and ray parity, reuse prepared segment
+  hierarchies and refitted triangle BVHs, and consume selected closest geometry
+  rather than full pair tables. BRep winding retains its measured dense route.
+- Interface distance metrics use `target_chunk_size=None` to derive tiles from a
+  512 KiB pair-workspace budget; explicit positive target caps remain selectable.
+- Exact graph radius/kNN candidates and line-graph endpoint joins avoid dense
+  rejection tables while preserving radius boundaries, ties, and edge order.
+  Graph query defaults are explicit integer source/target tiles of 256/64;
+  graph-transfer and regional-processor defaults change static module identities.
+- Balanced and unbalanced Sinkhorn default to `block_size=256`; explicit `None`
+  selects dense execution. `TransportProvenance` records the block size, changing
+  provenance persistence and fingerprints.
+- Automatic non-float32 measure-aware attention uses differentiable bounded block
+  loops; float32 fused and explicit dense selections remain available.
+- Process-memory compression uses axis slicing and local Kraus contractions
+  rather than expanded Kronecker selectors, preserving failure and leakage evidence.
+- Exact ML neighbors, KDE, and density clustering derive tiles from positive
+  `workspace_bytes` budgets (4 MiB by default); small admitted cases use one tile.
+- Spectral clustering defaults to certified matrix-free `RestartedLanczos`;
+  explicit `DenseEigh` is budget-admitted. Spectral recipe identities and
+  `ClusterDiagnostics` archive templates change to retain eigenvalue, residual,
+  and method evidence; unresolved eigenspaces report invalid/nonconverged results.
+- Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
+  prepared query hierarchies; source model and revision identities are unchanged.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -3396,6 +3422,8 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Polygon's retained `intersection_pairs` leaf and implicit unbounded `None`
+  graph-query tile selections; graph and NN operator callers use positive integers.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,

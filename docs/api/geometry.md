@@ -101,6 +101,16 @@ sets. It reports the symmetric directed-nearest mean, symmetric Hausdorff
 distance, and a configurable percentile Hausdorff distance. Masks exclude
 fixed-capacity padding. Point extraction, isovalue, spacing, and physical units
 remain caller-owned and must be identical across compared interfaces.
+The positive static `chunk_size` source cap defaults to 1024.
+`target_chunk_size=None` (default) derives both tiles from a 512 KiB pair-table
+planning budget, counting broadcast cases and dtype item size and clamping to
+the actual point counts, with at least one pair per case. Small point sets
+within both caps therefore execute as one dense-cost tile; larger sets retain
+bounded pair tiles. An explicit positive `target_chunk_size` sets the target cap
+instead and bypasses byte-budget derivation. Both controls must be static under
+JIT. Every active target is considered; tiling changes neither mask/broadcast
+semantics nor the metric reductions. The planning budget does not bound
+input/output arrays, percentile sorting, other compiler scratch, or process RSS.
 
 ::: phydrax.geometry.phase_geometry_metrics
 
@@ -186,6 +196,56 @@ triangulations to the common geometry kernel; `MeshRegion` refits its prepared
 `TriangleBVH` to the current design vertices for distance, closest-point, and
 inside queries instead of forming query-by-face arrays.
 
+`SegmentBVH(vertices, edges, policy=...)` prepares the corresponding exact
+planar hierarchy from finite `(V, 2)` vertices and nonempty `(E, 2)` edge indices,
+canonicalized to float64 and int32. Zero-length edges are refused. The default
+build policy is `BVHBuildPolicy(leaf_size=8)`. `nearest_segments(points, k=1)`
+accepts `(..., 2)` points, supports `k=1` and `k=2`, and returns
+`BVHNearestResult.items` and `distance_squared` with shape `(..., k)`. Equal
+distances are ordered by original segment index; unavailable ranks are padded
+with index `-1` and squared distance `inf`. `query(points)` returns
+`SegmentQueryResult.closest_point`, Euclidean `distance`, original
+`segment_index`, and unit right-hand `normal`, preserving leading point axes.
+The normal for segment direction `(dx, dy)` is `(dy, -dx)` after normalization;
+no enclosing-region orientation is inferred. `refit(vertices)` preserves
+topology, segment order, and policy and validates shape only; callers own finite
+vertices and nonzero edge lengths in the new embedding. Selected projections
+and squared distances remain locally differentiable away from branch changes.
+`SegmentMesh`, compiled `Polygon`, and compiled `PlanarMeshRegion` reuse this
+prepared hierarchy instead of retaining point-by-edge projections. Ray parity
+scans fixed-width edge and point tiles.
+The closed `execution` selector is `"auto"` (default), `"bvh"`, or `"dense"`.
+Automatic execution evaluates small batches densely only when the conservative
+`64 * query_count * segment_count` logical-byte admission fits
+`dense_workspace_bytes` (default 512 KiB); larger batches traverse the hierarchy.
+Explicit dense execution refuses workloads above that budget instead of
+silently switching routes. Explicit BVH execution always bounds candidates to
+the leaf capacity and stacks to tree depth. This logical admission excludes
+prepared arrays and required outputs and is not a process-RSS bound. Both routes
+use the same original segment-index tie order; dense selection uses two linear
+minima, not a full sort.
+
+Polygon validity scans nonadjacent pairs in lexicographic tiles; the compiled
+polygon no longer retains an `intersection_pairs` leaf. Prepared segment
+hierarchies add numerical PyTree leaves to `SegmentMesh` and compiled planar and
+polygon kernels. These are intentional persistence representation changes;
+feature and physical source identities remain unchanged. Leaf serialization
+requires a template with the current hierarchy structure and static policy;
+old leaf layouts are not migrated. The public `segment_query_evidence(points,
+closest_points, selected_coordinate, selected_length, second_distance_squared)`
+takes selected `(..., 2)` points/projections and scalar leading-axis arrays.
+The coordinate is the clipped segment fraction; the second squared distance is
+to the nearest other segment, or `inf` if absent. It returns `(unique, regular,
+margin)` without inferring enclosing-loop topology. Endpoints and unresolved
+ties have false flags and zero margin, not a regular projection certificate.
+
+::: phydrax.geometry.SegmentBVH
+
+::: phydrax.geometry.SegmentQueryExecution
+
+::: phydrax.geometry.segment_query_evidence
+
+
 `discrete_operators(...)` constructs matrix-free DDG incidence, mass, Laplacian,
 and gradient operators from the same topology. Mesh adapters accept native
 triangle arrays, `TriangleMesh`, Meshio data, or Meshio-supported paths through
@@ -233,6 +293,14 @@ coordinate contract.
 surface patch per face, trim loops, tessellation-to-face identities, and an import
 report. Supported analytic OCCT surfaces remain analytic patches; other faces are
 represented by rational tensor-product B-splines.
+
+Fixed-topology B-Rep nearest queries prepare one triangle hierarchy, refit it
+to current realized vertices, and select one or two faces without a full
+face-distance sort. The second selected distance supplies closest-point
+uniqueness evidence, and projection derivatives remain local to those faces.
+This adds prepared hierarchy leaves but preserves model/revision source IDs.
+The existing dense solid-angle containment route is retained: the measured
+winding candidate did not pass its memory adoption gate.
 
 Rational spline evaluation uses the shared span-local B-spline kernel. Each
 curve query gathers `degree + 1` controls; each surface query gathers only the

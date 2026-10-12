@@ -8,7 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, lax
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
@@ -152,21 +152,71 @@ def _directed_nearest_distances(
     /,
     *,
     chunk_size: int,
+    target_chunk_size: int | None,
 ) -> Array:
-    target_square = jnp.sum(target * target, axis=-1)
-    blocks = []
-    for start in range(0, source.shape[-2], chunk_size):
-        stop = min(start + chunk_size, source.shape[-2])
-        block = source[..., start:stop, :]
-        block_square = jnp.sum(block * block, axis=-1, keepdims=True)
-        cross = ein.contract("...id,...jd->...ij", block, target)
-        squared = jnp.maximum(
-            block_square + target_square[..., None, :] - 2.0 * cross,
-            0.0,
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
+    source_tile = min(chunk_size, source_count)
+    if target_chunk_size is None:
+        # Shape/dtype arithmetic is static: small sets use one dense-cost tile.
+        pair_capacity = max(
+            1,
+            (512 * 1024)
+            // (max(1, math.prod(source.shape[:-2])) * source.dtype.itemsize),
         )
-        squared = jnp.where(target_mask[..., None, :], squared, jnp.inf)
-        blocks.append(jnp.sqrt(jnp.min(squared, axis=-1)))
-    return jnp.concatenate(blocks, axis=-1)
+        source_tile = min(source_tile, pair_capacity)
+        target_tile = min(target_count, max(1, pair_capacity // source_tile))
+    else:
+        target_tile = min(target_chunk_size, target_count)
+    source_padding = (-source_count) % source_tile
+    target_padding = (-target_count) % target_tile
+    point_padding = [(0, 0)] * source.ndim
+    point_padding[-2] = (0, source_padding)
+    source = jnp.pad(source, point_padding)
+    point_padding[-2] = (0, target_padding)
+    target = jnp.pad(target, point_padding)
+    mask_padding = [(0, 0)] * target_mask.ndim
+    mask_padding[-1] = (0, target_padding)
+    target_mask = jnp.pad(target_mask, mask_padding, constant_values=False)
+    case_shape = source.shape[:-2]
+    output = jnp.zeros(case_shape + (source_count + source_padding,), dtype=source.dtype)
+
+    def source_body(index: Array, distances: Array) -> Array:
+        start = index * source_tile
+        block = lax.dynamic_slice_in_dim(source, start, source_tile, axis=-2)
+        block_square = jnp.sum(block * block, axis=-1, keepdims=True)
+
+        def target_body(target_index: Array, minima: Array) -> Array:
+            target_start = target_index * target_tile
+            candidates = lax.dynamic_slice_in_dim(
+                target, target_start, target_tile, axis=-2
+            )
+            active = lax.dynamic_slice_in_dim(
+                target_mask, target_start, target_tile, axis=-1
+            )
+            target_square = jnp.sum(candidates * candidates, axis=-1)
+            cross = ein.contract("...id,...jd->...ij", block, candidates)
+            squared = jnp.maximum(
+                block_square + target_square[..., None, :] - 2.0 * cross, 0.0
+            )
+            # Padded candidates cannot displace an active target's minimum.
+            squared = jnp.where(active[..., None, :], squared, jnp.inf)
+            return jnp.minimum(minima, jnp.min(squared, axis=-1))
+
+        minima = lax.fori_loop(
+            0,
+            (target_count + target_padding) // target_tile,
+            target_body,
+            jnp.full(case_shape + (source_tile,), jnp.inf, dtype=source.dtype),
+        )
+        return lax.dynamic_update_slice_in_dim(
+            distances, jnp.sqrt(minima), start, axis=-1
+        )
+
+    output = lax.fori_loop(
+        0, (source_count + source_padding) // source_tile, source_body, output
+    )
+    return output[..., :source_count]
 
 
 def _masked_mean(values: Array, mask: Array, /) -> Array:
@@ -268,6 +318,7 @@ def interface_distance_metrics(
     reference_mask: ArrayLike | None = None,
     percentile: float = 0.95,
     chunk_size: int = 1024,
+    target_chunk_size: int | None = None,
 ) -> InterfaceDistanceMetrics:
     """Return symmetric mean, Hausdorff, and percentile-Hausdorff distances.
 
@@ -276,6 +327,15 @@ def interface_distance_metrics(
     symmetric mean averages the two directed nearest-point means; Hausdorff
     quantities take the maximum of their two directed values. Percentiles use
     linear interpolation over active directed distances.
+    ``chunk_size`` is a positive static source cap (default 1024).
+    ``target_chunk_size=None`` (default) derives tiles from a 512 KiB pair-table
+    planning budget using broadcast case count and dtype item size, clamped to
+    actual point counts and at least one pair per case. Small sets within both
+    caps use a single dense-cost tile. A positive explicit ``target_chunk_size``
+    sets the target cap instead and bypasses byte-budget derivation. These
+    controls must be static under JIT. The budget excludes inputs, outputs,
+    percentile sorting, and other compiler scratch; it is not a process-RSS
+    limit. All active targets remain candidates under either route.
     """
 
     predicted = _point_cloud(predicted_points, "predicted_points")
@@ -288,6 +348,9 @@ def interface_distance_metrics(
     chunk = int(chunk_size)
     if chunk <= 0:
         raise ValueError("chunk_size must be positive.")
+    target_chunk = None if target_chunk_size is None else int(target_chunk_size)
+    if target_chunk is not None and target_chunk <= 0:
+        raise ValueError("target_chunk_size must be positive.")
 
     predicted_count = predicted.shape[-2]
     reference_count = reference.shape[-2]
@@ -342,12 +405,14 @@ def interface_distance_metrics(
         reference,
         reference_active,
         chunk_size=chunk,
+        target_chunk_size=target_chunk,
     )
     reference_to_predicted = _directed_nearest_distances(
         reference,
         predicted,
         predicted_active,
         chunk_size=chunk,
+        target_chunk_size=target_chunk,
     )
     mean_distance = 0.5 * (
         _masked_mean(predicted_to_reference, predicted_active)

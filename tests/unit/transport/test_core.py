@@ -334,3 +334,81 @@ def test_nonconvergence_and_invalid_measures_remain_explicit() -> None:
             cost=phx.transport.SquaredEuclideanCost(),
         )
         jax.block_until_ready(mismatched.mass)
+
+
+@pytest.mark.parametrize("iterations", [1, 100], ids=["iteration-limit", "converged"])
+def test_default_blocks_preserve_dense_values_gradients_and_status(
+    iterations: int,
+) -> None:
+    points = jnp.asarray([[-0.9], [-0.2], [0.1], [0.7], [1.3]], dtype=jnp.float64)
+    targets = jnp.linspace(-1.1, 1.6, 263, dtype=jnp.float64)[:, None]
+    dense_solver = phx.transport.Sinkhorn(
+        0.5, max_iterations=iterations, tolerance=1e-9, block_size=None
+    )
+    bounded_solver = phx.transport.Sinkhorn(
+        0.5, max_iterations=iterations, tolerance=1e-9
+    )
+    problem = _problem(points, targets)
+    dense = dense_solver(problem)
+    bounded = bounded_solver(problem)
+    assert bounded.provenance.execution == "blockwise"
+    assert bounded.provenance.block_size == 256
+    assert dense.provenance.execution == "dense"
+    assert dense.provenance.block_size is None
+    assert bounded.diagnostics.status == dense.diagnostics.status
+    assert bool(bounded.converged) is (iterations == 100)
+    assert jnp.allclose(bounded.dense_plan(), dense.dense_plan(), rtol=1e-10, atol=1e-12)
+    assert jnp.allclose(
+        bounded.regularized_cost, dense.regularized_cost, rtol=1e-10, atol=1e-12
+    )
+    dense_gradient = jax.grad(
+        lambda values: dense_solver(_problem(values, targets)).regularized_cost
+    )(points)
+    bounded_gradient = jax.grad(
+        lambda values: bounded_solver(_problem(values, targets)).regularized_cost
+    )(points)
+    assert jnp.allclose(bounded_gradient, dense_gradient, rtol=1e-9, atol=1e-11)
+
+
+@pytest.mark.parametrize(
+    "execution,block_size",
+    [("dense", 2), ("blockwise", None), ("blockwise", 0), ("factorized", 2)],
+)
+def test_transport_provenance_refuses_inconsistent_pair_tiles(
+    execution: str, block_size: int | None
+) -> None:
+    with pytest.raises(ValueError, match="block_size"):
+        phx.transport.TransportProvenance(
+            "test",
+            "cost",
+            execution,
+            "unrolled",
+            "source",
+            "target",
+            block_size=block_size,
+        )
+
+
+@pytest.mark.parametrize("block_size", [None, 256], ids=["dense", "blockwise"])
+def test_transport_result_persists_static_provenance_and_plan(
+    block_size: int | None,
+) -> None:
+    import io
+
+    import numpy as np
+
+    result = phx.transport.Sinkhorn(
+        0.5, max_iterations=100, tolerance=1e-9, block_size=block_size
+    )(_problem([[0.0], [1.0]], [[0.2], [0.8]]))
+    assert result.converged
+    assert jax.tree.leaves(result.provenance) == []
+    buffer = io.BytesIO()
+    eqx.tree_serialise_leaves(buffer, result)
+    buffer.seek(0)
+    restored = eqx.tree_deserialise_leaves(buffer, result)
+    assert restored.provenance == result.provenance
+    assert restored.provenance.block_size == block_size
+    assert jax.tree.leaves(restored.provenance) == []
+    assert restored.diagnostics.status == result.diagnostics.status
+    np.testing.assert_array_equal(restored.dense_plan(), result.dense_plan())
+    np.testing.assert_array_equal(restored.regularized_cost, result.regularized_cost)

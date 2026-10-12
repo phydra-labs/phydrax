@@ -2075,6 +2075,27 @@ them with geometry moments, and fuses the scales by concatenation or learned
 gates. A radius is a dimensional coordinate quantity; `coordinate_scale` only
 normalizes features presented to learned kernels.
 
+`GraphKernelTransfer`, `GraphAttentionTransfer`, and `RegionalGraphProcessor`
+use explicit positive integer `target_chunk_size=64` defaults for exact blocked
+neighborhood construction. Their source tiles use the graph query default of
+256. The enclosing `GINO`, `GeometryInformedFlower`, `RIGNO`, and `GAOT`
+architectures keep their explicit `query_chunk_size=256` default and pass it
+as the target-tile size to encoder/decoder transfers (and RIGNO's regional
+processor). Both parameters require positive, non-boolean integers, not
+`None`. Tile sizes select the memory/parallelism tradeoff, not an approximate
+neighborhood.
+
+The layer target-tile sizes are immutable static module fields, not numerical
+PyTree leaves. They affect compilation structure, while array-only fingerprints
+exclude them. Identities that include static module metadata distinguish tile
+configurations. Direct-layer defaults change from `None` to 64, intentionally
+changing their default structural identity; enclosing architecture defaults
+remain 256.
+Equinox leaf serialization and operator training checkpoints use caller-supplied
+templates for these static values. Restore with the original tile configuration:
+the training checkpoint's parameter/role binding does not independently verify
+tile metadata.
+
 - `GINO` transfers irregular data to a tensor latent grid, applies an
   N-dimensional `FNO`, and decodes at arbitrary query points. Use
   `bounds_policy="global"` with fixed training-domain bounds for strict
@@ -2267,6 +2288,22 @@ quadrature enters attention normalization, source masks remove padded samples,
 and query masks remove padded outputs. Physical measures are required for
 sampling-density invariance; an omitted point-cloud measure becomes unit
 counting weights and changes the represented operator.
+
+For softmax attention, `execution="auto"` selects fused XLA when the resolved
+accumulation dtype is float32 and source-blockwise execution for other floating
+dtypes. With `accumulation_dtype="input"` (the default), this dtype is the common
+query/key/value dtype; explicit `"float32"` or `"float64"` overrides it.
+`execution="blockwise"` selects the source loop explicitly, and
+`execution="dense"` retains the full query-by-source softmax route. Explicit
+`"xla"` and `"cudnn"` retain their fused-provider contracts. Non-softmax kernels
+accept only `"auto"` or `"dense"`.
+
+Positive `block_size=256` bounds the source tile, not the query count: blockwise
+pair scratch scales with batch × heads × queries × min(block_size, sources).
+Blockwise execution preserves physical measure normalization and zero outputs
+for fully masked sources, with fixed block order and reverse-mode differentiation
+support. This numerical-route change does not add attention fields or alter
+model persistence structure.
 
 `UPT` compresses one source function to a fixed learned token set and decodes an
 independent query set. `ABUPT` extends that pattern to an `OperatorBranchGraph`

@@ -13,6 +13,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._doc import DOC_KEY0
+from phydrax._validation import positive_integer
 from phydrax.geometry.operator import RegionalGeometryMode, RegionalPointLatentGeometry
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -38,6 +39,10 @@ class RIGNO(AbstractOperatorModel):
     of regional nodes, processed by a measure-aware latent graph network, and
     decoded onto arbitrary query coordinates. Every graph is constructed per
     case inside JAX; no physical samples or messages can cross case boundaries.
+
+    ``query_chunk_size=256`` requires a positive, non-boolean integer, not
+    ``None``. It sets the static target-tile size of transfers and the regional
+    processor; their exact neighborhood queries use source tiles of 256.
     """
 
     operator_architecture = "RIGNO"
@@ -80,10 +85,11 @@ class RIGNO(AbstractOperatorModel):
         coordinate_scale: float = 1.0,
         source_key: str | None = None,
         query_channels: int = 0,
-        query_chunk_size: int | None = 256,
+        query_chunk_size: int = 256,
         assume_uniform_measure: bool = False,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
         if int(coord_dim) <= 0 or int(regional_count) <= 0:
             raise ValueError("coord_dim and regional_count must be positive.")
         if int(latent_channels) <= 0:

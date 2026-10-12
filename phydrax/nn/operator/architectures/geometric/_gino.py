@@ -13,6 +13,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._doc import DOC_KEY0
+from phydrax._validation import positive_integer
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -38,6 +39,10 @@ class GINO(AbstractOperatorModel):
     Source fields are transferred to a structured latent grid by a learned
     measure-aware graph integral, processed by an N-dimensional FNO, and
     decoded onto arbitrary query coordinates by a second graph integral.
+
+    ``query_chunk_size=256`` requires a positive, non-boolean integer, not
+    ``None``. It sets the static target-tile size of the encoder and decoder;
+    their exact neighborhood queries use source tiles of 256.
     """
 
     operator_architecture = "GINO"
@@ -77,10 +82,11 @@ class GINO(AbstractOperatorModel):
         coordinate_scale: float = 1.0,
         source_key: str | None = None,
         query_channels: int = 0,
-        query_chunk_size: int | None = 256,
+        query_chunk_size: int = 256,
         assume_uniform_measure: bool = False,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
         shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):
             raise ValueError("latent_shape rank must match coord_dim.")

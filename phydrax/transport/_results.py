@@ -18,7 +18,13 @@ from ._status import TransportStatus
 
 
 class TransportProvenance(StrictModule):
-    """Static numerical identity for one native transport solve."""
+    """Static numerical identity for one native transport solve.
+
+    ``block_size`` is a positive integer for ``execution="blockwise"`` and
+    ``None`` for every other execution mode. It is static metadata, absent from
+    numerical PyTree leaves, and participates in provenance identity. Archive
+    templates must retain this field and the selected execution route.
+    """
 
     method: str = eqx.field(static=True)
     cost: str = eqx.field(static=True)
@@ -27,6 +33,7 @@ class TransportProvenance(StrictModule):
     source: str = eqx.field(static=True)
     target: str = eqx.field(static=True)
     approximation: str = eqx.field(static=True)
+    block_size: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -39,7 +46,17 @@ class TransportProvenance(StrictModule):
         /,
         *,
         approximation: str = "exact",
+        block_size: int | None = None,
     ) -> None:
+        if block_size is not None:
+            if not isinstance(block_size, int) or isinstance(block_size, bool):
+                raise TypeError("block_size must be a positive integer or None.")
+            if block_size < 1:
+                raise ValueError("block_size must be positive or None.")
+        if (execution == "blockwise") != (block_size is not None):
+            raise ValueError(
+                "block_size must be positive for blockwise execution and None otherwise."
+            )
         self.method = str(method)
         self.cost = str(cost)
         self.execution = str(execution)
@@ -47,6 +64,7 @@ class TransportProvenance(StrictModule):
         self.source = str(source)
         self.target = str(target)
         self.approximation = str(approximation)
+        self.block_size = block_size
 
 
 class AbstractBalancedTransportPlan(StrictModule):

@@ -12,6 +12,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._doc import DOC_KEY0
+from phydrax._validation import positive_integer
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -44,7 +45,7 @@ def _magno_transfer(
     coordinate_scale: float,
     reference_measure: float,
     fusion: Literal["concat", "gated"],
-    target_chunk_size: int | None,
+    target_chunk_size: int,
     key: PRNGKey,
 ) -> MultiscaleGraphTransfer:
     keys = jr.split(key, len(radii) + 1)
@@ -83,6 +84,10 @@ class GAOT(AbstractOperatorModel):
     onto a structured 2D or 3D latent grid. A patchwise U-shaped transformer
     processes that grid before a multiscale attention decoder evaluates the
     result at arbitrary query coordinates.
+
+    ``query_chunk_size=256`` requires a positive, non-boolean integer, not
+    ``None``. It sets the static target-tile size of each multiscale transfer;
+    their exact neighborhood queries use source tiles of 256.
     """
 
     operator_architecture = "GAOT"
@@ -128,10 +133,11 @@ class GAOT(AbstractOperatorModel):
         reference_measure: float = 1.0,
         source_key: str | None = None,
         query_channels: int = 0,
-        query_chunk_size: int | None = 256,
+        query_chunk_size: int = 256,
         assume_uniform_measure: bool = False,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
         if int(coord_dim) not in (2, 3):
             raise ValueError("GAOT supports coord_dim 2 or 3.")
         shape = tuple(latent_shape)

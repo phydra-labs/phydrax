@@ -2,9 +2,11 @@
 
 `Sinkhorn` solves balanced entropic transport in stabilized log coordinates. The dense
 and blockwise modes implement the same equations and return the same result contract.
-Set `block_size=` to bound pairwise-cost and coupling working memory; leave it `None`
-for dense execution. Blockwise mode does not allocate the complete cost or plan during
-solving, statistics, or plan application.
+Both `Sinkhorn` and `UnbalancedSinkhorn` default to `block_size=256`, bounding
+pairwise-cost and coupling working memory. Pass `block_size=None` explicitly for
+dense execution. Blockwise mode does not allocate the complete cost or plan during
+solving, statistics, or plan application. `TransportProvenance.block_size` records
+the positive tile size for blockwise execution and is `None` for untiled routes.
 
 `early_stop=False` is the compiled-work default: all configured iterations run, while
 diagnostics preserve the first converged check. `early_stop=True` short-circuits after

@@ -8,9 +8,11 @@ from math import prod
 from typing import Any, Sequence
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
+from phydrax._validation import positive_integer
 
 from ..discretization.spatial import MortonNeighborQueryPlan
 from ..sparse import gather_routes, RowRelation
@@ -241,7 +243,7 @@ def _minimum_image(
     return jnp.where(periodic, wrapped, relative)
 
 
-def _query_neighbors_block(
+def _query_neighbors_blocked(
     source: jnp.ndarray,
     target: jnp.ndarray,
     source_mask: jnp.ndarray,
@@ -252,47 +254,93 @@ def _query_neighbors_block(
     radius: float | None,
     periodic_lengths: Sequence[float | None] | None,
     exclude_self: bool,
-    target_offset: int = 0,
-) -> QueryNeighborhood:
-    coord_dim = source.shape[-1]
+    target_chunk_size: int,
+    source_chunk_size: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Exact two-axis top-k with bounded candidate tiles and index ties."""
+    cases, source_count, coord_dim = source.shape
+    target_count = target.shape[1]
     lengths, periodic = _periodic_data(periodic_lengths, coord_dim)
-    relative = target[:, :, None, :] - source[:, None, :, :]
-    relative = _minimum_image(relative, lengths, periodic)
-    distance_squared = jnp.sum(relative * relative, axis=-1)
-    valid = source_mask[:, None, :] & target_mask[:, :, None]
-    if radius is not None:
-        valid = valid & (distance_squared <= float(radius) ** 2)
-    if exclude_self:
-        source_indices = jnp.arange(source.shape[1], dtype=jnp.int32)
-        target_indices = int(target_offset) + jnp.arange(target.shape[1], dtype=jnp.int32)
-        valid = valid & (target_indices[None, :, None] != source_indices[None, None, :])
+    target_tile = min(target_chunk_size, target_count)
+    source_tile = min(source_chunk_size, source_count)
+    source_blocks = (source_count + source_tile - 1) // source_tile
+    target_blocks = (target_count + target_tile - 1) // target_tile
+    case_indices = jnp.arange(cases, dtype=jnp.int32)[:, None, None]
 
-    sortable = jnp.where(valid, distance_squared, jnp.inf)
-    indices = jnp.argsort(sortable, axis=-1, stable=True)[..., :neighbors]
-    selected_distance_squared = jnp.take_along_axis(distance_squared, indices, axis=2)
-    selected_mask = jnp.take_along_axis(valid, indices, axis=2)
-    selected_relative = jnp.take_along_axis(
-        relative,
-        indices[..., None],
-        axis=2,
+    def target_block(block: jnp.ndarray) -> tuple[jnp.ndarray, ...]:
+        target_ids = block * target_tile + jnp.arange(target_tile, dtype=jnp.int32)
+        safe_target_ids = jnp.minimum(target_ids, target_count - 1)
+        points = target[:, safe_target_ids]
+        target_valid = target_mask[:, safe_target_ids] & (target_ids < target_count)
+        # Padding follows real sources even when an active input has NaN
+        # distance: failure routes retain the dense authority's index order.
+        initial = (
+            jnp.full((cases, target_tile, neighbors), jnp.nan, dtype=jnp.float64),
+            jnp.full((cases, target_tile, neighbors), source_count, dtype=jnp.int32),
+        )
+
+        def merge(
+            source_block: jnp.ndarray,
+            best: tuple[jnp.ndarray, jnp.ndarray],
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+            source_ids = source_block * source_tile + jnp.arange(
+                source_tile, dtype=jnp.int32
+            )
+            safe_source_ids = jnp.minimum(source_ids, source_count - 1)
+            relative = points[:, :, None, :] - source[:, None, safe_source_ids, :]
+            relative = _minimum_image(relative, lengths, periodic)
+            squared = jnp.sum(relative * relative, axis=-1)
+            valid = (
+                source_mask[:, None, safe_source_ids]
+                & target_valid[:, :, None]
+                & (source_ids < source_count)
+            )
+            if radius is not None:
+                valid &= squared <= float(radius) ** 2
+            if exclude_self:
+                valid &= target_ids[:, None] != source_ids[None, :]
+            sortable = jnp.where(valid, squared, jnp.inf)
+            sortable = jnp.where(source_ids < source_count, sortable, jnp.nan)
+            ids = jnp.broadcast_to(
+                jnp.where(source_ids < source_count, source_ids, source_count),
+                sortable.shape,
+            )
+            distances, indices = jax.lax.sort(
+                (
+                    jnp.concatenate((best[0], sortable), axis=-1),
+                    jnp.concatenate((best[1], ids), axis=-1),
+                ),
+                dimension=-1,
+                num_keys=2,
+                is_stable=True,
+            )
+            return distances[..., :neighbors], indices[..., :neighbors]
+
+        _, indices = jax.lax.fori_loop(0, source_blocks, merge, initial)
+        indices = jnp.minimum(indices, source_count - 1)
+        relative = points[:, :, None, :] - source[case_indices, indices]
+        relative = _minimum_image(relative, lengths, periodic)
+        squared = jnp.sum(relative * relative, axis=-1)
+        valid = source_mask[case_indices, indices] & target_valid[:, :, None]
+        if radius is not None:
+            valid &= squared <= float(radius) ** 2
+        if exclude_self:
+            valid &= target_ids[None, :, None] != indices
+        return (
+            indices,
+            jnp.where(valid[..., None], relative, 0),
+            jnp.where(valid, squared, 0),
+            valid,
+        )
+
+    blocks = jax.lax.map(target_block, jnp.arange(target_blocks, dtype=jnp.int32))
+    indices, relative, squared, valid = (
+        array.swapaxes(0, 1).reshape(
+            (cases, target_blocks * target_tile) + array.shape[3:]
+        )[:, :target_count]
+        for array in blocks
     )
-    selected_distance_squared = jnp.where(
-        selected_mask,
-        selected_distance_squared,
-        jnp.zeros_like(selected_distance_squared),
-    )
-    selected_relative = jnp.where(
-        selected_mask[..., None], selected_relative, jnp.zeros_like(selected_relative)
-    )
-    return QueryNeighborhood(
-        indices=indices.astype(jnp.int32),
-        relative=selected_relative,
-        distance=jnp.sqrt(jnp.maximum(selected_distance_squared, 0.0)),
-        distance_squared=selected_distance_squared,
-        mask=selected_mask,
-        count=jnp.sum(selected_mask, axis=-1, dtype=jnp.int32),
-        source_size=source.shape[1],
-    )
+    return indices, relative, squared, valid
 
 
 def _query_neighbors_morton(
@@ -398,10 +446,24 @@ def query_neighbors(
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
     exclude_self: bool = False,
-    target_chunk_size: int | None = None,
+    target_chunk_size: int = 64,
+    source_chunk_size: int = 256,
     plan: MortonNeighborQueryPlan | None = None,
 ) -> QueryNeighborhood:
-    """Return deterministic, fixed-capacity neighbors without leaving JAX."""
+    """Return deterministic, fixed-capacity neighbors without leaving JAX.
+
+    Without ``plan``, exact top-k selection uses target tiles of at most
+    ``target_chunk_size=64`` and source tiles of at most
+    ``source_chunk_size=256``. Both sizes require positive, non-boolean
+    integers; ``None`` does not select a dense route. Equal distances retain
+    source-index order, and radius boundaries are inclusive. Larger tiles
+    trade scratch memory for parallel work without changing neighborhoods.
+
+    A Morton ``plan`` selects its bounded candidate route instead; these tile
+    arguments are still validated but do not override the plan's capacities.
+    Evidence identifies the selected backend and refuses incomplete Morton
+    results. Required target-by-neighbor output storage is not tile-bounded.
+    """
     source_raw = jnp.asarray(source_points, dtype=jnp.float64)
     target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
@@ -426,8 +488,8 @@ def query_neighbors(
         raise ValueError("exclude_self requires equal source and target point counts.")
     if radius is not None and float(radius) <= 0.0:
         raise ValueError("radius must be positive when supplied.")
-    if target_chunk_size is not None and int(target_chunk_size) <= 0:
-        raise ValueError("target_chunk_size must be positive when supplied.")
+    target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
+    source_chunk_size = positive_integer(source_chunk_size, "source_chunk_size")
 
     cases = prod(case_shape) if case_shape else 1
     source = source.reshape((cases, source_count, source.shape[-1]))
@@ -452,45 +514,35 @@ def query_neighbors(
             exclude_self=exclude_self,
         )
 
-    chunk_size = target_count if target_chunk_size is None else int(target_chunk_size)
-    blocks = []
-    for start in range(0, target_count, chunk_size):
-        stop = min(start + chunk_size, target_count)
-        blocks.append(
-            _query_neighbors_block(
-                source,
-                target[:, start:stop],
-                source_valid,
-                target_valid[:, start:stop],
-                neighbors=neighbor_count,
-                radius=radius,
-                periodic_lengths=periodic_lengths,
-                exclude_self=exclude_self,
-                target_offset=start,
-            )
-        )
+    indices, relative, squared, valid = _query_neighbors_blocked(
+        source,
+        target,
+        source_valid,
+        target_valid,
+        neighbors=neighbor_count,
+        radius=radius,
+        periodic_lengths=periodic_lengths,
+        exclude_self=exclude_self,
+        target_chunk_size=target_chunk_size,
+        source_chunk_size=source_chunk_size,
+    )
+    finite = jnp.all(jnp.isfinite(source) | ~source_valid[..., None]) & jnp.all(
+        jnp.isfinite(target) | ~target_valid[..., None]
+    )
     return QueryNeighborhood(
-        indices=jnp.concatenate([block.indices for block in blocks], axis=1),
-        relative=jnp.concatenate([block.relative for block in blocks], axis=1),
-        distance=jnp.concatenate([block.distance for block in blocks], axis=1),
-        distance_squared=jnp.concatenate(
-            [block.distance_squared for block in blocks], axis=1
-        ),
-        mask=jnp.concatenate([block.mask for block in blocks], axis=1),
-        count=jnp.concatenate([block.count for block in blocks], axis=1),
+        indices=indices,
+        relative=relative,
+        distance=jnp.sqrt(jnp.maximum(squared, 0.0)),
+        distance_squared=squared,
+        mask=valid,
+        count=jnp.sum(valid, axis=-1, dtype=jnp.int32),
         source_size=source_count,
         evidence=QueryNeighborhoodEvidence(
             exact=jnp.asarray(True),
             complete=jnp.asarray(True),
-            finite=(
-                jnp.all(jnp.isfinite(source) | ~source_valid[..., None])
-                & jnp.all(jnp.isfinite(target) | ~target_valid[..., None])
-            ),
-            successful=(
-                jnp.all(jnp.isfinite(source) | ~source_valid[..., None])
-                & jnp.all(jnp.isfinite(target) | ~target_valid[..., None])
-            ),
-            backend="dense",
+            finite=finite,
+            successful=finite,
+            backend="blocked",
         ),
     )
 
@@ -537,7 +589,8 @@ def batched_knn_query_graph(
     source_measure_key: str = "quadrature_weight",
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
-    target_chunk_size: int | None = None,
+    target_chunk_size: int = 64,
+    source_chunk_size: int = 256,
     plan: MortonNeighborQueryPlan | None = None,
     weight_kind: MollifierKind | None = None,
     weight_radius: float | None = None,
@@ -546,7 +599,12 @@ def batched_knn_query_graph(
     query_edge_type: int = 0,
     validate: bool = True,
 ) -> QueryGraph:
-    """Build a JIT-compatible counts-first batch of bipartite query graphs."""
+    """Build a JIT-compatible counts-first batch of bipartite query graphs.
+
+    ``target_chunk_size=64`` and ``source_chunk_size=256`` are positive,
+    non-boolean integer bounds for exact selection, as in ``query_neighbors``.
+    Neither admits ``None``; a supplied Morton ``plan`` owns its route sizes.
+    """
     source_raw = jnp.asarray(source_points, dtype=jnp.float64)
     target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
@@ -593,6 +651,7 @@ def batched_knn_query_graph(
         radius=radius,
         periodic_lengths=periodic_lengths,
         target_chunk_size=target_chunk_size,
+        source_chunk_size=source_chunk_size,
         plan=plan,
     )
     node_count = source_count + target_count
@@ -719,11 +778,17 @@ def batched_knn_graph(
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
     include_self: bool = False,
-    target_chunk_size: int | None = None,
+    target_chunk_size: int = 64,
+    source_chunk_size: int = 256,
     plan: MortonNeighborQueryPlan | None = None,
     validate: bool = True,
 ) -> GraphIR:
-    """Build a JIT-compatible counts-first batch of homogeneous KNN graphs."""
+    """Build a JIT-compatible counts-first batch of homogeneous KNN graphs.
+
+    ``target_chunk_size=64`` and ``source_chunk_size=256`` are positive,
+    non-boolean integer bounds for exact selection, as in ``query_neighbors``.
+    Neither admits ``None``; a supplied Morton ``plan`` owns its route sizes.
+    """
     raw = jnp.asarray(points, dtype=jnp.float64)
     case_shape = tuple(raw.shape[:-2])
     point_array = _point_array("points", raw, case_shape)
@@ -752,6 +817,7 @@ def batched_knn_graph(
         periodic_lengths=periodic_lengths,
         exclude_self=not include_self,
         target_chunk_size=target_chunk_size,
+        source_chunk_size=source_chunk_size,
         plan=plan,
     )
     offsets = jnp.arange(case_count, dtype=jnp.int32)[:, None, None] * point_count

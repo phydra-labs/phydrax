@@ -13,6 +13,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax._fingerprint import array_tree_fingerprint
 from phydrax.geometry.operator import (
     RegionalPointLatentGeometry,
     TensorGridLatentGeometry,
@@ -752,3 +753,104 @@ def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(
     assert status.name == "GAOT"
     assert status.tier == "research"
     assert not status.recommendation_eligible
+
+
+def _graph_layer(
+    layer: str, target_chunk_size: Any
+) -> GraphKernelTransfer | GraphAttentionTransfer | RegionalGraphProcessor:
+    match layer:
+        case "kernel":
+            return GraphKernelTransfer(
+                in_channels=1,
+                out_channels=1,
+                coord_dim=1,
+                neighbors=1,
+                target_chunk_size=target_chunk_size,
+                key=jr.key(0),
+            )
+        case "attention":
+            return GraphAttentionTransfer(
+                in_channels=1,
+                out_channels=1,
+                coord_dim=1,
+                neighbors=1,
+                target_chunk_size=target_chunk_size,
+                key=jr.key(0),
+            )
+        case "regional":
+            return RegionalGraphProcessor(
+                1,
+                1,
+                target_chunk_size=target_chunk_size,
+                key=jr.key(0),
+            )
+        case _:
+            raise ValueError(f"Unknown test layer {layer!r}.")
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+@pytest.mark.parametrize(
+    "tile, error",
+    [(0, ValueError), (None, TypeError), (True, TypeError), (1.5, TypeError)],
+    ids=["nonpositive", "none", "boolean", "fractional"],
+)
+def test_geometric_graph_layers_refuse_invalid_target_tiles(
+    layer: str, tile: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="target_chunk_size must be"):
+        _graph_layer(layer, tile)
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+def test_graph_tile_static_identity_and_matching_template_roundtrip(
+    layer: str, tmp_path: Any
+) -> None:
+    model = _graph_layer(layer, 3)
+    alternative = _graph_layer(layer, 4)
+
+    assert model.target_chunk_size == 3
+    assert jax.tree_util.tree_structure(model) != jax.tree_util.tree_structure(
+        alternative
+    )
+    assert array_tree_fingerprint(model) == array_tree_fingerprint(alternative)
+
+    path = tmp_path / "graph-layer.eqx"
+    eqx.tree_serialise_leaves(path, model)
+    restored = eqx.tree_deserialise_leaves(path, _graph_layer(layer, 3))
+    assert restored.target_chunk_size == 3
+    assert eqx.tree_equal(restored, model)
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(model)
+
+
+@pytest.mark.parametrize("architecture", ["gino", "rigno", "gaot", "flower"])
+@pytest.mark.parametrize(
+    "tile, error",
+    [(0, ValueError), (None, TypeError), (True, TypeError), (1.5, TypeError)],
+    ids=["nonpositive", "none", "boolean", "fractional"],
+)
+def test_graph_architectures_refuse_invalid_query_tiles(
+    architecture: str, tile: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="query_chunk_size must be"):
+        match architecture:
+            case "gino":
+                phx.nn.operator.architectures.GINO(
+                    coord_dim=2, latent_shape=(4, 4), query_chunk_size=tile
+                )
+            case "rigno":
+                phx.nn.operator.architectures.RIGNO(
+                    coord_dim=2, regional_count=4, query_chunk_size=tile
+                )
+            case "gaot":
+                phx.nn.operator.architectures.GAOT(
+                    coord_dim=2,
+                    latent_shape=(4, 4),
+                    transfer_radius=1.0,
+                    query_chunk_size=tile,
+                )
+            case "flower":
+                phx.nn.operator.architectures.GeometryInformedFlower(
+                    coord_dim=2, latent_shape=(4, 4), query_chunk_size=tile
+                )
+            case _:
+                raise ValueError(f"Unknown test architecture {architecture!r}.")
