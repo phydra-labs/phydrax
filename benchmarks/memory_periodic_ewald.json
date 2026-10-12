@@ -1,0 +1,899 @@
+{
+  "cases": [
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 24111,
+      "minimum_pair_distance": 1.6124515496597098,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.953134875,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 2458626,
+            "flops": 1624368,
+            "generated_code_bytes": 0,
+            "output_bytes": 552,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 423584,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935521557,
+            17.7633343698045,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -94.48465238278342,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 3.552713678800501e-15,
+          "lowering_seconds": 1.131713375,
+          "output_bytes": 496,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.01398475,
+            "mean_seconds": 0.0106820205,
+            "median_seconds": 0.0106820205,
+            "min_seconds": 0.007379291,
+            "samples_seconds": [
+              0.01398475,
+              0.007379291
+            ],
+            "std_seconds": 0.0033027295000000005
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.445719791,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 172013,
+            "flops": 451640,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 46272,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935521557,
+            17.7633343698045,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -94.48465238278342,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.144824666,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.02619325,
+            "mean_seconds": 0.017068562500000002,
+            "median_seconds": 0.017068562500000002,
+            "min_seconds": 0.007943875,
+            "samples_seconds": [
+              0.02619325,
+              0.007943875
+            ],
+            "std_seconds": 0.0091246875
+          }
+        }
+      },
+      "plan_id": "ae3300c4863567da99d6483da62b88a6671c9333d349351264f9afb6e4f6b17a",
+      "preparation_host_peak_bytes": 177533,
+      "preparation_seconds": 0.32081095897592604,
+      "prepared_id": "6d6e97e00355e696fc8f7c48d728b367db0ed42fc4fa7b91fc31a7dbbfc43de4",
+      "shell": 1,
+      "size": 16,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 29896,
+      "minimum_pair_distance": 1.2093386622447824,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 1.17302675,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 2537968,
+            "flops": 1657386,
+            "generated_code_bytes": 0,
+            "output_bytes": 936,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 441224,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916076693142,
+            7.300575301367815e-30,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -206.59643602646344,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 1.3322676295501878e-15,
+          "lowering_seconds": 2.564790083,
+          "output_bytes": 880,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.003937166,
+            "mean_seconds": 0.003900416,
+            "median_seconds": 0.003900416,
+            "min_seconds": 0.003863666,
+            "samples_seconds": [
+              0.003937166,
+              0.003863666
+            ],
+            "std_seconds": 3.674999999999989e-05
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.375123208,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 182975,
+            "flops": 462478,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 47320,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916076693142,
+            7.300575301367817e-30,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -206.59643602646344,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.199167459,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.000892791,
+            "mean_seconds": 0.000673208,
+            "median_seconds": 0.000673208,
+            "min_seconds": 0.000453625,
+            "samples_seconds": [
+              0.000892791,
+              0.000453625
+            ],
+            "std_seconds": 0.000219583
+          }
+        }
+      },
+      "plan_id": "ae3300c4863567da99d6483da62b88a6671c9333d349351264f9afb6e4f6b17a",
+      "preparation_host_peak_bytes": 139194,
+      "preparation_seconds": 0.19391329190693796,
+      "prepared_id": "6d6e97e00355e696fc8f7c48d728b367db0ed42fc4fa7b91fc31a7dbbfc43de4",
+      "shell": 1,
+      "size": 32,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 31024,
+      "minimum_pair_distance": 1.2093386622447824,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 1.243700542,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 2823953,
+            "flops": 1722444,
+            "generated_code_bytes": 0,
+            "output_bytes": 1704,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 489800,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.47102190421698,
+            2.1506844664041458e-29,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -372.4844333640485,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 1.64661264601919e-14,
+          "lowering_seconds": 1.218394583,
+          "output_bytes": 1648,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.017153833,
+            "mean_seconds": 0.015887104,
+            "median_seconds": 0.015887104,
+            "min_seconds": 0.014620375,
+            "samples_seconds": [
+              0.014620375,
+              0.017153833
+            ],
+            "std_seconds": 0.0012667290000000003
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.422084541,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 255615,
+            "flops": 483374,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 47320,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.47102190421698,
+            2.1506844664041458e-29,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -372.4844333640485,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.215543625,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.004285042,
+            "mean_seconds": 0.002879125,
+            "median_seconds": 0.002879125,
+            "min_seconds": 0.001473208,
+            "samples_seconds": [
+              0.001473208,
+              0.004285042
+            ],
+            "std_seconds": 0.001405917
+          }
+        }
+      },
+      "plan_id": "ae3300c4863567da99d6483da62b88a6671c9333d349351264f9afb6e4f6b17a",
+      "preparation_host_peak_bytes": 139493,
+      "preparation_seconds": 0.23511649994179606,
+      "prepared_id": "6d6e97e00355e696fc8f7c48d728b367db0ed42fc4fa7b91fc31a7dbbfc43de4",
+      "shell": 1,
+      "size": 64,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 32560,
+      "minimum_pair_distance": 0.8062257748298546,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 1.4128225,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 3284625,
+            "flops": 1852556,
+            "generated_code_bytes": 0,
+            "output_bytes": 3240,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 560968,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397356861037,
+            1.2131514323926103,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.4617326727487,
+          "energy_closure_residual": 1.1368683772161603e-13,
+          "finite": true,
+          "force_balance_residual": 3.552713678800501e-14,
+          "lowering_seconds": 0.85998475,
+          "output_bytes": 3184,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.057524875,
+            "mean_seconds": 0.054052229,
+            "median_seconds": 0.054052229,
+            "min_seconds": 0.050579583,
+            "samples_seconds": [
+              0.050579583,
+              0.057524875
+            ],
+            "std_seconds": 0.003472646000000003
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.3758295,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 344863,
+            "flops": 525166,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 80408,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397356861037,
+            1.2131514323926103,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.4617326727487,
+          "energy_closure_residual": 1.1368683772161603e-13,
+          "finite": true,
+          "lowering_seconds": 0.289707166,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.029195792,
+            "mean_seconds": 0.0228833335,
+            "median_seconds": 0.0228833335,
+            "min_seconds": 0.016570875,
+            "samples_seconds": [
+              0.029195792,
+              0.016570875
+            ],
+            "std_seconds": 0.006312458500000001
+          }
+        }
+      },
+      "plan_id": "ae3300c4863567da99d6483da62b88a6671c9333d349351264f9afb6e4f6b17a",
+      "preparation_host_peak_bytes": 138486,
+      "preparation_seconds": 0.15424387506209314,
+      "prepared_id": "6d6e97e00355e696fc8f7c48d728b367db0ed42fc4fa7b91fc31a7dbbfc43de4",
+      "shell": 1,
+      "size": 128,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 23904,
+      "minimum_pair_distance": 1.6124515496597098,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.940401291,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 2808538,
+            "flops": 1756186,
+            "generated_code_bytes": 0,
+            "output_bytes": 552,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 432160,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935519073,
+            20.758535057132615,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -91.48945169545283,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 1.7763568394002505e-15,
+          "lowering_seconds": 1.03702375,
+          "output_bytes": 496,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.008326708,
+            "mean_seconds": 0.005048875,
+            "median_seconds": 0.005048875,
+            "min_seconds": 0.001771042,
+            "samples_seconds": [
+              0.001771042,
+              0.008326708
+            ],
+            "std_seconds": 0.003277833
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.349529083,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 212485,
+            "flops": 493686,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 46272,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935519073,
+            20.758535057132615,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -91.48945169545283,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.161186791,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.001510958,
+            "mean_seconds": 0.0012894579999999998,
+            "median_seconds": 0.0012894579999999998,
+            "min_seconds": 0.001067958,
+            "samples_seconds": [
+              0.001067958,
+              0.001510958
+            ],
+            "std_seconds": 0.00022150000000000002
+          }
+        }
+      },
+      "plan_id": "27da2771b9798aa829ba619a810281812047534efaac1a0d29b15c5370d5990a",
+      "preparation_host_peak_bytes": 143569,
+      "preparation_seconds": 0.3048359998501837,
+      "prepared_id": "b667912922d44e49c581d631bdf512d1812659c87df340d23d889a7621ac936f",
+      "shell": 2,
+      "size": 16,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 29896,
+      "minimum_pair_distance": 1.2093386622447824,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 1.464712458,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 3151433,
+            "flops": 1908374,
+            "generated_code_bytes": 0,
+            "output_bytes": 936,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 524424,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916075369481,
+            27.447936543024017,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -179.14849948357178,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 3.352873534367973e-14,
+          "lowering_seconds": 0.996233375,
+          "output_bytes": 880,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.014627459,
+            "mean_seconds": 0.014490625,
+            "median_seconds": 0.014490625,
+            "min_seconds": 0.014353791,
+            "samples_seconds": [
+              0.014627459,
+              0.014353791
+            ],
+            "std_seconds": 0.0001368340000000006
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.456312667,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 248535,
+            "flops": 543724,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 47320,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916075369481,
+            27.447936543024017,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -179.14849948357178,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.0661905,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.010383041,
+            "mean_seconds": 0.0094151665,
+            "median_seconds": 0.0094151665,
+            "min_seconds": 0.008447292,
+            "samples_seconds": [
+              0.010383041,
+              0.008447292
+            ],
+            "std_seconds": 0.0009678745000000002
+          }
+        }
+      },
+      "plan_id": "27da2771b9798aa829ba619a810281812047534efaac1a0d29b15c5370d5990a",
+      "preparation_host_peak_bytes": 143586,
+      "preparation_seconds": 0.2953505420591682,
+      "prepared_id": "b667912922d44e49c581d631bdf512d1812659c87df340d23d889a7621ac936f",
+      "shell": 2,
+      "size": 32,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 31024,
+      "minimum_pair_distance": 1.2093386622447824,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 1.555804375,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 4378089,
+            "flops": 2211766,
+            "generated_code_bytes": 0,
+            "output_bytes": 1704,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 746952,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.4710219038798,
+            74.81360037122961,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -297.67083299315607,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 4.5890375097385437e-14,
+          "lowering_seconds": 1.123365125,
+          "output_bytes": 1648,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.057712,
+            "mean_seconds": 0.051965625,
+            "median_seconds": 0.051965625,
+            "min_seconds": 0.04621925,
+            "samples_seconds": [
+              0.057712,
+              0.04621925
+            ],
+            "std_seconds": 0.005746374999999998
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 0.0,
+          "compilation_seconds": 0.374869583,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 578327,
+            "flops": 643020,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 191768,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.4710219038798,
+            74.81360037122961,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -297.67083299315607,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.143819,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.031434542,
+            "mean_seconds": 0.019529854500000002,
+            "median_seconds": 0.019529854500000002,
+            "min_seconds": 0.007625167,
+            "samples_seconds": [
+              0.031434542,
+              0.007625167
+            ],
+            "std_seconds": 0.0119046875
+          }
+        }
+      },
+      "plan_id": "27da2771b9798aa829ba619a810281812047534efaac1a0d29b15c5370d5990a",
+      "preparation_host_peak_bytes": 143196,
+      "preparation_seconds": 0.2179841659963131,
+      "prepared_id": "b667912922d44e49c581d631bdf512d1812659c87df340d23d889a7621ac936f",
+      "shell": 2,
+      "size": 64,
+      "translation_tile_size": 16
+    },
+    {
+      "logical_displacement_workspace_bytes": 98304,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 32560,
+      "minimum_pair_distance": 0.8062257748298546,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "baseline_energy_defect": 1.1368683772161603e-13,
+          "compilation_seconds": 1.332656084,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 6306232,
+            "flops": 2818548,
+            "generated_code_bytes": 0,
+            "output_bytes": 3240,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 1072200,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.7639735858434,
+            1.5057468231020177,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.1691372992724,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "force_balance_residual": 1.1368683772161603e-13,
+          "lowering_seconds": 1.13446475,
+          "output_bytes": 3184,
+          "stress_symmetry_residual": 0.0,
+          "successful": true,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.266454125,
+            "mean_seconds": 0.21817375,
+            "median_seconds": 0.21817375,
+            "min_seconds": 0.169893375,
+            "samples_seconds": [
+              0.169893375,
+              0.266454125
+            ],
+            "std_seconds": 0.048280374999999986
+          }
+        },
+        "forward": {
+          "baseline_energy_defect": 1.1368683772161603e-13,
+          "compilation_seconds": 0.470791,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 974903,
+            "flops": 841612,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 382232,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.7639735858434,
+            1.5057468231020177,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.1691372992724,
+          "energy_closure_residual": 0.0,
+          "finite": true,
+          "lowering_seconds": 0.180815625,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.059890916,
+            "mean_seconds": 0.055033812,
+            "median_seconds": 0.055033812,
+            "min_seconds": 0.050176708,
+            "samples_seconds": [
+              0.050176708,
+              0.059890916
+            ],
+            "std_seconds": 0.004857104000000001
+          }
+        }
+      },
+      "plan_id": "27da2771b9798aa829ba619a810281812047534efaac1a0d29b15c5370d5990a",
+      "preparation_host_peak_bytes": 143316,
+      "preparation_seconds": 0.2743650828488171,
+      "prepared_id": "b667912922d44e49c581d631bdf512d1812659c87df340d23d889a7621ac936f",
+      "shell": 2,
+      "size": 128,
+      "translation_tile_size": 16
+    }
+  ],
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/application-kernel-bounds/benchmarks/memory_periodic_ewald.py",
+    "--sizes",
+    "16",
+    "32",
+    "64",
+    "128",
+    "--shells",
+    "1",
+    "2",
+    "--repeats",
+    "2"
+  ],
+  "configuration": {
+    "baseline": false,
+    "output": null,
+    "pair_tile_size": 16,
+    "repeats": 2,
+    "shells": [
+      1,
+      2
+    ],
+    "sizes": [
+      16,
+      32,
+      64,
+      128
+    ],
+    "translation_tile_size": 16
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": [
+    {
+      "baseline_bytes": 3540056,
+      "candidate_bytes": 80408,
+      "capacity": 128,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5,
+      "phase": "forward",
+      "shell": 1
+    },
+    {
+      "baseline_bytes": 67379208,
+      "candidate_bytes": 560968,
+      "capacity": 128,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5,
+      "phase": "force-and-strain",
+      "shell": 1
+    },
+    {
+      "baseline_bytes": 16385112,
+      "candidate_bytes": 382232,
+      "capacity": 128,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5,
+      "phase": "forward",
+      "shell": 2
+    },
+    {
+      "baseline_bytes": 311942536,
+      "candidate_bytes": 1072200,
+      "capacity": 128,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5,
+      "phase": "force-and-strain",
+      "shell": 2
+    }
+  ],
+  "identity": {
+    "benchmark_driver_fingerprint": "63056cd4b3057ce95f65042233bd4672a08a57bf031ba3d417838f4e3edd2c46",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "gates",
+        "process_peak_rss_bytes",
+        "scaling"
+      ],
+      "signature": "c7198505bf92be73c7fc33fb7201b8df9219376c49b748e87383070a4ed692fb"
+    },
+    "fingerprint": "268adfc4b0de8caa35746d568a50bd06262ea22e66a12d8ae081e990c2120e40",
+    "source_build_fingerprint": "b9261dc92b8ac735021de2c0e7764b97b5a3e92f71e0cbed7ddc56b7c13854eb"
+  },
+  "process_peak_rss_bytes": 1621786624,
+  "scaling": [
+    {
+      "compiler_derivative_exponent": 0.13664926471357217,
+      "host_minimum_distance_exponent": 0.13536598753327944,
+      "logical_displacement_exponent": 0.0,
+      "logical_host_pair_exponent": 0.0,
+      "maximum_doubled_derivative_workspace_ratio": 1.1453001224989792,
+      "maximum_doubled_logical_workspace_ratio": 1.0,
+      "shell": 1
+    },
+    {
+      "compiler_derivative_exponent": 0.4443091595881504,
+      "host_minimum_distance_exponent": 0.13909781788191614,
+      "logical_displacement_exponent": 0.0,
+      "logical_host_pair_exponent": 0.0,
+      "maximum_doubled_derivative_workspace_ratio": 1.435433602159175,
+      "maximum_doubled_logical_workspace_ratio": 1.0,
+      "shell": 2
+    }
+  ]
+}

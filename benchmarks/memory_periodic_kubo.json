@@ -1,0 +1,383 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.247323917,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 1530392,
+        "flops": 478444,
+        "generated_code_bytes": 0,
+        "output_bytes": 103109,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 499992,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.2376948208014096,
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "host_allocation_peak_bytes": 197905,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.214434084,
+      "maximum_relative_reference_defect": 8.662042236374904e-16,
+      "parallel": {
+        "compilation_seconds": 0.390575042,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 1530392,
+          "flops": 478444,
+          "generated_code_bytes": 0,
+          "output_bytes": 103109,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 499992,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 8,
+        "lowering_seconds": 0.02632175,
+        "maximum_relative_reference_defect": 8.662042236374904e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.025017084,
+          "mean_seconds": 0.011563153,
+          "median_seconds": 0.007889084,
+          "min_seconds": 0.001783291,
+          "samples_seconds": [
+            0.001783291,
+            0.007889084,
+            0.025017084
+          ],
+          "std_seconds": 0.009834509699837032
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.254651875,
+      "process_peak_rss_bytes": 1413513216,
+      "retained_output_bytes": 102917,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.00111875,
+        "mean_seconds": 0.0007157363333333333,
+        "median_seconds": 0.000530125,
+        "min_seconds": 0.000498334,
+        "samples_seconds": [
+          0.00111875,
+          0.000530125,
+          0.000498334
+        ],
+        "std_seconds": 0.0002852690876585746
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.27147825,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 2218913,
+        "flops": 484950,
+        "generated_code_bytes": 0,
+        "output_bytes": 106757,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 734328,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.18006040714475202,
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "host_allocation_peak_bytes": 189014,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.122705416,
+      "maximum_relative_reference_defect": 9.634247200486494e-16,
+      "parallel": {
+        "compilation_seconds": 0.288761625,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 3151352,
+          "flops": 1620100,
+          "generated_code_bytes": 0,
+          "output_bytes": 106757,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 1286424,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 32,
+        "lowering_seconds": 0.078086042,
+        "maximum_relative_reference_defect": 7.43979921229833e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.00141825,
+          "mean_seconds": 0.0012774583333333334,
+          "median_seconds": 0.001249875,
+          "min_seconds": 0.00116425,
+          "samples_seconds": [
+            0.00141825,
+            0.001249875,
+            0.00116425
+          ],
+          "std_seconds": 0.0001055134437195354
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.200420834,
+      "process_peak_rss_bytes": 1448230912,
+      "retained_output_bytes": 106565,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.014361,
+        "mean_seconds": 0.008268347,
+        "median_seconds": 0.00627025,
+        "min_seconds": 0.004173791,
+        "samples_seconds": [
+          0.014361,
+          0.00627025,
+          0.004173791
+        ],
+        "std_seconds": 0.004392349448641885
+      }
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.410097,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 2361485,
+        "flops": 524406,
+        "generated_code_bytes": 0,
+        "output_bytes": 121349,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 732920,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.1817844008175065,
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "host_allocation_peak_bytes": 188863,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.051879417,
+      "maximum_relative_reference_defect": 1.3061506031201141e-15,
+      "parallel": {
+        "compilation_seconds": 0.330306458,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 9642212,
+          "flops": 6186724,
+          "generated_code_bytes": 0,
+          "output_bytes": 121349,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 4442392,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 128,
+        "lowering_seconds": 0.082698917,
+        "maximum_relative_reference_defect": 8.436257901681264e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.003108792,
+          "mean_seconds": 0.0027766946666666664,
+          "median_seconds": 0.00303475,
+          "min_seconds": 0.002186542,
+          "samples_seconds": [
+            0.003108792,
+            0.002186542,
+            0.00303475
+          ],
+          "std_seconds": 0.0004183942972215988
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.081347333,
+      "process_peak_rss_bytes": 1463222272,
+      "retained_output_bytes": 121157,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.026347667,
+        "mean_seconds": 0.014428722333333333,
+        "median_seconds": 0.011714125,
+        "min_seconds": 0.005224375,
+        "samples_seconds": [
+          0.011714125,
+          0.026347667,
+          0.005224375
+        ],
+        "std_seconds": 0.008834596585429405
+      }
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.39177775,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 3080349,
+        "flops": 719094,
+        "generated_code_bytes": 0,
+        "output_bytes": 179717,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 803448,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.17741191610545612,
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "host_allocation_peak_bytes": 188760,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.176878542,
+      "maximum_relative_reference_defect": 2.0330782641204657e-15,
+      "parallel": {
+        "compilation_seconds": 0.263447625,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 35827952,
+          "flops": 24499300,
+          "generated_code_bytes": 0,
+          "output_bytes": 179717,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 17006872,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 512,
+        "lowering_seconds": 0.050905,
+        "maximum_relative_reference_defect": 1.2745847491070294e-15,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.026861791,
+          "mean_seconds": 0.018224847,
+          "median_seconds": 0.019803,
+          "min_seconds": 0.00800975,
+          "samples_seconds": [
+            0.019803,
+            0.026861791,
+            0.00800975
+          ],
+          "std_seconds": 0.007776794011029524
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.173373667,
+      "process_peak_rss_bytes": 1494876160,
+      "retained_output_bytes": 179525,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.019623459,
+        "mean_seconds": 0.012190986333333334,
+        "median_seconds": 0.009470458,
+        "min_seconds": 0.007479042,
+        "samples_seconds": [
+          0.009470458,
+          0.007479042,
+          0.019623459
+        ],
+        "std_seconds": 0.005318061794603013
+      }
+    }
+  ],
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax/.venv/bin/python",
+    "-m",
+    "benchmarks.memory_periodic_kubo",
+    "--phase",
+    "candidate"
+  ],
+  "configuration": {
+    "bands": 8,
+    "dimension": 3,
+    "k_count": 16,
+    "phase": "candidate",
+    "repeats": 3,
+    "sizes": [
+      8,
+      32,
+      128,
+      512
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 16859288,
+    "candidate_bytes": 803448,
+    "capacity": 512,
+    "compiler_scaling_matches": true,
+    "decision": "adopt",
+    "logical_scaling_matches": true,
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "89fa460fa978be60ec221c3893e9782c0239a7e2fad2bcd9f768951d0e1c5292",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "gate",
+        "scaling"
+      ],
+      "signature": "755531dc997e77015401aa6231bc03cd11574b589018d849a5a56f70ec8fd92e"
+    },
+    "fingerprint": "f0c38467bc3c2c31fc6d33e22fdc4e0aadf8a826a59c54a8ad22eed0647d8afe",
+    "source_build_fingerprint": "e59be46e5e7d5018e9ca117e81bff6c58c3913e8bf9730193a34b8516fce0fc5"
+  },
+  "scaling": {
+    "compiler_fitted_exponent": 0.10250650249748305,
+    "compiler_formula": "constant transition workspace plus O(F * dimension**2) passivity/output scratch",
+    "controlling_capacity": "frequency_count",
+    "declared_compiler_exponent_upper_bound": 1.1,
+    "declared_logical_exponent": 0.0,
+    "declared_workspace_formula": "16 * min(F, frequency_chunk_size) * K * bands**2 * dimension**2",
+    "logical_fitted_exponent": 0.0
+  }
+}

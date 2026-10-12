@@ -11,6 +11,7 @@ import pytest
 
 from phydrax.finance.core import FinancialScenarioSet, PhysicalLaw, StressLaw
 from phydrax.finance.market import QuoteKey, RiskFactorKey, RiskFactorLayout
+from phydrax.finance.risk import _scenarios as scenario_operations
 from phydrax.finance.risk._attribution import (
     brinson_attribution,
     explain_pnl,
@@ -218,3 +219,105 @@ def test_risk_scenarios_backtests_scenario_3() -> None:
     np.testing.assert_array_equal(result.selected_candidate, jnp.zeros(outer_count))
     np.testing.assert_allclose(result.out_of_sample_returns, 0.02)
     assert bool(result.valid)
+
+
+@pytest.mark.parametrize(
+    "scenario_count", [5, 64], ids=["five-scenarios", "64-scenarios"]
+)
+@pytest.mark.parametrize(
+    "representative_count", [1, 4], ids=["one-representative", "four-representatives"]
+)
+def test_scenario_reduction_matches_dense_reference(
+    scenario_count: int, representative_count: int
+) -> None:
+    index = np.arange(scenario_count, dtype=np.float64)
+    paths = np.stack(
+        (
+            np.stack((index / scenario_count, np.sin(index)), axis=1),
+            np.stack((np.cos(index), index**2 / scenario_count**2), axis=1),
+        ),
+        axis=1,
+    )
+    weights = np.arange(1, scenario_count + 1, dtype=np.float64)
+    weights /= np.sum(weights)
+    values = np.zeros((scenario_count + 2, 2, 2), dtype=np.float64)
+    values[:scenario_count] = paths
+    probabilities = np.zeros((scenario_count + 2,), dtype=np.float64)
+    probabilities[:scenario_count] = weights
+    valid = np.zeros((scenario_count + 2, 2), dtype=np.bool_)
+    valid[:scenario_count] = True
+    scenarios = FinancialScenarioSet(
+        values,
+        probabilities,
+        np.asarray((0.0, 1.0), dtype=np.float64),
+        valid,
+        _physical(),
+        "reference-returns",
+        "reference-source",
+    )
+    flattened = paths.reshape((scenario_count, -1))
+    pair_distance = np.sum((flattened[:, None, :] - flattened[None, :, :]) ** 2, axis=2)
+    selected = [int(np.argmax(weights))]
+    while len(selected) < representative_count:
+        scores = weights * np.min(pair_distance[:, selected], axis=1)
+        scores[np.asarray(selected, dtype=np.int64)] = -1.0
+        selected.append(int(np.argmax(scores)))
+    nearest = np.argmin(pair_distance[:, selected], axis=1)
+    expected_weights = np.zeros((representative_count,), dtype=np.float64)
+    for source, destination in enumerate(nearest):
+        expected_weights[destination] += weights[source]
+    expected_assignment = np.full((scenario_count + 2,), -1, dtype=np.int32)
+    expected_assignment[:scenario_count] = nearest
+    expected_distortion = np.sum(weights * np.min(pair_distance[:, selected], axis=1))
+
+    result = reduce_scenarios(
+        scenarios, representative_count, numeric_id="reference-reduced"
+    )
+
+    np.testing.assert_array_equal(result.representative_indices, selected)
+    np.testing.assert_array_equal(result.assignment, expected_assignment)
+    np.testing.assert_array_equal(result.scenarios.values, paths[selected])
+    np.testing.assert_array_equal(result.scenarios.weights, expected_weights)
+    np.testing.assert_array_equal(result.scenarios.valid, valid[selected])
+    np.testing.assert_array_equal(result.scenarios.times, scenarios.times)
+    np.testing.assert_allclose(
+        result.distortion, expected_distortion, rtol=1.0e-13, atol=1.0e-14
+    )
+    assert result.scenarios.law == scenarios.law
+    assert result.scenarios.semantic_id == scenarios.semantic_id
+    assert result.scenarios.numeric_id == "reference-reduced"
+    assert result.source_numeric_id == scenarios.numeric_id
+
+
+def test_scenario_reduction_first_representative_wins_exact_ties() -> None:
+    values = np.asarray(
+        (
+            ((0.0, 0.0),),
+            ((2.0, 0.0),),
+            ((1.0, 0.0),),
+            ((0.0, 0.0),),
+            ((2.0, 0.0),),
+            ((0.0, 0.0),),
+        ),
+        dtype=np.float64,
+    )
+    scenarios = FinancialScenarioSet(
+        values,
+        np.asarray((0.4, 0.15, 0.2, 0.1, 0.15, 0.0), dtype=np.float64),
+        np.asarray((0.0,), dtype=np.float64),
+        np.asarray(
+            ((True,), (True,), (True,), (True,), (True,), (False,)), dtype=np.bool_
+        ),
+        _physical(),
+        "tie-returns",
+        "tie-source",
+    )
+
+    result = scenario_operations.reduce_scenarios(scenarios, 2, numeric_id="tie-reduced")
+
+    np.testing.assert_array_equal(result.representative_indices, (0, 1))
+    np.testing.assert_array_equal(result.assignment, (0, 1, 0, 0, 1, -1))
+    np.testing.assert_allclose(result.scenarios.weights, (0.7, 0.3), rtol=1.0e-13)
+    np.testing.assert_allclose(result.distortion, 0.2, rtol=1.0e-13)
+    assert result.scenarios.numeric_id == "tie-reduced"
+    assert result.source_numeric_id == "tie-source"

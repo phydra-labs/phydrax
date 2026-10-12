@@ -543,7 +543,11 @@ from .amr import (
     VariablePatchTopologyCompiler,
 )
 from .bem import __all__ as _bem_all
-from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
+from .collocation import (
+    chebyshev_lobatto_matrices,
+    ChebyshevCollocation,
+    ChebyshevDifferentiationAction,
+)
 from .contact import (
     AbstractContactParticipant,
     AbstractContactTrajectory,
@@ -2851,6 +2855,7 @@ __all__ = [
     "CornerPolicy",
     "CompatibleSBPSecondDerivative",
     "ChebyshevCollocation",
+    "ChebyshevDifferentiationAction",
     "CompositeFaceVelocity",
     "CompositeMACMarkerRelation",
     "CompositeMACMarkerTransferDiagnostics",

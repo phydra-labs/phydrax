@@ -75,6 +75,7 @@ from ....optics.wave import (
     PreparedAngularSpectrum,
     ScalarPlaneField,
 )
+from ....signal import convolve
 from ....typing import (
     Bool,
     checked,
@@ -883,10 +884,19 @@ class FELPlan(StrictModule, NonTrainableState):
         units = _si_units(scale)
         light = float(scale.speed_of_light)
         charges = units.charge * slices.currents * slices.position_spacing / light
-        lags = units.length * (slices.positions[:, None] - slices.positions[None, :])
+        count = slices.slice_count
+        lags = (
+            units.length
+            * slices.position_spacing
+            * jnp.arange(1 - count, count, dtype=jnp.float64)
+        )
         kernel = self.wake.wake.evaluate(lags)
-        kernel = kernel * (1.0 - 0.5 * jnp.eye(slices.slice_count, dtype=jnp.float64))
-        potential = kernel @ charges
+        potential = (
+            convolve(charges, kernel, mode="full", method="fft")[
+                count - 1 : 2 * count - 1
+            ]
+            - 0.5 * kernel[count - 1] * charges
+        )
         rest_energy = units.energy * float(scale.electron_mass) * light**2
         electron_charge = units.charge * float(scale.elementary_charge)
         return electron_charge * potential / (rest_energy * self.wake.structure_length)

@@ -41,3 +41,13 @@ Offline min-cost-flow refinement is a separate result. It may alter the associat
 Kalman filtering/smoothing is applied only after associations are frozen. It returns innovations, filtered/smoothed states, covariance, support, and status.
 
 `TrackResult` remains canonical because it carries identity, observation provenance, association evidence, covariance, birth/death, and gaps. Conversion to `TrajectoryData` creates one case per track, increasing timestamps, invalid transitions across gaps, and reset boundaries. It does not discard the original tracking result.
+
+## Synthetic occlusion capacity
+
+`PTVScenarioPlan` uses an exact `MortonRadiusRelationPlan` for per-camera occlusion, with stable particle-slot IDs and active/projection-valid masks. A particle is hidden only by a strictly nearer valid particle within the inclusive pixel radius; equal-depth particles do not hide each other. A zero radius retains exact coincident-pixel semantics.
+
+The public limits are `occlusion_maximum_pairs` (default `32 * particle_capacity`), `occlusion_maximum_candidates` (default `min(particle_capacity, 256)`), and `occlusion_target_chunk_size=8`. Candidate and pair limits bound relation workspaces, not the scientific radius. Incomplete, uncertified, out-of-domain, or overflowing queries raise an explicit refusal with capacity evidence; they never silently mark particles visible. Crowded scenes may require larger declared capacities. These execution limits participate in scenario-plan identity; RNG addressing and trajectory IDs remain unchanged.
+
+Optional pair and candidate limits accept `None` for their documented defaults. Supplied limits must be non-boolean integers: pair capacity is nonnegative, while candidate capacity and target chunk size are positive. A zero pair capacity is admitted but refuses any scene requiring occlusion pairs. Fractions, booleans, and strings are not converted into capacities, and target chunk size cannot be `None`.
+
+`physical_plan_id` fingerprints the physical scenario and seeded RNG recipe without the occlusion execution policy. `plan_id` additionally fingerprints the prepared relation policy, and each generated `scenario_id` records that execution-specific plan. Trajectory IDs instead use the physical plan together with camera, image-support, and image-formation identity. Changing only pair/candidate capacities or target chunk size therefore changes plan/case provenance but not world trajectories, RNG addressing, or trajectory IDs. Changing the physical scenario or seed still changes trajectory identity.

@@ -28,4 +28,16 @@ law. A stress law is not silently treated as P or Q. `market_factor_risk`,
 `explain_factor_pnl`, `explain_pnl`, `brinson_attribution`, and `stress_test`
 separate exposure, realized P&L explanation, attribution, and stress results.
 
+`reduce_scenarios` keeps weighted farthest-first representative selection and
+streams nearest-mass assignment in representative order. Strictly smaller
+squared distance is required to replace an assignment, so an exact tie keeps
+the first representative, including for duplicate scenario paths. Assignment
+uses O(N D + N + R D) host workspace for N active flattened D-coordinate paths
+and R representatives, with no N-by-R-by-D difference tensor. Inactive capacity
+slots retain assignment -1; mass-transfer order, weighted distortion, law,
+semantic/source IDs, and the caller-supplied reduced `numeric_id` are unchanged.
+No new public route or persistence representation is introduced. Host allocation
+scaling and independent dense assignment evidence are recorded by
+`python -m benchmarks.memory_host_exact` (or `--smoke`).
+
 `walk_forward_splits`, `nested_backtest_splits`, and `validate_no_lookahead` establish chronological evaluation boundaries; `evaluate_walk_forward` and `evaluate_nested_backtest` report their own decisions and results. Backtests do not establish future performance, data rights, or a compliant production process. Qualification covers only the exact `portfolio_support` tuple and measured scale.

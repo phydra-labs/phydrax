@@ -145,13 +145,34 @@ def evaluate_aad_greeks(
     parameter_array = jnp.asarray(parameters, dtype=jnp.float64)
     if parameter_array.shape != (request.parameter_count,):
         raise ValueError("parameters must contain one value per requested parameter.")
-    function = lambda candidate: _scalar_value(valuation(candidate))
-    base, gradient = jax.value_and_grad(function)(parameter_array)
-    diagonal = jnp.diag(jax.hessian(function)(parameter_array))
+
+    def function(candidate: Array) -> Array:
+        return _scalar_value(valuation(candidate))
+
+    diagonal = jnp.full_like(parameter_array, jnp.nan)
+    if request.second_order_names:
+        (base, gradient), gradient_action = jax.linearize(
+            jax.value_and_grad(function), parameter_array
+        )
+        indices = jnp.asarray(
+            tuple(
+                request.parameter_names.index(name) for name in request.second_order_names
+            ),
+            dtype=jnp.int32,
+        )
+
+        def requested_diagonal(index: Array) -> Array:
+            basis = jnp.zeros_like(parameter_array).at[index].set(1.0)
+            _, response = gradient_action(basis)
+            return response[index]
+
+        diagonal = diagonal.at[indices].set(jax.lax.map(requested_diagonal, indices))
+    else:
+        base, gradient = jax.value_and_grad(function)(parameter_array)
     requested = jnp.asarray(
-        tuple(name in request.second_order_names for name in request.parameter_names)
+        tuple(name in request.second_order_names for name in request.parameter_names),
+        dtype=jnp.bool_,
     )
-    diagonal = jnp.where(requested, diagonal, jnp.nan)
     finite = (
         jnp.isfinite(base)
         & jnp.all(jnp.isfinite(gradient))

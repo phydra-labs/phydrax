@@ -288,6 +288,7 @@ class LondonCableBridgePlan(_AbstractBridgePolicy):
         *,
         scale_separation: ArrayLike,
     ) -> SuperconductingFidelityBridgeEvidence:
+        """Compare one winding; native London inductance failures propagate."""
         inductance, reciprocity = london.inductance_matrix()
         if inductance.shape != (1, 1):
             raise ValueError(

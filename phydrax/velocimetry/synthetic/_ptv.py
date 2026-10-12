@@ -16,6 +16,9 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import nonnegative_integer, positive_integer
+from ...discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
+from ...discretization.spatial._neighbor_query import MortonRadiusRelationEvidence
 from ...geometry import RigidFrame
 from ...imaging import ImagePlaneSupport
 from ...imaging.camera import CameraIntrinsics, CameraModel, CameraPose, CameraRig
@@ -27,6 +30,7 @@ from ...rendering import (
     PhotometricResponse,
     render_camera_stack,
 )
+from ...sparse import route_reduce
 from ...typing import checked
 from ._common import PTVScenarioKind, SyntheticEvidence
 
@@ -71,12 +75,14 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
     refractive_index: float = eqx.field(static=True)
     refraction_interface_z: float = eqx.field(static=True)
     occlusion_radius: float = eqx.field(static=True)
+    occlusion_relation: MortonRadiusRelationPlan
     observation_dropout_probability: float = eqx.field(static=True)
     particle_diameter: float = eqx.field(static=True)
     particle_intensity: float = eqx.field(static=True)
     read_noise_std: float = eqx.field(static=True)
     shot_noise: bool = eqx.field(static=True)
     seed: int = eqx.field(static=True)
+    physical_plan_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -99,6 +105,9 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
         refractive_index: float = 1.33,
         refraction_interface_z: float = 1.0,
         occlusion_radius: float = 1.5,
+        occlusion_maximum_pairs: int | None = None,
+        occlusion_maximum_candidates: int | None = None,
+        occlusion_target_chunk_size: int = 8,
         observation_dropout_probability: float = 0.0,
         particle_diameter: float = 2.0,
         particle_intensity: float = 1.0,
@@ -187,6 +196,50 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Particle diameter/intensity must be positive and noise non-negative."
             )
+        maximum_pairs = (
+            32 * capacity
+            if occlusion_maximum_pairs is None
+            else nonnegative_integer(occlusion_maximum_pairs, "occlusion_maximum_pairs")
+        )
+        maximum_candidates = (
+            min(capacity, 256)
+            if occlusion_maximum_candidates is None
+            else positive_integer(
+                occlusion_maximum_candidates, "occlusion_maximum_candidates"
+            )
+        )
+        target_chunk_size = positive_integer(
+            occlusion_target_chunk_size, "occlusion_target_chunk_size"
+        )
+        principal = ((shape[0] - 1.0) / 2.0, (shape[1] - 1.0) / 2.0)
+        projected_extent = (
+            focal
+            * (abs(center[1]) + 0.5 * extent[1] + 0.5 * velocity[1])
+            / minimum_trajectory_z,
+            focal
+            * (abs(center[0]) + 0.5 * extent[0] + 0.5 * velocity[0] + 0.5 * baseline)
+            / minimum_trajectory_z,
+        )
+        margin = max(occlusion, 1.0)
+        address = MortonAddressPlan(
+            tuple(
+                min(-margin, p - e - margin)
+                for p, e in zip(principal, projected_extent, strict=True)
+            ),
+            tuple(
+                max(s + margin, p + e + margin)
+                for s, p, e in zip(shape, principal, projected_extent, strict=True)
+            ),
+            20,
+        )
+        relation = MortonRadiusRelationPlan(
+            address,
+            capacity,
+            capacity,
+            maximum_pairs,
+            maximum_candidates=maximum_candidates,
+            target_chunk_size=target_chunk_size,
+        )
 
         self.kind = kind_
         self.family_id = family
@@ -204,13 +257,14 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
         self.refractive_index = refractive_index_
         self.refraction_interface_z = interface_z
         self.occlusion_radius = occlusion
+        self.occlusion_relation = relation
         self.observation_dropout_probability = dropout
         self.particle_diameter = diameter
         self.particle_intensity = intensity
         self.read_noise_std = noise
         self.shot_noise = bool(shot_noise)
         self.seed = int(seed)
-        self.plan_id = canonical_fingerprint(
+        self.physical_plan_id = canonical_fingerprint(
             {
                 "kind": "ptv-synthetic-scenario-plan",
                 "scenario_kind": kind_.value,
@@ -240,6 +294,13 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
                 "seed": int(seed),
                 "world_coordinate_convention": "right-handed-x-y-z",
                 "image_coordinate_convention": "row-down-column-right",
+            }
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "ptv-synthetic-scenario-plan",
+                "physical_plan": self.physical_plan_id,
+                "occlusion_relation": relation.plan_id,
             }
         )
 
@@ -475,6 +536,32 @@ def _world_trajectories(
     return positions, active
 
 
+def _occlusion_camera(
+    plan: PTVScenarioPlan, pixels: Array, depth: Array, visible: Array
+) -> tuple[Array, MortonRadiusRelationEvidence]:
+    ids = jnp.arange(plan.particle_capacity, dtype=jnp.int32)
+    # Zero radius still means coincident pixels; query a positive enclosing radius
+    # and retain the exact original distance predicate on the emitted relation.
+    query_radius = max(plan.occlusion_radius, 1.0e-12)
+    result = plan.occlusion_relation.query(
+        pixels,
+        pixels,
+        query_radius,
+        source_mask=visible,
+        target_mask=visible,
+        source_stable_ids=ids,
+        target_stable_ids=ids,
+        exclude_self=True,
+    )
+    relation = result.relation
+    source, target = relation.source_indices, relation.target_indices
+    distance_squared = jnp.sum((pixels[source] - pixels[target]) ** 2, axis=-1)
+    nearer = depth[source] < depth[target]
+    competing = nearer & (distance_squared <= plan.occlusion_radius**2)
+    occluded = route_reduce(relation, competing, reduction="max")
+    return visible & ~occluded, result.evidence
+
+
 def _occlusion_visibility(
     plan: PTVScenarioPlan,
     projection_pixels: Array,
@@ -487,17 +574,22 @@ def _occlusion_visibility(
     for camera_index in range(projection_pixels.shape[0]):
         visible = active & projection_valid[camera_index]
         if plan.kind is PTVScenarioKind.OCCLUSION:
-            pixels = projection_pixels[camera_index]
-            depth = projection_depth[camera_index]
-            pixel_delta = pixels[:, None, :] - pixels[None, :, :]
-            pixel_distance_squared = jnp.sum(pixel_delta * pixel_delta, axis=-1)
-            nearer = depth[None, :] < depth[:, None]
-            competing = visible[None, :] & nearer
-            occluded = jnp.any(
-                competing & (pixel_distance_squared <= plan.occlusion_radius**2),
-                axis=1,
+            visible, evidence = _occlusion_camera(
+                plan,
+                projection_pixels[camera_index],
+                projection_depth[camera_index],
+                visible,
             )
-            visible = visible & ~occluded
+            if not bool(evidence.successful):
+                raise ValueError(
+                    "PTV occlusion radius relation is incomplete: "
+                    f"required candidates={int(evidence.required_candidates)}, "
+                    f"candidate capacity={plan.occlusion_relation.maximum_candidates}, "
+                    f"required pairs={int(evidence.required_pairs)}, "
+                    f"pair capacity={plan.occlusion_relation.maximum_pairs}, "
+                    f"overflow rows={int(evidence.overflow_rows)}, "
+                    f"uncertified rows={int(evidence.uncertified_rows)}."
+                )
         camera_visibility.append(visible)
     return jnp.stack(tuple(camera_visibility), axis=0)
 
@@ -522,15 +614,16 @@ def generate_ptv_case(
         read_noise_std=plan.read_noise_std,
     )
     formation = ParticleImageFormation(rasterizer_, response)
-    scenario_id = canonical_fingerprint(
-        {
-            "kind": "ptv-synthetic-case",
-            "plan": plan.plan_id,
-            "true_rig": true_rig.rig_id,
-            "nominal_rig": nominal_rig.rig_id,
-            "geometry": geometry.geometry_id,
-            "formation": formation.formation_id,
-        }
+    case_identity = {
+        "kind": "ptv-synthetic-case",
+        "true_rig": true_rig.rig_id,
+        "nominal_rig": nominal_rig.rig_id,
+        "geometry": geometry.geometry_id,
+        "formation": formation.formation_id,
+    }
+    scenario_id = canonical_fingerprint(case_identity | {"plan": plan.plan_id})
+    physical_scenario_id = canonical_fingerprint(
+        case_identity | {"plan": plan.physical_plan_id}
     )
     keys = jr.split(jr.key(plan.seed), 3 + plan.frame_count)
     positions, active = _world_trajectories(plan, keys[0], keys[1])
@@ -580,7 +673,7 @@ def generate_ptv_case(
         visibility_frames.append(visible)
         rendering_frames.append(rendering)
 
-    trajectory_base = int(scenario_id[:8], 16) & 0x3FFFFFFF
+    trajectory_base = int(physical_scenario_id[:8], 16) & 0x3FFFFFFF
     trajectory_ids = jnp.where(
         jnp.arange(plan.particle_capacity) < plan.particle_count,
         trajectory_base + jnp.arange(plan.particle_capacity),

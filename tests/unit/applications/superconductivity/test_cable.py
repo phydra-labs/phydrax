@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -88,3 +89,36 @@ def test_cable_scenario_1() -> None:
         result.accepted.solid_temperature, state.solid_temperature
     )
     np.testing.assert_array_equal(result.accepted.time, state.time)
+
+
+def test_london_cable_bridge_preserves_inductance_solve_failure() -> None:
+    mesh = phx.geometry.TriangleMesh(
+        jnp.asarray(
+            (
+                (-1.0, -1.0, 0.0),
+                (1.0, -1.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (-1.0, 1.0, 0.0),
+            )
+        ),
+        jnp.asarray(((0, 1, 2), (0, 2, 3))),
+        source_id="bridge-resource-refusal",
+    )
+    london = phx.applications.superconductivity.ThinFilmLondonPlan(
+        mesh,
+        pearl_length=0.2,
+        constraint_matrix=jnp.asarray(((1.0, -1.0, 0.0, 0.0),)),
+        constraint_labels=("winding",),
+        solve_policy=phx.applications.superconductivity.LondonSolvePolicy(
+            route="minres", maximum_steps=1
+        ),
+    )
+    bridge = phx.applications.superconductivity.LondonCableBridgePlan(
+        relative_tolerance=1.0e-6, minimum_scale_separation=5.0
+    )
+    with pytest.raises(RuntimeError) as direct_failure:
+        london.inductance_matrix()
+    with pytest.raises(RuntimeError) as bridge_failure:
+        bridge.evaluate(london, _plan(), scale_separation=10.0)
+    assert str(bridge_failure.value) == str(direct_failure.value)
+    assert "status=" in str(bridge_failure.value)

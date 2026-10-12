@@ -106,7 +106,19 @@ and momentum units are exact `UnitDefinition` objects; human-readable displays u
 their `.symbol`. Coordinate kind remains part of the scale identity, while epoch and
 frame remain astrodynamics-owned.
 
-Direct and hierarchical gravity delegate to the core `NewtonianPairKernel`,
+`DirectNBodyGravityPlan` and `NearlyKeplerianPlan` evaluate every direct pair
+exactly with a shared bounded target-row action. Their positive integer
+`target_chunk_size` (default `4`) controls parallel target rows; each row retains
+the full source-axis reduction, so pair workspace scales as
+`min(target_chunk_size, N) * N`, not `N * N`. A larger chunk trades more workspace
+for target parallelism; it does not select Barnes–Hut, truncate interactions, or
+change scientific plan identity. The static chunk field does change the plan
+PyTree representation. Active masks, self exclusion, softened pair-once potential,
+minimum separation, net force, collision status, and rollout rollback remain
+explicit. Near-Keplerian integration retains its indirect heliocentric term and
+universal-Kepler drift.
+
+Hierarchical gravity delegates to the core `NewtonianPairKernel`,
 sparse runtime Morton hierarchy, `BarnesHutGravityPlan`, and
 `UniformFMMPlan`. The Cartesian FMM supports orders one through seven,
 power-of-two coefficient scaling, exact near completion, explicit opening and

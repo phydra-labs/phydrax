@@ -40,6 +40,13 @@ policies. `Z4cAlgebraicEnforcement` projects $\det\tilde\gamma=1$ and
 $\operatorname{tr}\tilde A=0$ only at the accepted-step boundary and reports its
 correction.
 
+`FixedGridGeometry.boundary_mask(width)` returns the required Boolean volume
+marking points within `width` nodes of any outer face. Periodic topology returns
+all false; both topologies reject widths that leave no interior. The independent
+shell benchmark measures compiler temporary storage separately from this required
+output, so a fused baseline is retained when a broadcast rewrite has no measured
+memory benefit.
+
 ## Initial data and fixed-grid evolution
 
 The analytic initial-data surface contains Cartesian Minkowski, isotropic exterior

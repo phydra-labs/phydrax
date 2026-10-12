@@ -66,3 +66,16 @@ Voltage probes enforce zero integrated probe current. Dephasing probes enforce z
 ## Finite width
 
 `SubbandCoulombFormFactorPlan` consumes a normalized vertical probability density in SI units and evaluates the quasi-two-dimensional Coulomb form factor. The zero-momentum limit, normalization, bounds, and quadrature identity are retained. Confinement remains owned by the semiconductor application; the Hall layer only consumes its density.
+
+Evaluation uses exact forward/backward host recurrences on the ordered vertical
+nodes: each adjacent interval contributes its exponential decay, and the reverse
+carry excludes the diagonal already counted by the forward side. For N nodes and
+W wave numbers, this requires O(W N) arithmetic and O(N + W) workspace rather
+than a dense N-by-N separation/kernel. The density, quadrature weights, public
+result fields, and physical-input `plan_id` contract are unchanged.
+
+The recurrence reassociates the floating-point double sum. Values agree with
+independent dense quadrature to the documented numerical tolerance, but low bits
+can differ; because `result_id` fingerprints numerical form factors, historical
+result fingerprints are not promised to remain byte-identical. Scaling evidence
+is recorded by `python -m benchmarks.memory_host_exact` (or `--smoke`).

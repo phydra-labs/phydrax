@@ -1,0 +1,227 @@
+{
+  "cases": [
+    {
+      "compilation_seconds": 0.077070958,
+      "compiler": {
+        "argument_bytes": 264,
+        "bytes_accessed": 5970,
+        "flops": 730,
+        "generated_code_bytes": 0,
+        "output_bytes": 544,
+        "source": "phase-field-chebyshev-action",
+        "temporary_bytes": 1064,
+        "unavailable_reason": null
+      },
+      "count": 33,
+      "finite": true,
+      "first_derivative_reference_defect": 2.7200464103316335e-15,
+      "logical_workspace_bytes": 2112,
+      "lowering_seconds": 0.018069709,
+      "output_bytes": 528,
+      "preparation_host_peak_bytes": 37392,
+      "retained_bytes": 528,
+      "second_derivative_reference_defect": 4.0467629247586956e-14,
+      "warm": {
+        "count": 3,
+        "max_seconds": 3.1791e-05,
+        "mean_seconds": 2.4888666666666668e-05,
+        "median_seconds": 2.2625e-05,
+        "min_seconds": 2.025e-05,
+        "samples_seconds": [
+          3.1791e-05,
+          2.2625e-05,
+          2.025e-05
+        ],
+        "std_seconds": 4.976063392772332e-06
+      }
+    },
+    {
+      "compilation_seconds": 0.068928083,
+      "compiler": {
+        "argument_bytes": 520,
+        "bytes_accessed": 11378,
+        "flops": 1370,
+        "generated_code_bytes": 0,
+        "output_bytes": 1056,
+        "source": "phase-field-chebyshev-action",
+        "temporary_bytes": 1576,
+        "unavailable_reason": null
+      },
+      "count": 65,
+      "finite": true,
+      "first_derivative_reference_defect": 8.326672684688674e-15,
+      "logical_workspace_bytes": 4160,
+      "lowering_seconds": 0.016026208,
+      "output_bytes": 1040,
+      "preparation_host_peak_bytes": 35952,
+      "retained_bytes": 1040,
+      "second_derivative_reference_defect": 2.9332092310596636e-13,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.000406167,
+        "mean_seconds": 0.00026158333333333334,
+        "median_seconds": 0.000211375,
+        "min_seconds": 0.000167208,
+        "samples_seconds": [
+          0.000211375,
+          0.000406167,
+          0.000167208
+        ],
+        "std_seconds": 0.0001038139633264984
+      }
+    },
+    {
+      "compilation_seconds": 0.08705225,
+      "compiler": {
+        "argument_bytes": 1032,
+        "bytes_accessed": 22194,
+        "flops": 2650,
+        "generated_code_bytes": 0,
+        "output_bytes": 2080,
+        "source": "phase-field-chebyshev-action",
+        "temporary_bytes": 2600,
+        "unavailable_reason": null
+      },
+      "count": 129,
+      "finite": true,
+      "first_derivative_reference_defect": 1.3988810110276972e-14,
+      "logical_workspace_bytes": 8256,
+      "lowering_seconds": 0.017285625,
+      "output_bytes": 2064,
+      "preparation_host_peak_bytes": 38024,
+      "retained_bytes": 2064,
+      "second_derivative_reference_defect": 1.003086502748829e-12,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.0066795,
+        "mean_seconds": 0.004744819333333333,
+        "median_seconds": 0.005874625,
+        "min_seconds": 0.001680333,
+        "samples_seconds": [
+          0.0066795,
+          0.005874625,
+          0.001680333
+        ],
+        "std_seconds": 0.002191690870355022
+      }
+    },
+    {
+      "compilation_seconds": 0.065954667,
+      "compiler": {
+        "argument_bytes": 2056,
+        "bytes_accessed": 43826,
+        "flops": 5210,
+        "generated_code_bytes": 0,
+        "output_bytes": 4128,
+        "source": "phase-field-chebyshev-action",
+        "temporary_bytes": 4712,
+        "unavailable_reason": null
+      },
+      "count": 257,
+      "finite": true,
+      "first_derivative_reference_defect": 3.2862601528904634e-14,
+      "logical_workspace_bytes": 16448,
+      "lowering_seconds": 0.014469333,
+      "output_bytes": 4112,
+      "preparation_host_peak_bytes": 42080,
+      "retained_bytes": 4112,
+      "second_derivative_reference_defect": 5.0849324750856795e-12,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.00082275,
+        "mean_seconds": 0.00047448600000000004,
+        "median_seconds": 0.000357625,
+        "min_seconds": 0.000243083,
+        "samples_seconds": [
+          0.00082275,
+          0.000243083,
+          0.000357625
+        ],
+        "std_seconds": 0.00025066023180526
+      }
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "f63cec9d6839895a247adfc594079682cd7433314fac27001e37bf19917edd66",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment",
+        "workspace_exponent"
+      ],
+      "signature": "838bcf41f9e6ece3ac82393b398612e08a9545e1ef0288150001a35d5aa7c71e"
+    },
+    "fingerprint": "1276214db110e8eab840dafa80e1860fac436f2d348666674bd6889b77806a98",
+    "source_build_fingerprint": "ded837e4661fc34b30a88ba13bc26bd2f8a87a2c7d82c347ad4891c40e3714bf"
+  },
+  "process_peak_rss_bytes": 1421000704,
+  "workspace_exponent": 0.9999999999999998
+}

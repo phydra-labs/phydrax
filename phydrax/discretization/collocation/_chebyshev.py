@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -124,4 +125,79 @@ class ChebyshevCollocation(StrictModule, NonTrainableState):
         return jnp.linalg.solve(operator, constrained_rhs)
 
 
-__all__ = ["ChebyshevCollocation", "chebyshev_lobatto_matrices"]
+class ChebyshevDifferentiationAction(StrictModule, NonTrainableState):
+    """Ascending Lobatto differentiation with linear retained and row workspace.
+
+    Rows are evaluated in deterministic order rather than retaining an N-by-N
+    differentiation matrix. Trailing axes are independent value components.
+    """
+
+    nodes: Array
+    barycentric_coefficients: Array
+    discretization_id: str = eqx.field(static=True)
+
+    def __init__(self, count: int, /, *, lower: float = -1.0, upper: float = 1.0) -> None:
+        size = int(count)
+        lower_ = float(lower)
+        upper_ = float(upper)
+        if (
+            size < 3
+            or not np.isfinite(lower_)
+            or not np.isfinite(upper_)
+            or upper_ <= lower_
+        ):
+            raise ValueError("Chebyshev action requires count >= 3 and finite bounds.")
+        indices = np.arange(size - 1, -1, -1, dtype=np.int64)
+        reference = np.cos(np.pi * indices / (size - 1))
+        coefficients = np.asarray((-1.0) ** indices, dtype=np.float64)
+        coefficients[[0, -1]] *= 2.0
+        nodes = lower_ + 0.5 * (reference + 1.0) * (upper_ - lower_)
+        self.nodes = jnp.asarray(nodes)
+        self.barycentric_coefficients = jnp.asarray(coefficients)
+        self.discretization_id = canonical_fingerprint(
+            {
+                "kind": "chebyshev-differentiation-action",
+                "count": size,
+                "bounds": [lower_, upper_],
+            }
+        )
+
+    @property
+    def count(self) -> int:
+        return self.nodes.size
+
+    def derivative(self, values: ArrayLike, order: int = 1, /) -> Array:
+        array = jnp.asarray(values)
+        if array.ndim < 1 or array.shape[0] != self.count:
+            raise ValueError("Chebyshev values must match the leading node dimension.")
+        if order not in (1, 2):
+            raise ValueError("Chebyshev action supports order one or two.")
+
+        indices = jnp.arange(self.count, dtype=jnp.int32)
+
+        def first(value: Array) -> Array:
+            def row(index: Array) -> Array:
+                difference = self.nodes[index] - self.nodes
+                off_diagonal = indices != index
+                weights = jnp.where(
+                    off_diagonal,
+                    self.barycentric_coefficients[index]
+                    / self.barycentric_coefficients
+                    / jnp.where(off_diagonal, difference, 1.0),
+                    0.0,
+                )
+                return (weights @ (value - value[index]).reshape(self.count, -1)).reshape(
+                    value.shape[1:]
+                )
+
+            return jax.lax.map(jax.checkpoint(row), indices)
+
+        result = first(array)
+        return result if order == 1 else first(result)
+
+
+__all__ = [
+    "ChebyshevCollocation",
+    "ChebyshevDifferentiationAction",
+    "chebyshev_lobatto_matrices",
+]

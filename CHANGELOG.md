@@ -18,6 +18,9 @@
   deterministic LRU eviction, including FEM tables; oversized values are not
   retained. Trainable-role metadata uses weak class keys, and Virasoro descendant
   admission precedes partition enumeration. Scientific identities are unchanged.
+- London/PTV capacities reject booleans and fractional truncation; failed London
+  inductance solves expose native status through explicit refusals, including at
+  cable bridges. Seeded PTV trajectory identity excludes execution capacities.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
@@ -268,6 +271,8 @@
   before execution.
 
 ### Added
+- Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
+  `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -2520,6 +2525,23 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Bound exact gravity target rows and quadratic-ringdown time batches with explicit
+  chunk controls; replace dense FEL wake products with exact FFT convolution.
+- Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer
+  contour-lag accumulation, stable contact key ranges, and streamed scenario
+  assignment; evaluate only requested AAD curvature diagonals. Coulomb result
+  fingerprints may change at roundoff; physical-input identities remain unchanged.
+- Prepare London/Pearl sparse local actions and reusable curvature evidence;
+  admit dense KKT storage by bytes and dimension or use native matrix-free solves.
+  London and PTV execution policies intentionally participate in plan identity,
+  separately from physical PTV trajectory identity.
+- Bound mapped-defect differentiation and Newton workspace with Chebyshev actions
+  and Newton–Krylov, use sparse radial Jacobians, and refuse full spectra above
+  declared budgets while preserving solver and stability evidence.
+- Tile exact periodic Ewald pair/translation sums and differentiated forces/stress;
+  default Kubo to frequency chunks with explicit parallel selection, preserving
+  both optical poles and sum-rule evidence. Ewald policies enter plan identity;
+  Kubo execution evidence has a separate policy identity.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -3411,6 +3433,9 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Dense CSR `line_table` and lattice `origin_differences` retained leaves, and
+  London `hessian`, `factorization`, and `current_basis` state; preparations and
+  persisted PyTree structures use bounded actions instead, without aliases.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,
