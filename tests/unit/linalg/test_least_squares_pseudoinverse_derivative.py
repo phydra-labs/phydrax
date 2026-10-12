@@ -172,3 +172,125 @@ def test_rhs_only_least_squares_derivative_needs_no_rank_gap() -> None:
     np.testing.assert_allclose(
         np.asarray(gradient), np.linalg.pinv(np.asarray(matrix)).T @ np.ones(3)
     )
+
+
+@pytest.mark.parametrize("shape", ((5, 3), (3, 5)), ids=("tall", "wide"))
+@pytest.mark.parametrize("complex_values", (False, True))
+def test_weighted_regularized_multi_rhs_stationarity_derivative(
+    shape: tuple[int, int], complex_values: bool
+) -> None:
+    rng = np.random.default_rng(109)
+    rows, columns = shape
+    matrix = rng.normal(size=(2, rows, columns))
+    direction = rng.normal(size=matrix.shape)
+    rhs = rng.normal(size=(2, rows, 3))
+    rhs_direction = rng.normal(size=rhs.shape)
+    regularizer = np.broadcast_to(0.7 * np.eye(columns), (2, columns, columns)).copy()
+    regularizer_direction = 0.1 * rng.normal(size=regularizer.shape)
+    if complex_values:
+        matrix = matrix + 1j * rng.normal(size=matrix.shape)
+        direction = direction + 1j * rng.normal(size=direction.shape)
+        rhs = rhs + 1j * rng.normal(size=rhs.shape)
+        regularizer = regularizer.astype(np.complex128)
+        regularizer_direction = regularizer_direction + 0.1j * rng.normal(
+            size=regularizer.shape
+        )
+    weights = rng.uniform(0.5, 1.5, size=(2, rows))
+    weight_direction = rng.normal(size=weights.shape) * 0.1
+    probe = rng.normal(size=(2, columns, 3))
+    if complex_values:
+        probe = probe + 1j * rng.normal(size=probe.shape)
+    policy = la.LinearSolvePolicy(
+        la.DenseSVD(damping=0.2),
+        tolerance=la.TolerancePolicy(relative=1e-11, absolute=1e-13, max_steps=50),
+    )
+
+    def native(parameter: Array) -> Array:
+        problem = la.LeastSquaresProblem(
+            la.DenseLinearOperator(
+                jnp.asarray(matrix) + parameter * jnp.asarray(direction)
+            ),
+            weights=jnp.asarray(weights) + parameter * jnp.asarray(weight_direction),
+            regularizer=la.DenseLinearOperator(
+                jnp.asarray(regularizer) + parameter * jnp.asarray(regularizer_direction)
+            ),
+        )
+        return la.solve(
+            problem,
+            jnp.asarray(rhs) + parameter * jnp.asarray(rhs_direction),
+            policy=policy,
+            rhs_layout=la.RHSLayout((3,)),
+        ).value
+
+    def reference(parameter: float) -> np.ndarray:
+        a = matrix + parameter * direction
+        r = regularizer + parameter * regularizer_direction
+        w = weights + parameter * weight_direction
+        b = rhs + parameter * rhs_direction
+        ah = a.conj().swapaxes(-1, -2)
+        return np.linalg.solve(
+            (ah * w[:, None, :]) @ a
+            + r.conj().swapaxes(-1, -2) @ r
+            + 0.04 * np.eye(columns),
+            (ah * w[:, None, :]) @ b,
+        )
+
+    parameter = jnp.asarray(0.0)
+    value, tangent = jax.jvp(native, (parameter,), (jnp.asarray(1.0),))
+    expected_tangent = _central_difference(reference)
+    np.testing.assert_allclose(value, reference(0.0), rtol=1e-10, atol=1e-11)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=1e-6, atol=1e-8)
+    derivative = jax.grad(lambda t: jnp.real(jnp.vdot(jnp.asarray(probe), native(t))))(
+        parameter
+    )
+    np.testing.assert_allclose(
+        derivative, np.real(np.vdot(probe, expected_tangent)), rtol=1e-6, atol=1e-8
+    )
+
+
+@pytest.mark.parametrize("shape", ((7, 3), (3, 7)))
+@pytest.mark.parametrize("complex_values", (False, True))
+def test_materialized_fixed_rank_pseudoinverse_derivative(
+    shape: tuple[int, int], complex_values: bool
+) -> None:
+    rng = np.random.default_rng(817)
+    left = rng.normal(size=(shape[0], 2))
+    right = rng.normal(size=(shape[1], 2))
+    dl = rng.normal(size=left.shape)
+    dr = rng.normal(size=right.shape)
+    probe = rng.normal(size=shape[::-1])
+    if complex_values:
+        left = left + 1j * rng.normal(size=left.shape)
+        right = right + 1j * rng.normal(size=right.shape)
+        dl = dl + 1j * rng.normal(size=dl.shape)
+        dr = dr + 1j * rng.normal(size=dr.shape)
+        probe = probe + 1j * rng.normal(size=probe.shape)
+
+    def native(parameter: Array) -> Array:
+        matrix = (jnp.asarray(left) + parameter * jnp.asarray(dl)) @ (
+            jnp.asarray(right) + parameter * jnp.asarray(dr)
+        ).conj().T
+        factorization = la.factorize(
+            la.DenseLinearOperator(matrix),
+            la.FactorizationPolicy("svd", rank=la.RankPolicy(relative_cutoff=1e-10)),
+        )
+        result = factorization.materialize_pseudoinverse()
+        return result.value
+
+    def reference(parameter: float) -> np.ndarray:
+        return np.linalg.pinv(
+            (left + parameter * dl) @ (right + parameter * dr).conj().T, rcond=1e-10
+        )
+
+    value, tangent = jax.jvp(native, (jnp.asarray(0.0),), (jnp.asarray(1.0),))
+    expected = _central_difference(reference)
+    np.testing.assert_allclose(value, reference(0.0), rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(tangent, expected, rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(
+        jax.grad(lambda t: jnp.real(jnp.vdot(jnp.asarray(probe), native(t))))(
+            jnp.asarray(0.0)
+        ),
+        np.real(np.vdot(probe, expected)),
+        rtol=1e-6,
+        atol=1e-8,
+    )

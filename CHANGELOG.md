@@ -24,6 +24,15 @@
 - London/PTV capacities reject booleans and fractional truncation; failed London
   inductance solves expose native status through explicit refusals, including at
   cable bridges. Seeded PTV trajectory identity excludes execution capacities.
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
+- Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
+  without changing stationarity, complex tangents, rank admission, or failure evidence.
+- Reuse prepared sparse factors across supported multi-RHS solves and evaluate
+  Cholesky determinants directly from factors, including invalid-factor evidence.
+- Bound selected-block gathering and constraint right-inverse certificates without
+  parent densification or target-space-square identity/projector buffers.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
@@ -278,6 +287,9 @@
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
   explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
+- Native certified banded and block-banded spectral/singular-value enclosures,
+  condition bounds, and rank-threshold certificates without densification, with
+  traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -2571,6 +2583,16 @@
   and method evidence; unresolved eigenspaces report invalid/nonconverged results.
 - Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
   prepared query hierarchies; source model and revision identities are unchanged.
+- Fixed and adaptive stochastic spectral actions use bounded probe batches and
+  absolute-index keyed addressing. Historical keyed samples intentionally change;
+  samples are invariant to execution batch size and requested probe capacity.
+- Batched matrix-function `auto` uses actions; explicit `dense` execution requires
+  workspace admission. Resolvents solve RHS blocks directly, and repeated-spectrum
+  eigenspace derivatives use confluent divided differences.
+- `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
+  in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -3467,6 +3489,8 @@
   persisted PyTree structures use bounded actions instead, without aliases.
 - Polygon's retained `intersection_pairs` leaf and implicit unbounded `None`
   graph-query tile selections; graph and NN operator callers use positive integers.
+- Duplicate CSR leaves in host sparse prepared state and the duplicate upper
+  Cholesky factor in nuisance plans; their persistence leaf structures change.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,

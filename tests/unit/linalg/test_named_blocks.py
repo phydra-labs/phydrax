@@ -535,3 +535,87 @@ def test_mapped_block_operator_uses_explicit_row_and_column_maps() -> None:
         rtol=1e-12,
         atol=1e-12,
     )
+
+
+class _ActionOnlyMatrix(la.AbstractLinearOperator):
+    matrix: Array
+    source: la.ArraySpace
+    target: la.ArraySpace
+
+    def __init__(self, matrix: Array, materializable: bool) -> None:
+        self.matrix = matrix
+        self.source = la.ArraySpace((matrix.shape[1],), dtype=matrix.dtype)
+        self.target = la.ArraySpace((matrix.shape[0],), dtype=matrix.dtype)
+        self.properties = la.OperatorProperties()
+        self.capabilities = la.OperatorCapabilities(
+            transpose=True, adjoint=True, materialize=materializable
+        )
+        self.batch_shape = ()
+        self.operator_id = "selected-action-only-matrix"
+
+    def mv(self, vector: Array, /) -> Array:
+        return self.matrix @ vector
+
+    def transpose_mv(self, vector: Array, /) -> Array:
+        return self.matrix.T @ vector
+
+    def adjoint_mv(self, vector: Array, /) -> Array:
+        return self.matrix.conj().T @ vector
+
+    def _materialize(self, /) -> Array:
+        raise AssertionError("Parent materialization must never be called")
+
+
+def _small_selected(parent: _ActionOnlyMatrix) -> la.BlockLinearOperator:
+    row_space = la.ArraySpace((3,), dtype=jnp.float64)
+    column_space = la.ArraySpace((4,), dtype=jnp.float64)
+    rows = la.BlockSelection(
+        parent.target,
+        (("rows", la.CoordinateBlock(row_space, ((8, 10), (1, 2)))),),
+    )
+    columns = la.BlockSelection(
+        parent.source,
+        (("columns", la.CoordinateBlock(column_space, ((7, 9), (0, 2)))),),
+    )
+    return la.select_block_operator(parent, rows, columns)
+
+
+@pytest.mark.parametrize("materializable", [False, True])
+def test_selected_block_materializes_actions_not_parent(materializable: bool) -> None:
+    reference = np.arange(144, dtype=np.float64).reshape((12, 12)) + 0.25
+    parent = _ActionOnlyMatrix(jnp.asarray(reference), materializable)
+    selected = _small_selected(parent)
+    policy = la.MaterializationPolicy(
+        max_entries=12, max_bytes=96, max_workspace_bytes=432
+    )
+    expected = reference[np.ix_([8, 9, 1], [7, 8, 0, 1])]
+    np.testing.assert_array_equal(la.materialize(selected, policy), expected)
+    np.testing.assert_array_equal(selected._materialize(), expected)
+    np.testing.assert_array_equal(
+        la.materialize(selected + selected, policy), 2 * expected
+    )
+    np.testing.assert_array_equal(la.materialize(2.0 * selected, policy), 2 * expected)
+    np.testing.assert_array_equal(
+        la.materialize(la.TransposeLinearOperator(selected), policy), expected.T
+    )
+    with pytest.raises(la.LinearCapabilityError):
+        la.materialize(parent, policy)
+
+
+def test_selected_block_refuses_before_parent_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = _ActionOnlyMatrix(jnp.zeros((12, 12), dtype=jnp.float64), False)
+    selected = _small_selected(parent)
+
+    def forbidden_action(self: _ActionOnlyMatrix, vector: Array, /) -> Array:
+        pytest.fail("Workspace refusal must precede any parent action")
+
+    monkeypatch.setattr(_ActionOnlyMatrix, "mv", forbidden_action)
+    with pytest.raises(la.LinearCapabilityError, match="workspace requires 216 bytes"):
+        la.materialize(
+            selected,
+            la.MaterializationPolicy(
+                max_entries=12, max_bytes=96, max_workspace_bytes=215
+            ),
+        )

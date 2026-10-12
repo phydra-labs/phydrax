@@ -40,7 +40,9 @@ type Field = Callable[[Array], Array]
 POLICY = phx.linalg.LinearSolvePolicy(
     phx.linalg.DenseLU(),
     materialization=phx.linalg.MaterializationPolicy(
-        max_entries=64_000_000, max_bytes=1024 * 1024 * 1024
+        max_entries=64_000_000,
+        max_bytes=1024 * 1024 * 1024,
+        max_workspace_bytes=1024 * 1024 * 1024,
     ),
 )
 
