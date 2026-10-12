@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Finance trade/position refusal coverage matches the checked-signature
+  diagnostics while preserving the unresolved-definition/resolved-position
+  type distinction.
 - IREE alias admission follows in-place result provenance and counts consumers
   of allocation origins before mutation, admitting a singly owned scan tape
   read after completion. Shared loop-carried splats, returned input aliases, and
