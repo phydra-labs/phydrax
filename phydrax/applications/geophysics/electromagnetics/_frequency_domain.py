@@ -352,10 +352,13 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
                     operator_id=self.plan_id + ":complex-surrogate-inverse",
                 )
             )
+            # The default policy stores ``preconditioning=None``; Equinox only
+            # replaces a ``None`` node when it is declared a leaf.
             policy = eqx.tree_at(
                 lambda value: value.preconditioning,
                 self.policy,
                 la.PreconditioningPolicy(inverse),
+                is_leaf=lambda node: node is None,
             )
             background_action = None
             if background_material is not None:

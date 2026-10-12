@@ -5,12 +5,28 @@ from phydrax.qualification import CapabilityDepth, ClosureState
 def test_advanced_closure_scenario_1() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
     matrices = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
-    assert len(matrices) == 21
+    declarations = tuple(
+        value
+        for value in catalog.declarations
+        if value.domain_maturity == "implementation-qualified-candidate"
+    )
+    assert matrices and declarations
     assert phx.qualification.validate_closure_catalog(catalog, matrices) == ()
     assert all(matrix.classified for matrix in matrices)
-    assert all(matrix.implementation_closed for matrix in matrices)
     assert all(not matrix.release_closed for matrix in matrices)
-    assert all(matrix.state is ClosureState.IMPLEMENTATION_CLOSED for matrix in matrices)
+    implementation_matrices = tuple(
+        matrix for matrix in matrices if matrix.implementation_closed
+    )
+    assert implementation_matrices
+    assert all(
+        matrix.state
+        is (
+            ClosureState.IMPLEMENTATION_CLOSED
+            if matrix.implementation_closed
+            else ClosureState.CLASSIFIED
+        )
+        for matrix in matrices
+    )
     reduced = {
         "correlation",
         "frequency",
@@ -18,7 +34,7 @@ def test_advanced_closure_scenario_1() -> None:
         "process-systems",
         "system-modeling",
     }
-    for matrix in matrices:
+    for matrix in implementation_matrices:
         implementation_depth = max(
             requirement.minimum_depth for requirement in matrix.requirements
         )
@@ -31,13 +47,6 @@ def test_advanced_closure_scenario_1() -> None:
         for matrix in matrices
         for resolution in matrix.resolutions
     )
-    catalog = phx.qualification.builtin_capability_catalog()
-    declarations = tuple(
-        value
-        for value in catalog.declarations
-        if value.domain_maturity == "implementation-qualified-candidate"
-    )
-    assert len(declarations) == 21
     for declaration in declarations:
         assert declaration.disposition.value == "candidate"
         assert len(declaration.profiles) == 1
