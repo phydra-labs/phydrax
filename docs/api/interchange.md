@@ -16,6 +16,31 @@ Candidate and accepted frames are separate objects. A renderer or asynchronous
 publisher may consume them, but renderer handles and serialization methods are outside
 the inspection contract.
 
+## Bounded NumPy decoding
+
+`decode_npy_resource` returns an immutable view over the admitted
+`BoundedResource.data`; its carrier keeps those bytes alive. `decode_npz_resource`
+validates the archive-wide inventory, size limits, checksums, and NPY metadata before
+decoding one member at a time. Both routes refuse object arrays and return read-only
+arrays. An explicit `np.array(value, copy=True)` is required for mutable storage.
+
+Native array archives preserve their canonical NPY payloads, ZIP bytes, and
+collection digests while streaming publication and verifying source stability.
+Lifecycle NPZ exports and authorized full-archive support bundles use temporary-file
+staging; distributed checkpoint reads use bounded disk-spilling chunk spools.
+
+## Identity byte streams
+
+Array content fingerprints hash contiguous byte views directly and stage strided
+C-order data in bounded chunks. Canonical metadata, byte order, scalar framing, and
+the SHA-256 digest remain unchanged. Atomistic surface adapters reuse one transferred
+host snapshot for source and evaluation identity. Runtime distribution file hashes
+are streamed while retaining mutation detection.
+
+Execution workset preparation streams its original canonical JSON identity rather
+than retaining expanded array lists. This does not change `prepared_id`, bucket
+ordering, padding, or semantic RNG addressing.
+
 ## Cartesian raster cell fields
 
 ::: phydrax.interchange.GeospatialCellField

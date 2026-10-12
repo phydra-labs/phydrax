@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 
 
 def _case() -> Any:
@@ -148,3 +149,46 @@ def test_workflows_scenario_1() -> None:
     assert bool(result.successful)
     assert np.isfinite(float(result.energy))
     assert np.all(np.isfinite(np.asarray(result.forces)))
+    coordinate = np.asarray([[0.0, 0.0, 0.0], [1.2, 0.0, 0.0]])
+    expected_source = canonical_fingerprint(
+        {
+            "kind": "atomistic-surface-evaluation",
+            "surface": surface.surface_id,
+            "arrays": array_tree_fingerprint(
+                {
+                    "positions": np.asarray(
+                        coordinate, dtype=system.plan.coordinate_dtype
+                    ),
+                    "energy": np.asarray(result.energy),
+                    "forces": np.asarray(result.forces),
+                }
+            ),
+        }
+    )
+    expected_evaluation = canonical_fingerprint(
+        {
+            "kind": "potential-energy-surface-evaluation",
+            "provider": surface.provider_id,
+            "source_result": expected_source,
+            "successful": True,
+            "arrays": array_tree_fingerprint(
+                {
+                    "energy": np.asarray(result.energy),
+                    "forces": np.asarray(result.forces),
+                    "hessian": None,
+                }
+            ),
+        }
+    )
+    assert result.source_result_id == expected_source
+    assert result.evaluation_id == expected_evaluation
+    repeated = surface.evaluate(coordinate)
+    assert repeated.evaluation_id == result.evaluation_id
+    translated = surface.evaluate(coordinate + 1.0)
+    assert bool(translated.successful)
+    assert translated.source_result_id != result.source_result_id
+    assert translated.evaluation_id != result.evaluation_id
+    changed = surface.evaluate(coordinate * 1.1)
+    assert bool(changed.successful)
+    assert changed.source_result_id != result.source_result_id
+    assert changed.evaluation_id != result.evaluation_id

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -1095,43 +1096,52 @@ def _read_shard_payload(
         raise RepositoryCorruptionError(
             "Checkpoint shard payload byte count is inconsistent."
         )
-    payload = b"".join(
-        repository.read_chunk(
-            artifact,
-            chunk,
-            maximum_plaintext_bytes=shard.byte_count,
-        )
-        for chunk in chunks
-    )
-    if len(payload) != shard.byte_count:
-        raise RepositoryCorruptionError("Checkpoint shard payload byte count mismatch.")
-    if hashlib.sha256(payload).hexdigest() != shard.payload_digest:
-        raise RepositoryCorruptionError("Checkpoint shard payload digest mismatch.")
-    stream = io.BytesIO(payload)
-    try:
-        dtype, shape, _ = _read_npy_metadata(stream, len(payload), limits)
-    except ArrayArchiveCorruptionError as error:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard NumPy payload metadata is invalid."
-        ) from error
-    if shape != expected_shape or dtype != expected_dtype:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard payload shape or dtype is inconsistent."
-        )
-    stream.seek(0)
-    try:
-        value = np.load(
-            stream,
-            allow_pickle=False,
-            max_header_size=limits.max_npy_header_bytes,
-        )
-    except (EOFError, OSError, ValueError) as error:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard NumPy payload is invalid."
-        ) from error
+    digest = hashlib.sha256()
+    observed = 0
+    with tempfile.SpooledTemporaryFile(max_size=1_048_576, mode="w+b") as stream:
+        for chunk in chunks:
+            payload = repository.read_chunk(
+                artifact, chunk, maximum_plaintext_bytes=shard.byte_count
+            )
+            observed += len(payload)
+            if observed > shard.byte_count:
+                raise RepositoryCorruptionError(
+                    "Checkpoint shard payload byte count mismatch."
+                )
+            digest.update(payload)
+            stream.write(payload)
+        if observed != shard.byte_count:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard payload byte count mismatch."
+            )
+        if digest.hexdigest() != shard.payload_digest:
+            raise RepositoryCorruptionError("Checkpoint shard payload digest mismatch.")
+        stream.seek(0)
+        try:
+            dtype, shape, _ = _read_npy_metadata(stream, observed, limits)
+        except ArrayArchiveCorruptionError as error:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard NumPy payload metadata is invalid."
+            ) from error
+        if shape != expected_shape or dtype != expected_dtype:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard payload shape or dtype is inconsistent."
+            )
+        stream.seek(0)
+        try:
+            value = np.load(
+                stream,
+                allow_pickle=False,
+                max_header_size=limits.max_npy_header_bytes,
+            )
+        except (EOFError, OSError, ValueError) as error:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard NumPy payload is invalid."
+            ) from error
     if value.shape != expected_shape or value.dtype != expected_dtype:
         raise RepositoryCorruptionError("Checkpoint shard payload changed while loading.")
-    return np.array(value, copy=True, order="C")
+    value.setflags(write=False)
+    return value
 
 
 def _intersection(

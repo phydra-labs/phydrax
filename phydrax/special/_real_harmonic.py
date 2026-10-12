@@ -21,7 +21,6 @@ values or derivatives.
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from numbers import Integral
 from typing import assert_never, final, Literal, TypeAlias
 
@@ -31,6 +30,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._host_table_cache import host_table_cache
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..typing import parse
@@ -53,7 +53,7 @@ def _static_degree(value: int, name: str, /) -> int:
     return degree
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _real_harmonic_basis_terms(
     degree: int, /
 ) -> tuple[tuple[tuple[int, int, int], ...], ...]:

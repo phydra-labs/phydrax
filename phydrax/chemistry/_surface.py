@@ -10,6 +10,7 @@ import abc
 from collections.abc import Callable, Sequence
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -83,6 +84,8 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
         *,
         provider_id: str,
         source_result_id: str,
+        _identity_leaves: tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray]
+        | None = None,
     ) -> None:
         energy_ = jnp.asarray(energy).reshape(())
         forces_ = jnp.asarray(forces, dtype=energy_.dtype)
@@ -97,10 +100,16 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
         source = str(source_result_id).strip()
         if not provider or not source:
             raise ValueError("Surface provider and source-result IDs must be non-empty.")
-        if bool(successful_) and (
-            not bool(jnp.isfinite(energy_))
-            or not bool(jnp.all(jnp.isfinite(forces_)))
-            or (hessian_ is not None and not bool(jnp.all(jnp.isfinite(hessian_))))
+        identity = (
+            jax.device_get((energy_, forces_, hessian_, successful_))
+            if _identity_leaves is None
+            else _identity_leaves
+        )
+        host_energy, host_forces, host_hessian, host_successful = identity
+        if bool(host_successful) and (
+            not bool(np.isfinite(host_energy))
+            or not bool(np.all(np.isfinite(host_forces)))
+            or (host_hessian is not None and not bool(np.all(np.isfinite(host_hessian))))
         ):
             raise ValueError("A successful surface evaluation must be finite.")
         self.energy = energy_
@@ -114,12 +123,12 @@ class PotentialEnergySurfaceEvaluation(StrictModule, NonTrainableState):
                 "kind": "potential-energy-surface-evaluation",
                 "provider": provider,
                 "source_result": source,
-                "successful": bool(successful_),
+                "successful": bool(host_successful),
                 "arrays": array_tree_fingerprint(
                     {
-                        "energy": np.asarray(energy_),
-                        "forces": np.asarray(forces_),
-                        "hessian": None if hessian_ is None else np.asarray(hessian_),
+                        "energy": host_energy,
+                        "forces": host_forces,
+                        "hessian": host_hessian,
                     }
                 ),
             }

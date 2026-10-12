@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from functools import cache
 from itertools import combinations
 
+from .._host_table_cache import host_table_cache
 from .._validation import nonnegative_integer
 
 
@@ -42,7 +42,7 @@ type ExteriorTable = tuple[
 ]
 
 
-@cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def wedge_table(n: int, k: int, l: int, /) -> ExteriorTable:
     left, right = exterior_indices(n, k), exterior_indices(n, l)
     output = {index: i for i, index in enumerate(exterior_indices(n, k + l))}
@@ -55,7 +55,7 @@ def wedge_table(n: int, k: int, l: int, /) -> ExteriorTable:
     return _columns(rows)
 
 
-@cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def derivative_table(n: int, k: int, /) -> ExteriorTable:
     source = {index: i for i, index in enumerate(exterior_indices(n, k))}
     rows = [
@@ -66,7 +66,7 @@ def derivative_table(n: int, k: int, /) -> ExteriorTable:
     return _columns(rows)
 
 
-@cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def interior_table(n: int, k: int, /) -> ExteriorTable:
     source = {index: i for i, index in enumerate(exterior_indices(n, k))}
     rows = []
@@ -78,7 +78,7 @@ def interior_table(n: int, k: int, /) -> ExteriorTable:
     return _columns(rows)
 
 
-@cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def complement_table(n: int, k: int, /) -> tuple[tuple[int, ...], tuple[int, ...]]:
     output = {index: i for i, index in enumerate(exterior_indices(n, n - k))}
     complements = [

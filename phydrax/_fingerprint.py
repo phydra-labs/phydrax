@@ -49,18 +49,33 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     records = _array_records(tree)
     digest = hashlib.sha256()
     for path, value in records:
-        contiguous = np.ascontiguousarray(value)
+        # Legacy ascontiguousarray promoted scalar leaves to a length-one axis.
+        shape = value.shape if value.ndim else (1,)
         metadata = canonical_json(
             {
                 "path": path,
-                "dtype": contiguous.dtype.str,
-                "shape": list(contiguous.shape),
+                "dtype": value.dtype.str,
+                "shape": list(shape),
             }
         ).encode("ascii")
-        payload = contiguous.tobytes(order="C")
-        for chunk in (metadata, payload):
-            digest.update(len(chunk).to_bytes(8, "big"))
-            digest.update(chunk)
+        digest.update(len(metadata).to_bytes(8, "big"))
+        digest.update(metadata)
+        digest.update(value.nbytes.to_bytes(8, "big"))
+        if value.nbytes == 0:
+            continue
+        if value.flags.c_contiguous:
+            digest.update(memoryview(value.reshape(-1).view(np.uint8)))
+        else:
+            # Bound the C-order staging buffer independently of the leaf size.
+            with np.nditer(
+                value,
+                flags=["external_loop", "buffered", "zerosize_ok"],
+                op_flags=["readonly"],
+                order="C",
+                buffersize=max(1, 65536 // max(1, value.dtype.itemsize)),
+            ) as chunks:
+                for chunk in chunks:
+                    digest.update(memoryview(np.ascontiguousarray(chunk).view(np.uint8)))
     return {
         "signature": [
             {

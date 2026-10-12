@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Fixed
+- Canonical array archives stream with bounded scratch and second-pass source
+  verification, preserving archive bytes, collection identities, and checkpoint
+  digests. Lifecycle NPZ exports and authorized support snapshots stage on disk.
+- NumPy resource decoding admits the complete NPZ inventory before loading members
+  individually and returns immutable resource-backed NPY views. Distributed
+  checkpoint restoration uses bounded disk-spilling spools
+  and read-only host shards.
+- Array fingerprints and prepared execution-workset identities retain canonical
+  bytes while avoiding whole-array serialization and repeated bucket scans.
+  Atomistic evaluations reuse grouped host identity leaves; runtime file hashing
+  streams content while retaining mutation refusal.
+- Dynamic host preparation caches enforce measured logical-byte ceilings and
+  deterministic LRU eviction, including FEM tables; oversized values are not
+  retained. Trainable-role metadata uses weak class keys, and Virasoro descendant
+  admission precedes partition enumeration. Scientific identities are unchanged.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.

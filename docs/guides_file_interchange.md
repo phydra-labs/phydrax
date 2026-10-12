@@ -52,6 +52,22 @@ meaning:
 - pickle-free NPY and NPZ with header, dtype, shape, rank, and element preflight;
 - HDF5 object, link, dataset, dtype, filter, attribute, and logical-byte inspection.
 
+NPY decoding returns a read-only view backed by the immutable resource bytes;
+request an explicit NumPy copy if mutation is required. NPZ decoding preflights
+the complete inventory, checksums, headers, and aggregate element limits before
+decoding members individually. It does not retain a second mapping of every
+decompressed member.
+
+Native array archives hash and count canonical NPY payloads before publication,
+then stream the same encoding into stored ZIP members and verify each second-pass
+digest. Source mutation refuses publication without replacing the destination.
+Archive bytes, collection digests, and deterministic member metadata are unchanged.
+Lifecycle NPZ exports stage directly to a file; explicitly authorized full support
+bundles use a bounded, descriptor-verified temporary snapshot rather than retaining
+the complete archive as bytes. Checkpoint restore hashes chunks incrementally through
+a one-MiB disk-spilling spool, loads each admitted shard once, and returns read-only
+host arrays.
+
 Format adapters remain responsible for units, frames, axes, topology, field
 association, validity, uncertainty, support, status, and provenance.
 

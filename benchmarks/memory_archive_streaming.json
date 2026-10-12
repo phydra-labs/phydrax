@@ -1,0 +1,249 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "6a8803c9fc24c1e974f4152f070011612411e295c9cab77970df53e1f08aa5dd",
+    "evidence_schema": {
+      "fields": [
+        "collection_digest",
+        "input_bytes",
+        "output_bytes",
+        "scratch_peak_bytes",
+        "sha256"
+      ],
+      "signature": "ef6fbeffadbd82e4734c3431ada5c34b31fbcb9ead7d3432bfda19d085923965"
+    },
+    "fingerprint": "7b476eb0c2d1b14363e8dc29764772fa21e71bd3ad0d6c62147a70ebbae3c21a",
+    "source_build_fingerprint": "f9116dc2a9024bd944fb78fba4af9046e749db8d83464d17e82e4de3b8c6498f"
+  },
+  "member_bytes": 1048576,
+  "process_peak_rss_bytes": 1987969024,
+  "records": [
+    {
+      "capacity": 4,
+      "case": "archive-write",
+      "collection_digest": "db9d1ddef35d46b00f6920f7ce1d6a6ab890493b00a7f9de5e87c648fc67205d",
+      "input_bytes": 4194304,
+      "output_bytes": 4196330,
+      "scratch_peak_bytes": 2110418,
+      "sha256": "6cd1f83ac9cef3cc5f3a0588e4ae5fc3478de7656a28dc01dcfea3245d6416da",
+      "wall_seconds": 0.01390358293429017
+    },
+    {
+      "capacity": 4,
+      "case": "archive-read",
+      "input_bytes": 4196330,
+      "output_bytes": 4194304,
+      "scratch_peak_bytes": 551737
+    },
+    {
+      "capacity": 4,
+      "case": "npz-read",
+      "input_bytes": 4195294,
+      "output_bytes": 4194304,
+      "scratch_peak_bytes": 542949
+    },
+    {
+      "capacity": 4,
+      "case": "npz-export",
+      "input_bytes": 4194304,
+      "output_bytes": 4196846,
+      "scratch_peak_bytes": 2103730
+    },
+    {
+      "capacity": 4,
+      "case": "support-snapshot",
+      "input_bytes": 4196912,
+      "output_bytes": 4198587,
+      "scratch_peak_bytes": 2134440,
+      "status": "ok"
+    },
+    {
+      "capacity": 4,
+      "case": "checkpoint-read",
+      "input_bytes": 4194432,
+      "output_bytes": 4194304,
+      "payload_digest": "7f2ea9ded816d07eb275ff7571896972d0df5201eade98ce721545e32d155a20",
+      "scratch_peak_bytes": 544773
+    },
+    {
+      "capacity": 16,
+      "case": "archive-write",
+      "collection_digest": "6892b3c67dc99ed4a5f0e48a1cd1bc24ec34567674d880df116a2377e0e7ad84",
+      "input_bytes": 16777216,
+      "output_bytes": 16784798,
+      "scratch_peak_bytes": 2117056,
+      "sha256": "2a31fc9885678d7f3569618e21ef06873f7ddcbf686616bf0a8e72ed914e5e18",
+      "wall_seconds": 0.047569874906912446
+    },
+    {
+      "capacity": 16,
+      "case": "archive-read",
+      "input_bytes": 16784798,
+      "output_bytes": 16777216,
+      "scratch_peak_bytes": 578825
+    },
+    {
+      "capacity": 16,
+      "case": "npz-read",
+      "input_bytes": 16781110,
+      "output_bytes": 16777216,
+      "scratch_peak_bytes": 578068
+    },
+    {
+      "capacity": 16,
+      "case": "npz-export",
+      "input_bytes": 16777216,
+      "output_bytes": 16785446,
+      "scratch_peak_bytes": 2104994
+    },
+    {
+      "capacity": 16,
+      "case": "support-snapshot",
+      "input_bytes": 16785380,
+      "output_bytes": 16787058,
+      "scratch_peak_bytes": 2155453,
+      "status": "ok"
+    },
+    {
+      "capacity": 16,
+      "case": "checkpoint-read",
+      "input_bytes": 16777344,
+      "output_bytes": 16777216,
+      "payload_digest": "b9101fa94ae51b8338496a9b9fff08134e0c1eaa5332a2841161987c4e9ee39d",
+      "scratch_peak_bytes": 558409
+    },
+    {
+      "capacity": 64,
+      "case": "archive-write",
+      "collection_digest": "28836f9716b8c69c241bc5aad8b410953c26ccabad2985756ac5e4da0c20cf9d",
+      "input_bytes": 67108864,
+      "output_bytes": 67138670,
+      "scratch_peak_bytes": 2149632,
+      "sha256": "20a933c0d71d826e77a56c1b9194e7866e5db71cbf437de502a05f696036ff00",
+      "wall_seconds": 0.18101262487471104
+    },
+    {
+      "capacity": 64,
+      "case": "archive-read",
+      "input_bytes": 67138670,
+      "output_bytes": 67108864,
+      "scratch_peak_bytes": 675360
+    },
+    {
+      "capacity": 64,
+      "case": "npz-read",
+      "input_bytes": 67124374,
+      "output_bytes": 67108864,
+      "scratch_peak_bytes": 633060
+    },
+    {
+      "capacity": 64,
+      "case": "npz-export",
+      "input_bytes": 67108864,
+      "output_bytes": 67139846,
+      "scratch_peak_bytes": 2110122
+    },
+    {
+      "capacity": 64,
+      "case": "support-snapshot",
+      "input_bytes": 67139252,
+      "output_bytes": 0,
+      "reason": "Archive array 'archive' exceeds the axis-length limit.",
+      "scratch_peak_bytes": 2111312,
+      "status": "refused"
+    },
+    {
+      "capacity": 64,
+      "case": "checkpoint-read",
+      "input_bytes": 67108992,
+      "output_bytes": 67108864,
+      "payload_digest": "7777b35d689c3ae4c26d99820aeea788d10a2643785224c75c8d75f8038d31ea",
+      "scratch_peak_bytes": 620563
+    }
+  ],
+  "scaling": {
+    "archive-read": {
+      "exponent": 0.07291900055308348,
+      "fourfold_ratios": [
+        1.0490958554528698,
+        1.1667775234310889
+      ],
+      "scratch_bound_met": true
+    },
+    "archive-write": {
+      "exponent": 0.006640232075480386,
+      "fourfold_ratios": [
+        1.0031453484570356,
+        1.0153874059070709
+      ],
+      "scratch_bound_met": true
+    },
+    "checkpoint-read": {
+      "exponent": 0.046980619712343706,
+      "fourfold_ratios": [
+        1.025030609079378,
+        1.11130551262605
+      ],
+      "scratch_bound_met": true
+    },
+    "npz-export": {
+      "exponent": 0.001094214245587283,
+      "fourfold_ratios": [
+        1.000600837559953,
+        1.0024361114568499
+      ],
+      "scratch_bound_met": true
+    },
+    "npz-read": {
+      "exponent": 0.05538138789911133,
+      "fourfold_ratios": [
+        1.0646819498700615,
+        1.0951306766677968
+      ],
+      "scratch_bound_met": true
+    },
+    "support-snapshot": {
+      "exponent": 0.00706674813311278,
+      "fourfold_ratios": [
+        1.0098447367927887
+      ],
+      "scratch_bound_met": true
+    }
+  }
+}

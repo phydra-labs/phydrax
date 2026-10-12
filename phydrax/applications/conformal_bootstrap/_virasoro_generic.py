@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import functools
 import math
 from collections.abc import Sequence
 
@@ -18,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._strict import StrictModule
 from ._virasoro import elliptic_nome
 
@@ -26,7 +26,7 @@ def _complex_payload(value: complex, /) -> tuple[float, float]:
     return float(value.real), float(value.imag)
 
 
-@functools.cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _partitions(level: int, maximum: int | None = None) -> tuple[tuple[int, ...], ...]:
     if level == 0:
         return ((),)
@@ -37,7 +37,7 @@ def _partitions(level: int, maximum: int | None = None) -> tuple[tuple[int, ...]
     return tuple(result)
 
 
-@functools.cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _canonical_negative_modes(
     sequence: tuple[int, ...],
 ) -> tuple[tuple[tuple[int, ...], complex], ...]:
@@ -147,6 +147,28 @@ def _three_point_descendant(
     return value
 
 
+def _admit_partition_count(level: int, capacity: int, /) -> None:
+    """Count descendants before enumeration, using Euler's pentagonal recurrence."""
+    if level >= capacity:
+        raise ValueError("Virasoro descendant count exceeds maximum_partition_count.")
+    counts = [1]
+    total = 1
+    for current in range(1, level + 1):
+        count = 0
+        index = 1
+        while (lower := index * (3 * index - 1) // 2) <= current:
+            sign = 1 if index % 2 else -1
+            count += sign * counts[current - lower]
+            upper = lower + index
+            if upper <= current:
+                count += sign * counts[current - upper]
+            index += 1
+        counts.append(count)
+        total += count
+        if total > capacity:
+            raise ValueError("Virasoro descendant count exceeds maximum_partition_count.")
+
+
 class VirasoroEllipticBlockPlan(StrictModule):
     """Generic finite Verma-module recursion in elliptic normalization."""
 
@@ -180,9 +202,7 @@ class VirasoroEllipticBlockPlan(StrictModule):
             raise ValueError("Virasoro weights and central charge must be finite.")
         if level < 0 or tolerance <= 0.0 or capacity < 1:
             raise ValueError("Virasoro recursion limits must be positive.")
-        partition_count = sum(len(_partitions(index)) for index in range(level + 1))
-        if partition_count > capacity:
-            raise ValueError("Virasoro descendant count exceeds maximum_partition_count.")
+        _admit_partition_count(level, capacity)
         content = {
             "kind": "virasoro-elliptic-block-plan",
             "central_charge": _complex_payload(central),

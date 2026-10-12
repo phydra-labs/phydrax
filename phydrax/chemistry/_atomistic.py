@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
@@ -93,15 +94,18 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
             relation,
             species=self.system.plan.atom_type_ids,
         )
+        host_coordinate, host_energy, host_forces, host_successful = jax.device_get(
+            (coordinate, value.energy, value.forces, value.successful)
+        )
         source_id = canonical_fingerprint(
             {
                 "kind": "atomistic-surface-evaluation",
                 "surface": self.surface_id,
                 "arrays": array_tree_fingerprint(
                     {
-                        "positions": np.asarray(coordinate),
-                        "energy": np.asarray(value.energy),
-                        "forces": np.asarray(value.forces),
+                        "positions": host_coordinate,
+                        "energy": host_energy,
+                        "forces": host_forces,
                     }
                 ),
             }
@@ -113,6 +117,12 @@ class AtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySurface):
             value.successful,
             provider_id=self.provider_id,
             source_result_id=source_id,
+            _identity_leaves=(
+                np.asarray(host_energy).reshape(()),
+                np.asarray(host_forces, dtype=host_energy.dtype),
+                None,
+                np.asarray(host_successful, dtype=np.bool_).reshape(()),
+            ),
         )
 
 
@@ -161,17 +171,18 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
         value = self.provider.evaluate(self.system, positions, cell_vectors)
         if value.provider_id != self.provider_id:
             raise ValueError("External atomistic provider changed its bound identity.")
+        host_energy, host_forces, host_stress, host_successful = jax.device_get(
+            (value.energy, value.forces, value.stress, value.successful)
+        )
         source_id = canonical_fingerprint(
             {
                 "kind": "external-atomistic-surface-evaluation",
                 "surface": self.surface_id,
                 "arrays": array_tree_fingerprint(
                     {
-                        "energy": np.asarray(value.energy),
-                        "forces": np.asarray(value.forces),
-                        "stress": None
-                        if value.stress is None
-                        else np.asarray(value.stress),
+                        "energy": host_energy,
+                        "forces": host_forces,
+                        "stress": host_stress,
                     }
                 ),
             }
@@ -183,6 +194,12 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
             value.successful,
             provider_id=self.provider_id,
             source_result_id=source_id,
+            _identity_leaves=(
+                np.asarray(host_energy).reshape(()),
+                np.asarray(host_forces, dtype=host_energy.dtype),
+                None,
+                np.asarray(host_successful, dtype=np.bool_).reshape(()),
+            ),
         )
 
 

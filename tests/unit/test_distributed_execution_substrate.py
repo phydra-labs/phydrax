@@ -389,7 +389,7 @@ def test_generic_halo_shard_map_matches_forward_and_transpose_references() -> No
     )
 
 
-def _repository(tmp_path: Path) -> POSIXArtifactRepository:
+def _repository(tmp_path: Path, maximum_chunk_bytes: int = 64) -> POSIXArtifactRepository:
     profile = HPCFilesystemProfile(
         "posix.distributed-test",
         "local-posix",
@@ -401,7 +401,7 @@ def _repository(tmp_path: Path) -> POSIXArtifactRepository:
     )
     policy = POSIXRepositoryPolicy(
         profile,
-        maximum_chunk_bytes=64,
+        maximum_chunk_bytes=maximum_chunk_bytes,
         maximum_metadata_bytes=64 * 1024,
     )
     return POSIXArtifactRepository(tmp_path / "repository", policy)
@@ -550,3 +550,64 @@ def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_alloca
             # ty: ignore[invalid-argument-type]
             None,
         )
+
+
+def test_checkpoint_multichunk_disk_spool_returns_readonly_array(tmp_path: Path) -> None:
+    from phydrax._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
+
+    repository = _repository(tmp_path, maximum_chunk_bytes=262144)
+    value = jnp.arange(262144, dtype=jnp.float64)
+    publication = publish_process_checkpoint(
+        repository,
+        "checkpoint-spool",
+        "execution-spool",
+        {"value": value},
+        analysis_plan_id="analysis-spool",
+        numeric_revision_id="revision-spool",
+        writer_id="writer-spool",
+    )
+    shard = publication.shards[0]
+    restored = checkpoint_module._read_shard_payload(
+        repository, shard, value.shape, np.dtype(np.float64), DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+    np.testing.assert_array_equal(restored, np.arange(262144, dtype=np.float64))
+    assert not restored.flags.writeable
+    with pytest.raises(ValueError):
+        restored[0] = -1
+
+
+@pytest.mark.parametrize("fault", ["digest", "shape", "dtype", "allocation"])
+def test_checkpoint_shard_decode_refuses_invalid_payload_contract(
+    tmp_path: Path, fault: str
+) -> None:
+    from phydrax._array_archive import ArrayArchiveLimits, DEFAULT_ARRAY_ARCHIVE_LIMITS
+
+    repository = _repository(tmp_path)
+    value = jnp.arange(16, dtype=jnp.float64)
+    publication = publish_process_checkpoint(
+        repository,
+        "checkpoint-fault",
+        "execution-fault",
+        {"value": value},
+        analysis_plan_id="analysis-fault",
+        numeric_revision_id="revision-fault",
+        writer_id="writer-fault",
+    )
+    shard = publication.shards[0]
+    shape = (15,) if fault == "shape" else value.shape
+    dtype = np.dtype(np.float32) if fault == "dtype" else np.dtype(np.float64)
+    limits = (
+        ArrayArchiveLimits(max_member_bytes=128)
+        if fault == "allocation"
+        else DEFAULT_ARRAY_ARCHIVE_LIMITS
+    )
+    if fault == "digest":
+        shard = CheckpointShard(
+            shard.shard_id,
+            "0" * 64,
+            shard.byte_count,
+            shard.layout_ids,
+            metadata=dict(shard.metadata),
+        )
+    with pytest.raises(RepositoryCorruptionError):
+        checkpoint_module._read_shard_payload(repository, shard, shape, dtype, limits)

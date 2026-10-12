@@ -20,6 +20,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._host_table_cache import host_table_cache
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import positive_integer
@@ -415,7 +416,7 @@ def _fs_orbit_squares(
     }
 
 
-@functools.lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _genz_malik_host_table(dimension: int, degree: int) -> _GenzMalikHostTable:
     order = (degree - 1) // 2
     delta_squared = _FS_DELTA2[degree]

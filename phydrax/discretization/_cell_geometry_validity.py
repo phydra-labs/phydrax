@@ -25,7 +25,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import IntEnum
-from functools import cache
 from itertools import product
 from typing import Any
 
@@ -44,6 +43,7 @@ from .._geometry_predicates import (
     PredicateSign,
     resolve_host_predicate_mode,
 )
+from .._host_table_cache import host_table_cache, logical_table_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._cell_complex import PolyhedralConnectivity
@@ -372,7 +372,21 @@ class _BernsteinPlan:
     child_matrices: np.ndarray
 
 
-@cache
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    weight=lambda value: logical_table_bytes(
+        (
+            value.domain,
+            value.nodes,
+            value.coefficients_from_values,
+            value.conversion_norm,
+            value.vertex_indices,
+            value.child_origins,
+            value.child_matrices,
+        )
+    ),
+)
 def _bernstein_plan(domain: str, degrees: tuple[int, ...], /) -> _BernsteinPlan:
     match domain:
         case "box":
