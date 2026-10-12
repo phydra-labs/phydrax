@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from math import prod
 from typing import Literal, TypeAlias
 
@@ -29,6 +30,7 @@ from phydrax.nn.layers._measure_convolution import (
     _AbstractMeasureNormalizedConvND,
     _measure_dependency_support,
 )
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import (
     FunctionSamples,
     OperatorAxis,
@@ -102,6 +104,24 @@ class ConvolutionSupportPlan(StrictModule):
                 raise ValueError("Periodic Fourier convolution requires periodic axes.")
             if policy != "periodic_fourier" and axis.periodic:
                 raise ValueError("Bounded convolution policies require nonperiodic axes.")
+
+
+def _convolution_contract(model: CNO | UNO) -> ConfiguredOperatorContract:
+    """Admit the axes declared by the model's own support plan.
+
+    The registered capability describes the periodic Fourier configuration. A
+    bounded plan keeps the uniform-spacing requirement while its own
+    ``validate_axes`` owns the per-axis boundary semantics.
+    """
+    from phydrax.nn.operator.catalog import operator_architecture_contract
+
+    contract = operator_architecture_contract(model.operator_architecture)
+    if model.support_plan.periodic:
+        return contract
+    return replace(
+        contract,
+        capabilities=replace(contract.capabilities, axis_requirement="positive_uniform"),
+    )
 
 
 def _activate(name: CNOActivation, values: Array, /) -> Array:
@@ -319,6 +339,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         oversample_factor: int = 2,
         circular: bool = True,
         extension_modes: Sequence[ConvolutionAxisPolicy] | None = None,
+        use_bias: bool = True,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         super().__init__(
@@ -328,7 +349,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             kernel_size=kernel_size,
             padding="SAME",
             circular=bool(circular),
-            use_bias=True,
+            use_bias=use_bias,
             key=key,
         )
         self.activation = activation
@@ -351,7 +372,8 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             weight_key,
             shape=self.kernel_size + (self.in_channels, self.out_channels),
         )
-        self.bias = jnp.zeros((self.out_channels,), dtype=jnp.float64)
+        if use_bias:
+            self.bias = jnp.zeros((self.out_channels,), dtype=jnp.float64)
 
     def dependency_support(
         self,
@@ -384,7 +406,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         original_shape = tuple(jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1])
         halos = tuple(size // 2 for size in self.kernel_size)
 
-        def extend(array: ArrayLike, *, channels: bool) -> Array:
+        def extend(array: ArrayLike, *, channels: bool, signed: bool) -> Array:
             result = jnp.asarray(array)
             start = result.ndim - self.spatial_ndim - (1 if channels else 0)
             for local_axis, (width, mode) in enumerate(
@@ -396,7 +418,9 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
                 pads[start + local_axis] = (width, width)
                 if mode in ("neumann_cosine", "dirichlet_sine"):
                     result = jnp.pad(result, pads, mode="reflect")
-                    if mode == "dirichlet_sine":
+                    # Only field values carry the odd Dirichlet extension; the
+                    # physical measure and support mask reflect evenly.
+                    if mode == "dirichlet_sine" and signed:
                         sign = jnp.ones(
                             (result.shape[start + local_axis],),
                             dtype=result.dtype,
@@ -410,14 +434,18 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
                     result = jnp.pad(result, pads, mode="constant")
             return result
 
-        extended_values = extend(values, channels=True)
+        extended_values = extend(values, channels=True, signed=True)
         extended_mask = (
             None
             if source_mask is None
-            else extend(jnp.asarray(source_mask, dtype=jnp.bool_), channels=False)
+            else extend(
+                jnp.asarray(source_mask, dtype=jnp.bool_), channels=False, signed=False
+            )
         )
         extended_quadrature = (
-            None if quadrature is None else extend(quadrature, channels=False)
+            None
+            if quadrature is None
+            else extend(quadrature, channels=False, signed=False)
         )
         output = super().__call__(
             extended_values,
@@ -496,10 +524,11 @@ class _CNOBlock(StrictModule):
         in_channels: int,
         out_channels: int,
         kernel_size: int | Sequence[int],
-        activation: CNOActivation,
+        activation: CNOActivation | None,
         oversample_factor: int,
         circular: bool,
         extension_modes: Sequence[ConvolutionAxisPolicy],
+        use_bias: bool,
         key: PRNGKey,
     ) -> None:
         first_key, second_key, skip_key = jr.split(key, 3)
@@ -509,6 +538,7 @@ class _CNOBlock(StrictModule):
             out_channels=out_channels,
             kernel_size=kernel_size,
             activation=activation,
+            use_bias=use_bias,
             oversample_factor=oversample_factor,
             circular=circular,
             key=first_key,
@@ -520,6 +550,7 @@ class _CNOBlock(StrictModule):
             out_channels=out_channels,
             kernel_size=kernel_size,
             activation=None,
+            use_bias=use_bias,
             oversample_factor=oversample_factor,
             circular=circular,
             key=second_key,
@@ -532,6 +563,7 @@ class _CNOBlock(StrictModule):
                 in_size=in_channels,
                 out_size=out_channels,
                 activation=None,
+                use_bias=use_bias,
                 key=skip_key,
             )
         )
@@ -587,6 +619,7 @@ class CNO(AbstractOperatorModel):
     """Boundary-declared anti-aliased Convolutional Neural Operator."""
 
     operator_architecture = "CNO"
+    _operator_contract_builder = staticmethod(_convolution_contract)
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
@@ -608,9 +641,10 @@ class CNO(AbstractOperatorModel):
         width: int = 32,
         depth: int = 4,
         kernel_size: int | Sequence[int] = 3,
-        activation: CNOActivation = "gelu",
+        activation: CNOActivation | None = "gelu",
         oversample_factor: int = 2,
         coordinate_embedding: bool = True,
+        use_bias: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
         key: PRNGKey = DOC_KEY0,
@@ -638,7 +672,11 @@ class CNO(AbstractOperatorModel):
             2 * self.spatial_ndim if coordinate_embedding else 0
         )
         self.lift = Linear(
-            in_size=lifted, out_size=self.width, activation=None, key=keys[0]
+            in_size=lifted,
+            out_size=self.width,
+            activation=None,
+            use_bias=use_bias,
+            key=keys[0],
         )
         self.blocks = tuple(
             _CNOBlock(
@@ -647,6 +685,7 @@ class CNO(AbstractOperatorModel):
                 out_channels=self.width,
                 kernel_size=kernel_size,
                 activation=activation,
+                use_bias=use_bias,
                 oversample_factor=oversample_factor,
                 circular=self.support_plan.periodic,
                 extension_modes=self.support_plan.axis_policies,
@@ -658,6 +697,7 @@ class CNO(AbstractOperatorModel):
             in_size=self.width,
             out_size=_get_size(out_channels),
             activation=None,
+            use_bias=use_bias,
             key=keys[-1],
         )
 
@@ -803,6 +843,7 @@ class UNO(AbstractOperatorModel):
     """Boundary-declared U-shaped operator with measure-aware resampling."""
 
     operator_architecture = "UNO"
+    _operator_contract_builder = staticmethod(_convolution_contract)
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
@@ -825,9 +866,10 @@ class UNO(AbstractOperatorModel):
         in_channels: int | Literal["scalar"] = "scalar",
         out_channels: int | Literal["scalar"] = "scalar",
         kernel_size: int | Sequence[int] = 3,
-        activation: CNOActivation = "gelu",
+        activation: CNOActivation | None = "gelu",
         oversample_factor: int = 2,
         coordinate_embedding: bool = True,
+        use_bias: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
         key: PRNGKey = DOC_KEY0,
@@ -860,6 +902,7 @@ class UNO(AbstractOperatorModel):
             in_size=lifted,
             out_size=self.widths[0],
             activation=None,
+            use_bias=use_bias,
             key=keys[0],
         )
         encoders = []
@@ -872,6 +915,7 @@ class UNO(AbstractOperatorModel):
                     out_channels=width,
                     kernel_size=kernel_size,
                     activation=activation,
+                    use_bias=use_bias,
                     oversample_factor=oversample_factor,
                     circular=self.support_plan.periodic,
                     extension_modes=self.support_plan.axis_policies,
@@ -891,6 +935,7 @@ class UNO(AbstractOperatorModel):
                     in_size=current + width,
                     out_size=width,
                     activation=None,
+                    use_bias=use_bias,
                     key=keys[key_offset + 2 * index],
                 )
             )
@@ -901,6 +946,7 @@ class UNO(AbstractOperatorModel):
                     out_channels=width,
                     kernel_size=kernel_size,
                     activation=activation,
+                    use_bias=use_bias,
                     oversample_factor=oversample_factor,
                     circular=self.support_plan.periodic,
                     extension_modes=self.support_plan.axis_policies,
@@ -914,6 +960,7 @@ class UNO(AbstractOperatorModel):
             in_size=self.widths[0],
             out_size=_get_size(out_channels),
             activation=None,
+            use_bias=use_bias,
             key=keys[-1],
         )
 
