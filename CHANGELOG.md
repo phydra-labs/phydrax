@@ -8,6 +8,14 @@
   contaminating elastic reverse-mode tangents; root refusal evidence is unchanged.
 - Dynamic MAC production incompatibility coverage supplies valid wall statistics
   to reach the scientific refusal after checked nominal argument validation.
+- Signed-Hermitian spectral roundtrip regressions use dtype-relative machine
+  precision, correctly admitting a one-ulp float32 scaling roundtrip.
+- Polynomial-image analysis budgets dense SVD column materialization and both
+  singular-mode certification actions, avoiding false resource refusal on small
+  Jacobians without changing declared memory or design-entry limits.
+- Target-matrix mesh shape energies retain small positive distortion near ideal
+  two- and three-dimensional cells, preventing cancellation-induced Armijo
+  failures after untangling while preserving convergence and validity guards.
 - Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
   in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
   batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
