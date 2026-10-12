@@ -205,6 +205,12 @@ value accepted by its owner is never refused by a partial check; a contract
 form beside a static-only member is refused. Phydrax forms nested in other
 containers are refused.
 
+Do not decorate boundaries whose inputs are all static-only. For example, the
+`LaggedCoulombFrictionPlan`, `ConvergentContactPotentialPlan`,
+`MuIMPMConstitutivePlan`, and `MuIParameters` constructors accept conversion
+inputs and scalar metadata; their explicit conversion and scientific validation
+remain the input contract rather than an ineffective `checked` wrapper.
+
 Arguments are checked in declaration order, omitted defaults included, before
 the body runs. Python's binding errors (missing, duplicate, or unexpected
 arguments) are reported first. Values are forwarded unchanged: `checked` never
