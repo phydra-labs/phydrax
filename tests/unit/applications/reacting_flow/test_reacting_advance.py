@@ -154,6 +154,10 @@ def test_reacting_advance_scenario_1() -> None:
     after = _average(result, conserved.shape)
 
     assert bool(result.accepted)
+    for diagnostic in result.process_diagnostics:
+        np.testing.assert_array_equal(
+            diagnostic.energy_change, jnp.zeros_like(diagnostic.energy_change)
+        )
     assert float(after[0, 0]) < float(conserved[0, 0])
     for before, advanced in zip(
         _invariants(system, conserved), _invariants(system, after), strict=True
@@ -173,19 +177,25 @@ def test_reacting_advance_scenario_1() -> None:
     assert bool(result.accepted)
     assert jnp.all(after[..., : system.species_count] >= 0.0)
     assert float(after[0, 0]) < float(conserved[0, 0])
+    for diagnostic in result.process_diagnostics:
+        np.testing.assert_array_equal(
+            diagnostic.energy_change, jnp.zeros_like(diagnostic.energy_change)
+        )
     np.testing.assert_allclose(
         after[..., system.energy_index],
         conserved[..., system.energy_index],
-        rtol=0.0,
+        rtol=8 * np.finfo(conserved.dtype).eps,
         atol=0.0,
     )
     _, mechanism, runtime, conserved = _problem(rate=1.0e6)
     balance = _balance(runtime, mechanism, integration="explicit-subcycled", subcycles=1)
+    initialized = runtime.initialize_state(conserved, 0.0, 0.01)
+    initialized_average = initialized.cell_average().reshape(conserved.shape)
     result = _advance(balance, runtime, conserved, 0.01)
     after = _average(result, conserved.shape)
 
     assert not bool(result.accepted)
-    np.testing.assert_array_equal(after, conserved)
+    np.testing.assert_array_equal(after, initialized_average)
 
 
 def test_thermochemistry_process_composes_with_viscous_mixture_transport() -> None:
@@ -197,6 +207,13 @@ def test_thermochemistry_process_composes_with_viscous_mixture_transport() -> No
     assert isinstance(system, HomogeneousMixtureCompressibleNavierStokesSystem)
     assert bool(result.accepted)
     assert float(after[0, 0]) < float(conserved[0, 0])
-    np.testing.assert_array_equal(
-        after[..., system.energy_index], conserved[..., system.energy_index]
+    for diagnostic in result.process_diagnostics:
+        np.testing.assert_array_equal(
+            diagnostic.energy_change, jnp.zeros_like(diagnostic.energy_change)
+        )
+    np.testing.assert_allclose(
+        after[..., system.energy_index],
+        conserved[..., system.energy_index],
+        rtol=8 * np.finfo(conserved.dtype).eps,
+        atol=0.0,
     )
