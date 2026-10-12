@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Fixed
+- Lattice-Boltzmann geometry snapshots own a detached host mask before device
+  conversion, so caller mutations cannot invalidate frozen classification.
+- Rigid-MPM detailed steps validate trial geometry before P2G and pass splat
+  routes through conditional operands, preserving recoverable failed-step
+  rollback without tracing an inactive scatter's geometry refusal.
+- The tetrahedral VOF rejection regression supplies a valid gradient object,
+  retaining geometry-first scientific validation under checked nominal signatures.
+- Identity conservative-remap regressions measure conservation against the
+  source-content roundoff scale instead of requiring exact floating-point zero.
+- Cubical spline-Whitney chains use the grid's nodal coordinates and exact
+  declared upper faces rather than cumulative-width reconstructions, preserving
+  closed-face current deposition and continuity without relaxing boundary checks.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.

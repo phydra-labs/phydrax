@@ -89,6 +89,37 @@ def test_nonuniform_segment_work_uses_actual_cell_widths() -> None:
     np.testing.assert_allclose(samples, np.broadcast_to(field, samples.shape), atol=3e-14)
 
 
+def test_closed_face_segments_preserve_work_and_chain_boundary() -> None:
+    grid = TensorGridPlan(
+        tuple(UniformCellAxisSpec(6, periodic=False) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+    ).prepare(jnp.asarray(((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))))
+    bridge = StructuredCochainBridge(grid)
+    kernel = CubicalSplineWhitneyKernel(bridge, 1)
+    start = jnp.asarray(((0.3, 1.0, 0.4), (0.97, 0.2, 0.3), (0.6, 0.6, 0.99)))
+    end = jnp.asarray(((0.35, 1.0, 0.4), (1.0, 0.205, 0.3), (0.604, 0.6, 1.0)))
+    field = np.asarray((2.3, -1.1, 0.7))
+    charges = jnp.asarray((0.7, -2.0, 1.1))
+    query = jax.jit(lambda a, b: kernel.integrate_segments(a, b, maximum_segments=4))(
+        start, end
+    )
+    assert bool(jnp.all(query.successful))
+    np.testing.assert_allclose(
+        query.gather(_electric(bridge, field)),
+        np.asarray(end - start) @ field,
+        atol=3e-14,
+    )
+    difference = kernel.integrate_points(end).deposit(charges) - kernel.integrate_points(
+        start
+    ).deposit(charges)
+    boundary = (
+        bridge.cochain.topology.incidences[0]
+        .exterior_derivative()
+        .transpose_mv(query.deposit(charges))
+    )
+    np.testing.assert_allclose(boundary, difference, atol=4e-13, rtol=4e-13)
+
+
 @pytest.mark.parametrize("order", (1, 2, 3), ids=("linear", "quadratic", "cubic"))
 @pytest.mark.parametrize(
     "rate", (0.0, 0.03, 7.0, -23.0), ids=("zero", "small", "moderate", "negative-fast")

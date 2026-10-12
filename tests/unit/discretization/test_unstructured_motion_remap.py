@@ -610,7 +610,16 @@ def test_unstructured_motion_remap_scenario_1() -> None:
     )
     transferred = eqx.filter_jit(remap.apply)(values)
     np.testing.assert_allclose(transferred, values)
-    np.testing.assert_allclose(remap.conservation_defect(values, transferred), 0.0)
+    source_content_scale = np.sum(
+        np.asarray(discretization.cell_volumes)[:, None] * np.abs(np.asarray(values)),
+        axis=0,
+    )
+    np.testing.assert_allclose(
+        remap.conservation_defect(values, transferred) / source_content_scale,
+        0.0,
+        rtol=0.0,
+        atol=4.0 * np.finfo(np.asarray(values).dtype).eps,
+    )
     gradient = jax.grad(lambda state: jnp.sum(remap.apply(state) ** 2))(values)
     np.testing.assert_allclose(gradient, 2.0 * values)
 

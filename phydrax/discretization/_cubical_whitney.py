@@ -200,14 +200,18 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
             _CubicalWhitneyAxis(
                 np.concatenate(
                     (
-                        np.asarray(axis.point_coordinates[:1], dtype=np.float64),
-                        np.asarray(axis.point_coordinates[:1], dtype=np.float64)
-                        + np.cumsum(width),
+                        np.asarray(
+                            axis.point_coordinates
+                            if axis.periodic
+                            else axis.point_coordinates[:-1],
+                            dtype=np.float64,
+                        ),
+                        np.asarray(axis.bounds[1:], dtype=np.float64),
                     )
                 ),
                 axis=index,
             )
-            for index, (axis, width) in enumerate(zip(axes, widths, strict=True))
+            for index, axis in enumerate(axes)
         )
         self.bridge = bridge
         self.shape_order = order
@@ -601,10 +605,15 @@ class CubicalGridGeometry(StrictModule):
         points = tuple(
             np.asarray(axis.point_coordinates, dtype=np.float64) for axis in axes
         )
-        # Cell boundaries including the closing node of periodic axes.
+        # The declared upper face is exact even when node spacing accumulates roundoff.
         self.boundaries = tuple(
-            np.concatenate((point[:1], point[0] + np.cumsum(width)))
-            for point, width in zip(points, self.widths, strict=True)
+            np.concatenate(
+                (
+                    point if axis.periodic else point[:-1],
+                    np.asarray(axis.bounds[1:], dtype=np.float64),
+                )
+            )
+            for point, axis in zip(points, axes, strict=True)
         )
         self.lower = np.asarray([edges[0] for edges in self.boundaries])
         self.upper = np.asarray([edges[-1] for edges in self.boundaries])
