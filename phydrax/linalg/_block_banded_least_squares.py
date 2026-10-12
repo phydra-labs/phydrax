@@ -12,6 +12,10 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ._banded_spectrum import (
+    banded_singular_value_brackets,
+    banded_singular_value_certificate,
+)
 from ._results import LinearSolveStatus
 from ._svd_contracts import SVDRankEvidence
 
@@ -106,11 +110,6 @@ def _back_substitute(diagonal: Array, off_diagonal: Array, rhs: Array) -> Array:
 def _spectrum(
     diagonal: Array, upper: Array, rows: int
 ) -> tuple[Array, Array, Array, SVDRankEvidence]:
-    from phydrax.linalg import (
-        banded_singular_value_brackets,
-        banded_singular_value_certificate,
-    )
-
     count, width, _ = diagonal.shape
     bandwidth = 2 * width - 1
     row = jnp.arange(width)[:, None]

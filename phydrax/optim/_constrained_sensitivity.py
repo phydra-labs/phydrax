@@ -154,6 +154,7 @@ def _sensitivity_system(
     *,
     route: ConstrainedSensitivityRoute = "matrix-free",
     materialization: MaterializationPolicy | None = None,
+    adjoint: bool = False,
 ) -> _SensitivitySystem:
     mode = parse(mode, ConstrainedSensitivityMode, "mode")
     route = parse(route, ConstrainedSensitivityRoute, "route")
@@ -260,7 +261,9 @@ def _sensitivity_system(
         return jnp.concatenate((stationarity, current.values.equalities, active_values))
 
     derivative = prepare_linearization(lambda value: residual(value, args), initial)
-    operator = JacobianLinearOperator(derivative)
+    operator: AbstractLinearOperator = JacobianLinearOperator(derivative)
+    if adjoint:
+        operator = AdjointLinearOperator(operator)
     system = _prepare_system(operator, policy, route, precision)
     return (
         prepared,
@@ -400,7 +403,7 @@ def constrained_solution_vjp(
         raise ValueError(
             "cotangent_parameters must match the parameter PyTree and leaf shapes."
         )
-    prepared, initial, residual, operator, _, active, model_parameters, gradient = (
+    prepared, initial, residual, operator, system, active, model_parameters, gradient = (
         _sensitivity_system(
             problem,
             parameters,
@@ -412,6 +415,7 @@ def constrained_solution_vjp(
             precision_,
             route=route,
             materialization=materialization,
+            adjoint=True,
         )
     )
     cotangent, _ = ravel_pytree(cotangent_parameters)
@@ -420,14 +424,9 @@ def constrained_solution_vjp(
     right = jnp.concatenate(
         (cotangent, jnp.zeros((initial.size - cotangent.size,), dtype=cotangent.dtype))
     )
-    adjoint_operator = AdjointLinearOperator(operator)
-    policy = _linear_policy(
-        linear, precision_, route=route, materialization=materialization
-    )
-    system = _prepare_system(adjoint_operator, policy, route, precision_)
     result = solve_linear(system, _linear_rhs(system, right))
     condition, regular, certificate = _regularity(
-        adjoint_operator, system, result, route, precision_
+        operator, system, result, route, precision_
     )
     _, pullback = jax.vjp(lambda current_args: residual(initial, current_args), args)
     argument_cotangent = jax.tree.map(

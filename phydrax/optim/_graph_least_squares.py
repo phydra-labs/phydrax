@@ -339,17 +339,22 @@ def _solve_route(
     schur: SchurComplementPlan | None,
     /,
 ) -> tuple[Array, Array, Array]:
-    if route.route == "schur":
-        if schur is None:
-            raise ValueError("Schur route requires a SchurComplementPlan.")
-        step = solve_schur_system(matrix, gradient, schur)
-        return step, jnp.asarray(1, dtype=jnp.int32), jnp.all(jnp.isfinite(step))
+    match route.route:
+        case "schur":
+            if schur is None:
+                raise ValueError("Schur route requires a SchurComplementPlan.")
+            step = solve_schur_system(matrix, gradient, schur)
+            return step, jnp.asarray(1, dtype=jnp.int32), jnp.all(jnp.isfinite(step))
+        case "dense-qr" | "dense-svd":
+            matrix = DenseLinearOperator(
+                materialize(matrix, route.linear_policy.materialization)
+            )
+        case "sparse-qr" | "lsmr":
+            pass
+        case _:
+            raise ValueError("Unsupported residual-graph solve route.")
     result = solve_linear(
-        LinearLeastSquaresProblem(
-            DenseLinearOperator(materialize(matrix, route.linear_policy.materialization))
-            if route.route in ("dense-qr", "dense-svd")
-            else matrix
-        ),
+        LinearLeastSquaresProblem(matrix),
         -gradient,
         policy=route.linear_policy,
     )

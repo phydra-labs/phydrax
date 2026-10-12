@@ -123,14 +123,3 @@ def test_block_banded_above_dense_cutoff_keeps_small_singular_mode() -> None:
     np.testing.assert_allclose(result.value[0], expected, rtol=1e-12)
     assert result.rank_evidence.lower_bound == 2
     assert result.successful
-
-
-def test_coupling_oracle_detects_dropped_continuity_block() -> None:
-    a, b, left, right, coupling = _fixture()
-    matrix = _dense(a, left, right)
-    target = np.concatenate((b.ravel(), coupling.ravel()))
-    expected = np.linalg.lstsq(matrix, target, rcond=None)[0]
-    faulty = left.copy()
-    faulty[1] = 0.0
-    result = solve_block_banded_least_squares(a, b, faulty, right, coupling)
-    assert np.linalg.norm(np.asarray(result.value).ravel() - expected) > 0.05

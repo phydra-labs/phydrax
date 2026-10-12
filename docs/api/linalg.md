@@ -1505,6 +1505,14 @@ Row sums and product residuals include a conservative floating-point
 rounding allowance. Evidence is numerical verification, not an
 interval-arithmetic theorem for arbitrary user-provided action kernels.
 
+This is distinct from `ConstraintOperatorEvidence`: constraint preparation supports
+rectangular and rank-deficient maps, retains a generalized right inverse, and checks
+Frobenius norms of `MRM - M`, `MR - I`, the nullspace residual, and the pairing
+minimum-norm residual. Those projector and compatibility checks do not certify
+square-operator invertibility or provide a Neumann condition bound. Both certificates
+stream coordinate blocks, but their norms, admissible operators, retained state,
+and refusal contracts differ; neither substitutes for the other.
+
 `InverseResidualCertificate` exposes status, residual/condition bounds,
 rank, validity, operator identity, and evidence scope. Unknown rank is `-1`,
 not an asserted rank deficiency. Action failure, nonfinite arithmetic,
