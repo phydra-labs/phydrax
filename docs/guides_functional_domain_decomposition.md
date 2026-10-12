@@ -242,6 +242,25 @@ local parameters and patch kernel states with
 `solve_functional_decomposition`. The resumed run verifies each patch kernel state
 against its patch kernel identity and continues it exactly.
 
+For bounded complete-sweep acceleration, pass
+`relaxation=phx.nonlinear.AitkenRelaxation(initial_relaxation=0.7)` to
+`SchwarzDecompositionTraining`. Jacobi, Gauss–Seidel, and colored strategies
+first form a complete raw sweep `G`: intermediate Gauss–Seidel/colored trace
+captures use unit relaxation. Only at the sweep boundary are incoming targets
+updated as `x + omega * (G(x) - x)`, using the shared Irons–Tuck policy.
+The physical, unrelaxed interface defect still determines convergence.
+All exchanged traces must have one shared, nonempty `quantity_id`; mixed physical
+quantities are refused and require an explicitly scaled formulation. Coordinates
+within that quantity must be commensurate or nondimensionalized.
+
+The state carries `previous_increment` and `omega` as numerical leaves only on
+the Aitken path; ordinary float relaxation keeps both `None` and retains its
+existing numerical behavior. Chunking with `max_sweeps` preserves this history.
+Checkpoints persist both values. Supply a `state_like` template with matching
+optional-field presence, shapes/dtypes, completed sweeps, and patch kernels when
+loading. The canonical checkpoint representation has changed: old field-set
+checkpoints are not supported by a compatibility shim.
+
 ## Coarse correction
 
 `FunctionalCoarseCorrection` freezes an existing global solution and trains one
@@ -310,9 +329,12 @@ sum, and `distributed_schwarz_exchange` routes fixed-shape traces through a devi
 collective.
 
 `SchwarzTraceQuantity` exchanges authored value, derivative, flux, traction, or
-characteristic fields. `aitken_relax_trace_state` applies bounded Aitken
-delta-squared acceleration in trace space. `solve_asynchronous_schwarz` executes a
-deterministic patch schedule against explicitly bounded stale trace revisions.
+characteristic fields. The former `AitkenTracePlan`, `AitkenTraceState`, and
+`aitken_relax_trace_state` helper are removed: use
+`phx.nonlinear.AitkenRelaxation` through `SchwarzDecompositionTraining` so
+acceleration owns complete-sweep history and checkpoint continuation.
+`solve_asynchronous_schwarz` executes a deterministic patch schedule against
+explicitly bounded stale trace revisions; it does not consume strategy relaxation.
 
 `HybridFunctionalDecomposition` accepts trainable functional participants and fixed
 external/numerical field participants. `DecompositionDeploymentArtifact` preserves

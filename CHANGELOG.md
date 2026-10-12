@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Fixed
+- Exact integer powers in finite-difference, semidiscrete, and spectral PDE
+  evaluators lower through one native integer-power path, so JVPs at a zero state
+  are finite and exact (including complex spectral states and exponent zero);
+  non-integer exponents keep their previous lowering.
+- Strict dtype and rank promotion: `Linear` broadcasts random-weight-factorization
+  scales and biases explicitly over batched inputs; finite-volume scalar and
+  cell-diagonal diffusion coefficients expand to tensors with explicit cell axes;
+  the Fourier/sine/cosine modal derivative multiplier carries its wavenumber
+  scale in the coefficient dtype. Numerical values are unchanged.
+- Bounded `AntiAliasedConvND` (and therefore bounded CNO/UNO) extends only field
+  values oddly for `"dirichlet_sine"` axes; source masks and physical quadrature
+  reflect evenly instead of producing negative measure.
+- Finite-element actions that consume several coefficients sharing one layout
+  (for example SIPG diffusivity and Dirichlet data) execute again: workset
+  signatures and kernel bindings now agree on the canonical set of coefficient
+  layouts. Identities of actions without repeated layouts are unchanged.
+- The API reference documents functions wrapped by `eqx.filter_custom_jvp` or
+  `eqx.filter_custom_vjp` (such as `phydrax.nonlinear.implicit_root_output`) from
+  their source definitions; forced inspection previously aliased them to a
+  nonexistent Equinox member and failed the strict documentation build.
 - `tools/incompressible_spectral_benchmarks.py` reads the periodic
   `advective_energy_rate` diagnostic instead of a nonexistent attribute that a
   type-checker suppression had hidden; the emitted invariant key is renamed
@@ -148,6 +168,18 @@
   states and evidence change accordingly, without a compatibility alias.
 
 ### Added
+- `phydrax.nonlinear.AitkenRelaxation` provides bounded Irons–Tuck relaxation for
+  `FixedPointIteration` (and therefore native partitioned coupling) and for
+  complete functional Schwarz sweeps, with safeguard retentions reported through
+  `acceleration_restarts` and checkpointed relaxation history.
+- `compile_finite_difference_residual` compiles stationary native
+  finite-difference residuals with explicit equation-to-field targets, runtime
+  Dirichlet elimination, field-identified reduced layouts, Jacobian/transpose
+  actions, and exact affine `linear_system` construction.
+- `CNO` and `UNO` accept `activation=None` and `use_bias=False`; with
+  `coordinate_embedding=False` they are linear in input values for fixed masks
+  and quadrature. Default configurations keep their recipe and artifact
+  identities.
 - Resolution-dependent spectral vanishing viscosity for isotropic periodic boxes:
   `SpectralVanishingViscosityPlan` prepares λ_n = −ε_K|k|^(2s)Q(|n|/m_K) with
   ε_K = εK^(1−2s), m_K = m₀K^θ and `tadmor_step` or `exponential_highpass` kernels.
@@ -2298,6 +2330,21 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `OperatorCorrectionBinding.binding_id` fingerprints the numerical contents of
+  its residual and correction transfers; previous binding identities are not
+  retained.
+- CNO and UNO derive their operator contract from their `ConvolutionSupportPlan`:
+  bounded plans admit nonperiodic uniform axes in `fit_operator` and contract
+  validation, while periodic plans keep the registered contract unchanged.
+- `SchwarzDecompositionTraining(relaxation=...)` accepts `AitkenRelaxation`;
+  `FunctionalDecompositionState` and its checkpoints carry the Aitken increment and
+  relaxation (absent for fixed relaxation). Aitken requires one shared trace
+  quantity, validates finite bounds, and retains the previous relaxation on a
+  non-finite candidate.
+- Equation compilers share one exact field-dependence analysis: field-free
+  subexpressions have degree zero (including non-integer powers of coefficients),
+  `u**0` is affine, and field-dependent exponents or unknown field-dependent
+  operations are nonlinear rather than misclassified as field-free.
 - Periodic production turbulence statistics include spectral-viscosity
   dissipation shells, totals, and the numerical-dissipation fraction. The
   streamed statistics vector grows from 6 shell arrays plus 51 scalars to 7 shell
@@ -3130,6 +3177,9 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- `AitkenTracePlan`, `AitkenTraceState`, and `aitken_relax_trace_state`; use
+  `phydrax.nonlinear.AitkenRelaxation` with `SchwarzDecompositionTraining` or
+  `FixedPointIteration`.
 - Duplicate exterior-basis tables, graph cochain calculus/spectral/harmonic carriers,
   diagonal-only cochain metric state, specialized RT/BDM/Nédélec factories, compatible
   tensor and spline Piola/transfer shims, and redundant gauge path implementations.

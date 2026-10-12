@@ -33,7 +33,14 @@ from ..linalg import (
     OperatorProperties,
 )
 from ..typing import checked, parse
-from ._ir import PDEExpression, PDEField, PDEProblemIR
+from ._ir import (
+    _evaluate_power,
+    depends_on_fields,
+    field_polynomial_degree,
+    PDEExpression,
+    PDEField,
+    PDEProblemIR,
+)
 from ._validate import infer_expression_type, validate_pde_ir
 
 
@@ -495,7 +502,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 return None
             selected = indices[0]
             if any(
-                _field_degree(argument) > 0
+                depends_on_fields(argument)
                 for index, argument in enumerate(expression.args)
                 if index != selected
             ):
@@ -524,7 +531,7 @@ class _SemidiscreteEvaluator(StrictModule):
             return result
         if expression.op == "divide":
             source = self._expression_lift(expression.args[0], time, args)
-            if source is None or _field_degree(expression.args[1]) > 0:
+            if source is None or depends_on_fields(expression.args[1]):
                 return None
             denominator = self._evaluate(expression.args[1], time, args, {})
             numerator_components = self._components(expression.args[0])
@@ -1157,7 +1164,7 @@ class _SemidiscreteEvaluator(StrictModule):
         if node.op == "negate":
             return -values[0]
         if node.op == "power":
-            return values[0] ** values[1]
+            return _evaluate_power(node, values[0], values[1])
         if node.op == "sin":
             return jnp.sin(values[0])
         if node.op == "cos":
@@ -2067,42 +2074,6 @@ def _validate_boundary_conditions(
                 )
 
 
-def _field_degree(expression: PDEExpression, /) -> int:
-    if expression.op == "field":
-        return 1
-    degrees = tuple(_field_degree(argument) for argument in expression.args)
-    if not degrees:
-        return 0
-    if expression.op in (
-        "add",
-        "negate",
-        "component",
-        "derivative",
-        "gradient",
-        "divergence",
-        "curl",
-        "laplacian",
-        "integral",
-    ):
-        return max(degrees)
-    if expression.op == "multiply":
-        return min(sum(degrees), 2)
-    if expression.op == "divide":
-        return degrees[0] if degrees[1] == 0 else 2
-    if expression.op == "dot":
-        return min(sum(degrees), 2)
-    if expression.op == "power":
-        exponent = expression.args[1]
-        if degrees[0] == 0:
-            return 0
-        if exponent.op == "constant" and exponent.value == 1.0:
-            return degrees[0]
-        return 2
-    if expression.op in ("sin", "cos", "exp", "log", "sqrt"):
-        return 0 if degrees[0] == 0 else 2
-    return max(degrees)
-
-
 def _depends_on_time(expression: PDEExpression, time_coordinate: str, /) -> bool:
     if expression.op == "coordinate" and expression.symbol == time_coordinate:
         return True
@@ -2598,7 +2569,10 @@ def compile_semidiscrete_pde(
         )
         mass_self_adjoint = True
     elif (
-        all(_field_degree(expression) <= 1 for expression in rhs_expressions)
+        all(
+            field_polynomial_degree(expression) in (0, 1)
+            for expression in rhs_expressions
+        )
         and not any(
             _depends_on_time(expression, time_coordinate)
             for expression in rhs_expressions

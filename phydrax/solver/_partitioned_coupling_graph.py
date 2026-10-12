@@ -16,7 +16,7 @@ import numpy as np
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..nonlinear import FixedPointIteration
+from ..nonlinear import AitkenRelaxation, AndersonAcceleration, FixedPointIteration
 from ..units import TIME, UnitDefinition
 from ._partitioned_coupling_measurement import CouplingMeasurement
 from ._partitioned_coupling_types import (
@@ -1342,9 +1342,19 @@ def _estimate_coupling_resources(
     if isinstance(policy, ImplicitCouplingPolicy):
         if isinstance(policy.method, FixedPointIteration):
             acceleration = policy.method.acceleration
-            if acceleration is not None:
+            if isinstance(acceleration, AndersonAcceleration):
                 history_bytes = (
                     2 * (acceleration.history + 1) * offset * coordinate_dtype.itemsize
+                )
+            elif isinstance(acceleration, AitkenRelaxation):
+                history_bytes = (
+                    offset * coordinate_dtype.itemsize
+                    + np.dtype(
+                        policy.method.precision.decision_dtype
+                        or policy.method.precision.accumulation_dtype
+                        or coordinate_dtype.type(0).real.dtype
+                    ).itemsize
+                    + np.dtype(np.bool_).itemsize
                 )
         else:
             history_complete = False

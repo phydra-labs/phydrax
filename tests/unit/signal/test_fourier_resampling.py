@@ -13,13 +13,14 @@ from phydrax._interpolation import fourier_interpolate
 from phydrax.signal import fourier_resample, FourierSpectrumPlan
 
 
+@pytest.mark.strict_jax
 @pytest.mark.parametrize("source_size,target_size", ((5, 8), (6, 9), (9, 6), (8, 5)))
 def test_fourier_resample_preserves_representable_complex_modes(
     source_size: Any,
     target_size: Any,
 ) -> None:
-    source_points = jnp.arange(source_size, dtype="float64") / source_size
-    target_points = jnp.arange(target_size, dtype="float64") / target_size
+    source_points = jnp.arange(source_size, dtype=jnp.complex128) / source_size
+    target_points = jnp.arange(target_size, dtype=jnp.complex128) / target_size
     values = jnp.exp(2.0j * jnp.pi * source_points)
 
     output = fourier_resample(values, (target_size,))

@@ -85,6 +85,39 @@ to native finite-difference operators. A global spectral method instead starts f
 `TensorSpectralPlan` basis factors and supplies an explicit
 `PseudospectralMethodPlan`; numerical axis specifications remain sampling objects.
 
+### Stationary finite-difference residuals
+
+Use `compile_finite_difference_residual` for stationary scalar or pseudoscalar
+equations. Declare spatial coordinates only and provide an explicit bijection
+from equation names to solved field names:
+
+```python
+compiled = phx.equations.compile_finite_difference_residual(
+    problem, support, equation_targets={"poisson": "u"},
+)
+args = {"forcing": forcing, "boundary": boundary}
+state = compiled.state_space.zeros()
+residual = compiled.residual(state, args)
+fields = compiled.expand(state, args)
+system, rhs = compiled.linear_system(args)
+```
+
+The flat state contains each field's free nodes. Runtime Dirichlet targets are
+applied when expanding the state, not baked into compilation; targets must be
+independent of solved fields. Neumann and Robin endpoints remain unknowns, with
+coordinate-derivative laws realized by the existing FD boundary runtime.
+Residual rows are `lhs - rhs` gathered at the explicitly targeted field's free
+nodes, so coupled fields can have different Dirichlet masks.
+
+`linearization(state, args)` prepares reusable Jacobian and transpose actions.
+`linear_system(args)` returns the Jacobian at zero and minus the residual at
+zero only for affine equations and field-independent boundary targets. A
+nonlinear residual can still be evaluated and linearized, but cannot be
+misrepresented as one exact linear system. Time coordinates, algebraic-only
+problems, missing or non-bijective equation targets, and boundary laws that the
+native FD lowering cannot represent are refused.
+
+
 For uniform periodic grids, `periodic_finite_difference(support)` prepares the common
 first/second-derivative calculus. Uniform bounded FD2 Laplacians can instead be
 diagonalized from explicit boundary semantics:

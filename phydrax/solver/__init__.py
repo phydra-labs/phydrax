@@ -2731,9 +2731,6 @@ from .maxwell import (
 
 _FUNCTIONAL_DECOMPOSITION_EXPORTS = frozenset(
     {
-        "AitkenTracePlan",
-        "AitkenTraceState",
-        "aitken_relax_trace_state",
         "capture_generalized_trace_state",
         "AsynchronousSchwarzPlan",
         "AsynchronousSchwarzResult",
@@ -3982,9 +3979,6 @@ __all__ = [
     "solve_rough_delay",
     "solve_deep_picard",
     "solve_deep_bsde",
-    "AitkenTracePlan",
-    "AitkenTraceState",
-    "aitken_relax_trace_state",
     "capture_generalized_trace_state",
     "AsynchronousSchwarzPlan",
     "AsynchronousSchwarzResult",

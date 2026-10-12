@@ -55,30 +55,31 @@ def _pou_problem() -> Any:
     return problem
 
 
-def _broken_problem() -> Any:
+def _broken_problem(patches: int = 2) -> Any:
     domain = phx.domain.Interval1d(0.0, 1.0)
-    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 2)
+    cover = phx.domain.cartesian_subdomain_cover(domain, "x", patches)
     family = phx.domain.LocalFieldFamily(
         "u",
         cover,
         {
-            cover.patch_ids[0]: cover.patches[0].domain.Parameter(1.0),
-            cover.patch_ids[1]: cover.patches[1].domain.Parameter(-1.0),
+            patch.patch_id: patch.domain.Parameter(1.0 if index % 2 == 0 else -1.0)
+            for index, patch in enumerate(cover.patches)
         },
     )
-    pairing = cover.pairings[0]
-    jump = phx.conditions.SubdomainValueJump(
-        family.ref(pairing.left_patch_id),
-        family.ref(pairing.right_patch_id),
-        pairing,
-    )
-    problem = phx.solver.FunctionalDecompositionProblem.broken(
-        family,
+    terms = tuple(
         phx.solver.ScopedFunctionalTerm(
-            _fixed_penalty(jump),
+            _fixed_penalty(
+                phx.conditions.SubdomainValueJump(
+                    family.ref(pairing.left_patch_id),
+                    family.ref(pairing.right_patch_id),
+                    pairing,
+                )
+            ),
             phx.solver.PairScope(pairing.pairing_id),
-        ),
+        )
+        for pairing in cover.pairings
     )
+    problem = phx.solver.FunctionalDecompositionProblem.broken(family, terms)
     return problem
 
 
@@ -459,7 +460,9 @@ def test_functional_decomposition_advanced_scenario_3() -> None:
         quantity,
         sweep=1,
     )
-    relaxed, aitken = phx.solver.aitken_relax_trace_state(previous, proposed)
+    relaxation = phx.nonlinear.AitkenRelaxation()
+    increment = proposed.exchanges[0].left_target - previous.exchanges[0].left_target
+    omega = relaxation.update(increment, increment, jnp.asarray(1.0))
     asynchronous = phx.solver.solve_asynchronous_schwarz(
         prepared,
         phx.solver.AsynchronousSchwarzPlan(
@@ -471,8 +474,8 @@ def test_functional_decomposition_advanced_scenario_3() -> None:
         jit=True,
     )
 
-    assert relaxed.exchanges[0].quantity_id == "value"
-    assert float(aitken.relaxation) == 1.0
+    assert proposed.exchanges[0].quantity_id == "value"
+    assert float(omega) == 1.0
     assert asynchronous.state.patch_revisions == (2, 2)
     assert asynchronous.state.maximum_observed_staleness == 1
     assert phx.solver.FunctionalCyclePlan(1, (1, 1), kind="v").order(2) == (
@@ -521,3 +524,199 @@ def test_multi_device_collectives_use_shard_map_global_semantics() -> None:
 
     np.testing.assert_allclose(pou.value, [[[3.0], [7.0]], [[3.0], [7.0]]])
     np.testing.assert_allclose(schwarz.value, [[7.0, 11.0], [3.0, 5.0]])
+
+
+def _trace_targets(state: Any) -> np.ndarray:
+    return np.concatenate(
+        [
+            np.asarray(target).reshape(-1)
+            for exchange in state.exchanges
+            for target in (exchange.left_target, exchange.right_target)
+        ]
+    )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    "sweep",
+    ["jacobi", "gauss-seidel", "colored"],
+    ids=["jacobi", "gauss-seidel", "colored"],
+)
+def test_aitken_relaxes_complete_sweep(sweep: Any) -> None:
+    problem = _broken_problem()
+    policy = phx.nonlinear.AitkenRelaxation(initial_relaxation=0.7)
+    prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.SchwarzDecompositionTraining(3, 1, sweep=sweep, relaxation=policy),
+            trace_points=6,
+        ),
+    )
+    raw_prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.SchwarzDecompositionTraining(3, 1, sweep=sweep, relaxation=1.0),
+            trace_points=6,
+        ),
+    )
+    optimizer = optax.sgd(0.1)
+    state = None
+    previous = None
+    omega = 0.7
+    for step in range(3):
+        entry = (
+            phx.solver.capture_schwarz_trace_state(
+                problem, problem.functions, prepared.trace_batches, sweep=0
+            )
+            if state is None
+            else state.trace_state
+        )
+        raw_state = (
+            None
+            if state is None
+            else eqx.tree_at(
+                lambda value: (value.previous_increment, value.omega),
+                state,
+                (None, None),
+            )
+        )
+        raw = phx.solver.solve_functional_decomposition(
+            raw_prepared, optimizer, state=raw_state, max_sweeps=1, jit=True
+        )
+        increment = _trace_targets(raw.state.trace_state) - _trace_targets(entry)
+        if previous is not None:
+            delta = increment - previous
+            denominator = np.vdot(delta, delta).real
+            candidate = (
+                omega
+                if denominator == 0
+                else -omega * np.vdot(previous, delta).real / denominator
+            )
+            omega = float(
+                np.clip(candidate if np.isfinite(candidate) else omega, 0.05, 1.5)
+            )
+        result = phx.solver.solve_functional_decomposition(
+            prepared, optimizer, state=state, max_sweeps=1, jit=True
+        )
+        np.testing.assert_allclose(
+            _trace_targets(result.state.trace_state),
+            _trace_targets(entry) + omega * increment,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(result.state.previous_increment, increment)
+        assert float(result.state.omega) == pytest.approx(omega)
+        assert result.state.completed_sweeps == step + 1
+        assert eqx.tree_equal(result.state.functions, raw.state.functions)
+        state = result.state
+        previous = increment
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    "relaxation",
+    [0.7, phx.nonlinear.AitkenRelaxation(initial_relaxation=0.7)],
+    ids=["fixed-float", "aitken"],
+)
+@pytest.mark.parametrize(
+    "sweep",
+    ["jacobi", "gauss-seidel", "colored"],
+    ids=["jacobi", "gauss-seidel", "colored"],
+)
+def test_schwarz_chunk_and_checkpoint_resume(
+    sweep: Any, relaxation: Any, tmp_path: Any
+) -> None:
+    problem = _broken_problem()
+    prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.SchwarzDecompositionTraining(
+                3, 1, sweep=sweep, relaxation=relaxation
+            ),
+            trace_points=6,
+        ),
+    )
+    optimizer = optax.sgd(0.02, momentum=0.9)
+    uninterrupted = phx.solver.solve_functional_decomposition(
+        prepared, optimizer, jit=True
+    )
+    partial = phx.solver.solve_functional_decomposition(
+        prepared, optimizer, max_sweeps=1, jit=True
+    )
+    chunked = phx.solver.solve_functional_decomposition(
+        prepared, optimizer, state=partial.state, jit=True
+    )
+    phx.solver.save_functional_decomposition_checkpoint(
+        tmp_path / "schwarz", partial.state, prepared
+    )
+    restored = phx.solver.load_functional_decomposition_checkpoint(
+        tmp_path / "schwarz", prepared, partial.state
+    )
+    resumed = phx.solver.solve_functional_decomposition(
+        prepared, optimizer, state=restored, jit=True
+    )
+    assert eqx.tree_equal(chunked.state, uninterrupted.state)
+    assert eqx.tree_equal(resumed.state, uninterrupted.state)
+    if isinstance(relaxation, float):
+        assert resumed.state.previous_increment is None
+        assert resumed.state.omega is None
+
+
+@pytest.mark.strict_jax
+def test_aitken_refuses_heterogeneous_trace_quantities() -> None:
+    problem = _broken_problem(3)
+    prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.SchwarzDecompositionTraining(
+                3, 1, relaxation=phx.nonlinear.AitkenRelaxation()
+            ),
+            trace_points=6,
+        ),
+    )
+    partial = phx.solver.solve_functional_decomposition(
+        prepared, optax.sgd(0.1), max_sweeps=1
+    )
+    exchange = partial.state.trace_state.exchanges[1]
+    incompatible = phx.solver.TraceExchangeState(
+        pairing_id=exchange.pairing_id,
+        points=exchange.points,
+        left_values=exchange.left_values,
+        right_values=exchange.right_values,
+        left_target=exchange.left_target,
+        right_target=exchange.right_target,
+        quantity_id="flux",
+    )
+    traces = phx.solver.SchwarzTraceState(
+        (partial.state.trace_state.exchanges[0], incompatible), sweep=1
+    )
+    state = eqx.tree_at(lambda value: value.trace_state, partial.state, traces)
+    with pytest.raises(ValueError, match="quantity"):
+        phx.solver.solve_functional_decomposition(prepared, optax.sgd(0.1), state=state)
+
+
+@pytest.mark.strict_jax
+def test_fixed_float_jacobi_targets_keep_existing_relaxation() -> None:
+    problem = _broken_problem()
+    prepared = phx.solver.prepare_functional_decomposition(
+        problem,
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.SchwarzDecompositionTraining(1, 1, sweep="jacobi", relaxation=0.5),
+            trace_points=6,
+        ),
+    )
+    initial = phx.solver.capture_schwarz_trace_state(
+        problem, problem.functions, prepared.trace_batches, sweep=0
+    )
+    result = phx.solver.solve_functional_decomposition(prepared, optax.sgd(0.1), jit=True)
+    raw = phx.solver.capture_schwarz_trace_state(
+        problem, result.state.functions, prepared.trace_batches, sweep=1
+    )
+    np.testing.assert_allclose(
+        _trace_targets(result.state.trace_state),
+        0.5 * _trace_targets(initial) + 0.5 * _trace_targets(raw),
+        rtol=1e-13,
+        atol=1e-13,
+    )
+    assert result.state.previous_increment is None
+    assert result.state.omega is None

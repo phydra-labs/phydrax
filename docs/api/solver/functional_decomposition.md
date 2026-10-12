@@ -225,11 +225,23 @@ internal boundary.
 
 ---
 
-::: phydrax.solver.functional_decomposition.AitkenTracePlan
+`SchwarzDecompositionTraining(relaxation=phydrax.nonlinear.AitkenRelaxation())`
+uses bounded Irons–Tuck relaxation of a complete raw sweep. Intermediate
+Gauss–Seidel and colored captures use unit relaxation; the final targets alone
+receive the scalar update. Exchanged traces must share one nonempty `quantity_id`
+and have commensurate or nondimensionalized coordinates. Physical interface
+defect, rather than coefficient convergence, remains the convergence criterion.
 
----
+`FunctionalDecompositionState.previous_increment` and `.omega` preserve Aitken
+history across chunked execution and checkpoints. Both are `None` on the fixed
+float path, whose numerical behavior is unchanged. Checkpoint loading requires
+a matching `state_like` template, including optional-field presence, shapes,
+dtypes, completed sweeps, and patch kernels. The canonical reconstruction field
+set changed; old checkpoints have no compatibility shim.
 
-::: phydrax.solver.functional_decomposition.aitken_relax_trace_state
+`AitkenTracePlan`, `AitkenTraceState`, and `aitken_relax_trace_state` are removed.
+Migrate helper callers to the shared nonlinear policy through the training
+strategy. Asynchronous Schwarz does not consume strategy relaxation.
 
 ---
 

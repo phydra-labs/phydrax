@@ -15,6 +15,7 @@ from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._term import AbstractScalarTerm
 from ...domain import DomainFunction, PairedSupport
+from ...nonlinear import AitkenRelaxation
 from ...typing import checked, PRNGKey
 from ._problem import FunctionalDecompositionProblem
 
@@ -324,117 +325,70 @@ def capture_generalized_trace_state(
     return SchwarzTraceState(tuple(exchanges), sweep=sweep)
 
 
-class AitkenTracePlan(StrictModule):
-    initial_relaxation: float = eqx.field(static=True)
-    minimum_relaxation: float = eqx.field(static=True)
-    maximum_relaxation: float = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        initial_relaxation: float = 1.0,
-        minimum_relaxation: float = 0.05,
-        maximum_relaxation: float = 1.5,
-    ) -> None:
-        initial = float(initial_relaxation)
-        minimum = float(minimum_relaxation)
-        maximum = float(maximum_relaxation)
-        if not 0.0 < minimum <= initial <= maximum:
-            raise ValueError("Aitken relaxation bounds are invalid.")
-        self.initial_relaxation = initial
-        self.minimum_relaxation = minimum
-        self.maximum_relaxation = maximum
+def _validate_aitken_trace_state(state: SchwarzTraceState, /) -> None:
+    quantities = {exchange.quantity_id for exchange in state.exchanges}
+    if len(quantities) != 1 or not all(quantities):
+        raise ValueError(
+            "Aitken Schwarz relaxation requires one homogeneous non-empty quantity_id."
+        )
 
 
-class AitkenTraceState(StrictModule):
-    residual: Array
-    relaxation: Array
-
-    def __init__(self, residual: Array, relaxation: Array, /) -> None:
-        self.residual = jnp.asarray(residual)
-        self.relaxation = jnp.asarray(relaxation).reshape(())
-
-
-def aitken_relax_trace_state(
+def _relax_aitken_sweep(
     previous: SchwarzTraceState,
     proposed: SchwarzTraceState,
-    plan: AitkenTracePlan | None = None,
-    state: AitkenTraceState | None = None,
+    plan: AitkenRelaxation,
+    previous_increment: Array | None,
+    omega: Array,
     /,
-) -> tuple[SchwarzTraceState, AitkenTraceState]:
-    """Apply bounded scalar Aitken delta-squared relaxation in trace space."""
-    plan_ = AitkenTracePlan() if plan is None else plan
-    if not isinstance(plan_, AitkenTracePlan):
-        raise TypeError("plan must be an AitkenTracePlan or None.")
-    if len(previous.exchanges) != len(proposed.exchanges):
-        raise ValueError("Aitken trace states must have matching pairings.")
-    residual = jnp.concatenate(
-        tuple(
-            (new.left_target - old.left_target).reshape((-1,))
-            for old, new in zip(
-                previous.exchanges,
-                proposed.exchanges,
-                strict=True,
-            )
+) -> tuple[SchwarzTraceState, Array, Array]:
+    """Relax one complete raw sweep without altering physical trace defects."""
+    _validate_aitken_trace_state(previous)
+    _validate_aitken_trace_state(proposed)
+    if tuple(
+        (exchange.pairing_id, exchange.quantity_id) for exchange in previous.exchanges
+    ) != tuple(
+        (exchange.pairing_id, exchange.quantity_id) for exchange in proposed.exchanges
+    ):
+        raise ValueError(
+            "Aitken trace states must have matching pairings and quantities."
         )
-        + tuple(
-            (new.right_target - old.right_target).reshape((-1,))
-            for old, new in zip(
-                previous.exchanges,
-                proposed.exchanges,
-                strict=True,
-            )
+    increments = tuple(
+        (
+            new.left_target - old.left_target,
+            new.right_target - old.right_target,
         )
+        for old, new in zip(previous.exchanges, proposed.exchanges, strict=True)
     )
-    if state is None:
-        relaxation = jnp.asarray(plan_.initial_relaxation)
-    else:
-        delta = residual - state.residual
-        denominator = jnp.real(jnp.vdot(delta, delta))
-        numerator = jnp.real(jnp.vdot(state.residual, delta))
-        candidate = (
-            -state.relaxation
-            * numerator
-            / jnp.where(
-                denominator > 0.0,
-                denominator,
-                1.0,
-            )
-        )
-        relaxation = jnp.clip(
-            jnp.where(denominator > 0.0, candidate, state.relaxation),
-            plan_.minimum_relaxation,
-            plan_.maximum_relaxation,
-        )
+    increment = jnp.concatenate(
+        tuple(value.reshape((-1,)) for pair in increments for value in pair)
+    )
+    if previous_increment is not None:
+        if previous_increment.shape != increment.shape:
+            raise ValueError("Aitken previous increment must match the trace space.")
+        omega = plan.update(previous_increment, increment, omega)
     exchanges = tuple(
         TraceExchangeState(
             pairing_id=new.pairing_id,
             points=new.points,
             left_values=new.left_values,
             right_values=new.right_values,
-            left_target=old.left_target
-            + relaxation * (new.left_target - old.left_target),
-            right_target=old.right_target
-            + relaxation * (new.right_target - old.right_target),
+            left_target=old.left_target + omega * left_increment,
+            right_target=old.right_target + omega * right_increment,
             quantity_id=new.quantity_id,
         )
-        for old, new in zip(previous.exchanges, proposed.exchanges, strict=True)
+        for old, new, (left_increment, right_increment) in zip(
+            previous.exchanges, proposed.exchanges, increments, strict=True
+        )
     )
-    return (
-        SchwarzTraceState(exchanges, sweep=proposed.sweep),
-        AitkenTraceState(residual, relaxation),
-    )
+    return SchwarzTraceState(exchanges, sweep=proposed.sweep), increment, omega
 
 
 __all__ = [
-    "AitkenTracePlan",
-    "AitkenTraceState",
     "DiscreteOperatorTracePenalty",
     "DiscreteTracePenalty",
     "SchwarzTraceState",
     "TraceExchangeState",
     "SchwarzTraceQuantity",
-    "aitken_relax_trace_state",
     "capture_generalized_trace_state",
     "capture_schwarz_trace_state",
 ]
