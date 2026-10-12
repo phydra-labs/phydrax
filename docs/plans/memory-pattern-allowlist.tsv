@@ -1,0 +1,63 @@
+path	symbol	rule	rationale
+phydrax/_array_archive.py	_save_array	payload-tobytes	bounded/static: At most max(64KiB, one dtype element) per streaming NPY chunk, independent of array length.
+phydrax/_execution_sampling.py	_darwin_system	array-cache	external-provider: Keyless singleton native libc handle retained for process lifetime; no array payload.
+phydrax/_meshcore.py	_resolve	array-cache	external-provider: Process-lifetime native meshcore library handle, not a numerical table.
+phydrax/_numerics/_quadrature_rules.py	gauss_kronrod_data	array-cache	bounded/static: Closed six-order published Gauss-Kronrod domain: 15, 21, 31, 41, 51, 61.
+phydrax/_trainable.py	_code_global_names	array-cache	bounded/static: Count-bounded 4096-entry frozenset-of-name metadata cache; values contain no numerical arrays.
+phydrax/_trainable.py	_terminal_types	array-cache	bounded/static: Keyless singleton containing two terminal owner types; no array payload.
+phydrax/_typing_plan.py	_compiled_parse_form	array-cache	bounded/static: Count-bounded 4096-entry compiled annotation-contract metadata; does not cache numerical values.
+phydrax/applications/astrodynamics/_regularization.py	PreparedCloseEncounterSegment.propagate	dense-derivative	bounded/static: Fixed Kustaanheimo-Stiefel position map has a 3-by-4 physical Jacobian.
+phydrax/applications/astrophysics/_wcs.py	TangentSipWcsPlan.pixel_to_world.step	dense-derivative	bounded/static: TAN-SIP admission fixes two pixel coordinates and a 2-by-2 Newton residual Jacobian.
+phydrax/applications/compressible_flow/_qualification.py	ManufacturedViscousNSPlan.evaluate.point_terms	dense-derivative	bounded/static: Scalar-time state derivative and flux divergence over admitted spatial dimensions 1, 2, or 3, not state-sized square derivatives.
+phydrax/applications/compressible_flow/_rans.py	SpalartAllmarasManufacturedPlan.evaluate.at_point	dense-derivative	output-size: Conserved-state gradient is required by diffusion_evaluation and returned as conserved_gradient evidence.
+phydrax/applications/contact/_lubrication.py	ReynoldsFilmPlan.prepare	inverse-by-identity	bounded/static: P1 film triangles use a fixed 2-by-2 edge Gram inverse for their local basis gradients.
+phydrax/applications/free_boundary/_stefan.py	explicit_front_stefan_loss.pde_one	dense-derivative	bounded/static: Heat residual differentiates temperature in the fixed two-coordinate space-time plane.
+phydrax/applications/free_boundary/_stefan.py	implicit_level_set_stefan_loss.ambient_one	dense-derivative	bounded/static: Heat residual extracts the spatial Hessian component from a fixed two-coordinate space-time plane.
+phydrax/applications/functional_rg/_fermi_surface.py	FermiSurfacePatchRGPlan.prepare	inverse-by-identity	bounded/static: Reciprocal vectors are admitted as exactly 2-by-2; inverse constructs physical reciprocal wraps.
+phydrax/applications/numerical_relativity/_checkpoint.py	restore_distributed_numerical_relativity_checkpoint	payload-tobytes	bounded/static: Reconstruction JSON template is capped at 65536 bytes and restored arrays must match its exact shape/dtype before parsing.
+phydrax/applications/radiation_biophysics/interchange/_dnadamage1.py	dnadamage1_column_payload	identity-tolist	output-size: Exported canonical bytes encode eight physical and five chemical columns plus original IDs; import verifies this exact rights payload.
+phydrax/atomistic/_graph.py	_case_binning_lattice	inverse-by-identity	bounded/static: Fully periodic cell binning uses exactly three physical coordinates and a fixed 3-by-3 lattice inverse.
+phydrax/atomistic/interchange/_ase_calculator.py	NativeASECalculator._provider	payload-tobytes	host-topology: Exact ordered int64 atomic-number bytes and three PBC flags are retained as the provider-cache topology discriminator.
+phydrax/atomistic/interchange/_ipi.py	IPISession.send_force	payload-tobytes	output-size: Outgoing N-by-3 float64 force frame is admitted by maximum_atoms (default 1000000); JSON extras have a separate byte ceiling.
+phydrax/atomistic/interchange/_ipi.py	IPISession.send_positions	payload-tobytes	output-size: Outgoing N-by-3 float64 position frame is admitted by maximum_atoms; cell records and atom count add 148 bytes.
+phydrax/atomistic/interchange/_ipi.py	_encode_cell	payload-tobytes	bounded/static: i-PI cell and inverse wire outputs are fixed 3-by-3 float64 records (72 bytes each).
+phydrax/atomistic/interchange/_ipi.py	_encode_virial	payload-tobytes	bounded/static: i-PI virial and unavailable sentinel are fixed 3-by-3 float64 wire records (72 bytes).
+phydrax/atomistic/interchange/_mace_checkpoint.py	_worker_bytes	payload-read-bytes	external-provider: Package-owned fixed worker source is staged as worker.py input to the pinned provider command.
+phydrax/atomistic/interchange/_mace_worker.py	_load_source	payload-read-bytes	external-provider: Source is admitted by max_source_bytes (default 1GiB) and parsed as a seekable torch.save container, including trusted BytesIO loading.
+phydrax/atomistic/interchange/_mace_worker.py	_npy_chunks	payload-tobytes	external-provider: Admitted NPY output streams one scalar or leading-axis slices targeting 16MiB; one larger slice is capped by max_tensor_bytes.
+phydrax/atomistic/interchange/_mace_worker.py	_npy_header	whole-buffer	bounded/static: Buffer contains only an NPY metadata header; result rank, dtype and member size are admitted before output.
+phydrax/chemistry/electronic_structure/_response.py	MeanFieldResponsePlan.nuclear_hessian	dense-derivative	output-size: MeanFieldHessianResult explicitly returns raw and symmetrized dense position Hessians and response evidence.
+phydrax/control/games/_local_lq.py	suggest_local_affine_game_policy.derivatives_at_step	dense-derivative	output-size: Dense A/B/Q/R/N blocks are retained in LocalQuadraticGame and consumed by the finite-horizon Nash LQ solver.
+phydrax/discretization/_adaptive_simplex.py	maubach_bisection_tables	array-cache	bounded/static: Closed supported simplex dimensions 2 and 3.
+phydrax/discretization/_motion_validity.py	reference_corner_frames	array-cache	bounded/static: Closed seven-reference-cell-kind table domain.
+phydrax/discretization/bem/_rwg.py	_rwg_element	array-cache	bounded/static: Keyless singleton fixed triangle form element, maxsize=1.
+phydrax/discretization/fem/_mortar.py	_total_degree_tabulation	inverse-by-identity	bounded/static: Facet dimension is 1 or 2 and polynomial degree is below 32, giving at most 528 nodes for dense nodal tabulation.
+phydrax/discretization/finite_volume/_small_cell.py	ConservativeSmallCellRedistributionPlan.__init__	dense-zero-sparse	host-topology: Route table has shape small_cell_count-by-maximum_recipients (default width 4), not a square cell matrix.
+phydrax/discretization/finite_volume/_small_cell.py	ConservativeSmallCellRedistributionPlan.from_multivalued_cut_complex	dense-zero-sparse	host-topology: Route table has shape small_component_count-by-maximum_recipients (default width 4) before compacting masked routes.
+phydrax/discretization/pic/_unstructured.py	UnstructuredElectrostaticPICPlan.__init__	pairwise-broadcast	host-topology: Degree-one simplex-local stiffness has shape cell_count-by-(dimension+1)-by-(dimension+1), retained for element-local action.
+phydrax/discretization/vem/_polyhedral.py	_cell_matrix	inverse-by-identity	bounded/static: Admitted three-dimensional degree-one VEM uses exactly four affine monomials and a fixed 4-by-4 inverse.
+phydrax/ein/_syntax.py	_parse_pattern	array-cache	bounded/static: Count-bounded 256-entry parsed string-syntax metadata; no numerical arrays.
+phydrax/ein/_transform.py	_specialize_transform	array-cache	bounded/static: Count-bounded 256-entry axis/shape transform-plan metadata; no numerical arrays.
+phydrax/equations/_finite_element_variational.py	CompiledFiniteElementProblem.exact_diagonal	vmap-identity	bounded/static: Opt-in coordinate fallback refuses state_space.size above maximum_coordinate_size (default 4096).
+phydrax/finance/curves/_bootstrap.py	AbstractCurveBootstrapPlan._solve_from_raw	dense-derivative	output-size: PreparedCurve explicitly retains the dense node_quote_jacobian with ordered quote identities.
+phydrax/geometry/complex/_closure.py	assess_complex_moduli_atlas	inverse-by-identity	output-size: ComplexModuliAtlasEvidence explicitly returns dense monodromy from declared patch-transition products.
+phydrax/geometry/implicit/_neural.py	_cell_pieces	array-cache	bounded/static: Closed internal square/cube sign-pattern domain: 16 square and 256 cube cases.
+phydrax/interchange/_inspection.py	_readonly_array	payload-tobytes	output-size: Retained immutable bytes back the detached NumPy inspection output so its write flag cannot be re-enabled.
+phydrax/interchange/_openpmd_laser.py	write_openpmd_laser_envelope_hdf5	whole-buffer	output-size: Field bytes/nodes are pre-admitted; BoundedHDF5Buffer enforces limits.max_bytes on the published resource image.
+phydrax/interchange/_openpmd_mesh.py	write_openpmd_meshes_hdf5	whole-buffer	output-size: Component budget is preflighted and BoundedHDF5Buffer caps the exact resource/publication image by limits.max_bytes.
+phydrax/interchange/_openpmd_particles.py	write_openpmd_particle_tracks_hdf5	whole-buffer	output-size: samples*lanes*7 stored words are pre-admitted; HDF5 artifact growth is independently capped before publication.
+phydrax/interchange/_openpmd_pic.py	_encode_state	whole-buffer	output-size: Preflighted mesh/particle state uses a max_bytes-capped HDF5 buffer; EncodedIteration.data is the published artifact.
+phydrax/interchange/dafoam.py	run_dafoam	payload-read-bytes	external-provider: Package-owned fixed aerodynamic worker script is staged as bytes input to run_pinned_command.
+phydrax/interchange/hfss_design.py	run_hfss_design	payload-read-bytes	external-provider: Package-owned fixed HFSS worker script is staged as bytes input to the external command.
+phydrax/lifecycle/_archive.py	encode_logical_arrays	payload-tobytes	output-size: CanonicalLogicalArrays.payloads explicitly returns canonical little-endian C-order bytes; production checkpoint staging pre-admits aggregate plaintext.
+phydrax/lifecycle/_distributed_checkpoint.py	_array_payload	whole-buffer	output-size: AddressableCheckpointShard.payload_bytes is an explicit NPY output; snapshot and chunk publication enforce member/aggregate admission.
+phydrax/linalg/_compound.py	_small_plan	array-cache	bounded/static: Internal owner requests only sizes 1 through 4; maxsize=4.
+phydrax/meshing/_metis.py	_load	array-cache	external-provider: Keyless process-lifetime native METIS library handle, not a numerical table.
+phydrax/meshing/_quality.py	_dihedral_table	array-cache	bounded/static: Closed four-solid-kind table domain.
+phydrax/meshing/_quality.py	_measure_rule	array-cache	bounded/static: Closed three-quadrature-kind table domain.
+phydrax/metrix/_operators.py	_gradient_point	dense-derivative	output-size: Scalar pointwise differentiation produces the coordinate-gradient vector returned by public gradient, not a square Jacobian.
+phydrax/metrix/algebra/_nonassociative.py	_canonical_octonion_algebra_id	array-cache	bounded/static: Keyless singleton canonical octonion identifier; no array payload.
+phydrax/ml/interop/_sklearn.py	_sklearn_api	array-cache	external-provider: Keyless singleton provider API classes; no numerical payload.
+phydrax/operators/differential/_stochastic_estimators.py	_bilaplacian_plan	array-cache	bounded/static: Count-bounded 64-entry immutable fourth-order contraction metadata; never caches callable or numerical point.
+phydrax/operators/integral/vortex/_fmm_complete.py	PreparedVortexFMM._multipole_velocity	dense-derivative	bounded/static: Admitted physical dimension 2 or 3 fixes kernel derivatives to 2-by-2 or 3-by-3 first-moment tensors.
+phydrax/operators/quantum/gaussian/_spherical.py	cartesian_to_real_spherical	array-cache	bounded/static: Validated angular momentum 0 through 12 gives thirteen finite Cartesian-to-spherical tables.

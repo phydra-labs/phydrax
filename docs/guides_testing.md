@@ -177,6 +177,20 @@ admit descendant counts before enumerating partitions.
 Run `python -m benchmarks.memory_host_caches --smoke` to exercise all migrated
 sites, oversized-result behavior, and the retained-byte plateau.
 
+### Memory-pattern audit and scaling ratchet
+
+Run `python tools/audit_memory_patterns.py` for deterministic AST candidates.
+Its exact symbol/rule allowlist rejects new findings, stale entries, and duplicate
+entries. See [the audit policy](plans/memory-pattern-audit.md) before adding a
+disposition; public dense outputs and bounded local physical tensors are not
+interchangeable with avoidable dense scratch.
+
+Run `python -m benchmarks.memory_scaling --check` to recompute the committed
+aggregate memory summary. The ratchet uses the shared memory gate and ratios
+within a matching environment fingerprint; timing and RSS remain observations.
+The focused tests are `tests/integration/test_audit_memory_patterns.py` and
+`tests/unit/test_benchmark_memory.py`.
+
 ## Performance evidence
 
 `--durations`, collection timing, import timing, process RSS, and JAX compile logs only

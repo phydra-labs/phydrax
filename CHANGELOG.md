@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Memory-pattern auditing now uses deterministic AST findings and exact justified
+  symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
+  memory-scaling ratchet recomputes recorded ratio gates in matching environments.
 - Canonical array archives stream with bounded scratch and second-pass source
   verification, preserving archive bytes, collection identities, and checkpoint
   digests. Lifecycle NPZ exports and authorized support snapshots stage on disk.

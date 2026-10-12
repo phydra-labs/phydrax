@@ -1,0 +1,4568 @@
+{
+  "disposition_counts": {
+    "candidate-only": 1,
+    "compared": 20,
+    "environment-mismatch": 1,
+    "paired-evidence": 2
+  },
+  "policy": {
+    "comparison": "Equal environment fingerprint, explicit driver family and matching case/evidence identity",
+    "gate": "benchmarks._memory.evaluate_memory_gate",
+    "growth": "benchmarks._memory.fitted_scaling_exponent",
+    "timing_and_rss": "observed evidence only; never hard gates"
+  },
+  "records": [
+    {
+      "baseline": "memory_archive_streaming_baseline.json",
+      "baseline_comparisons": 6,
+      "baseline_driver_fingerprint": "6a8803c9fc24c1e974f4152f070011612411e295c9cab77970df53e1f08aa5dd",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "6a8803c9fc24c1e974f4152f070011612411e295c9cab77970df53e1f08aa5dd",
+      "cases": [
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              1.0235671930275154,
+              1.0332727696761677
+            ],
+            "bytes": [
+              1600233,
+              1637946,
+              1692445
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.020206742123777963
+          },
+          "candidate_to_baseline_ratios": [
+            0.3447854156238498,
+            0.3533846659169472,
+            0.3990439866583552
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "archive-read",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                4194304,
+                16777216,
+                67108864
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999997
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0490958554528698,
+                1.1667775234310889
+              ],
+              "bytes": [
+                551737,
+                578825,
+                675360
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.07291900055308348,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              2.997214099830495,
+              3.665619344621047
+            ],
+            "bytes": [
+              6304246,
+              18895175,
+              69262519
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.8644197802042515
+          },
+          "candidate_to_baseline_ratios": [
+            0.3347613655939188,
+            0.11204214832622614,
+            0.031036006645960998
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "archive-write",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                3.999875605588693,
+                3.9999689004300203
+              ],
+              "bytes": [
+                4196330,
+                16784798,
+                67138670
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.999985979164957
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0031453484570356,
+                1.0153874059070709
+              ],
+              "bytes": [
+                2110418,
+                2117056,
+                2149632
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.006640232075480386,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.996498428017431,
+              3.9993034849751545
+            ],
+            "bytes": [
+              8403083,
+              33582908,
+              134308241
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.9996213212995461
+          },
+          "candidate_to_baseline_ratios": [
+            0.0648301343685407,
+            0.01662777386639656,
+            0.004620438741357651
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "checkpoint-read",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                4194304,
+                16777216,
+                67108864
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999997
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.025030609079378,
+                1.11130551262605
+              ],
+              "bytes": [
+                544773,
+                558409,
+                620563
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.046980619712343706,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.1658364082811152,
+              3.8417128461152514
+            ],
+            "bytes": [
+              6300649,
+              19946824,
+              76629970
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.9010840985848385
+          },
+          "candidate_to_baseline_ratios": [
+            0.33389100075246214,
+            0.10553028391888353,
+            0.027536510845560816
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "npz-export",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                3.9995382246572784,
+                3.9998845428355017
+              ],
+              "bytes": [
+                4196846,
+                16785446,
+                67139846
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999479492914394
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.000600837559953,
+                1.0024361114568499
+              ],
+              "bytes": [
+                2103730,
+                2104994,
+                2110122
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.001094214245587283,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.3965086394399635,
+              3.8247352434555655
+            ],
+            "bytes": [
+              5255086,
+              17848945,
+              68267489
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.9248531021544157
+          },
+          "candidate_to_baseline_ratios": [
+            0.10331876585844646,
+            0.03238667607525263,
+            0.009273228139385645
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "npz-read",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                4194304,
+                16777216,
+                67108864
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999997
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0646819498700615,
+                1.0951306766677968
+              ],
+              "bytes": [
+                542949,
+                578068,
+                633060
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.05538138789911133,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              0.9999947948984883,
+              1.0
+            ],
+            "bytes": [
+              1073754275,
+              1073748686,
+              1073748686
+            ],
+            "disposition": "observed-only",
+            "exponent": -1.8773484207082937e-06
+          },
+          "candidate_to_baseline_ratios": [
+            0.0019878291054999525,
+            0.0020074092086013505,
+            0.0019662999615535737
+          ],
+          "capacities": [
+            4,
+            16,
+            64
+          ],
+          "case": "support-snapshot",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                3.9982637015738867,
+                0.0
+              ],
+              "bytes": [
+                4198587,
+                16787058,
+                0
+              ],
+              "disposition": "observed-only",
+              "exponent": null
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0098447367927887,
+                0.9795212421704393
+              ],
+              "bytes": [
+                2134440,
+                2155453,
+                2111312
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.003929454775649753,
+              "maximum_adjacent_ratio": 1.5
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "archive_streaming",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_archive_streaming.json"
+    },
+    {
+      "baseline": "memory_astrodynamics_pairs_baseline.json",
+      "baseline_comparisons": 2,
+      "baseline_driver_fingerprint": "ab9f4e0f03bb316acbd475659e8d548eda7b637e2acd01d54819a0ed5ea1c0f3",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "ab9f4e0f03bb316acbd475659e8d548eda7b637e2acd01d54819a0ed5ea1c0f3",
+      "cases": [
+        {
+          "capacities": [
+            32,
+            64,
+            128,
+            256
+          ],
+          "case": "direct",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 3145728,
+            "candidate_bytes": 61688,
+            "capacity": 256,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.23099233937032282,
+                0.8734783858909231,
+                0.9973663996488533
+              ],
+              "bytes": [
+                90332,
+                20866,
+                18226,
+                18178
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.7134287108767392
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                6144,
+                12288,
+                24576,
+                49152
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000004,
+              "maximum_exponent": 1.0
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.9850746268656716,
+                1.9924812030075187,
+                1.9962264150943396
+              ],
+              "bytes": [
+                2144,
+                4256,
+                8480,
+                16928
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9937670278918134
+            }
+          }
+        },
+        {
+          "capacities": [
+            4,
+            8,
+            16,
+            32
+          ],
+          "case": "near",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16640,
+            "candidate_bytes": 4080,
+            "capacity": 32,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.2000645577792124,
+                1.0033190430092656,
+                0.9897082471858488
+              ],
+              "bytes": [
+                108430,
+                21693,
+                21765,
+                21541
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.6990040083084532
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                768,
+                1536,
+                3072,
+                6144
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000002,
+              "maximum_exponent": 1.0
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.4444444444444444,
+                1.6153846153846154,
+                1.7619047619047619
+              ],
+              "bytes": [
+                72,
+                104,
+                168,
+                296
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.681046279719758
+            }
+          }
+        },
+        {
+          "capacities": [
+            64,
+            256
+          ],
+          "case": "near/rollout",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.653661875427789
+              ],
+              "bytes": [
+                11688,
+                31016
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7039922784738409
+            },
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                1.0001158323519759
+              ],
+              "bytes": [
+                103598,
+                103610
+              ],
+              "disposition": "observed-only",
+              "exponent": 8.355054105101371e-05
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0
+              ],
+              "bytes": [
+                768,
+                768
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                3.6666666666666665
+              ],
+              "bytes": [
+                576,
+                2112
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9372345589580703
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "astrodynamics_pairs",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_astrodynamics_pairs.json"
+    },
+    {
+      "baseline": "memory_contact_london_ptv_baseline.json",
+      "baseline_comparisons": 3,
+      "baseline_driver_fingerprint": "4c826060d38d6e204e7903842756252b424b9e6d79be55de7dbeeaa668a986ff",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "1bf8a66290f07dbb35fe5a84a717e07f7a21ada84510b3c72f3c0eaa5f126d0d",
+      "cases": [
+        {
+          "capacities": [
+            64,
+            256,
+            1024
+          ],
+          "case": "contact",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 9502736,
+            "candidate_bytes": 41320,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                3.6301369863013697,
+                3.8981132075471696
+              ],
+              "bytes": [
+                2920,
+                10600,
+                41320
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9556999949962605
+            },
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                4096,
+                16384,
+                65536
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                704,
+                2816,
+                11264
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999997
+            }
+          }
+        },
+        {
+          "capacities": [
+            20,
+            40,
+            80
+          ],
+          "case": "london",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 678568,
+            "candidate_bytes": 66424,
+            "capacity": 80,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.4808686659772494,
+                3.461025427261359
+              ],
+              "bytes": [
+                7736,
+                19192,
+                66424
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.5510224517336713
+            },
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                0.6722067717193436,
+                1.0029986046144808
+              ],
+              "bytes": [
+                6205839,
+                4171607,
+                4184116
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.28435170990047065
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.9099526066350712,
+                1.9528535980148884
+              ],
+              "bytes": [
+                1055,
+                2015,
+                3935
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9495603184001499
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                2.653628969590219,
+                2.9959783690920094
+              ],
+              "bytes": [
+                19303,
+                51223,
+                153463
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.4954969373936349
+            }
+          }
+        },
+        {
+          "capacities": [
+            20,
+            40,
+            80
+          ],
+          "case": "london_field",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 309120,
+            "candidate_bytes": 5496,
+            "capacity": 80,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_tile_workspace_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                10240,
+                20480,
+                40960
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000002,
+              "maximum_exponent": 1.0
+            },
+            "tiled.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                4.544303797468355,
+                1.9136490250696379
+              ],
+              "bytes": [
+                632,
+                2872,
+                5496
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.5601927703204994
+            }
+          }
+        },
+        {
+          "capacities": [
+            20,
+            40,
+            80
+          ],
+          "case": "matrix-free/gmres",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.0365004179437167,
+                1.718018880831851
+              ],
+              "bytes": [
+                28712,
+                58472,
+                100456
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9034190010191105
+            },
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                0.9602661218921804,
+                1.00718862683808
+              ],
+              "bytes": [
+                1800378,
+                1728842,
+                1741270
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.024079958588944586
+            },
+            "logical_face_tile_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                10240,
+                20480,
+                40960
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000002,
+              "maximum_exponent": 1.0
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.9099526066350712,
+                1.9528535980148884
+              ],
+              "bytes": [
+                1055,
+                2015,
+                3935
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9495603184001499
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                1.989860800824884,
+                1.9949045686155973
+              ],
+              "bytes": [
+                11638,
+                23158,
+                46198
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9944936223784102
+            }
+          }
+        },
+        {
+          "capacities": [
+            20,
+            40,
+            80
+          ],
+          "case": "matrix-free/minres",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.7649088220798423,
+                1.828818765707903
+              ],
+              "bytes": [
+                16232,
+                28648,
+                52392
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8452528829776442
+            },
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                0.7142261834279104,
+                0.8221104029638037
+              ],
+              "bytes": [
+                3513184,
+                2509208,
+                2062846
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.3840715081860942
+            },
+            "logical_face_tile_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                10240,
+                20480,
+                40960
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000002,
+              "maximum_exponent": 1.0
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.9099526066350712,
+                1.9528535980148884
+              ],
+              "bytes": [
+                1055,
+                2015,
+                3935
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9495603184001499
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                1.989860800824884,
+                1.9949045686155973
+              ],
+              "bytes": [
+                11638,
+                23158,
+                46198
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9944936223784102
+            }
+          }
+        },
+        {
+          "capacities": [
+            64,
+            256,
+            1024
+          ],
+          "case": "ptv",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 9437184,
+            "candidate_bytes": 1991784,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                4.624545522000445,
+                3.9947533092659446
+              ],
+              "bytes": [
+                107816,
+                498600,
+                1991784
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0518545014160843
+            },
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                13.6,
+                4.0
+              ],
+              "bytes": [
+                20480,
+                278528,
+                1114112
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.4413836865907443
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                2.761467889908257,
+                3.5514950166112955
+              ],
+              "bytes": [
+                109,
+                301,
+                1069
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8234654532358909
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "contact_london_ptv",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 1,
+      "record": "memory_contact_london_ptv.json"
+    },
+    {
+      "baseline": "memory_csr_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "3bc9342d8274f1df566f39686e2e670248b1d25247a5f960c15f2bcfd63a016f",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "528c3e8cb8fcb02dd26081a66ecb23e6878c32e02bb3c62ced2e3ce6dd00e3eb",
+      "cases": [
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              2.0,
+              2.0
+            ],
+            "bytes": [
+              256,
+              512,
+              1024
+            ],
+            "disposition": "observed-only",
+            "exponent": 1.0000000000000002
+          },
+          "candidate_to_baseline_ratios": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "capacities": [
+            16,
+            32,
+            64
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.5282271654575954,
+                0.9946222268946179
+              ],
+              "bytes": [
+                5726434,
+                3024858,
+                3008591
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.46427451025063493
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.8798447132100424,
+                1.9360823338515132
+              ],
+              "bytes": [
+                46881,
+                88129,
+                170625
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9318768986381438
+            },
+            "row_workspace_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                256,
+                512,
+                1024
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0000000000000002,
+              "maximum_exponent": 1.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "csr",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_csr.json"
+    },
+    {
+      "baseline_comparisons": 0,
+      "benchmark_driver_fingerprint": "34729ef4b505c72337d3aa0b793ad32479887772568faec00bb769c112d2427a",
+      "cases": [
+        {
+          "capacities": [
+            64,
+            128,
+            256,
+            512,
+            1024,
+            2048,
+            4096
+          ],
+          "case": "main",
+          "disposition": "unconditional",
+          "metrics": {
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.5279487689848871,
+                0.9995315359534641,
+                1.0091959410156413,
+                1.0430400520246803,
+                0.9771590840870887,
+                1.052613339869536
+              ],
+              "bytes": [
+                5757606,
+                3039721,
+                3038297,
+                3066237,
+                3198208,
+                3125158,
+                3289583
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.08102541984599934
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.9669860805860806,
+                1.983215987271205,
+                1.9638447057621609,
+                1.981589534991359,
+                1.9907092439258762,
+                1.9953329417128733
+              ],
+              "bytes": [
+                170625,
+                335617,
+                665601,
+                1307137,
+                2590209,
+                5156353,
+                10288641
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9851965857910714
+            },
+            "row_workspace_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0,
+                2.0,
+                2.0,
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                1024,
+                2048,
+                4096,
+                8192,
+                16384,
+                32768,
+                65536
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0,
+              "maximum_exponent": 1.0
+            }
+          }
+        }
+      ],
+      "disposition": "candidate-only",
+      "driver_family": "csr_capacity",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_csr_capacity.json"
+    },
+    {
+      "baseline": "memory_fel_wake_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "b0b4b1dbad41c36c50c199d202e1285e04a26eeca0174d3d451c174171906b4b",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "1ca010910541c0ab5bba3d880c96b87b2e75e2e6153425fe79010abd40e05c63",
+      "cases": [
+        {
+          "capacities": [
+            256,
+            512,
+            1024,
+            2048
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 201326752,
+            "candidate_bytes": 262432,
+            "capacity": 2048,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.9912875121006777,
+                1.9956246961594555,
+                1.997807551766139
+              ],
+              "bytes": [
+                33056,
+                65824,
+                131360,
+                262432
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9963719177801099
+            },
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.03340453060533706,
+                1.3184544698520175,
+                1.5793325579314663
+              ],
+              "bytes": [
+                5075569,
+                169547,
+                223540,
+                353044
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.1138101235161566
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.9885987495402722,
+                1.9942666913260587,
+                1.9971251043308913
+              ],
+              "bytes": [
+                21752,
+                43256,
+                86264,
+                172280
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.995246415414177
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "fel_wake",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_fel_wake.json"
+    },
+    {
+      "baseline": "memory_fingerprint_workset_baseline.json",
+      "baseline_comparisons": 3,
+      "baseline_driver_fingerprint": "365802c16c74c80feb6a91780131bcabe40d57a9605e3c7bded7710ac21d5336",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "74756d0c7854d55bc021d5b19664d81d91ba13204f4ec98a1d13605dc9c7e320",
+      "cases": [
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.998132914740252,
+              3.9995332490893234
+            ],
+            "bytes": [
+              1049229,
+              4194957,
+              16777870
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.9997895198742932
+          },
+          "candidate_to_baseline_ratios": [
+            0.0011008083078145952,
+            0.0002696094381897121,
+            6.746982781485373e-05
+          ],
+          "capacities": [
+            1,
+            4,
+            16
+          ],
+          "case": "contiguous",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                0.9792207792207792,
+                1.0008841732979663
+              ],
+              "bytes": [
+                1155,
+                1131,
+                1132
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.00725472336788424
+            }
+          }
+        },
+        {
+          "capacities": [
+            1,
+            4,
+            16
+          ],
+          "case": "file-legacy-reference",
+          "disposition": "reference-only",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                3.986823040594302,
+                3.9966948722650772
+              ],
+              "bytes": [
+                1053202,
+                4198930,
+                16781842
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9985117513949563
+            }
+          }
+        },
+        {
+          "capacities": [
+            1,
+            4,
+            16
+          ],
+          "case": "file-stream",
+          "disposition": "unconditional",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                267553,
+                267553,
+                267553
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "identity-legacy-reference",
+          "disposition": "reference-only",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                5.5944954128440365,
+                4.670219744178419
+              ],
+              "bytes": [
+                8720,
+                48784,
+                227832
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.17687461221828
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "identity-stream",
+          "disposition": "unconditional",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.2302158273381294,
+                1.006578947368421
+              ],
+              "bytes": [
+                1112,
+                1368,
+                1377
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.07709294285286401
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.998927976616639,
+              3.9997315647119165
+            ],
+            "bytes": [
+              2097902,
+              8389359,
+              33555184
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.9998791191650405
+          },
+          "candidate_to_baseline_ratios": [
+            0.03209444483107409,
+            0.008025881357562598,
+            0.0020066348019429723
+          ],
+          "capacities": [
+            1,
+            4,
+            16
+          ],
+          "case": "strided",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.0000148519998218,
+                1.000014851779243
+              ],
+              "bytes": [
+                67331,
+                67332,
+                67333
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0713294131677274e-05
+            }
+          }
+        },
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              1.743985567784195,
+              3.011489784158677
+            ],
+            "bytes": [
+              82593,
+              144041,
+              433778
+            ],
+            "disposition": "observed-only",
+            "exponent": 0.5982163665365935
+          },
+          "candidate_to_baseline_ratios": [
+            1.0181008075744917,
+            0.7352489916065564,
+            0.5028447731328006
+          ],
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "workset",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                2176,
+                8704,
+                34816
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0000000000000002
+            },
+            "scratch_peak_bytes": {
+              "adjacent_ratios": [
+                1.2594662734278375,
+                2.0595905803259495
+              ],
+              "bytes": [
+                84088,
+                105906,
+                218123
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.34379251660850024
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "fingerprint_workset",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_fingerprint_workset.json"
+    },
+    {
+      "baseline": "memory_geometry_brep_baseline.json",
+      "baseline_comparisons": 4,
+      "baseline_driver_fingerprint": "765eb4a368137a09cc1a986cb4717a055d62281a5471243a6af03a652fc61ad8",
+      "baseline_environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "benchmark_driver_fingerprint": "eabd28236dddbd0c8c2a2d91da37360d76b4c4b8a0b8c0629b0ea3e74744463d",
+      "cases": [
+        {
+          "capacities": [
+            192,
+            384,
+            768,
+            1536
+          ],
+          "case": "nearest",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 10862672,
+            "candidate_bytes": 83112,
+            "capacity": 1536,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                1.3868363215731636,
+                1.66320521802956,
+                1.79845791228906
+              ],
+              "bytes": [
+                172900,
+                239784,
+                398810,
+                717243
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.6891538531428258
+            },
+            "nearest.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0031089089672593,
+                1.0030992736077482,
+                1.003089697788935
+              ],
+              "bytes": [
+                82344,
+                82600,
+                82856,
+                83112
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.00446441769647879
+            }
+          },
+          "scaling_acceptance": {
+            "accepted": true,
+            "decision": "adopt",
+            "formula": "O(Q*(k+log2(F))), k=2; prepared topology/output excluded",
+            "normalized_adjacent_ratios": [
+              0.9083415530225484,
+              0.9165129533201075,
+              0.9233842796971882
+            ],
+            "relative_residuals": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "capacities": [
+            192,
+            384,
+            768,
+            1536
+          ],
+          "case": "nearest_dynamic",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 10862672,
+            "candidate_bytes": 212008,
+            "capacity": 1536,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                1.3868363215731636,
+                1.66320521802956,
+                1.79845791228906
+              ],
+              "bytes": [
+                172900,
+                239784,
+                398810,
+                717243
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.6891538531428258
+            },
+            "nearest_dynamic.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0389622553151634,
+                1.199044442441179,
+                1.9924065859709796
+              ],
+              "bytes": [
+                85416,
+                88744,
+                106408,
+                212008
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.4196506516933515
+            }
+          },
+          "scaling_acceptance": {
+            "accepted": true,
+            "decision": "adopt",
+            "formula": "O(Q*(k+log2(F))), k=2; prepared topology/output excluded",
+            "normalized_adjacent_ratios": [
+              0.9083415530225484,
+              0.9165129533201075,
+              0.9233842796971882
+            ],
+            "relative_residuals": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "capacities": [
+            192,
+            384,
+            768,
+            1536
+          ],
+          "case": "winding",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 5111808,
+            "candidate_bytes": 4892280,
+            "capacity": 1536,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                1.3868363215731636,
+                1.66320521802956,
+                1.79845791228906
+              ],
+              "bytes": [
+                172900,
+                239784,
+                398810,
+                717243
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.6891538531428258
+            },
+            "winding.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.9350687804577138,
+                1.9663429966782915,
+                1.9828315743397695
+              ],
+              "bytes": [
+                648440,
+                1254776,
+                2467320,
+                4892280
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9721900945907307
+            }
+          },
+          "scaling_acceptance": {
+            "accepted": false,
+            "decision": "retain-baseline",
+            "maximum_adjacent_ratio": 1.25
+          }
+        },
+        {
+          "capacities": [
+            192,
+            384,
+            768,
+            1536
+          ],
+          "case": "winding_dynamic",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 5111808,
+            "candidate_bytes": 4916856,
+            "capacity": 1536,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_preparation_peak_bytes": {
+              "adjacent_ratios": [
+                1.3868363215731636,
+                1.66320521802956,
+                1.79845791228906
+              ],
+              "bytes": [
+                172900,
+                239784,
+                398810,
+                717243
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.6891538531428258
+            },
+            "winding_dynamic.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.9353749432090277,
+                1.9665069948926182,
+                1.9829166545679802
+              ],
+              "bytes": [
+                651512,
+                1260920,
+                2479608,
+                4916856
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.972325265851849
+            }
+          },
+          "scaling_acceptance": {
+            "accepted": false,
+            "decision": "retain-baseline",
+            "maximum_adjacent_ratio": 1.25
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "geometry_brep",
+      "environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "paired_comparisons": 0,
+      "record": "memory_geometry_brep.json"
+    },
+    {
+      "baseline": "memory_geometry_interface_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "424db303a5f86d76db08ad83550e4863788bb7d8ae2b73a01fa2bfc4214cd150",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "6936b2c299c75223a1b605d6dff04e0116da93aa971bf0b069affc3f2285abe2",
+      "cases": [
+        {
+          "capacities": [
+            256,
+            512,
+            1024,
+            2048
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 4194304,
+            "candidate_bytes": 534704,
+            "capacity": 2048,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0158985894941635,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                526336,
+                534704,
+                534704,
+                534704
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.006826918348792999,
+              "maximum_adjacent_ratio": 1.25
+            },
+            "logical_pair_tile_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                524288,
+                524288,
+                524288,
+                524288
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_adjacent_ratio": 1.25,
+              "maximum_exponent": 0.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "geometry_interface",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_geometry_interface.json"
+    },
+    {
+      "baseline": "memory_geometry_queries_baseline.json",
+      "baseline_comparisons": 0,
+      "baseline_driver_fingerprint": "db6c1f1434ea635a8c3406a418dedd5a7305a4ab777c91f1426602cb275174a4",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "71fbfbec85696f68a2f754884a49b8f97e572281e36a21e6f44294811ebd6913",
+      "cases": [
+        {
+          "capacities": [
+            128,
+            256,
+            512
+          ],
+          "case": "bvh",
+          "disposition": "unconditional",
+          "metrics": {
+            "bvh.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0130372784681199,
+                1.0128694952744821
+              ],
+              "bytes": [
+                39272,
+                39784,
+                40296
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.01856778214606809,
+              "maximum_adjacent_ratio": 1.25
+            }
+          }
+        },
+        {
+          "capacities": [
+            128,
+            256,
+            512
+          ],
+          "case": "main",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 2097232,
+            "candidate_bytes": 40296,
+            "capacity": 512,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "candidate.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                0.10115536389894635,
+                1.0128694952744821
+              ],
+              "bytes": [
+                393296,
+                39784,
+                40296
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.6434534861331969
+            }
+          }
+        },
+        {
+          "capacities": [
+            512,
+            1024
+          ],
+          "case": "polygon_pairs",
+          "disposition": "unconditional",
+          "metrics": {
+            "peak_bytes": {
+              "adjacent_ratios": [
+                1.0146103896103895
+              ],
+              "bytes": [
+                4928,
+                5000
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.020925838854547994
+            },
+            "retained_pair_bytes": {
+              "adjacent_ratios": [
+                null
+              ],
+              "bytes": [
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            }
+          }
+        }
+      ],
+      "disposition": "environment-mismatch",
+      "driver_family": "geometry_queries",
+      "environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "paired_comparisons": 1,
+      "record": "memory_geometry_queries.json"
+    },
+    {
+      "baseline": "memory_graph_queries_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "d7a783fd00065f219fcacd2439bda66087eeae12dc1f72affbde3c5dc169fa2d",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "8232dbcde458d9bf34d86b96c6a5ce34079a7138c6a9f11bc11701bacbaa7cf2",
+      "cases": [
+        {
+          "capacities": [
+            128,
+            256,
+            512
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 4194384,
+            "candidate_bytes": 367680,
+            "capacity": 512,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.941765810895429,
+                1.6467806084058905
+              ],
+              "bytes": [
+                114984,
+                223272,
+                367680
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8385087893399655
+            },
+            "host_graph_peak_bytes": {
+              "adjacent_ratios": [
+                1.673508941943441,
+                2.757317329964203
+              ],
+              "bytes": [
+                22702,
+                37992,
+                104756
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.1030707856516602
+            },
+            "host_join_peak_bytes": {
+              "adjacent_ratios": [
+                1.855075298259339,
+                2.8833948339483393
+              ],
+              "bytes": [
+                20452,
+                37940,
+                109396
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.2096230757771667
+            },
+            "host_radius_query_peak_bytes": {
+              "adjacent_ratios": [
+                1.8641697476289985,
+                2.5779943088729844
+              ],
+              "bytes": [
+                12442,
+                23194,
+                59794
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.1323911568922533
+            },
+            "logical_block_pair_bytes": {
+              "adjacent_ratios": [
+                1.9411764705882353,
+                1.0
+              ],
+              "bytes": [
+                104448,
+                202752,
+                202752
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.4784656390540572
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.9999668972822668,
+                1.9999834483671814
+              ],
+              "bytes": [
+                30209,
+                60417,
+                120833
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999820908551665
+            }
+          }
+        },
+        {
+          "capacities": [
+            128,
+            256,
+            512
+          ],
+          "case": "source_scan_cases",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.9353021768914598,
+                1.6448517265790923
+              ],
+              "bytes": [
+                105104,
+                203408,
+                334576
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.835258192537787
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                15105,
+                15105,
+                15105
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            512,
+            1024,
+            2048
+          ],
+          "case": "steady_source_scan_cases",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                334576,
+                334576,
+                334576
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                15105,
+                15105,
+                15105
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "graph_queries",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_graph_queries.json"
+    },
+    {
+      "baseline": "memory_host_caches_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "23d5e7f33c96a7a9244763db0d091ca22adeec462e96e96715408e58f8f1e8ba",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "11cd402c94c1514734b43c57409e8935e9dc6332d44adfea46f11f75da15f5c1",
+      "cases": [
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              5.340314136125654,
+              4.0,
+              4.0
+            ],
+            "bytes": [
+              48896,
+              261120,
+              1044480,
+              4177920
+            ],
+            "disposition": "observed-only",
+            "exponent": 1.0625386913234667
+          },
+          "candidate_to_baseline_ratios": [
+            1.0,
+            1.0,
+            1.0,
+            0.25072954963235294
+          ],
+          "capacities": [
+            64,
+            256,
+            1024,
+            4096
+          ],
+          "case": "churn",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "retained_bytes": {
+              "adjacent_ratios": [
+                5.340314136125654,
+                4.0,
+                1.0029181985294118
+              ],
+              "bytes": [
+                48896,
+                261120,
+                1044480,
+                1047528
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7631692822575565
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "host_caches",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "hot_sets": [
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.01953125,
+          "module": "_numerics._adaptive_cubature_rules",
+          "retained_to_budget_ratio": 0.0315704345703125,
+          "symbol": "_genz_malik_host_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.01171875,
+          "module": "_numerics._smolyak",
+          "retained_to_budget_ratio": 0.001922607421875,
+          "symbol": "_leja_nodes"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.05859375,
+          "module": "_numerics._smolyak",
+          "retained_to_budget_ratio": 0.0107421875,
+          "symbol": "_smolyak_terms_cached"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.05859375,
+          "module": "_numerics._smolyak",
+          "retained_to_budget_ratio": 0.0086212158203125,
+          "symbol": "_weighted_total_degree_indices_cached"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.041015625,
+          "module": "_numerics._smolyak",
+          "retained_to_budget_ratio": 0.009706497192382812,
+          "symbol": "smolyak_axis_data"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.17578125,
+          "module": "_polynomial._orthogonal",
+          "retained_to_budget_ratio": 0.093658447265625,
+          "symbol": "_derivative_operator"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.55078125,
+          "module": "applications.conformal_bootstrap._virasoro_generic",
+          "retained_to_budget_ratio": 0.0202484130859375,
+          "symbol": "_canonical_negative_modes"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.35546875,
+          "module": "applications.conformal_bootstrap._virasoro_generic",
+          "retained_to_budget_ratio": 0.01641082763671875,
+          "symbol": "_partitions"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.21484375,
+          "module": "control.games._master_equation",
+          "retained_to_budget_ratio": 0.0606231689453125,
+          "symbol": "_weak_compositions"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.0234375,
+          "module": "discretization._cell_geometry_validity",
+          "retained_to_budget_ratio": 0.030101776123046875,
+          "symbol": "_bernstein_plan"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.046875,
+          "module": "discretization._reference_cell",
+          "retained_to_budget_ratio": 0.05345726013183594,
+          "symbol": "reference_cell_topology"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.09375,
+          "module": "discretization.fem._form_elements",
+          "retained_to_budget_ratio": 0.07575225830078125,
+          "symbol": "_tensor_derivative"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.01953125,
+          "module": "discretization.fem._form_elements",
+          "retained_to_budget_ratio": 0.00232696533203125,
+          "symbol": "_tensor_interval"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.0703125,
+          "module": "discretization.meshfree._stencils",
+          "retained_to_budget_ratio": 0.006256103515625,
+          "symbol": "_basis_exponents"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.87890625,
+          "module": "discretization.spectral._spherical_algebra",
+          "retained_to_budget_ratio": 0.03033447265625,
+          "symbol": "_coupled_angular_momentum_block"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.1640625,
+          "module": "exterior._basis",
+          "retained_to_budget_ratio": 0.00775146484375,
+          "symbol": "complement_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.13671875,
+          "module": "exterior._basis",
+          "retained_to_budget_ratio": 0.0546875,
+          "symbol": "derivative_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.13671875,
+          "module": "exterior._basis",
+          "retained_to_budget_ratio": 0.0546875,
+          "symbol": "interior_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.109375,
+          "module": "exterior._basis",
+          "retained_to_budget_ratio": 0.053619384765625,
+          "symbol": "wedge_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.1171875,
+          "module": "meshing._quality",
+          "retained_to_budget_ratio": 0.03604888916015625,
+          "symbol": "_corner_table"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.0234375,
+          "module": "nn.atomistic._symmetric_contraction",
+          "retained_to_budget_ratio": 0.0030059814453125,
+          "symbol": "_native_coupling_span"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.171875,
+          "module": "nn.operator.representations._irreps",
+          "retained_to_budget_ratio": 0.0225982666015625,
+          "symbol": "_prepared_real_coupling"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.12890625,
+          "module": "special._real_harmonic",
+          "retained_to_budget_ratio": 0.04909515380859375,
+          "symbol": "_real_harmonic_basis_terms"
+        },
+        {
+          "disposition": "within-declared-budget",
+          "entries_to_budget_ratio": 0.21484375,
+          "module": "tensor_network._su2",
+          "retained_to_budget_ratio": 0.0230712890625,
+          "symbol": "_su2_clebsch_gordan_entries"
+        }
+      ],
+      "oversized_value": {
+        "disposition": "observed-only",
+        "reason": "Record has a not_retained boolean, not before/after byte and miss counters; it cannot be independently recomputed."
+      },
+      "paired_comparisons": 0,
+      "record": "memory_host_caches.json"
+    },
+    {
+      "baseline": "memory_host_exact_baseline.json",
+      "baseline_comparisons": 2,
+      "baseline_driver_fingerprint": "424b387b09c22eef8ece039d7230799c967410572990b007bb2c643678415294",
+      "baseline_environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "benchmark_driver_fingerprint": "087dfa0f2cc1047e4c2646a03d0f65276235562f8962445fbda9c7ba63bf6101",
+      "cases": [
+        {
+          "capacities": [
+            101,
+            201,
+            401,
+            801,
+            1601,
+            3201,
+            6401
+          ],
+          "case": "quantum_hall",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 1311285592,
+            "candidate_bytes": 360328,
+            "capacity": 6401,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                1.3207184092366901,
+                1.4856726566294318,
+                1.9094475318731612,
+                1.9587399417907891,
+                1.9789354077440784,
+                1.9893555938341947
+              ],
+              "bytes": [
+                12472,
+                16472,
+                24472,
+                46728,
+                91528,
+                181128,
+                360328
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8368257536096775
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                1.99009900990099,
+                1.9950248756218905,
+                1.9975062344139651,
+                1.9987515605493134,
+                1.9993753903810119,
+                1.999687597625742
+              ],
+              "bytes": [
+                1616,
+                3216,
+                6416,
+                12816,
+                25616,
+                51216,
+                102416
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999999
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                66,
+                66,
+                66,
+                66,
+                66,
+                66,
+                66
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            256,
+            512,
+            1024,
+            2048,
+            4096,
+            8192,
+            16384
+          ],
+          "case": "scenarios",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 77211656,
+            "candidate_bytes": 3102616,
+            "capacity": 16384,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                1.95461060678452,
+                1.9640674651674408,
+                1.971437461107654,
+                1.6041791610113316,
+                1.9117311400574555,
+                1.9958572634265834
+              ],
+              "bytes": [
+                66976,
+                130912,
+                257120,
+                506896,
+                813152,
+                1554528,
+                3102616
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9072067604597546
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                1.9995721009841678,
+                1.9997860047078964,
+                1.999892990904227,
+                1.9999464925892236,
+                1.999973245578832,
+                1.999986622610464
+              ],
+              "bytes": [
+                18696,
+                37384,
+                74760,
+                149512,
+                299016,
+                598024,
+                1196040
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999100661547368
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.1715817694369972,
+                1.2929061784897025,
+                1.4530973451327434,
+                1.6236297198538368,
+                1.768192048012003,
+                1.8689011455239712
+              ],
+              "bytes": [
+                5968,
+                6992,
+                9040,
+                13136,
+                21328,
+                37712,
+                70480
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.5995189502122564
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "host_exact",
+      "environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "paired_comparisons": 0,
+      "record": "memory_host_exact.json"
+    },
+    {
+      "baseline": "memory_limber_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "1eb7a3a8f34a830a4346a618103d7eebb9e1d7cd042fd76a27c3a7d767dd98a7",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "1eb7a3a8f34a830a4346a618103d7eebb9e1d7cd042fd76a27c3a7d767dd98a7",
+      "cases": [
+        {
+          "capacities": [
+            64,
+            256,
+            1024,
+            4096
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 134217728,
+            "candidate_bytes": 69960,
+            "capacity": 4096,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                3.921985815602837,
+                3.9584086799276674,
+                3.9949748743718594
+              ],
+              "bytes": [
+                1128,
+                4424,
+                17512,
+                69960
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9924497259088452
+            },
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                2048,
+                8192,
+                32768,
+                131072
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0,
+              "maximum_exponent": 1.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "limber",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_limber.json"
+    },
+    {
+      "baseline": "memory_ml_neighbors_baseline.json",
+      "baseline_comparisons": 3,
+      "baseline_driver_fingerprint": "518abafdd1083951075449dff5197d73805e6cfec75878790fa37672594b7342",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "5313829c5343896d7f003907054fe6f3d02c0342c871fe2b95b34143e64a6d88",
+      "cases": [
+        {
+          "capacities": [
+            256,
+            512,
+            1024
+          ],
+          "case": "dbscan",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16785504,
+            "candidate_bytes": 135096,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                0.44097900390625,
+                0.25
+              ],
+              "bytes": [
+                3145728,
+                1387200,
+                346800
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.5906090638622974
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.9741697416974169,
+                1.9869158878504674
+              ],
+              "bytes": [
+                8672,
+                17120,
+                34016
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9858884200886162
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                0.35997411298918836,
+                0.3571776052792995
+              ],
+              "bytes": [
+                1050720,
+                378232,
+                135096
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.4796607006002453
+            }
+          }
+        },
+        {
+          "capacities": [
+            256,
+            512,
+            1024
+          ],
+          "case": "kde",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 8396800,
+            "candidate_bytes": 106864,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                0.44097900390625,
+                0.25
+              ],
+              "bytes": [
+                3145728,
+                1387200,
+                346800
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.5906090638622974
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                2.0,
+                2.0
+              ],
+              "bytes": [
+                2048,
+                4096,
+                8192
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999994
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                0.5078732976653697,
+                0.39977255042796433
+              ],
+              "bytes": [
+                526336,
+                267312,
+                106864
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.1501040751555898
+            }
+          }
+        },
+        {
+          "capacities": [
+            256,
+            512,
+            1024
+          ],
+          "case": "knn",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 12582928,
+            "candidate_bytes": 203128,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                0.4392578125,
+                0.25874747751137256
+              ],
+              "bytes": [
+                3194880,
+                1403376,
+                363120
+              ],
+              "disposition": "observed-only",
+              "exponent": -1.568621722962177
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.9986996098829648,
+                1.9993493819128172
+              ],
+              "bytes": [
+                12304,
+                24592,
+                49168
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9992961318155683
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                0.7864321608040201,
+                0.3284267439303592
+              ],
+              "bytes": [
+                786448,
+                618488,
+                203128
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.9764811286622083
+            }
+          }
+        },
+        {
+          "capacities": [
+            256,
+            512,
+            1024
+          ],
+          "case": "spectral",
+          "disposition": "unconditional",
+          "metrics": {
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                1.2258064516129032,
+                1.368421052631579
+              ],
+              "bytes": [
+                126976,
+                155648,
+                212992
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.3731217038771088
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.9892525057360222,
+                1.9945972196928308
+              ],
+              "bytes": [
+                8281,
+                16473,
+                32857
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9941619302753485
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                1.7538093054069204,
+                1.9818974284468982
+              ],
+              "bytes": [
+                156984,
+                275320,
+                545656
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8986870942942701
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "ml_neighbors",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_ml_neighbors.json"
+    },
+    {
+      "baseline": "memory_ocean_shell_baseline.json",
+      "baseline_comparisons": 2,
+      "baseline_driver_fingerprint": null,
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": null,
+      "cases": [
+        {
+          "capacities": [
+            32,
+            128,
+            512,
+            2048
+          ],
+          "case": "ocean",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 8208,
+            "candidate_bytes": 61768,
+            "capacity": 2048,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                64,
+                256,
+                1024,
+                4096
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                3.2360248447204967,
+                3.763915547024952,
+                3.9372768995410503
+              ],
+              "bytes": [
+                1288,
+                4168,
+                15688,
+                61768
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9331599808258375
+            }
+          }
+        },
+        {
+          "capacities": [
+            8,
+            16,
+            32,
+            64
+          ],
+          "case": "shell",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 0,
+            "candidate_bytes": 0,
+            "capacity": 64,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "output_bytes": {
+              "adjacent_ratios": [
+                8.0,
+                8.0,
+                8.0
+              ],
+              "bytes": [
+                512,
+                4096,
+                32768,
+                262144
+              ],
+              "disposition": "observed-only",
+              "exponent": 3.0000000000000004
+            },
+            "temporary_bytes": {
+              "adjacent_ratios": [
+                null,
+                null,
+                null
+              ],
+              "bytes": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "ocean_shell",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_ocean_shell.json"
+    },
+    {
+      "baseline": "memory_periodic_ewald_baseline.json",
+      "baseline_comparisons": 4,
+      "baseline_driver_fingerprint": "6f83c55c544e20b15370017029750434b68681f0933c0ac9837a0e43d6549f83",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "63056cd4b3057ce95f65042233bd4672a08a57bf031ba3d417838f4e3edd2c46",
+      "cases": [
+        {
+          "capacities": [
+            16,
+            32,
+            64,
+            128
+          ],
+          "case": "shell-1/force-and-strain",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 67379208,
+            "candidate_bytes": 560968,
+            "capacity": 128,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_displacement_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                98304,
+                98304,
+                98304,
+                98304
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_host_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                6144,
+                6144,
+                6144,
+                6144
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_retained_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                5631,
+                5631,
+                5631,
+                5631
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "phases.force-and-strain.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0416446324695927,
+                1.1100937392344932,
+                1.1453001224989792
+              ],
+              "bytes": [
+                423584,
+                441224,
+                489800,
+                560968
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.13664926471357217
+            },
+            "preparation_host_peak_bytes": {
+              "adjacent_ratios": [
+                0.7840457830375198,
+                1.0021480810954495,
+                0.992780999763429
+              ],
+              "bytes": [
+                177533,
+                139194,
+                139493,
+                138486
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.10719455441768536
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            32,
+            64,
+            128
+          ],
+          "case": "shell-1/forward",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 3540056,
+            "candidate_bytes": 80408,
+            "capacity": 128,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_displacement_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                98304,
+                98304,
+                98304,
+                98304
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_host_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                6144,
+                6144,
+                6144,
+                6144
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_retained_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                5631,
+                5631,
+                5631,
+                5631
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "phases.forward.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0226486860304287,
+                1.0,
+                1.6992392223161454
+              ],
+              "bytes": [
+                46272,
+                47320,
+                47320,
+                80408
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.23915987658194823
+            },
+            "preparation_host_peak_bytes": {
+              "adjacent_ratios": [
+                0.7840457830375198,
+                1.0021480810954495,
+                0.992780999763429
+              ],
+              "bytes": [
+                177533,
+                139194,
+                139493,
+                138486
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.10719455441768536
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            32,
+            64,
+            128
+          ],
+          "case": "shell-2/force-and-strain",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 311942536,
+            "candidate_bytes": 1072200,
+            "capacity": 128,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_displacement_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                98304,
+                98304,
+                98304,
+                98304
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_host_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                6144,
+                6144,
+                6144,
+                6144
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_retained_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                10335,
+                10335,
+                10335,
+                10335
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "phases.force-and-strain.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.2134950018511663,
+                1.4243284060226076,
+                1.435433602159175
+              ],
+              "bytes": [
+                432160,
+                524424,
+                746952,
+                1072200
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.4443091595881504
+            },
+            "preparation_host_peak_bytes": {
+              "adjacent_ratios": [
+                1.0001184099631537,
+                0.9972838577577201,
+                1.0008380122349787
+              ],
+              "bytes": [
+                143569,
+                143586,
+                143196,
+                143316
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.0011557657691142835
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            32,
+            64,
+            128
+          ],
+          "case": "shell-2/forward",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16385112,
+            "candidate_bytes": 382232,
+            "capacity": 128,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "logical_displacement_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                98304,
+                98304,
+                98304,
+                98304
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_host_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                6144,
+                6144,
+                6144,
+                6144
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "logical_retained_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                10335,
+                10335,
+                10335,
+                10335
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "phases.forward.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0226486860304287,
+                4.052578191039729,
+                1.9932001168078095
+              ],
+              "bytes": [
+                46272,
+                47320,
+                191768,
+                382232
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.1157551626196525
+            },
+            "preparation_host_peak_bytes": {
+              "adjacent_ratios": [
+                1.0001184099631537,
+                0.9972838577577201,
+                1.0008380122349787
+              ],
+              "bytes": [
+                143569,
+                143586,
+                143196,
+                143316
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.0011557657691142835
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "periodic_ewald",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_periodic_ewald.json"
+    },
+    {
+      "baseline": "memory_periodic_kubo_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "330ee35f27f9f826732e0da125879252b439dad50e04bc6a579c392473ca32e5",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "89fa460fa978be60ec221c3893e9782c0239a7e2fad2bcd9f768951d0e1c5292",
+      "cases": [
+        {
+          "capacities": [
+            8,
+            32,
+            128,
+            512
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16859288,
+            "candidate_bytes": 803448,
+            "capacity": 512,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.468679498871982,
+                0.9980826006906995,
+                1.0962287834961524
+              ],
+              "bytes": [
+                499992,
+                734328,
+                732920,
+                803448
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.10250650249748305
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.9550744043859427,
+                0.9992011173775488,
+                0.9994546311347379
+              ],
+              "bytes": [
+                197905,
+                189014,
+                188863,
+                188760
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.010295898046785119
+            },
+            "logical_frequency_transition_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                1179648,
+                1179648,
+                1179648,
+                1179648
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.035446039041169,
+                1.136930511894149,
+                1.4817550781217759
+              ],
+              "bytes": [
+                102917,
+                106565,
+                121157,
+                179525
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.129662722116505
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                26824,
+                26824,
+                26824,
+                26824
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          },
+          "scaling_acceptance": {
+            "accepted": true,
+            "compiler_exponent": 0.10250650249748305,
+            "decision": "adopt",
+            "declared_logical_exponent": 0.0,
+            "logical_exponent": 0.0,
+            "maximum_compiler_exponent": 1.1,
+            "maximum_logical_exponent_defect": 0.1
+          }
+        },
+        {
+          "capacities": [
+            8,
+            32,
+            128,
+            512
+          ],
+          "case": "parallel",
+          "disposition": "unconditional",
+          "metrics": {
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.9550744043859427,
+                0.9992011173775488,
+                0.9994546311347379
+              ],
+              "bytes": [
+                197905,
+                189014,
+                188863,
+                188760
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.010295898046785119
+            },
+            "parallel.compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.5728891662266595,
+                3.453287563042978,
+                3.828314115458519
+              ],
+              "bytes": [
+                499992,
+                1286424,
+                4442392,
+                17006872
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8526088730284989
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.035446039041169,
+                1.136930511894149,
+                1.4817550781217759
+              ],
+              "bytes": [
+                102917,
+                106565,
+                121157,
+                179525
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.129662722116505
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                26824,
+                26824,
+                26824,
+                26824
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "periodic_kubo",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_periodic_kubo.json"
+    },
+    {
+      "baseline": "memory_phase_field_defects_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "6fd8b059a4daaa219c5c851bfd6ac986c20b38d48e2aea980c4d041825c7799e",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "f63cec9d6839895a247adfc594079682cd7433314fac27001e37bf19917edd66",
+      "cases": [
+        {
+          "baseline_evidence": {
+            "adjacent_ratios": [
+              3.879706152433425,
+              3.938698224852071,
+              3.969052340604531
+            ],
+            "bytes": [
+              17424,
+              67600,
+              266256,
+              1056784
+            ],
+            "disposition": "observed-only",
+            "exponent": 1.9999999999999996
+          },
+          "candidate_to_baseline_ratios": [
+            0.12121212121212122,
+            0.06153846153846154,
+            0.031007751937984496,
+            0.01556420233463035
+          ],
+          "capacities": [
+            33,
+            65,
+            129,
+            257
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "unconditional",
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.481203007518797,
+                1.649746192893401,
+                1.8123076923076924
+              ],
+              "bytes": [
+                1064,
+                1576,
+                2600,
+                4712
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7257596283889859
+            },
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                1.9696969696969697,
+                1.9846153846153847,
+                1.9922480620155039
+              ],
+              "bytes": [
+                2112,
+                4160,
+                8256,
+                16448
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.9999999999999998,
+              "maximum_exponent": 1.0
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.9696969696969697,
+                1.9846153846153847,
+                1.9922480620155039
+              ],
+              "bytes": [
+                528,
+                1040,
+                2064,
+                4112
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999998
+            },
+            "preparation_host_peak_bytes": {
+              "adjacent_ratios": [
+                0.9614890885750963,
+                1.057632398753894,
+                1.1066694719124763
+              ],
+              "bytes": [
+                37392,
+                35952,
+                38024,
+                42080
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.06014369482076162
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                1.9696969696969697,
+                1.9846153846153847,
+                1.9922480620155039
+              ],
+              "bytes": [
+                528,
+                1040,
+                2064,
+                4112
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9999999999999998
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "phase_field_defects",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_phase_field_defects.json"
+    },
+    {
+      "baseline": "memory_polymer_lag_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "976372ef6a44beae176f097ddb95a571f4e124621fc7442280a1a508cc09f7a6",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "95c0880b3c523ff41fc7def6bc9a14e45b38d3999b0c6b1ac2fdc86bce35615a",
+      "cases": [
+        {
+          "capacities": [
+            64,
+            256,
+            1024,
+            4096
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 2149157888,
+            "candidate_bytes": 82608,
+            "capacity": 4096,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.951219512195122,
+                3.644628099173554,
+                3.9024943310657596
+              ],
+              "bytes": [
+                1968,
+                5808,
+                21168,
+                82608
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9020104870274647
+            },
+            "host_peak_bytes": {
+              "adjacent_ratios": [
+                0.8873239436619719,
+                1.3463595583160801,
+                2.4479827427863565
+              ],
+              "bytes": [
+                39192,
+                34776,
+                46821,
+                114617
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.2536816781615846
+            },
+            "logical_workspace_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                2048,
+                8192,
+                32768,
+                131072
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 1.0,
+              "maximum_exponent": 1.0
+            },
+            "retained_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                256,
+                1024,
+                4096,
+                16384
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "polymer_lag",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_polymer_lag.json"
+    },
+    {
+      "baseline": "memory_process_compression_baseline.json",
+      "baseline_comparisons": 0,
+      "baseline_driver_fingerprint": "840b9b7765263b05fe4e8146e83f5f6de3561d896e57fb135b38bfe5230a0bef",
+      "baseline_environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "benchmark_driver_fingerprint": "a6261bb04d305bf86f03fa9d30e5dd86ba793f1d1b3683b35f5d99768716658e",
+      "cases": [
+        {
+          "capacities": [
+            8,
+            16,
+            32
+          ],
+          "case": "contract",
+          "comparison_scope": "same-record-paired",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 589824,
+            "candidate_bytes": 524288,
+            "capacity": 32,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                4.0,
+                4.0
+              ],
+              "bytes": [
+                32768,
+                131072,
+                524288
+              ],
+              "disposition": "observed-only",
+              "exponent": 2.0
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.5582188078265016,
+                1.0015869275235927
+              ],
+              "bytes": [
+                3200306,
+                1786471,
+                1789306
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.4194048618848287
+            },
+            "logical_expanded_local_bytes": {
+              "adjacent_ratios": [
+                null,
+                null
+              ],
+              "bytes": [
+                0,
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            },
+            "logical_selector_bytes": {
+              "adjacent_ratios": [
+                null,
+                null
+              ],
+              "bytes": [
+                0,
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                64,
+                64,
+                64
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                3.9978043425225667,
+                3.9994507841581743
+              ],
+              "bytes": [
+                12297,
+                49161,
+                196617
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.9995048825958168
+            }
+          }
+        },
+        {
+          "capacities": [
+            8,
+            16,
+            32
+          ],
+          "case": "projection",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 426072,
+            "candidate_bytes": 82008,
+            "capacity": 32,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                3.9493087557603688,
+                3.987164527421237
+              ],
+              "bytes": [
+                5208,
+                20568,
+                82008
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.9884816499923939
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.5582188078265016,
+                1.0015869275235927
+              ],
+              "bytes": [
+                3200306,
+                1786471,
+                1789306
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.4194048618848287
+            },
+            "logical_expanded_local_bytes": {
+              "adjacent_ratios": [
+                null,
+                null
+              ],
+              "bytes": [
+                0,
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            },
+            "logical_selector_bytes": {
+              "adjacent_ratios": [
+                null,
+                null
+              ],
+              "bytes": [
+                0,
+                0,
+                0
+              ],
+              "disposition": "zero-workspace",
+              "exponent": null
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                3.959537572254335,
+                3.98978102189781
+              ],
+              "bytes": [
+                3114,
+                12330,
+                49194
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.9908207584432407
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                3.9978043425225667,
+                3.9994507841581743
+              ],
+              "bytes": [
+                12297,
+                49161,
+                196617
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.9995048825958168
+            }
+          }
+        }
+      ],
+      "disposition": "paired-evidence",
+      "driver_family": "process_compression",
+      "environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "paired_comparisons": 2,
+      "record": "memory_process_compression.json"
+    },
+    {
+      "baseline": "memory_ringdown_baseline.json",
+      "baseline_comparisons": 1,
+      "baseline_driver_fingerprint": "6cfb1a955bee7680af86dbc9b3f6574413315f8268abac6a3ced199fc419eefa",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "f2788b964a01631f3c5b9eb204adae7f5840f94b455d199f9003544a4daed0da",
+      "cases": [
+        {
+          "capacities": [
+            8,
+            16,
+            32,
+            64,
+            128
+          ],
+          "case": "main",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 67700736,
+            "candidate_bytes": 5773432,
+            "capacity": 128,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.2221091039679097,
+                1.0000443548107643,
+                1.0000887056870047,
+                1.0001773956380076
+              ],
+              "bytes": [
+                4722688,
+                5771640,
+                5771896,
+                5772408,
+                5773432
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.05798338615269753,
+              "maximum_adjacent_ratio": 2.25
+            },
+            "logical_response_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                4194304,
+                4194304,
+                4194304,
+                4194304,
+                4194304
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 3.283821236910038e-31,
+              "maximum_adjacent_ratio": 2.25,
+              "maximum_exponent": 0.0
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.007992189451218,
+                1.0158576416263092,
+                1.0312202044391228,
+                1.0605500247274604
+              ],
+              "bytes": [
+                528516,
+                532740,
+                541188,
+                558084,
+                591876
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.03937462989262006
+            },
+            "retained_plan_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                1082368,
+                1082368,
+                1082368,
+                1082368,
+                1082368
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "ringdown",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_ringdown.json"
+    },
+    {
+      "baseline": "memory_sensitivity_optics_baseline.json",
+      "baseline_comparisons": 5,
+      "baseline_driver_fingerprint": "07855de856ff1f61ddfaf0a4bfc6d044d6d18dbf290cb91e1a417bca890dab0f",
+      "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "benchmark_driver_fingerprint": "07855de856ff1f61ddfaf0a4bfc6d044d6d18dbf290cb91e1a417bca890dab0f",
+      "cases": [
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "optics_batch1",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 11272,
+            "candidate_bytes": 9224,
+            "capacity": 256,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0232333010648595,
+                1.0908230842005677
+              ],
+              "bytes": [
+                8264,
+                8456,
+                9224
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.03963806469667805
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                112,
+                112,
+                112
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "optics_batch1024",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 4400600,
+            "candidate_bytes": 2311576,
+            "capacity": 256,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0000830947245236,
+                1.0003323512814566
+              ],
+              "bytes": [
+                2310616,
+                2310808,
+                2311576
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.00014981931291137908
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                106504,
+                106504,
+                106504
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "optics_batch16",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 72088,
+            "candidate_bytes": 39384,
+            "capacity": 256,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.004996876951905,
+                1.0198881292728403
+              ],
+              "bytes": [
+                38424,
+                38616,
+                39384
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.008900482749363794
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                1672,
+                1672,
+                1672
+              ],
+              "disposition": "observed-only",
+              "exponent": 1.0261941365343867e-31
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256
+          ],
+          "case": "optics_batch256",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "retain-baseline",
+          "gate": {
+            "baseline_bytes": 1066584,
+            "candidate_bytes": 544280,
+            "capacity": 256,
+            "decision": "retain-baseline",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.000353382905102,
+                1.001413032278956
+              ],
+              "bytes": [
+                543320,
+                543512,
+                544280
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0006367173588372749
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                26632,
+                26632,
+                26632
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            }
+          }
+        },
+        {
+          "capacities": [
+            16,
+            64,
+            256,
+            1024
+          ],
+          "case": "sensitivity",
+          "comparison_scope": "matching-environment-baseline",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 8388872,
+            "candidate_bytes": 18464,
+            "capacity": 1024,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                2.391304347826087,
+                2.8545454545454545,
+                3.6751592356687897
+              ],
+              "bytes": [
+                736,
+                1760,
+                5024,
+                18464
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7729928846566188
+            },
+            "retained_output_bytes": {
+              "adjacent_ratios": [
+                3.9883268482490273,
+                3.9970731707317073,
+                3.9992677568952892
+              ],
+              "bytes": [
+                257,
+                1025,
+                4097,
+                16385
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.9991167246398113
+            }
+          }
+        }
+      ],
+      "disposition": "compared",
+      "driver_family": "sensitivity_optics",
+      "environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+      "paired_comparisons": 0,
+      "record": "memory_sensitivity_optics.json"
+    },
+    {
+      "baseline": "memory_transport_attention_baseline.json",
+      "baseline_comparisons": 0,
+      "baseline_driver_fingerprint": "1a1a9fe8dd983d5966cf670590d19e510879543e916839dcebe221dd25277421",
+      "baseline_environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "benchmark_driver_fingerprint": "a7597672f37f29d3955d7e82ca339e1d4e464e43f5bca787ab3d74d3d9843a0a",
+      "cases": [
+        {
+          "capacities": [
+            512,
+            1024,
+            2048
+          ],
+          "case": "attention",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16777216,
+            "candidate_bytes": 2182320,
+            "capacity": 2048,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                2182320,
+                2182320,
+                2182320
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.39842356024939235,
+                1.205244075506598
+              ],
+              "bytes": [
+                7794145,
+                3105371,
+                3742730
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.5291498975269305
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                1048576,
+                1048576,
+                1048576
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                32768,
+                32768,
+                32768
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                1.7630057803468209,
+                1.8655737704918032
+              ],
+              "bytes": [
+                177152,
+                312320,
+                582656
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.8588283073349283
+            }
+          }
+        },
+        {
+          "capacities": [
+            512,
+            1024,
+            2048
+          ],
+          "case": "balanced",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 16833280,
+            "candidate_bytes": 1659760,
+            "capacity": 2048,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0101725559540249,
+                1.0201402342482324
+              ],
+              "bytes": [
+                1610608,
+                1626992,
+                1659760
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.021684619793506176
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.39842356024939235,
+                1.205244075506598
+              ],
+              "bytes": [
+                7794145,
+                3105371,
+                3742730
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.5291498975269305
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                524288,
+                524288,
+                524288
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                16,
+                16,
+                16
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                1.6654434250764527,
+                1.799118619170033
+              ],
+              "bytes": [
+                13080,
+                21784,
+                39192
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7915983279487031
+            }
+          }
+        },
+        {
+          "capacities": [
+            512,
+            1024,
+            2048
+          ],
+          "case": "unbalanced",
+          "comparison_scope": "same-record-paired",
+          "disposition": "adopt",
+          "gate": {
+            "baseline_bytes": 21007432,
+            "candidate_bytes": 1659440,
+            "capacity": 2048,
+            "decision": "adopt",
+            "maximum_candidate_fraction": 0.5
+          },
+          "metrics": {
+            "compiler.temporary_bytes": {
+              "adjacent_ratios": [
+                1.0102536588273867,
+                1.020023800391428
+              ],
+              "bytes": [
+                1610352,
+                1626864,
+                1659440
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.021660195884790005
+            },
+            "host_allocation_peak_bytes": {
+              "adjacent_ratios": [
+                0.39842356024939235,
+                1.205244075506598
+              ],
+              "bytes": [
+                7794145,
+                3105371,
+                3742730
+              ],
+              "disposition": "observed-only",
+              "exponent": -0.5291498975269305
+            },
+            "logical_pair_workspace_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                524288,
+                524288,
+                524288
+              ],
+              "disposition": "bounded-growth",
+              "exponent": 0.0,
+              "maximum_exponent": 0.0
+            },
+            "output_bytes": {
+              "adjacent_ratios": [
+                1.0,
+                1.0
+              ],
+              "bytes": [
+                16,
+                16,
+                16
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.0
+            },
+            "retained_input_bytes": {
+              "adjacent_ratios": [
+                1.6650366748166259,
+                1.7988252569750367
+              ],
+              "bytes": [
+                13088,
+                21792,
+                39200
+              ],
+              "disposition": "observed-only",
+              "exponent": 0.7913045004740914
+            }
+          }
+        }
+      ],
+      "disposition": "paired-evidence",
+      "driver_family": "transport_attention",
+      "environment_fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+      "paired_comparisons": 3,
+      "record": "memory_transport_attention.json"
+    }
+  ]
+}
