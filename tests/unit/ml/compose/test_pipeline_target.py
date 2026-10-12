@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -515,11 +516,13 @@ def test_keyed_subspace_target_transform_restores_projected_targets(
         feature_schema=source.feature_schema,
         target_schema=phx.ml.TargetSchema("continuous", names=("u", "v", "w")),
     )
+    # The targets have centered rank two. Cover that range before selecting one
+    # component, so admission does not depend on a lucky rank-one sketch.
     transform_recipe = (
         PCA(
             1,
             differentiate="none",
-            method=RandomizedSVD(oversampling=0, power_iterations=0),
+            method=RandomizedSVD(oversampling=1, power_iterations=0),
             tolerance=SVDTolerancePolicy(residual=1.0, orthogonality=1e-6),
         )
         if randomized
@@ -536,6 +539,13 @@ def test_keyed_subspace_target_transform_restores_projected_targets(
     target_model = fitted.transformer
     assert isinstance(target_model, SubspaceModel)
     expected = target_model.project(targets)
+    centered_targets = np.asarray(targets - jnp.mean(targets, axis=0))
+    _, _, right = np.linalg.svd(centered_targets, full_matrices=False)
+    count = 1 if randomized else 2
+    reference = centered_targets @ right[:count].T @ right[:count] + np.asarray(
+        jnp.mean(targets, axis=0)
+    )
+    assert jnp.allclose(expected, reference, atol=1e-6)
     assert jnp.allclose(fitted(batch.features), expected, atol=1e-6)
     assert jnp.allclose(
         fitted(batch.features), repeated.as_trainable()(batch.features), atol=1e-10
