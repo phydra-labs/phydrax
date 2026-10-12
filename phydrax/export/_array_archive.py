@@ -22,6 +22,7 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from .._fingerprint import iter_array_bytes
 from .._validation import canonical_identifier as _canonical_identifier
 from ..typing import parse
 
@@ -318,7 +319,8 @@ def _payload_id(
         digest.update(
             json.dumps(list(array.shape), separators=(",", ":")).encode("ascii")
         )
-        digest.update(array.tobytes(order="C"))
+        for chunk in iter_array_bytes(array):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -572,7 +574,8 @@ def fused_bem_result_archive_record(
         array = arrays[name]
         content.update(name.encode("utf-8"))
         content.update(array.dtype.str.encode("ascii"))
-        content.update(array.tobytes(order="C"))
+        for chunk in iter_array_bytes(array):
+            content.update(chunk)
     result_id = f"fused-bem-result-{content.hexdigest()}"
     metadata = {
         "action_id": result.action_id,
