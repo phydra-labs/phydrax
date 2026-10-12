@@ -361,3 +361,164 @@ def test_astrodynamics_extended_scenario_2() -> None:
             source_provider_id="source",
             occulting_provider_id="occulter",
         )
+
+
+def _gravity_reference(
+    position: np.ndarray, masses: np.ndarray, active: np.ndarray, softening: float
+) -> tuple[np.ndarray, float, float]:
+    acceleration = np.zeros_like(position)
+    potential = 0.0
+    minimum = np.inf
+    for i in range(masses.size):
+        for j in range(masses.size):
+            if i == j or not (active[i] and active[j]):
+                continue
+            displacement = position[j] - position[i]
+            squared = np.dot(displacement, displacement)
+            minimum = min(minimum, np.sqrt(squared))
+            acceleration[i] += masses[j] * displacement / (squared + softening**2) ** 1.5
+            if i < j:
+                potential -= masses[i] * masses[j] / np.sqrt(squared + softening**2)
+    return acceleration, potential, minimum
+
+
+@pytest.mark.parametrize("count", [3, 8, 16])
+@pytest.mark.parametrize("softening", [0.0, 0.07])
+@pytest.mark.parametrize("chunk", [1, 4, 7])
+def test_direct_gravity_matches_independent_pairs(
+    count: int, softening: float, chunk: int
+) -> None:
+    astro = phx.applications.astrodynamics
+    position = np.random.default_rng(count).normal(size=(count, 3))
+    masses = np.linspace(0.5, 1.5, count)
+    active = np.arange(count) < count - 1
+    particles = phx.discretization.particle.ParticleSetPlan(
+        np.arange(count), masses, ambient_dimension=3, active_mask=active
+    ).prepare()
+    expected, potential, minimum = _gravity_reference(position, masses, active, softening)
+    plan = astro.DirectNBodyGravityPlan(
+        particles, _context(), softening=softening, target_chunk_size=chunk
+    )
+    result = plan.evaluate(position)
+    assert bool(result.valid)
+    assert int(result.status) == int(astro.AstrodynamicsStatus.SUCCESS)
+    np.testing.assert_allclose(result.acceleration, expected, rtol=2e-12, atol=2e-13)
+    np.testing.assert_allclose(result.potential_energy, potential, rtol=2e-12)
+    np.testing.assert_allclose(result.minimum_pair_distance, minimum, rtol=2e-12)
+    np.testing.assert_allclose(
+        result.net_internal_force, np.sum(masses[:, None] * expected, axis=0), atol=2e-13
+    )
+    assert result.plan_id == plan.plan_id
+
+
+@pytest.mark.parametrize("count", [3, 8, 16])
+@pytest.mark.parametrize("chunk", [1, 4, 7])
+def test_near_kepler_gravity_matches_independent_pairs(count: int, chunk: int) -> None:
+    astro = phx.applications.astrodynamics
+    position = np.random.default_rng(count).normal(size=(count, 3))
+    masses = np.linspace(1e-4, 2e-4, count)
+    expected, _, minimum = _gravity_reference(
+        position, masses, np.ones(count, dtype=np.bool_), 0.0
+    )
+    expected -= np.sum(
+        masses[:, None] * position / np.linalg.norm(position, axis=1)[:, None] ** 3,
+        axis=0,
+    )
+    plan = astro.NearlyKeplerianPlan(
+        1.0, masses, jnp.asarray([0.0, 0.01]), _context(), target_chunk_size=chunk
+    )
+    acceleration, actual_minimum, valid = plan._perturbation(jnp.asarray(position))
+    assert bool(valid)
+    np.testing.assert_allclose(acceleration, expected, rtol=2e-12, atol=2e-13)
+    np.testing.assert_allclose(actual_minimum, minimum, rtol=2e-12)
+
+
+@pytest.mark.parametrize("softening,threshold", [(0.0, 0.0), (0.1, 0.01)])
+def test_direct_gravity_collision_rolls_back(softening: float, threshold: float) -> None:
+    astro = phx.applications.astrodynamics
+    particles = phx.discretization.particle.ParticleSetPlan(
+        jnp.asarray([0, 1]), jnp.asarray([1.0, 1.0]), ambient_dimension=3
+    ).prepare()
+    context = _context()
+    plan = astro.DirectNBodyGravityPlan(
+        particles, context, softening=softening, collision_distance=threshold
+    )
+    position = jnp.zeros((2, 3))
+    evaluation = plan.evaluate(position)
+    assert not bool(evaluation.valid)
+    assert bool(evaluation.collision)
+    assert int(evaluation.status) == int(astro.AstrodynamicsStatus.COLLISION)
+    assert bool(jnp.isnan(evaluation.potential_energy))
+    np.testing.assert_array_equal(evaluation.acceleration, 0.0)
+    rollout = astro.NBodyPropagationPlan(plan, jnp.asarray([0.0, 0.01, 0.02])).rollout(
+        astro.NBodyState(position, position, particles, context)
+    )
+    assert not bool(rollout.successful)
+    np.testing.assert_array_equal(rollout.positions, 0.0)
+
+
+def test_gravity_chunk_policy_preserves_scientific_identity() -> None:
+    astro = phx.applications.astrodynamics
+    particles = phx.discretization.particle.ParticleSetPlan(
+        jnp.asarray([0, 1]), jnp.asarray([1.0, 1.0]), ambient_dimension=3
+    ).prepare()
+    context = _context()
+    assert (
+        astro.DirectNBodyGravityPlan(particles, context, target_chunk_size=1).plan_id
+        == astro.DirectNBodyGravityPlan(particles, context, target_chunk_size=7).plan_id
+    )
+    assert (
+        astro.NearlyKeplerianPlan(
+            1.0,
+            jnp.asarray([0.001]),
+            jnp.asarray([0.0, 0.01]),
+            context,
+            target_chunk_size=1,
+        ).plan_id
+        == astro.NearlyKeplerianPlan(
+            1.0,
+            jnp.asarray([0.001]),
+            jnp.asarray([0.0, 0.01]),
+            context,
+            target_chunk_size=7,
+        ).plan_id
+    )
+
+
+@pytest.mark.parametrize("chunk", [0, -1])
+def test_gravity_refuses_nonpositive_chunks(chunk: int) -> None:
+    astro = phx.applications.astrodynamics
+    particles = phx.discretization.particle.ParticleSetPlan(
+        jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=3
+    ).prepare()
+    with pytest.raises(ValueError, match="positive"):
+        astro.DirectNBodyGravityPlan(particles, _context(), target_chunk_size=chunk)
+    with pytest.raises(ValueError, match="positive"):
+        astro.NearlyKeplerianPlan(
+            1.0,
+            jnp.asarray([0.001]),
+            jnp.asarray([0.0, 0.01]),
+            _context(),
+            target_chunk_size=chunk,
+        )
+
+
+def test_near_kepler_collision_reports_failed_rollout() -> None:
+    astro = phx.applications.astrodynamics
+    context = _context()
+    position = jnp.asarray([[1.0, 0.0, 0.0], [1.01, 0.0, 0.0]])
+    plan = astro.NearlyKeplerianPlan(
+        1.0,
+        jnp.asarray([1e-8, 1e-8]),
+        jnp.asarray([0.0, 0.01]),
+        context,
+        close_approach_distance=0.1,
+    )
+    _, minimum, valid = plan._perturbation(position)
+    assert not bool(valid)
+    np.testing.assert_allclose(minimum, 0.01, atol=1e-15)
+    result = plan.rollout(
+        astro.NearlyKeplerianState(position, jnp.zeros_like(position), context)
+    )
+    assert not bool(result.successful)
+    assert not bool(jnp.any(result.valid))

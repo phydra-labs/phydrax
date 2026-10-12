@@ -1,6 +1,10 @@
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
+import pytest
+from jax import Array
 
 from phydrax._strict import StrictModule
 from phydrax.finance.contracts._options import OptionType, VanillaPayoff
@@ -162,3 +166,70 @@ def test_finance_valuation_scenario_2() -> None:
     )
     assert replay.evidence.self_financing
     assert jnp.allclose(replay.replication_errors, 0.0)
+
+
+class _CoupledQuarticValuation(StrictModule):
+    def __call__(self, parameters: Array) -> Array:
+        return jnp.sum(parameters**4) + jnp.sum(parameters) ** 2
+
+
+@pytest.mark.parametrize("count", [1, 4, 32])
+@pytest.mark.parametrize("selection", ["none", "partial", "all"])
+def test_requested_aad_diagonals_match_analytic_coupled_quartic(
+    count: int, selection: str
+) -> None:
+    names = tuple(f"p{index}" for index in range(count))
+    second = (
+        () if selection == "none" else names[::2] if selection == "partial" else names
+    )
+    parameters = np.linspace(0.1, 0.9, count, dtype=np.float64)
+    result = evaluate_aad_greeks(
+        _CoupledQuarticValuation(),
+        parameters,
+        GreekRequest(names, second_order_names=second),
+        valuation_id="coupled-quartic",
+    )
+    np.testing.assert_allclose(
+        result.first_order,
+        4 * parameters**3 + 2 * parameters.sum(),
+        rtol=1e-12,
+    )
+    expected = np.asarray(
+        [
+            12 * parameters[index] ** 2 + 2 if name in second else np.nan
+            for index, name in enumerate(names)
+        ],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(result.second_order_diagonal, expected, rtol=1e-12)
+    assert bool(result.evidence.finite)
+
+
+def test_first_order_request_does_not_require_finite_curvature() -> None:
+    class FractionalValuation(StrictModule):
+        def __call__(self, parameters: Array) -> Array:
+            return parameters[0] ** 1.5
+
+    result = evaluate_aad_greeks(
+        FractionalValuation(),
+        jnp.zeros((1,), dtype=jnp.float64),
+        GreekRequest(("spot",)),
+        valuation_id="fractional",
+    )
+    np.testing.assert_array_equal(result.first_order, [0.0])
+    assert bool(result.evidence.finite)
+    assert bool(jnp.isnan(result.second_order_diagonal[0]))
+
+
+def test_requested_nonfinite_curvature_is_refused() -> None:
+    class FractionalValuation(StrictModule):
+        def __call__(self, parameters: Array) -> Array:
+            return parameters[0] ** 1.5
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="non-finite derivatives"):
+        evaluate_aad_greeks(
+            FractionalValuation(),
+            jnp.zeros((1,), dtype=jnp.float64),
+            GreekRequest(("spot",), second_order_names=("spot",)),
+            valuation_id="fractional",
+        )

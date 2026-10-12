@@ -196,3 +196,52 @@ def test_quantum_hall_scenario_3() -> None:
     assert bool(result.causal)
     assert bool(result.broadening_positive_semidefinite)
     assert bool(result.successful)
+
+
+@pytest.mark.parametrize("node_count", [5, 101], ids=["five-nodes", "101-nodes"])
+@pytest.mark.parametrize(
+    "wave_numbers",
+    [(0.0,), (2.0e8,), (0.0, 1.0e8, 4.0e8)],
+    ids=["zero-only", "positive-only", "three-momenta"],
+)
+def test_subband_form_factor_matches_dense_quadrature(
+    node_count: int, wave_numbers: tuple[float, ...]
+) -> None:
+    positions = 1.0e-8 * (
+        np.linspace(0.0, 1.0, node_count, dtype=np.float64) ** 1.4 - 0.4
+    )
+    density = 1.0 + 0.5 * np.cos(positions / 1.0e-8 * np.pi)
+    density /= np.trapezoid(density, positions)
+    plan = qh.SubbandCoulombFormFactorPlan(
+        positions, density, normalization_tolerance=1.0e-12
+    )
+    q = np.asarray(wave_numbers, dtype=np.float64)
+    weights = np.empty_like(positions)
+    weights[0] = (positions[1] - positions[0]) / 2.0
+    weights[-1] = (positions[-1] - positions[-2]) / 2.0
+    weights[1:-1] = (positions[2:] - positions[:-2]) / 2.0
+    probability = weights * density
+    separation = np.abs(positions[:, None] - positions[None, :])
+    expected = np.asarray(
+        [probability @ np.exp(-momentum * separation) @ probability for momentum in q],
+        dtype=np.float64,
+    )
+
+    result = qh.evaluate_subband_coulomb_form_factor(plan, q)
+
+    np.testing.assert_allclose(result.form_factors, expected, rtol=1.0e-12, atol=1.0e-14)
+    np.testing.assert_array_equal(result.wave_numbers_per_meter, q)
+    np.testing.assert_allclose(
+        qh.apply_subband_form_factor(np.full_like(q, 2.0), result),
+        2.0 * expected,
+        rtol=1.0e-12,
+        atol=1.0e-14,
+    )
+    assert bool(result.bounded)
+    assert bool(result.successful)
+    assert result.plan_id == plan.plan_id
+    assert float(result.normalization_residual) <= 1.0e-12
+    if 0.0 in wave_numbers:
+        assert float(result.zero_momentum_residual) <= 1.0e-12
+    else:
+        assert np.isnan(float(result.zero_momentum_residual))

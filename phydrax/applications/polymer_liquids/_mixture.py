@@ -10,10 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, lax
 from jax.typing import ArrayLike
-
-from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -111,23 +109,39 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
         if wave.ndim != 1 or wave.shape[0] == 0:
             raise ValueError("wave_numbers must be a non-empty vector.")
         sequence = self.sequence_site_types
-        contour = jnp.arange(sequence.size)
-        separation = jnp.abs(contour[:, None] - contour[None, :])
-        squared_wave = wave[:, None, None] ** 2
+        contour = jnp.arange(sequence.size, dtype=jnp.int32)
         length_squared = self.statistical_segment_length**2
-        if self.kind == "gaussian-chain":
-            pair = jnp.exp(-squared_wave * length_squared * separation / 6.0)
-        elif self.kind == "freely-jointed-chain":
-            characteristic = jnp.sinc(wave * self.statistical_segment_length / jnp.pi)
-            pair = characteristic[:, None, None] ** separation[None, :, :]
-        else:
-            chain_length = sequence.size
-            ring_distance = separation * (chain_length - separation) / chain_length
-            pair = jnp.exp(-squared_wave * length_squared * ring_distance / 6.0)
-        channels = jnp.arange(self.site_count)
-        membership = sequence[:, None] == channels[None, :]
-        counts = jnp.sum(membership, axis=0)
-        aggregated = contract("ia,jb,kij->kab", membership, membership, pair)
+        characteristic = jnp.sinc(wave * self.statistical_segment_length / jnp.pi)
+        counts = jnp.bincount(sequence, length=self.site_count)
+
+        def accumulate(lag: Array, accumulated: Array) -> Array:
+            valid = contour + lag < sequence.size
+            following = sequence[jnp.minimum(contour + lag, sequence.size - 1)]
+            pair_indices = sequence * self.site_count + following
+            pair_counts = jnp.bincount(
+                pair_indices,
+                weights=valid.astype(jnp.float64),
+                length=self.site_count**2,
+            ).reshape(self.site_count, self.site_count)
+            # Positive lags represent both directed orientations, but self pairs once.
+            directed = pair_counts + jnp.where(lag == 0, 0.0, pair_counts.T)
+            if self.kind == "freely-jointed-chain":
+                kernel = characteristic**lag
+            else:
+                distance = (
+                    lag * (sequence.size - lag) / sequence.size
+                    if self.kind == "gaussian-ring"
+                    else lag
+                )
+                kernel = jnp.exp(-(wave**2) * length_squared * distance / 6.0)
+            return accumulated + kernel[:, None, None] * directed[None, :, :]
+
+        aggregated = lax.fori_loop(
+            0,
+            sequence.size,
+            accumulate,
+            jnp.zeros((wave.size, self.site_count, self.site_count), dtype=jnp.float64),
+        )
         normalization = jnp.sqrt(counts[:, None] * counts[None, :])
         return aggregated / normalization[None, :, :]
 

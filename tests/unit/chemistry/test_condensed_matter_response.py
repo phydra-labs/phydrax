@@ -168,6 +168,10 @@ def test_condensed_matter_response_scenario_2() -> None:
         "physical-linewidth",
         False,
         False,
+        "parallel",
+        1,
+        16,
+        "fixture-kubo-parallel-policy",
     )
     omega = np.asarray([1.0e14, 2.0e14])
     conductivity = np.broadcast_to(np.eye(3), (omega.size, 3, 3)).astype("complex128")

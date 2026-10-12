@@ -8,7 +8,13 @@ Phydrax keeps microscopic, mesoscopic, continuum, thin-film, and cable states no
 
 ## Thin-film London/Pearl electrodynamics
 
-`ThinFilmLondonPlan` accepts one planar `TriangleMesh`, a nonnegative Pearl length, and optional independent linear constraints for holes, fluxoids, or terminal currents. A scalar stream function generates the face sheet current. The prepared dense London KKT operator combines a DDG kinetic term and a softened nonlocal magnetostatic energy and is factorized once. Results retain stream function, face current, normal field, constraint reactions, separated magnetic/kinetic/applied energies, linear and constraint residuals, and current-divergence evidence. Curved films and arbitrary three-dimensional screening are not claimed.
+`ThinFilmLondonPlan` accepts one planar `TriangleMesh`, a nonnegative Pearl length, and optional independent linear constraints for holes, fluxoids, or terminal currents. A scalar stream function generates the face sheet current. A sparse face-to-vertex action combines prepared local kinetic terms and the exact softened nonlocal magnetostatic kernel, evaluated in target-face tiles. Curvature is certified once during preparation, not refactorized at each solve. Results retain stream function, face current, normal field, constraint reactions, separated magnetic/kinetic/applied energies, linear and constraint residuals, current-divergence evidence, the selected solve route, native linear status, and curvature certification. Curved films and arbitrary three-dimensional screening are not claimed.
+
+`LondonSolvePolicy` selects `"auto"` (default), `"dense"`, `"minres"`, or `"gmres"`. Dense KKT preparation is admitted only below both `dense_maximum_dofs=512` and `dense_maximum_bytes=16 MiB`, accounting for the KKT, factors, and curvature state. Above either bound, auto uses native matrix-free MINRES; explicit dense refuses rather than allocating. GMRES has a bounded restart (`krylov_restart=32`). Face tiles (`face_tile_size=8`), eigen subspaces (`eigen_subspace_dimension=32`), iterations (`maximum_steps=2000`), and native solve/eigen workspace (`workspace_bytes=64 MiB`) are explicit resource contracts. Both single-field solves and multi-RHS inductance evaluation reuse preparation. No dense `hessian` compatibility field remains. Execution policy participates in plan identity.
+
+Every London resource capacity must be a non-boolean positive integer; fractional values are refused rather than rounded or truncated. The eigen subspace must contain at least two dimensions.
+
+`inductance_matrix()` is a host consumer boundary: it returns `(inductance, reciprocity_residual)` only when every native RHS solve succeeds. A failed solve raises `RuntimeError` with the selected route, per-RHS native status codes and messages, and residual norms; it never substitutes a NaN matrix for the lost status. `LondonCableBridgePlan.evaluate()` propagates that refusal instead of reporting an ordinary unsuccessful comparison. Single-field `solve()` continues to return native status in its result evidence.
 
 ## Gauge-covariant GL and TDGL
 
@@ -36,7 +42,7 @@ The bridge plans compare common observables only after the caller supplies the m
 - `BdGQuasiclassicalBridgePlan` compares gap scales.
 - `QuasiclassicalGLBridgePlan` compares the declared gap/order-parameter scale.
 - `GLLondonBridgePlan` compares currents through a caller-supplied projection.
-- `LondonCableBridgePlan` compares one-winding inductance.
+- `LondonCableBridgePlan` compares one-winding inductance and propagates a failed native inductance solve.
 
 A successful bridge is evidence over one common support; it does not make either model interchangeable or infer material parameters automatically.
 

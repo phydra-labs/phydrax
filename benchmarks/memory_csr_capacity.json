@@ -1,0 +1,139 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "34729ef4b505c72337d3aa0b793ad32479887772568faec00bb769c112d2427a",
+    "evidence_schema": {
+      "fields": [
+        "retained_bytes",
+        "row_workspace_bytes"
+      ],
+      "signature": "40dfe5cbb95c63e38fc4f892591304b006ed3d0039df5bf3096574fba65655fe"
+    },
+    "fingerprint": "36d0974aad82fbca304c165c7d0292273b39c8b8fc17b9335abea76902a0cc0f",
+    "source_build_fingerprint": "a4ab775cf9845e15076b1122e80b95de3a1096334396edc8c61aca805ba83e98"
+  },
+  "process_peak_rss_bytes": 1753202688,
+  "row_workspace_exponent": 1.0,
+  "rows": [
+    {
+      "capacity": 64,
+      "estimate": {
+        "history_bytes": 2377728,
+        "kernel_bytes": 25311904,
+        "retarded_pairs": 513702
+      },
+      "host_peak_bytes": 5757606,
+      "preparation_seconds": 16.585258207982406,
+      "retained_bytes": 170625,
+      "row_workspace_bytes": 1024
+    },
+    {
+      "capacity": 128,
+      "estimate": {
+        "history_bytes": 4755456,
+        "kernel_bytes": 51025568,
+        "retarded_pairs": 1035558
+      },
+      "host_peak_bytes": 3039721,
+      "preparation_seconds": 11.379387625027448,
+      "retained_bytes": 335617,
+      "row_workspace_bytes": 2048
+    },
+    {
+      "capacity": 256,
+      "estimate": {
+        "history_bytes": 9510912,
+        "kernel_bytes": 102452896,
+        "retarded_pairs": 2079270
+      },
+      "host_peak_bytes": 3038297,
+      "preparation_seconds": 10.577461959095672,
+      "retained_bytes": 665601,
+      "row_workspace_bytes": 4096
+    },
+    {
+      "capacity": 512,
+      "estimate": {
+        "history_bytes": 19021824,
+        "kernel_bytes": 205307552,
+        "retarded_pairs": 4166694
+      },
+      "host_peak_bytes": 3066237,
+      "preparation_seconds": 11.110081291990355,
+      "retained_bytes": 1307137,
+      "row_workspace_bytes": 8192
+    },
+    {
+      "capacity": 1024,
+      "estimate": {
+        "history_bytes": 38043648,
+        "kernel_bytes": 411016864,
+        "retarded_pairs": 8341542
+      },
+      "host_peak_bytes": 3198208,
+      "preparation_seconds": 8.68341883388348,
+      "retained_bytes": 2590209,
+      "row_workspace_bytes": 16384
+    },
+    {
+      "capacity": 2048,
+      "estimate": {
+        "history_bytes": 76087296,
+        "kernel_bytes": 822435488,
+        "retarded_pairs": 16691238
+      },
+      "host_peak_bytes": 3125158,
+      "preparation_seconds": 9.79481945792213,
+      "retained_bytes": 5156353,
+      "row_workspace_bytes": 32768
+    },
+    {
+      "capacity": 4096,
+      "estimate": {
+        "history_bytes": 152174592,
+        "kernel_bytes": 1645272736,
+        "retarded_pairs": 33390630
+      },
+      "host_peak_bytes": 3289583,
+      "preparation_seconds": 8.988748583942652,
+      "retained_bytes": 10288641,
+      "row_workspace_bytes": 65536
+    }
+  ]
+}

@@ -196,6 +196,18 @@ These are separate plans with separate source and branch identities. They do not
 second-order self-force, nonlinear spacetime evolution, generic field content, or
 complete resonance catalogs.
 
+`QuadraticRingdownPlan(..., time_chunk_size=8)` prepares the pole-pair detunings
+and resonance flags once and evaluates independent time samples in bounded
+parallel chunks. A positive integer selects the chunk capacity; larger chunks
+trade workspace for parallelism without changing the child-parent-parent
+contraction or resonant Duhamel limit. Results report `time_chunk_size` and
+`logical_response_workspace_bytes`: the complex response array requires
+`16 * min(time_count, time_chunk_size) * mode_count**3` bytes, excluding the
+retained pole-pair data and the required time-by-mode output. The scientific
+`plan_id` remains tied to poles, amplitudes, coupling, and resonance tolerance,
+not the execution chunk. Finite, stable, qualified, derivative-valid, and status
+evidence retains its original meaning.
+
 `FixedBranchInverseAdapter` provides JVP/VJP pairing and central-difference evidence
 only while the numeric branch signature remains unchanged.
 `kerr_geometry_inverse_adapter`, `kerr_thermodynamics_inverse_adapter`, and

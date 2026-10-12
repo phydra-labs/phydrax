@@ -20,16 +20,34 @@ from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_integer
 from ...algebraic import SparsePolynomialSystem
+from ...discretization.collocation import ChebyshevDifferentiationAction
 from ...linalg import (
+    ArraySpace,
     DenseCholesky,
     DenseLinearOperator,
+    GMRES,
+    LinearizationPolicy,
     LinearSolvePolicy,
+    LinearSolveStatus,
     LinearSystem,
     OperatorProperties,
     prepare,
     solve,
+    TolerancePolicy,
 )
+from ...nonlinear import (
+    JacobianPolicy,
+    NewtonForcingPolicy,
+    NewtonKrylov,
+    NonlinearResult,
+    NonlinearStatus,
+    NonlinearSystemProblem,
+    NonlinearTermination,
+    RootLineSearch,
+)
+from ...sparse import compile_sparse_jacobian, prepare_sparse_linearization, SparsePattern
 from ...typing import checked
 
 
@@ -111,6 +129,9 @@ class MappedInfiniteDefectPlan(StrictModule):
     residual_tolerance: float = eqx.field(static=True)
     maximum_iterations: int = eqx.field(static=True)
     backtracking_steps: int = eqx.field(static=True)
+    maximum_stability_dimension: int = eqx.field(static=True)
+    maximum_stability_bytes: int = eqx.field(static=True)
+    krylov_restart: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -127,6 +148,9 @@ class MappedInfiniteDefectPlan(StrictModule):
         residual_tolerance: float = 1e-10,
         maximum_iterations: int = 40,
         backtracking_steps: int = 12,
+        maximum_stability_dimension: int = 512,
+        maximum_stability_bytes: int = 64 * 1024 * 1024,
+        krylov_restart: int = 64,
     ) -> None:
         gradient = np.asarray(gradient_matrix, dtype=np.float64)
         left = np.asarray(left_vacuum, dtype=np.float64)
@@ -154,6 +178,21 @@ class MappedInfiniteDefectPlan(StrictModule):
             or backtracking < 1
         ):
             raise ValueError("Mapped-infinite defect controls are invalid.")
+        maximum_stability_dimension = positive_integer(
+            maximum_stability_dimension, "maximum_stability_dimension"
+        )
+        maximum_stability_bytes = positive_integer(
+            maximum_stability_bytes, "maximum_stability_bytes"
+        )
+        krylov_restart = positive_integer(krylov_restart, "krylov_restart")
+        stability_dimension = (count - 2) * dimension
+        if (
+            stability_dimension > maximum_stability_dimension
+            or 32 * stability_dimension**2 > maximum_stability_bytes
+        ):
+            raise ValueError(
+                "The full stability spectrum exceeds its dimension or byte budget."
+            )
         for vacuum in (left, right):
             if (
                 np.linalg.norm(np.asarray(potential.gradient(jnp.asarray(vacuum))))
@@ -173,6 +212,9 @@ class MappedInfiniteDefectPlan(StrictModule):
             "residual_tolerance": tolerance,
             "maximum_iterations": iterations,
             "backtracking_steps": backtracking,
+            "maximum_stability_dimension": maximum_stability_dimension,
+            "maximum_stability_bytes": maximum_stability_bytes,
+            "krylov_restart": krylov_restart,
         }
         self.potential = potential
         self.gradient_matrix = jnp.asarray(gradient)
@@ -183,6 +225,9 @@ class MappedInfiniteDefectPlan(StrictModule):
         self.residual_tolerance = tolerance
         self.maximum_iterations = iterations
         self.backtracking_steps = backtracking
+        self.maximum_stability_dimension = maximum_stability_dimension
+        self.maximum_stability_bytes = maximum_stability_bytes
+        self.krylov_restart = krylov_restart
         self.plan_id = canonical_fingerprint(content)
 
 
@@ -194,6 +239,7 @@ class MappedInfiniteDefectEvidence(StrictModule):
     stability_eigenvalues: Array
     negative_mode_count: Array
     converged: Array
+    solver_status: Array
     plan_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
@@ -208,30 +254,74 @@ class MappedInfiniteDefectResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _chebyshev_operators(
-    count: int, scale: float, /
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    order = count - 1
-    descending = np.cos(np.pi * np.arange(count) / order)
-    coefficients = np.ones(count)
-    coefficients[[0, -1]] = 2.0
-    coefficients *= (-1.0) ** np.arange(count)
-    difference = descending[:, None] - descending[None, :]
-    matrix = (coefficients[:, None] / coefficients[None, :]) / (
-        difference + np.eye(count)
+def _defect_linear_policy(
+    plan: MappedInfiniteDefectPlan, dimension: int
+) -> LinearSolvePolicy:
+    return LinearSolvePolicy(
+        GMRES(restart=min(plan.krylov_restart, dimension)),
+        tolerance=TolerancePolicy(
+            relative=1e-12,
+            absolute=0.01 * plan.residual_tolerance,
+            max_steps=8 * dimension,
+        ),
     )
-    matrix = matrix - np.diag(np.sum(matrix, axis=1))
-    permutation = np.arange(count - 1, -1, -1)
-    compact = descending[permutation]
-    derivative_compact = -matrix[np.ix_(permutation, permutation)]
-    one_minus = 1.0 - compact**2
-    compact_per_physical = one_minus**2 / (scale * (1.0 + compact**2))
-    derivative = np.diag(compact_per_physical) @ derivative_compact
-    second = derivative @ derivative
-    physical = np.empty_like(compact)
-    physical[1:-1] = scale * compact[1:-1] / (1.0 - compact[1:-1] ** 2)
-    physical[0], physical[-1] = -np.inf, np.inf
-    return compact, physical, derivative, second
+
+
+class _MappedDefectResidual(StrictModule):
+    plan: MappedInfiniteDefectPlan
+    action: ChebyshevDifferentiationAction
+    factor: Array
+
+    def first(self, values: Array) -> Array:
+        # Preserve the defect coordinate-orientation convention.
+        return -self.factor[:, None] * self.action.derivative(values)
+
+    def second(self, values: Array) -> Array:
+        return self.first(self.first(values))
+
+    def __call__(self, interior: Array, args: tuple[Array, Array]) -> Array:
+        full = jnp.concatenate(
+            (
+                self.plan.left_vacuum[None, :],
+                interior.reshape(
+                    self.plan.collocation_count - 2, self.plan.potential.field_count
+                ),
+                self.plan.right_vacuum[None, :],
+            )
+        )
+        equation = -self.second(full) @ self.plan.gradient_matrix.T + jax.vmap(
+            self.plan.potential.gradient
+        )(full)
+        return equation[1:-1].reshape(-1)
+
+    def admissible(self, candidate: Array, args: tuple[Array, Array]) -> Array:
+        baseline, initial = args
+        # Native root admission also evaluates its current state. Admit that
+        # exact state, but require every changed trial to strictly decrease.
+        return jnp.all(candidate == initial) | (
+            jnp.linalg.norm(self(candidate, args)) < baseline
+        )
+
+
+@eqx.filter_jit
+def _mapped_defect_first(residual: _MappedDefectResidual, values: Array) -> Array:
+    return residual.first(values)
+
+
+@eqx.filter_jit
+def _mapped_defect_second(residual: _MappedDefectResidual, values: Array) -> Array:
+    return residual.second(values)
+
+
+@eqx.filter_jit
+def _mapped_defect_step(
+    method: NewtonKrylov,
+    problem: NonlinearSystemProblem,
+    interior: Array,
+    termination: NonlinearTermination,
+    args: tuple[Array, Array],
+) -> NonlinearResult:
+    return method.solve(problem, interior, termination=termination, args=args)
 
 
 def solve_mapped_infinite_defect(
@@ -242,10 +332,14 @@ def solve_mapped_infinite_defect(
 ) -> MappedInfiniteDefectResult:
     if not isinstance(plan, MappedInfiniteDefectPlan):
         raise TypeError("plan must be MappedInfiniteDefectPlan.")
-    compact, physical, derivative, second = _chebyshev_operators(
-        plan.collocation_count,
-        plan.map_scale,
-    )
+    action = ChebyshevDifferentiationAction(plan.collocation_count)
+    compact = np.asarray(action.nodes)
+    physical = np.empty_like(compact)
+    physical[1:-1] = plan.map_scale * compact[1:-1] / (1.0 - compact[1:-1] ** 2)
+    physical[0], physical[-1] = -np.inf, np.inf
+    factor = (1.0 - action.nodes**2) ** 2 / (plan.map_scale * (1.0 + action.nodes**2))
+
+    residual = _MappedDefectResidual(plan, action, factor)
     if initial_fields is None:
         interpolation = 0.5 * (1.0 + compact[:, None])
         fields = np.asarray(plan.left_vacuum) + interpolation * (
@@ -260,41 +354,64 @@ def solve_mapped_infinite_defect(
     fields[-1] = np.asarray(plan.right_vacuum)
     interior_shape = fields[1:-1].shape
 
-    def residual(interior: Array) -> Array:
-        full = jnp.concatenate(
-            (
-                plan.left_vacuum[None, :],
-                interior.reshape(interior_shape),
-                plan.right_vacuum[None, :],
-            ),
-            axis=0,
-        )
-        second_derivative = jnp.asarray(second) @ full
-        potential_gradient = jax.vmap(plan.potential.gradient)(full)
-        equation = -second_derivative @ plan.gradient_matrix.T + potential_gradient
-        return equation[1:-1].reshape(-1)
-
     interior = jnp.asarray(fields[1:-1]).reshape(-1)
-    residual_norm = math.inf
-    converged = False
+    space = ArraySpace(interior.shape, dtype=interior.dtype)
+
+    problem = NonlinearSystemProblem(
+        residual,
+        state_space=space,
+        residual_space=space,
+        trial_validity=residual.admissible,
+        trial_validity_id=f"{plan.plan_id}:strict-residual-decrease",
+        problem_id=f"{plan.plan_id}:mapped-residual",
+    )
+    method = NewtonKrylov(
+        jacobian_policy=JacobianPolicy(
+            linearization_policy=LinearizationPolicy("rematerialize")
+        ),
+        linear_policy=_defect_linear_policy(plan, interior.size),
+        forcing_policy=NewtonForcingPolicy(
+            "constant", initial=1e-12, minimum=1e-12, maximum=1e-12
+        ),
+        line_search=RootLineSearch(
+            contraction=0.5,
+            sufficient_decrease=np.finfo(np.float64).tiny,
+            minimum_rate=0.5**plan.backtracking_steps,
+            maximum_steps=plan.backtracking_steps,
+        ),
+    )
+    termination = NonlinearTermination(
+        absolute_residual=plan.residual_tolerance,
+        relative_residual=0.0,
+        absolute_step=0.0,
+        relative_step=0.0,
+        maximum_steps=1,
+    )
+    solver_status = jnp.asarray(int(NonlinearStatus.MAXIMUM_STEPS_REACHED), jnp.int32)
     for _ in range(plan.maximum_iterations):
-        value = residual(interior)
+        value = residual(interior, (jnp.asarray(0.0), interior))
         residual_norm = float(jnp.linalg.norm(value))
         if residual_norm <= plan.residual_tolerance:
-            converged = True
+            solver_status = jnp.asarray(int(NonlinearStatus.SUCCESS), jnp.int32)
             break
-        jacobian = jax.jacfwd(residual)(interior)
-        update = jnp.linalg.solve(jacobian, -value)
-        accepted = False
-        for backtrack in range(plan.backtracking_steps):
-            candidate = interior + 0.5**backtrack * update
-            candidate_norm = float(jnp.linalg.norm(residual(candidate)))
-            if candidate_norm < residual_norm:
-                interior = candidate
-                accepted = True
-                break
-        if not accepted:
+        result = _mapped_defect_step(
+            method,
+            problem,
+            interior,
+            termination,
+            (jnp.asarray(residual_norm), interior),
+        )
+        solver_status = result.status
+        candidate = space.validate(result.state)
+        if not bool(jnp.any(candidate != interior)):
             break
+        interior = candidate
+    residual_norm = float(
+        jnp.linalg.norm(residual(interior, (jnp.asarray(0.0), interior)))
+    )
+    converged = residual_norm <= plan.residual_tolerance
+    if converged:
+        solver_status = jnp.asarray(int(NonlinearStatus.SUCCESS), jnp.int32)
     final_fields = np.concatenate(
         (
             np.asarray(plan.left_vacuum)[None, :],
@@ -303,8 +420,8 @@ def solve_mapped_infinite_defect(
         ),
         axis=0,
     )
-    first = derivative @ final_fields
-    second_values = second @ final_fields
+    first = np.asarray(_mapped_defect_first(residual, jnp.asarray(final_fields)))
+    second_values = np.asarray(_mapped_defect_second(residual, jnp.asarray(final_fields)))
     interior_x = physical[1:-1]
     density = 0.5 * np.asarray(
         ein.contract(
@@ -320,7 +437,21 @@ def solve_mapped_infinite_defect(
         jax.vmap(plan.potential.hessian)(jnp.asarray(final_fields[1:-1]))
     )
     interior_count = plan.collocation_count - 2
-    stability = -np.kron(second[1:-1, 1:-1], np.asarray(plan.gradient_matrix))
+    dimension = interior_count * plan.potential.field_count
+    stability = np.empty((dimension, dimension), dtype=np.float64)
+    # Only the admitted full-spectrum output is dense; each action uses one column.
+    for column in range(dimension):
+        basis = (
+            jnp.zeros(expected, dtype=interior.dtype)
+            .at[
+                1 + column // plan.potential.field_count,
+                column % plan.potential.field_count,
+            ]
+            .set(1.0)
+        )
+        stability[:, column] = np.asarray(
+            -_mapped_defect_second(residual, basis)[1:-1] @ plan.gradient_matrix.T
+        ).reshape(-1)
     for index in range(interior_count):
         block = slice(
             index * plan.potential.field_count, (index + 1) * plan.potential.field_count
@@ -351,6 +482,7 @@ def solve_mapped_infinite_defect(
         stability_eigenvalues=jnp.asarray(eigenvalues),
         negative_mode_count=jnp.asarray(negative, dtype=jnp.int32),
         converged=jnp.asarray(converged),
+        solver_status=solver_status,
         plan_id=plan.plan_id,
         evidence_id=evidence_id,
     )
@@ -408,6 +540,32 @@ class RadialDefectResult(StrictModule):
     energy: Array
     converged: Array
     plan_id: str = eqx.field(static=True)
+    linear_status: Array
+
+
+class _RadialDefectResidual(StrictModule):
+    plan: RadialDefectPlan
+    center: Array
+    boundary: Array
+    radii: Array
+    spacing: float = eqx.field(static=True)
+
+    def __call__(self, interior: Array, args: None) -> Array:
+        full = jnp.concatenate(
+            (
+                self.center[None],
+                interior.reshape(
+                    self.plan.radial_points - 2, self.plan.base.potential.field_count
+                ),
+                self.boundary[None],
+            )
+        )
+        first = (full[2:] - full[:-2]) / (2.0 * self.spacing)
+        second = (full[2:] - 2.0 * full[1:-1] + full[:-2]) / self.spacing**2
+        radial = first * (self.plan.spatial_dimension - 1) / self.radii[1:-1, None]
+        gradient = jax.vmap(self.plan.base.potential.gradient)(full[1:-1])
+        equation = -(second + radial) @ self.plan.base.gradient_matrix.T + gradient
+        return equation.reshape(-1)
 
 
 def solve_radial_defect(
@@ -431,28 +589,47 @@ def solve_radial_defect(
     fields = center + interpolation * (boundary - center)
     interior_shape = (plan.radial_points - 2, field_count)
 
-    def residual(interior: Array) -> Array:
-        full = jnp.concatenate(
-            (center[None], interior.reshape(interior_shape), boundary[None])
-        )
-        first = (full[2:] - full[:-2]) / (2.0 * spacing)
-        second = (full[2:] - 2.0 * full[1:-1] + full[:-2]) / spacing**2
-        radial = first * (plan.spatial_dimension - 1) / radii[1:-1, None]
-        gradient = jax.vmap(plan.base.potential.gradient)(full[1:-1])
-        equation = -(second + radial) @ plan.base.gradient_matrix.T + gradient
-        return equation.reshape(-1)
+    residual = _RadialDefectResidual(plan, center, boundary, radii, spacing)
 
     interior = fields[1:-1].reshape(-1)
-    converged = False
-    residual_norm = math.inf
+    space = ArraySpace(interior.shape, dtype=interior.dtype)
+    rows: list[int] = []
+    columns: list[int] = []
+    for row_node in range(interior_shape[0]):
+        for column_node in range(
+            max(0, row_node - 1), min(interior_shape[0], row_node + 2)
+        ):
+            for row_field in range(field_count):
+                for column_field in range(field_count):
+                    rows.append(row_node * field_count + row_field)
+                    columns.append(column_node * field_count + column_field)
+    pattern = SparsePattern.from_coo(rows, columns, (interior.size, interior.size))
+    derivative_plan = compile_sparse_jacobian(
+        residual,
+        interior,
+        source=space,
+        target=space,
+        structure=pattern,
+        compiler="native",
+        mode="fwd",
+        chunk_size=1,
+        plan_id=f"{plan.plan_id}:radial-block-tridiagonal",
+    )
+    linear_policy = _defect_linear_policy(plan.base, interior.size)
+    linear_status = jnp.asarray(int(LinearSolveStatus.SUCCESS), jnp.int32)
     for _ in range(plan.base.maximum_iterations):
-        value = residual(interior)
-        residual_norm = float(jnp.linalg.norm(value))
-        if residual_norm <= plan.base.residual_tolerance:
-            converged = True
+        value = residual(interior, None)
+        if float(jnp.linalg.norm(value)) <= plan.base.residual_tolerance:
             break
-        jacobian = jax.jacfwd(residual)(interior)
-        interior = interior + jnp.linalg.solve(jacobian, -value)
+        linearization = prepare_sparse_linearization(derivative_plan, interior)
+        prepared = prepare(LinearSystem(linearization.operator), linear_policy)
+        update = solve(prepared, -value)
+        linear_status = update.status
+        if not bool(update.successful):
+            break
+        interior = interior + space.validate(update.value)
+    residual_norm = float(jnp.linalg.norm(residual(interior, None)))
+    converged = residual_norm <= plan.base.residual_tolerance
     final = jnp.concatenate(
         (center[None], interior.reshape(interior_shape), boundary[None])
     )
@@ -477,6 +654,7 @@ def solve_radial_defect(
         residual_norm=jnp.asarray(residual_norm),
         energy=energy,
         converged=jnp.asarray(converged),
+        linear_status=linear_status,
         plan_id=plan.plan_id,
     )
 
@@ -515,6 +693,9 @@ def continue_polynomial_defect(
             residual_tolerance=plan.residual_tolerance,
             maximum_iterations=plan.maximum_iterations,
             backtracking_steps=plan.backtracking_steps,
+            maximum_stability_dimension=plan.maximum_stability_dimension,
+            maximum_stability_bytes=plan.maximum_stability_bytes,
+            krylov_restart=plan.krylov_restart,
         )
         result = solve_mapped_infinite_defect(candidate_plan, initial_fields=fields)
         results.append(result)

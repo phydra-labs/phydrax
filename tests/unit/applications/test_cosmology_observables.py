@@ -2,6 +2,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -92,3 +93,74 @@ def test_cosmology_observables_scenario_1() -> None:
     np.testing.assert_allclose(result.quadrupole, 8.0 / 3.0 + 4.0 / 7.0, rtol=1e-10)
     np.testing.assert_allclose(result.hexadecapole, 8.0 / 35.0, rtol=1e-10)
     assert bool(result.successful)
+
+
+@pytest.mark.parametrize("node_count", (3, 17, 257))
+def test_limber_lensing_matches_dense_nonuniform_reference(node_count: int) -> None:
+    background, _, power = _context()
+    distance = cosmology.FLRWDistancePlan(light_speed=1.0, order=64)
+    redshifts = 0.1 + 0.8 * np.linspace(0.0, 1.0, node_count) ** 1.4
+    grid = cosmology.RadialGrid(redshifts)
+    distribution = cosmology.RedshiftDistribution(
+        grid, np.exp(-(((redshifts - 0.5) / 0.2) ** 2)), "dense-reference"
+    )
+    tracer = cosmology.LensingConvergenceTracer(distribution)
+    plan = cosmology.LimberAngularPowerPlan(jnp.asarray([20, 50]), 1)
+    prediction = plan.predict(background, distance, power, (tracer,))
+    radial = np.asarray(
+        distance.evaluate(background, grid.redshifts).radial_comoving_distance
+    )
+    weights = np.asarray(grid.weights)
+    density = np.asarray(distribution.values)
+    efficiency = np.sum(
+        weights[None, :]
+        * density[None, :]
+        * np.maximum(radial[None, :] - radial[:, None], 0.0)
+        / radial[None, :],
+        axis=1,
+    )
+    hubble = np.asarray(background.hubble(jnp.asarray(1.0 / (1.0 + redshifts))))
+    coefficient = 1.5 * background.matter_density * background.hubble_constant**2
+    kernel = coefficient * radial * (1.0 + redshifts) * efficiency
+    expected = np.sum(weights * kernel**2 / (hubble * radial**2))
+    assert bool(prediction.successful)
+    np.testing.assert_allclose(prediction.values, expected, rtol=1e-12, atol=1e-16)
+
+
+@pytest.mark.parametrize("node_count", (3, 17, 257))
+def test_limber_efficiency_zero_radius_dense_reference(node_count: int) -> None:
+    from phydrax.applications.cosmology._observables import _lensing_efficiency
+
+    radial = np.linspace(0.0, 1.0, node_count) ** 1.7
+    weighted_density = np.linspace(0.2, 1.0, node_count) / node_count
+    safe = np.where(radial > 0.0, radial, 1.0)
+    expected = np.sum(
+        np.maximum(radial[None, :] - radial[:, None], 0.0)
+        / safe[None, :]
+        * weighted_density[None, :],
+        axis=1,
+    )
+    np.testing.assert_allclose(
+        _lensing_efficiency(jnp.asarray(radial), jnp.asarray(weighted_density)),
+        expected,
+        rtol=1e-12,
+        atol=1e-16,
+    )
+
+
+def test_limber_dense_oracle_kills_inclusive_density_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jax import Array
+
+    from phydrax.applications.cosmology import _observables
+
+    original = _observables._lensing_efficiency
+
+    def inclusive_density_tail(radial: Array, weighted_density: Array, /) -> Array:
+        # Making both tails inclusive cancels exactly; mutate only the density tail.
+        return original(radial, weighted_density) + weighted_density
+
+    monkeypatch.setattr(_observables, "_lensing_efficiency", inclusive_density_tail)
+    with pytest.raises(AssertionError):
+        test_limber_lensing_matches_dense_nonuniform_reference(17)

@@ -81,6 +81,20 @@ Kremer–Grest melts with long-range hydrodynamic interactions.
 
 `PRISMPlan` combines that transform with `SiteMixturePlan`, a sequence or tabulated intramolecular form factor, `SitePairPotentialPlan`, and an explicit closure. Supported closures are HNC, Percus–Yevick, mean-spherical, and Martynov–Sarkisov. Hard cores are explicit masks; invalid exponential or square-root domains fail instead of being clipped.
 
+### Sequence form factors
+
+`SequenceFormFactorPlan` supports Gaussian chains, freely jointed chains, and
+Gaussian rings. Exact contour-lag accumulation counts site-type pairs with
+fixed-length masked indices. Every nonzero lag includes both directed pair
+orientations; zero lag includes self pairs once. Gaussian rings use contour
+distance `d(N-d)/N`, and freely jointed chains use `sinc(k b / π)^d`.
+Each site-pair channel is normalized by the square root of its two populations.
+The required wave-number × site-pair output is retained, while transient
+contour workspace grows linearly rather than forming a wave-number × N × N
+pair tensor. `benchmarks.memory_polymer_lag` records the untouched compiler
+baseline, candidate scaling, and the compiler-temporary adoption gate.
+
+
 The Ornstein–Zernike site-matrix system uses native batched dense LU solves and independent native SVD conditioning evidence. `solve_prism` retains nonlinear and per-wave-number linear evidence. `solve_prism_implicit` differentiates only a successful smooth fixed branch. `continue_prism_density` uses native transactional continuation.
 
 Near singular OZ matrices, closure boundaries, hard-core changes, or branch switching, derivatives are not admitted. PRISM predicts homogeneous isotropic correlations, not spatial morphologies.

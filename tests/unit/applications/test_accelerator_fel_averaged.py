@@ -454,6 +454,48 @@ def test_betatron_transfer_natural_focusing_and_thin_quadrupole(
     )
 
 
+@pytest.mark.parametrize("count", [3, 8, 31], ids=["three", "eight", "thirty-one"])
+def test_wake_rates_match_dense_causal_oracle(count: int) -> None:
+    spacing = 1.0e-6
+    positions = np.arange(count, dtype=np.float64) * spacing
+    currents = np.linspace(700.0, 3200.0, count)
+    support = np.array([0.0, 4.5e-6, 40.0e-6])
+    amplitudes = np.array([1.0e13, 3.0e12, 7.0e12])
+    wake = WakeFunctionPlan(
+        "longitudinal",
+        support,
+        amplitudes,
+        units="V/C",
+        causality_convention="behind-positive",
+    )
+    slices = FELBeamSlices(
+        positions,
+        currents,
+        np.full(count, GAMMA),
+        np.zeros(count),
+        np.full((count, 2), COLD_EMITTANCE),
+        np.full((count, 2), COLD_BETA),
+        np.zeros((count, 2)),
+    )
+    lattice = _lattice((_peak_field(DEFLECTION),), periods=1)
+    plan = FELPlan(
+        lattice,
+        1.0e-9,
+        loading=FELLoading(8, 2, shot_noise="quiet"),
+        wake=FELWakeLoss(wake, structure_length=2.0),
+    )
+    lags = positions[:, None] - positions[None, :]
+    kernel = np.where(lags >= 0.0, np.interp(lags, support, amplitudes), 0.0)
+    kernel[np.diag_indices(count)] *= 0.5
+    potential = kernel @ (currents * spacing / LIGHT)
+    expected = CHARGE * potential / (MASS * LIGHT**2 * 2.0)
+    np.testing.assert_allclose(
+        eqx.filter_jit(plan._wake_rates)(slices),
+        expected,
+        rtol=2.0e-11,
+    )
+
+
 def test_per_slice_wake_energy_loss(wavelength: float) -> None:
     count = 8
     spacing = 1.0e-6

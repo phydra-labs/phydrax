@@ -57,6 +57,33 @@ Hermitian conductivity and retains the f-sum residual. It never broadens the Dru
 distribution into a finite ballistic DC value and never infers a relaxation time
 from the linewidth.
 
+Frequency execution is explicit: `frequency_policy="chunked"` (the default) maps
+bounded batches with `frequency_chunk_size=8`; `"parallel"` evaluates all
+frequencies together. Both contract transition axes directly, retain resonant and
+antiresonant poles, and return the required `(frequency, Cartesian, Cartesian)`
+conductivity plus unchanged raw transition data. They do not form six-dimensional
+frequency-by-transition-by-Cartesian products. The contractions have a fixed
+reduction schedule per frequency; changing batching does not change the physical
+approximation.
+
+`KuboResponseEvidence` records `frequency_policy`, the effective
+`frequency_chunk_size`, and `logical_frequency_workspace_bytes`. The latter is a
+conservative logical frequency-dependent bound
+`16 * min(F, chunk_size) * K * bands**2 * dimension**2` bytes for complex128,
+not compiler temporary bytes or process RSS; raw transition storage and required
+outputs are reported separately by the benchmark. For `"parallel"`, replace the
+minimum by `F`. The positive chunk size is validated even for the parallel route.
+`execution_policy_id` identifies the requested batching configuration separately
+from the scientific `plan_id`, which remains a fingerprint of physical inputs.
+
+The A14 compiler gate is recorded in `benchmarks/memory_periodic_kubo_baseline.json`
+and `benchmarks/memory_periodic_kubo.json`. At 512 frequencies, 16 k points, 8 bands,
+and 3 Cartesian axes, the adopted chunked route reduced compiler temporary storage
+from 16,859,288 to 803,448 bytes. Its frequency-transition logical workspace is
+constant at a fixed chunk size; full-response compiler scratch also includes
+frequency-sized passivity checks. Both selectable routes have phase-separated
+timing evidence; timing acceptance requires a quiet serialized comparison.
+
 `conserved_collinear_spin_evidence` checks the supplied band-basis generator by the
 actual commutator `[diag(E), Sz]` and by Hermiticity. A consumer must call
 `require_conserved_collinear_spin` before interpreting a response as conserved

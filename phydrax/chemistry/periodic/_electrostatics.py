@@ -16,6 +16,7 @@ import jax.scipy as jsp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from numpy.typing import NDArray
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -205,6 +206,8 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
     charge_tolerance: float = eqx.field(static=True)
     minimum_distance: float = eqx.field(static=True)
     residual_tolerance: float = eqx.field(static=True)
+    pair_tile_size: int = eqx.field(static=True)
+    translation_tile_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -221,6 +224,8 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
         charge_tolerance: float = 1.0e-12,
         minimum_distance: float = 1.0e-10,
         residual_tolerance: float = 1.0e-9,
+        pair_tile_size: int = 16,
+        translation_tile_size: int = 16,
     ) -> None:
         if (
             not isinstance(cell, PeriodicCell)
@@ -237,6 +242,13 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
         minimum = float(minimum_distance)
         residual_tolerance_ = float(residual_tolerance)
         neutrality = parse(neutrality, EwaldNeutralityKind, "neutrality")
+        if any(
+            isinstance(size, (bool, np.bool_))
+            or not isinstance(size, (int, np.integer))
+            or size <= 0
+            for size in (pair_tile_size, translation_tile_size)
+        ):
+            raise ValueError("Ewald tile sizes must be positive integers.")
         if (
             not isfinite(alpha_)
             or alpha_ <= 0.0
@@ -259,6 +271,8 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
         self.charge_tolerance = charge_tolerance_
         self.minimum_distance = minimum
         self.residual_tolerance = residual_tolerance_
+        self.pair_tile_size = int(pair_tile_size)
+        self.translation_tile_size = int(translation_tile_size)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-ewald-plan",
@@ -271,6 +285,8 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
                 "charge_tolerance": charge_tolerance_.hex(),
                 "minimum_distance": minimum.hex(),
                 "residual_tolerance": residual_tolerance_.hex(),
+                "pair_tile_size": self.pair_tile_size,
+                "translation_tile_size": self.translation_tile_size,
             }
         )
 
@@ -317,6 +333,105 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
             }
         )
 
+    def _real_energy(self, positions: Array, charges: Array, cell: Array, /) -> Array:
+        count = positions.shape[0]
+        translation_count = self.real_indices.shape[0]
+        pair_size = min(count, self.plan.pair_tile_size)
+        translation_size = min(translation_count, self.plan.translation_tile_size)
+        pair_blocks = (count + pair_size - 1) // pair_size
+        translation_blocks = (
+            translation_count + translation_size - 1
+        ) // translation_size
+        pair_offsets = jnp.arange(pair_size, dtype=jnp.int32)
+        translation_offsets = jnp.arange(translation_size, dtype=jnp.int32)
+        zero = jnp.asarray(0.0, dtype=positions.dtype)
+
+        def target_block(target: Array, total: Array) -> Array:
+            target_indices = target * pair_size + pair_offsets
+            target_valid = target_indices < count
+            target_safe = jnp.minimum(target_indices, count - 1)
+            target_positions = positions[target_safe]
+            target_charges = charges[target_safe]
+
+            def source_block(source: Array, subtotal: Array) -> Array:
+                source_indices = source * pair_size + pair_offsets
+                source_valid = source_indices < count
+                source_safe = jnp.minimum(source_indices, count - 1)
+                delta = target_positions[:, None, :] - positions[source_safe][None, :, :]
+                pair_charge = target_charges[:, None] * charges[source_safe][None, :]
+                diagonal = target_indices[:, None] == source_indices[None, :]
+                pair_valid = target_valid[:, None] & source_valid[None, :]
+
+                def translation_block(translation: Array, partial: Array) -> Array:
+                    indices = translation * translation_size + translation_offsets
+                    translation_valid = indices < translation_count
+                    real_indices = self.real_indices[
+                        jnp.minimum(indices, translation_count - 1)
+                    ]
+                    displacement = (
+                        delta[:, :, None, :] + (real_indices @ cell)[None, None, :, :]
+                    )
+                    distance_squared = jnp.sum(displacement**2, axis=-1)
+                    origin = jnp.all(real_indices == 0, axis=1)
+                    include = (
+                        pair_valid[:, :, None]
+                        & translation_valid[None, None, :]
+                        & ~(diagonal[:, :, None] & origin[None, None, :])
+                    )
+                    distance = jnp.sqrt(
+                        jnp.where(
+                            include,
+                            jnp.maximum(distance_squared, self.plan.minimum_distance**2),
+                            1.0,
+                        )
+                    )
+                    terms = jnp.where(
+                        include,
+                        pair_charge[:, :, None]
+                        * jsp.special.erfc(self.plan.alpha * distance)
+                        / distance,
+                        0.0,
+                    )
+                    return partial + jnp.sum(terms)
+
+                return subtotal + jax.lax.fori_loop(
+                    0, translation_blocks, jax.checkpoint(translation_block), zero
+                )
+
+            # Rematerialize entire inner reductions, not just their kernels:
+            # reverse mode must not retain one tile tensor per site-pair block.
+            return total + jax.lax.fori_loop(
+                0, pair_blocks, jax.checkpoint(source_block), zero
+            )
+
+        real_sum = jax.lax.fori_loop(0, pair_blocks, jax.checkpoint(target_block), zero)
+        return 0.5 * self.plan.units.coulomb_constant * real_sum
+
+    def _minimum_pair_distance(
+        self,
+        positions: NDArray[np.float32 | np.float64],
+        cell: NDArray[np.float32 | np.float64],
+        /,
+    ) -> float:
+        fractional = np.linalg.solve(cell.T, positions.T).T
+        count = positions.shape[0]
+        size = min(count, self.plan.pair_tile_size)
+        minimum = np.inf
+        for target in range(0, count, size):
+            stop = min(target + size, count)
+            for source in range(0, count, size):
+                source_stop = min(source + size, count)
+                displacement = (
+                    fractional[target:stop, None, :]
+                    - fractional[None, source:source_stop, :]
+                )
+                displacement -= np.rint(displacement)
+                distances = np.linalg.norm(displacement @ cell, axis=-1)
+                if target == source:
+                    np.fill_diagonal(distances, np.inf)
+                minimum = min(minimum, float(np.min(distances, initial=np.inf)))
+        return float(minimum)
+
     def _energy(
         self, positions: Array, charges: Array, cell: Array, /
     ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
@@ -334,37 +449,7 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
             / determinant
         )
         constant = self.plan.units.coulomb_constant
-        translations = self.real_indices @ cell
-        displacement = (
-            positions[:, None, None, :]
-            - positions[None, :, None, :]
-            + translations[None, None, :, :]
-        )
-        distance_squared = jnp.sum(displacement**2, axis=-1)
-        zero_translation = jnp.all(self.real_indices == 0, axis=1)
-        diagonal = jnp.eye(positions.shape[0], dtype=jnp.bool_)[:, :, None]
-        include = ~(diagonal & zero_translation[None, None, :])
-        safe_distance = jnp.sqrt(
-            jnp.where(
-                include,
-                jnp.maximum(distance_squared, self.plan.minimum_distance**2),
-                1.0,
-            )
-        )
-        pair_charge = charges[:, None, None] * charges[None, :, None]
-        real_energy = (
-            0.5
-            * constant
-            * jnp.sum(
-                jnp.where(
-                    include,
-                    pair_charge
-                    * jsp.special.erfc(self.plan.alpha * safe_distance)
-                    / safe_distance,
-                    0.0,
-                )
-            )
-        )
+        real_energy = self._real_energy(positions, charges, cell)
         wavevectors = 2.0 * jnp.pi * self.reciprocal_indices @ inverse.T
         squared = jnp.sum(wavevectors**2, axis=1)
         phase = positions @ wavevectors.T
@@ -424,12 +509,7 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
             raise ValueError(
                 "Ewald geometry, charges, and cell must be finite and nonsingular."
             )
-        fractional = coordinate_host @ np.linalg.inv(cell_host)
-        fractional_displacement = fractional[:, None, :] - fractional[None, :, :]
-        fractional_displacement -= np.rint(fractional_displacement)
-        pair_distance = np.linalg.norm(fractional_displacement @ cell_host, axis=-1)
-        np.fill_diagonal(pair_distance, np.inf)
-        minimum_pair_distance = float(np.min(pair_distance, initial=np.inf))
+        minimum_pair_distance = self._minimum_pair_distance(coordinate_host, cell_host)
         if minimum_pair_distance <= self.plan.minimum_distance:
             raise ValueError("Distinct Ewald sites violate minimum_distance.")
         net_charge_host = float(np.sum(charge_host))

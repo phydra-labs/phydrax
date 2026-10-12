@@ -141,9 +141,14 @@ def reduce_scenarios(
         selected_local.append(candidate)
         distance = np.sum((values - values[candidate]) ** 2, axis=1)
         minimum_distance = np.minimum(minimum_distance, distance)
-    representatives = values[np.asarray(selected_local)]
-    distances = np.sum((values[:, None, :] - representatives[None, :, :]) ** 2, axis=-1)
-    assignment_local = np.argmin(distances, axis=1)
+    # Representative order is scientific: strict improvement keeps argmin's first tie.
+    assignment_local = np.zeros((active.size,), dtype=np.int32)
+    best_distance = np.sum((values - values[selected_local[0]]) ** 2, axis=1)
+    for destination in range(1, requested):
+        distance = np.sum((values - values[selected_local[destination]]) ** 2, axis=1)
+        closer = distance < best_distance
+        np.copyto(best_distance, distance, where=closer)
+        assignment_local[closer] = destination
     reduced_weights = np.zeros((requested,), dtype=probabilities.dtype)
     for source, destination in enumerate(assignment_local):
         reduced_weights[int(destination)] += probabilities[source]
@@ -159,7 +164,7 @@ def reduce_scenarios(
     )
     assignment = np.full((scenarios.scenario_capacity,), -1, dtype=np.int32)
     assignment[active] = assignment_local
-    distortion = np.sum(probabilities * np.min(distances, axis=1))
+    distortion = np.sum(probabilities * best_distance)
     return ScenarioReductionResult(
         scenarios=reduced,
         representative_indices=jnp.asarray(selected, dtype=jnp.int32),

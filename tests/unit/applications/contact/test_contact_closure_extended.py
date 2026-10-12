@@ -5,8 +5,10 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.applications.contact._cone import (
@@ -562,3 +564,67 @@ def test_global_reynolds_film_reports_residual_and_balanced_traction() -> None:
     assert bool(result.successful)
     assert result.evidence.pde_residual == 0.0
     assert jnp.allclose(result.interface_residual.action_reaction_residual, 0.0)
+
+
+@pytest.mark.parametrize("empty_new", (False, True))
+def test_route_remap_multimap_first_source_and_duplicate_flags(empty_new: bool) -> None:
+    _, _, epoch, _, previous = _closure_case()
+    count = previous.capacity
+    old_keys = np.arange(count, dtype=np.int64)
+    old_keys[:5] = (8, 8, -4, np.iinfo(np.int64).max, np.iinfo(np.int64).max)
+    old_valid = np.ones(count, dtype=np.bool_)
+    old_valid[3] = False
+    new_keys = np.arange(count, dtype=np.int64) + 100
+    new_keys[:5] = (8, -4, -4, np.iinfo(np.int64).max, 8)
+    new_valid = np.ones(count, dtype=np.bool_)
+    new_valid[4] = False
+    previous = eqx.tree_at(
+        lambda s: (s.route_keys, s.valid, s.wear_depth),
+        previous,
+        (
+            jnp.asarray(old_keys),
+            jnp.asarray(old_valid),
+            jnp.arange(count, dtype=jnp.float64),
+        ),
+    )
+    batch = eqx.tree_at(
+        lambda b: (b.route_keys, b.valid),
+        epoch.batches[0],
+        (jnp.asarray(new_keys), jnp.asarray(new_valid)),
+    )
+    epoch = eqx.tree_at(lambda e: e.batches, epoch, () if empty_new else (batch,))
+    result = phx.applications.contact.remap_contact_route_state(previous, epoch)
+    if empty_new:
+        assert result.candidate.capacity == 0
+        assert int(result.disappeared) == int(np.sum(old_valid))
+        assert int(result.duplicate_keys) == 0
+        return
+    sources = {
+        int(key): [i for i in range(count) if old_valid[i] and old_keys[i] == key]
+        for key in new_keys
+    }
+    expected = [
+        float(sources[int(key)][0]) if new_valid[i] and sources[int(key)] else 0.0
+        for i, key in enumerate(new_keys)
+    ]
+    duplicate = [
+        new_valid[i]
+        and (len(sources[int(key)]) > 1 or np.sum(new_valid & (new_keys == key)) > 1)
+        for i, key in enumerate(new_keys)
+    ]
+    np.testing.assert_array_equal(result.candidate.wear_depth, expected)
+    np.testing.assert_array_equal(result.candidate.route_keys, new_keys)
+    assert int(result.duplicate_keys) == sum(duplicate)
+    assert int(result.continued) == sum(
+        bool(new_valid[i] and sources[int(key)]) for i, key in enumerate(new_keys)
+    )
+    assert int(result.created) == sum(
+        bool(new_valid[i] and not sources[int(key)]) for i, key in enumerate(new_keys)
+    )
+    assert int(result.disappeared) == sum(
+        bool(old_valid[i] and not np.any(new_valid & (new_keys == key)))
+        for i, key in enumerate(old_keys)
+    )
+    assert not bool(result.successful)
+    assert result.commit() is result.candidate
+    assert result.rollback() is previous

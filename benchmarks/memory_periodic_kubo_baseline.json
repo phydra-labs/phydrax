@@ -1,0 +1,239 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.322865541,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 1075224,
+        "flops": 534476,
+        "generated_code_bytes": 0,
+        "output_bytes": 103109,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 345368,
+        "unavailable_reason": null
+      },
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "host_allocation_peak_bytes": 197492,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.163076292,
+      "passive": true,
+      "preparation_seconds": 0.306121625,
+      "process_peak_rss_bytes": 1411710976,
+      "retained_output_bytes": 102917,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.000953417,
+        "mean_seconds": 0.0007829863333333333,
+        "median_seconds": 0.000745583,
+        "min_seconds": 0.000649959,
+        "samples_seconds": [
+          0.000953417,
+          0.000745583,
+          0.000649959
+        ],
+        "std_seconds": 0.00012667792875196884
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.2642805,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 2682360,
+        "flops": 1847300,
+        "generated_code_bytes": 0,
+        "output_bytes": 106757,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 1135256,
+        "unavailable_reason": null
+      },
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 32,
+      "host_allocation_peak_bytes": 188022,
+      "logical_frequency_transition_workspace_bytes": 4718592,
+      "lowering_seconds": 0.1709575,
+      "passive": true,
+      "preparation_seconds": 0.127506333,
+      "process_peak_rss_bytes": 1421410304,
+      "retained_output_bytes": 106565,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.005731125,
+        "mean_seconds": 0.0029749583333333334,
+        "median_seconds": 0.001793125,
+        "min_seconds": 0.001400625,
+        "samples_seconds": [
+          0.005731125,
+          0.001793125,
+          0.001400625
+        ],
+        "std_seconds": 0.001955480347354299
+      }
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.249071292,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 9117924,
+        "flops": 7098596,
+        "generated_code_bytes": 0,
+        "output_bytes": 121349,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 4286616,
+        "unavailable_reason": null
+      },
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 128,
+      "host_allocation_peak_bytes": 187904,
+      "logical_frequency_transition_workspace_bytes": 18874368,
+      "lowering_seconds": 0.2203765,
+      "passive": true,
+      "preparation_seconds": 0.147898,
+      "process_peak_rss_bytes": 1445101568,
+      "retained_output_bytes": 121157,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.002774625,
+        "mean_seconds": 0.0025669720000000003,
+        "median_seconds": 0.002721708,
+        "min_seconds": 0.002204583,
+        "samples_seconds": [
+          0.002774625,
+          0.002204583,
+          0.002721708
+        ],
+        "std_seconds": 0.0002571567520832382
+      }
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.321542459,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 35008752,
+        "flops": 28145252,
+        "generated_code_bytes": 0,
+        "output_bytes": 179717,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 16859288,
+        "unavailable_reason": null
+      },
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 512,
+      "host_allocation_peak_bytes": 188057,
+      "logical_frequency_transition_workspace_bytes": 75497472,
+      "lowering_seconds": 0.215225542,
+      "passive": true,
+      "preparation_seconds": 0.173612708,
+      "process_peak_rss_bytes": 1482915840,
+      "retained_output_bytes": 179525,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.013078084,
+        "mean_seconds": 0.009574639000000001,
+        "median_seconds": 0.010951625,
+        "min_seconds": 0.004694208,
+        "samples_seconds": [
+          0.004694208,
+          0.010951625,
+          0.013078084
+        ],
+        "std_seconds": 0.003558502684087883
+      }
+    }
+  ],
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax/.venv/bin/python",
+    "-m",
+    "benchmarks.memory_periodic_kubo",
+    "--phase",
+    "baseline"
+  ],
+  "configuration": {
+    "bands": 8,
+    "dimension": 3,
+    "k_count": 16,
+    "phase": "baseline",
+    "repeats": 3,
+    "sizes": [
+      8,
+      32,
+      128,
+      512
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": null,
+  "identity": {
+    "benchmark_driver_fingerprint": "330ee35f27f9f826732e0da125879252b439dad50e04bc6a579c392473ca32e5",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "gate",
+        "scaling"
+      ],
+      "signature": "755531dc997e77015401aa6231bc03cd11574b589018d849a5a56f70ec8fd92e"
+    },
+    "fingerprint": "a15b4cc0084399cea0ff4c9f8bc40173ca6179c40706d4e8d5ed49d3739e62dc",
+    "source_build_fingerprint": "9e7605bb43a4ec140cd39be88b2aa791effaf36aa399d5f4985938d5cf966725"
+  },
+  "scaling": {
+    "compiler_fitted_exponent": 0.9372308836183484,
+    "compiler_formula": "constant transition workspace plus O(F * dimension**2) passivity/output scratch",
+    "controlling_capacity": "frequency_count",
+    "declared_compiler_exponent_upper_bound": 1.1,
+    "declared_logical_exponent": 1.0,
+    "declared_workspace_formula": "16 * min(F, frequency_chunk_size) * K * bands**2 * dimension**2",
+    "logical_fitted_exponent": 0.9999999999999997
+  }
+}
