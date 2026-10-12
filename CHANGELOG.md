@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Fixed
+- Replace dense derivative intermediates in SSM invariance, ADM geometry,
+  geometric/stochastic divergence, horizontal brackets, monopole diagonals,
+  probabilistic ODE sensitivities, and SING support checks with exact bounded actions.
+  Native exact-state divergence no longer unrolls a state-sized Python loop.
+- Replace quadratic ensemble voting, cardinal-anchor equality, and polygon
+  repeated-vertex workspaces with exact sort-based counting and comparisons.
+  Preserve vote tie-breaking and duplicate-validation behavior.
+- Bound DEM multicontact and wall-feature pair workspace with byte-admitted row
+  tiles, preserving source reduction order, classifications, and plan identities.
+- Prepare reactor diffusion and fission operators directly from sparse stencils
+  and cell-local group blocks, preserving canonical coordinates and identities.
+- Apply reusable native factorization solves to conditional-independence kernels,
+  periodic lattice coordinates/image reach, and metric-orthonormal bases without
+  inverse-by-identity intermediates.
+- Admit Krawczyk dense certification workspace before Jacobian evaluation with a
+  64 MiB default ceiling and returned byte-estimate/limit evidence; scientific
+  certificate identity is unchanged.
+- Accumulate optical transport failure weight in scan carry without retaining
+  per-interaction history, preserving identity-addressed random sampling.
+- Stream array payload hashes and canonical list/hex identities, provider RECORD
+  verification, MACE fixture publication, and marker-flow artifact hashing without
+  whole-buffer copies; preserve existing digests and source stability checks.
 - Canonical array archives stream with bounded scratch and second-pass source
   verification, preserving archive bytes, collection identities, and checkpoint
   digests. Lifecycle NPZ exports and authorized support snapshots stage on disk.
