@@ -714,8 +714,33 @@ def _block_filter(
                     )
                 ).reshape(-1)
 
-            drift_jacobian = jax.jacfwd(flattened_drift)(predicted_mean[0])
-            drift_jacobian_diagonal = jnp.diag(drift_jacobian)
+            # Sensitivities have parameter_size columns, often zero or far fewer
+            # than state_size. Only the coordinate diagonal and those actions
+            # are needed by the block filter, never the full drift Jacobian.
+            def drift_diagonal(index: Array) -> Array:
+                direction = jax.nn.one_hot(index, state_size, dtype=mean.dtype)
+                _, action = jax.jvp(flattened_drift, (predicted_mean[0],), (direction,))
+                return action[index]
+
+            coordinate_batch = min(
+                state_size, max(1, (1 << 20) // (2 * predicted_mean[0].nbytes))
+            )
+            drift_jacobian_diagonal = jax.lax.map(
+                jax.checkpoint(drift_diagonal),
+                jnp.arange(state_size, dtype=jnp.int32),
+                batch_size=coordinate_batch,
+            )
+
+            def sensitivity_action(direction: Array) -> Array:
+                return jax.jvp(flattened_drift, (predicted_mean[0],), (direction,))[1]
+
+            parameter_size = predicted_sensitivity.shape[-1]
+            sensitivity_batch = min(parameter_size, coordinate_batch)
+            drift_sensitivity = jax.lax.map(
+                jax.checkpoint(sensitivity_action),
+                predicted_sensitivity[0].T,
+                batch_size=sensitivity_batch if parameter_size else None,
+            ).T
             observation_rows = (
                 jnp.zeros((state_size, derivative_count), dtype=mean.dtype)
                 .at[:, 1]
@@ -731,9 +756,7 @@ def _block_filter(
                 predicted_state,
             )
             residual_sensitivity = (
-                predicted_sensitivity[1]
-                - drift_jacobian @ predicted_sensitivity[0]
-                - parameter_jacobian
+                predicted_sensitivity[1] - drift_sensitivity - parameter_jacobian
             )
             predicted_covariance = jnp.sum(predicted_sources, axis=0)
             innovation_variance = (

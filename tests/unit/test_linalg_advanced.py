@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.linalg._factorizations import _metric_orthonormalize
 
 
 la = phx.linalg
@@ -1464,3 +1465,38 @@ def test_batched_inverse_diagonal_retains_solve_failure_evidence() -> None:
     assert not jnp.any(result.probe_converged[:, 1])
     assert not result.converged[1]
     assert jnp.all(result.probe_statuses[:, 1] != int(la.StochasticProbeStatus.SUCCESS))
+
+
+@pytest.mark.parametrize("complex_values", (False, True))
+@pytest.mark.parametrize("column_scale", (1.0, 1e-4))
+def test_metric_orthonormalization_matches_dense_transform(
+    complex_values: bool,
+    column_scale: float,
+) -> None:
+    rng = np.random.default_rng(622)
+    basis = rng.normal(size=(2, 7, 4))
+    if complex_values:
+        basis = basis + 1j * rng.normal(size=basis.shape)
+    basis[..., -1] *= column_scale
+    weights = np.geomspace(0.1, 10.0, 7)
+    space = la.ArraySpace(
+        (7,), dtype=basis.dtype, pairing=la.DiagonalPairing(jnp.asarray(weights))
+    )
+    dimensions = np.asarray([4, 2], dtype=np.int32)
+    observed = _metric_orthonormalize(space, jnp.asarray(basis), jnp.asarray(dimensions))
+    for index, dimension in enumerate(dimensions):
+        columns = basis[index].copy()
+        columns[:, dimension:] = 0.0
+        gram = columns.conj().T @ (weights[:, None] * columns)
+        gram += np.diag(np.arange(4) >= dimension)
+        factor = np.linalg.cholesky(gram)
+        reference = columns @ np.linalg.solve(factor.conj().T, np.eye(4))
+        np.testing.assert_allclose(observed[index], reference, rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(
+            np.asarray(observed[index]).conj().T
+            @ (weights[:, None] * np.asarray(observed[index])),
+            np.diag(np.arange(4) < dimension),
+            atol=1e-12,
+        )
+    zero = _metric_orthonormalize(space, jnp.asarray(basis[0]), jnp.asarray(0))
+    np.testing.assert_array_equal(zero, np.zeros_like(basis[0]))

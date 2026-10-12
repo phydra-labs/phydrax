@@ -3,6 +3,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 from phydrax.operators.differential._dimension_estimators import (
@@ -12,6 +13,7 @@ from phydrax.operators.differential._dimension_estimators import (
 )
 from phydrax.operators.differential._stochastic_estimators import (
     estimate_stochastic_trace,
+    exact_state_divergence,
     stochastic_divergence_samples,
     stochastic_trace_samples,
     StochasticTracePolicy,
@@ -157,3 +159,34 @@ def test_randomized_estimators_scenario_2() -> None:
         )
     )
     assert jnp.isfinite(compiled(jnp.asarray(1.0)))
+
+
+@pytest.mark.parametrize("dimension", [7, 401])
+def test_exact_divergence_actions_match_dense_and_gradients(dimension: int) -> None:
+    rng = np.random.default_rng(710)
+    state = jnp.asarray(rng.normal(size=dimension), dtype=jnp.float64)
+    diagonal = jnp.asarray(rng.normal(size=dimension), dtype=jnp.float64)
+
+    def field(value: jax.Array) -> jax.Array:
+        return jnp.sin(value) * diagonal + 0.1 * jnp.sum(value**2)
+
+    def dense(value: jax.Array) -> jax.Array:
+        return jnp.trace(jax.jacfwd(field)(value))
+
+    np.testing.assert_allclose(
+        exact_state_divergence(field, state), dense(state), atol=1e-12, rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        jax.grad(lambda q: exact_state_divergence(field, q))(state),
+        jax.grad(dense)(state),
+        atol=1e-12,
+        rtol=1e-12,
+    )
+
+
+def test_exact_divergence_preserves_multiaxis_state_and_empty_state() -> None:
+    state = jnp.arange(6, dtype=jnp.float64).reshape((2, 3)) / 10.0
+    np.testing.assert_allclose(
+        exact_state_divergence(jnp.sin, state), np.cos(np.asarray(state)).sum()
+    )
+    assert exact_state_divergence(jnp.sin, jnp.empty((0,), dtype=jnp.float64)) == 0.0

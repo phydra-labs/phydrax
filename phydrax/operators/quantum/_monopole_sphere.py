@@ -63,11 +63,18 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
         jacobian = jax.jacrev(log_components)
         gradient_components = jacobian(flat)
 
-        def diagonal_component(direction: Array) -> Array:
+        def diagonal_component(index: Array) -> Array:
+            direction = jax.nn.one_hot(index, dimension, dtype=flat.dtype)
             _, directional = jax.jvp(jacobian, (flat,), (direction,))
-            return jnp.sum(directional * direction[None, :], axis=1)
+            return directional[:, index]
 
-        diagonal = jax.vmap(diagonal_component)(jnp.eye(dimension, dtype=flat.dtype))
+        # Keep small systems parallel; bound direction/HVP batches to one MiB.
+        batch_size = min(dimension, max(1, (1 << 20) // (3 * flat.nbytes)))
+        diagonal = jax.lax.map(
+            jax.checkpoint(diagonal_component),
+            jnp.arange(dimension, dtype=jnp.int32),
+            batch_size=batch_size,
+        )
         gradient = (gradient_components[0] + 1.0j * gradient_components[1]).reshape(shape)
         hessian_diagonal = (diagonal[:, 0] + 1.0j * diagonal[:, 1]).reshape(shape)
         theta = flat.reshape(shape)[:, 0]

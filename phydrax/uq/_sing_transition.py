@@ -721,7 +721,6 @@ def _projected_sing_problem(
         ).reshape((-1,))
 
     drift_origin = flat_drift(support.origin)
-    drift_jacobian = jax.jacfwd(flat_drift)(support.origin)
     coefficient_origin = transition.dispersion(
         problem.initial_time.reshape((-1,))[0],
         origin_state,
@@ -731,24 +730,37 @@ def _projected_sing_problem(
         jnp.max(jnp.abs(support.constraints @ drift_origin)),
         jnp.max(jnp.abs(support.constraints @ coefficient_origin)),
     )
-    affine_residual = jnp.asarray(0.0, dtype=drift_origin.dtype)
-    diffusion_residual = jnp.asarray(0.0, dtype=drift_origin.dtype)
-    for column in range(support.rank):
+
+    def probe_residuals(column: Array) -> tuple[Array, Array]:
         probe = support.origin + support.tangent_basis[:, column]
         probe_drift = flat_drift(probe)
-        predicted = drift_origin + drift_jacobian @ (probe - support.origin)
-        affine_residual = jnp.maximum(
-            affine_residual, jnp.max(jnp.abs(probe_drift - predicted))
+        # Use the actual rounded probe displacement, as the dense reference did.
+        _, drift_action = jax.jvp(
+            flat_drift, (support.origin,), (probe - support.origin,)
         )
+        predicted = drift_origin + drift_action
+        affine_residual = jnp.max(jnp.abs(probe_drift - predicted))
         probe_coefficient = transition.dispersion(
             problem.initial_time.reshape((-1,))[0],
             probe.reshape(transition.state_shape),
             context,
         )
-        diffusion_residual = jnp.maximum(
-            diffusion_residual,
-            jnp.max(jnp.abs(probe_coefficient - coefficient_origin)),
-        )
+        diffusion_residual = jnp.max(jnp.abs(probe_coefficient - coefficient_origin))
+        return affine_residual, diffusion_residual
+
+    batch_size = min(
+        support.rank,
+        max(
+            1, (1 << 20) // max(1, 4 * support.origin.nbytes + coefficient_origin.nbytes)
+        ),
+    )
+    affine_residuals, diffusion_residuals = jax.lax.map(
+        probe_residuals,
+        jnp.arange(support.rank, dtype=jnp.int32),
+        batch_size=batch_size if support.rank else None,
+    )
+    affine_residual = jnp.max(affine_residuals, initial=0.0)
+    diffusion_residual = jnp.max(diffusion_residuals, initial=0.0)
     if not bool(
         (tangent_residual <= support.tolerance)
         & (affine_residual <= support.tolerance)

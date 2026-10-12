@@ -181,13 +181,15 @@ def sub_laplacian(
         raise ValueError("Density and horizontal cometric charts must match.")
 
     def evaluate(point: Array) -> Array:
+        from ..operators.differential import exact_state_divergence
+
         def weighted_gradient(local_point: Array) -> Array:
             gradient = horizontal_gradient(field, cometric, local_point)
             if density is None:
                 return gradient
             return density(local_point) * gradient
 
-        divergence = jnp.trace(jax.jacfwd(weighted_gradient)(point))
+        divergence = exact_state_divergence(weighted_gradient, point)
         return divergence if density is None else divergence / density(point)
 
     return _pointwise_array(evaluate, coordinates, cometric.chart.dimension)
@@ -208,25 +210,30 @@ def step_two_horizontal_rank(
 
     def evaluate(point: Array) -> Array:
         frame = cometric.frame(point)
-        fields = tuple(
-            lambda local_point, index=index: cometric.frame(local_point)[:, index]
-            for index in range(cometric.rank)
+        left_indices, right_indices = jnp.triu_indices(cometric.rank, k=1)
+
+        def bracket(pair: tuple[Array, Array]) -> Array:
+            left, right = pair
+            _, right_action = jax.jvp(
+                lambda q: cometric.frame(q)[:, right],
+                (point,),
+                (frame[:, left],),
+            )
+            _, left_action = jax.jvp(
+                lambda q: cometric.frame(q)[:, left],
+                (point,),
+                (frame[:, right],),
+            )
+            return right_action - left_action
+
+        count = left_indices.size
+        batch_size = min(count, max(1, (1 << 20) // max(1, 4 * frame.nbytes)))
+        brackets = jax.lax.map(
+            jax.checkpoint(bracket),
+            (left_indices, right_indices),
+            batch_size=batch_size if count else None,
         )
-        brackets = []
-        for left in range(cometric.rank):
-            for right in range(left + 1, cometric.rank):
-                left_value = fields[left](point)
-                right_value = fields[right](point)
-                bracket = (
-                    jax.jacfwd(fields[right])(point) @ left_value
-                    - jax.jacfwd(fields[left])(point) @ right_value
-                )
-                brackets.append(bracket)
-        augmented = (
-            frame
-            if not brackets
-            else jnp.concatenate((frame, jnp.stack(brackets, axis=-1)), axis=-1)
-        )
+        augmented = jnp.concatenate((frame, brackets.T), axis=-1)
         return jnp.linalg.matrix_rank(augmented, tol=tolerance)
 
     return _pointwise_array(evaluate, coordinates, cometric.chart.dimension)

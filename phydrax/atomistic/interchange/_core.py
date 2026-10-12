@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import numpy as np
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import canonical_array_list_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
@@ -142,7 +142,7 @@ def canonical_source_digest(value: Mapping[str, object], /) -> str:
             return {
                 "shape": list(array.shape),
                 "dtype": array.dtype.name,
-                "data": array.tolist(),
+                "data": array,
             }
         if isinstance(content, np.generic):
             return content.item()
@@ -162,7 +162,7 @@ def canonical_source_digest(value: Mapping[str, object], /) -> str:
             f"Unsupported noncanonical interchange value {type(content).__name__}."
         )
 
-    return canonical_fingerprint(
+    return canonical_array_list_fingerprint(
         {"kind": "atomistic-interchange-source", "content": normalize(value)}
     )
 

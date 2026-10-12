@@ -21,7 +21,9 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     DenseLinearOperator,
+    DenseLU,
     determinant_small_linear,
+    LinearSolvePolicy,
     LinearSystem,
     SmallLinearSolvePlan,
     solve,
@@ -292,8 +294,12 @@ class PeriodicCell(StrictModule, NonTrainableState):
         shifts = np.asarray(tuple(product(*choices)), dtype=np.int32)
 
         gram = matrix @ matrix.T
-        gram_inverse = np.linalg.inv(gram)
-        inverse = matrix.T @ gram_inverse
+        coordinate_solve = solve(
+            LinearSystem(DenseLinearOperator(gram)),
+            matrix,
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        inverse = np.asarray(coordinate_solve.value).T
         reciprocal = _TWO_PI * inverse.T
         measure = float(np.sqrt(np.linalg.det(gram)))
         if not np.isfinite(measure) or measure <= np.finfo(dtype).eps:
@@ -515,7 +521,12 @@ class PeriodicCell(StrictModule, NonTrainableState):
             raise ValueError(
                 "fractional_excursion must be finite, nonnegative, and lattice-rank aligned."
             )
-        inverse = matrix.T @ np.linalg.inv(matrix @ matrix.T)
+        coordinate_solve = solve(
+            LinearSystem(DenseLinearOperator(matrix @ matrix.T)),
+            matrix,
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        inverse = np.asarray(coordinate_solve.value).T
         reach = np.sqrt(np.sum(inverse * inverse, axis=0))
         extents = tuple(
             int(np.floor(excursion[axis] + value * reach[axis])) if periodic else 0

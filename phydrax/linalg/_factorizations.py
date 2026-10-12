@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -920,11 +921,11 @@ def _metric_orthonormalize(
         gram = 0.5 * (gram + jnp.conj(jnp.swapaxes(gram, -1, -2)))
         gram = gram + jnp.diag((~active_columns).astype(gram.dtype))
         factor = jnp.linalg.cholesky(gram)
-        transform = jnp.linalg.solve(
-            jnp.conj(jnp.swapaxes(factor, -1, -2)),
-            jnp.eye(capacity, dtype=gram.dtype),
-        )
-        return columns @ transform
+        return jsp.linalg.solve_triangular(
+            jnp.conj(factor),
+            columns.T,
+            lower=True,
+        ).T
 
     return jax.vmap(orthonormalize_one)(flattened, dimensions).reshape(basis.shape)
 

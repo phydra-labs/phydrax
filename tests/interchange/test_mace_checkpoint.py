@@ -1,17 +1,21 @@
 """Trusted mace-torch source conversion against the independent provider oracle."""
 
+import base64
 import dataclasses
+import hashlib
 import json
 import os
 import pickle
 import struct
 import subprocess
 import sys
+import tempfile
 import textwrap
 import zipfile
 from collections.abc import Mapping, Sequence
+from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +32,8 @@ from phydrax.atomistic._model_artifact import (
     write_atomistic_model_artifact,
 )
 from phydrax.atomistic.interchange import (
+    _mace_checkpoint,
+    _mace_worker,
     convert_mace_checkpoint,
     create_mace_provider_fixture,
     evaluate_mace_source,
@@ -70,6 +76,246 @@ FLOAT32_PRECISION = phx.atomistic.AtomisticPrecisionPolicy(
     reduction_dtype="float32",
     output_dtype="float32",
 )
+
+
+@pytest.mark.parametrize("fault", ("none", "digest", "size", "algorithm"))
+def test_provider_record_files_stream_and_validate_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    payload = bytes(range(256)) * 8193
+    (tmp_path / "provider.bin").write_bytes(payload)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    size = len(payload)
+    algorithm = "sha256"
+    if fault == "digest":
+        digest = b"0" * len(digest)
+    elif fault == "size":
+        size += 1
+    elif fault == "algorithm":
+        algorithm = "sha512"
+    info = tmp_path / "provider.dist-info"
+    info.mkdir()
+    (info / "RECORD").write_text(
+        f"provider.bin,{algorithm}={digest.decode('ascii')},{size}\n",
+        encoding="utf-8",
+    )
+    distribution = metadata.Distribution.at(info)
+
+    def refuse_full_read(self: Path) -> NoReturn:
+        pytest.fail("Provider RECORD verification must stream file bytes.")
+
+    monkeypatch.setattr(Path, "read_bytes", refuse_full_read)
+    if fault == "none":
+        assert _mace_worker._verify_record_files(distribution) == 1
+    else:
+        with pytest.raises(_mace_worker.ProviderRefusal, match="RECORD"):
+            _mace_worker._verify_record_files(distribution)
+
+
+@pytest.mark.parametrize("fault", ("overwrite", "replace", "touch", "nonregular"))
+def test_provider_record_files_refuse_stat_mutations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    payload = b"provider file"
+    location = tmp_path / "provider.bin"
+    location.write_bytes(payload)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    info = tmp_path / "provider.dist-info"
+    info.mkdir()
+    (info / "RECORD").write_text(
+        f"provider.bin,sha256={digest.decode('ascii')},{len(payload)}\n",
+        encoding="utf-8",
+    )
+    distribution = metadata.Distribution.at(info)
+    original_digest = hashlib.file_digest
+
+    def mutate_after_digest(*args: Any, **kwargs: Any) -> Any:
+        result = original_digest(*args, **kwargs)
+        if fault == "overwrite":
+            location.write_bytes(b"x" * len(payload))
+        elif fault == "replace":
+            replacement = tmp_path / "replacement.bin"
+            replacement.write_bytes(payload)
+            os.replace(replacement, location)
+        elif fault == "touch":
+            before = location.stat()
+            os.utime(
+                location,
+                ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000),
+            )
+        return result
+
+    if fault == "nonregular":
+        location.unlink()
+        location.symlink_to(os.devnull)
+        refusal = "regular file"
+    else:
+        monkeypatch.setattr(hashlib, "file_digest", mutate_after_digest)
+        refusal = "changed while being hashed"
+    with pytest.raises(_mace_worker.ProviderRefusal, match=refusal):
+        _mace_worker._verify_record_files(distribution)
+
+
+@pytest.mark.parametrize("fault", ("none", "digest", "size", "source-limit"))
+def test_provider_fixture_publication_streams_and_checks_file_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    payload = bytes(range(256)) * 8193
+    digest = hashlib.sha256(payload).hexdigest()
+    directory = tempfile.TemporaryDirectory()
+    root = Path(directory.name)
+    (root / "fixture.pt").write_bytes(payload)
+    record = {
+        "seed": SEED,
+        "source_kind": "torch-state-dict",
+        "source_dtype": "float64",
+        "fixture_byte_size": len(payload) + (fault == "size"),
+        "fixture_sha256": "0" * 64 if fault == "digest" else digest,
+        "declaration": ONE_LAYER_INVARIANT_READOUT,
+    }
+
+    def provider_result(
+        provider: MACEProviderRuntime,
+        request: Mapping[str, Any],
+        source_payload: bytes | None,
+        limits: MACEConversionLimits,
+        /,
+        *,
+        extra_outputs: Sequence[tuple[str, int]] = (),
+    ) -> tuple[
+        dict[str, Any], dict[str, np.ndarray], Path, tempfile.TemporaryDirectory[str]
+    ]:
+        assert extra_outputs == (("fixture.pt", limits.max_source_bytes),)
+        return {"fixture": record, "provider": {}}, {}, root / "result.zip", directory
+
+    def refuse_full_read(self: Path) -> NoReturn:
+        pytest.fail("Provider fixture publication must stream file bytes.")
+
+    monkeypatch.setattr(_mace_checkpoint, "_run_provider", provider_result)
+    limits = MACEConversionLimits(
+        max_source_bytes=len(payload) - 1
+        if fault == "source-limit"
+        else MACEConversionLimits().max_source_bytes
+    )
+    with monkeypatch.context() as streaming:
+        streaming.setattr(Path, "read_bytes", refuse_full_read)
+        # The test owns the provider-result boundary; no provider is executed.
+        runtime: Any = None
+        if fault == "none":
+            fixture = create_mace_provider_fixture(
+                ONE_LAYER_INVARIANT_READOUT,
+                tmp_path,
+                provider=runtime,
+                seed=SEED,
+                limits=limits,
+            )
+        else:
+            with pytest.raises(ValueError, match="fixture"):
+                create_mace_provider_fixture(
+                    ONE_LAYER_INVARIANT_READOUT,
+                    tmp_path,
+                    provider=runtime,
+                    seed=SEED,
+                    limits=limits,
+                )
+    assert not root.exists()
+    if fault == "none":
+        assert fixture.path.read_bytes() == payload
+        assert fixture.sha256 == digest
+        assert fixture.byte_size == len(payload)
+    else:
+        assert not tuple(tmp_path.iterdir())
+
+
+_STREAMED_PROVIDER_FIXTURE = """
+import dataclasses
+import hashlib
+import importlib.abc
+import io
+import json
+import runpy
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+class RefusePhydrax(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] == "phydrax":
+            raise ImportError("worker must remain standalone")
+        return None
+
+sys.meta_path.insert(0, RefusePhydrax())
+sys.path.insert(0, sys.argv[1])
+import torch
+worker = runpy.run_path(sys.argv[2], run_name="_standalone_mace_worker")
+request = json.loads(sys.argv[3])
+limits = worker["_Limits"](**request.pop("limits"))
+torch.manual_seed(request["seed"])
+dtype = {"float32": torch.float32, "float64": torch.float64}[request["source_dtype"]]
+model = worker["_build"](request["architecture"], dtype, limits)
+buffer = io.BytesIO()
+payload = model.state_dict() if request["source_kind"] == "torch-state-dict" else model
+torch.save(payload, buffer)
+expected = buffer.getvalue()
+
+def refuse_buffer(*args, **kwargs):
+    raise AssertionError("fixture serialization must not buffer the file")
+
+def refuse_read(self):
+    raise AssertionError("fixture hashing must stream")
+
+run_fixture = worker["_run_fixture"]
+run_fixture.__globals__["io"] = SimpleNamespace(BytesIO=refuse_buffer)
+Path.read_bytes = refuse_read
+record = run_fixture(request, Path(sys.argv[4]) / "result.zip", limits)
+with (Path(sys.argv[4]) / "fixture.pt").open("rb") as stream:
+    actual = stream.read()
+assert actual == expected
+assert record["fixture_sha256"] == hashlib.sha256(expected).hexdigest()
+assert record["fixture_byte_size"] == len(expected)
+try:
+    run_fixture(
+        request,
+        Path(sys.argv[4]) / "result.zip",
+        dataclasses.replace(limits, max_source_bytes=len(expected) - 1),
+    )
+except worker["ProviderRefusal"] as error:
+    assert "source byte limit" in str(error)
+else:
+    raise AssertionError("oversized serialized fixture must be refused")
+assert not any(name.split(".")[0] == "phydrax" for name in sys.modules)
+"""
+
+
+@pytest.mark.parametrize("kind", ("torch-state-dict", "torch-full-model"))
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
+def test_streamed_provider_fixture_preserves_buffer_serialization(
+    provider: MACEProviderRuntime, tmp_path: Path, kind: str, dtype: str
+) -> None:
+    request = {
+        "architecture": ONE_LAYER_INVARIANT_READOUT,
+        "seed": SEED,
+        "source_kind": kind,
+        "source_dtype": dtype,
+        "limits": _mace_checkpoint._worker_limits(MACEConversionLimits()),
+    }
+    completed = subprocess.run(
+        [
+            provider.interpreter.path,
+            "-I",
+            "-c",
+            textwrap.dedent(_STREAMED_PROVIDER_FIXTURE),
+            provider.site_packages,
+            str(REPOSITORY / "phydrax/atomistic/interchange/_mace_worker.py"),
+            json.dumps(request),
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 @pytest.fixture(scope="module")

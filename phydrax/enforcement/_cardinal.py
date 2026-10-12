@@ -83,11 +83,12 @@ def _validate_distinct_anchors(anchors: tuple[Array, ...], count: int, /) -> Non
         tuple(jnp.asarray(anchor).reshape((count, -1)) for anchor in anchors),
         axis=1,
     )
-    coincident = jnp.all(
-        coordinates[:, None, :] == coordinates[None, :, :],
-        axis=-1,
-    )
-    coincident = coincident & ~jnp.eye(count, dtype=jnp.bool_)
+    if coordinates.shape[1] == 0:
+        coincident = jnp.asarray(count > 1, dtype=jnp.bool_)
+    else:
+        order = jnp.lexsort(coordinates.T)
+        ordered = coordinates[order]
+        coincident = jnp.all(ordered[1:] == ordered[:-1], axis=-1)
     if bool(jnp.any(coincident)):
         raise ValueError(
             "Cardinal correction anchors must be pairwise distinct; coincident "

@@ -190,6 +190,8 @@ class KrawczykCertificate:
     image_upper: Array
     unique_root: bool
     certificate_id: str
+    dense_workspace_bytes: int
+    maximum_dense_workspace_bytes: int
 
 
 def krawczyk_certificate(
@@ -197,8 +199,19 @@ def krawczyk_certificate(
     center: ArrayLike,
     radius: ArrayLike,
     /,
+    *,
+    maximum_dense_workspace_bytes: int = 64 * 1024 * 1024,
 ) -> KrawczykCertificate:
-    """Certify one unique real root in an axis-aligned polynomial box."""
+    """Certify one unique real root in an axis-aligned polynomial box.
+
+    The interval enclosure requires every entry of a dense center-Jacobian
+    preconditioner. Before evaluating that Jacobian, admit a conservative
+    float64 workspace estimate of ``8 * (10*n*n + 12*n)`` bytes. The default
+    ceiling is 64 MiB; this accounts for dense factors, solve scratch, and
+    interval matrices, not provider-private or polynomial-evaluation storage.
+    Admission limits and the estimate are returned as certificate evidence
+    without changing the scientific certificate identity.
+    """
 
     center_ = np.asarray(center, dtype=np.float64)
     radius_ = np.asarray(radius, dtype=np.float64)
@@ -211,6 +224,21 @@ def krawczyk_certificate(
         raise ValueError("Krawczyk radii must be finite and positive.")
     if system.support.equation_count != system.support.variable_count:
         raise ValueError("Krawczyk certification requires a square system.")
+    if (
+        isinstance(maximum_dense_workspace_bytes, bool)
+        or not isinstance(maximum_dense_workspace_bytes, int)
+        or maximum_dense_workspace_bytes <= 0
+    ):
+        raise ValueError("maximum_dense_workspace_bytes must be a positive integer.")
+    dimension = system.support.variable_count
+    dense_workspace_bytes = (10 * dimension**2 + 12 * dimension) * np.dtype(
+        np.float64
+    ).itemsize
+    if dense_workspace_bytes > maximum_dense_workspace_bytes:
+        raise ValueError(
+            f"Krawczyk dense workspace requires {dense_workspace_bytes} bytes, "
+            f"exceeding maximum_dense_workspace_bytes={maximum_dense_workspace_bytes}."
+        )
     lower = center_ - radius_
     upper = center_ + radius_
     center_jacobian = np.asarray(system.jacobian(jnp.asarray(center_)), dtype=jnp.float64)
@@ -247,6 +275,8 @@ def krawczyk_certificate(
         jnp.asarray(image_high),
         unique,
         canonical_fingerprint(payload),
+        dense_workspace_bytes,
+        maximum_dense_workspace_bytes,
     )
 
 

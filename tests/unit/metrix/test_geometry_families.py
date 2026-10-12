@@ -8,6 +8,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -530,3 +531,84 @@ def test_patchwise_form_reflection_obeys_twisted_transition(
     patchwise = phx.metrix.PatchwiseDifferentialForm(cover, forms)
     points = jnp.asarray([[0.2, 0.3], [-0.4, 0.7]])
     assert patchwise.transition_residual(0, 1, points) == 0.0
+
+
+@pytest.mark.parametrize("weighted", [False, True])
+def test_horizontal_trace_matches_dense_and_gradient(weighted: bool) -> None:
+    rng = np.random.default_rng(714)
+    chart = phx.metrix.CoordinateChart("horizontal-actions", ("x", "y", "z"))
+    cometric = phx.metrix.HorizontalCometric(
+        lambda q: jnp.asarray([[1.0, 0.0], [0.0, 1.0], [-0.5 * q[1], 0.5 * q[0]]]),
+        chart,
+        2,
+    )
+    density = (
+        phx.metrix.VolumeDensity(lambda q: jnp.exp(0.1 * jnp.sum(q**2)), chart=chart)
+        if weighted
+        else None
+    )
+    point = jnp.asarray(rng.normal(size=3))
+
+    def field(q: jax.Array) -> jax.Array:
+        return jnp.sin(q[0] * q[1]) + jnp.sum(q**4)
+
+    def dense(q: jax.Array) -> jax.Array:
+        def flux(x: jax.Array) -> jax.Array:
+            gradient = cometric(x) @ jax.grad(field)(x)
+            return gradient if density is None else density(x) * gradient
+
+        trace = jnp.trace(jax.jacfwd(flux)(q))
+        return trace if density is None else trace / density(q)
+
+    def actual(q: jax.Array) -> jax.Array:
+        return phx.metrix.sub_laplacian(field, cometric, q, density=density)
+
+    np.testing.assert_allclose(actual(point), dense(point), atol=2e-12, rtol=2e-12)
+    np.testing.assert_allclose(
+        jax.grad(actual)(point), jax.grad(dense)(point), atol=2e-11, rtol=2e-12
+    )
+
+
+def test_horizontal_bracket_actions_match_dense_rank() -> None:
+    rng = np.random.default_rng(715)
+    chart = phx.metrix.CoordinateChart("bracket-actions", ("x", "y", "z"))
+    cometric = phx.metrix.HorizontalCometric(
+        lambda q: jnp.asarray([[1.0, 0.0], [0.0, 1.0], [-0.5 * q[1], 0.5 * q[0]]]),
+        chart,
+        2,
+    )
+    for point in jnp.asarray(rng.normal(size=(3, 3))):
+        frame = cometric.frame(point)
+        left = lambda q: cometric.frame(q)[:, 0]
+        right = lambda q: cometric.frame(q)[:, 1]
+        bracket = (
+            jax.jacfwd(right)(point) @ frame[:, 0] - jax.jacfwd(left)(point) @ frame[:, 1]
+        )
+        expected = np.linalg.matrix_rank(
+            np.column_stack((np.asarray(frame), np.asarray(bracket)))
+        )
+        assert phx.metrix.step_two_horizontal_rank(cometric, point) == expected
+    rank_one = phx.metrix.HorizontalCometric(
+        lambda q: jnp.asarray([[1.0], [0.0], [q[1]]]), chart, 1
+    )
+    assert phx.metrix.step_two_horizontal_rank(rank_one, jnp.zeros((3,))) == 1
+
+
+def test_commuting_horizontal_frame_cancels_both_directional_actions() -> None:
+    chart = phx.metrix.CoordinateChart("commuting-frame", ("x", "y", "z"))
+    cometric = phx.metrix.HorizontalCometric(
+        lambda q: jnp.asarray([[1.0, 0.0], [0.0, 1.0], [q[1], q[0]]]),
+        chart,
+        2,
+    )
+    point = jnp.asarray(np.random.default_rng(720).normal(size=3))
+    frame = cometric.frame(point)
+    bracket = (
+        jax.jacfwd(lambda q: cometric.frame(q)[:, 1])(point) @ frame[:, 0]
+        - jax.jacfwd(lambda q: cometric.frame(q)[:, 0])(point) @ frame[:, 1]
+    )
+    expected = np.linalg.matrix_rank(
+        np.column_stack((np.asarray(frame), np.asarray(bracket)))
+    )
+    assert expected == 2
+    assert phx.metrix.step_two_horizontal_rank(cometric, point) == expected

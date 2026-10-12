@@ -44,7 +44,7 @@ from ._external_worker import (
     _relative_path,
     _send_packet,
 )
-from ._fingerprint import canonical_fingerprint, canonical_json
+from ._fingerprint import array_bytes_digest, canonical_fingerprint, canonical_json
 from ._host_io import open_regular_beneath, open_regular_file
 from ._identity import ArtifactBindingIdentity
 from ._jax_context import inside_jax_transformation
@@ -1900,11 +1900,10 @@ def _detached(value: Any, spec: ExternalTensorSpec, role: str, /) -> np.ndarray:
 
 
 def _array_record(array: np.ndarray, /) -> list[Any]:
-    contiguous = np.ascontiguousarray(array)
     return [
         list(array.shape),
         array.dtype.str,
-        hashlib.sha256(contiguous.tobytes(order="C")).hexdigest(),
+        array_bytes_digest(array),
     ]
 
 

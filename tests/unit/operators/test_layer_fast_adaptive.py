@@ -1,3 +1,4 @@
+import hashlib
 from typing import Any
 
 import jax.numpy as jnp
@@ -115,6 +116,15 @@ def test_fused_block_forward_transpose_and_per_column_status_match_serial(
     assert jnp.all(jnp.isfinite(failed.values[:, (0, 2)]))
     plan_record = laplace_dp0_plan_archive_record(prepared)
     result_record = fused_bem_result_archive_record(failed, plan_record.plan_id)
+    reference = hashlib.sha256()
+    reference.update(failed.action_id.encode("utf-8"))
+    reference.update(str(bool(failed.transpose)).encode("ascii"))
+    for name in sorted(result_record.arrays):
+        value = result_record.arrays[name]
+        reference.update(name.encode("utf-8"))
+        reference.update(value.dtype.str.encode("ascii"))
+        reference.update(value.tobytes(order="C"))
+    assert result_record.result_id == f"fused-bem-result-{reference.hexdigest()}"
     assert plan_record.metadata["report_id"] == prepared.assembly_report.report_id
     assert np.array_equal(
         result_record.arrays["column_status"], np.asarray([0, 1, 0], dtype=np.int32)

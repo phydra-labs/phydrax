@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from benchmarks._memory import host_allocation_peak
-from phydrax._fingerprint import array_tree_fingerprint
+from phydrax._fingerprint import (
+    array_bytes_digest,
+    array_tree_fingerprint,
+    canonical_array_hex_fingerprint,
+    iter_array_bytes,
+)
 
 
 def _legacy(tree: Any) -> dict[str, Any]:
@@ -108,3 +113,20 @@ def test_array_fingerprint_rejects_object_arrays() -> None:
 def test_non_numeric_array_fingerprint_matches_legacy(dtype: str) -> None:
     value = np.zeros((3, 4), dtype=np.dtype(dtype))
     assert array_tree_fingerprint(value.T) == _legacy(value.T)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128, np.bool_, ">f8"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_bounded_array_byte_and_hex_hashes(dtype: np.dtype, empty: bool) -> None:
+    value = np.arange(24).reshape(4, 6).astype(dtype)[::-1, ::2]
+    if empty:
+        value = value[:0]
+    payload = value.tobytes(order="C")
+    assert array_bytes_digest(value) == hashlib.sha256(payload).hexdigest()
+    canonical_hex = json.dumps(payload.hex(), separators=(",", ":")).encode("ascii")
+    assert (
+        canonical_array_hex_fingerprint(value)
+        == hashlib.sha256(canonical_hex).hexdigest()
+    )
+    assert b"".join(bytes(chunk) for chunk in iter_array_bytes(value)) == payload
+    assert all(len(chunk) <= 65536 for chunk in iter_array_bytes(value))
