@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Residual-penalty source refusal coverage now matches the checked-signature
+  diagnostic introduced by nominal-boundary migration; invalid integration
+  plans still raise `TypeError` rather than bypassing typed sources.
 - Function linear operators detach duplicate numerical constants from converted
   JAX programs while retaining them as dynamic Equinox leaves; frozen spectral
   closures and progressive MAC controls pass the unchanged hidden-state audit,
