@@ -3553,10 +3553,16 @@
   QR-reduced low-rank core instead of a squared Gram trace, so exact
   low-rank ADI solutions are no longer reported as
   `RESIDUAL_TOLERANCE_NOT_MET`.
-- The strict documentation build renders runtime type aliases
-  (`Literal[...]`, parameterized generics, PEP 695 `type` aliases with
-  forward references) through the `RuntimeTypeAliases` griffe extension
-  instead of failing alias resolution.
+- The strict documentation build collects the API reference by static analysis
+  instead of importing Phydrax, so a clean strict build takes about 2 minutes
+  instead of about 17. Lazily exported facade names bind to their static
+  definitions through the checked public API manifest; `Name = Other` exports
+  document `Other`; Equinox module classes show their generated or inherited
+  constructor signatures. Module pages list every public export, and classes
+  list their methods, properties, class constants, enum members, and fields
+  (undocumented members inherit base docstrings; undocumented fields appear in
+  the constructor signature), instead of runtime dunder attributes carrying
+  builtin `frozenset`/`str` docstrings.
 - The PIC deposit↔Gauss preparation certificate no longer divides numerical
   roundoff by an almost-zero charge change when a high-capacity periodic probe
   uniformly fills the grid. It subtracts the same charge-scaled roundoff floor

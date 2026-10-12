@@ -63,17 +63,17 @@ plugins:
         handlers:
             python:
                 options:
-                    force_inspection: true
                     extensions:
-                        - mkdocstrings_setup.py:RuntimeTypeAliases
-                    preload_modules:
-                        - mkdocstrings_setup
+                        - mkdocstrings_setup.py:PublicFacadeExports
+                        - mkdocstrings_setup.py:EquinoxConstructors
+                        - mkdocstrings_setup.py:ClassMemberListing
                     heading_level: 4
                     inherited_members: false
+                    merge_init_into_class: true
                     members_order: source
                     show_bases: false
                     show_signature: true
-                    show_if_no_docstring: false
+                    show_if_no_docstring: true
                     show_overloads: false
                     show_root_heading: true
                     show_signature_annotations: true
