@@ -24,7 +24,7 @@ def _compile_periodic(control: Any, radii: Any) -> Any:
         jnp.asarray([[0.8]]),
         jnp.asarray([[0.4]]),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
         ),

@@ -54,7 +54,11 @@ class VectorLocalRootDiagnostics(StrictModule):
 
 
 class VectorLocalRootPlan(StrictModule, NonTrainableState):
-    """Bounded one-to-64 component root with implicit-function derivatives."""
+    """Bounded one-to-64 component root with implicit-function derivatives.
+
+    ``solve_with_diagnostics`` reports accepted Newton updates, excluding
+    iterations after convergence and unsuccessful or refused trial steps.
+    """
 
     dimension: int = eqx.field(static=True)
     maximum_steps: int = eqx.field(static=True)
@@ -181,92 +185,118 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         residual: Callable[[Array], Array],
         guess: Array,
         admissible: Callable[[Array], Array] | None,
-    ) -> Array:
-        def body(_: int | Array, value: Array) -> Array:
+    ) -> tuple[Array, Array]:
+        zero = jnp.asarray(0, dtype=jnp.int32)
+
+        def body(_: int | Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
+            value, iterations = carry
             current = residual(value)
             jacobian = jax.jacfwd(residual)(value)
-            delta, solve = self._solve_linear(jacobian, current)
+            delta, solve_result = self._solve_linear(jacobian, current)
             candidate = value - delta
             converged = jnp.linalg.norm(current) <= self.tolerance
-            return jnp.where(converged | ~solve.successful, value, candidate)
+            update = ~converged & solve_result.successful
+            return (
+                jnp.where(update, candidate, value),
+                iterations + update.astype(jnp.int32),
+            )
 
-        if admissible is not None:
+        if admissible is None:
+            return jax.lax.fori_loop(
+                0,
+                self.maximum_steps,
+                body,
+                (guess, zero),
+            )
 
-            def guarded_body(_: int | Array, value: Array) -> Array:
-                def unchanged(_: None) -> Array:
-                    return value
+        def guarded_body(
+            _: int | Array, carry: tuple[Array, Array]
+        ) -> tuple[Array, Array]:
+            value, iterations = carry
 
-                def evaluate(_: None) -> Array:
-                    current = residual(value)
-                    merit = 0.5 * jnp.sum(jnp.abs(current) ** 2)
+            def unchanged(_: None) -> tuple[Array, Array]:
+                return carry
 
-                    def update(_: None) -> Array:
-                        jacobian = jax.jacfwd(residual)(value)
-                        delta, evidence = self._solve_linear(jacobian, current)
-                        direction = -delta
-                        slope = jnp.real(jnp.vdot(current, jacobian @ direction))
+            def evaluate(_: None) -> tuple[Array, Array]:
+                current = residual(value)
+                merit = 0.5 * jnp.sum(jnp.abs(current) ** 2)
 
-                        def globalize(_: None) -> Array:
-                            trial = self._backtracking_step(
-                                residual, admissible, value, direction, merit, slope
-                            )
+                def update(_: None) -> tuple[Array, Array]:
+                    jacobian = jax.jacfwd(residual)(value)
+                    delta, evidence = self._solve_linear(jacobian, current)
+                    direction = -delta
+                    slope = jnp.real(jnp.vdot(current, jacobian @ direction))
 
-                            def accepted(_: None) -> Array:
-                                return trial
+                    def globalize(_: None) -> Array:
+                        trial = self._backtracking_step(
+                            residual, admissible, value, direction, merit, slope
+                        )
 
-                            def steepest_descent(_: None) -> Array:
-                                # A Newton direction can point out of an active
-                                # physical face even when the root is feasible.
-                                # Use another genuine residual descent search,
-                                # never project/clip the candidate into validity.
-                                gradient = jnp.conj(jacobian).T @ current
-                                descent = -gradient
-                                descent_slope = -jnp.real(jnp.vdot(gradient, gradient))
-                                return self._backtracking_step(
-                                    residual,
-                                    admissible,
-                                    value,
-                                    descent,
-                                    merit,
-                                    descent_slope,
-                                )
+                        def accepted(_: None) -> Array:
+                            return trial
 
-                            return domain_cond(
-                                jnp.any(trial != value), accepted, steepest_descent
+                        def steepest_descent(_: None) -> Array:
+                            # A Newton direction can point out of an active
+                            # physical face even when the root is feasible.
+                            # Use another genuine residual descent search,
+                            # never project/clip the candidate into validity.
+                            gradient = jnp.conj(jacobian).T @ current
+                            descent = -gradient
+                            descent_slope = -jnp.real(jnp.vdot(gradient, gradient))
+                            return self._backtracking_step(
+                                residual,
+                                admissible,
+                                value,
+                                descent,
+                                merit,
+                                descent_slope,
                             )
 
                         return domain_cond(
-                            jnp.all(evidence.successful)
-                            & jnp.all(jnp.isfinite(delta))
-                            & jnp.isfinite(slope)
-                            & (slope < 0.0),
-                            globalize,
-                            unchanged,
+                            jnp.any(trial != value), accepted, steepest_descent
                         )
 
-                    return domain_cond(
-                        jnp.all(jnp.isfinite(current))
-                        & (2.0 * merit > self.tolerance**2),
-                        update,
-                        unchanged,
+                    trial = domain_cond(
+                        jnp.all(evidence.successful)
+                        & jnp.all(jnp.isfinite(delta))
+                        & jnp.isfinite(slope)
+                        & (slope < 0.0),
+                        globalize,
+                        lambda _: value,
+                    )
+                    accepted_update = jnp.any(trial != value)
+                    return (
+                        trial,
+                        iterations + accepted_update.astype(jnp.int32),
                     )
 
                 return domain_cond(
-                    jnp.all(jnp.isfinite(value)) & admissible(value), evaluate, unchanged
+                    jnp.all(jnp.isfinite(current)) & (2.0 * merit > self.tolerance**2),
+                    update,
+                    unchanged,
                 )
 
-            return jax.lax.fori_loop(0, self.maximum_steps, guarded_body, guess)
+            return domain_cond(
+                jnp.all(jnp.isfinite(value)) & admissible(value),
+                evaluate,
+                unchanged,
+            )
 
-        return jax.lax.fori_loop(0, self.maximum_steps, body, guess)
+        return jax.lax.fori_loop(
+            0,
+            self.maximum_steps,
+            guarded_body,
+            (guess, zero),
+        )
 
-    def solve(
+    def _solve(
         self,
         residual: Callable[[Array], Array],
         initial: ArrayLike,
         /,
         *,
         admissible: Callable[[Array], Array] | None = None,
-    ) -> Array:
+    ) -> tuple[Array, Array]:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if admissible is not None and not callable(admissible):
@@ -279,7 +309,9 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         if not jnp.issubdtype(initial_.dtype, jnp.inexact):
             raise TypeError("Vector local root initial state must have an inexact dtype.")
 
-        def solve_fn(function: Callable[[Array], Array], guess: Array) -> Array:
+        def solve_fn(
+            function: Callable[[Array], Array], guess: Array
+        ) -> tuple[Array, Array]:
             return self._newton(function, guess, admissible)
 
         def tangent_solve(
@@ -292,15 +324,13 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
                 value, evidence = self._solve_linear(operator, right)
                 # An undefined derivative is a nonfinite numeric trial, not a
                 # host exception inside the enclosing nonlinear iteration.
-                # Root diagnostics retain the native matrix-failure evidence.
                 return jnp.where(
                     jnp.all(evidence.successful), value, jnp.full_like(value, jnp.nan)
                 )
 
-            # Native solves refine and check the RHS. Those checks must not be
-            # transposed as if they were linear arithmetic in the root tangent.
-            # The implicit solve boundary owns both actions; numeric solves and
-            # their refusal evidence remain with the native linear owner.
+            # Native solve evidence may depend on the RHS. The IFT action is
+            # linear nonetheless; explicitly own both actions rather than
+            # transposing diagnostic predicates.
             return jax.lax.custom_linear_solve(
                 linearize,
                 right_hand_side,
@@ -308,7 +338,23 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
                 transpose_solve=lambda _, right: solve_tangent(matrix.T, right),
             )
 
-        return custom_root(residual, initial_, solve_fn, tangent_solve)
+        return custom_root(
+            residual,
+            initial_,
+            solve_fn,
+            tangent_solve,
+            has_aux=True,
+        )
+
+    def solve(
+        self,
+        residual: Callable[[Array], Array],
+        initial: ArrayLike,
+        /,
+        *,
+        admissible: Callable[[Array], Array] | None = None,
+    ) -> Array:
+        return self._solve(residual, initial, admissible=admissible)[0]
 
     @overload
     def solve_with_diagnostics(
@@ -357,12 +403,19 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
             def residual_only(value: Array) -> Array:
                 return evaluate(value)[0]
 
-            root = self.solve(residual_only, initial, admissible=admissible)
+            root, iterations = self._solve(
+                residual_only,
+                initial,
+                admissible=admissible,
+            )
             value, auxiliary = evaluate(root)
             jacobian = jax.jacfwd(residual_only)(root)
-
         else:
-            root = self.solve(residual, initial, admissible=admissible)
+            root, iterations = self._solve(
+                residual,
+                initial,
+                admissible=admissible,
+            )
             value = residual(root)
             jacobian = jax.jacfwd(residual)(root)
         if self.dimension <= 3:
@@ -392,7 +445,7 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
             converged = converged & admissible(root)
         diagnostics = VectorLocalRootDiagnostics(
             converged,
-            jnp.asarray(self.maximum_steps, dtype=jnp.int32),
+            iterations,
             value,
             norm,
             jacobian,

@@ -27,6 +27,44 @@ forcing are explicit application plans; neither is injected automatically.
 ::: phydrax.discretization.IncompressibleSpectralDiagnostics
 
 
+## Spectral viscosity and Courant policy
+
+`compile_periodic_incompressible_flow(..., spectral_viscosity=plan)` binds the
+[spectral viscosity operator](../discretization/spectral.md#spectral-vanishing-viscosity)
+into the diagonal linear term, so ETDRK integrates molecular and numerical decay
+exactly. SVV cannot be composed with algebraic or dynamic LES. Compilation,
+linear, nonlinear, drift, bundle, and method identities are unchanged when the
+option is absent; an active option contributes its prepared scientific identity.
+
+Stage records retain molecular and SVV rates separately. Absent SVV contributes
+`spectral_viscosity_rate=None`, with no modal zero array in compiled stages.
+Diagnostics always include zero-valued `spectral_viscosity_energy_rate` and
+`spectral_viscosity_dissipation` when absent and a static `spectral_viscosity_id`.
+The energy defect uses forcing minus molecular, SGS, and SVV dissipation.
+
+DNS `advective_courant_restriction(state, maximum_courant_number=C_max)` computes
+f=max_native_grid Σ_a |u_a|/(L_a/N_a), with bound C_max/f (infinity for zero f).
+`CourantGuardedETDRKMethod(ETDRKMethod(4), maximum_courant_number=C_max)` admits
+0<C_max≤2√2/π, the classical RK4 frozen-uniform-advection reference.
+It is **not** a nonlinear stability certificate. LES and ETDRK2 are refused.
+`PeriodicAdvectiveCourantRestriction` requires an explicit non-empty canonical
+`compilation_id`, binding the evidence to its compiled dynamics. Its
+`reference_model="frozen_uniform_advection_rk4"` and
+`nonlinear_stability_certified=False` are fixed by the equation owner, not
+constructor options. The same owner validates C_max for both dynamics and
+the guard: strings and booleans raise `TypeError`, while nonfinite or
+out-of-range values raise `ValueError`.
+Preparation requires velocity-compatible Hermitian coordinates; every transition
+rejects above-bound or nonfinite evidence without changing the accepted state.
+The existing LES guard uses the same transactional acceptance helper and retains
+its original identities and numerical semantics.
+
+::: phydrax.equations.PeriodicAdvectiveCourantRestriction
+
+::: phydrax.solver.CourantGuardedETDRKMethod
+
+::: phydrax.solver.PreparedCourantGuardedETDRKMethod
+
 ## Large-eddy simulation
 
 Periodic static algebraic LES compiles into the named incompressible stage and uses
@@ -273,11 +311,27 @@ identical case, runtime, tree, and encoding identities. Full-complex Hermitian s
 leaves may use independent-real checkpoint encoding.
 
 `PeriodicModalTurbulenceStatisticsPlan(dynamics, bin_edges, /, *, ...)` binds one compiled
-equation and reports conservative full-complex energy, molecular dissipation,
-advective transfer, SGS transfer, forcing injection, resolved spectral flux,
-derived scales/tails, static-SGS energy/projection evidence, and current step limits.
+equation and reports conservative full-complex energy, molecular and spectral
+viscosity dissipation, advective transfer, SGS transfer, forcing injection,
+resolved spectral flux, derived scales/tails, SGS evidence, and current step limits.
 `evaluate(time, velocity, args, *, stage=..., additive_forcing_rate=...,
 step_restriction=...)` rejects foreign stages or restrictions.
+SVV shells, total and volume-normalized mean dissipation are always present and
+zero when unavailable; `spectral_viscosity_available` and `spectral_viscosity_id`
+declare the operator binding. `numerical_dissipation_fraction` is SVV dissipation
+divided by molecular + SVV + resolved SGS dissipation (SGS is minus its energy
+transfer). A nonpositive denominator yields zero with
+`numerical_dissipation_fraction_valid=False`. Taylor/Kolmogorov validity is false
+whenever SVV is active. The production vector stores seven shell arrays followed
+by 54 scalars; the added scalars are SVV total, mean, and numerical fraction, after
+molecular total/mean. Availability and fraction validity remain snapshot evidence,
+not extra vector slots. Periodic manifests bind the evaluator ID and value shape
+through the runtime inventory's `program` identity. A changed shell layout or
+evaluator payload raises `StaleRuntimeCheckpointError` with `roles=("program",)`
+before any checkpoint arrays are decoded. Manifests, topology/geometry digests,
+stores, and production-plan identities change at this cutover; checkpoints without
+the inventory are also refused with typed stale-role evidence. There is no
+old-layout decoder or compatibility shim.
 `SpectralChannelStatisticsPlan` provides
 homogeneous-plane raw/central moments and separate-wall shear/friction semantics.
 `StreamingMomentPlan` places those or other real-valued observables in sample- or
@@ -292,6 +346,14 @@ produce a `PreparedOUForcedETDRKMethod` whose accepted state transactionally cou
 velocity and exact OU continuation. `SpectralChannelProductionPlan` derives the exact
 step from prepared SBDF2 and requires its horizon, outputs, and statistics window on
 that lattice.
+No-LES production also accepts `PreparedCourantGuardedETDRKMethod`, retaining its
+guarded execution route. Courant guards are explicitly incompatible with OU
+forcing and constant-power adapter wiring; compiled forcing does not drop a guard.
+`prepare_constant_power_periodic_method(method: PreparedETDRKMethod, forcing, /)`
+accepts only plain ETDRK. `PreparedOUForcedETDRKMethod(base, forcing, realization, /)`
+and `prepare_ou_forced_periodic_method(method, forcing, realization, /)` accept
+`PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod`. Unsupported guarded
+adapter variants raise `TypeError`, including explicit Courant refusals.
 `StructuredMACProductionPlan` binds a fixed-step method, compiled MAC dynamics, and
 `MACPlaneWallStatisticsPlan`; optional `MACConstantPressureGradientForcing` must
 already be compiled with the same identity. General feedback is instead owned by
@@ -371,12 +433,14 @@ Each production route prepares a checkpoint root before initialization.
 
 ## Route-qualified candidate evidence
 
-`tools/incompressible_flow_qualification.py` owns three independent route labels and
-artifact paths:
+`tools/incompressible_flow_qualification.py` separates independent route labels and
+candidate artifact paths:
 
 | Route | Candidate artifact | Required case metrics |
 | --- | --- | --- |
 | `periodic-spectral` | `benchmarks/incompressible_periodic_qualification.json` | `taylor-green-decay`; `manufactured-forcing-refinement-restart` |
+| `periodic-spectral-vanishing-viscosity` | `benchmarks/incompressible_svv_qualification.json` | `shear-decay-2d`; `shear-decay-3d`; `energy-identity-2d`; `energy-identity-3d`; `fixed-low-mode-vanishing` |
+| `periodic-statistical-solution` | `benchmarks/incompressible_statistical_qualification.json` | `coupled-campaign`: default 16/32/64 nested grids; paired-jackknife significant W1 decrease, consistent non-abstained scaling, runtime gates; per-resolution dynamics/method/ensemble/discretization/SVV provenance |
 | `spectral-channel` | `benchmarks/incompressible_channel_qualification.json` | `couette`; `poiseuille`; `manufactured-sbdf2-refinement-restart` |
 | `mac` | `benchmarks/mac_incompressible_qualification.json` | `periodic-taylor-green`; `stretched-couette`; `stretched-poiseuille`; `full-hybrid-iterative-comparison` |
 
@@ -386,6 +450,89 @@ They always retain `release_ready=false`. Assembly requires passed existing arti
 and produces an unsigned candidate with `signed=false` and
 `CapabilityProfile.released=false`. Neither an artifact path nor the assembled
 candidate is a universal DNS or distributed-support claim.
+
+### Spectral viscosity operator qualification
+
+The SVV route runs unforced inviscid single-mode solutions in both two and three
+dimensions with ordinary ETDRK4. An independent oracle computes `K=N/2-1` for
+even mode counts and `K=(N-1)/2` for odd counts directly from `N` and evaluates
+the declared plan's analytic rate. It chooses the smallest retained mode `n`
+with a negative **oracle** rate, not from the prepared decay array, and a unit
+polarization `a` perpendicular to `n`. Thus `u(0)=a*cos(n.x)` is an exact steady
+Euler solution even for diagonal modes. Gates independently check the prepared
+resolution equals `K` and the prepared rate equals the oracle before comparing
+with `u(t)=exp(lambda_n*t)u(0)`.
+Initial and final diagnostics are compared with
+`E(t)=(2*pi)^d exp(2*lambda_n*t)/4` and
+`D_SVV(t)=-2*lambda_n*E(t)`. Gates cover velocity error, divergence, successful
+integration, positive numerical dissipation, energy/rate agreement, finiteness,
+and the semidiscrete energy-balance defect.
+
+The fixed-low-mode case compares one retained integer mode across at least three
+strictly increasing resolutions. It records the actual and analytic rates,
+monotone decay magnitudes, and the vanishing bound
+`|lambda_n| <= strength*K^(1-2*order)*|n|^(2*order)` on this `2*pi` box.
+These are finite-campaign operator checks, not solution-convergence evidence.
+
+Every case, including each low-mode resolution row, reports
+`operator_scaling_admissible`, `cited_convergence_supported=false`, and
+`support_reason`. Only `tadmor_step` with the cited strict cutoff scaling can
+be operator-admissible. `exponential_highpass` is practical exponential high-pass
+hyperviscosity, not the cited theorem's operator. Neither profile certifies the
+initial-data mollification or full-method hypotheses for rough-data convergence.
+The scaling reference is [Rohner–Mishra (2024), Section 2](https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf).
+Strength, order, cutoff scale, cutoff exponent, and kernel must be explicitly
+supplied; the exponential profile additionally requires its high-pass exponent.
+
+For example, this declared test configuration produces an unreleased artifact:
+
+```bash
+.venv/bin/python -m tools.incompressible_flow_qualification \
+  periodic-spectral-vanishing-viscosity \
+  --strength 0.1 --order 1 --cutoff-scale 0.5 --cutoff-exponent 0.25 \
+  --kernel tadmor_step --mode-count 12 --low-mode-counts 12 24 48 \
+  --output benchmarks/incompressible_svv_qualification.json
+```
+
+The displayed values are campaign inputs, not universal scientific defaults.
+Passing these gates cannot release support or certify nonlinear stability.
+
+### Finite statistical refinement qualification
+
+The statistical route requires at least three nested resolutions (default
+`16 32 64`, coarsest count greater than eight). Consecutive coupled ensembles
+use the same ordered members, final save time, and each pair's coarse injection
+nodes. Componentwise empirical W1 distances are comparable spatial integrals
+over the same physical domain, with the same component-mean convention and
+domain quadrature measure; no fine retained modes are truncated for sampling.
+Deleting the same member at every resolution gives jackknife SEs of each
+distance `d_j` and, using the paired deletions, each `d_j-d_(j+1)`.
+The declared threshold `z` defaults to two: every consecutive difference above
+`z*SE` passes the refinement gate, any difference below `-z*SE` fails, and
+otherwise refinement is inconclusive.
+Inconsistent scaling or any abstained scaling fit is inconclusive and cannot
+yield a passed route. Runtime failures return guard/invariant evidence without
+statistical metrics; finite metric evidence is also a gate.
+
+Inputs bind measure/coupling IDs and per-resolution compilation, prepared
+temporal method, prepared/result ensemble, discretization, and SVV plan/prepared
+IDs. Support binds kernel, two spatial dimensions, `fourier-pseudospectral`,
+`courant-guarded-etdrk4`, and `convergence_certified=false`. The power-law exponent
+is a declared parameter: the family is motivated by Herde et al. (2024),
+Appendix B.2.2, Eq. (42); LMPP (arXiv:1909.06615) motivates only metrics and
+structure functions. Passing finite-campaign gates is not a continuum claim.
+
+For example:
+
+```bash
+.venv/bin/python -m tools.incompressible_flow_qualification \
+  periodic-statistical-solution \
+  --strength 0.1 --order 1 --cutoff-scale 0.5 --cutoff-exponent 0.25 \
+  --kernel tadmor_step --power-law-exponent 1.5 --velocity-scale 0.02 \
+  --maximum-courant-number 0.5 --mode-counts 16 32 64 --members 6 --steps 2 \
+  --refinement-z 2 \
+  --output benchmarks/incompressible_statistical_qualification.json
+```
 
 ### LES campaign status
 
@@ -770,3 +917,264 @@ provenance. Admission does not change or retry the owner route.
 ---
 
 ::: phydrax.applications.incompressible_flow.ImmersedRuntimeAdmissionResult
+
+## Volume-fraction immersed CFD–DEM
+
+This first-order direct-forcing route is distinct from regularized marker
+penalty coupling and sharp cut-cell interface traction. Its candidate
+`volume-fraction-cfd-dem` support tuple is not part of the existing six-regime
+immersed DNS reference portfolio.
+
+`MACSDFCutFractionPlan` binds canonical prepared rigid-shape signed queries
+to fixed cell/subbox/query capacities. It returns per-body estimates, union
+lower/upper bounds, an explicitly bounded midpoint estimate, unresolved
+fraction, sign reliability, domain support, and overflow evidence. The
+unresolved threshold applies **per cell**. Unsupported active queries,
+superquadrics without certified bounds, capacity overflow, and uncontained
+bodies are not silently repaired. Periodic fluid boundaries do not imply
+periodic posed-shape images.
+
+`MACVolumeFractionIBCFDEMCouplingPlan` requires identical MAC operator
+identities for its fluid, geometry, and projection owners, positive scalar
+intrinsic densities, and solid density consistent with active DEM mass/volume.
+Mixture inertia is \(\rho_m=(1-\phi)\rho_f+\phi\rho_s\) and solid mass
+fraction is \(\psi=\phi\rho_s/\rho_m\). Centered geometric face fractions
+define direct forcing
+\(\mathbf f_{\rm IB}=\rho_m\psi(\mathbf u_s-\mathbf u^*)/\Delta t\).
+Normalized per-body shares partition overlaps. Body load density is
+\(\alpha_b[\psi\mathbf b_\sigma-(1-\psi)\mathbf f_{\rm IB}]\).
+The load/rigid-velocity pullback uses actual face locations and face-dual
+measures, retaining discrete force, torque, and work identities while
+approximating volume integration.
+
+`MACVolumeFractionIBEvaluation` separates pressure/viscous loads from direct
+reaction. Its impulse residual balances **external-fluid**
+\((1-\psi)\mathbf f_{\rm IB}\), not total mixture forcing; the internal
+impulse is separately reported. Torque residual is about the world origin,
+while body torque is about its COM.
+
+`MACVolumeFractionIBState.initialize` accepts the fluid owner's native packed
+density/momentum state and optional pressure. An advance builds unprojected
+native transport/viscous prediction including the accepted pressure gradient,
+evaluates direct forcing, performs **one** variable-density pressure-increment
+projection, and evaluates final total-pressure/viscous loads. It then
+advances native compliant DEM, and admits candidate-pose geometry. Accepted
+fluid coordinates use candidate geometric mixture density and preserve the
+projected physical velocity through native donor-density momentum. Geometry
+owns next-step density; the miscible-density transport result does not replace
+it. Fluid, DEM, pressure, impulse ledgers, and counters commit atomically.
+
+Invalid step size, geometry/capacity/support, transport, force/torque/work
+identity, projection, DEM, or candidate-pose admission failure retains the
+entire previous accepted state. `MACVolumeFractionIBStepResult` preserves
+candidate state, `evaluation`, `pressure_projection`, `dem_step`,
+`candidate_cut_fraction`, and status. No retries or capacity growth are
+performed. See the [immersed-boundary guide](../../guides_immersed_boundary.md#volume-fraction-direct-forcing-cfddem)
+for the discrete formulas, reference attribution, real sphere-settling
+candidate tolerance, and limitations.
+
+::: phydrax.equations.MACSDFCutFractionPlan
+
+---
+
+::: phydrax.equations.MACSDFCutFractionEvaluation
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBCFDEMCouplingPlan
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBEvaluation
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBStatus
+
+---
+
+::: phydrax.equations.evaluate_mac_volume_fraction_ib_cfd_dem
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBState
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBStepResult
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBStepStatus
+
+---
+
+::: phydrax.solver.advance_mac_volume_fraction_ib_cfd_dem
+## Periodic incompressible initial measures
+
+Families synthesize orthonormal modal coefficients on periodic Fourier boxes.
+Taylor–Green is direct modal synthesis; patch and cell vorticities use analytic
+integrals with explicit mean neutralization. A patch is a circular patch **plus
+a neutralizing uniform background**, not an isolated nonzero-mean torus vortex.
+The displaced shear layer combines the layer profile from
+[Lanthaler–Mishra–Parés-Pulido §5.2, Eq. (42)](https://arxiv.org/abs/1909.06615)
+with the mode-weighted displacement law from
+[Poseidon Appendix B.2.3, Eq. (45)](https://arxiv.org/html/2405.19101v2#A2.SS2.SSS3).
+It is not LMP Eq. (43)'s single-frequency displacement law, nor equivalent to
+Poseidon Eq. (44)'s layer (whose tanh argument omits displacement).
+The profile is evaluated at `mod(y + sigma(x), 1)` before both the branch
+comparison and tanh argument, defining its periodic extension on the torus.
+Periodicity requires no displacement bound. Thickness remains strictly positive
+for smooth layers, and perturbation amplitude nonnegative as the declared
+amplitude law. An explicit oversampling policy and separate discarded-tail/
+Leray-projection energies accompany the hybrid family.
+
+The sinusoidal sheet follows Poseidon Eqs. (46)–(50): vectorized host
+Gauss–Legendre radial Hankel quadrature, split at the mollifier's polynomial
+break, resolves the largest retained |k|ρ and checks normalization. A bounded
+type-1 NUFFT computes
+the **exact discrete sum over trapezoid quadrature**, never exact continuum
+coefficients. Each state reports its Q-versus-2Q residual (not a certified
+continuum error bound). Point quadrature and member workspaces are refused
+before execution when the declared byte cap cannot accommodate them.
+
+Member parameters depend on the measure identity and member index, not batch
+or chunk size. Resource policies have a distinct preparation identity.
+`restrict_periodic_flow_initial_state(state, target, maximum_bytes=...)` is the
+single restriction API: canonical retained-band gather plus target Nyquist
+zeroing, without reprojection. Nested restrictions are bitwise transitive.
+Scientific identities and root-key/coupling identities persist across
+restrictions. Byte-budget refusals raise `MemoryBudgetError` with
+`budget="maximum_bytes"`, required bytes, and limit bytes; wrong scalar kinds
+(including booleans and strings) raise `TypeError`.
+
+`velocity_from_vorticity` refuses nonfinite input, nonzero mean, and 3D
+longitudinal vorticity with traced `eqx.error_if` validation, including under
+JIT. For `curl(u)=∂x u_y−∂y u_x`, its 2D convention is
+`psi_hat=omega_hat/|k|²`, `u_hat=(i k_y,−i k_x)*psi_hat`.
+Planar embedding scales coefficients by `sqrt(L_invariant)`: integrated energy
+scales by invariant length, while energy per unit length and planar dynamics
+are preserved. Embedded measure and coupling identities depend on the source
+measure, invariant axis/domain/length, and zero-mode embedding policy, never on
+the target resolution. `restrict_periodic_flow_initial_state` owns retained-band
+restriction of embedded states (and ordinary initial states), preserving those
+identities so coupled multi-resolution planar 3D campaigns can align.
+
+::: phydrax.discretization.spectral.PeriodicLerayProjector.velocity_from_vorticity
+
+::: phydrax.discretization.spectral.PeriodicLerayProjector.vorticity_from_velocity
+
+::: phydrax.applications.incompressible_flow.TaylorGreenFamily
+
+::: phydrax.applications.incompressible_flow.ShearLayerProfile
+
+::: phydrax.applications.incompressible_flow.ShearLayerFamily
+
+::: phydrax.applications.incompressible_flow.VortexPatchFamily
+
+::: phydrax.applications.incompressible_flow.PiecewiseConstantVorticityFamily
+
+::: phydrax.applications.incompressible_flow.SinusoidalVortexSheetFamily
+
+::: phydrax.applications.incompressible_flow.PowerLawVelocityFamily
+
+::: phydrax.applications.incompressible_flow.PeriodicFlowFamily
+
+::: phydrax.applications.incompressible_flow.PeriodicFlowInitialMeasure
+
+::: phydrax.applications.incompressible_flow.PreparedPeriodicFlowInitialMeasure
+
+::: phydrax.applications.incompressible_flow.PeriodicFlowInitialState
+
+::: phydrax.applications.incompressible_flow.embed_planar_velocity
+
+::: phydrax.applications.incompressible_flow.restrict_periodic_flow_initial_state
+
+## Statistical periodic-flow evidence
+
+The [statistical-flow guide](../../guides_statistical_incompressible_flow.md)
+connects initial measures, SVV, Courant-guarded ETDRK4, the solver-owned
+fixed-step ensemble, radial increment moments, and grouped operator data.
+These APIs report finite-campaign evidence, not convergence, compactness, or
+exact multidimensional correlation-marginal Wasserstein distance.
+
+`prepare_periodic_flow_ensemble(...) -> PreparedPeriodicFlowEnsemble` binds the
+native prepared executable to its initial measure; `.execute()` returns a
+`PeriodicFlowEnsembleResult`. That result validates scientific member path labels
+and the problem's discretization identity, not shape coincidence.
+`CoupledEnsemblePair` validates measure/coupling identities, ordered paths, member
+indices, weights and saves on construction. Alignment preserves the original
+owners for identity permutations and otherwise gathers the fine solutions once.
+
+Metrics alias-sum fine modes onto the coarse lattice before the coarse inverse
+transform, exactly reproducing nested fine-grid injection without reconstructing
+the fine physical grid or truncating its unresolved modes. All three accept
+`member_chunk_size: int = 8` and `maximum_workspace_bytes: int = 2**28`, admitting
+live shared-node, modal/transform and transport buffers with `MemoryBudgetError`.
+The sliced metric uses this common cap, not a tuple-only cap. Componentwise
+Wasserstein is exact only for scalar marginals; paired norm cost is a coupling
+upper bound; sliced distances report projection Monte Carlo uncertainty.
+
+Scaling uses a declared resolved radius window and paired member jackknife
+replicates across radii and resolutions. Fit status and abstention reason own
+validity; a reported exponent is not a theorem certificate. Retained-band
+dataset transfer is a separate observation policy, not statistical metric
+alignment. `periodic_flow_operator_dataset(result: PeriodicFlowEnsembleResult, /,
+..., member_chunk_size: int = 8, maximum_dataset_bytes: int = 2**31)` owns chunked
+conversion with retained-plus-transient byte admission. Vorticity uses the
+projector-owned curl, inverse to Biot--Savart for admissible mean-zero solenoidal
+velocities. Leakage grouping is coupling/member-based: it shares groups across
+coupled resolutions but distinguishes different measures using the same key.
+
+::: phydrax.applications.incompressible_flow.prepare_periodic_flow_ensemble
+
+::: phydrax.applications.incompressible_flow.PreparedPeriodicFlowEnsemble
+
+::: phydrax.applications.incompressible_flow.PeriodicFlowEnsembleResult
+
+::: phydrax.applications.incompressible_flow.CoupledEnsemblePair
+
+::: phydrax.applications.incompressible_flow.align_coupled_ensembles
+
+::: phydrax.applications.incompressible_flow.componentwise_empirical_wasserstein
+
+::: phydrax.applications.incompressible_flow.paired_coupling_upper_bound
+
+::: phydrax.applications.incompressible_flow.sliced_joint_marginal_distance
+
+::: phydrax.applications.incompressible_flow.StructureFunctionScalingPlan
+
+::: phydrax.applications.incompressible_flow.ComponentwiseEmpiricalWassersteinResult
+
+::: phydrax.applications.incompressible_flow.PairedCouplingUpperBoundResult
+
+::: phydrax.applications.incompressible_flow.SlicedJointMarginalDistanceResult
+
+::: phydrax.applications.incompressible_flow.ScalingEvidenceStatus
+
+::: phydrax.applications.incompressible_flow.StructureFunctionScalingFit
+
+::: phydrax.applications.incompressible_flow.InstantaneousStructureFunctionScalingEvidence
+
+Time quadrature returns a separate finite time-integrated evidence record,
+retaining the explicit weights rather than labeling an integrated result as an
+instantaneous snapshot.
+
+::: phydrax.applications.incompressible_flow.TimeIntegratedStructureFunctionScalingEvidence
+
+## Periodic-flow operator data
+
+`periodic_flow_operator_dataset` produces member-major input/target cases on a
+declared observation grid. Its `initial` input is the selected input-time field;
+`conditions` supplies scalar lead time; queries and targets use the selected
+`velocity` or `vorticity` field. Coarser observation grids use modal retained-band
+restriction before reconstruction, not physical-node injection. Only selected
+saves must be valid and finite; selected invalid saves are refused and target
+times must be later than the input time. Dataset byte admission precedes
+materialization. Use the default grouped
+`phydrax.nn.operator.training.split_operator_dataset` policy to keep every saved
+time and coupled resolution of one realization in the same partition.
+
+::: phydrax.applications.incompressible_flow.PeriodicFlowDatasetField
+
+::: phydrax.applications.incompressible_flow.periodic_flow_operator_dataset

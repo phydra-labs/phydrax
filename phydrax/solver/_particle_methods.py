@@ -16,9 +16,9 @@ from .._trainable import NonTrainableState
 from ..discretization.flip import FLIPRuntimeState
 from ..discretization.particle import (
     DEMRuntimeState,
+    PreparedCompliantDEMDynamics,
     PreparedDFSPH,
     PreparedIISPH,
-    PreparedSoftSphereDEMDynamics,
     PreparedTransportVelocityDynamics,
 )
 from ..equations._flip import CompiledFLIPProblem
@@ -140,11 +140,11 @@ class DFSPHFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
 class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     """Fixed-step adapter for prepared soft-sphere DEM dynamics."""
 
-    dynamics: PreparedSoftSphereDEMDynamics
+    dynamics: PreparedCompliantDEMDynamics
     method_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, dynamics: PreparedSoftSphereDEMDynamics, /) -> None:
+    def __init__(self, dynamics: PreparedCompliantDEMDynamics, /) -> None:
         self.dynamics = dynamics
         self.method_id = canonical_fingerprint(
             {

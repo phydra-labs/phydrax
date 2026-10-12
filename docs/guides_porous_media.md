@@ -231,3 +231,29 @@ exchange. These repository checks are not field calibration.
 
 The solid-Earth benchmark and qualification commands are listed in the
 [native geophysics guide](guides_geophysics.md).
+
+## Deformable saturated skeleton with separate water points
+
+The [double-point MPM guide](guides_mpm_double_point.md) describes a distinct
+solid–water dynamics path: dense Cartesian single-field USL MPM plus FLIP
+water particles, one exact-adjoint mixed `D = [D_s, D_f]` projection, physical
+phase masses, and lagged implicit interphase drag. Physical pressure uses
+cell-volume pairing and a mandatory reservoir datum, not a mean-zero gauge.
+Material stress remains effective skeleton stress; accepted pressure acts
+once before drag, followed by one pressure increment. Invalid fractions are
+not clipped, phase masks constrain both divergence and transpose, and failure
+retains both committed phases.
+
+For incompressible constituents (`alpha=1`, `S=0`), low inertia gives discharge
+`q = n(v_f-v_s) = (n²/beta)(-grad p + rho_f g)`. Hydraulic conductivity is
+`k = n² rho_f g / beta` (m/s), while intrinsic permeability is
+`kappa = mu_f n² / beta` (m²). Under small strain, constant porosity/drag,
+constant total vertical stress, and lateral constraint, the constrained
+skeleton modulus `H` gives Terzaghi diffusion `p_t = C_v p_zz` with
+`C_v = H n² / beta`. These assumptions do not establish a finite-storage Biot,
+unsaturated, large-strain consolidation, or Mandel–Cryer qualification.
+
+`examples/double_point_mpm.py` constructs the real coupled plan and prints one
+atomic attempt's status and balance/solver evidence; it is not a field
+calibration or a reported convergence study. Axisymmetric, sparse, multifield,
+and non-USL MPM configurations are explicitly unsupported by this coupled path.

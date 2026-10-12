@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -16,6 +15,8 @@ from phydrax import ein
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....combinatorial import ShortestPathFieldPlan, ShortestPathFieldStatus
+from ....sparse import EdgeRelation
 
 
 class TravelTimeResult(StrictModule):
@@ -24,15 +25,19 @@ class TravelTimeResult(StrictModule):
     path_margin_s: Array
     converged: Array
     derivative_available: Array
+    field_status: Array
+    bellman_residual: Array
+    dual_residual: Array
+    reachable: Array
 
 
 class TravelTimeGraphPlan(StrictModule, NonTrainableState):
-    """Exact finite graph eikonal relaxation with fixed-path derivative evidence."""
+    """Finite graph travel times with an explicit host-Dijkstra boundary."""
 
     node_positions_m: Array
     edge_nodes: Array
     edge_lengths_m: Array
-    iteration_count: int = eqx.field(static=True)
+    shortest_path_plan: ShortestPathFieldPlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, node_positions_m: ArrayLike, edge_nodes: ArrayLike, /) -> None:
@@ -60,7 +65,14 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
         self.node_positions_m = jnp.asarray(positions)
         self.edge_nodes = jnp.asarray(directed, dtype=jnp.int32)
         self.edge_lengths_m = jnp.asarray(lengths)
-        self.iteration_count = positions.shape[0] - 1
+        self.shortest_path_plan = ShortestPathFieldPlan(
+            EdgeRelation(
+                directed[:, 0],
+                directed[:, 1],
+                source_size=positions.shape[0],
+                target_size=positions.shape[0],
+            )
+        )
         self.plan_id = canonical_fingerprint(
             {"kind": "travel-time-graph", "positions_m": positions, "edges": directed}
         )
@@ -82,72 +94,24 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
         source = int(source_node)
         if not 0 <= source < self.node_positions_m.shape[0]:
             raise ValueError("Travel-time source node is out of range.")
-        edge_time = self.edge_lengths_m / speed
-        infinity = jnp.asarray(jnp.inf, dtype=edge_time.dtype)
-        times = jnp.full((self.node_positions_m.shape[0],), infinity).at[source].set(0.0)
-        predecessor = jnp.full(times.shape, -1, dtype=jnp.int32)
-        second = jnp.full_like(times, infinity)
-
-        def relax(
-            _: Array, state: tuple[Array, Array, Array]
-        ) -> tuple[Array, Array, Array]:
-            current_times, current_predecessor, current_second = state
-            candidates = current_times[self.edge_nodes[:, 0]] + edge_time
-            destination = self.edge_nodes[:, 1]
-            best = jnp.full_like(current_times, infinity).at[destination].min(candidates)
-            sentinel = jnp.asarray(self.edge_nodes.shape[0], dtype=jnp.int32)
-            best_edge = jnp.full(current_times.shape, sentinel, dtype=jnp.int32)
-            is_best = candidates == best[destination]
-            edge_ids = jnp.arange(candidates.size, dtype=jnp.int32)
-            best_edge = best_edge.at[destination].min(
-                jnp.where(is_best, edge_ids, sentinel)
-            )
-            candidate_second = jnp.where(is_best, infinity, candidates)
-            second_best = (
-                jnp.full_like(current_times, infinity)
-                .at[destination]
-                .min(candidate_second)
-            )
-            improved = best < current_times
-            current_second = jnp.where(
-                improved,
-                jnp.minimum(current_times, second_best),
-                jnp.minimum(current_second, second_best),
-            )
-            current_predecessor = jnp.where(
-                improved,
-                best_edge,
-                current_predecessor,
-            )
-            current_times = jnp.minimum(current_times, best)
-            return (
-                current_times.at[source].set(0.0),
-                current_predecessor,
-                current_second,
-            )
-
-        times, predecessor, second = jax.lax.fori_loop(
-            0,
-            self.iteration_count,
-            relax,
-            (times, predecessor, second),
+        field = self.shortest_path_plan.solve(
+            self.edge_lengths_m / speed, jnp.asarray([source], dtype=jnp.int32)
         )
-        residual_candidates = times[self.edge_nodes[:, 0]] + edge_time
-        bellman = (
-            jnp.full_like(times, infinity)
-            .at[self.edge_nodes[:, 1]]
-            .min(residual_candidates)
-        )
-        converged = jnp.all(
-            times <= bellman + 64 * jnp.finfo(times.dtype).eps * jnp.maximum(times, 1.0)
-        )
-        margin = second - times
-        margin = margin.at[source].set(infinity)
-        derivative_available = converged & jnp.all(
-            jnp.isinf(margin) | (margin > path_margin_tolerance_s)
+        converged = field.status == int(ShortestPathFieldStatus.SUCCESS)
+        margin = field.margin.at[source].set(jnp.inf)
+        derivative_available = field.derivative_regular & jnp.all(
+            ~field.reachable | (margin > path_margin_tolerance_s)
         )
         return TravelTimeResult(
-            times, predecessor, margin, converged, derivative_available
+            field.distance,
+            field.predecessor_edge,
+            margin,
+            converged,
+            derivative_available,
+            field.status,
+            field.bellman_residual,
+            field.dual_residual,
+            field.reachable,
         )
 
 

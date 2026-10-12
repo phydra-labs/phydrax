@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, assert_never, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -33,7 +33,9 @@ from ...solver._channel_flow import (
 )
 from ...solver._etdrk import (
     _etdrk_update,
+    _real_temporal,
     ETDRKMethod,
+    PreparedCourantGuardedETDRKMethod,
     PreparedETDRKMethod,
     PreparedLESStabilityGuardedETDRKMethod,
 )
@@ -59,6 +61,7 @@ from ...solver._runtime_lifecycle import (
     ExactTimeSchedule,
     RuntimeCheckpointEncodingPlan,
     RuntimeCheckpointLeafBinding,
+    RuntimeIdentityInventory,
     StreamingMomentPlan,
 )
 from ...solver._semilinear_drift import SemilinearDrift
@@ -363,6 +366,48 @@ class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod, NonTrainable
         )
 
 
+def _bind_periodic_method(
+    dynamics: CompiledIncompressibleSpectralDynamics | None,
+    method: PreparedETDRKMethod
+    | PreparedLESStabilityGuardedETDRKMethod
+    | PreparedCourantGuardedETDRKMethod,
+    /,
+) -> PreparedETDRKMethod:
+    """Validate the binding and return the base ETDRK, never the execution route."""
+    match method:
+        case PreparedETDRKMethod():
+            if dynamics is not None and dynamics.algebraic_les is not None:
+                raise ValueError(
+                    "Static periodic LES production requires PreparedLESStabilityGuardedETDRKMethod."
+                )
+            base = method
+        case PreparedLESStabilityGuardedETDRKMethod():
+            if dynamics is not None:
+                if dynamics.dynamic_les is not None:
+                    raise ValueError(
+                        "Dynamic periodic LES uses its transactional ETDRK route, not the static LES guard."
+                    )
+                if dynamics.algebraic_les is None:
+                    raise ValueError("Guarded ETDRK cannot be bound to no-LES dynamics.")
+                if method.dynamics.compilation_id != dynamics.compilation_id:
+                    raise ValueError(
+                        "Guarded ETDRK and production dynamics compilation identities differ."
+                    )
+            base = method.base_method
+        case PreparedCourantGuardedETDRKMethod():
+            if dynamics is not None:
+                if method.dynamics.compilation_id != dynamics.compilation_id:
+                    raise ValueError(
+                        "Guarded ETDRK and production dynamics compilation identities differ."
+                    )
+            base = method.base_method
+        case _:
+            assert_never(method)
+    if dynamics is not None and base.drift.drift_id != dynamics.semilinear_drift.drift_id:
+        raise ValueError("Prepared ETDRK and compiled periodic dynamics disagree.")
+    return base
+
+
 def prepare_constant_power_periodic_method(
     method: PreparedETDRKMethod,
     forcing: ConstantPowerFourierForcingPlan,
@@ -370,6 +415,10 @@ def prepare_constant_power_periodic_method(
 ) -> _PreparedConstantPowerPeriodicMethod:
     """Explicitly add constant-power forcing to one already prepared ETDRK drift."""
 
+    if isinstance(method, PreparedCourantGuardedETDRKMethod):
+        raise TypeError(
+            "Constant-power adapter is unavailable for Courant-guarded ETDRK."
+        )
     if not isinstance(method, PreparedETDRKMethod):
         raise TypeError("method must be PreparedETDRKMethod.")
     if not isinstance(forcing, ConstantPowerFourierForcingPlan):
@@ -413,7 +462,6 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
     realization: OrnsteinUhlenbeckRealization
     method_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         base: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod,
@@ -421,13 +469,19 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
         realization: OrnsteinUhlenbeckRealization,
         /,
     ) -> None:
+        if isinstance(base, PreparedCourantGuardedETDRKMethod):
+            raise TypeError("OU forcing is unavailable for Courant-guarded ETDRK.")
         if not isinstance(
             base, (PreparedETDRKMethod, PreparedLESStabilityGuardedETDRKMethod)
         ):
             raise TypeError(
                 "base must be a prepared ETDRK or LES-stability-guarded ETDRK."
             )
-        etdrk = base if isinstance(base, PreparedETDRKMethod) else base.base_method
+        if not isinstance(forcing, SolenoidalOUForcingPlan):
+            raise TypeError("forcing must be SolenoidalOUForcingPlan.")
+        if not isinstance(realization, OrnsteinUhlenbeckRealization):
+            raise TypeError("realization must be OrnsteinUhlenbeckRealization.")
+        etdrk = _bind_periodic_method(None, base)
         if etdrk.coordinates is None:
             raise ValueError("OU-forced periodic ETDRK requires Hermitian coordinates.")
         if forcing.discretization_id != etdrk.coordinates.discretization.prepared_id:
@@ -509,13 +563,13 @@ class PreparedOUForcedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
         del step_index
         etdrk = self.etdrk
         value = etdrk._validate_state(state.velocity)
-        step = jnp.asarray(step_size, dtype=value.real.dtype).reshape(())
+        step = _real_temporal(step_size, value.real.dtype)
         step = eqx.error_if(
             step,
             ~(jnp.isfinite(step) & (step > 0.0)),
             "OU-forced ETDRK step size must be finite and positive.",
         )
-        scheduled_start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        scheduled_start = _real_temporal(time, step.dtype)
         start = state.forcing_state.time
         schedule_defect = jnp.abs(scheduled_start - start)
         schedule_tolerance = (
@@ -768,13 +822,13 @@ class PreparedPeriodicDynamicETDRKMethod(AbstractFixedStepMethod, NonTrainableSt
     ) -> FixedStepResult:
         del step_index
         velocity, continuation = self._split_state(state)
-        step = jnp.asarray(step_size, dtype=velocity.real.dtype).reshape(())
+        step = _real_temporal(step_size, velocity.real.dtype)
         step = eqx.error_if(
             step,
             ~(jnp.isfinite(step) & (step > 0.0)),
             "Dynamic ETDRK step size must be finite and positive.",
         )
-        start = jnp.asarray(time, dtype=step.dtype).reshape(())
+        start = _real_temporal(time, step.dtype)
         _, incoming_valid, incoming_defect = self.base_method._boundary_evidence(velocity)
         view = _PeriodicDynamicNonlinearView(self.dynamics, continuation)
         candidate_velocity = _etdrk_update(
@@ -1078,10 +1132,10 @@ class _PeriodicStatisticsEvaluator(StrictModule):
                 "ou_forcing": None if ou_forcing is None else ou_forcing.forcing_id,
                 "stage": "compiled-periodic-incompressible-stage",
                 "cadence": "every-accepted-step",
-                "payload": "full-shells-fields-and-sgs-evidence",
+                "payload": "seven-shells-fields-svv-and-sgs-evidence",
             }
         )
-        self.value_size = 6 * statistics.geometry.bin_count + 51
+        self.value_size = 7 * statistics.geometry.bin_count + 54
 
     def snapshot(
         self,
@@ -1151,6 +1205,7 @@ class _PeriodicStatisticsEvaluator(StrictModule):
         shells = (
             result.energy_shells.integral,
             result.molecular_dissipation_shells.integral,
+            result.spectral_viscosity_dissipation_shells.integral,
             result.advective_transfer_shells.integral,
             result.sgs_transfer_shells.integral,
             result.forcing_injection_shells.integral,
@@ -1162,6 +1217,9 @@ class _PeriodicStatisticsEvaluator(StrictModule):
                 result.mean_kinetic_energy,
                 result.molecular_dissipation,
                 result.mean_molecular_dissipation,
+                result.spectral_viscosity_dissipation,
+                result.mean_spectral_viscosity_dissipation,
+                result.numerical_dissipation_fraction,
                 result.advective_energy_rate,
                 result.mean_advective_energy_rate,
                 result.sgs_energy_rate,
@@ -1444,6 +1502,129 @@ class _PreparedProductionRoute:
         return self.runtime.checkpoint(state)
 
 
+def _validate_periodic_production_identities(
+    dynamics: CompiledIncompressibleSpectralDynamics,
+    coordinates: HermitianSpectralCoordinates,
+    statistics: PeriodicModalTurbulenceStatisticsPlan,
+    case: PeriodicSpectralProductionCase,
+    forcing: ConstantPowerFourierForcingPlan | None,
+    ou_forcing: SolenoidalOUForcingPlan | None,
+) -> None:
+    discretization_id = dynamics.discretization.prepared_id
+    projector_id = dynamics.projector.projector_id
+    if (
+        coordinates.discretization.prepared_id != discretization_id
+        or statistics.compilation_id != dynamics.compilation_id
+        or statistics.source_problem_id != dynamics.problem.problem_id
+        or statistics.discretization_id != discretization_id
+        or statistics.projector_id != projector_id
+    ):
+        raise ValueError(
+            "Periodic dynamics, ETDRK coordinates, and statistics identities differ."
+        )
+    if (
+        case.source_problem_id != dynamics.problem.problem_id
+        or case.compilation_id != dynamics.compilation_id
+        or case.discretization_id != discretization_id
+        or case.projector_id != projector_id
+    ):
+        raise ValueError("Periodic production case belongs to another compilation.")
+    if forcing is not None and (
+        forcing.discretization_id != discretization_id
+        or forcing.projector_id != projector_id
+    ):
+        raise ValueError("Periodic forcing belongs to another compiled grid.")
+    if ou_forcing is not None and (
+        ou_forcing.discretization_id != discretization_id
+        or ou_forcing.projector_id != projector_id
+    ):
+        raise ValueError("OU forcing belongs to another compiled grid.")
+
+
+def _select_periodic_production_method(
+    dynamics: CompiledIncompressibleSpectralDynamics,
+    method: PreparedETDRKMethod
+    | PreparedLESStabilityGuardedETDRKMethod
+    | PreparedCourantGuardedETDRKMethod,
+    base_method: PreparedETDRKMethod,
+    forcing: ConstantPowerFourierForcingPlan | None,
+    constant_power_wiring: ConstantPowerWiring,
+    ou_forcing: SolenoidalOUForcingPlan | None,
+    ou_realization: OrnsteinUhlenbeckRealization | None,
+) -> tuple[AbstractFixedStepMethod, ConstantPowerFourierForcingPlan | None, str | None]:
+    dynamic = dynamics.dynamic_les is not None
+    compiled_forcing_id = (
+        None if dynamics.problem.forcing is None else dynamics.problem.forcing_id
+    )
+    selected_method: AbstractFixedStepMethod = method
+    observer_forcing: ConstantPowerFourierForcingPlan | None = None
+    if dynamic and ou_forcing is not None:
+        raise ValueError(
+            "OU forcing is not yet composable with transactional dynamic LES state."
+        )
+    if dynamic and forcing is not None and constant_power_wiring == "adapter":
+        raise ValueError(
+            "Dynamic LES requires constant-power forcing compiled into the dynamics."
+        )
+    if ou_forcing is not None and ou_realization is not None:
+        if isinstance(method, PreparedCourantGuardedETDRKMethod):
+            raise TypeError("OU forcing is unavailable for Courant-guarded ETDRK.")
+        if compiled_forcing_id is not None:
+            raise ValueError("OU composition requires otherwise unforced dynamics.")
+        selected_method = prepare_ou_forced_periodic_method(
+            method, ou_forcing, ou_realization
+        )
+    elif forcing is not None and constant_power_wiring == "adapter":
+        if compiled_forcing_id is not None:
+            raise ValueError(
+                "Constant-power adapter requires otherwise unforced dynamics."
+            )
+        if isinstance(method, PreparedCourantGuardedETDRKMethod):
+            raise TypeError(
+                "Constant-power adapter is unavailable for Courant-guarded ETDRK."
+            )
+        if isinstance(method, PreparedLESStabilityGuardedETDRKMethod):
+            raise TypeError(
+                "Constant-power adapter is unavailable for guarded LES; "
+                "compile the forcing into the periodic dynamics."
+            )
+        selected_method = prepare_constant_power_periodic_method(base_method, forcing)
+        observer_forcing = forcing
+    elif forcing is not None and compiled_forcing_id != forcing.forcing_id:
+        raise ValueError(
+            "The compiled periodic dynamics do not bind the declared constant-power forcing."
+        )
+    if dynamic:
+        selected_method = PreparedPeriodicDynamicETDRKMethod(base_method, dynamics)
+    return selected_method, observer_forcing, compiled_forcing_id
+
+
+def _validate_periodic_forcing_inputs(
+    forcing: ConstantPowerFourierForcingPlan | None,
+    ou_forcing: SolenoidalOUForcingPlan | None,
+    ou_realization: OrnsteinUhlenbeckRealization | None,
+    constant_power_wiring: ConstantPowerWiring,
+) -> ConstantPowerWiring:
+    if forcing is not None and not isinstance(forcing, ConstantPowerFourierForcingPlan):
+        raise TypeError("constant_power_forcing has the wrong type.")
+    if (ou_forcing is None) != (ou_realization is None):
+        raise ValueError("ou_forcing and ou_realization must be supplied together.")
+    if forcing is not None and ou_forcing is not None:
+        raise ValueError("Constant-power and OU forcing are mutually exclusive.")
+    if ou_forcing is not None and not isinstance(ou_forcing, SolenoidalOUForcingPlan):
+        raise TypeError("ou_forcing has the wrong type.")
+    if ou_realization is not None and not isinstance(
+        ou_realization, OrnsteinUhlenbeckRealization
+    ):
+        raise TypeError("ou_realization has the wrong type.")
+    wiring = parse(constant_power_wiring, ConstantPowerWiring, "constant_power_wiring")
+    if forcing is None and wiring != "compiled":
+        raise ValueError(
+            "constant_power_wiring='adapter' requires constant_power_forcing."
+        )
+    return wiring
+
+
 class PeriodicSpectralProductionPlan(StrictModule):
     """Identity-closed periodic production for compiled incompressible dynamics."""
 
@@ -1471,7 +1652,9 @@ class PeriodicSpectralProductionPlan(StrictModule):
     def __init__(
         self,
         dynamics: CompiledIncompressibleSpectralDynamics,
-        method: PreparedETDRKMethod | PreparedLESStabilityGuardedETDRKMethod,
+        method: PreparedETDRKMethod
+        | PreparedLESStabilityGuardedETDRKMethod
+        | PreparedCourantGuardedETDRKMethod,
         statistics: PeriodicModalTurbulenceStatisticsPlan,
         case: PeriodicSpectralProductionCase,
         /,
@@ -1498,128 +1681,40 @@ class PeriodicSpectralProductionPlan(StrictModule):
         maximum_statistics_batches: int = 0,
     ) -> None:
         if not isinstance(
-            method, (PreparedETDRKMethod, PreparedLESStabilityGuardedETDRKMethod)
+            method,
+            (
+                PreparedETDRKMethod,
+                PreparedLESStabilityGuardedETDRKMethod,
+                PreparedCourantGuardedETDRKMethod,
+            ),
         ):
             raise TypeError(
                 "method must be a prepared ETDRK or LES-stability-guarded ETDRK."
             )
         forcing = constant_power_forcing
-        if forcing is not None and not isinstance(
-            forcing, ConstantPowerFourierForcingPlan
-        ):
-            raise TypeError("constant_power_forcing has the wrong type.")
-        if (ou_forcing is None) != (ou_realization is None):
-            raise ValueError("ou_forcing and ou_realization must be supplied together.")
-        if forcing is not None and ou_forcing is not None:
-            raise ValueError("Constant-power and OU forcing are mutually exclusive.")
-        if ou_forcing is not None and not isinstance(ou_forcing, SolenoidalOUForcingPlan):
-            raise TypeError("ou_forcing has the wrong type.")
-        if ou_realization is not None and not isinstance(
-            ou_realization, OrnsteinUhlenbeckRealization
-        ):
-            raise TypeError("ou_realization has the wrong type.")
-        constant_power_wiring = parse(
-            constant_power_wiring, ConstantPowerWiring, "constant_power_wiring"
+        constant_power_wiring = _validate_periodic_forcing_inputs(
+            forcing, ou_forcing, ou_realization, constant_power_wiring
         )
-        if forcing is None and constant_power_wiring != "compiled":
-            raise ValueError(
-                "constant_power_wiring='adapter' requires constant_power_forcing."
-            )
-        guarded = isinstance(method, PreparedLESStabilityGuardedETDRKMethod)
-        dynamic = dynamics.dynamic_les is not None
-        if dynamics.algebraic_les is not None:
-            if not guarded:
-                raise ValueError(
-                    "Static periodic LES production requires PreparedLESStabilityGuardedETDRKMethod."
-                )
-            if method.dynamics.compilation_id != dynamics.compilation_id:
-                raise ValueError(
-                    "Guarded ETDRK and production dynamics compilation identities differ."
-                )
-            base_method = method.base_method
-        elif dynamic:
-            if guarded:
-                raise ValueError(
-                    "Dynamic periodic LES uses its transactional ETDRK route, not the static LES guard."
-                )
-            base_method = method
-        else:
-            if guarded:
-                raise ValueError("Guarded ETDRK cannot be bound to no-LES dynamics.")
-            base_method = method
-        if base_method.drift.drift_id != dynamics.semilinear_drift.drift_id:
-            raise ValueError("Prepared ETDRK and compiled periodic dynamics disagree.")
+        base_method = _bind_periodic_method(dynamics, method)
         coordinates = base_method.coordinates
         if coordinates is None:
             raise ValueError(
                 "Periodic production requires full-complex Hermitian ETDRK state."
             )
-        discretization_id = dynamics.discretization.prepared_id
-        projector_id = dynamics.projector.projector_id
-        if (
-            coordinates.discretization.prepared_id != discretization_id
-            or statistics.compilation_id != dynamics.compilation_id
-            or statistics.source_problem_id != dynamics.problem.problem_id
-            or statistics.discretization_id != discretization_id
-            or statistics.projector_id != projector_id
-        ):
-            raise ValueError(
-                "Periodic dynamics, ETDRK coordinates, and statistics identities differ."
-            )
-        if (
-            case.source_problem_id != dynamics.problem.problem_id
-            or case.compilation_id != dynamics.compilation_id
-            or case.discretization_id != discretization_id
-            or case.projector_id != projector_id
-        ):
-            raise ValueError("Periodic production case belongs to another compilation.")
-        if forcing is not None and (
-            forcing.discretization_id != discretization_id
-            or forcing.projector_id != projector_id
-        ):
-            raise ValueError("Periodic forcing belongs to another compiled grid.")
-        if ou_forcing is not None and (
-            ou_forcing.discretization_id != discretization_id
-            or ou_forcing.projector_id != projector_id
-        ):
-            raise ValueError("OU forcing belongs to another compiled grid.")
-        compiled_forcing_id = (
-            None if dynamics.problem.forcing is None else dynamics.problem.forcing_id
+        _validate_periodic_production_identities(
+            dynamics, coordinates, statistics, case, forcing, ou_forcing
         )
-        selected_method: AbstractFixedStepMethod = method
-        observer_forcing: ConstantPowerFourierForcingPlan | None = None
-        if dynamic and ou_forcing is not None:
-            raise ValueError(
-                "OU forcing is not yet composable with transactional dynamic LES state."
+        selected_method, observer_forcing, compiled_forcing_id = (
+            _select_periodic_production_method(
+                dynamics,
+                method,
+                base_method,
+                forcing,
+                constant_power_wiring,
+                ou_forcing,
+                ou_realization,
             )
-        if dynamic and forcing is not None and constant_power_wiring == "adapter":
-            raise ValueError(
-                "Dynamic LES requires constant-power forcing compiled into the dynamics."
-            )
-        if ou_forcing is not None and ou_realization is not None:
-            if compiled_forcing_id is not None:
-                raise ValueError("OU composition requires otherwise unforced dynamics.")
-            selected_method = prepare_ou_forced_periodic_method(
-                method, ou_forcing, ou_realization
-            )
-        elif forcing is not None and constant_power_wiring == "adapter":
-            if compiled_forcing_id is not None:
-                raise ValueError(
-                    "Constant-power adapter requires otherwise unforced dynamics."
-                )
-            if guarded:
-                raise ValueError(
-                    "Constant-power adapter is unavailable for guarded LES; "
-                    "compile the forcing into the periodic dynamics."
-                )
-            selected_method = prepare_constant_power_periodic_method(base_method, forcing)
-            observer_forcing = forcing
-        elif forcing is not None and compiled_forcing_id != forcing.forcing_id:
-            raise ValueError(
-                "The compiled periodic dynamics do not bind the declared constant-power forcing."
-            )
-        if dynamic:
-            selected_method = PreparedPeriodicDynamicETDRKMethod(base_method, dynamics)
+        )
         start, end, step, steps, interval, segment, retention = _runtime_values(
             start_time,
             end_time,
@@ -1700,12 +1795,21 @@ class PeriodicSpectralProductionPlan(StrictModule):
             }
         )
         discretization = coordinates.discretization
-        manifest = ProductionCaseManifest(
+        # The runtime program binds each moment's evaluator identity and shape.
+        # Inventory admission precedes checkpoint array decoding.
+        inventory = RuntimeIdentityInventory(
+            {
+                "source": case.identity_id,
+                "program": runtime_plan.plan_id,
+                "method": selected_method.method_id,
+                "precision": discretization.plan.precision.policy_id,
+                "topology": discretization.prepared_id,
+                "geometry": coordinates.coordinate_id,
+            }
+        )
+        manifest = ProductionCaseManifest.from_inventory(
+            inventory,
             problem_id=case_problem_id,
-            method_id=selected_method.method_id,
-            precision_id=discretization.plan.precision.policy_id,
-            topology_id=discretization.prepared_id,
-            geometry_layout_id=coordinates.coordinate_id,
             dtype=coordinates.evidence.source_dtype,
         )
         self.dynamics = dynamics

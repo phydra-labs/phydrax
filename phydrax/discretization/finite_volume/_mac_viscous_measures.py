@@ -138,5 +138,65 @@ class MACFreeSurfaceViscousMeasurePlan(StrictModule, NonTrainableState):
             identifier,
         )
 
+    def evaluate_cell_fraction(
+        self,
+        cell_fraction: ArrayLike,
+        viscosity: ArrayLike,
+        /,
+        *,
+        solid: QualifiedSharpGeometry | None = None,
+    ) -> MACFreeSurfaceViscousMeasures:
+        """Weight a caller-admitted liquid cell fraction and its adjacent faces.
+
+        Face liquid fractions are arithmetic adjacent-cell averages; domain
+        boundary faces inherit the adjacent cell fraction. Zero liquid cells
+        carry no stress, and massless but stress-coupled faces remain unknowns.
+        """
+        fraction = self.operators.validate_pressure(cell_fraction)
+        mu = jnp.asarray(viscosity, dtype=fraction.dtype)
+        if mu.shape == ():
+            mu = jnp.full_like(fraction, mu)
+        if mu.shape != fraction.shape:
+            raise ValueError("viscosity must be scalar or cell shaped.")
+        if solid is not None and solid.operator_id != self.operators.prepared_id:
+            raise ValueError("Solid measures do not bind this prepared MAC grid.")
+        valid = jnp.all(
+            jnp.isfinite(fraction) & (fraction >= 0.0) & (fraction <= 1.0)
+        ) & jnp.all(jnp.isfinite(mu) & (mu >= 0.0))
+        open_cell = (
+            jnp.ones_like(fraction) if solid is None else solid.cell_fluid_fraction
+        )
+        faces = []
+        solid_faces = []
+        axes = self.operators.discretization.grid.structured_axes
+        for axis, layout in enumerate(self.operators.discretization.face_layouts):
+            moved = jnp.moveaxis(fraction, axis, 0)
+            liquid = (
+                0.5 * (moved + jnp.roll(moved, 1, axis=0))
+                if axes[axis].periodic
+                else jnp.concatenate(
+                    (moved[:1], 0.5 * (moved[:-1] + moved[1:]), moved[-1:]), axis=0
+                )
+            )
+            liquid = jnp.moveaxis(liquid, 0, axis)
+            opened = (
+                jnp.ones(layout.shape, dtype=fraction.dtype)
+                if solid is None
+                else solid.face_open_fraction[axis]
+            )
+            faces.append(liquid * opened)
+            solid_faces.append(opened)
+        weighted = fraction * open_cell
+        return MACFreeSurfaceViscousMeasures(
+            weighted,
+            tuple(faces),
+            tuple(self.density * value for value in faces),
+            mu * weighted,
+            tuple(solid_faces),
+            valid,
+            valid & (solid is None or solid.accepted),
+            self.plan_id,
+        )
+
 
 __all__ = ["MACFreeSurfaceViscousMeasurePlan", "MACFreeSurfaceViscousMeasures"]

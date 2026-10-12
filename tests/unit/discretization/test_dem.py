@@ -43,7 +43,7 @@ def _compiled_dem(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
         tangential=phx.discretization.CundallStrackTangentialPlan(2.5e3),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         contact, maximum_overlap_fraction=0.25
     )
     problem = phx.equations.DiscreteElementProblemIR(

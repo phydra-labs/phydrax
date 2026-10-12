@@ -42,7 +42,7 @@ compiled = phx.equations.compile_discrete_element_problem(
     phx.discretization.RigidSphereSetPlan(
         jnp.full((2,), 0.5), jnp.zeros((2,), dtype=jnp.int32)
     ),
-    phx.discretization.SoftSphereDEMMethodPlan(contact),
+    phx.discretization.CompliantDEMMethodPlan(contact),
     neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
 )
 state = compiled.initialize_state(

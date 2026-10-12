@@ -149,6 +149,17 @@ def _expand_axis(value: Array, axis: int, /) -> Array:
     return jnp.expand_dims(value, axis=axis)
 
 
+def _face_center_distances(grid: PreparedTensorGrid, axis_index: int, /) -> Array:
+    """Distances between adjacent centers, with half-cell boundary distances."""
+    axis = grid.structured_axes[axis_index]
+    widths = axis.interval_widths
+    if axis.periodic:
+        return 0.5 * (jnp.roll(widths, 1) + widths)
+    return jnp.concatenate(
+        (0.5 * widths[:1], 0.5 * (widths[:-1] + widths[1:]), 0.5 * widths[-1:])
+    )
+
+
 class FaceCoefficientPlan(StrictModule, NonTrainableState):
     """Cell-to-face interpolation with explicit discontinuity semantics."""
 
@@ -198,14 +209,20 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         left: Array,
         right: Array,
         velocity: Array | None,
+        left_width: Array,
+        right_width: Array,
         /,
     ) -> Array:
         if self.kind == "arithmetic":
             return 0.5 * (left + right)
         if self.kind == "harmonic":
-            denominator = left + right
+            denominator = left_width * right + right_width * left
             safe = jnp.where(denominator != 0.0, denominator, 1.0)
-            return jnp.where(denominator != 0.0, 2.0 * left * right / safe, 0.0)
+            return jnp.where(
+                denominator != 0.0,
+                (left_width + right_width) * left * right / safe,
+                0.0,
+            )
         if self.kind == "upwind":
             if velocity is None:
                 raise ValueError("Upwind face interpolation requires face velocity.")
@@ -233,10 +250,16 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         velocity_ = None if velocity is None else jnp.asarray(velocity)
         if velocity_ is not None and velocity_.shape != face_shape:
             raise ValueError("Face velocity shape does not match interpolated values.")
+        widths = structured_axis.interval_widths
+        width_shape = [1] * value.ndim
+        width_shape[axis_index] = widths.size
+        widths = widths.reshape(width_shape)
         if structured_axis.periodic:
             left = jnp.roll(value, 1, axis=axis_index)
             right = value
-            result = self._combine(left, right, velocity_)
+            result = self._combine(
+                left, right, velocity_, jnp.roll(widths, 1, axis=axis_index), widths
+            )
         else:
             lower = jnp.take(value, jnp.asarray([0]), axis=axis_index)
             upper = jnp.take(value, jnp.asarray([-1]), axis=axis_index)
@@ -259,7 +282,17 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
                     axis=axis_index,
                 )
             )
-            interior = self._combine(left, right, velocity_interior)
+            interior = self._combine(
+                left,
+                right,
+                velocity_interior,
+                jnp.take(
+                    widths, jnp.arange(widths.shape[axis_index] - 1), axis=axis_index
+                ),
+                jnp.take(
+                    widths, jnp.arange(1, widths.shape[axis_index]), axis=axis_index
+                ),
+            )
             result = jnp.concatenate((lower, interior, upper), axis=axis_index)
         if result.shape != face_shape:
             raise RuntimeError("Face interpolation produced the wrong entity shape.")
@@ -273,12 +306,19 @@ def _normalize_tensor_coefficient(
 ) -> Array:
     dimension = len(grid.shape)
     value = jnp.asarray(coefficient)
+    # The identity carries explicit singleton cell axes so strict rank
+    # promotion admits the cellwise product.
+    cell_axes = (1,) * dimension
     if value.shape == () or value.shape == grid.shape:
         scalar = jnp.broadcast_to(value, grid.shape)
-        identity = jnp.eye(dimension, dtype=scalar.dtype)
+        identity = jnp.eye(dimension, dtype=scalar.dtype).reshape(
+            cell_axes + (dimension, dimension)
+        )
         return scalar[..., None, None] * identity
     if value.shape == grid.shape + (dimension,):
-        identity = jnp.eye(dimension, dtype=value.dtype)
+        identity = jnp.eye(dimension, dtype=value.dtype).reshape(
+            cell_axes + (dimension, dimension)
+        )
         return value[..., :, None] * identity
     if value.shape == (dimension, dimension):
         return jnp.broadcast_to(value, grid.shape + (dimension, dimension))
@@ -500,10 +540,10 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         axis = grid.structured_axes[axis_index]
         if axis.periodic:
             previous = jnp.roll(value, 1, axis=axis_index)
-            widths = self.precision.reduction(axis.interval_widths)
+            distances = self.precision.reduction(_face_center_distances(grid, axis_index))
             reshape = [1] * value.ndim
-            reshape[axis_index] = widths.size
-            return (value - previous) / widths.reshape(reshape)
+            reshape[axis_index] = distances.size
+            return (value - previous) / distances.reshape(reshape)
         lower_condition, upper_condition = self.plan.boundaries[axis_index]
         lower = _expand_axis(
             self._boundary_gradient(
@@ -535,7 +575,9 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             jnp.arange(1, value.shape[axis_index]),
             axis=axis_index,
         )
-        distances = jnp.diff(self.precision.reduction(axis.interval_centers))
+        distances = self.precision.reduction(
+            _face_center_distances(grid, axis_index)[1:-1]
+        )
         reshape = [1] * value.ndim
         reshape[axis_index] = distances.size
         interior = (right - left) / distances.reshape(reshape)

@@ -28,6 +28,9 @@ from ...discretization.particle._resolved_lubrication import (
     ResolvedLubricationCorrectionPlan,
 )
 from ...equations._mac_penalty_ib_cfd_dem import MACPenaltyIBCFDEMCouplingPlan
+from ...equations._mac_volume_fraction_ib_cfd_dem import (
+    MACVolumeFractionIBCFDEMCouplingPlan,
+)
 from ...qualification._registry import SupportTuple
 from ...solver._mac_immersed_boundary import MACImmersedBoundaryProjectionPlan
 from ...solver._mac_immersed_contact import MACRigidImmersedContactMethod
@@ -52,6 +55,7 @@ ImmersedRegime: TypeAlias = Literal[
     "deformable-contact",
     "lbm-body",
     "resolved-cfd-dem",
+    "volume-fraction-cfd-dem",
 ]
 ImmersedDerivativeMode: TypeAlias = Literal["none", "jvp", "vjp"]
 ImmersedOwnerPlan: TypeAlias = (
@@ -65,6 +69,7 @@ ImmersedOwnerPlan: TypeAlias = (
     | MACRigidImmersedContactMethod
     | ImmersedBoundaryForcingPlan
     | MACPenaltyIBCFDEMCouplingPlan
+    | MACVolumeFractionIBCFDEMCouplingPlan
 )
 
 
@@ -147,6 +152,20 @@ _RESOLVED_CFD_DEM_ATTRIBUTES = {
     "qualification_state": "candidate",
 }
 
+_VOLUME_FRACTION_CFD_DEM_ATTRIBUTES = {
+    "regime": "volume-fraction-cfd-dem",
+    "discretization": "staggered-mac-compliant-dem",
+    "enforcement": "mass-fraction-direct-forcing",
+    "motion": "free-rigid-bodies",
+    "geometry": "certified-signed-field-subbox-enclosures",
+    "topology": "fixed-capacity-contact-and-query-routes",
+    "contact": "compliant-shape-contact",
+    "load_path": "measure-adjoint-external-fluid-reaction-and-stress",
+    "derivative_scope": "none",
+    "distributed": "unsupported",
+    "qualification_state": "candidate",
+}
+
 PRESCRIBED_MARKER_SUPPORT_TUPLE = SupportTuple(
     "immersed-dns", _PRESCRIBED_MARKER_ATTRIBUTES
 )
@@ -162,6 +181,9 @@ DEFORMABLE_CONTACT_SUPPORT_TUPLE = SupportTuple(
 LBM_BODY_SUPPORT_TUPLE = SupportTuple("immersed-dns", _LBM_BODY_ATTRIBUTES)
 RESOLVED_CFD_DEM_SUPPORT_TUPLE = SupportTuple(
     "immersed-dns", _RESOLVED_CFD_DEM_ATTRIBUTES
+)
+VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE = SupportTuple(
+    "immersed-dns", _VOLUME_FRACTION_CFD_DEM_ATTRIBUTES
 )
 IMMERSED_DNS_SUPPORT_TUPLES = (
     PRESCRIBED_MARKER_SUPPORT_TUPLE,
@@ -264,6 +286,14 @@ def _owner_contract(
             None,
             True,
         )
+    if isinstance(owner, MACVolumeFractionIBCFDEMCouplingPlan):
+        return (
+            "volume-fraction-cfd-dem",
+            owner.plan_id,
+            None,
+            owner.cut_fraction.shape_query.shape_id,
+            True,
+        )
     raise TypeError("owner must be a supported prepared immersed-flow plan.")
 
 
@@ -275,6 +305,7 @@ def _support_tuple(regime: ImmersedRegime, /) -> SupportTuple:
         "deformable-contact": DEFORMABLE_CONTACT_SUPPORT_TUPLE,
         "lbm-body": LBM_BODY_SUPPORT_TUPLE,
         "resolved-cfd-dem": RESOLVED_CFD_DEM_SUPPORT_TUPLE,
+        "volume-fraction-cfd-dem": VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE,
     }
     return support_by_regime[regime]
 
@@ -590,4 +621,5 @@ __all__ = [
     "LBM_BODY_SUPPORT_TUPLE",
     "PRESCRIBED_MARKER_SUPPORT_TUPLE",
     "RESOLVED_CFD_DEM_SUPPORT_TUPLE",
+    "VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE",
 ]

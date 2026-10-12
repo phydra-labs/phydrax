@@ -150,6 +150,21 @@ class MixedPrecisionRootExecution(StrictModule):
             divergence_factor=termination.divergence_factor,
         )
         model_initial = self.precision.state(initial_state)
+        if problem.step_limit_function is not None:
+            physical_initial = problem.validate_state(initial_state)
+            model_state = self.precision.state(physical_initial)
+            if any(
+                physical.dtype != model.dtype
+                for physical, model in zip(
+                    jax.tree.leaves(physical_initial),
+                    jax.tree.leaves(model_state),
+                    strict=True,
+                )
+            ):
+                raise ValueError(
+                    "Mixed-precision state conversion cannot preserve a certified "
+                    "linear-path step_limit; keep the physical state dtype."
+                )
 
         def model_residual(
             state: PyTree[Any], current_args: Any
@@ -179,6 +194,10 @@ class MixedPrecisionRootExecution(StrictModule):
             validity=(None if problem.validity_function is None else model_validity),
             trial_validity=problem.trial_validity_function,
             trial_validity_id=problem.trial_validity_id,
+            potential=problem.potential_function,
+            potential_id=problem.potential_id,
+            step_limit=problem.step_limit_function,
+            step_limit_id=problem.step_limit_id,
             problem_id=f"{problem.problem_id}/mixed-precision",
         )
         if isinstance(method, (NewtonKrylov, NewtonTrustRegion)):

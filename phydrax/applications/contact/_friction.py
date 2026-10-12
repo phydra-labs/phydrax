@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,13 +18,14 @@ from jaxtyping import PyTree
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.contact import (
-    contact_tangent_basis,
-    ContactCandidateEpoch,
+from ...discretization.contact._distance import contact_tangent_basis
+from ...discretization.contact._participant import ContactParticipantScene
+from ...discretization.contact._search import ContactCandidateEpoch
+from ...discretization.contact._stencils import (
     ContactStencilKind,
     evaluate_contact_stencils,
-    PreparedCollisionScene,
 )
+from ...discretization.contact._surface import PreparedCollisionScene
 from ...typing import checked
 from ._barrier import (
     clamped_log_barrier_first_derivative,
@@ -41,6 +45,7 @@ def smooth_coulomb_potential(speed: ArrayLike, threshold: ArrayLike, /) -> Array
     return jnp.where(magnitude < epsilon, interior, magnitude)
 
 
+@final
 class LaggedCoulombFrictionPlan(StrictModule, NonTrainableState):
     coefficient: Array
     velocity_threshold: float = eqx.field(static=True)
@@ -48,6 +53,7 @@ class LaggedCoulombFrictionPlan(StrictModule, NonTrainableState):
     lag_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
+    @checked
     def __init__(
         self,
         coefficient: ArrayLike,
@@ -89,15 +95,17 @@ class LaggedCoulombFrictionPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @checked
     def prepare(
         self,
-        scene: PreparedCollisionScene,
+        scene: PreparedCollisionScene | ContactParticipantScene,
         contact: PreparedConvergentContactPotential,
         /,
     ) -> PreparedLaggedCoulombFriction:
         return PreparedLaggedCoulombFriction(self, scene, contact)
 
 
+@final
 class ContactFrictionState(StrictModule, NonTrainableState):
     vertex_indices: Array
     coefficients: Array
@@ -110,6 +118,7 @@ class ContactFrictionState(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
 
+@final
 class ContactFrictionEvaluation(StrictModule):
     energy: Array
     surface_force: Array
@@ -123,9 +132,18 @@ class ContactFrictionEvaluation(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
+@final
 class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
+    """Frozen Coulomb frame with effort pullback at the supplied current states.
+
+    ``build_state`` refreshes closest coefficients, tangent frames, compressive
+    normal forces and route evidence from the fixed candidate epoch. These remain
+    frozen during ``evaluate``; only the participant transpose follows the current
+    geometry state.
+    """
+
     plan: LaggedCoulombFrictionPlan
-    scene: PreparedCollisionScene
+    scene: PreparedCollisionScene | ContactParticipantScene
     contact: PreparedConvergentContactPotential
     prepared_id: str = eqx.field(static=True)
 
@@ -133,14 +151,11 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: LaggedCoulombFrictionPlan,
-        scene: PreparedCollisionScene,
+        scene: PreparedCollisionScene | ContactParticipantScene,
         contact: PreparedConvergentContactPotential,
         /,
     ) -> None:
-        if (
-            not isinstance(contact, PreparedConvergentContactPotential)
-            or contact.scene.scene_id != scene.scene_id
-        ):
+        if contact.scene.scene_id != scene.scene_id:
             raise ValueError("contact must be prepared for the friction collision scene.")
         if plan.coefficient.ndim == 2:
             maximum_body = int(jnp.max(scene.vertex_body_ids, initial=0))
@@ -165,6 +180,7 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
             return jnp.full(left_body.shape, self.plan.coefficient)
         return self.plan.coefficient[left_body, right_body]
 
+    @checked
     def build_state(
         self,
         positions: ArrayLike,
@@ -175,19 +191,24 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         stiffness: ArrayLike | None = None,
         state_version: ArrayLike = 0,
     ) -> ContactFrictionState:
-        current = jnp.asarray(
-            positions, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        current = jnp.asarray(positions, dtype=self.contact.reference_positions.dtype)
+        expected = (self.scene.vertex_count, self.scene.ambient_dimension)
+        if current.shape != expected:
+            raise ValueError(f"positions must have shape {expected}.")
         rest = (
             self.contact._rest_positions()
             if rest_positions is None
             else jnp.asarray(rest_positions, dtype=current.dtype)
         )
+        if rest.shape != expected:
+            raise ValueError(f"rest_positions must have shape {expected}.")
         stiffness_ = (
             self.contact.plan.stiffness
             if stiffness is None
             else jnp.asarray(stiffness, dtype=current.dtype)
         )
+        if stiffness_.shape != ():
+            raise ValueError("stiffness must be scalar.")
         vertex_measure, edge_measure = self.contact._measures(rest)
         vertex_indices = []
         coefficients = []
@@ -199,8 +220,6 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         body_ids = self.scene.vertex_body_ids
         d_hat = jnp.asarray(self.contact.plan.activation_distance, dtype=current.dtype)
         edge_offset = self.scene.vertex_count
-        face_offset = self.scene.vertex_count + self.scene.edge_count
-        del face_offset
         for batch in epoch.active_batches:
             evaluation = evaluate_contact_stencils(
                 batch,
@@ -280,20 +299,16 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
             self.prepared_id,
         )
 
+    @checked
     def energy(
         self,
         velocities: ArrayLike,
         state: ContactFrictionState,
         /,
     ) -> Array:
-        if (
-            not isinstance(state, ContactFrictionState)
-            or state.prepared_id != self.prepared_id
-        ):
+        if state.prepared_id != self.prepared_id:
             raise ValueError("Friction state belongs to another prepared friction plan.")
-        velocity = jnp.asarray(
-            velocities, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        velocity = jnp.asarray(velocities, dtype=self.contact.reference_positions.dtype)
         expected = (self.scene.vertex_count, self.scene.ambient_dimension)
         if velocity.shape != expected:
             raise ValueError(f"velocities must have shape {expected}.")
@@ -315,20 +330,33 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         value = state.friction_coefficient * state.normal_force * potential
         return jnp.sum(jnp.where(state.valid, value, 0.0))
 
+    @checked
     def evaluate(
         self,
         velocities: ArrayLike,
         state: ContactFrictionState,
         /,
+        *,
+        participant_states: Sequence[PyTree[Array]] | None = None,
     ) -> ContactFrictionEvaluation:
-        velocity = jnp.asarray(
-            velocities, dtype=self.scene.surfaces[0].precision.geometry_dtype
-        )
+        if isinstance(self.scene, ContactParticipantScene):
+            if participant_states is None:
+                raise ValueError("Participant scenes require participant_states.")
+        elif participant_states is not None:
+            raise ValueError(
+                "Shared-state collision scenes do not accept participant_states."
+            )
+        velocity = jnp.asarray(velocities, dtype=self.contact.reference_positions.dtype)
         energy, gradient = jax.value_and_grad(lambda value: self.energy(value, state))(
             velocity
         )
         surface_effort = -gradient
-        state_force = self.scene.effort_pullback(surface_effort)
+        if isinstance(self.scene, ContactParticipantScene):
+            if participant_states is None:
+                raise ValueError("Participant scenes require participant_states.")
+            state_force = self.scene.effort_pullback(participant_states, surface_effort)
+        else:
+            state_force = self.scene.effort_pullback(surface_effort)
         dissipation = -jnp.sum(surface_effort * velocity)
         force_norm = jnp.sqrt(jnp.sum(surface_effort * surface_effort, axis=-1))
         finite = (
@@ -336,6 +364,8 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(surface_effort))
             & jnp.isfinite(dissipation)
         )
+        for leaf in jax.tree.leaves(state_force):
+            finite = finite & jnp.all(jnp.isfinite(leaf))
         tolerance = jnp.finfo(velocity.dtype).eps * max(64, 8 * state.valid.size)
         dissipative = dissipation >= -tolerance * jnp.maximum(1.0, jnp.abs(dissipation))
         return ContactFrictionEvaluation(
@@ -373,7 +403,17 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         basis = jnp.max(
             jnp.abs(candidate.tangent_basis - previous.tangent_basis), initial=0.0
         )
-        return jnp.where(route_valid, jnp.maximum(force, basis), jnp.inf)
+        coefficients = jnp.max(
+            jnp.where(
+                previous.valid[:, None],
+                jnp.abs(candidate.coefficients - previous.coefficients),
+                0.0,
+            ),
+            initial=0.0,
+        )
+        return jnp.where(
+            route_valid, jnp.maximum(jnp.maximum(force, basis), coefficients), jnp.inf
+        )
 
 
 class AxisymmetricInterfaceGeometry(StrictModule):

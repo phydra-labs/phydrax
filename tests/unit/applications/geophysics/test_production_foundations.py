@@ -43,13 +43,6 @@ from phydrax.uq import (
 )
 
 
-def _tetra_mesh() -> Any:
-    return phx.discretization.CellMesh.from_tetrahedra(
-        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
-        np.asarray(((0, 1, 2, 3),)),
-    )
-
-
 def test_production_foundations_scenario_1() -> None:
     resource = bounded_resource_from_bytes(
         b"pinned leap table", limits=ResourceLimits(1024, 2, 4, 4, 0)

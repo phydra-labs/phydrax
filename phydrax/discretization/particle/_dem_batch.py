@@ -16,7 +16,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._dem import DEMRuntimeState, DEMStepEvaluation, PreparedSoftSphereDEMDynamics
+from ._dem import DEMRuntimeState, DEMStepEvaluation, PreparedCompliantDEMDynamics
 from ._verlet import PreparedVerletParticleNeighborhood
 
 
@@ -52,7 +52,7 @@ def stack_dem_states(states: Sequence[DEMRuntimeState], /) -> DEMRuntimeState:
 
 
 def initialize_dem_batch(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     time: Array,
     positions: Array,
     velocities: Array,
@@ -60,9 +60,10 @@ def initialize_dem_batch(
     /,
     *,
     args: Any = None,
+    orientations: Array | None = None,
 ) -> DEMRuntimeState:
-    if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-        raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+    if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+        raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
     if positions.ndim != 3 or velocities.shape != positions.shape:
         raise ValueError("Batched positions and velocities must have shape (batch,N,D).")
     if angular_velocities is None:
@@ -74,6 +75,23 @@ def initialize_dem_batch(
             ),
             dtype=positions.dtype,
         )
+    if orientations is not None:
+        expected = (
+            positions.shape[0],
+            dynamics.bodies.capacity,
+            dynamics.bodies.orientation_dimension,
+        )
+        if orientations.shape != expected:
+            raise ValueError(
+                "Batched orientations must match prepared body orientation shape."
+            )
+        return jax.vmap(
+            lambda position, velocity, angular, orientation: dynamics.initialize_state(
+                time, position, velocity, angular, orientation=orientation, args=args
+            )
+        )(positions, velocities, angular_velocities, orientations)
+    if dynamics.shapes.shape_kind != "sphere":
+        raise ValueError("Nonspherical DEM batches require explicit orientations.")
     return jax.vmap(
         lambda position, velocity, angular: dynamics.initialize_state(
             time, position, velocity, angular, args=args
@@ -82,7 +100,7 @@ def initialize_dem_batch(
 
 
 def _force_uniform_rebuild(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     states: DEMRuntimeState,
     step_size: Array,
     /,
@@ -91,9 +109,18 @@ def _force_uniform_rebuild(
     if cache is None:
         return states
     half_velocity = states.kinematics.velocity + 0.5 * step_size * (
-        dynamics.bodies.inverse_masses[None, :, None] * states.loads.total.force
+        states.body_properties.inverse_masses[:, :, None] * states.loads.total.force
     )
     predicted = step_size * jnp.sqrt(jnp.sum(half_velocity**2, axis=-1))
+    if dynamics.shapes.shape_kind != "sphere":
+        angular_speed = jnp.sqrt(jnp.sum(states.kinematics.angular_velocity**2, axis=-1))
+        predicted = (
+            predicted
+            + step_size
+            * angular_speed
+            * dynamics.shapes.bounding_radii[None, :]
+            * states.body_properties.shape_scale
+        )
     needs_rebuild = jnp.any(jnp.max(predicted, axis=-1) > cache.certificate_margin)
     successful = jnp.where(needs_rebuild, False, cache.successful)
     return eqx.tree_at(
@@ -104,7 +131,7 @@ def _force_uniform_rebuild(
 
 
 def batch_step_detailed(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     states: DEMRuntimeState,
     step_index: Array,
     time: Array,
@@ -114,8 +141,8 @@ def batch_step_detailed(
     *,
     args: Any = None,
 ) -> DEMStepEvaluation:
-    if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-        raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+    if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+        raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
     if not isinstance(plan, DEMBatchExecutionPlan):
         raise TypeError("plan must be a DEMBatchExecutionPlan.")
     prepared_states = states

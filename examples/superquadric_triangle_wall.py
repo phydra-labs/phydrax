@@ -17,6 +17,7 @@ shapes = phx.discretization.SuperquadricSetPlan(
     jnp.asarray([2.0]),
     jnp.asarray([2.0]),
     jnp.asarray([0]),
+    contact_geometry=phx.discretization.SuperquadricContactPlan(iterations=24),
 )
 wall = phx.discretization.TriangleWallPlan(
     jnp.asarray([[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [0.0, 2.0, 0.0]]),
@@ -29,35 +30,43 @@ material = phx.equations.DEMMaterialTable(
     jnp.asarray([[0.8]]),
     jnp.asarray([[0.3]]),
 )
-dynamics = phx.discretization.SuperquadricDEMPlan(
-    shapes,
-    phx.discretization.SuperquadricContactPlan(iterations=24),
-    phx.discretization.DEMContactModelPlan(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        tangential=phx.discretization.CundallStrackTangentialPlan(2.0e3),
+compiled = phx.equations.compile_discrete_element_problem(
+    phx.equations.DiscreteElementProblemIR(
+        "superquadric-wall", material, gravity=jnp.zeros((3,)), walls=(wall,)
     ),
-    walls=(wall,),
-    wall_geometry=phx.discretization.SuperquadricTriangleContactPlan(),
-).prepare(
     particles,
-    material,
-    phx.discretization.DenseParticleNeighborhoodPlan(0),
+    shapes,
+    phx.discretization.CompliantDEMMethodPlan(
+        phx.discretization.DEMContactModelPlan(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            tangential=phx.discretization.CundallStrackTangentialPlan(2.0e3),
+        ),
+        wall_geometry=phx.discretization.SuperquadricTriangleContactPlan(),
+    ),
+    neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(0),
 )
-state = dynamics.initialize_state(
+state = compiled.initialize_state(
+    0.0,
     jnp.asarray([[0.0, 0.0, 0.25]]),
     jnp.zeros((1, 3)),
-    jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
     jnp.asarray([[0.0, 0.0, 0.5]]),
+    orientation=jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
 )
-result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-5))
-wall_response = result.evaluation.walls[0]
+result = compiled.dynamics.step_detailed(
+    jnp.asarray(0, dtype=jnp.int32), jnp.asarray(0.0), state, jnp.asarray(1.0e-5), None
+)
+wall_response = result.evaluation.boundaries[0]
 if not bool(result.successful):
     raise RuntimeError("Superquadric triangle-wall step failed")
+if not isinstance(
+    wall_response.triangle_witness, phx.discretization.SuperquadricWallContactResult
+):
+    raise RuntimeError("Triangle-wall response omitted its witness evidence")
 print("successful=True")
-print(f"gap={float(wall_response.geometry.geometry.gap[0]):.6e}")
-print(f"feature_kind={int(wall_response.geometry.feature_kind[0])}")
-print(f"witness_residual={float(wall_response.geometry.witness_residual[0]):.6e}")
+print(f"gap={float(wall_response.geometry.gap[0]):.6e}")
+print(f"feature_kind={int(wall_response.triangle_witness.feature_kind[0])}")
+print(f"witness_residual={float(wall_response.geometry.residual[0]):.6e}")
 reaction_balance = jnp.linalg.norm(
-    jnp.sum(wall_response.particle_load.force, axis=0) + wall_response.reaction_force
+    jnp.sum(wall_response.particle_force, axis=0) + wall_response.reaction_force
 )
 print(f"reaction_balance={float(reaction_balance):.6e}")

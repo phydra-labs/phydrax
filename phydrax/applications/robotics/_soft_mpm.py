@@ -127,6 +127,7 @@ def _runtime_at_reset_time(state: MPMRuntimeState, time: Array, /) -> MPMRuntime
         state.velocity_field_slots,
         state.storage_state,
         state.lifecycle_state,
+        state.boundary_states,
     )
 
 
@@ -139,13 +140,15 @@ def _validate_initial_runtime(
     count = dynamics.particles.capacity
     dimension = dynamics.dimension
     vector_shape = (count, dimension)
-    tensor_shape = (count, dimension, dimension)
+    affine_shape = (count, dimension, dimension)
+    constitutive_dimension = dynamics.constitutive_dimension
+    tensor_shape = (count, constitutive_dimension, constitutive_dimension)
     scalar_shape = (count,)
     expected_shapes = (
         ("position", particles.position.shape, vector_shape),
         ("velocity", particles.velocity.shape, vector_shape),
         ("deformation_gradient", particles.deformation_gradient.shape, tensor_shape),
-        ("affine_velocity", particles.affine_velocity.shape, tensor_shape),
+        ("affine_velocity", particles.affine_velocity.shape, affine_shape),
         ("reference_volume", particles.reference_volume.shape, scalar_shape),
         ("first_piola", particles.first_piola.shape, tensor_shape),
         (
@@ -399,7 +402,7 @@ class MPMSoftResolutionEvidence(StrictModule, NonTrainableState):
         grid_shape = tuple(dynamics.splat.target_shape)
         grid_node_count = int(np.prod(grid_shape))
         field_count = int(dynamics.nodal_fields.field_count)
-        route_count = int(dynamics.splat.route_count)
+        route_count = dynamics.route_count
         minimum_spacing = float(dynamics.minimum_spacing)
         particle_prepared_id = dynamics.particles.prepared_id
         grid_prepared_id = dynamics.splat.prepared_id

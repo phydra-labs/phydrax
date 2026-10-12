@@ -63,6 +63,8 @@ class _PairReuseTerms(NamedTuple):
     threshold: Array
     finite: Array
     certified: Array
+    pose: Array | None
+    bounds: Array | None
 
 
 class _ImageReuseTerms(NamedTuple):
@@ -81,6 +83,17 @@ class _ImageReuseTerms(NamedTuple):
     certified: Array
 
 
+def _pose_admissible(pose: Array | None, /) -> Array:
+    if pose is None:
+        return jnp.asarray(True)
+    finite = jnp.all(jnp.isfinite(pose))
+    if pose.shape[-1] == 4:
+        finite = finite & jnp.all(
+            jnp.abs(jnp.sum(pose**2, axis=-1) - 1.0) <= 64.0 * jnp.finfo(pose.dtype).eps
+        )
+    return finite
+
+
 class ParticleVerletState(StrictModule, NonTrainableState):
     neighborhood: ParticleNeighborhoodState
     reference_position: Array
@@ -94,6 +107,8 @@ class ParticleVerletState(StrictModule, NonTrainableState):
     certificate_margin: Array
     successful: Array
     prepared_verlet_id: str = eqx.field(static=True)
+    reference_orientation: Array | None
+    reference_radii: Array | None
 
 
 class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
@@ -250,15 +265,24 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         *,
         active_mask: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
+        orientation: ArrayLike | None = None,
+        radii: ArrayLike | None = None,
     ) -> ParticleVerletState:
         value = self._positions(positions)
         active = self._active(active_mask)
         vectors = self._resolved_cell_vectors(value.dtype, cell_vectors)
+        pose, bounds = self._pose_bounds(orientation, radii, value)
         neighborhood = self.base.build(value, active_mask=active)
         successful = (
             neighborhood.successful
             & jnp.all(jnp.isfinite(value))
             & jnp.all(jnp.isfinite(vectors))
+            & _pose_admissible(pose)
+            & (
+                jnp.asarray(True)
+                if bounds is None
+                else jnp.all(jnp.isfinite(bounds) & (bounds >= 0.0))
+            )
         )
         return ParticleVerletState(
             neighborhood,
@@ -273,6 +297,8 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             jnp.asarray(0.5 * self.plan.skin, dtype=value.dtype),
             successful,
             self.prepared_id,
+            pose,
+            bounds,
         )
 
     def _reuse_terms(
@@ -281,11 +307,14 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         previous: ParticleVerletState,
         active_mask: ArrayLike | None,
         cell_vectors: ArrayLike | None,
+        orientation: ArrayLike | None,
+        radii: ArrayLike | None,
         /,
     ) -> _PairReuseTerms:
         if previous.prepared_verlet_id != self.prepared_id:
             raise ValueError("Verlet state belongs to another prepared neighborhood.")
         value = self._positions(positions)
+        pose, bounds = self._pose_bounds(orientation, radii, value)
         active = self._active(active_mask)
         vectors = self._resolved_cell_vectors(value.dtype, cell_vectors)
         if vectors.shape != previous.reference_cell_vectors.shape:
@@ -294,6 +323,29 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         if self.box is not None:
             displacement = self.box.minimum_image(displacement)
         distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
+        if (pose is None) != (previous.reference_orientation is None):
+            raise ValueError(
+                "Verlet orientation participation changed from initialization."
+            )
+        if pose is not None and bounds is not None:
+            reference = previous.reference_orientation
+            reference_bounds = previous.reference_radii
+            if reference is None or reference_bounds is None:
+                raise ValueError(
+                    "Verlet rotation certificate lacks reference pose/bounds."
+                )
+            if pose.shape != reference.shape:
+                raise ValueError("Verlet orientation shape changed from initialization.")
+            if pose.shape[-1] == 1:
+                sine_half_angle = jnp.abs(jnp.sin(0.5 * (pose[:, 0] - reference[:, 0])))
+            else:
+                cosine_half_angle = jnp.sum(pose * reference, axis=-1)
+                sine_half_angle = jnp.sqrt(jnp.maximum(1.0 - cosine_half_angle**2, 0.0))
+            distance = (
+                distance
+                + 2.0 * jnp.maximum(bounds, reference_bounds) * sine_half_angle
+                + jnp.abs(bounds - reference_bounds)
+            )
         particle_maximum = jnp.max(distance)
         cell_delta = vectors - previous.reference_cell_vectors
         cell_deformation = jnp.sqrt(jnp.sum(cell_delta * cell_delta))
@@ -303,6 +355,12 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             jnp.all(jnp.isfinite(value))
             & jnp.all(jnp.isfinite(vectors))
             & jnp.isfinite(maximum)
+            & _pose_admissible(pose)
+            & (
+                jnp.asarray(True)
+                if bounds is None
+                else jnp.all(jnp.isfinite(bounds) & (bounds >= 0.0))
+            )
         )
         certified = (
             previous.successful
@@ -320,6 +378,8 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             threshold,
             finite,
             certified,
+            pose,
+            bounds,
         )
 
     @checked
@@ -331,13 +391,17 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         *,
         active_mask: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
+        orientation: ArrayLike | None = None,
+        radii: ArrayLike | None = None,
     ) -> Array:
         """Return whether ``previous``'s cached pair epoch is exact here.
 
         The predicate ``update`` uses: previous success, finite inputs, an
         unchanged active set and particle plus cell motion within ``skin/2``.
         """
-        return self._reuse_terms(positions, previous, active_mask, cell_vectors).certified
+        return self._reuse_terms(
+            positions, previous, active_mask, cell_vectors, orientation, radii
+        ).certified
 
     @checked
     def update(
@@ -348,8 +412,13 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         *,
         active_mask: ArrayLike | None = None,
         cell_vectors: ArrayLike | None = None,
+        orientation: ArrayLike | None = None,
+        radii: ArrayLike | None = None,
     ) -> ParticleVerletState:
-        terms = self._reuse_terms(positions, previous, active_mask, cell_vectors)
+        terms = self._reuse_terms(
+            positions, previous, active_mask, cell_vectors, orientation, radii
+        )
+        pose, bounds = terms.pose, terms.bounds
         value = terms.value
         active = terms.active
         vectors = terms.vectors
@@ -376,6 +445,8 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
                 threshold,
                 successful,
                 self.prepared_id,
+                pose,
+                bounds,
             )
 
         def reuse_routes(_: None) -> ParticleVerletState:
@@ -392,9 +463,33 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
                 threshold - maximum,
                 previous.successful & finite,
                 self.prepared_id,
+                previous.reference_orientation,
+                previous.reference_radii,
             )
 
         return jax.lax.cond(rebuild, rebuild_routes, reuse_routes, operand=None)
+
+    def _pose_bounds(
+        self,
+        orientation: ArrayLike | None,
+        radii: ArrayLike | None,
+        positions: Array,
+        /,
+    ) -> tuple[Array | None, Array | None]:
+        if orientation is None and radii is None:
+            return None, None
+        if orientation is None or radii is None:
+            raise ValueError(
+                "Verlet rotation certificates require orientation and radii together."
+            )
+        pose = jnp.asarray(orientation, dtype=positions.dtype)
+        bounds = jnp.asarray(radii, dtype=positions.dtype)
+        expected = (self.particle_capacity, 1 if positions.shape[-1] == 2 else 4)
+        if pose.shape != expected or bounds.shape != (self.particle_capacity,):
+            raise ValueError(
+                "Verlet orientation/radii must match the prepared body shape."
+            )
+        return pose, bounds
 
     def _active(self, active_mask: ArrayLike | None, /) -> Array:
         if active_mask is None:

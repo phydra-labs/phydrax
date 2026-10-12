@@ -4,22 +4,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
-from math import isfinite
+from math import ceil, isfinite, log2
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import checked
+from ._distance import (
+    edge_edge_distance,
+    point_edge_distance,
+    point_point_distance,
+    point_triangle_distance,
+)
 from ._guarantee import (
     ContactGuaranteeEvidence,
     ContactGuaranteeLevel,
 )
+from ._participant import ContactParticipantScene
 from ._search import ContactCandidateEpoch
 from ._stencils import ContactStencilBatch, ContactStencilKind
 from ._surface import PreparedCollisionScene
@@ -31,10 +40,14 @@ class CCDStatus(IntEnum):
     SEARCH_INCOMPLETE = 2
     WORK_LIMIT = 3
     NONFINITE_INPUT = 4
+    TRAJECTORY_BOUND_FAILURE = 5
 
 
 class InclusionCCDPlan(StrictModule, NonTrainableState):
-    """Conservative linear-trajectory CCD using Lipschitz interval inclusion."""
+    """Conservative CCD using Lipschitz or supplied full-path interval enclosures.
+
+    Unsupported degenerate primitive distances refuse a collision-free certificate.
+    """
 
     time_tolerance: float = eqx.field(static=True)
     numerical_error: float = eqx.field(static=True)
@@ -166,430 +179,464 @@ class ContactSafetyEvidence(StrictModule):
         return (self.status == int(CCDStatus.SUCCESS)) & self.guarantee.successful
 
 
-def _point_segment_distance(
-    point: np.ndarray, first: np.ndarray, second: np.ndarray, /
-) -> float:
-    edge = second - first
-    denominator = float(np.dot(edge, edge))
-    if denominator <= 0.0:
-        return float(np.linalg.norm(point - first))
-    coordinate = float(np.clip(np.dot(point - first, edge) / denominator, 0.0, 1.0))
-    return float(np.linalg.norm(point - (first + coordinate * edge)))
-
-
-def _point_triangle_distance(
-    point: np.ndarray, first: np.ndarray, second: np.ndarray, third: np.ndarray, /
-) -> float:
-    edge_first = second - first
-    edge_second = third - first
-    normal = np.cross(edge_first, edge_second)
-    area_squared = float(np.dot(normal, normal))
-    candidates = [
-        _point_segment_distance(point, first, second),
-        _point_segment_distance(point, second, third),
-        _point_segment_distance(point, third, first),
-    ]
-    if area_squared > 0.0:
-        witness = point - np.dot(point - first, normal) / area_squared * normal
-        dot00 = float(np.dot(edge_first, edge_first))
-        dot01 = float(np.dot(edge_first, edge_second))
-        dot11 = float(np.dot(edge_second, edge_second))
-        rhs0 = float(np.dot(witness - first, edge_first))
-        rhs1 = float(np.dot(witness - first, edge_second))
-        determinant = dot00 * dot11 - dot01 * dot01
-        if determinant > 0.0:
-            second_weight = (dot11 * rhs0 - dot01 * rhs1) / determinant
-            third_weight = (dot00 * rhs1 - dot01 * rhs0) / determinant
-            first_weight = 1.0 - second_weight - third_weight
-            if min(first_weight, second_weight, third_weight) >= 0.0:
-                candidates.append(float(np.linalg.norm(point - witness)))
-    return min(candidates)
-
-
-def _segment_segment_distance(
-    a0: np.ndarray, a1: np.ndarray, b0: np.ndarray, b1: np.ndarray, /
-) -> float:
-    ua = a1 - a0
-    ub = b1 - b0
-    aa = float(np.dot(ua, ua))
-    bb = float(np.dot(ua, ub))
-    cc = float(np.dot(ub, ub))
-    w = a0 - b0
-    dd = float(np.dot(ua, w))
-    ee = float(np.dot(ub, w))
-    determinant = aa * cc - bb * bb
-    candidates = [
-        _point_segment_distance(a0, b0, b1),
-        _point_segment_distance(a1, b0, b1),
-        _point_segment_distance(b0, a0, a1),
-        _point_segment_distance(b1, a0, a1),
-    ]
-    if determinant > 0.0:
-        s = (bb * ee - cc * dd) / determinant
-        t = (aa * ee - bb * dd) / determinant
-        if 0.0 <= s <= 1.0 and 0.0 <= t <= 1.0:
-            candidates.append(float(np.linalg.norm((a0 + s * ua) - (b0 + t * ub))))
-    return min(candidates)
-
-
-def _stencil_distance(kind: ContactStencilKind, vertices: np.ndarray, /) -> float:
-    if kind == ContactStencilKind.VERTEX_VERTEX:
-        return float(np.linalg.norm(vertices[0] - vertices[1]))
-    if kind == ContactStencilKind.EDGE_VERTEX:
-        return _point_segment_distance(vertices[0], vertices[1], vertices[2])
-    if kind == ContactStencilKind.FACE_VERTEX:
-        return _point_triangle_distance(
-            vertices[0], vertices[1], vertices[2], vertices[3]
-        )
-    if kind == ContactStencilKind.EDGE_EDGE:
-        return _segment_segment_distance(
-            vertices[0], vertices[1], vertices[2], vertices[3]
-        )
-    raise TypeError("Unsupported CCD stencil kind.")
-
-
-def _relative_speed_bound(kind: ContactStencilKind, velocities: np.ndarray, /) -> float:
-    speed = np.linalg.norm(velocities, axis=1)
-    if kind == ContactStencilKind.VERTEX_VERTEX:
-        return float(speed[0] + speed[1])
-    if kind == ContactStencilKind.EDGE_VERTEX:
-        return float(speed[0] + max(speed[1], speed[2]))
-    if kind == ContactStencilKind.FACE_VERTEX:
-        return float(speed[0] + max(speed[1], speed[2], speed[3]))
-    if kind == ContactStencilKind.EDGE_EDGE:
-        return float(max(speed[0], speed[1]) + max(speed[2], speed[3]))
-    raise TypeError("Unsupported CCD stencil kind.")
-
-
-def _candidate_toi(
-    plan: InclusionCCDPlan,
-    kind: ContactStencilKind,
-    start: np.ndarray,
-    end: np.ndarray,
-    minimum_separation: float,
-    /,
-) -> tuple[float, int, bool, bool]:
-    initial = _stencil_distance(kind, start)
-    if initial <= minimum_separation + plan.numerical_error:
-        return 0.0, 1, True, False
-    velocity = end - start
-    speed_bound = _relative_speed_bound(kind, velocity)
-    if speed_bound == 0.0:
-        return np.inf, 1, False, False
-    stack: list[tuple[float, float]] = [(0.0, 1.0)]
-    iterations = 0
-    while stack:
-        if iterations >= plan.maximum_iterations:
-            return 0.0, iterations, False, True
-        lower_time, upper_time = stack.pop()
-        iterations += 1
-        midpoint = 0.5 * (lower_time + upper_time)
-        midpoint_vertices = start + midpoint * velocity
-        midpoint_distance = _stencil_distance(kind, midpoint_vertices)
-        half_width = 0.5 * (upper_time - lower_time)
-        lower_distance = (
-            midpoint_distance - half_width * speed_bound - plan.numerical_error
-        )
-        if lower_distance > minimum_separation:
-            continue
-        if upper_time - lower_time <= plan.time_tolerance:
-            return lower_time, iterations, False, False
-        split = midpoint
-        stack.append((split, upper_time))
-        stack.append((lower_time, split))
-    return np.inf, iterations, False, False
+def _stencil_distance(kind: ContactStencilKind, vertices: Array, /) -> Array:
+    match kind:
+        case ContactStencilKind.VERTEX_VERTEX:
+            result = point_point_distance(vertices[0], vertices[1], tolerance=0.0)
+        case ContactStencilKind.EDGE_VERTEX:
+            result = point_edge_distance(
+                vertices[0], vertices[1], vertices[2], tolerance=0.0
+            )
+        case ContactStencilKind.FACE_VERTEX:
+            result = point_triangle_distance(
+                vertices[0], vertices[1], vertices[2], vertices[3], tolerance=0.0
+            )
+        case ContactStencilKind.EDGE_EDGE:
+            result = edge_edge_distance(
+                vertices[0], vertices[1], vertices[2], vertices[3], tolerance=0.0
+            )
+        case _:
+            raise TypeError("Unsupported CCD stencil kind.")
+    # Degenerate primitive kernels may mask unsupported features with a large
+    # finite sentinel; that value is not a separation certificate.
+    squared = jnp.where(result.nondegenerate, result.squared_distance, 0.0)
+    return jnp.sqrt(squared)
 
 
 def _primitive_partition(
-    kind: ContactStencilKind, vertices: np.ndarray, /
-) -> tuple[np.ndarray, np.ndarray]:
-    if kind == ContactStencilKind.VERTEX_VERTEX:
-        return vertices[:1], vertices[1:2]
-    if kind in (
-        ContactStencilKind.EDGE_VERTEX,
-        ContactStencilKind.FACE_VERTEX,
-    ):
-        return vertices[:1], vertices[1:]
-    if kind == ContactStencilKind.EDGE_EDGE:
-        return vertices[:2], vertices[2:]
-    raise TypeError("Unsupported CCD stencil kind.")
+    kind: ContactStencilKind, vertices: Array, /
+) -> tuple[Array, Array]:
+    match kind:
+        case ContactStencilKind.VERTEX_VERTEX:
+            return vertices[:1], vertices[1:2]
+        case ContactStencilKind.EDGE_VERTEX | ContactStencilKind.FACE_VERTEX:
+            return vertices[:1], vertices[1:]
+        case ContactStencilKind.EDGE_EDGE:
+            return vertices[:2], vertices[2:]
+        case _:
+            raise TypeError("Unsupported CCD stencil kind.")
 
 
 def _outward_bounds(
-    start: np.ndarray,
-    velocity: np.ndarray,
-    lower_time: float,
-    upper_time: float,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    lower_positions = start + lower_time * velocity
-    upper_positions = start + upper_time * velocity
-    lower = np.minimum(lower_positions, upper_positions).min(axis=0)
-    upper = np.maximum(lower_positions, upper_positions).max(axis=0)
-    for _ in range(4):
-        lower = np.nextafter(lower, -np.inf)
-        upper = np.nextafter(upper, np.inf)
+    start: Array, velocity: Array, lower_time: Array, upper_time: Array, /
+) -> tuple[Array, Array]:
+    negative = jnp.full_like(start, -jnp.inf)
+    positive = jnp.full_like(start, jnp.inf)
+    velocity_lower = jnp.nextafter(velocity, negative)
+    velocity_upper = jnp.nextafter(velocity, positive)
+
+    def endpoint(time: Array) -> tuple[Array, Array]:
+        product_lower = jnp.nextafter(time * velocity_lower, negative)
+        product_upper = jnp.nextafter(time * velocity_upper, positive)
+        return (
+            jnp.nextafter(start + product_lower, negative),
+            jnp.nextafter(start + product_upper, positive),
+        )
+
+    first_lower, first_upper = endpoint(lower_time)
+    second_lower, second_upper = endpoint(upper_time)
+    lower = jnp.minimum(first_lower, second_lower).min(axis=0)
+    upper = jnp.maximum(first_upper, second_upper).max(axis=0)
     return lower, upper
 
 
 def _rounded_aabb_distance_squared(
-    first_min: np.ndarray,
-    first_max: np.ndarray,
-    second_min: np.ndarray,
-    second_max: np.ndarray,
-    /,
-) -> float:
-    separation = np.maximum(
-        0.0,
-        np.maximum(first_min - second_max, second_min - first_max),
+    first_min: Array, first_max: Array, second_min: Array, second_max: Array, /
+) -> Array:
+    separation = jnp.maximum(
+        jnp.zeros_like(first_min),
+        jnp.maximum(first_min - second_max, second_min - first_max),
     )
     for _ in range(4):
-        separation = np.maximum(0.0, np.nextafter(separation, -np.inf))
-    squared = np.nextafter(separation * separation, -np.inf)
-    result = np.asarray(0.0, dtype=np.float64)
-    for value in squared:
-        result = np.nextafter(result + value, -np.inf)
-    return float(max(result, 0.0))
+        separation = jnp.maximum(
+            jnp.zeros_like(separation),
+            jnp.nextafter(separation, jnp.full_like(separation, -jnp.inf)),
+        )
+    squared = jnp.nextafter(separation * separation, jnp.full_like(separation, -jnp.inf))
+
+    def add(result: Array, value: Array) -> tuple[Array, None]:
+        total = result + value
+        return jnp.nextafter(total, jnp.full_like(total, -jnp.inf)), None
+
+    total, _ = jax.lax.scan(add, jnp.zeros((), dtype=separation.dtype), squared)
+    return jnp.maximum(total, jnp.zeros_like(total))
 
 
-def _candidate_toi_certified(
-    plan: CertifiedAABBCCDPlan,
+def _interval_free(
+    plan: CCDPlan,
     kind: ContactStencilKind,
-    start: np.ndarray,
-    end: np.ndarray,
-    minimum_separation: float,
+    start: Array,
+    velocity: Array,
+    separation: Array,
+    lower: Array,
+    upper: Array,
     /,
-) -> tuple[float, int, bool, bool]:
-    initial = np.nextafter(_stencil_distance(kind, start), -np.inf)
-    threshold = np.nextafter(minimum_separation, np.inf)
-    if initial <= threshold:
-        return 0.0, 1, True, False
-    velocity = end - start
-    if np.all(velocity == 0.0):
-        return np.inf, 1, False, False
-    first_start, second_start = _primitive_partition(kind, start)
-    first_velocity, second_velocity = _primitive_partition(kind, velocity)
-    threshold_squared = np.nextafter(minimum_separation * minimum_separation, np.inf)
-    stack: list[tuple[float, float]] = [(0.0, 1.0)]
-    iterations = 0
-    while stack:
-        if iterations >= plan.maximum_iterations:
-            return 0.0, iterations, False, True
-        lower_time, upper_time = stack.pop()
-        iterations += 1
-        first_min, first_max = _outward_bounds(
-            first_start,
-            first_velocity,
-            lower_time,
-            upper_time,
-        )
-        second_min, second_max = _outward_bounds(
-            second_start,
-            second_velocity,
-            lower_time,
-            upper_time,
-        )
-        lower_squared = _rounded_aabb_distance_squared(
+) -> Array:
+    if isinstance(plan, CertifiedAABBCCDPlan):
+        first, second = _primitive_partition(kind, start)
+        first_velocity, second_velocity = _primitive_partition(kind, velocity)
+        first_min, first_max = _outward_bounds(first, first_velocity, lower, upper)
+        second_min, second_max = _outward_bounds(second, second_velocity, lower, upper)
+        distance = _rounded_aabb_distance_squared(
             first_min, first_max, second_min, second_max
         )
-        if lower_squared > threshold_squared:
-            continue
-        if upper_time - lower_time <= plan.time_tolerance:
-            return lower_time, iterations, False, False
-        midpoint = 0.5 * (lower_time + upper_time)
-        stack.append((midpoint, upper_time))
-        stack.append((lower_time, midpoint))
-    return np.inf, iterations, False, False
+        threshold = separation * separation
+        threshold = jnp.nextafter(threshold, jnp.full_like(threshold, jnp.inf))
+        return distance > threshold
+    first_velocity, second_velocity = _primitive_partition(kind, velocity)
+    speed = (
+        jnp.sqrt(jnp.sum(first_velocity * first_velocity, axis=-1)).max()
+        + jnp.sqrt(jnp.sum(second_velocity * second_velocity, axis=-1)).max()
+    )
+    midpoint = (lower + upper) * 0.5
+    distance = _stencil_distance(kind, start + midpoint * velocity)
+    return distance - (upper - lower) * 0.5 * speed - plan.numerical_error > separation
+
+
+type ContactTrajectoryBoundsAction = Callable[[Array, Array], tuple[Array, Array, Array]]
+
+
+def _trajectory_enclosure(
+    action: ContactTrajectoryBoundsAction,
+    lower_time: Array,
+    upper_time: Array,
+    expected: tuple[int, ...],
+    /,
+) -> tuple[Array, Array, Array]:
+    lower, upper, successful = action(lower_time, upper_time)
+    lower = jnp.asarray(lower, dtype=lower_time.dtype)
+    upper = jnp.asarray(upper, dtype=lower_time.dtype)
+    successful = jnp.asarray(successful)
+    if lower.shape != expected or upper.shape != expected:
+        raise ValueError("trajectory_bounds must return the complete scene vertex shape.")
+    if successful.shape != () or successful.dtype != jnp.bool_:
+        raise ValueError("trajectory_bounds must return one Boolean success scalar.")
+    valid = (
+        successful
+        & jnp.all(jnp.isfinite(lower))
+        & jnp.all(jnp.isfinite(upper))
+        & jnp.all(lower <= upper)
+    )
+    return lower, upper, valid
+
+
+def _enclosure_interval_free(
+    plan: CCDPlan,
+    kind: ContactStencilKind,
+    action: ContactTrajectoryBoundsAction,
+    separation: Array,
+    lower_time: Array,
+    upper_time: Array,
+    /,
+) -> tuple[Array, Array]:
+    lower, upper, valid = action(lower_time, upper_time)
+    first_lower, second_lower = _primitive_partition(kind, lower)
+    first_upper, second_upper = _primitive_partition(kind, upper)
+    distance = _rounded_aabb_distance_squared(
+        first_lower.min(axis=0),
+        first_upper.max(axis=0),
+        second_lower.min(axis=0),
+        second_upper.max(axis=0),
+    )
+    threshold = separation
+    if isinstance(plan, InclusionCCDPlan):
+        threshold = threshold + plan.numerical_error
+    squared_threshold = threshold * threshold
+    squared_threshold = jnp.nextafter(
+        squared_threshold, jnp.full_like(squared_threshold, jnp.inf)
+    )
+    return valid & (distance > squared_threshold), valid
+
+
+type _IntervalCarry = tuple[Array, Array, Array, Array, Array, Array, Array]
+
+
+def _candidate_toi(
+    plan: CCDPlan,
+    kind: ContactStencilKind,
+    start: Array,
+    end: Array,
+    minimum_separation: Array,
+    /,
+    *,
+    trajectory_bounds: ContactTrajectoryBoundsAction | None = None,
+) -> tuple[Array, Array, Array, Array, Array]:
+    dtype = start.dtype
+    zero = jnp.zeros((), dtype=dtype)
+    infinity = jnp.full((), jnp.inf, dtype=dtype)
+    initial_distance = _stencil_distance(kind, start)
+    if isinstance(plan, CertifiedAABBCCDPlan):
+        initial_distance = jnp.nextafter(initial_distance, -infinity)
+        threshold = jnp.nextafter(minimum_separation, infinity)
+    else:
+        threshold = minimum_separation + plan.numerical_error
+    initial_invalid = initial_distance <= threshold
+    velocity = end - start
+    capacity = max(2, ceil(-log2(plan.time_tolerance)) + 3)
+    lower_stack = jnp.zeros((capacity,), dtype=dtype)
+    upper_stack = jnp.zeros((capacity,), dtype=dtype).at[0].set(1.0)
+    carry = (
+        lower_stack,
+        upper_stack,
+        jnp.where(initial_invalid, 0, 1).astype(jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.where(initial_invalid, zero, infinity),
+        jnp.asarray(False, dtype=jnp.bool_),
+        jnp.asarray(False, dtype=jnp.bool_),
+    )
+
+    def condition(values: _IntervalCarry) -> Array:
+        return (
+            (values[2] > 0)
+            & (values[3] < plan.maximum_iterations)
+            & ~values[5]
+            & ~values[6]
+        )
+
+    def body(values: _IntervalCarry) -> _IntervalCarry:
+        lowers, uppers, size, iterations, toi, exhausted, bound_failed = values
+        index = size - 1
+        lower, upper = lowers[index], uppers[index]
+        bounds_valid = jnp.asarray(True, dtype=jnp.bool_)
+        if trajectory_bounds is None:
+            free = _interval_free(
+                plan, kind, start, velocity, minimum_separation, lower, upper
+            )
+        else:
+            free, bounds_valid = _enclosure_interval_free(
+                plan, kind, trajectory_bounds, minimum_separation, lower, upper
+            )
+        midpoint = (lower + upper) * 0.5
+        terminal = upper - lower <= plan.time_tolerance
+        split = ~free & ~terminal
+        room = (index + 1 < capacity) & (midpoint > lower) & (midpoint < upper)
+        unresolved = ~free & terminal
+        lowers = (
+            lowers.at[index]
+            .set(midpoint)
+            .at[jnp.minimum(index + 1, capacity - 1)]
+            .set(lower)
+        )
+        uppers = (
+            uppers.at[index]
+            .set(upper)
+            .at[jnp.minimum(index + 1, capacity - 1)]
+            .set(midpoint)
+        )
+        next_size = jnp.where(split & room, index + 2, index)
+        return (
+            lowers,
+            uppers,
+            jnp.where(unresolved | ~bounds_valid, 0, next_size),
+            iterations + 1,
+            jnp.where(~bounds_valid, zero, jnp.where(unresolved, lower, toi)),
+            exhausted | (split & ~room),
+            bound_failed | ~bounds_valid,
+        )
+
+    result = jax.lax.while_loop(condition, body, carry)
+    exhausted = result[5] | (result[2] > 0)
+    toi = jnp.where(exhausted, zero, result[4])
+    count = jnp.where(initial_invalid, 1, result[3]).astype(jnp.int32)
+    return toi, count, initial_invalid, exhausted, result[6]
+
+
+type _BatchCarry = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 def _batch_step_limit(
     plan: CCDPlan,
     batch: ContactStencilBatch,
-    start: np.ndarray,
-    end: np.ndarray,
-    /,
-) -> tuple[float, int, int, int, int, bool]:
-    minimum_toi = np.inf
-    limiting_key = 0
-    query_count = 0
-    interval_count = 0
-    initial_violations = 0
-    exhausted = False
-    for slot in np.flatnonzero(np.asarray(batch.valid, dtype=np.bool_)).tolist():
-        indices = np.asarray(batch.vertex_indices[slot], dtype=np.int32)
-        arity = (
-            2
-            if batch.kind == ContactStencilKind.VERTEX_VERTEX
-            else 3
-            if batch.kind == ContactStencilKind.EDGE_VERTEX
-            else 4
-        )
-        vertices_start = start[indices[:arity]]
-        vertices_end = end[indices[:arity]]
-        separation = float(batch.minimum_separation[slot])
-        if isinstance(plan, CertifiedAABBCCDPlan):
-            toi, intervals, initial, work_exhausted = _candidate_toi_certified(
-                plan, batch.kind, vertices_start, vertices_end, separation
-            )
-        else:
-            toi, intervals, initial, work_exhausted = _candidate_toi(
-                plan, batch.kind, vertices_start, vertices_end, separation
-            )
-        query_count += 1
-        interval_count += intervals
-        initial_violations += int(initial)
-        exhausted = exhausted or work_exhausted
-        if toi < minimum_toi:
-            minimum_toi = toi
-            limiting_key = int(batch.route_keys[slot])
-    return (
-        minimum_toi,
-        limiting_key,
-        query_count,
-        interval_count,
-        initial_violations,
-        exhausted,
-    )
-
-
-def _make_ccd_guarantee(
-    plan: CCDPlan,
+    start: Array,
+    end: Array,
     /,
     *,
-    finite: bool,
-    work_complete: bool,
-    failure_code: int,
-    margin: float,
-) -> ContactGuaranteeEvidence:
-    level = (
-        ContactGuaranteeLevel.ROUNDING_CERTIFIED
-        if isinstance(plan, CertifiedAABBCCDPlan)
-        else ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE
+    trajectory_bounds: ContactTrajectoryBoundsAction | None = None,
+) -> _BatchCarry:
+    initial = (
+        jnp.full((), jnp.inf, dtype=start.dtype),
+        jnp.asarray(0, dtype=jnp.int64),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(False, dtype=jnp.bool_),
+        jnp.asarray(False, dtype=jnp.bool_),
     )
-    return ContactGuaranteeEvidence(
-        level,
-        required_level=plan.required_guarantee,
-        finite=finite,
-        work_complete=work_complete,
-        failure_code=failure_code,
-        margin=margin,
-        backend_id=plan.plan_id,
+    arity = (
+        2
+        if batch.kind == ContactStencilKind.VERTEX_VERTEX
+        else (3 if batch.kind == ContactStencilKind.EDGE_VERTEX else 4)
     )
 
+    def body(slot: Array, carry: _BatchCarry) -> _BatchCarry:
+        def query(values: _BatchCarry) -> _BatchCarry:
+            toi, key, queries, intervals, violations, exhausted, bound_failed = values
+            indices = batch.vertex_indices[slot, :arity]
 
+            def route_bounds(
+                lower_time: Array, upper_time: Array
+            ) -> tuple[Array, Array, Array]:
+                if trajectory_bounds is None:
+                    raise ValueError("A route enclosure requires trajectory_bounds.")
+                lower, upper, valid = _trajectory_enclosure(
+                    trajectory_bounds, lower_time, upper_time, start.shape
+                )
+                return lower[indices], upper[indices], valid
+
+            limit, count, invalid, work_limit, bounds_invalid = _candidate_toi(
+                plan,
+                batch.kind,
+                start[indices],
+                end[indices],
+                batch.minimum_separation[slot].astype(start.dtype),
+                trajectory_bounds=None if trajectory_bounds is None else route_bounds,
+            )
+            return (
+                jnp.minimum(toi, limit),
+                jnp.where(limit < toi, batch.route_keys[slot], key),
+                queries + 1,
+                intervals + count,
+                violations + invalid.astype(jnp.int32),
+                exhausted | work_limit,
+                bound_failed | bounds_invalid,
+            )
+
+        return jax.lax.cond(batch.valid[slot], query, lambda values: values, carry)
+
+    return jax.lax.fori_loop(0, batch.valid.shape[0], body, initial)
+
+
+@checked
 def collision_free_step_limit(
     plan: CCDPlan,
-    scene: PreparedCollisionScene,
+    scene: PreparedCollisionScene | ContactParticipantScene,
     epoch: ContactCandidateEpoch,
     start_positions: ArrayLike,
     end_positions: ArrayLike,
     /,
+    *,
+    trajectory_bounds: ContactTrajectoryBoundsAction | None = None,
 ) -> ContactSafetyEvidence:
-    if not isinstance(plan, (InclusionCCDPlan, CertifiedAABBCCDPlan)):
-        raise TypeError("plan must be a concrete CCD plan.")
-    if not isinstance(scene, PreparedCollisionScene):
-        raise TypeError("scene must be PreparedCollisionScene.")
-    if not isinstance(epoch, ContactCandidateEpoch):
-        raise TypeError("epoch must be ContactCandidateEpoch.")
-    start = np.asarray(start_positions, dtype=np.float64)
-    end = np.asarray(end_positions, dtype=np.float64)
+    """Certify a complete trajectory with bounded, fixed-capacity JAX work.
+
+    The default certifies linear sample trajectories. Nonlinear maps require an
+    explicit ``trajectory_bounds`` provider enclosing the whole scene over each
+    queried interval; endpoints alone are never a nonlinear path certificate.
+    External providers establish ENCLOSURE_CONSERVATIVE, not ROUNDING_CERTIFIED.
+    Search and scene construction remain explicit host preparation operations.
+    """
+    dtype = jnp.float64
+    start = jnp.asarray(start_positions, dtype=dtype)
+    end = jnp.asarray(end_positions, dtype=dtype)
     expected = (scene.vertex_count, scene.ambient_dimension)
-    finite = (
-        start.shape == expected
-        and end.shape == expected
-        and np.all(np.isfinite(start))
-        and np.all(np.isfinite(end))
-    )
-    if not finite:
-        return ContactSafetyEvidence(
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            jnp.asarray(0, dtype=jnp.int64),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(int(CCDStatus.NONFINITE_INPUT), dtype=jnp.int32),
-            jnp.asarray(False),
-            jnp.asarray(True),
-            _make_ccd_guarantee(
-                plan,
-                finite=False,
-                work_complete=False,
-                failure_code=int(CCDStatus.NONFINITE_INPUT),
-                margin=0.0,
-            ),
-            epoch.epoch_id,
-            plan.plan_id,
+    if start.shape != expected or end.shape != expected:
+        raise ValueError("CCD positions must match the scene vertex shape.")
+    finite = jnp.all(jnp.isfinite(start)) & jnp.all(jnp.isfinite(end))
+    minimum_toi = jnp.full((), jnp.inf, dtype=start.dtype)
+    limiting_key = jnp.asarray(0, dtype=jnp.int64)
+    queries = jnp.asarray(0, dtype=jnp.int32)
+    intervals = jnp.asarray(0, dtype=jnp.int32)
+    violations = jnp.asarray(0, dtype=jnp.int32)
+    exhausted = jnp.asarray(False, dtype=jnp.bool_)
+    bounds_failed = jnp.asarray(False, dtype=jnp.bool_)
+    if trajectory_bounds is not None:
+        lower_enclosure, upper_enclosure, bounds_valid = _trajectory_enclosure(
+            trajectory_bounds,
+            jnp.zeros((), dtype=start.dtype),
+            jnp.ones((), dtype=start.dtype),
+            expected,
         )
-    if not bool(epoch.successful):
-        status = CCDStatus.SEARCH_INCOMPLETE
-        return ContactSafetyEvidence(
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            jnp.asarray(0, dtype=jnp.int64),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(int(status), dtype=jnp.int32),
-            jnp.asarray(True),
-            jnp.asarray(True),
-            _make_ccd_guarantee(
-                plan,
-                finite=True,
-                work_complete=False,
-                failure_code=int(CCDStatus.SEARCH_INCOMPLETE),
-                margin=0.0,
-            ),
-            epoch.epoch_id,
-            plan.plan_id,
+        bounds_valid = bounds_valid & (
+            jnp.all(start >= lower_enclosure)
+            & jnp.all(start <= upper_enclosure)
+            & jnp.all(end >= lower_enclosure)
+            & jnp.all(end <= upper_enclosure)
         )
-    minimum_toi = np.inf
-    limiting_key = 0
-    queries = 0
-    intervals = 0
-    initial_violations = 0
-    exhausted = False
+        bounds_failed = ~bounds_valid | (
+            plan.required_guarantee > ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE
+        )
+    # Heterogeneous stencil kinds are static; slots use bounded lax work.
     for batch in epoch.active_batches:
-        result = _batch_step_limit(plan, batch, start, end)
-        toi, key, query_count, interval_count, initial_count, work_exhausted = result
-        if toi < minimum_toi:
-            minimum_toi = toi
-            limiting_key = key
-        queries += query_count
-        intervals += interval_count
-        initial_violations += initial_count
-        exhausted = exhausted or work_exhausted
-    if initial_violations:
-        status = CCDStatus.INITIAL_DISTANCE_VIOLATION
-        step = 0.0
-    elif exhausted:
-        status = CCDStatus.WORK_LIMIT
-        step = 0.0
-    else:
-        status = CCDStatus.SUCCESS
-        step = (
-            1.0
-            if not np.isfinite(minimum_toi)
-            else min(1.0, plan.conservative_rescaling * minimum_toi)
+        empty = (
+            minimum_toi,
+            limiting_key,
+            jnp.zeros_like(queries),
+            jnp.zeros_like(intervals),
+            jnp.zeros_like(violations),
+            jnp.asarray(False, dtype=jnp.bool_),
+            jnp.asarray(False, dtype=jnp.bool_),
         )
-    reported_toi = 1.0 if not np.isfinite(minimum_toi) else minimum_toi
-    return ContactSafetyEvidence(
-        jnp.asarray(step),
-        jnp.asarray(reported_toi),
-        jnp.asarray(limiting_key, dtype=jnp.int64),
-        jnp.asarray(queries, dtype=jnp.int32),
-        jnp.asarray(intervals, dtype=jnp.int32),
-        jnp.asarray(initial_violations, dtype=jnp.int32),
-        jnp.asarray(int(status), dtype=jnp.int32),
-        jnp.asarray(True),
-        jnp.asarray(True),
-        _make_ccd_guarantee(
-            plan,
-            finite=True,
-            work_complete=not exhausted,
-            failure_code=(0 if status == CCDStatus.SUCCESS else int(status)),
-            margin=float(step),
+        toi, key, count, work, invalid, work_limit, bounds_invalid = jax.lax.cond(
+            finite & epoch.successful & ~bounds_failed,
+            lambda _: _batch_step_limit(
+                plan, batch, start, end, trajectory_bounds=trajectory_bounds
+            ),
+            lambda _: empty,
+            None,
+        )
+        limiting_key = jnp.where(toi < minimum_toi, key, limiting_key)
+        minimum_toi = jnp.minimum(minimum_toi, toi)
+        queries += count
+        intervals += work
+        violations += invalid
+        exhausted |= work_limit
+        bounds_failed |= bounds_invalid
+    status = jnp.where(
+        ~finite,
+        int(CCDStatus.NONFINITE_INPUT),
+        jnp.where(
+            ~epoch.successful,
+            int(CCDStatus.SEARCH_INCOMPLETE),
+            jnp.where(
+                bounds_failed,
+                int(CCDStatus.TRAJECTORY_BOUND_FAILURE),
+                jnp.where(
+                    violations > 0,
+                    int(CCDStatus.INITIAL_DISTANCE_VIOLATION),
+                    jnp.where(
+                        exhausted, int(CCDStatus.WORK_LIMIT), int(CCDStatus.SUCCESS)
+                    ),
+                ),
+            ),
         ),
+    ).astype(jnp.int32)
+    reported = jnp.where(
+        jnp.isfinite(minimum_toi), minimum_toi, jnp.ones_like(minimum_toi)
+    )
+    step = jnp.where(
+        status == int(CCDStatus.SUCCESS),
+        jnp.where(
+            jnp.isfinite(minimum_toi),
+            plan.conservative_rescaling * minimum_toi,
+            jnp.ones_like(minimum_toi),
+        ),
+        jnp.zeros_like(minimum_toi),
+    )
+    level = (
+        ContactGuaranteeLevel.ROUNDING_CERTIFIED
+        if isinstance(plan, CertifiedAABBCCDPlan) and trajectory_bounds is None
+        else ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE
+    )
+    guarantee = ContactGuaranteeEvidence(
+        level,
+        required_level=plan.required_guarantee,
+        finite=finite,
+        work_complete=finite & epoch.successful & ~exhausted & ~bounds_failed,
+        failure_code=status,
+        margin=step,
+        backend_id=plan.plan_id,
+    )
+    return ContactSafetyEvidence(
+        step,
+        reported,
+        limiting_key,
+        queries,
+        intervals,
+        violations,
+        status,
+        finite,
+        jnp.asarray(True, dtype=jnp.bool_),
+        guarantee,
         epoch.epoch_id,
         plan.plan_id,
     )

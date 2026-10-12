@@ -237,16 +237,10 @@ class FunctionContactParticipant(AbstractContactParticipant):
     configuration: AbstractVectorSpace
     tangent: AbstractVectorSpace
     contact_space: ArraySpace
-    position_action: Callable[[PyTree[Any]], Array] = eqx.field(static=True)
-    velocity_action: Callable[[PyTree[Any], PyTree[Any]], Array] | None = eqx.field(
-        static=True
-    )
-    effort_pullback_action: Callable[[PyTree[Any], Array], PyTree[Array]] | None = (
-        eqx.field(static=True)
-    )
-    bounds_action: Callable[[PyTree[Any], PyTree[Any]], tuple[Array, Array]] | None = (
-        eqx.field(static=True)
-    )
+    position_action: Callable[[PyTree[Any]], Array]
+    velocity_action: Callable[[PyTree[Any], PyTree[Any]], Array] | None
+    effort_pullback_action: Callable[[PyTree[Any], Array], PyTree[Array]] | None
+    bounds_action: Callable[[PyTree[Any], PyTree[Any]], tuple[Array, Array]] | None
     _capabilities: ContactCapability = eqx.field(static=True)
     _participant_id: str = eqx.field(static=True)
 

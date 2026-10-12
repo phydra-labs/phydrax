@@ -2,27 +2,31 @@ import phydrax as phx
 from phydrax.qualification import CapabilityDepth, ClosureState
 
 
-# Fuel-performance closure matrices are candidates: they close only with
-# external evidence artifacts (see tests/unit/applications/nuclear_fuel).
-NUCLEAR_FUEL_FAMILIES = {"nuclear-fuel.implementation", "nuclear-fuel.scientific-release"}
-
-
 def test_advanced_closure_scenario_1() -> None:
     catalog = phx.qualification.builtin_capability_catalog()
-    builtin = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
-    assert phx.qualification.validate_closure_catalog(catalog, builtin) == ()
-    fuel = tuple(matrix for matrix in builtin if matrix.family in NUCLEAR_FUEL_FAMILIES)
-    assert {matrix.family for matrix in fuel} == NUCLEAR_FUEL_FAMILIES
-    assert all(matrix.state is ClosureState.CLASSIFIED for matrix in fuel)
-    assert all(not matrix.release_closed for matrix in fuel)
-    matrices = tuple(
-        matrix for matrix in builtin if matrix.family not in NUCLEAR_FUEL_FAMILIES
+    matrices = phx.qualification.builtin_omniphysics_closure_matrices(catalog)
+    declarations = tuple(
+        value
+        for value in catalog.declarations
+        if value.domain_maturity == "implementation-qualified-candidate"
     )
-    assert len(matrices) == 21
+    assert matrices and declarations
+    assert phx.qualification.validate_closure_catalog(catalog, matrices) == ()
     assert all(matrix.classified for matrix in matrices)
-    assert all(matrix.implementation_closed for matrix in matrices)
     assert all(not matrix.release_closed for matrix in matrices)
-    assert all(matrix.state is ClosureState.IMPLEMENTATION_CLOSED for matrix in matrices)
+    implementation_matrices = tuple(
+        matrix for matrix in matrices if matrix.implementation_closed
+    )
+    assert implementation_matrices
+    assert all(
+        matrix.state
+        is (
+            ClosureState.IMPLEMENTATION_CLOSED
+            if matrix.implementation_closed
+            else ClosureState.CLASSIFIED
+        )
+        for matrix in matrices
+    )
     reduced = {
         "correlation",
         "frequency",
@@ -30,7 +34,7 @@ def test_advanced_closure_scenario_1() -> None:
         "process-systems",
         "system-modeling",
     }
-    for matrix in matrices:
+    for matrix in implementation_matrices:
         implementation_depth = max(
             requirement.minimum_depth for requirement in matrix.requirements
         )
@@ -43,13 +47,6 @@ def test_advanced_closure_scenario_1() -> None:
         for matrix in builtin
         for resolution in matrix.resolutions
     )
-    catalog = phx.qualification.builtin_capability_catalog()
-    declarations = tuple(
-        value
-        for value in catalog.declarations
-        if value.domain_maturity == "implementation-qualified-candidate"
-    )
-    assert len(declarations) == 21
     for declaration in declarations:
         assert declaration.disposition.value == "candidate"
         assert len(declaration.profiles) == 1

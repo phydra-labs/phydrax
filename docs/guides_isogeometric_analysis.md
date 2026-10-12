@@ -1,5 +1,26 @@
 # Isogeometric analysis
 
+## Monolithic contact bindings
+
+A compiled IGA weak form supplies mechanics residual/JVP and candidate history;
+an existing `PreparedIGASplinePatchProxy` supplies contact samples through
+`prepare_iga_contact_participant(proxy, source_space)`. The latter is a geometry
+adapter, not a private IGA solver. Bind it to the appropriate mechanics block in
+`MonolithicContactPlan`; a fixed geometry uses an explicit fixed state.
+The shared pullback retains cross blocks and geometry curvature.
+
+The adapter binds a conservative full-path enclosure provider from the existing
+proxy plan and source space. Geometry declaring `NONLINEAR_TRAJECTORY` is admitted
+only with that provider, participant-domain limits, and a complete fixed search
+envelope. CCD subdivides whole-interval enclosures, and the root bounds motion
+within the envelope; missing providers refuse instead of using endpoint distances.
+A proxy's static error/coverage certificate alone does not certify arbitrary
+motion. The stronger rounding-certified AABB CCD route refuses these nonlinear
+enclosures, and nonlinear friction uses residual rather than potential merit.
+Contact integration does not enlarge the IGA release surface below. See
+[Monolithic implicit contact](guides_monolithic_contact.md).
+
+
 This page documents the legacy S1 release surface. The implementation also
 contains broader 1D/2D/3D, periodic, multipatch, trimmed, hierarchical, T-spline,
 and compatible-space candidate routes. Their exact admitted tuples and nonclaims

@@ -60,8 +60,8 @@ def _gimp_axis_stencil(
     maximum_half_width_cells: float,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     count = coordinates.size
-    spacing_value = _uniform_spacing(coordinates, bounds, periodic)
-    spacing = jnp.asarray(spacing_value, dtype=position.dtype)
+    # Preparation validates uniform spacing; keep runtime coordinates on device.
+    spacing = (coordinates[1] - coordinates[0]).astype(position.dtype)
     lower, upper = bounds
     evaluated = jnp.mod(position - lower, upper - lower) + lower if periodic else position
     center = jnp.floor((evaluated - coordinates[0]) / spacing).astype(jnp.int32)

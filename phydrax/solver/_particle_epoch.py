@@ -14,6 +14,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._dem import (
+    CompliantDEMBodyProperties,
     DEMResolvedLoad,
     DEMRuntimeState,
     DEMStepEvaluation,
@@ -34,9 +35,9 @@ from ..discretization.particle._particle_epoch import (
     ParticleEpochTransition,
     ParticleExecutionEpoch,
 )
-from ..discretization.particle._particle_morphology import ParticleDynamicBodyProperties
 from ..discretization.particle._population import ParticlePopulationState
-from ..discretization.particle._rigid_sphere import RigidSphereKinematics, RigidSphereLoad
+from ..discretization.particle._rigid_body import RigidBodyKinematics, RigidBodyLoad
+from ..discretization.particle._rigid_sphere import PreparedRigidSphereSet
 
 
 class ParticleEpochSegmentRecord(StrictModule, NonTrainableState):
@@ -204,8 +205,8 @@ def _pullback_history(
     )
 
 
-def _slice_load(load: RigidSphereLoad, capacity: int, /) -> RigidSphereLoad:
-    return RigidSphereLoad(load.force[:capacity], load.torque[:capacity])
+def _slice_load(load: RigidBodyLoad, capacity: int, /) -> RigidBodyLoad:
+    return RigidBodyLoad(load.force[:capacity], load.torque[:capacity])
 
 
 def pullback_particle_epoch_transition(
@@ -220,9 +221,10 @@ def pullback_particle_epoch_transition(
     source = transition.source_epoch.state
     target = transition.candidate_epoch.state
     capacity = transition.old_to_new.shape[0]
-    kinematics = RigidSphereKinematics(
+    kinematics = RigidBodyKinematics(
         cotangent.kinematics.position[:capacity],
         cotangent.kinematics.velocity[:capacity],
+        cotangent.kinematics.orientation[:capacity],
         cotangent.kinematics.angular_velocity[:capacity],
     )
     cotangent_population = cotangent.body_properties.population
@@ -239,12 +241,22 @@ def pullback_particle_epoch_transition(
         cotangent_population.next_id_hi,
         cotangent_population.next_id_lo,
     )
-    properties = ParticleDynamicBodyProperties(
+    source_shapes = transition.source_epoch.dynamics.shapes
+    target_shapes = transition.candidate_epoch.dynamics.shapes
+    if not isinstance(source_shapes, PreparedRigidSphereSet) or not isinstance(
+        target_shapes, PreparedRigidSphereSet
+    ):
+        raise ValueError("Particle epoch pullbacks require sphere contact shapes.")
+    # Growth freezes a new radius chart at the current physical radius:
+    # R_old ds_old = R_new ds_new. Covectors use the transpose chart map.
+    scale_pullback = source_shapes.radii / target_shapes.radii[:capacity]
+    properties = CompliantDEMBodyProperties(
         population,
         cotangent.body_properties.inverse_masses[:capacity],
-        cotangent.body_properties.radii[:capacity],
-        cotangent.body_properties.inertias[:capacity],
-        cotangent.body_properties.inverse_inertias[:capacity],
+        cotangent.body_properties.shape_scale[:capacity] * scale_pullback,
+        cotangent.body_properties.inertia_com[:capacity],
+        cotangent.body_properties.inverse_inertia_com[:capacity],
+        source.body_properties.shape_id,
     )
     particle_history = _pullback_history(
         source.particle_history,

@@ -23,6 +23,7 @@ from ..discretization.mpm import (
     KWayMPMContactPlan,
     MPMContactGraph,
     MPMKWayContactResult,
+    PreparedMPMDynamics,
 )
 from ..discretization.spatial import SparseBlockTopologyState
 from ..discretization.splatting import ParticleGridSplatState, PreparedParticleGridSplat
@@ -188,28 +189,53 @@ class MPMMovingDomainDerivative(StrictModule):
     input_transpose: Any
     route_topology_stable: Array
     successful: Array
+    primal_cell_average_gradients: Array | None = None
+    cell_average_gradient_jvp: Array | None = None
+    primal_hoop_gradients: Array | None = None
+    hoop_gradient_jvp: Array | None = None
+    primal_cell_average_hoop_gradients: Array | None = None
+    cell_average_hoop_gradient_jvp: Array | None = None
 
 
 class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
     prepared: PreparedParticleGridSplat
+    dynamics: PreparedMPMDynamics | None
     minimum_margin: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
-        self, prepared: PreparedParticleGridSplat, /, *, minimum_margin: float = 1.0e-8
+        self,
+        prepared: PreparedParticleGridSplat,
+        /,
+        *,
+        minimum_margin: float = 1.0e-8,
+        dynamics: PreparedMPMDynamics | None = None,
     ) -> None:
         margin = float(minimum_margin)
         if not np.isfinite(margin) or margin <= 0.0:
             raise ValueError("Route superset margin must be finite and positive.")
+        if dynamics is not None and dynamics.splat.prepared_id != prepared.prepared_id:
+            raise ValueError("Route superset dynamics must own the supplied splat.")
         self.prepared = prepared
+        self.dynamics = dynamics
         self.minimum_margin = margin
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "mpm-route-superset",
                 "prepared": prepared.prepared_id,
                 "minimum_margin": margin,
+                "dynamics": None if dynamics is None else dynamics.prepared_id,
             }
+        )
+
+    def _build_routes(
+        self, position: Array, assignment_input: object, /
+    ) -> ParticleGridSplatState:
+        if self.dynamics is None:
+            return self.prepared.build(position, assignment_input=assignment_input)
+        return self.dynamics._build_routes(
+            position, assignment_input, self.dynamics.particles.active_mask
         )
 
     def build(
@@ -220,9 +246,13 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
         *,
         topology_generation: int = 0,
     ) -> MPMRouteSupersetState:
-        routes = self.prepared.build(position, assignment_input=assignment_input)
+        routes = self._build_routes(jnp.asarray(position), assignment_input)
+        margin_routes = routes.stencil.valid
+        if routes.cell_average_gradients is not None:
+            # Quadrature-only routes have zero interpolation weight by design.
+            margin_routes = margin_routes & (jnp.abs(routes.stencil.weights) > 0.0)
         margin = jnp.min(
-            jnp.where(routes.stencil.valid, jnp.abs(routes.stencil.weights), jnp.inf)
+            jnp.where(margin_routes, jnp.abs(routes.stencil.weights), jnp.inf)
         )
         return MPMRouteSupersetState(
             routes,
@@ -248,23 +278,47 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
         position_direction: Array,
         deformation_direction: Array,
         input_direction: PyTree,
-        cotangents: tuple[Array, Array, Array],
+        cotangents: tuple[Array, ...],
         /,
     ) -> MPMMovingDomainDerivative:
+        """Differentiate every floating route operator over the frozen superset.
+
+        Cotangents are ordered as weights, spatial gradients, and offsets,
+        followed by cell-average gradients, hoop gradients, and cell-average hoop
+        gradients when present. Reflection parity is fixed with route topology;
+        the transpose includes radial basis and ring-domain normalization.
+        """
         assignment = self.prepared.plan.assignment
+        stabilized = state.base_routes.cell_average_gradients is not None
+        has_hoop = state.base_routes.hoop_gradients is not None
+        has_cell_hoop = state.base_routes.cell_average_hoop_gradients is not None
+        expected_count = 3 + stabilized + has_hoop + has_cell_hoop
+        if len(cotangents) != expected_count:
+            raise ValueError(
+                f"Route derivatives require {expected_count} cotangents: weights, "
+                "spatial gradients, offsets, then cell-average gradients and "
+                "hoop gradients and cell-average hoop gradients when present."
+            )
 
         def floating_outputs(
             current_position: Array, current_deformation: Array, current_input: PyTree
-        ) -> tuple[Array, Array, Array]:
+        ) -> tuple[Array, ...]:
             updated = assignment.update_input(
                 current_position, current_deformation, current_input
             )
-            routes = self.prepared.build(current_position, assignment_input=updated)
-            return (
+            routes = self._build_routes(current_position, updated)
+            outputs = (
                 routes.stencil.weights,
                 routes.weight_gradients,
                 routes.route_offsets,
             )
+            if routes.cell_average_gradients is not None:
+                outputs = (*outputs, routes.cell_average_gradients)
+            if routes.hoop_gradients is not None:
+                outputs = (*outputs, routes.hoop_gradients)
+            if routes.cell_average_hoop_gradients is not None:
+                outputs = (*outputs, routes.cell_average_hoop_gradients)
+            return outputs
 
         primal, tangent = jax.jvp(
             floating_outputs,
@@ -274,7 +328,7 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
         _, pullback = jax.vjp(floating_outputs, position, deformation, assignment_input)
         transpose = pullback(cotangents)
         candidate_input = assignment.update_input(position, deformation, assignment_input)
-        candidate = self.prepared.build(position, assignment_input=candidate_input)
+        candidate = self._build_routes(position, candidate_input)
         stable = jnp.array_equal(
             candidate.stencil.indices, state.base_routes.stencil.indices
         ) & jnp.array_equal(candidate.stencil.valid, state.base_routes.stencil.valid)
@@ -292,6 +346,12 @@ class MPMRouteSupersetPlan(StrictModule, NonTrainableState):
             transpose[2],
             stable,
             successful,
+            primal[3] if stabilized else None,
+            tangent[3] if stabilized else None,
+            primal[3 + stabilized] if has_hoop else None,
+            tangent[3 + stabilized] if has_hoop else None,
+            primal[3 + stabilized + has_hoop] if has_cell_hoop else None,
+            tangent[3 + stabilized + has_hoop] if has_cell_hoop else None,
         )
 
 

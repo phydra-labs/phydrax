@@ -20,13 +20,15 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, tree_where
 from ..discretization.particle import (
+    CompliantDEMBodyProperties,
     DEMRuntimeState,
     ParticleConversionLedger,
     ParticleConversionState,
     ParticleMorphologyEvaluation,
     ParticleRadiationEvaluation,
-    PreparedSoftSphereDEMDynamics,
-    RigidSphereKinematics,
+    PreparedCompliantDEMDynamics,
+    PreparedRigidSphereSet,
+    RigidBodyKinematics,
 )
 from ..equations import (
     evaluate_unresolved_cfd_dem,
@@ -349,6 +351,9 @@ def _advance_once(
                 particle_volume,
                 dem_step,
             )
+            dem_successful = (
+                dem_successful & first_hydro.successful & second_hydro.successful
+            )
             dem = _hydrodynamic_kick(
                 plan.dem, dem, second_hydro.particle_force, 0.5 * dem_step
             )
@@ -439,10 +444,32 @@ def _advance_once(
             tuple(material.schema.molar_masses for material in thermodynamics),
         )
         conversion = plan.morphology.apply(conversion, morphology)
+        shapes = plan.dem.shapes
+        if not isinstance(shapes, PreparedRigidSphereSet):
+            raise ValueError("Particle morphology requires sphere contact shapes.")
+        morphology_properties = morphology.body_properties
+        dimension = plan.dem.bodies.ambient_dimension
+        if dimension == 2:
+            inertia_com = morphology_properties.inertias
+            inverse_inertia_com = morphology_properties.inverse_inertias
+        else:
+            identity = jnp.eye(3, dtype=morphology_properties.inertias.dtype)
+            inertia_com = morphology_properties.inertias[:, None, None] * identity
+            inverse_inertia_com = (
+                morphology_properties.inverse_inertias[:, None, None] * identity
+            )
+        body_properties = CompliantDEMBodyProperties(
+            morphology_properties.population,
+            morphology_properties.inverse_masses,
+            morphology_properties.radii / shapes.radii,
+            inertia_com,
+            inverse_inertia_com,
+            shapes.shape_id,
+        )
         body_update = plan.dem.apply_body_properties(
             time + step_size,
             dem,
-            morphology.body_properties,
+            body_properties,
             morphology.neighborhood_rebuild_required,
             args=args,
         )
@@ -587,7 +614,7 @@ def _kick_conversion(
 
 
 def _hydrodynamic_kick(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     state: DEMRuntimeState,
     force: Array,
     scale: Array,
@@ -597,9 +624,10 @@ def _hydrodynamic_kick(
         state.body_properties.inverse_masses[:, None] * force
     )
     velocity = jnp.where(mobile, velocity, 0.0)
-    kinematics = RigidSphereKinematics(
+    kinematics = RigidBodyKinematics(
         state.kinematics.position,
         velocity,
+        state.kinematics.orientation,
         state.kinematics.angular_velocity,
     )
     return eqx.tree_at(lambda value: value.kinematics, state, kinematics)

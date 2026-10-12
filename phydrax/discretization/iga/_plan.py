@@ -792,6 +792,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     def integration_domain(
         self, kind: str, selection: EntitySelection | None = None, /
     ) -> IntegrationDomain:
+        """Return the cell, exterior-facet, or interior-facet integration domain.
+
+        A selection restricts the domain to the selected entities of the same
+        entity set.
+        """
         match str(kind):
             case "cell":
                 base = self.cell_domain
@@ -1081,6 +1086,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         return self.qualification_policy.check(geometry_actions.evidence(realized))
 
     def homogeneous_trace_constraint(self, field_name: str, /) -> ConstraintMap:
+        """Return the constraint map that fixes a field's boundary control sites.
+
+        The map embeds the free interior control coefficients, every component of
+        each non-boundary site, into the field's full coefficient space.
+        """
         field_index = self._field_index(field_name)
         field = self.fields[field_index]
         full_space = self.field_spaces[field_index].vector_space

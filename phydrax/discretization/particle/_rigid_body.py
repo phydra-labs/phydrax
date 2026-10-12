@@ -293,6 +293,16 @@ class PreparedRigidBodySet(StrictModule, NonTrainableState):
         angular_ = jnp.where(mobile, angular_, 0.0)
         return RigidBodyKinematics(position_, velocity_, orientation_, angular_)
 
+    def load(self, force: ArrayLike, torque: ArrayLike, /) -> RigidBodyLoad:
+        """Convert and validate one COM force/world-torque payload per body."""
+        force_ = jnp.asarray(force, dtype=self.particles.safe_masses.dtype)
+        torque_ = jnp.asarray(torque, dtype=force_.dtype)
+        if force_.shape != (self.capacity, self.ambient_dimension):
+            raise ValueError("Rigid-body force load shape is invalid.")
+        if torque_.shape != (self.capacity, self.angular_dimension):
+            raise ValueError("Rigid-body torque load shape is invalid.")
+        return RigidBodyLoad(force_, torque_)
+
 
 class RigidBodyKinematics(StrictModule):
     """Rigid-body pose and twist expressed at each center of mass."""
@@ -567,18 +577,23 @@ def rigid_body_world_inertia(
     bodies: PreparedRigidBodySet,
     orientation: Array,
     /,
+    *,
+    inertia_com: Array | None = None,
+    inverse_inertia_com: Array | None = None,
 ) -> tuple[Array, Array]:
     rotation = quaternion_rotation_matrix(orientation)
     inertia = contract(
         "...ij,...jk,...lk->...il",
         rotation,
-        bodies.mass_properties.inertia_com,
+        bodies.mass_properties.inertia_com if inertia_com is None else inertia_com,
         rotation,
     )
     inverse = contract(
         "...ij,...jk,...lk->...il",
         rotation,
-        bodies.mass_properties.inverse_inertia_com,
+        bodies.mass_properties.inverse_inertia_com
+        if inverse_inertia_com is None
+        else inverse_inertia_com,
         rotation,
     )
     return inertia, inverse
@@ -700,11 +715,22 @@ def rigid_body_angular_acceleration(
     kinematics: RigidBodyKinematics,
     torque: Array,
     /,
+    *,
+    inertia_com: Array | None = None,
+    inverse_inertia_com: Array | None = None,
 ) -> Array:
     if bodies.ambient_dimension == 2:
-        return bodies.mass_properties.inverse_inertia_com[:, None] * torque
+        inverse = (
+            bodies.mass_properties.inverse_inertia_com
+            if inverse_inertia_com is None
+            else inverse_inertia_com
+        )
+        return inverse[:, None] * torque
     inertia_world, inverse_world = rigid_body_world_inertia(
-        bodies, kinematics.orientation
+        bodies,
+        kinematics.orientation,
+        inertia_com=inertia_com,
+        inverse_inertia_com=inverse_inertia_com,
     )
     angular_momentum = contract(
         "...ij,...j->...i", inertia_world, kinematics.angular_velocity

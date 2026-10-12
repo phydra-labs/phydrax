@@ -703,6 +703,13 @@ partial_t zeta
 
 The zero mean-vorticity mode is removed. `BetaPlaneBudgets` reports energy/enstrophy
 rates, nonlinear invariants, Hermitian reality, finiteness, and success.
+`BarotropicBetaPlane(..., spectral_viscosity=plan)` adds the prepared SVV
+diagonal λ on admissible nonzero modes. Energy/enstrophy budgets expose distinct
+always-present SVV rates (zero when absent):
+`spectral_viscosity_energy_rate = Σ λ|ζ|²/|k|² / V` and
+`spectral_viscosity_enstrophy_rate = Σ λ|ζ|² / V`. This matches the existing
+area-normalized beta-plane budget convention. CE2/GCE2 materialize the same
+linear tendency, so this decay is included in their linear operator.
 
 `StatisticalDynamicsPlan` accepts finite real quadratic dynamics
 `x_dot = c + A x + B[x,x]`. CE2 is exact only for an explicitly selected

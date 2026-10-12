@@ -80,6 +80,9 @@ def test_incompressible_spectral_scenario_1() -> None:
         jnp.abs(diagnostics.molecular_energy_rate + diagnostics.molecular_dissipation)
         < 1e-10
     )
+    assert diagnostics.spectral_viscosity_id is None
+    assert diagnostics.spectral_viscosity_energy_rate == 0.0
+    assert diagnostics.spectral_viscosity_dissipation == 0.0
     assert jnp.abs(diagnostics.energy_balance_defect) < 1e-10
     assert diagnostics.pressure_gauge_residual < 1e-12
     assert jnp.isfinite(derivative)

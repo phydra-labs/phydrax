@@ -3656,7 +3656,6 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             raise ValueError("boundary_dof_mask is only unambiguous for one field.")
         return self.dof_maps[0].boundary_dof_mask
 
-    @checked
     def axis_dof_mask(self, field_name: str, /) -> Array:
         """Identify regular-axis DOFs for the owner's radial displacement condition.
 

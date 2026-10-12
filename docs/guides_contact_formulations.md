@@ -11,6 +11,17 @@ vertices and maps contact forces back to generalized forces. Linear finite
 element, rod, shell, static, rigid, articulated, and meshfree participants can
 share one `ContactParticipantScene` while retaining independent state spaces.
 
+These are **geometry** participants, not mechanics residual owners.
+`LinearContactParticipant(PreparedCollisionSurface)` only supplies positions,
+tangents, and transpose effort. `AbstractImplicitContactParticipant` separately
+supplies physical residual/JVP, trial history, optional consistent potential,
+and a domain step limit. A `MonolithicContactPlan` binds scene surfaces to
+mechanics-block indices or explicit fixed wall states. Several surfaces may
+share one block. Its single residual retains contact cross blocks and nonlinear
+geometry-curvature terms; it does not exchange forces between private solves.
+See [Monolithic implicit contact](guides_monolithic_contact.md) for the potential
+gate, nonsymmetric GMRES route, frozen envelope, and atomic transaction.
+
 `ContactKinematicsEpoch` lowers candidate stencils to law-independent local
 quantities: gap, relative normal velocity, tangential velocity/slip, normal and
 tangent frame, quadrature weight, material pair, stable route key, and branch

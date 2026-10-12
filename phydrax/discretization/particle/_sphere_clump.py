@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import final
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -17,14 +19,32 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._core import ParticleDiscretization
-from ._pair_state import CLUMP_COMPONENT_INTERACTION, INTERACTION_KEY_WIDTH
-from ._pairwise import ParticlePairRelation
+from ._pair_state import (
+    CLUMP_COMPONENT_INTERACTION,
+    INTERACTION_KEY_WIDTH,
+    ParticlePairKeys,
+    ParticlePairKeySpace,
+)
+from ._pairwise import ParticlePairGeometry, ParticlePairRelation
 from ._rigid_body import (
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
     RigidBodyKinematics,
     RigidBodySetPlan,
+)
+from ._rigid_shape import (
+    AbstractPreparedRigidContactShape,
+    AbstractRigidContactShapePlan,
+    bounded_contact_geometry,
+    CompliantContactShapeKind,
+    RigidContactGeometryBatch,
+)
+from ._signed_field import (
+    exact_signed_field_result,
+    posed_signed_field_coordinates,
+    PosedSignedFieldQueryResult,
 )
 
 
@@ -122,12 +142,14 @@ class SphereClumpTemplatePlan(StrictModule, NonTrainableState):
             raise ValueError("template_id must be nonempty.")
 
 
-class RigidSphereClumpSetPlan(StrictModule, NonTrainableState):
+@final
+class RigidSphereClumpSetPlan(AbstractRigidContactShapePlan):
     templates: tuple[SphereClumpTemplatePlan, ...]
     owner_template_ids: Array
     owner_material_ids: Array
     fixed_mask: Array
     plan_id: str = eqx.field(static=True)
+    shape_kind: CompliantContactShapeKind = eqx.field(static=True)
 
     def __init__(
         self,
@@ -185,9 +207,29 @@ class RigidSphereClumpSetPlan(StrictModule, NonTrainableState):
         self.owner_template_ids = jnp.asarray(template_ids, dtype=jnp.int32)
         self.owner_material_ids = jnp.asarray(material_ids, dtype=jnp.int32)
         self.fixed_mask = jnp.asarray(fixed)
+        self.shape_kind = parse("clump", CompliantContactShapeKind, "shape_kind")
         self.plan_id = generated if plan_id is None else str(plan_id)
         if not self.plan_id:
             raise ValueError("plan_id must be nonempty.")
+
+    def rigid_body_plan(self, particles: ParticleDiscretization, /) -> RigidBodySetPlan:
+        if self.owner_template_ids.shape != (particles.capacity,):
+            raise ValueError("Clump owners must match particle capacity.")
+        selected = np.asarray(self.owner_template_ids)
+        masses = np.asarray(particles.safe_masses)
+        expected = np.asarray([self.templates[index].total_mass for index in selected])
+        active = np.asarray(particles.active_mask)
+        if not np.allclose(masses[active], expected[active], rtol=1.0e-12, atol=1.0e-12):
+            raise ValueError("Owner masses must equal selected clump template masses.")
+        inertia = np.stack(
+            [np.asarray(self.templates[index].inertia_body) for index in selected]
+        )
+        return RigidBodySetPlan(
+            self.owner_material_ids,
+            inertia,
+            fixed_mask=self.fixed_mask,
+            name="rigid-sphere-clump-bodies",
+        )
 
     def prepare(
         self, particles: ParticleDiscretization, /
@@ -195,7 +237,8 @@ class RigidSphereClumpSetPlan(StrictModule, NonTrainableState):
         return PreparedRigidSphereClumpSet(self, particles)
 
 
-class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
+@final
+class PreparedRigidSphereClumpSet(AbstractPreparedRigidContactShape):
     plan: RigidSphereClumpSetPlan
     bodies: PreparedRigidBodySet
     component_offset: Array
@@ -214,23 +257,7 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
         dimension = particles.ambient_dimension
         if any(value.component_offset.shape[1] != dimension for value in plan.templates):
             raise ValueError("Clump template dimension does not match particles.")
-        masses = np.asarray(particles.safe_masses)
-        template_ids = np.asarray(plan.owner_template_ids)
-        expected_mass = np.asarray(
-            [plan.templates[index].total_mass for index in template_ids]
-        )
-        if not np.allclose(masses, expected_mass, rtol=1.0e-12, atol=1.0e-12):
-            raise ValueError("Owner masses must equal selected clump template masses.")
-        inertia = np.stack(
-            [np.asarray(plan.templates[index].inertia_body) for index in template_ids]
-        )
-        body_plan = RigidBodySetPlan(
-            plan.owner_material_ids,
-            inertia,
-            fixed_mask=plan.fixed_mask,
-            name="rigid-sphere-clump-bodies",
-        )
-        bodies = body_plan.prepare(particles)
+        bodies = plan.rigid_body_plan(particles).prepare(particles)
         maximum = max(value.component_count for value in plan.templates)
         template_count = len(plan.templates)
         offset = np.zeros((template_count, maximum, dimension))
@@ -255,9 +282,13 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
             radius[selected], dtype=particles.safe_masses.dtype
         )
         self.component_material = jnp.asarray(material[selected], dtype=jnp.int32)
-        self.component_valid = jnp.asarray(valid[selected])
-        self.bounding_radius = jnp.asarray(
-            bounds[selected], dtype=particles.safe_masses.dtype
+        self.component_valid = (
+            jnp.asarray(valid[selected]) & particles.active_mask[:, None]
+        )
+        self.bounding_radius = jnp.where(
+            particles.active_mask,
+            jnp.asarray(bounds[selected], dtype=particles.safe_masses.dtype),
+            0.0,
         )
         self.max_components = maximum
         self.prepared_id = canonical_fingerprint(
@@ -266,17 +297,136 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
                 "plan": plan.plan_id,
                 "bodies": bodies.prepared_id,
                 "max_components": maximum,
+                "contact_measure": "point_force",
             }
         )
 
+    @property
+    def particles(self) -> ParticleDiscretization:
+        return self.bodies.particles
+
+    @property
+    def material_ids(self) -> Array:
+        return self.bodies.material_ids
+
+    @property
+    def contact_material_ids(self) -> Array:
+        return jnp.where(self.component_valid, self.component_material, 0).reshape((-1,))
+
+    @property
+    def bounding_radii(self) -> Array:
+        return self.bounding_radius
+
+    @property
+    def shape_kind(self) -> CompliantContactShapeKind:
+        return self.plan.shape_kind
+
+    @property
+    def shape_id(self) -> str:
+        return self.prepared_id
+
+    @property
+    def routes_per_pair(self) -> int:
+        return self.max_components * self.max_components
+
+    @property
+    def volumes(self) -> Array:
+        volume = (
+            jnp.pi * self.component_radius**2
+            if self.bodies.ambient_dimension == 2
+            else (4.0 / 3.0) * jnp.pi * self.component_radius**3
+        )
+        return jnp.sum(jnp.where(self.component_valid, volume, 0.0), axis=-1)
+
+    def evaluate_signed_field_query(
+        self,
+        kinematics: RigidBodyKinematics,
+        body_indices: Array,
+        world_points: Array,
+        /,
+        *,
+        shape_scale: Array | None = None,
+    ) -> PosedSignedFieldQueryResult:
+        """Evaluate the exact unit-Lipschitz minimum of component sphere fields.
+
+        Overlapping pebbles do not make this the Euclidean SDF of their union.
+        Its sign, zero set, and spatial enclosure remain certified.
+        """
+        local, indices, scale, supported = posed_signed_field_coordinates(
+            kinematics,
+            body_indices,
+            world_points,
+            self.bodies.particles.active_mask,
+            shape_scale=shape_scale,
+        )
+
+        def query(route: tuple[Array, Array]) -> Array:
+            point, body = route
+            component_value = (
+                jnp.linalg.norm(point[None, :] - self.component_offset[body], axis=-1)
+                - self.component_radius[body]
+            )
+            return jnp.min(
+                jnp.where(self.component_valid[body], component_value, jnp.inf)
+            )
+
+        # Keep only one prepared maximum-component working set per query lane.
+        value = scale * jax.lax.map(query, (local, indices))
+        return exact_signed_field_result(value, supported, self.shape_id)
+
+    def pair_geometry(
+        self,
+        kinematics: RigidBodyKinematics,
+        shape_scale: Array,
+        pairs: ParticlePairRelation,
+        pair_key_space: ParticlePairKeySpace,
+        /,
+        *,
+        maximum_contact_routes: int,
+        center_geometry: ParticlePairGeometry | None = None,
+        distance_tolerance: float = 1.0e-12,
+    ) -> RigidContactGeometryBatch:
+        from ._rigid_contact import clump_component_contact_geometry
+
+        del center_geometry
+        owner_keys = pair_key_space.keys(pairs)
+        components = expand_clump_owner_pairs(
+            self, kinematics, pairs, owner_keys.keys, shape_scale=shape_scale
+        )
+        geometry = clump_component_contact_geometry(
+            components,
+            kinematics.angular_velocity[components.left_owner],
+            kinematics.angular_velocity[components.right_owner],
+            distance_tolerance=distance_tolerance,
+        )
+        keys = ParticlePairKeys(
+            components.component_pair_keys,
+            components.valid,
+            owner_keys.successful,
+            owner_keys.key_space_id,
+        )
+        return bounded_contact_geometry(
+            geometry,
+            keys,
+            maximum_contact_routes,
+            self.shape_id,
+            left_material_ids=components.left_material,
+            right_material_ids=components.right_material,
+        )
+
     def component_kinematics(
-        self, kinematics: RigidBodyKinematics, /
+        self, kinematics: RigidBodyKinematics, /, *, shape_scale: Array | None = None
     ) -> ClumpComponentKinematics:
+        scale = (
+            jnp.ones((self.bodies.capacity,), dtype=self.component_offset.dtype)
+            if shape_scale is None
+            else shape_scale
+        )
         if self.bodies.ambient_dimension == 2:
             angle = kinematics.orientation[:, 0]
             cosine = jnp.cos(angle)[:, None]
             sine = jnp.sin(angle)[:, None]
-            offset = self.component_offset
+            offset = self.component_offset * scale[:, None, None]
             world_offset = jnp.stack(
                 (
                     cosine * offset[..., 0] - sine * offset[..., 1],
@@ -291,7 +441,11 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
             )
         else:
             rotation = quaternion_rotation_matrix(kinematics.orientation)
-            world_offset = contract("...ij,...kj->...ki", rotation, self.component_offset)
+            world_offset = contract(
+                "...ij,...kj->...ki",
+                rotation,
+                self.component_offset * scale[:, None, None],
+            )
             spin = jnp.cross(kinematics.angular_velocity[:, None, :], world_offset)
         position = kinematics.position[:, None, :] + world_offset
         velocity = kinematics.velocity[:, None, :] + spin
@@ -299,7 +453,7 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
             position,
             velocity,
             world_offset,
-            self.component_radius,
+            self.component_radius * scale[:, None],
             self.component_material,
             self.component_valid,
         )
@@ -339,10 +493,12 @@ def expand_clump_owner_pairs(
     owner_pairs: ParticlePairRelation,
     owner_pair_keys: Array,
     /,
+    *,
+    shape_scale: Array | None = None,
 ) -> ClumpComponentPairBatch:
     if owner_pair_keys.shape != (owner_pairs.capacity, INTERACTION_KEY_WIDTH):
         raise ValueError("owner_pair_keys must use structured interaction identities.")
-    components = clumps.component_kinematics(kinematics)
+    components = clumps.component_kinematics(kinematics, shape_scale=shape_scale)
     capacity = owner_pairs.capacity
     maximum = clumps.max_components
     left_owner = jnp.repeat(owner_pairs.left_indices, maximum * maximum)
@@ -356,6 +512,7 @@ def expand_clump_owner_pairs(
     owner_valid = jnp.repeat(owner_pairs.valid, maximum * maximum)
     valid = (
         owner_valid
+        & (left_owner != right_owner)
         & components.valid[left_owner, left_component]
         & components.valid[right_owner, right_component]
     )
@@ -367,8 +524,22 @@ def expand_clump_owner_pairs(
             jnp.full_like(left_component, CLUMP_COMPONENT_INTERACTION, dtype=jnp.int64),
             owner_identity[:, 1],
             owner_identity[:, 2],
-            left_component.astype(jnp.int64),
-            right_component.astype(jnp.int64),
+            jnp.where(
+                jnp.repeat(
+                    owner_pairs.left_particle_ids < owner_pairs.right_particle_ids,
+                    maximum * maximum,
+                ),
+                left_component,
+                right_component,
+            ).astype(jnp.int64),
+            jnp.where(
+                jnp.repeat(
+                    owner_pairs.left_particle_ids < owner_pairs.right_particle_ids,
+                    maximum * maximum,
+                ),
+                right_component,
+                left_component,
+            ).astype(jnp.int64),
         ),
         axis=-1,
     )

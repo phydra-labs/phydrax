@@ -65,6 +65,7 @@ from ._fas import (
     FASResult,
 )
 from ._fixed_point import (
+    AitkenRelaxation,
     AndersonAcceleration,
     FixedPointIteration,
     PicardIteration,
@@ -248,6 +249,7 @@ __all__ = [
     "AbstractNonlinearSystemTransformation",
     "AbstractNonlinearUpdate",
     "ASPIN",
+    "AitkenRelaxation",
     "AndersonAcceleration",
     "AbstractRightNonlinearPreconditioner",
     "Bounds",

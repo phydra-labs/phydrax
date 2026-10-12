@@ -1,0 +1,938 @@
+{
+  "artifact_id": "18f154f4e535f17f2dee445bfb49bdc09d1cd9dce37ab7ab643a1633ed31e7ea",
+  "configuration": {
+    "comparison_nodes": "Each pair's coarse injection nodes; distances integrate the component-mean W1 with the same physical-domain quadrature measure.",
+    "configuration_id": "d0fd752f8866df475ad4fbe4e468da1eef30b45a2ac6ccac4d091835b3371dba",
+    "cutoff_exponent": 0.25,
+    "cutoff_scale": 0.5,
+    "domain_length": 6.283185307179586,
+    "highpass_exponent": null,
+    "invariant_tolerance": 1e-09,
+    "kernel": "tadmor_step",
+    "kind": "qualification-configuration",
+    "maximum_courant_number": 0.5,
+    "maximum_workspace_bytes": 268435456,
+    "members": 6,
+    "mode_counts": [
+      16,
+      32,
+      64
+    ],
+    "num_projections": 32,
+    "order": 1.0,
+    "power_law_exponent": 1.5,
+    "radial_averaging": "ball",
+    "radius_window": [
+      0.7853981633974483,
+      1.5707963267948966
+    ],
+    "refinement_z": 2.0,
+    "seed": 0,
+    "step_size": 0.0001,
+    "steps": 2,
+    "strength": 0.1,
+    "time_policy": "Shared dt/save grid, fail-closed Courant guard at every resolution.",
+    "timing_gate": false,
+    "uncertainty": "Delete the same coupled member at every resolution; paired jackknife SE for distances and their consecutive differences.",
+    "velocity_scale": 0.02
+  },
+  "external_reference": null,
+  "failed_reasons": [],
+  "gates": [
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "diagnostics-finite:16",
+      "gate_outcome_id": "6d1731ee0669682406010022211ea28a58b4f0f3be6114659087793509444bfc",
+      "kind": "qualification-gate-outcome",
+      "metric": "diagnostics_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "diagnostics_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "diagnostics-finite:32",
+      "gate_outcome_id": "f7eb6e90d943a28351731f78fe952236e9dbe34768dfaa81542c6ca882f7f5ca",
+      "kind": "qualification-gate-outcome",
+      "metric": "diagnostics_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "diagnostics_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "diagnostics-finite:64",
+      "gate_outcome_id": "575344c63bbcd409d86d66a3b04d10779fcde08e67985785c777bd548d3f4842",
+      "kind": "qualification-gate-outcome",
+      "metric": "diagnostics_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "diagnostics_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "divergence:16",
+      "gate_outcome_id": "0fafaf3abe30f081de931d500609a6bcd496dbf624eb93665a1228c3f4846406",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_divergence",
+      "observed": 3.165573288030121e-17,
+      "outcome": "passed",
+      "reason": "maximum_divergence satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "divergence:32",
+      "gate_outcome_id": "52a9bd24dd8c27b5999bc915070b95b0b8f37c745059e24c06984654d62c188c",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_divergence",
+      "observed": 3.198672041575565e-17,
+      "outcome": "passed",
+      "reason": "maximum_divergence satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "divergence:64",
+      "gate_outcome_id": "eea76a8c69f65cbfcfe8cfc0c84658722db180d64870053d51bf5d5d561d02d7",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_divergence",
+      "observed": 3.283396684877013e-17,
+      "outcome": "passed",
+      "reason": "maximum_divergence satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-budget:16",
+      "gate_outcome_id": "1d2aaf2faa73b6fa848b98676f974ba21221fb37989cb03695c9760c64e8dca2",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_energy_balance_defect",
+      "observed": 6.938893903907228e-18,
+      "outcome": "passed",
+      "reason": "maximum_energy_balance_defect satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-budget:32",
+      "gate_outcome_id": "a7227e140ed47069ca3699ef1bc871bc4779624326d623294df7b6546c28942b",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_energy_balance_defect",
+      "observed": 8.673617379884035e-18,
+      "outcome": "passed",
+      "reason": "maximum_energy_balance_defect satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "comparison": "less-than-or-equal",
+        "maximum": 1e-09
+      },
+      "gate": "energy-budget:64",
+      "gate_outcome_id": "66c1651b9c3567cef4477c82f71a2e992d9ceacc9ccf43402b8838634b53dc1b",
+      "kind": "qualification-gate-outcome",
+      "metric": "maximum_energy_balance_defect",
+      "observed": 6.938893903907228e-18,
+      "outcome": "passed",
+      "reason": "maximum_energy_balance_defect satisfied the configured upper bound."
+    },
+    {
+      "criterion": {
+        "decrease": "d_j - d_(j+1) > z * paired_SE",
+        "z": 2.0
+      },
+      "gate": "finite-campaign-refinement",
+      "gate_outcome_id": "0fa44215ea92534840fe78bacad7c42a2a70a9fba5f2175d5dcc5d7f111b5952",
+      "kind": "qualification-gate-outcome",
+      "metric": null,
+      "observed": {
+        "differences": [
+          0.06632846694797623
+        ],
+        "paired_standard_errors": [
+          0.003094891254017341
+        ]
+      },
+      "outcome": "passed",
+      "reason": "Every consecutive W1 distance significantly decreased."
+    },
+    {
+      "criterion": null,
+      "gate": "finite-campaign-scaling",
+      "gate_outcome_id": "a9c478ebc0918dec9a39b00c4498827fff33cb2fc5b4c0f7b89df1d9da5bd054",
+      "kind": "qualification-gate-outcome",
+      "metric": null,
+      "observed": false,
+      "outcome": "inconclusive",
+      "reason": "Scaling exponents are inconsistent within the coupled campaign."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "metric-evidence-finite",
+      "gate_outcome_id": "5f303056dc5e0cd4489c9988b074793ea4fd949695fb1a93da24f1071841f643",
+      "kind": "qualification-gate-outcome",
+      "metric": "finite_metric_evidence",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "finite_metric_evidence was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "solver-success:16",
+      "gate_outcome_id": "8c9034c8b2b02bf9e2de12c41203dcd16e5aee085e46e6db35ad21c3338dadc6",
+      "kind": "qualification-gate-outcome",
+      "metric": "solver_successful",
+      "observed": {
+        "guard_evidence": {
+          "held_terminal_state_courant_frequency": [
+            0.4737063572478265,
+            0.46083967157141936,
+            0.3674211195208273,
+            0.49479876041543325,
+            0.3143503689428403,
+            0.3943911057689363
+          ],
+          "held_terminal_state_maximum_step": [
+            1.0555062062179958,
+            1.0849760357979765,
+            1.3608363086261226,
+            1.0105118282434657,
+            1.5905818774175422,
+            1.2677770687175112
+          ],
+          "native_refused_evidence": [],
+          "nonlinear_stability_certified": false,
+          "reference_model": "frozen_uniform_advection_rk4",
+          "restriction_finite": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "step_residuals": [
+            [
+              3.23237503588365e-23,
+              4.336734345598272e-23
+            ],
+            [
+              1.4455762113193725e-23,
+              2.891152422638745e-23
+            ],
+            [
+              2.1683300011164552e-23,
+              1.4900669814451834e-23
+            ],
+            [
+              1.4900383182290204e-23,
+              1.6162249965801885e-23
+            ],
+            [
+              1.4568145704011454e-23,
+              9.730839611936174e-24
+            ],
+            [
+              1.4568157483098267e-23,
+              2.1683950518457665e-23
+            ]
+          ]
+        },
+        "successful": true
+      },
+      "outcome": "passed",
+      "reason": "Every member completed the native guarded trajectory."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "solver-success:32",
+      "gate_outcome_id": "6aa31563886080d2acf788772c83e5530476c875b7686acab788b9df478aa1f8",
+      "kind": "qualification-gate-outcome",
+      "metric": "solver_successful",
+      "observed": {
+        "guard_evidence": {
+          "held_terminal_state_courant_frequency": [
+            1.116781931415383,
+            0.9988714539412497,
+            0.8356674491950735,
+            1.070862573123071,
+            0.7593825141841682,
+            0.8711458647505901
+          ],
+          "held_terminal_state_maximum_step": [
+            0.4477149799212025,
+            0.5005649105569577,
+            0.5983241305876003,
+            0.4669133206717614,
+            0.6584296986837627,
+            0.5739566933984707
+          ],
+          "native_refused_evidence": [],
+          "nonlinear_stability_certified": false,
+          "reference_model": "frozen_uniform_advection_rk4",
+          "restriction_finite": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "step_residuals": [
+            [
+              1.3552527156068805e-20,
+              1.6162486241922568e-23
+            ],
+            [
+              3.232442588419498e-23,
+              2.9801490193083304e-23
+            ],
+            [
+              3.3881317890172014e-21,
+              5.293955920339377e-23
+            ],
+            [
+              2.9801814588309106e-23,
+              1.3552527156068805e-20
+            ],
+            [
+              1.8160117944346743e-23,
+              7.450235064422238e-24
+            ],
+            [
+              2.710505431213761e-20,
+              1.6940658945086007e-21
+            ]
+          ]
+        },
+        "successful": true
+      },
+      "outcome": "passed",
+      "reason": "Every member completed the native guarded trajectory."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "solver-success:64",
+      "gate_outcome_id": "a60a0b917b9a9524a29b31768d21f19e856f9ded578bd387bf6403fffe02ebc0",
+      "kind": "qualification-gate-outcome",
+      "metric": "solver_successful",
+      "observed": {
+        "guard_evidence": {
+          "held_terminal_state_courant_frequency": [
+            2.265552347426325,
+            2.1367438159277166,
+            1.7135320062063193,
+            2.248534715603878,
+            1.5837541809035303,
+            1.8017832854098565
+          ],
+          "held_terminal_state_maximum_step": [
+            0.22069673233019826,
+            0.2340009112336724,
+            0.2917949581268557,
+            0.2223670359769017,
+            0.3157055596309463,
+            0.27750285178512113
+          ],
+          "native_refused_evidence": [],
+          "nonlinear_stability_certified": false,
+          "reference_model": "frozen_uniform_advection_rk4",
+          "restriction_finite": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "step_residuals": [
+            [
+              1.0842021724855044e-19,
+              5.421010862427522e-20
+            ],
+            [
+              5.421010862427522e-20,
+              1.0842021724855044e-19
+            ],
+            [
+              2.710505431213761e-20,
+              2.168404344971009e-19
+            ],
+            [
+              2.710505431213761e-20,
+              5.421010862427522e-20
+            ],
+            [
+              1.3552527156068805e-20,
+              5.421010862427522e-20
+            ],
+            [
+              1.0842021724855044e-19,
+              8.470329472543003e-22
+            ]
+          ]
+        },
+        "successful": true
+      },
+      "outcome": "passed",
+      "reason": "Every member completed the native guarded trajectory."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "svv-dissipation:16",
+      "gate_outcome_id": "c815e2bca677374d61e6d16b556cf960048e61d49f8743f9425d368aa3a1f551",
+      "kind": "qualification-gate-outcome",
+      "metric": "positive_svv_dissipation",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "positive_svv_dissipation was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "svv-dissipation:32",
+      "gate_outcome_id": "035f5fa903f40e25816342995985df79a555ffdbda8d3121fc1dc2c6ffcb85a4",
+      "kind": "qualification-gate-outcome",
+      "metric": "positive_svv_dissipation",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "positive_svv_dissipation was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "svv-dissipation:64",
+      "gate_outcome_id": "d1c4888719473d3e68b47f9b413b552aac511b02e47f3fdf217ee6dc7e9b18d6",
+      "kind": "qualification-gate-outcome",
+      "metric": "positive_svv_dissipation",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "positive_svv_dissipation was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "trajectory-finite:16",
+      "gate_outcome_id": "cea9fca54477222d04c9ac1a9a319bcfe93c187d137e103686fc7a97c0392534",
+      "kind": "qualification-gate-outcome",
+      "metric": "trajectory_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "trajectory_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "trajectory-finite:32",
+      "gate_outcome_id": "f7b6c3b5448af0642cd2ec2e3c22ec009d80ca5e59fb1dad9b2498702c8024db",
+      "kind": "qualification-gate-outcome",
+      "metric": "trajectory_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "trajectory_finite was true."
+    },
+    {
+      "criterion": {
+        "comparison": "is",
+        "expected": true
+      },
+      "gate": "trajectory-finite:64",
+      "gate_outcome_id": "09f3b0b9f26fb9880e44a5802e3cba70b4ed3e716b60f2d573542e90afed0738",
+      "kind": "qualification-gate-outcome",
+      "metric": "trajectory_finite",
+      "observed": true,
+      "outcome": "passed",
+      "reason": "trajectory_finite was true."
+    }
+  ],
+  "inconclusive_reasons": [
+    "Scaling exponents are inconsistent within the coupled campaign."
+  ],
+  "input": {
+    "coupling_id": "69f658da4a87e91e61ed43a4ad25c1b1b8a2e25290403d29d3aadbfbcd7f0725",
+    "input_id": "759c44bb7598365c1ff335ffc026d33120cb35ec706dc4d030c369a876a9beeb",
+    "kind": "qualification-input",
+    "measure_id": "1e31a6398247b22515ee376e11b0c2e298a2e686fbd3de96bebc92bddedfa61c",
+    "measure_prepared_id": "69546102a49020980b4776933895a3d78881b2d7c5915587be21b022771b26f0",
+    "resolutions": [
+      {
+        "compilation_id": "fe1f22a952b19b66c37584bb30fc857004a1aab5841fac78c5f5d12635f1d3e5",
+        "coupling_id": "69f658da4a87e91e61ed43a4ad25c1b1b8a2e25290403d29d3aadbfbcd7f0725",
+        "discretization_prepared_id": "49d085046b8b40780ca0fef1a3e9c6e686e407fa9c8bb28bad08c2cfcc6a3c23",
+        "ensemble_prepared_id": "9b2d9501a3cd6366a895896d8eb458f36dd224ca00b28e279d85897775c4502c",
+        "ensemble_result_id": "f274bffb774021447d7d3cc22630a0898383320c49a9e274f64d0540a44f78cb",
+        "measure_id": "1e31a6398247b22515ee376e11b0c2e298a2e686fbd3de96bebc92bddedfa61c",
+        "method_id": "a18850aff1685daed5d9a8d378201b18dd4b41fb53b7460e14a22fa4ce149a35",
+        "mode_count": 16,
+        "spatial_method_id": "58fdf5bc85bba5c753235a6963996144aab1759d06c515cb8cb74095a44e9311",
+        "spectral_viscosity_plan_id": "91d93de3e4ec9cb21873f4e0b33473b244e2cb751c66ab44a9c12586c1d45151",
+        "spectral_viscosity_prepared_id": "b204f34e5b60a4023bb202c1db409578de3c0d381e4431499a13023fa855980d"
+      },
+      {
+        "compilation_id": "5a641784e74cd3e51a8217888da971460a10d6d7d703237f04c621fb9b816f90",
+        "coupling_id": "69f658da4a87e91e61ed43a4ad25c1b1b8a2e25290403d29d3aadbfbcd7f0725",
+        "discretization_prepared_id": "894766aec7591bfd0b167c36f9f60e88c294a8594989ca02d7a49ab2d7e9c504",
+        "ensemble_prepared_id": "9139ac852273d68e0255ccf830fca1184f1ec25a5403a0609990eaefbf9e6580",
+        "ensemble_result_id": "19b0ed59aeb1e3080810ed72b3a888023f9588a0ce8f198653ebef4d13fcec5b",
+        "measure_id": "1e31a6398247b22515ee376e11b0c2e298a2e686fbd3de96bebc92bddedfa61c",
+        "method_id": "5fc49a3f2e6d83e1fa4bb65a8d7add4229d212727e0b44af41ddc59ed8339865",
+        "mode_count": 32,
+        "spatial_method_id": "58fdf5bc85bba5c753235a6963996144aab1759d06c515cb8cb74095a44e9311",
+        "spectral_viscosity_plan_id": "91d93de3e4ec9cb21873f4e0b33473b244e2cb751c66ab44a9c12586c1d45151",
+        "spectral_viscosity_prepared_id": "b4682b060c326717f2504ac12faeadf4931964a1bb35b3b528f10985846572be"
+      },
+      {
+        "compilation_id": "f4d4aa04ce7e40788bc6f4507b38e107395da8c2e1e8e8e78d04349f8d46da99",
+        "coupling_id": "69f658da4a87e91e61ed43a4ad25c1b1b8a2e25290403d29d3aadbfbcd7f0725",
+        "discretization_prepared_id": "bb9c4ab3ce0841bad60b64faf0506998fe4e6b96dc823cfe0e1ff2210fcfbb06",
+        "ensemble_prepared_id": "58b8628b3413aefe5a1df1af77b8fb9152f778568559aca4e0f6980ecd92c311",
+        "ensemble_result_id": "598c72e4784ee6fe5de94621070455fb1e79d5c9e856683f1f0124565efd8331",
+        "measure_id": "1e31a6398247b22515ee376e11b0c2e298a2e686fbd3de96bebc92bddedfa61c",
+        "method_id": "82d3ae9fc1dc542f0bc65206b5e1fb6e8c3cded45b0c09f34a029ef55e951c02",
+        "mode_count": 64,
+        "spatial_method_id": "58fdf5bc85bba5c753235a6963996144aab1759d06c515cb8cb74095a44e9311",
+        "spectral_viscosity_plan_id": "91d93de3e4ec9cb21873f4e0b33473b244e2cb751c66ab44a9c12586c1d45151",
+        "spectral_viscosity_prepared_id": "894725ee993f6d4d1c78fc62be78362ac64466bbc1146b390603e5b27941285f"
+      }
+    ],
+    "spectral_viscosity_plan_id": "91d93de3e4ec9cb21873f4e0b33473b244e2cb751c66ab44a9c12586c1d45151"
+  },
+  "kind": "incompressible-flow-qualification-artifact",
+  "metrics": {
+    "coupled-campaign": {
+      "comparisons": [
+        {
+          "componentwise_empirical_wasserstein": 0.24405606562130067,
+          "jackknife_standard_error": 0.0026224041761523345,
+          "mode_counts": [
+            16,
+            32
+          ],
+          "paired_coupling_upper_bound": 0.4346351755957816,
+          "projection_standard_error": [
+            0.00019908642442183574,
+            0.0003273262400660616
+          ],
+          "sliced_joint_marginal_distance": [
+            0.005009801557806372,
+            0.007329006446307357
+          ]
+        },
+        {
+          "componentwise_empirical_wasserstein": 0.17772759867332444,
+          "jackknife_standard_error": 0.0025076624120816647,
+          "mode_counts": [
+            32,
+            64
+          ],
+          "paired_coupling_upper_bound": 0.3048055726041869,
+          "projection_standard_error": [
+            0.00036239623867359376,
+            0.00017948326978554742
+          ],
+          "sliced_joint_marginal_distance": [
+            0.00544087104482495,
+            0.004918737114592503
+          ]
+        }
+      ],
+      "delete_one_member_distances": [
+        [
+          0.2503849802962206,
+          0.17878326021197627
+        ],
+        [
+          0.2485764555739624,
+          0.18107577399442915
+        ],
+        [
+          0.2500627272468847,
+          0.1816884348268511
+        ],
+        [
+          0.24880261684228852,
+          0.17982328037186263
+        ],
+        [
+          0.24803204853489594,
+          0.18046474661923423
+        ],
+        [
+          0.2514159801323125,
+          0.18209362539866386
+        ]
+      ],
+      "member_count": 6,
+      "nonclaims": [
+        "Not joint velocity or k-point correlation-marginal Wasserstein distance.",
+        "Only this empirical coupling; not an optimal joint transport distance.",
+        "Sliced metric, not joint Wasserstein; error is projection Monte Carlo only.",
+        "Paired jackknife is finite-campaign uncertainty, not a population confidence bound or statistical-solution convergence certification."
+      ],
+      "paired_difference_standard_errors": [
+        0.003094891254017341
+      ],
+      "refinement_differences": [
+        0.06632846694797623
+      ],
+      "refinement_z": 2.0,
+      "runtime": [
+        {
+          "guard_evidence": {
+            "held_terminal_state_courant_frequency": [
+              0.4737063572478265,
+              0.46083967157141936,
+              0.3674211195208273,
+              0.49479876041543325,
+              0.3143503689428403,
+              0.3943911057689363
+            ],
+            "held_terminal_state_maximum_step": [
+              1.0555062062179958,
+              1.0849760357979765,
+              1.3608363086261226,
+              1.0105118282434657,
+              1.5905818774175422,
+              1.2677770687175112
+            ],
+            "native_refused_evidence": [],
+            "nonlinear_stability_certified": false,
+            "reference_model": "frozen_uniform_advection_rk4",
+            "restriction_finite": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true
+            ],
+            "step_residuals": [
+              [
+                3.23237503588365e-23,
+                4.336734345598272e-23
+              ],
+              [
+                1.4455762113193725e-23,
+                2.891152422638745e-23
+              ],
+              [
+                2.1683300011164552e-23,
+                1.4900669814451834e-23
+              ],
+              [
+                1.4900383182290204e-23,
+                1.6162249965801885e-23
+              ],
+              [
+                1.4568145704011454e-23,
+                9.730839611936174e-24
+              ],
+              [
+                1.4568157483098267e-23,
+                2.1683950518457665e-23
+              ]
+            ]
+          },
+          "initial_maximum_step": [
+            1.0554783739689473,
+            1.0849461223543297,
+            1.3607873596409106,
+            1.0105036595350134,
+            1.5905247847837023,
+            1.2677459928963817
+          ],
+          "maximum_divergence": 3.165573288030121e-17,
+          "maximum_energy_balance_defect": 6.938893903907228e-18,
+          "member_status": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "minimum_svv_dissipation": 0.009134934608399148,
+          "mode_count": 16,
+          "refused_step": null,
+          "resolution": [
+            16,
+            16
+          ],
+          "solver_successful": true,
+          "trajectory_finite": true
+        },
+        {
+          "guard_evidence": {
+            "held_terminal_state_courant_frequency": [
+              1.116781931415383,
+              0.9988714539412497,
+              0.8356674491950735,
+              1.070862573123071,
+              0.7593825141841682,
+              0.8711458647505901
+            ],
+            "held_terminal_state_maximum_step": [
+              0.4477149799212025,
+              0.5005649105569577,
+              0.5983241305876003,
+              0.4669133206717614,
+              0.6584296986837627,
+              0.5739566933984707
+            ],
+            "native_refused_evidence": [],
+            "nonlinear_stability_certified": false,
+            "reference_model": "frozen_uniform_advection_rk4",
+            "restriction_finite": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true
+            ],
+            "step_residuals": [
+              [
+                1.3552527156068805e-20,
+                1.6162486241922568e-23
+              ],
+              [
+                3.232442588419498e-23,
+                2.9801490193083304e-23
+              ],
+              [
+                3.3881317890172014e-21,
+                5.293955920339377e-23
+              ],
+              [
+                2.9801814588309106e-23,
+                1.3552527156068805e-20
+              ],
+              [
+                1.8160117944346743e-23,
+                7.450235064422238e-24
+              ],
+              [
+                2.710505431213761e-20,
+                1.6940658945086007e-21
+              ]
+            ]
+          },
+          "initial_maximum_step": [
+            0.44771062853959726,
+            0.5005513866807568,
+            0.5983052914747089,
+            0.4669041232004625,
+            0.6583884891699475,
+            0.5739316409070172
+          ],
+          "maximum_divergence": 3.198672041575565e-17,
+          "maximum_energy_balance_defect": 8.673617379884035e-18,
+          "member_status": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "minimum_svv_dissipation": 0.010288105199699858,
+          "mode_count": 32,
+          "refused_step": null,
+          "resolution": [
+            32,
+            32
+          ],
+          "solver_successful": true,
+          "trajectory_finite": true
+        },
+        {
+          "guard_evidence": {
+            "held_terminal_state_courant_frequency": [
+              2.265552347426325,
+              2.1367438159277166,
+              1.7135320062063193,
+              2.248534715603878,
+              1.5837541809035303,
+              1.8017832854098565
+            ],
+            "held_terminal_state_maximum_step": [
+              0.22069673233019826,
+              0.2340009112336724,
+              0.2917949581268557,
+              0.2223670359769017,
+              0.3157055596309463,
+              0.27750285178512113
+            ],
+            "native_refused_evidence": [],
+            "nonlinear_stability_certified": false,
+            "reference_model": "frozen_uniform_advection_rk4",
+            "restriction_finite": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true
+            ],
+            "step_residuals": [
+              [
+                1.0842021724855044e-19,
+                5.421010862427522e-20
+              ],
+              [
+                5.421010862427522e-20,
+                1.0842021724855044e-19
+              ],
+              [
+                2.710505431213761e-20,
+                2.168404344971009e-19
+              ],
+              [
+                2.710505431213761e-20,
+                5.421010862427522e-20
+              ],
+              [
+                1.3552527156068805e-20,
+                5.421010862427522e-20
+              ],
+              [
+                1.0842021724855044e-19,
+                8.470329472543003e-22
+              ]
+            ]
+          },
+          "initial_maximum_step": [
+            0.22069166433895232,
+            0.23399184786307325,
+            0.2917782559034355,
+            0.22235978252720603,
+            0.3156895926814685,
+            0.277488348611866
+          ],
+          "maximum_divergence": 3.283396684877013e-17,
+          "maximum_energy_balance_defect": 6.938893903907228e-18,
+          "member_status": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "minimum_svv_dissipation": 0.010514229340123114,
+          "mode_count": 64,
+          "refused_step": null,
+          "resolution": [
+            64,
+            64
+          ],
+          "solver_successful": true,
+          "trajectory_finite": true
+        }
+      ],
+      "scaling": {
+        "common_exponent": 0.5015431917608449,
+        "consistent_within_campaign": false,
+        "envelope_constant": 0.053229436892798,
+        "fits": [
+          {
+            "condition_number": 4.317755693334028,
+            "constant": 0.048176537870666815,
+            "exponent": 0.5484479783921267,
+            "reason": "",
+            "residual": 0.003319212078888716,
+            "standard_error": 0.032038719172314385,
+            "status": "complete"
+          },
+          {
+            "condition_number": 4.317755693334028,
+            "constant": 0.05134380246662773,
+            "exponent": 0.49044665979378455,
+            "reason": "",
+            "residual": 0.0016300644391342867,
+            "standard_error": 0.03374156137358253,
+            "status": "complete"
+          },
+          {
+            "condition_number": 4.317755693334028,
+            "constant": 0.0528420027317115,
+            "exponent": 0.46573493709662367,
+            "reason": "",
+            "residual": 0.0010114129920185235,
+            "standard_error": 0.034061906735612026,
+            "status": "complete"
+          }
+        ],
+        "nonclaim": "Finite-campaign evidence only; tightness, uniform limits and theorem hypotheses are not certified."
+      }
+    }
+  },
+  "reference": {
+    "initial_family_reference": "Herde et al. 2024, Appendix B.2.2, Eq. (42)",
+    "kind": "qualification-reference",
+    "metric_reference": "Lanthaler--Mishra--Par\u00e9s-Pulido: metrics and structure functions",
+    "nonclaim": "Finite campaign only; compactness and continuum convergence are not certified.",
+    "publication": "https://arxiv.org/abs/1909.06615",
+    "reference_id": "74d3d7bfaf126cb644ccb66c2ea73ef5765cec240d423a3a209f1740b1f50f2f",
+    "source": "finite-native-campaign"
+  },
+  "release_ready": false,
+  "route": "periodic-statistical-solution",
+  "status": "inconclusive",
+  "support_tuple": {
+    "attributes": {
+      "convergence_certified": "false",
+      "kernel": "tadmor_step",
+      "route": "periodic-statistical-solution",
+      "spatial_dimensions": "2",
+      "spatial_method": "fourier-pseudospectral",
+      "temporal_method": "courant-guarded-etdrk4"
+    },
+    "capability": "incompressible-flow",
+    "kind": "capability-support-tuple",
+    "support_tuple_id": "6e4042c252e72c8e1f27ae2ab632adc4e6f8a34d79db962722e224e369e76f5c"
+  }
+}

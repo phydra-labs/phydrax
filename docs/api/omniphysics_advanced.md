@@ -14,6 +14,9 @@ The modules below expose exact fixed-topology, single-host CPU candidate tuples.
 
 ::: phydrax.rheology
 
+See the [rheology API contract](rheology.md) for μ(I), dynamic material
+coefficients, and the generalized-Newtonian zero-rate result/status cutover.
+
 ::: phydrax.structural_dynamics
 
 ::: phydrax.correlation

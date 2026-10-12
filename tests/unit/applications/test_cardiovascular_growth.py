@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -52,6 +53,61 @@ def _constant_cycle(prepared: Any, value: Any, index: Any = 0) -> Any:
     )
     return growth.aggregate_growth_cycle(
         prepared, index, np.asarray((0.0, 400.0, 900.0)), tensor
+    )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("log_scale", (0.0, 0.2), ids=("identity", "isotropic"))
+def test_growth_kinematics_derivatives_at_repeated_spectrum(log_scale: float) -> None:
+    _, prepared = _growth_problem()
+    state = growth.initialize_growth_state(prepared)
+    identity = jnp.broadcast_to(
+        jnp.eye(3, dtype=jnp.float64), state.log_growth_tensor.shape
+    )
+    logarithm = log_scale * identity
+    direction = jnp.asarray(
+        (
+            ((0.2, 0.1, -0.04), (0.1, -0.3, 0.07), (-0.04, 0.07, 0.15)),
+            ((-0.1, 0.02, 0.08), (0.02, 0.25, -0.05), (0.08, -0.05, 0.3)),
+        ),
+        dtype=jnp.float64,
+    )
+    total = jnp.asarray(
+        (
+            ((1.1, 0.12, 0.03), (0.01, 0.93, -0.04), (0.0, 0.08, 1.02)),
+            ((0.96, -0.02, 0.07), (0.05, 1.08, 0.02), (0.01, 0.0, 1.03)),
+        ),
+        dtype=jnp.float64,
+    )
+
+    def deformation_gradients(value: jax.Array) -> tuple[jax.Array, ...]:
+        varied = eqx.tree_at(lambda item: item.log_growth_tensor, state, value)
+        result = growth.evaluate_growth_kinematics(prepared, varied, total)
+        return (
+            result.growth_deformation_gradient,
+            result.inverse_growth_deformation_gradient,
+            result.elastic_deformation_gradient,
+        )
+
+    values, tangents = jax.jit(
+        lambda value, tangent: jax.jvp(deformation_gradients, (value,), (tangent,))
+    )(logarithm, direction)
+    expected_tangents = (
+        jnp.exp(log_scale) * direction,
+        -jnp.exp(-log_scale) * direction,
+        -jnp.exp(-log_scale) * (total @ direction),
+    )
+    for tangent, expected in zip(tangents, expected_tangents, strict=True):
+        np.testing.assert_allclose(tangent, expected, rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(values[1] @ values[0], identity, atol=2e-12)
+    np.testing.assert_allclose(values[2] @ values[0], total, atol=2e-12)
+
+    def inverse_objective(value: jax.Array) -> jax.Array:
+        return jnp.sum(deformation_gradients(value)[1] * direction)
+
+    reverse = jax.jit(jax.grad(inverse_objective))(logarithm)
+    np.testing.assert_allclose(
+        reverse, -jnp.exp(-log_scale) * direction, rtol=2e-12, atol=2e-12
     )
 
 

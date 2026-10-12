@@ -63,10 +63,14 @@ from ._convex_contact import (
     convex_sat_contact,
     ConvexContactResult,
     ConvexShapePlan,
+    ConvexShapeSetPlan,
     PreparedConvexShape,
+    PreparedConvexShapeSet,
 )
 from ._core import ParticleDiscretization, ParticleSetPlan
 from ._dem import (
+    CompliantDEMBodyProperties,
+    CompliantDEMMethodPlan,
     DEMBodyPropertyUpdateResult,
     DEMDiagnostics,
     DEMEnergyLedgerState,
@@ -79,8 +83,7 @@ from ._dem import (
     DEMStepEnergyLedger,
     DEMStepEvaluation,
     DEMStepRestriction,
-    PreparedSoftSphereDEMDynamics,
-    SoftSphereDEMMethodPlan,
+    PreparedCompliantDEMDynamics,
 )
 from ._dem_batch import (
     batch_step_detailed,
@@ -118,6 +121,7 @@ from ._dem_contact import (
     AbstractDEMRotationalContactPlan,
     AbstractDEMTangentialContactPlan,
     ConstantRollingResistancePlan,
+    ContactMeasureKind,
     CundallStrackTangentialPlan,
     DEMContactBatch,
     DEMContactHistory,
@@ -125,6 +129,8 @@ from ._dem_contact import (
     DEMContactResponse,
     DEMRotationalResponse,
     HertzNormalContactPlan,
+    LevelSetPenaltyNormalPlan,
+    LevelSetTangentialContactPlan,
     LinearSpringDashpotNormalPlan,
     MindlinTangentialContactPlan,
     PreparedDEMContactModel,
@@ -311,6 +317,14 @@ from ._implicit_contact import (
     ImplicitRigidShapePlan,
     sphere_implicit_contact,
 )
+from ._level_set import (
+    evaluate_level_set_point_query,
+    LevelSetMassPropertyEvidence,
+    LevelSetPointQueryResult,
+    LevelSetRigidShapeSetPlan,
+    LevelSetShapeTemplatePlan,
+    PreparedLevelSetRigidShapeSet,
+)
 from ._metric_cell_list import (
     MetricCellListParticleNeighborhoodPlan,
     PreparedMetricCellListParticleNeighborhood,
@@ -334,6 +348,7 @@ from ._neighborhood import (
     ParticleNeighborhoodState,
     PreparedDenseParticleNeighborhood,
 )
+from ._packing import RandomSequentialPackingPlan, RigidDEMPackingResult
 from ._pair_state import (
     match_particle_pair_keys,
     ParticlePairKeys,
@@ -655,6 +670,12 @@ from ._rigid_parameters import (
     RigidInertialParameters,
     RigidInertialRealization,
 )
+from ._rigid_shape import (
+    AbstractPreparedRigidContactShape,
+    AbstractRigidContactShapePlan,
+    CompliantContactShapeKind,
+    RigidContactGeometryBatch,
+)
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
     RigidSphereKinematics,
@@ -706,6 +727,7 @@ from ._rigid_unilateral import (
     UnilateralState,
     UnilateralStepResult,
 )
+from ._signed_field import PosedSignedFieldQueryResult
 from ._smoothing import (
     AbstractSPHSmoothingKernel,
     CubicSplineSPHKernel,
@@ -760,14 +782,6 @@ from ._superquadric_contact import (
     SuperquadricContactPlan,
     SuperquadricContactResult,
     SuperquadricSetPlan,
-)
-from ._superquadric_dynamics import (
-    PreparedSuperquadricDEMDynamics,
-    SuperquadricDEMEvaluation,
-    SuperquadricDEMPlan,
-    SuperquadricDEMState,
-    SuperquadricDEMStepResult,
-    SuperquadricWallResponse,
 )
 from ._superquadric_wall import (
     superquadric_triangle_contact_geometry,
@@ -1103,11 +1117,30 @@ __all__ = [
     "ParticlePairRemap",
     "PreparedDEMContactModel",
     "PreparedRigidSphereSet",
-    "PreparedSoftSphereDEMDynamics",
+    "PreparedCompliantDEMDynamics",
+    "CompliantDEMBodyProperties",
+    "AbstractRigidContactShapePlan",
+    "AbstractPreparedRigidContactShape",
+    "CompliantContactShapeKind",
+    "RigidContactGeometryBatch",
+    "ContactMeasureKind",
+    "LevelSetPenaltyNormalPlan",
+    "LevelSetTangentialContactPlan",
+    "LevelSetMassPropertyEvidence",
+    "LevelSetPointQueryResult",
+    "LevelSetRigidShapeSetPlan",
+    "LevelSetShapeTemplatePlan",
+    "PreparedLevelSetRigidShapeSet",
+    "evaluate_level_set_point_query",
+    "RandomSequentialPackingPlan",
+    "RigidDEMPackingResult",
+    "PosedSignedFieldQueryResult",
+    "ConvexShapeSetPlan",
+    "PreparedConvexShapeSet",
     "RigidSphereKinematics",
     "RigidSphereLoad",
     "RigidSphereSetPlan",
-    "SoftSphereDEMMethodPlan",
+    "CompliantDEMMethodPlan",
     "SpherePairContactGeometry",
     "evaluate_dem_barrier",
     "match_particle_pair_keys",
@@ -1315,11 +1348,6 @@ __all__ = [
     "split_preallocated_owner",
     "stack_dem_states",
     "surrogate_bias_certificate",
-    "PreparedSuperquadricDEMDynamics",
-    "SuperquadricDEMEvaluation",
-    "SuperquadricDEMPlan",
-    "SuperquadricDEMState",
-    "SuperquadricDEMStepResult",
     "PreparedSuperquadricSet",
     "SuperquadricContactPlan",
     "SuperquadricContactResult",
@@ -1466,7 +1494,6 @@ __all__ = [
     "PreparedUnstructuredParticleInternalMesh",
     "SuperquadricTriangleContactPlan",
     "SuperquadricWallContactResult",
-    "SuperquadricWallResponse",
     "UnstructuredParticleInternalMeshPlan",
     "adapt_particle_internal_mesh",
     "apply_particle_internal_flux_correction",

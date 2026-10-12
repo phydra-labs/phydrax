@@ -352,8 +352,8 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
                     operator_id=self.plan_id + ":complex-surrogate-inverse",
                 )
             )
-            # The plan policy declares no preconditioner; its absent ``None``
-            # slot is the single leaf replaced by the per-frequency surrogate.
+            # The default policy stores ``preconditioning=None``; Equinox only
+            # replaces a ``None`` node when it is declared a leaf.
             policy = eqx.tree_at(
                 lambda value: value.preconditioning,
                 self.policy,

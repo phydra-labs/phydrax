@@ -1,12 +1,42 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+"""Multiplicative Hencky Drucker–Prager integration.
+
+Stress is tension-positive: p=-tr(tau)/3, q=sqrt(3 s:s/2).
+The outer Mohr–Coulomb fit gives M=6 sin(phi)/(3-sin(phi)) and
+k=6 c cos(phi)/(3-sin(phi))+H alpha. Thus f=q-M p-k and
+its nonassociated potential g=q-Mpsi p has gradient
+3 s/(2q)+Mpsi I/3. Elastic contraction of this gradient gives
+q=qtrial-3G gamma and p=ptrial+K Mpsi gamma. Substitution in f=0
+therefore gives gamma=ftrial/(3G+K M Mpsi+H).
+
+If that return crosses q=0, all deviatoric elastic strain is removed.
+Writing v=tr(delta epsilon_p), alpha+=v/Mpsi and p=ptrial+K v
+in the apex equation -M p-k=0 gives
+v=-(k+M ptrial)/(H/Mpsi+M K). Zero dilation cannot reach the apex
+and is explicitly refused (unless a tensile cutoff admits another branch).
+
+For the optional mean tension cutoff ft=-p-sigma_t, associated flow is
+I/3. Its multiplier t gives p+=K t. Tension alone has t=fttrial/K.
+At the cone/tension corner p=-sigma_t and
+shear gamma=(qtrial-k+M sigma_t)/(3G+H),
+t=fttrial/K-Mpsi gamma. Each branch is admitted only if its multipliers
+are nonnegative and both yield inequalities hold to a relative tolerance.
+Plastic metric reconstruction follows F=Fe Fp, not additive reference strain.
+
+Corrected tau_i=(q/qtrial) s_trial_i-p determines elastic strain
+epsilon_i=(tau_i-mean(tau))/(2G)+mean(tau)/(3K) and B_e,i=exp(2 epsilon_i).
+The recoverable Hencky energy is tau:epsilon/2. Plastic stress work is
+tau:delta epsilon_p=q gamma-p v (v=Mpsi gamma+t); at the apex q=0.
+The admissibility tolerance is max(1e-10,64 machine epsilon) times a stress
+scale, so converting all stress/modulus units does not change branch admission.
+"""
 
 from __future__ import annotations
 
-import abc
 from math import pi
-from typing import Any, TypeAlias
+from typing import final
 
 import equinox as eqx
 import jax
@@ -24,31 +54,18 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
-from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
-from ...nonlinear import LocalRootPlan
 from ...typing import checked
+from ._principal_hencky import (
+    elastic_principal_metric,
+    evaluate_principal_point,
+    initialize_metric_state,
+    initialize_state_from_stress,
+    PrestressedMaterialState,
+    principal_trial,
+)
 
 
-def _validated_frictional_values(
-    name: str, values: tuple[ArrayLike, ...]
-) -> tuple[Array, ...]:
-    arrays = tuple(jnp.asarray(value) for value in values)
-    if any(value.shape != () for value in arrays) or any(
-        not bool(jnp.isfinite(value)) for value in arrays
-    ):
-        raise ValueError(f"{name} parameters must be finite scalars.")
-    if (
-        arrays[0] <= 0.0
-        or arrays[1] <= 0.0
-        or arrays[2] < 0.0
-        or not 0.0 <= arrays[3] < 0.5 * pi
-        or not -0.5 * pi < arrays[4] < 0.5 * pi
-        or arrays[5] < 0.0
-    ):
-        raise ValueError(f"{name} parameters are inadmissible.")
-    return arrays
-
-
+@final
 class DruckerPragerParameters(StrictModule, NonTrainableState):
     shear_modulus: Array
     bulk_modulus: Array
@@ -56,6 +73,7 @@ class DruckerPragerParameters(StrictModule, NonTrainableState):
     friction_angle: Array
     dilation_angle: Array
     hardening_modulus: Array
+    tensile_strength: Array | None
 
     def __init__(
         self,
@@ -65,241 +83,326 @@ class DruckerPragerParameters(StrictModule, NonTrainableState):
         friction_angle: ArrayLike,
         dilation_angle: ArrayLike,
         hardening_modulus: ArrayLike = 0.0,
-        /,
-    ) -> None:
-        values = _validated_frictional_values(
-            "Drucker-Prager",
-            (
-                shear_modulus,
-                bulk_modulus,
-                cohesion,
-                friction_angle,
-                dilation_angle,
-                hardening_modulus,
-            ),
-        )
-        (
-            self.shear_modulus,
-            self.bulk_modulus,
-            self.cohesion,
-            self.friction_angle,
-            self.dilation_angle,
-            self.hardening_modulus,
-        ) = values
-
-
-class MohrCoulombParameters(StrictModule, NonTrainableState):
-    shear_modulus: Array
-    bulk_modulus: Array
-    cohesion: Array
-    friction_angle: Array
-    dilation_angle: Array
-    hardening_modulus: Array
-
-    def __init__(
-        self,
-        shear_modulus: ArrayLike,
-        bulk_modulus: ArrayLike,
-        cohesion: ArrayLike,
-        friction_angle: ArrayLike,
-        dilation_angle: ArrayLike,
-        hardening_modulus: ArrayLike = 0.0,
-        /,
-    ) -> None:
-        values = _validated_frictional_values(
-            "Mohr-Coulomb",
-            (
-                shear_modulus,
-                bulk_modulus,
-                cohesion,
-                friction_angle,
-                dilation_angle,
-                hardening_modulus,
-            ),
-        )
-        (
-            self.shear_modulus,
-            self.bulk_modulus,
-            self.cohesion,
-            self.friction_angle,
-            self.dilation_angle,
-            self.hardening_modulus,
-        ) = values
-
-
-class ModifiedCamClayParameters(StrictModule, NonTrainableState):
-    shear_modulus: Array
-    bulk_modulus: Array
-    critical_state_slope: Array
-    hardening_modulus: Array
-
-    def __init__(
-        self,
-        shear_modulus: ArrayLike,
-        bulk_modulus: ArrayLike,
-        critical_state_slope: ArrayLike,
-        hardening_modulus: ArrayLike,
-        /,
-    ) -> None:
-        values = tuple(
-            jnp.asarray(value)
-            for value in (
-                shear_modulus,
-                bulk_modulus,
-                critical_state_slope,
-                hardening_modulus,
-            )
-        )
-        if any(value.shape != () for value in values) or any(
-            not bool(jnp.isfinite(value)) or value <= 0.0 for value in values
-        ):
-            raise ValueError(
-                "Modified Cam-Clay parameters must be positive finite scalars."
-            )
-        (
-            self.shear_modulus,
-            self.bulk_modulus,
-            self.critical_state_slope,
-            self.hardening_modulus,
-        ) = values
-
-
-class NonlocalSofteningPlan(StrictModule, NonTrainableState):
-    characteristic_length: float = eqx.field(static=True)
-    viscosity: float = eqx.field(static=True)
-    minimum_modulus: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        characteristic_length: float,
         /,
         *,
-        viscosity: float = 0.0,
-        minimum_modulus: float = 0.0,
+        tensile_strength: ArrayLike | None = None,
     ) -> None:
-        length = float(characteristic_length)
-        viscosity_ = float(viscosity)
-        minimum = float(minimum_modulus)
-        if (
-            not np.isfinite(length)
-            or length <= 0.0
-            or not np.isfinite(viscosity_)
-            or viscosity_ < 0.0
-            or not np.isfinite(minimum)
-            or minimum < 0.0
-        ):
-            raise ValueError("Nonlocal softening plan is invalid.")
-        self.characteristic_length = length
-        self.viscosity = viscosity_
-        self.minimum_modulus = minimum
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "nonlocal-softening-plan",
-                "characteristic_length": length,
-                "viscosity": viscosity_,
-                "minimum_modulus": minimum,
-            }
+        values = tuple(
+            jnp.asarray(v)
+            for v in (
+                shear_modulus,
+                bulk_modulus,
+                cohesion,
+                friction_angle,
+                dilation_angle,
+                hardening_modulus,
+            )
         )
-
-    def regularize(
-        self,
-        local_history: ArrayLike,
-        nonlocal_history: ArrayLike,
-        step_size: ArrayLike,
-        /,
-    ) -> Array:
-        local = jnp.asarray(local_history)
-        nonlocal_ = jnp.asarray(nonlocal_history, dtype=local.dtype)
-        dt = jnp.asarray(step_size, dtype=local.dtype)
-        if self.viscosity == 0.0:
-            return nonlocal_
-        weight = dt / (self.viscosity + dt)
-        return local + weight * (nonlocal_ - local)
-
-
-class GeomechanicalFailureEvidence(StrictModule):
-    branch_code: Array
-    yield_residual: Array
-    plastic_multiplier: Array
-    apex_or_corner: Array
-    dissipation: Array
-    suggested_step: Array
-    successful: Array
-
-
-_PressureDependentParameters: TypeAlias = (
-    DruckerPragerParameters | MohrCoulombParameters | ModifiedCamClayParameters
-)
-_PointOutputs: TypeAlias = tuple[
-    Array, Array, Array, Array, Array, Array, Array, dict[str, Array]
-]
+        if any(v.shape != () or not bool(jnp.isfinite(v)) for v in values):
+            raise ValueError("Drucker-Prager parameters must be finite scalars.")
+        g, k, c, phi, psi, h = values
+        if (
+            g <= 0
+            or k <= 0
+            or c < 0
+            or not 0 <= phi < pi / 2
+            or not -pi / 2 < psi < pi / 2
+            or h < 0
+        ):
+            raise ValueError("Drucker-Prager parameters are inadmissible.")
+        tension = None if tensile_strength is None else jnp.asarray(tensile_strength)
+        if tension is not None:
+            m, strength, _ = _coefficients_values(c, phi, psi)
+            if (
+                tension.shape != ()
+                or not bool(jnp.isfinite(tension))
+                or tension < 0
+                or (m > 0 and m * tension > strength)
+            ):
+                raise ValueError("Tensile strength must lie between zero and k/M.")
+        self.shear_modulus, self.bulk_modulus, self.cohesion = g, k, c
+        self.friction_angle, self.dilation_angle, self.hardening_modulus = phi, psi, h
+        self.tensile_strength = tension
 
 
-def _inverse(value: Array) -> SmallLinearSolveResult:
-    identity = jnp.broadcast_to(jnp.eye(3, dtype=value.dtype), value.shape)
-    return solve_small_linear(SmallLinearSolvePlan(3), value, identity)
-
-
-def _log_strain(deformation: Array) -> tuple[Array, Array]:
-    right = deformation.T @ deformation
-    eigenvalues, eigenvectors = jnp.linalg.eigh(right)
-    valid = jnp.all(eigenvalues > 0.0) & jnp.all(jnp.isfinite(eigenvalues))
-    logarithmic = 0.5 * jnp.log(jnp.where(eigenvalues > 0.0, eigenvalues, 1.0))
-    return (eigenvectors * logarithmic[None, :]) @ eigenvectors.T, valid
-
-
-def _elastic_stress(elastic_strain: Array, shear: Array, bulk: Array) -> Array:
-    trace = jnp.trace(elastic_strain)
-    deviatoric = elastic_strain - trace / 3.0 * jnp.eye(3, dtype=elastic_strain.dtype)
-    return 2.0 * shear * deviatoric + bulk * trace * jnp.eye(
-        3, dtype=elastic_strain.dtype
+def _coefficients_values(c: Array, phi: Array, psi: Array) -> tuple[Array, Array, Array]:
+    return (
+        6 * jnp.sin(phi) / (3 - jnp.sin(phi)),
+        6 * c * jnp.cos(phi) / (3 - jnp.sin(phi)),
+        6 * jnp.sin(psi) / (3 - jnp.sin(psi)),
     )
 
 
-def _invariants(stress: Array) -> tuple[Array, Array, Array]:
-    mean = jnp.trace(stress) / 3.0
-    deviatoric = stress - mean * jnp.eye(3, dtype=stress.dtype)
-    return -mean, jnp.sqrt(1.5 * jnp.sum(deviatoric * deviatoric)), deviatoric
+def _dp_yield(
+    stress: Array, parameters: DruckerPragerParameters, scalars: Array
+) -> Array:
+    p = -jnp.trace(stress) / 3
+    s = stress + p * jnp.eye(3, dtype=stress.dtype)
+    q = jnp.sqrt(1.5 * jnp.sum(s * s))
+    m, c, _ = _coefficients_values(
+        parameters.cohesion, parameters.friction_angle, parameters.dilation_angle
+    )
+    f = q - m * p - c - parameters.hardening_modulus * scalars[0]
+    return (
+        f
+        if parameters.tensile_strength is None
+        else jnp.maximum(f, -p - parameters.tensile_strength)
+    )
 
 
-def _first_piola(
-    kirchhoff: Array, deformation: Array
-) -> tuple[Array, SmallLinearSolveResult]:
-    inverse = _inverse(deformation)
-    return kirchhoff @ inverse.value.T, inverse
+def _dp_principal(
+    eigenvalues: Array, data: tuple[DruckerPragerParameters, Array]
+) -> tuple[Array, dict[str, Array]]:
+    parameters, scalars = data
+    g, bulk, h = (
+        parameters.shear_modulus,
+        parameters.bulk_modulus,
+        parameters.hardening_modulus,
+    )
+    _, _, p, q, s = principal_trial(eigenvalues, g, bulk)
+    m, cohesion, dilation = _coefficients_values(
+        parameters.cohesion, parameters.friction_angle, parameters.dilation_angle
+    )
+    strength = cohesion + h * scalars[0]
+    f = q - m * p - strength
+    scale = jnp.maximum(jnp.maximum(jnp.abs(p), q), jnp.maximum(strength, g))
+    tol = jnp.maximum(1e-10, 64 * jnp.finfo(eigenvalues.dtype).eps) * scale
+    tension = parameters.tensile_strength
+    ft = jnp.asarray(0.0, dtype=p.dtype) if tension is None else -p - tension
+
+    def elastic(_: None) -> tuple[Array, Array, Array, Array, Array]:
+        return p, q, jnp.zeros_like(p), jnp.zeros_like(p), jnp.asarray(0, dtype=jnp.int32)
+
+    def plastic(_: None) -> tuple[Array, Array, Array, Array, Array]:
+        gamma = f / (3 * g + bulk * m * dilation + h)
+        cone_p, cone_q = p + bulk * dilation * gamma, q - 3 * g * gamma
+        cone_ok = (gamma >= 0) & (cone_q >= 0)
+        if tension is not None:
+            cone_ok &= -cone_p - tension <= tol
+            t = ft / bulk
+            tension_ok = (t >= 0) & (q + m * tension - strength <= tol)
+            corner_gamma = (q - strength + m * tension) / (3 * g + h)
+            corner_t = ft / bulk - dilation * corner_gamma
+            corner_q = q - 3 * g * corner_gamma
+            corner_ok = (corner_gamma >= 0) & (corner_t >= 0) & (corner_q >= 0)
+            return jax.lax.cond(
+                cone_ok,
+                lambda _: (
+                    cone_p,
+                    cone_q,
+                    gamma,
+                    dilation * gamma,
+                    jnp.asarray(1, dtype=jnp.int32),
+                ),
+                lambda _: jax.lax.cond(
+                    tension_ok,
+                    lambda _: (
+                        -tension,
+                        q,
+                        jnp.zeros_like(q),
+                        t,
+                        jnp.asarray(4, dtype=jnp.int32),
+                    ),
+                    lambda _: (
+                        -tension,
+                        corner_q,
+                        corner_gamma,
+                        dilation * corner_gamma + corner_t,
+                        jnp.where(corner_ok, 5, -1).astype(jnp.int32),
+                    ),
+                    None,
+                ),
+                None,
+            )
+
+        def apex(_: None) -> tuple[Array, Array, Array, Array, Array]:
+            safe_dilation = jnp.where(dilation > 0, dilation, 1.0)
+            denominator = h / safe_dilation + m * bulk
+            v = -(strength + m * p) / jnp.where(denominator > 0, denominator, 1.0)
+            valid = (dilation > 0) & (denominator > 0) & (v >= 0)
+            return (
+                p + bulk * v,
+                jnp.zeros_like(q),
+                v / safe_dilation,
+                v,
+                jnp.where(valid, 2, -1).astype(jnp.int32),
+            )
+
+        return jax.lax.cond(
+            cone_ok,
+            lambda _: (
+                cone_p,
+                cone_q,
+                gamma,
+                dilation * gamma,
+                jnp.asarray(1, dtype=jnp.int32),
+            ),
+            apex,
+            None,
+        )
+
+    pn, qn, gamma, volume, branch = jax.lax.cond(
+        (f <= 0) & (ft <= 0), elastic, plastic, None
+    )
+    ratio = jnp.where((branch == 0) | (branch == 4), 1.0, qn / jnp.where(q > 0, q, 1.0))
+    tau = ratio * s - pn
+    alpha = scalars[0] + gamma
+    residual = qn - m * pn - cohesion - h * alpha
+    successful = (branch >= 0) & (residual <= tol) & (scalars[0] >= 0.0)
+    if tension is not None:
+        successful &= -pn - tension <= tol
+    metric = elastic_principal_metric(tau, g, bulk)
+    elastic_strain = 0.5 * jnp.log(metric)
+    energy = 0.5 * jnp.sum(tau * elastic_strain)
+    # tau : delta epsilon_p; apex deviatoric work vanishes.
+    dissipation = qn * gamma - pn * volume
+    cone_gamma = f / (3 * g + bulk * m * dilation + h)
+    cone_q = q - 3 * g * cone_gamma
+    strict_branch = jnp.where(
+        branch == 0,
+        f < -tol,
+        jnp.where(
+            branch == 1,
+            (f > tol) & (qn > tol),
+            (branch == 2) & (cone_q < -tol) & (bulk * volume > tol),
+        ),
+    )
+    if tension is not None:
+        strict_branch = jnp.where(
+            branch == 4,
+            (ft > tol) & (q + m * tension - strength < -tol),
+            jnp.where(
+                branch == 5,
+                (3 * g * gamma > tol)
+                & (bulk * (volume - dilation * gamma) > tol)
+                & (qn > tol),
+                strict_branch & (-pn - tension < -tol),
+            ),
+        )
+    return jnp.stack((tau, metric)), {
+        "scalars": alpha[None],
+        "branch_code": branch,
+        "successful": successful,
+        "strict_branch": strict_branch,
+        "energy": energy,
+        "dissipation": dissipation,
+        "yield_residual": residual,
+        "plastic_multiplier": gamma,
+        "apex_or_corner": (branch == 2) | (branch == 5),
+    }
 
 
-class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
+@final
+class DruckerPragerMPMConstitutivePlan(
+    AbstractImplicitMPMConstitutivePlan, NonTrainableState
+):
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
-    @abc.abstractmethod
+    def __init__(self) -> None:
+        self.dimension, self.kinematics, self.state_shape = 3, "three_dimensional", (7,)
+        self.capabilities = MPMConstitutiveCapabilities(
+            stateful=True,
+            has_free_energy=True,
+            has_algorithmic_tangent=True,
+            has_dissipation=True,
+            supports_implicit=True,
+        )
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "drucker-prager-mpm",
+                "history": "plastic-metric",
+                "flow": "non-associated",
+            }
+        )
+
     def initialize_state(
         self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
     ) -> Array:
-        raise NotImplementedError
+        return initialize_metric_state(batch_shape, dtype, scalars=(0.0,))
 
-    @abc.abstractmethod
-    def _point(
+    def initialize_state_from_stress(
         self,
-        deformation: Array,
-        history: Array,
-        density: Array,
-        parameters: Any,
+        kirchhoff_stress: ArrayLike,
+        parameters: DruckerPragerParameters,
+        /,
+        *,
+        equivalent_plastic_strain: ArrayLike = 0.0,
+    ) -> PrestressedMaterialState:
+        stress = jnp.asarray(kirchhoff_stress)
+        if stress.shape[-2:] != (3, 3):
+            raise ValueError("Kirchhoff stress must end in 3x3.")
+        alpha = jnp.broadcast_to(
+            jnp.asarray(equivalent_plastic_strain, dtype=stress.dtype), stress.shape[:-2]
+        )
+        result = initialize_state_from_stress(
+            stress, parameters, alpha[..., None], _dp_yield
+        )
+        return PrestressedMaterialState(
+            result.state, result.admissible & (alpha >= 0.0), result.yield_value
+        )
+
+    @checked
+    def evaluate(
+        self,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: DruckerPragerParameters,
+        time: ArrayLike,
         step_size: ArrayLike,
-    ) -> _PointOutputs:
-        raise NotImplementedError
+        /,
+    ) -> MPMConstitutiveResponse:
+        del time
+        deformation = jnp.asarray(deformation_gradient)
+        state = jnp.asarray(committed_state, dtype=deformation.dtype)
+        if state.shape != deformation.shape[:-2] + (7,):
+            raise ValueError("Drucker-Prager history shape changed.")
+        density = jnp.broadcast_to(
+            jnp.asarray(reference_density, dtype=deformation.dtype),
+            deformation.shape[:-2],
+        )
+        shape = deformation.shape[:-2]
+        outputs = jax.vmap(
+            lambda f, history, rho: evaluate_principal_point(
+                f,
+                history,
+                rho,
+                parameters,
+                _dp_principal,
+                function_id="drucker-prager",
+                step_size=jnp.asarray(step_size, dtype=deformation.dtype),
+                wave_modulus=parameters.bulk_modulus + 4 * parameters.shear_modulus / 3,
+            )
+        )(deformation.reshape((-1, 3, 3)), state.reshape((-1, 7)), density.reshape((-1,)))
+        stress, history, energy, speed, dissipation, branch, valid, diagnostics = outputs
+        diagnostics["tangent_successful"] &= diagnostics["strict_branch"]
+        return MPMConstitutiveResponse(
+            stress.reshape(shape + (3, 3)),
+            history.reshape(shape + (7,)),
+            energy.reshape(shape),
+            speed.reshape(shape),
+            dissipation_increment=dissipation.reshape(shape),
+            branch_code=branch.reshape(shape),
+            suggested_step=jnp.where(
+                valid, jnp.inf, 0.5 * jnp.asarray(step_size)
+            ).reshape(shape),
+            successful=valid.reshape(shape),
+            admissible=valid.reshape(shape),
+            diagnostics={
+                name: value.reshape(shape) for name, value in diagnostics.items()
+            },
+        )
 
     def evaluate_linearized(
         self,
         deformation_gradient: ArrayLike,
         committed_state: ArrayLike,
         reference_density: ArrayLike,
-        parameters: _PressureDependentParameters,
+        parameters: DruckerPragerParameters,
         time: ArrayLike,
         step_size: ArrayLike,
         /,
@@ -313,474 +416,65 @@ class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
             step_size,
         )
         deformation = jnp.asarray(deformation_gradient)
+        shape = deformation.shape[:-2]
         state = jnp.asarray(committed_state, dtype=deformation.dtype)
-        density = jnp.asarray(reference_density, dtype=deformation.dtype)
-        batch_shape = deformation.shape[:-2]
+        density = jnp.broadcast_to(
+            jnp.asarray(reference_density, dtype=deformation.dtype), shape
+        )
 
-        def stress(value: Array, history: Array, rho: Array) -> Array:
-            return self._point(value, history, rho, parameters, step_size)[0]
+        def point_stress(f: Array, history: Array, rho: Array) -> Array:
+            return evaluate_principal_point(
+                f,
+                history,
+                rho,
+                parameters,
+                _dp_principal,
+                function_id="drucker-prager",
+                step_size=jnp.asarray(step_size, dtype=deformation.dtype),
+                wave_modulus=parameters.bulk_modulus + 4 * parameters.shear_modulus / 3,
+            )[0]
 
-        tangent = jax.vmap(jax.jacfwd(stress, argnums=0))(
+        tangent = jax.vmap(jax.jacfwd(point_stress))(
             deformation.reshape((-1, 3, 3)),
-            state.reshape((-1, self.state_shape[0])),
+            state.reshape((-1, 7)),
             density.reshape((-1,)),
-        ).reshape(batch_shape + (3, 3, 3, 3))
-        successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
-        return MPMLinearizedConstitutiveResponse(response, tangent, successful)
+        ).reshape(shape + (3, 3, 3, 3))
+        return MPMLinearizedConstitutiveResponse(
+            response,
+            tangent,
+            response.diagnostics["tangent_successful"]
+            & jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1)),
+        )
 
-    def _response(
-        self,
-        deformation: Array,
-        state: Array,
-        density: Array,
-        parameters: _PressureDependentParameters,
-        step_size: ArrayLike,
-    ) -> MPMConstitutiveResponse:
-        batch_shape = deformation.shape[:-2]
-        outputs = jax.vmap(
-            lambda value, history, rho: self._point(
-                value, history, rho, parameters, step_size
+
+@final
+class NonlocalSofteningPlan(StrictModule, NonTrainableState):
+    viscosity: float = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(self, *, viscosity: float = 0.0) -> None:
+        value = float(viscosity)
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(
+                "Nonlocal softening viscosity must be finite and nonnegative."
             )
-        )(
-            deformation.reshape((-1, 3, 3)),
-            state.reshape((-1, self.state_shape[0])),
-            density.reshape((-1,)),
-        )
-        (
-            stress,
-            next_state,
-            energy,
-            speed,
-            dissipation,
-            branch,
-            valid,
-            diagnostics,
-        ) = outputs
-        suggested = jnp.where(valid, jnp.inf, 0.5 * jnp.asarray(step_size))
-        return MPMConstitutiveResponse(
-            stress.reshape(batch_shape + (3, 3)),
-            next_state.reshape(batch_shape + self.state_shape),
-            energy.reshape(batch_shape),
-            speed.reshape(batch_shape),
-            dissipation_increment=dissipation.reshape(batch_shape),
-            branch_code=branch.reshape(batch_shape),
-            suggested_step=suggested.reshape(batch_shape),
-            successful=valid.reshape(batch_shape),
-            admissible=valid.reshape(batch_shape),
-            diagnostics={
-                name: value.reshape(batch_shape) for name, value in diagnostics.items()
-            },
-        )
-
-
-class DruckerPragerMPMConstitutivePlan(
-    _AbstractPressureDependentPlan,
-    NonTrainableState,
-):
-    def __init__(self) -> None:
-        self.dimension = 3
-        self.kinematics = "three_dimensional"
-        self.state_shape = (10,)
-        self.capabilities = MPMConstitutiveCapabilities(
-            stateful=True,
-            has_free_energy=True,
-            has_algorithmic_tangent=True,
-            has_dissipation=True,
-            supports_implicit=True,
-        )
+        self.viscosity = value
         self.plan_id = canonical_fingerprint(
-            {"kind": "drucker-prager-mpm", "flow": "non-associated"}
+            {"kind": "nonlocal-softening-plan", "viscosity": value}
         )
 
-    def initialize_state(
-        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
-    ) -> Array:
-        return jnp.zeros(tuple(batch_shape) + self.state_shape, dtype=dtype)
-
-    def _point(
+    def regularize(
         self,
-        deformation: Array,
-        history: Array,
-        density: Array,
-        parameters: DruckerPragerParameters,
-        step_size: ArrayLike,
-    ) -> _PointOutputs:
-        del step_size
-        plastic = history[:9].reshape((3, 3))
-        hardening = history[9]
-        strain, strain_valid = _log_strain(deformation)
-        trial = _elastic_stress(
-            strain - plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        pressure, q, deviatoric = _invariants(trial)
-        phi = parameters.friction_angle
-        psi = parameters.dilation_angle
-        alpha = 2.0 * jnp.sin(phi) / (jnp.sqrt(3.0) * (3.0 - jnp.sin(phi)))
-        beta = 2.0 * jnp.sin(psi) / (jnp.sqrt(3.0) * (3.0 - jnp.sin(psi)))
-        strength = (
-            6.0
-            * parameters.cohesion
-            * jnp.cos(phi)
-            / (jnp.sqrt(3.0) * (3.0 - jnp.sin(phi)))
-        )
-        yield_value = (
-            q + alpha * pressure - (strength + parameters.hardening_modulus * hardening)
-        )
-        denominator = (
-            3.0 * parameters.shear_modulus
-            + parameters.bulk_modulus * alpha * beta
-            + parameters.hardening_modulus
-        )
-        multiplier = jnp.maximum(yield_value, 0.0) / denominator
-        apex = q <= 1.0e-12
-        direction = 1.5 * deviatoric / jnp.where(q > 1.0e-12, q, 1.0)
-        flow = direction - beta / 3.0 * jnp.eye(3, dtype=strain.dtype)
-        next_plastic = plastic + multiplier * flow
-        next_hardening = hardening + multiplier
-        stress = _elastic_stress(
-            strain - next_plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        first_piola, inverse = _first_piola(stress, deformation)
-        p_new, q_new, _ = _invariants(stress)
-        residual = (
-            q_new
-            + alpha * p_new
-            - (strength + parameters.hardening_modulus * next_hardening)
-        )
-        energy = 0.5 * jnp.sum(stress * (strain - next_plastic))
-        dissipation = jnp.maximum(strength * multiplier, 0.0)
-        speed = jnp.sqrt(
-            (parameters.bulk_modulus + 4.0 * parameters.shear_modulus / 3.0)
-            / jnp.maximum(density, 1.0e-30)
-        )
-        valid = (
-            strain_valid
-            & inverse.successful
-            & jnp.all(jnp.isfinite(first_piola))
-            & jnp.isfinite(residual)
-            & (density > 0.0)
-        )
-        state = jnp.concatenate((next_plastic.reshape((9,)), next_hardening[None]))
-        diagnostics = {
-            "yield_residual": residual,
-            "plastic_multiplier": multiplier,
-            "apex_or_corner": apex,
-        }
-        return (
-            jnp.where(valid, first_piola, 0.0),
-            jnp.where(valid, state, history),
-            jnp.where(valid, energy, 0.0),
-            jnp.where(valid, speed, 0.0),
-            jnp.where(valid, dissipation, 0.0),
-            jnp.where(yield_value > 1.0e-10, jnp.where(apex, 2, 1), 0).astype(jnp.int32),
-            valid,
-            diagnostics,
-        )
-
-    @checked
-    def evaluate(
-        self,
-        deformation_gradient: ArrayLike,
-        committed_state: ArrayLike,
-        reference_density: ArrayLike,
-        parameters: DruckerPragerParameters,
-        time: ArrayLike,
+        local_history: ArrayLike,
+        nonlocal_history: ArrayLike,
         step_size: ArrayLike,
         /,
-    ) -> MPMConstitutiveResponse:
-        del time
-        return self._response(
-            jnp.asarray(deformation_gradient),
-            jnp.asarray(committed_state),
-            jnp.asarray(reference_density),
-            parameters,
-            step_size,
-        )
-
-
-class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainableState):
-    def __init__(self) -> None:
-        self.dimension = 3
-        self.kinematics = "three_dimensional"
-        self.state_shape = (10,)
-        self.capabilities = MPMConstitutiveCapabilities(
-            stateful=True,
-            has_free_energy=True,
-            has_algorithmic_tangent=True,
-            has_dissipation=True,
-            supports_implicit=True,
-        )
-        self.plan_id = canonical_fingerprint(
-            {"kind": "mohr-coulomb-mpm", "return": "principal-semismooth"}
-        )
-
-    def initialize_state(
-        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
     ) -> Array:
-        return jnp.zeros(tuple(batch_shape) + self.state_shape, dtype=dtype)
-
-    def _point(
-        self,
-        deformation: Array,
-        history: Array,
-        density: Array,
-        parameters: MohrCoulombParameters,
-        step_size: ArrayLike,
-    ) -> _PointOutputs:
-        del step_size
-        plastic = history[:9].reshape((3, 3))
-        hardening = history[9]
-        strain, strain_valid = _log_strain(deformation)
-        trial = _elastic_stress(
-            strain - plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        principal, vectors = jnp.linalg.eigh(trial)
-        phi, psi = parameters.friction_angle, parameters.dilation_angle
-        cohesion = parameters.cohesion + parameters.hardening_modulus * hardening
-        yield_value = (
-            principal[2]
-            - principal[0]
-            + (principal[2] + principal[0]) * jnp.sin(phi)
-            - 2.0 * cohesion * jnp.cos(phi)
-        )
-        yield_gradient = jnp.asarray((-1.0 + jnp.sin(phi), 0.0, 1.0 + jnp.sin(phi)))
-        flow_gradient = jnp.asarray((-1.0 + jnp.sin(psi), 0.0, 1.0 + jnp.sin(psi)))
-        elasticity = 2.0 * parameters.shear_modulus * (
-            jnp.eye(3) - jnp.ones((3, 3)) / 3.0
-        ) + parameters.bulk_modulus * jnp.ones((3, 3))
-        denominator = (
-            yield_gradient @ elasticity @ flow_gradient + parameters.hardening_modulus
-        )
-        multiplier = jnp.maximum(yield_value, 0.0) / jnp.maximum(denominator, 1.0e-12)
-        flow = (vectors * flow_gradient[None, :]) @ vectors.T
-        next_plastic = plastic + multiplier * flow
-        next_hardening = hardening + multiplier
-        stress = _elastic_stress(
-            strain - next_plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        corrected, _ = jnp.linalg.eigh(stress)
-        edge = (corrected[2] - corrected[1] <= 1.0e-10) | (
-            corrected[1] - corrected[0] <= 1.0e-10
-        )
-        apex = corrected[2] - corrected[0] <= 1.0e-10
-        first_piola, inverse = _first_piola(stress, deformation)
-        residual = jnp.maximum(yield_value - multiplier * denominator, 0.0)
-        energy = 0.5 * jnp.sum(stress * (strain - next_plastic))
-        dissipation = jnp.maximum(cohesion * multiplier, 0.0)
-        speed = jnp.sqrt(
-            (parameters.bulk_modulus + 4.0 * parameters.shear_modulus / 3.0)
-            / jnp.maximum(density, 1.0e-30)
-        )
-        valid = (
-            strain_valid
-            & inverse.successful
-            & jnp.all(jnp.isfinite(first_piola))
-            & jnp.isfinite(residual)
-            & (density > 0.0)
-        )
-        state = jnp.concatenate((next_plastic.reshape((9,)), next_hardening[None]))
-        diagnostics = {
-            "yield_residual": residual,
-            "plastic_multiplier": multiplier,
-            "apex_or_corner": apex | edge,
-        }
-        branch = jnp.where(
-            yield_value > 1.0e-10,
-            jnp.where(apex, 3, jnp.where(edge, 2, 1)),
-            0,
-        ).astype(jnp.int32)
+        local = jnp.asarray(local_history)
+        nonlocal_ = jnp.asarray(nonlocal_history, dtype=local.dtype)
+        dt = jnp.asarray(step_size, dtype=local.dtype)
         return (
-            jnp.where(valid, first_piola, 0.0),
-            jnp.where(valid, state, history),
-            jnp.where(valid, energy, 0.0),
-            jnp.where(valid, speed, 0.0),
-            jnp.where(valid, dissipation, 0.0),
-            branch,
-            valid,
-            diagnostics,
+            nonlocal_
+            if self.viscosity == 0
+            else local + dt / (self.viscosity + dt) * (nonlocal_ - local)
         )
-
-    @checked
-    def evaluate(
-        self,
-        deformation_gradient: ArrayLike,
-        committed_state: ArrayLike,
-        reference_density: ArrayLike,
-        parameters: MohrCoulombParameters,
-        time: ArrayLike,
-        step_size: ArrayLike,
-        /,
-    ) -> MPMConstitutiveResponse:
-        del time
-        return self._response(
-            jnp.asarray(deformation_gradient),
-            jnp.asarray(committed_state),
-            jnp.asarray(reference_density),
-            parameters,
-            step_size,
-        )
-
-
-class ModifiedCamClayMPMConstitutivePlan(
-    _AbstractPressureDependentPlan,
-    NonTrainableState,
-):
-    initial_preconsolidation_pressure: float = eqx.field(static=True)
-    initial_void_ratio: float = eqx.field(static=True)
-    root: LocalRootPlan
-
-    def __init__(
-        self, *, initial_preconsolidation_pressure: float, initial_void_ratio: float
-    ) -> None:
-        pressure = float(initial_preconsolidation_pressure)
-        void = float(initial_void_ratio)
-        if pressure <= 0.0 or void <= 0.0:
-            raise ValueError("Modified Cam-Clay initial state is inadmissible.")
-        self.dimension = 3
-        self.kinematics = "three_dimensional"
-        self.state_shape = (11,)
-        self.capabilities = MPMConstitutiveCapabilities(
-            stateful=True,
-            has_free_energy=True,
-            has_algorithmic_tangent=True,
-            has_dissipation=True,
-            supports_implicit=True,
-        )
-        self.initial_preconsolidation_pressure = pressure
-        self.initial_void_ratio = void
-        self.root = LocalRootPlan(plan_id="modified-cam-clay-consistency")
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "modified-cam-clay-mpm",
-                "initial_preconsolidation_pressure": pressure,
-                "initial_void_ratio": void,
-                "root": self.root.plan_id,
-            }
-        )
-
-    def initialize_state(
-        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
-    ) -> Array:
-        shape = tuple(batch_shape)
-        return jnp.concatenate(
-            (
-                jnp.zeros(shape + (9,), dtype=dtype),
-                jnp.full(
-                    shape + (1,), self.initial_preconsolidation_pressure, dtype=dtype
-                ),
-                jnp.full(shape + (1,), self.initial_void_ratio, dtype=dtype),
-            ),
-            axis=-1,
-        )
-
-    def _point(
-        self,
-        deformation: Array,
-        history: Array,
-        density: Array,
-        parameters: ModifiedCamClayParameters,
-        step_size: ArrayLike,
-    ) -> _PointOutputs:
-        del step_size
-        plastic = history[:9].reshape((3, 3))
-        pc_old, void_old = history[9], history[10]
-        strain, strain_valid = _log_strain(deformation)
-        trial = _elastic_stress(
-            strain - plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        p_trial, q_trial, deviatoric = _invariants(trial)
-        slope = parameters.critical_state_slope
-        yield_trial = q_trial**2 + slope**2 * p_trial * (p_trial - pc_old)
-        flow = 3.0 * deviatoric - slope**2 * (2.0 * p_trial - pc_old) / 3.0 * jnp.eye(3)
-
-        def consistency(multiplier: Array) -> Array:
-            next_plastic = plastic + multiplier * flow
-            stress = _elastic_stress(
-                strain - next_plastic, parameters.shear_modulus, parameters.bulk_modulus
-            )
-            pressure, q, _ = _invariants(stress)
-            pc = pc_old * jnp.exp(parameters.hardening_modulus * multiplier)
-            return q**2 + slope**2 * pressure * (pressure - pc)
-
-        multiplier = jax.lax.cond(
-            yield_trial > 1.0e-10,
-            lambda _: self.root.solve(
-                consistency, jnp.asarray(0.0, dtype=deformation.dtype)
-            ),
-            lambda _: jnp.asarray(0.0, dtype=deformation.dtype),
-            operand=None,
-        )
-        next_plastic = plastic + multiplier * flow
-        stress = _elastic_stress(
-            strain - next_plastic, parameters.shear_modulus, parameters.bulk_modulus
-        )
-        pc = pc_old * jnp.exp(parameters.hardening_modulus * multiplier)
-        volumetric_plastic = jnp.trace(next_plastic - plastic)
-        void = jnp.maximum(void_old - (1.0 + void_old) * volumetric_plastic, 1.0e-8)
-        pressure, q, _ = _invariants(stress)
-        residual = q**2 + slope**2 * pressure * (pressure - pc)
-        first_piola, inverse = _first_piola(stress, deformation)
-        energy = 0.5 * jnp.sum(stress * (strain - next_plastic))
-        dissipation = jnp.maximum(pc_old * multiplier, 0.0)
-        speed = jnp.sqrt(
-            (parameters.bulk_modulus + 4.0 * parameters.shear_modulus / 3.0)
-            / jnp.maximum(density, 1.0e-30)
-        )
-        valid = (
-            strain_valid
-            & inverse.successful
-            & jnp.all(jnp.isfinite(first_piola))
-            & jnp.isfinite(residual)
-            & (pc > 0.0)
-            & (void > 0.0)
-            & (density > 0.0)
-        )
-        state = jnp.concatenate((next_plastic.reshape((9,)), pc[None], void[None]))
-        diagnostics = {
-            "yield_residual": residual,
-            "plastic_multiplier": multiplier,
-            "preconsolidation_pressure": pc,
-            "void_ratio": void,
-        }
-        return (
-            jnp.where(valid, first_piola, 0.0),
-            jnp.where(valid, state, history),
-            jnp.where(valid, energy, 0.0),
-            jnp.where(valid, speed, 0.0),
-            jnp.where(valid, dissipation, 0.0),
-            jnp.where(yield_trial > 1.0e-10, 1, 0).astype(jnp.int32),
-            valid,
-            diagnostics,
-        )
-
-    @checked
-    def evaluate(
-        self,
-        deformation_gradient: ArrayLike,
-        committed_state: ArrayLike,
-        reference_density: ArrayLike,
-        parameters: ModifiedCamClayParameters,
-        time: ArrayLike,
-        step_size: ArrayLike,
-        /,
-    ) -> MPMConstitutiveResponse:
-        del time
-        return self._response(
-            jnp.asarray(deformation_gradient),
-            jnp.asarray(committed_state),
-            jnp.asarray(reference_density),
-            parameters,
-            step_size,
-        )
-
-
-__all__ = [
-    "DruckerPragerMPMConstitutivePlan",
-    "DruckerPragerParameters",
-    "GeomechanicalFailureEvidence",
-    "ModifiedCamClayMPMConstitutivePlan",
-    "ModifiedCamClayParameters",
-    "MohrCoulombMPMConstitutivePlan",
-    "MohrCoulombParameters",
-    "NonlocalSofteningPlan",
-]

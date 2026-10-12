@@ -18,12 +18,14 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
-from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
+from ._dem import DEMRuntimeState, PreparedCompliantDEMDynamics
 from ._dem_cohesion import DEMCohesionComponentHistory
 
 
 _ReplayCarry: TypeAlias = tuple[DEMRuntimeState, Array]
-_ReplayPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_ReplayPayload: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class DEMCheckpointPolicy(StrictModule, NonTrainableState):
@@ -49,6 +51,8 @@ class DEMReplayRecord(StrictModule, NonTrainableState):
     active_contacts: Array
     sliding_contacts: Array
     cache_epoch: Array
+    geometry_successful: Array
+    contact_overflow: Array
     replay_id: str = eqx.field(static=True)
 
 
@@ -91,7 +95,7 @@ def _route_digest(state: DEMRuntimeState, /) -> Array:
 
 
 def checkpointed_dem_rollout(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     initial_state: DEMRuntimeState,
     /,
     *,
@@ -103,8 +107,8 @@ def checkpointed_dem_rollout(
 ) -> DEMReplayResult:
     """Run a deterministic segmented scan whose blocks rematerialize in reverse AD."""
 
-    if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-        raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+    if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+        raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
     if not isinstance(initial_state, DEMRuntimeState):
         raise TypeError("initial_state must be a DEMRuntimeState.")
     if not isinstance(checkpoint, DEMCheckpointPolicy):
@@ -148,6 +152,8 @@ def checkpointed_dem_rollout(
             detail.evaluation.diagnostics.active_contacts,
             detail.evaluation.diagnostics.sliding_contacts,
             cache_epoch,
+            detail.evaluation.geometry.successful,
+            detail.evaluation.geometry.overflow,
         )
         return (accepted, successful), payload
 
@@ -171,6 +177,8 @@ def checkpointed_dem_rollout(
             {
                 "kind": "dem-replay-record",
                 "dynamics": dynamics.prepared_id,
+                "shape": dynamics.shapes.shape_id,
+                "shape_kind": dynamics.shapes.shape_kind,
                 "checkpoint": checkpoint.policy_id,
                 "t0": start,
                 "step_size": dt_value,
@@ -183,7 +191,7 @@ def checkpointed_dem_rollout(
 
 def checkpointed_dem_vjp(
     loss: Callable[[DEMRuntimeState], Array],
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     initial_state: DEMRuntimeState,
     cotangent: Array,
     /,
@@ -258,6 +266,8 @@ def dem_replay_matches(left: DEMReplayRecord, right: DEMReplayRecord, /) -> Arra
         & jnp.array_equal(left.active_contacts, right.active_contacts)
         & jnp.array_equal(left.sliding_contacts, right.sliding_contacts)
         & jnp.array_equal(left.cache_epoch, right.cache_epoch)
+        & jnp.array_equal(left.geometry_successful, right.geometry_successful)
+        & jnp.array_equal(left.contact_overflow, right.contact_overflow)
     )
 
 

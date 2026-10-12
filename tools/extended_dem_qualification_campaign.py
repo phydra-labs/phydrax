@@ -41,7 +41,7 @@ def _cohesive_case(center_distance: Any) -> Any:
         phx.discretization.RigidSphereSetPlan(
             jnp.full((2,), 0.5), jnp.zeros((2,), dtype=jnp.int32)
         ),
-        phx.discretization.SoftSphereDEMMethodPlan(
+        phx.discretization.CompliantDEMMethodPlan(
             phx.discretization.DEMContactModelPlan(
                 phx.discretization.HertzNormalContactPlan(),
                 cohesion=cohesion,
@@ -89,34 +89,45 @@ def _superquadric_case(semi_axes: Any, epsilon1: Any, epsilon2: Any) -> Any:
         jnp.full((2,), epsilon1),
         jnp.full((2,), epsilon2),
         jnp.zeros((2,), dtype=jnp.int32),
+        contact_geometry=phx.discretization.SuperquadricContactPlan(iterations=24),
     )
-    dynamics = phx.discretization.SuperquadricDEMPlan(
-        shapes,
-        phx.discretization.SuperquadricContactPlan(iterations=24),
-        phx.discretization.DEMContactModelPlan(
-            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "superquadric-qualification", _material(), gravity=jnp.zeros((3,))
         ),
-    ).prepare(particles, _material(), phx.discretization.DenseParticleNeighborhoodPlan(1))
+        particles,
+        shapes,
+        phx.discretization.CompliantDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+            )
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
+    )
     distance = 2.0 * semi_axes[0] - 0.02
-    state = dynamics.initialize_state(
+    state = compiled.initialize_state(
+        0.0,
         jnp.asarray([[0.0, 0.0, 0.0], [distance, 0.0, 0.0]]),
         jnp.zeros((2, 3)),
-        jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
         jnp.zeros((2, 3)),
+        orientation=jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
     )
-    evaluation = dynamics.evaluate(state, jnp.asarray(1.0e-5))
+    evaluation = compiled.dynamics.evaluate(
+        jnp.asarray(0.0), state, jnp.asarray(1.0e-5), None
+    )
+    geometry = evaluation.geometry.geometry
     passed = (
         evaluation.successful
-        & jnp.all(evaluation.geometry.valid)
-        & (jnp.max(evaluation.geometry.residual) <= 1.0e-8)
-        & jnp.all(evaluation.geometry.effective_radius > 0.0)
+        & jnp.all(geometry.valid)
+        & (jnp.max(geometry.residual) <= 1.0e-8)
+        & jnp.all(geometry.effective_radius > 0.0)
     )
     return {
         "semi_axes": list(semi_axes),
         "epsilon1": epsilon1,
         "epsilon2": epsilon2,
-        "gap": float(evaluation.geometry.gap[0]),
-        "contact_residual": float(evaluation.geometry.residual[0]),
+        "gap": float(geometry.gap[0]),
+        "contact_residual": float(geometry.residual[0]),
         "passed": bool(passed),
     }
 

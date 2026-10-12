@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._types import MPMParticleState
+from ._volumetric import MPMVolumetricStabilizationPlan
 
 
 class MPMLifecycleState(StrictModule):
@@ -253,6 +254,9 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
             copy_parent(particles.reference_energy_density),
             copy_parent(particles.maximum_wave_speed),
             copy_parent(particles.material_state),
+            None
+            if particles.physical_deformation_gradient is None
+            else copy_parent(particles.physical_deformation_gradient),
         )
         next_active = lifecycle.active.at[parent].set(False).at[children].set(True)
         next_mass = lifecycle.masses.at[children].set(
@@ -302,6 +306,9 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
             merge_field(particles.reference_energy_density),
             merge_field(particles.maximum_wave_speed),
             merge_field(particles.material_state),
+            None
+            if particles.physical_deformation_gradient is None
+            else merge_field(particles.physical_deformation_gradient),
         )
         next_active = lifecycle.active.at[sources].set(False).at[target].set(True)
         next_state = MPMLifecycleState(
@@ -432,7 +439,17 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
         /,
         *,
         refinement_ratio: int = 2,
+        volumetric_stabilization: MPMVolumetricStabilizationPlan | None = None,
     ) -> None:
+        stabilization = (
+            MPMVolumetricStabilizationPlan()
+            if volumetric_stabilization is None
+            else volumetric_stabilization
+        )
+        if stabilization.kind != "none":
+            raise ValueError(
+                "MPM AMR volumetric stabilization requires cross-level projection restriction."
+            )
         shapes = tuple(tuple(shape) for shape in level_shapes)
         blocks = tuple(maximum_blocks)
         ratio = int(refinement_ratio)

@@ -142,6 +142,7 @@ from ._certificate import (
     FieldBoundOrigin,
     FieldCertificate,
     FieldRegularity,
+    level_set_interpolation_certificate,
     SignReliability,
     ZeroSetAccuracy,
 )
@@ -982,6 +983,7 @@ __all__ = [
     "estimate_point_normals",
     "exact_signed_distance_certificate",
     "establish_implicit_cover",
+    "level_set_interpolation_certificate",
     "implicit",
     "implicit_state_id",
     "incircle",

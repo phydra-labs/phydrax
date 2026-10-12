@@ -34,7 +34,7 @@ def _compile_liquid(*, initial_film: Any = 5.0e-4, evaporation_flux: Any = 0.0) 
         initial_film,
         evaporation_flux=evaporation_flux,
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
             cohesion=bridge,

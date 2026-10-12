@@ -51,7 +51,6 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
         "._gas_transport_properties",
         "AbstractGasTransportPropertyPlan",
     ),
-    "AbstractHydrodynamicClosurePlan": ("._cfd_dem", "AbstractHydrodynamicClosurePlan"),
     "AbstractImplicitMPMConstitutivePlan": (
         "._material_point",
         "AbstractImplicitMPMConstitutivePlan",
@@ -571,7 +570,6 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "HybridColdThermalEOS": ("._relativistic_eos", "HybridColdThermalEOS"),
     "HybridRANSLESGridScalePlan": ("._hybrid_turbulence", "HybridRANSLESGridScalePlan"),
     "HybridTurbulenceEvaluation": ("._hybrid_turbulence", "HybridTurbulenceEvaluation"),
-    "HydrodynamicClosureResult": ("._cfd_dem", "HydrodynamicClosureResult"),
     "HydrostaticLayerCoupling": ("._finite_volume_advanced", "HydrostaticLayerCoupling"),
     "IBPenaltyPlan": ("._mac_penalty_ib_cfd_dem", "IBPenaltyPlan"),
     "IdealDiluteElectrochemicalClosure": (
@@ -1235,7 +1233,6 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "StencilStateLayout": ("._stencil_compile", "StencilStateLayout"),
     "StickingRatePlan": ("._chemical_rates", "StickingRatePlan"),
     "StiffenedGasMaterial": ("._materials", "StiffenedGasMaterial"),
-    "StokesDragPlan": ("._cfd_dem", "StokesDragPlan"),
     "StrongToIntegralRewriteSpec": ("._integral_rewrite", "StrongToIntegralRewriteSpec"),
     "SuperconductingMaterialEvaluation": (
         "._superconducting_material",
@@ -1722,6 +1719,20 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
         "..discretization.discrete_velocity._smooth_compressible",
         "smooth_compressible_d2v37_off_lattice_method",
     ),
+    "AbstractInterphaseDragLaw": ("._cfd_dem", "AbstractInterphaseDragLaw"),
+    "CompiledFiniteDifferenceResidual": ("._fd_residual_compile", "CompiledFiniteDifferenceResidual"),
+    "FLIPViscousLaw": ("._flip", "FLIPViscousLaw"),
+    "InterphaseDragCorrelation": ("._cfd_dem", "InterphaseDragCorrelation"),
+    "InterphaseDragEvaluation": ("._cfd_dem", "InterphaseDragEvaluation"),
+    "InterphaseDragLawPlan": ("._cfd_dem", "InterphaseDragLawPlan"),
+    "MACSDFCutFractionEvaluation": ("._mac_volume_fraction_ib_cfd_dem", "MACSDFCutFractionEvaluation"),
+    "MACSDFCutFractionPlan": ("._mac_volume_fraction_ib_cfd_dem", "MACSDFCutFractionPlan"),
+    "MACVolumeFractionIBCFDEMCouplingPlan": ("._mac_volume_fraction_ib_cfd_dem", "MACVolumeFractionIBCFDEMCouplingPlan"),
+    "MACVolumeFractionIBEvaluation": ("._mac_volume_fraction_ib_cfd_dem", "MACVolumeFractionIBEvaluation"),
+    "MACVolumeFractionIBStatus": ("._mac_volume_fraction_ib_cfd_dem", "MACVolumeFractionIBStatus"),
+    "PeriodicAdvectiveCourantRestriction": ("._incompressible", "PeriodicAdvectiveCourantRestriction"),
+    "compile_finite_difference_residual": ("._fd_residual_compile", "compile_finite_difference_residual"),
+    "evaluate_mac_volume_fraction_ib_cfd_dem": ("._mac_volume_fraction_ib_cfd_dem", "evaluate_mac_volume_fraction_ib_cfd_dem"),
 }
 
 _FACADE_EXPORT_MODULES = (
@@ -1784,12 +1795,9 @@ if TYPE_CHECKING:
         BarotropicEulerSystem,
     )
     from ._cfd_dem import (
-        AbstractHydrodynamicClosurePlan,
         CFDEMCouplingEvaluation,
         evaluate_unresolved_cfd_dem,
         FluidParticleSample,
-        HydrodynamicClosureResult,
-        StokesDragPlan,
         UnresolvedCFDEMCouplingPlan,
     )
     from ._channel_flow import (
@@ -3364,11 +3372,8 @@ __all__ = [
     "DEMMaterialTable",
     "DiscreteElementProblemIR",
     "compile_discrete_element_problem",
-    "AbstractHydrodynamicClosurePlan",
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
-    "HydrodynamicClosureResult",
-    "StokesDragPlan",
     "UnresolvedCFDEMCouplingPlan",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
@@ -3713,4 +3718,18 @@ __all__ = [
     "ValenciaHLLEFlux",
     "ValenciaPrimitiveRecovery",
     "ValenciaRecoveryStatus",
+    "AbstractInterphaseDragLaw",
+    "CompiledFiniteDifferenceResidual",
+    "FLIPViscousLaw",
+    "InterphaseDragCorrelation",
+    "InterphaseDragEvaluation",
+    "InterphaseDragLawPlan",
+    "MACSDFCutFractionEvaluation",
+    "MACSDFCutFractionPlan",
+    "MACVolumeFractionIBCFDEMCouplingPlan",
+    "MACVolumeFractionIBEvaluation",
+    "MACVolumeFractionIBStatus",
+    "PeriodicAdvectiveCourantRestriction",
+    "compile_finite_difference_residual",
+    "evaluate_mac_volume_fraction_ib_cfd_dem",
 ]

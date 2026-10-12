@@ -17,8 +17,8 @@ from ..discretization.particle import (
     DensityPorosityMorphologyPlan,
     ParticleContactExchangePlan,
     ParticleConversionState,
+    PreparedCompliantDEMDynamics,
     PreparedParticleInternalBatch,
-    PreparedSoftSphereDEMDynamics,
     ReciprocalPairRadiationPlan,
 )
 from ..discretization.particle._particle_internal_unstructured import (
@@ -302,7 +302,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
 
 
 class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
-    dem: PreparedSoftSphereDEMDynamics
+    dem: PreparedCompliantDEMDynamics
     conversion: PreparedParticleConversionDynamics
     continuum_exchange: ParticleContinuumExchangePlan
     contact_exchange: ParticleContactExchangePlan | None
@@ -314,7 +314,7 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
     @checked
     def __init__(
         self,
-        dem: PreparedSoftSphereDEMDynamics,
+        dem: PreparedCompliantDEMDynamics,
         conversion: PreparedParticleConversionDynamics,
         continuum_exchange: ParticleContinuumExchangePlan,
         /,
@@ -324,6 +324,12 @@ class ReactiveCFDDEMCouplingPlan(StrictModule, NonTrainableState):
         morphology: DensityPorosityMorphologyPlan | None = None,
         radiation: ReciprocalPairRadiationPlan | None = None,
     ) -> None:
+        if dem.shapes.shape_kind != "sphere":
+            raise ValueError("Reactive CFD–DEM coupling requires sphere contact shapes.")
+        if dem.walls and (contact_exchange is not None or radiation is not None):
+            raise ValueError(
+                "Reactive contact/radiation exchange requires implicit barriers, not triangle walls."
+            )
         if contact_exchange is not None and not isinstance(
             contact_exchange, ParticleContactExchangePlan
         ):

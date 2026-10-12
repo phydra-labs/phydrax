@@ -4,11 +4,15 @@
 
 from typing import Any, NamedTuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
+from phydrax.sparse._linear import _SparseStoragePlan
 
 
 la = phx.linalg
@@ -232,6 +236,111 @@ def test_newton_rebases_distinct_pytree_spaces_without_dense_fallback() -> None:
         assert isinstance(result.residual, _CoordinateResidual)
         assert jnp.allclose(result.state.value, jnp.asarray([2.0]))
         assert jnp.allclose(jitted_state, jnp.asarray([2.0]))
+
+
+def test_jitted_explicit_sparse_newton_refreshes_factor_preconditioner() -> None:
+    size = 6
+    sources = np.asarray([0, 1, 1, 2, 3, 4, 4, 5], dtype=np.int32)
+    targets = np.asarray([1, 0, 2, 3, 4, 3, 5, 4], dtype=np.int32)
+    diagonal = np.arange(size, dtype=np.int32)
+    relation = EdgeRelation(
+        np.concatenate((targets, diagonal)),
+        np.concatenate((sources, diagonal)),
+        source_size=size,
+        target_size=size,
+    )
+    storage_plan = _SparseStoragePlan(relation)
+    space = la.ArraySpace((size,), dtype=jnp.float64)
+
+    def residual(state: jax.Array, rhs: jax.Array) -> jax.Array:
+        coupling = jnp.zeros_like(state).at[sources].add(0.15 * state[targets] ** 2)
+        return state - coupling - rhs
+
+    def jacobian(state: jax.Array, rhs: jax.Array) -> SparseCoordinateOperator:
+        del rhs
+        coefficients = jnp.concatenate((-0.3 * state[targets], jnp.ones_like(state)))
+        return SparseCoordinateOperator(
+            relation,
+            coefficients,
+            source=space,
+            target=space,
+            operator_id="explicit-sparse-newton-jacobian",
+            storage_plan=storage_plan,
+        )
+
+    problem = nl.NonlinearSystemProblem(
+        residual,
+        state_space=space,
+        residual_space=space,
+        problem_id="explicit-sparse-newton",
+    )
+    method = nl.NewtonKrylov(
+        jacobian_policy=nl.JacobianPolicy("explicit", operator=jacobian),
+        linear_policy=la.LinearSolvePolicy(
+            la.GMRES(restart=4),
+            tolerance=la.TolerancePolicy(relative=1e-11, absolute=0.0, max_steps=8),
+            preconditioning=la.PreconditioningPolicy(
+                la.SparseFactorizationPreconditionerBuilder(
+                    la.SparseFactorizationPolicy(
+                        "lu", ordering="approximate-minimum-degree"
+                    )
+                )
+            ),
+        ),
+    )
+    rhs = jnp.full((size,), 0.5, dtype=jnp.float64)
+    result = jax.jit(
+        lambda argument: nl.root(
+            problem,
+            jnp.zeros_like(argument),
+            method=method,
+            args=argument,
+            termination=nl.NonlinearTermination(
+                absolute_residual=1e-11, relative_residual=0.0
+            ),
+        )
+    )(rhs)
+
+    # Independent host Newton solve assembles and factors the dense Jacobian.
+    adjacency = np.zeros((size, size), dtype=np.float64)
+    np.add.at(adjacency, (sources, targets), 0.3)
+    expected = np.zeros(size, dtype=np.float64)
+    for _ in range(8):
+        dense_residual = expected - 0.5 * adjacency @ expected**2 - np.asarray(rhs)
+        dense_jacobian = np.eye(size, dtype=np.float64) - adjacency * expected[None, :]
+        expected -= np.linalg.solve(dense_jacobian, dense_residual)
+
+    assert bool(result.successful)
+    assert int(result.diagnostics.iterations) > 1
+    assert int(result.diagnostics.numeric_refreshes) > 1
+    np.testing.assert_allclose(result.state, expected, rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(result.residual, 0.0, atol=1e-11)
+
+    prepared = nl.prepare_nonlinear(
+        problem,
+        jnp.zeros_like(rhs),
+        method=method,
+        args=rhs,
+        termination=nl.NonlinearTermination(
+            absolute_residual=1e-11, relative_residual=0.0
+        ),
+    )
+
+    @eqx.filter_jit
+    def refresh_and_solve(
+        retained: nl.PreparedNonlinearSolve, argument: jax.Array
+    ) -> nl.NonlinearResult:
+        refreshed = nl.refresh_nonlinear(
+            retained,
+            retained.problem,
+            jnp.zeros_like(argument),
+            args=argument,
+        )
+        return nl.solve_prepared_nonlinear(refreshed)
+
+    refreshed_result = refresh_and_solve(prepared, rhs)
+    assert bool(refreshed_result.successful)
+    np.testing.assert_allclose(refreshed_result.state, expected, rtol=1e-9, atol=1e-11)
 
 
 def test_newton_still_rejects_unequal_coordinate_dimensions() -> None:

@@ -2,6 +2,20 @@
 
 This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
+## Monolithic implicit contact
+
+```text
+JAX_ENABLE_X64=1 python -m examples.monolithic_contact
+```
+
+The [monolithic contact guide](../guides_monolithic_contact.md) accompanies a
+public-API tetrahedral affine body above a fixed triangular wall. It supplies
+consistent volume quadrature, a fixed motion envelope and capacities, and prints
+root/contact/safety/acceptance evidence. This bounded example is not a release
+qualification, mixed MPM/FEM benchmark, friction validation, or general stack
+claim. Rejection preserves all accepted coordinates and histories.
+
+
 ## Meshfree spatial and temporal workflows
 
 Run these checkout examples from the repository root with explicit float64

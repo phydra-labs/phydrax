@@ -5,25 +5,42 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
+from tests._reactive_systems import reactive_fluid_sample, reactive_problem
 
 
-def _compiled_dem() -> Any:
+def _compiled_dem(*, clump: bool = False) -> Any:
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.asarray([1.0, 1.0]), ambient_dimension=2
     ).prepare()
     spheres = phx.discretization.RigidSphereSetPlan(
         jnp.asarray([0.1, 0.1]), jnp.asarray([0, 0])
     )
+    if clump:
+        template = phx.discretization.SphereClumpTemplatePlan(
+            jnp.zeros((1, 2)),
+            jnp.asarray([0.1]),
+            jnp.asarray([1.0]),
+            jnp.zeros((1,), dtype=jnp.int32),
+        )
+        shapes = phx.discretization.RigidSphereClumpSetPlan(
+            (template,),
+            jnp.zeros((2,), dtype=jnp.int32),
+            jnp.zeros((2,), dtype=jnp.int32),
+        )
+    else:
+        shapes = spheres
     materials = phx.equations.DEMMaterialTable(
         jnp.asarray([1.0e5]),
         jnp.asarray([0.25]),
         jnp.asarray([[0.9]]),
         jnp.asarray([[0.0]]),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e3)
         )
@@ -34,7 +51,7 @@ def _compiled_dem() -> Any:
     compiled = phx.equations.compile_discrete_element_problem(
         problem,
         particles,
-        spheres,
+        shapes,
         method,
         neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
     )
@@ -42,6 +59,7 @@ def _compiled_dem() -> Any:
         0.0,
         jnp.asarray([[-0.25, 0.0], [0.25, 0.0]]),
         jnp.zeros((2, 2)),
+        orientation=jnp.zeros((2, 1)),
     )
     mesh = phx.discretization.CellMesh(
         jnp.asarray(
@@ -98,7 +116,7 @@ def test_cfd_dem_scenario_1() -> None:
     coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
         compiled.dynamics,
         transfer,
-        phx.equations.StokesDragPlan(maximum_reynolds=1.0),
+        phx.equations.InterphaseDragLawPlan("stokes", maximum_reynolds=1.0),
     )
     evaluation = phx.equations.evaluate_unresolved_cfd_dem(
         coupling,
@@ -117,7 +135,7 @@ def test_cfd_dem_scenario_1() -> None:
     coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
         compiled.dynamics,
         transfer,
-        phx.equations.StokesDragPlan(maximum_reynolds=1.0),
+        phx.equations.InterphaseDragLawPlan("stokes", maximum_reynolds=1.0),
     )
     coupled_state = phx.solver.CFDEMCouplingState(
         state,
@@ -191,3 +209,109 @@ def test_cfd_dem_scenario_1() -> None:
     assert step.successful
     accepted_velocity = fluid.unpack_velocity(step.accepted_state.fluid_state)
     assert jnp.linalg.norm(operators.divergence(accepted_velocity)) < 1e-8
+
+
+def test_radius_dependent_cfd_coupling_refuses_nonspherical_dem_shape() -> None:
+    compiled, _, transfer = _compiled_dem(clump=True)
+    with pytest.raises(ValueError, match="sphere"):
+        phx.equations.UnresolvedCFDEMCouplingPlan(
+            compiled.dynamics,
+            transfer,
+            phx.equations.InterphaseDragLawPlan("stokes", maximum_reynolds=1.0),
+        )
+
+
+def test_interphase_drag_exchange_is_equal_and_opposite() -> None:
+    compiled, state, transfer = _compiled_dem()
+    coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
+        compiled.dynamics,
+        transfer,
+        phx.equations.InterphaseDragLawPlan("schiller_naumann"),
+        include_pressure_gradient=False,
+    )
+    result = phx.equations.evaluate_unresolved_cfd_dem(
+        coupling,
+        state,
+        jnp.full((2, 2), 0.1),
+        jnp.ones((2,)),
+        jnp.full((2,), 0.01),
+        jnp.zeros((2, 2)),
+        jnp.full((2,), 0.01),
+        jnp.asarray(1.0e-3),
+    )
+    assert result.successful
+    assert jnp.all(result.drag.admissible)
+    assert jnp.all(result.particle_force > 0.0)
+    assert jnp.allclose(
+        jnp.sum(result.particle_force, axis=0),
+        -jnp.sum(result.fluid_momentum_source_rate, axis=0),
+    )
+    assert jnp.allclose(result.momentum_residual, 0.0)
+
+
+def test_reactive_window_rejects_inadmissible_drag() -> None:
+    plan, state, boundary, schedule = reactive_problem()
+    hydrodynamics = phx.equations.UnresolvedCFDEMCouplingPlan(
+        plan.dem,
+        plan.continuum_exchange.transfer,
+        phx.equations.InterphaseDragLawPlan("stokes", maximum_reynolds=1.0e-6),
+    )
+    plan = phx.equations.ReactiveCFDDEMCouplingPlan(
+        plan.dem,
+        plan.conversion,
+        plan.continuum_exchange,
+        hydrodynamics=hydrodynamics,
+    )
+
+    def sample(fluid: Any) -> phx.solver.ReactiveFluidFields:
+        fields = reactive_fluid_sample(fluid)
+        return eqx.tree_at(lambda value: value.velocity, fields, jnp.ones((1, 2)))
+
+    def update(
+        fluid: Any, momentum: Any, energy: Any, species: Any, step_size: Any
+    ) -> Any:
+        del momentum, step_size
+        return fluid[0] + energy, fluid[1] + species
+
+    result = phx.solver.advance_reactive_cfd_dem_window(
+        plan,
+        schedule,
+        state,
+        sample,
+        update,
+        (boundary,),
+        jnp.zeros((0,)),
+        jnp.asarray([0.001]),
+        jnp.asarray(0.0),
+        jnp.asarray(1.0e-5),
+    )
+    assert not result.successful
+    assert not result.evaluation.dem_successful
+    assert result.accepted_state.accepted_windows == 0
+
+
+@pytest.mark.parametrize("include_pressure", (True, False), ids=("pressure", "drag-only"))
+def test_pressure_gradient_force_is_separate_from_drag(include_pressure: bool) -> None:
+    compiled, state, transfer = _compiled_dem()
+    coupling = phx.equations.UnresolvedCFDEMCouplingPlan(
+        compiled.dynamics,
+        transfer,
+        phx.equations.InterphaseDragLawPlan("stokes"),
+        include_pressure_gradient=include_pressure,
+    )
+    gradient = jnp.full((2, 2), 2.0)
+    volume = jnp.full((2,), 0.01)
+    result = phx.equations.evaluate_unresolved_cfd_dem(
+        coupling,
+        state,
+        jnp.zeros((2, 2)),
+        jnp.ones((2,)),
+        jnp.ones((2,)),
+        gradient,
+        volume,
+        jnp.asarray(1.0e-3),
+    )
+    reference = -volume[:, None] * gradient if include_pressure else jnp.zeros((2, 2))
+    assert result.successful
+    assert jnp.allclose(result.particle_force, reference)
+    assert jnp.allclose(result.momentum_residual, 0.0)

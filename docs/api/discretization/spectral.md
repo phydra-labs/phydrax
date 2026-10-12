@@ -92,7 +92,59 @@ bounded faces through a sum-factorized `SpectralFaceRoute`.
 
 ::: phydrax.discretization.SpectralFaceRoute
 
+## Spectral vanishing viscosity
+
+`SpectralVanishingViscosityPlan` requires explicit strength ε, order s ≥ 1,
+cutoff scale m₀, cutoff exponent θ ∈ (0, 1], and kernel. Preparation admits
+only equal-length, equal-point-count Fourier axes. With maximum retained integer
+mode K, ε_K = ε K^(1−2s), m_K = m₀ K^θ, and
+λ_n = −ε_K |2πn/L|^(2s) Q(|n|/m_K). Zero and forbidden modes are undamped.
+`tadmor_step` uses Q(x)=1 for x>1, zero otherwise; `exponential_highpass`
+uses Q(x)=−expm1(−x^p) with an explicit integer p≥2.
+All four scaling parameters must be finite real numbers, and a supplied
+`highpass_exponent` must be a non-boolean integer. Strings, booleans, and other
+wrong kinds raise `TypeError`; invalid values or kernel/exponent combinations
+raise `ValueError`.
+
+The scaling follows [Rohner–Mishra, section 2](https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf).
+Only the step profile with 0<θ<(2s−1)/(2s) receives
+`operator_scaling_admissible=True`. `cited_convergence_supported` is always false:
+operator scaling does not certify the initial-data mollification and full-method
+hypotheses of [Lanthaler–Mishra](https://arxiv.org/abs/1903.12361).
+The exponential profile is practical high-pass hyperviscosity, not the cited theorem.
+Preparation refuses an operator with no damped retained mode.
+
+`rate(coefficients)` accepts modal coefficients with optional trailing component
+axes. `dissipation(coefficients)` returns −Σ λ_n |c_n|² in the orthonormal modal
+convention, the nonnegative loss rate of integrated kinetic energy.
+`maximum_decay_rate` is max(−λ), not the signed diagonal maximum.
+
+::: phydrax.discretization.SpectralViscosityKernel
+
+::: phydrax.discretization.SpectralVanishingViscosityPlan
+
+::: phydrax.discretization.PreparedSpectralVanishingViscosity
+
 ## Transfer and diagnostics
+
+`RetainedBandRestrictionPlan(source, target, /).prepare()` produces a
+`PreparedRetainedBandRestriction` callable for the coarsening-only all-Fourier
+policy. Host preparation builds signed-mode gather indices and retained masks
+once; these remain dynamic array leaves, so the prepared callable can itself be
+passed as a dynamic argument to `eqx.filter_jit` or used with `jax.vmap`.
+`restriction(coefficients, /)` preserves trailing payload dimensions, gathers
+matching integer modes, and zeros target Nyquist planes, with no Nyquist
+merging/splitting, coefficient rescaling, or reprojection. Nested restriction is
+bitwise transitive. Preparation refuses non-Fourier spaces with `TypeError` and
+refinement or incompatible axis domains/ranks with `ValueError`.
+`restriction_id` binds source and target scientific discretization identities;
+`retained_mode_count` and `discarded_forbidden_mode_count` count the retained
+target modes and source modes omitted by truncation or target Nyquist exclusion.
+The interpolation transfer remains a distinct policy.
+
+::: phydrax.discretization.RetainedBandRestrictionPlan
+
+::: phydrax.discretization.PreparedRetainedBandRestriction
 
 ::: phydrax.discretization.SpectralModalTransferPlan
 
@@ -764,3 +816,76 @@ representation=...)`.
 ## Precision
 
 ::: phydrax.discretization.SpectralPrecisionPolicy
+
+## Periodic increment moments
+
+All plans consume complex orthonormal Fourier coefficients
+`(members, *modal_shape, *component_shape)` with an explicit nonempty member axis
+and Hermitian retained coefficients. They are callable and return
+`PeriodicIncrementMomentResult`: `values` is member-major, `finite` and
+`forbidden_coefficient_energy` have shape `(members,)`, and `exact`/`plan_id`
+are static. Forbidden coefficient energy is reported as Σ|c|²; it is never
+silently hidden in the exact retained-field statistics.
+
+`PeriodicLatticeIncrementMomentPlan(space, component_shape=...)` computes
+M₂(h) = (2/V) Σ|cₙ|²(1 − cos(kₙ·h)) by an unnormalized inverse DFT.
+It supports unequal box lengths and returns `(members, *modal_shape)`.
+`PeriodicRadialIncrementMomentPlan(space, radii, averaging="sphere" | "ball",
+component_shape=...)` requires equal axis lengths and point counts. It prepares
+host Bessel/sinc kernels grouped by exact integer |n|²; runtime uses the canonical
+shell reduction and one matrix product. The plan exposes `radii` as a static
+tuple; the result exposes the same coordinates as an array. Values have shape
+`(members, radii)`. Small-radius Taylor branches prepare `1 − K_d` directly
+to retain the quadratic limit without cancellation.
+
+`PeriodicThirdIncrementMomentPlan(space, statistic="longitudinal_cube" |
+"energy_flux", dealiasing=PaddingDealiasingPlan(2), member_chunk_size=...,
+maximum_workspace_bytes=...)` consumes d-component vectors. Quadratic retained
+products and antisymmetric correlations give exact ⟨(δu·ĥ)³⟩ or
+⟨|δu|²(δu·ĥ)⟩ without cubic padding. Lattice directions use minimum images;
+an even-grid half-box tie is positive, and the zero displacement returns zero.
+Optional `radial_bin_edges` averages these lattice values, **not** continuous
+sphere averages. The result exposes bin-center `radii`, `bin_counts` and
+`valid_bins`; the plan additionally exposes `radial_bin_edges`. Empty bins
+contain zero and have a false validity mask.
+
+`PeriodicIncrementMomentEstimatorPlan(space, displacements, order=...,
+projection="magnitude" | "longitudinal" | "absolute_longitudinal",
+member_chunk_size=..., maximum_displacements=...)` returns native-grid quadrature
+(`exact=False`) for a bounded integer `(queries, d)` matrix. Periodic zero shifts,
+nonpositive orders, and noninteger signed-longitudinal orders are refused.
+Longitudinal projections require d components; magnitude accepts scalar or
+multicomponent fields. Minimum-image ties use the same positive convention.
+
+All member maps use virtual zero lanes in fixed-size chunks with explicit masks.
+Each route has one prepared, reusable compiled entry point; repeated calls with
+the same plan structure, shapes, and dtypes reuse compilation. Only third-moment
+plans prepare the full minimum-image direction grid, sharing its norms with
+optional bins. Their padded workspace follows the prepared degree-two dealiasing
+report rather than a separately predicted shape.
+
+Every plan accepts `maximum_workspace_bytes`; the radial plan also accepts
+`maximum_kernel_bytes`. Route-specific byte models account for support/reality
+buffers, FFT or reduction work, padded member outputs, and route metadata before
+construction and execution. The estimator counts its components once in a
+sequential displacement lane. Workspace/kernel refusal raises
+`phydrax.execution.MemoryBudgetError`, carrying the cap name, required bytes,
+and limit bytes. Invalid policy values raise `ValueError`; booleans and
+nonintegral integer policies raise `TypeError`. Caps and chunk sizes participate
+in plan identity; no existing spectral identities are changed.
+
+::: phydrax.discretization.PeriodicIncrementMomentResult
+
+::: phydrax.discretization.PeriodicLatticeIncrementMomentPlan
+
+::: phydrax.discretization.PeriodicRadialIncrementMomentPlan
+
+::: phydrax.discretization.PeriodicThirdIncrementMomentPlan
+
+::: phydrax.discretization.PeriodicIncrementMomentEstimatorPlan
+
+::: phydrax.discretization.IncrementAverage
+
+::: phydrax.discretization.IncrementProjection
+
+::: phydrax.discretization.ThirdIncrementStatistic

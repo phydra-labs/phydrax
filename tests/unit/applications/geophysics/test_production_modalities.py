@@ -5,6 +5,8 @@
 
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -213,6 +215,10 @@ def test_production_modalities_scenario_2() -> None:
     )
     travel = graph.solve(2.0, 0)
     np.testing.assert_allclose(travel.travel_times_s, [0.0, 0.5, 1.0])
+    assert travel.field_status == phx.combinatorial.ShortestPathFieldStatus.SUCCESS
+    assert travel.bellman_residual == 0
+    assert travel.dual_residual == 0
+    np.testing.assert_array_equal(travel.reachable, True)
     rayleigh = geo.HomogeneousRayleighWavePlan(3000.0, 1700.0)
     assert 0.85 * 1700 < rayleigh.phase_velocity_m_s < 1700
     # ty: ignore[invalid-argument-type]
@@ -282,3 +288,68 @@ def test_production_modalities_scenario_2() -> None:
     ).prepare()
     with pytest.raises(ValueError, match="explicit real transient envelopes"):
         geo.DispersiveFullWaveGPRPlan(runtime, 0.05 * runtime.stable_dt, 3)
+
+
+def test_travel_time_tie_margin_regression() -> None:
+    plan = geo.TravelTimeGraphPlan(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))),
+        np.asarray(((0, 1), (0, 2), (1, 3), (2, 3), (3, 4)), np.int32),
+    )
+    result = plan.solve(2.0, 0)
+    assert result.converged
+    np.testing.assert_allclose(result.travel_times_s, [0.0, 0.5, 0.5, 1.0, 1.5])
+    np.testing.assert_allclose(result.path_margin_s[3:], 0.0)
+    assert not result.derivative_available
+
+
+def test_travel_time_line_baseline_and_analytic_gradient() -> None:
+    plan = geo.TravelTimeGraphPlan(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (3.0, 0.0))),
+        np.asarray(((0, 1), (1, 2)), np.int32),
+    )
+    speed = jnp.asarray([2.0, 4.0, 2.0, 4.0])
+    result = plan.solve(speed, 0)
+    np.testing.assert_allclose(result.travel_times_s, [0.0, 0.5, 1.0])
+    assert result.converged
+    assert result.derivative_available
+    gradient = jax.grad(lambda v: plan.solve(v, 0).travel_times_s[-1])(speed)
+    np.testing.assert_allclose(gradient, [-1 / 4, -2 / 16, 0.0, 0.0])
+    scalar_gradient = jax.grad(lambda v: jnp.sum(plan.solve(v, 0).travel_times_s))(2.0)
+    np.testing.assert_allclose(scalar_gradient, -1.0)
+
+
+def test_tiny_edge_travel_source_margin_and_derivative_evidence() -> None:
+    graph = geo.TravelTimeGraphPlan(
+        np.asarray([[0.0, 0.0], [1e-10, 0.0]], dtype=np.float64),
+        np.asarray([[0, 1]], dtype=np.int32),
+    )
+    result = jax.jit(lambda speed: graph.solve(speed, 0))(jnp.asarray(1.0))
+    assert result.field_status == phx.combinatorial.ShortestPathFieldStatus.SUCCESS
+    assert result.converged
+    assert result.derivative_available
+    assert result.bellman_residual == 0
+    assert result.dual_residual == 0
+    np.testing.assert_array_equal(result.path_margin_s, np.inf)
+    np.testing.assert_array_equal(result.reachable, True)
+    derivative = jax.grad(lambda speed: graph.solve(speed, 0).travel_times_s[1])(1.0)
+    np.testing.assert_allclose(derivative, -1e-10, rtol=1e-12, atol=0.0)
+
+
+def test_travel_time_preserves_field_resource_refusal_evidence() -> None:
+    graph = geo.TravelTimeGraphPlan(
+        np.asarray([[0.0, 0.0], [1.0, 0.0]], dtype=np.float64),
+        np.asarray([[0, 1]], dtype=np.int32),
+    )
+    refused_field = phx.combinatorial.ShortestPathFieldPlan(
+        graph.shortest_path_plan.relation, maximum_host_bytes=1
+    )
+    graph = eqx.tree_at(lambda plan: plan.shortest_path_plan, graph, refused_field)
+    result = graph.solve(1.0, 0)
+    assert (
+        result.field_status
+        == phx.combinatorial.ShortestPathFieldStatus.HOST_BYTE_BUDGET_EXCEEDED
+    )
+    assert not result.converged
+    assert not result.derivative_available
+    assert jnp.all(jnp.isnan(result.travel_times_s))
+    assert not jnp.any(result.reachable)

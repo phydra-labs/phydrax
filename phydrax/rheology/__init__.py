@@ -4,6 +4,7 @@
 
 from ._core import (
     exp_conformation,
+    GeneralizedNewtonianEvaluation,
     GeneralizedNewtonianKind,
     GeneralizedNewtonianLaw,
     log_conformation,
@@ -11,6 +12,13 @@ from ._core import (
     ThixotropicLaw,
     ViscoelasticKind,
     ViscoelasticLaw,
+)
+from ._mu_i import (
+    MuILaw,
+    MuILawEvaluation,
+    MuIPackingFractionLaw,
+    MuIParameters,
+    MuIRegularizationKind,
 )
 from ._spatial import SpatialConformationSolver, SpatialConformationStep
 from ._stabilization import ConformationTransformResult, log_conformation_with_status
@@ -20,6 +28,12 @@ from ._transport import gordon_schowalter_rate, upper_convected_rate
 
 __all__ = [
     "ConformationTransformResult",
+    "GeneralizedNewtonianEvaluation",
+    "MuILaw",
+    "MuILawEvaluation",
+    "MuIPackingFractionLaw",
+    "MuIParameters",
+    "MuIRegularizationKind",
     "GeneralizedNewtonianKind",
     "GeneralizedNewtonianLaw",
     "SpatialConformationSolver",

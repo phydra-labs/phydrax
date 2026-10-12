@@ -30,7 +30,7 @@ material range, backend, precision, or acquisition.
 | Acoustic waves | Constant- and variable-density staggered Cartesian acoustics with prepared source/receiver stencils | Fixed-step replay, JVP/VJP, FWI, Gauss–Newton action, source variable projection, and RTM | Cartesian grids; 2D means line-source physics per unit thickness |
 | Elastic waves | Isotropic stress/half-step velocity and anisotropic stiffness with passive standard-linear-solid memory | Fixed periodic grid and fixed relaxation spectrum; equilibrium and finiteness qualified | No curvilinear free-surface meshing in this backend |
 | Wave boundaries/backends | Split Cartesian CPML, acoustic pressure-free surface, traction-free stress projection, generic mass/stiffness spectral-element stepping, and fixed AMR epoch transfer | CPML state is restart-complete; AMR selection is nondifferentiable while each epoch is differentiable | CPML evidence is profile-specific; the generic spectral-element backend requires caller-qualified operators |
-| Traveltime and seismology | Graph eikonal relaxation, homogeneous event location, moment-tensor radiation, layered Love waves, homogeneous Rayleigh waves, ambient-noise correlation, and HVSR | Fixed graph paths or fixed mode identity only; path/mode margins expose derivative availability | No claim of a general unstructured fast-marching or full waveform surface-wave solver |
+| Traveltime and seismology | Explicit host Dijkstra graph fields, homogeneous event location, moment-tensor radiation, layered Love waves, homogeneous Rayleigh waves, ambient-noise correlation, and HVSR | Host synchronization with a device forest adjoint for fixed graph paths; fixed mode identity only; path/mode margins expose derivative availability | Work/peak-host-byte admission before Dijkstra; no claim of a general unstructured fast-marching or full waveform surface-wave solver |
 | Conductive EM | Layered TE/TM/MT recursions, digital Hankel transforms, 3D tetrahedral Nédélec H(curl) frequency EM, primary–secondary fields, and implicit quasistatic TDEM | Native GMRES/CG routes with PEC edge elimination and dissipated-power evidence | Fixed lowest-order tetrahedral H(curl); no automatic air-layer/domain construction |
 | MT and GPR | Impedance, tipper, phase tensor, galvanic distortion, remote reference; passive Lorentz/Drude full-wave GPR with real transient sources and CPML | Fixed calibration matrices and streaming compatible-Maxwell state | GPR rejects harmonic/complex forcing; MT distortion and remote-reference assumptions remain explicit |
 | Poromechanics and faults | Mixed Biot KKT stepping, phase-field damage, regularized rate/state friction, Coulomb contact, Maxwell relaxation, and quasi-dynamic earthquake-cycle roots | Fixed fault network/contact topology; derivatives only on successful smooth branches | No spontaneous topology change hidden inside a differentiated step |
@@ -47,6 +47,17 @@ the SHA-256 of `proj.db` plus every declared grid; observed resources become par
 the transform record. It never asks PROJ to choose an operation from source/target
 CRS labels. Version/data pins do not content-pin native shared-library bytes, so the
 host environment remains qualification scope.
+
+For Cartesian conductivity rasters, `geospatial_cell_field(qualified_grid, spatial)`
+requires pixel registration and the same declared spatial contract. It prepares
+native cell geometry from the pixel region, preserves non-square spacing and the
+validity mask, and flips decreasing rows/columns to increasing `(north, east)`
+coordinates. `raster_to_tensor` and `tensor_to_raster` are exact inverse orientation
+flips, not resampling. Geographic CRS and gridline registration are refused.
+The resulting `field.grid` and `field.valid` can prepare
+`StructuredFaceConductancePlan`; 2-D coefficients must be sheet conductance
+(conductivity integrated over thickness), not unqualified bulk conductivity.
+
 
 `TimeReferenceContract` maps TAI, GPS, UTC, instrument, or source-relative samples
 through explicit epoch, offset, and drift semantics. UTC requires a checksum-pinned

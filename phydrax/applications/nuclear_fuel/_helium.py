@@ -410,7 +410,6 @@ class HeliumGasModel(StrictModule):
             }
         )
 
-    @checked
     def initial_state(
         self, shape: tuple[int, ...], /, *, grain_radius: ArrayLike
     ) -> HeliumGasSiteState:

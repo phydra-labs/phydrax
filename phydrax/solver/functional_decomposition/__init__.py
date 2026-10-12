@@ -70,9 +70,6 @@ from ._problem import (
     ScopedFunctionalTerm,
 )
 from ._schwarz import (
-    aitken_relax_trace_state,
-    AitkenTracePlan,
-    AitkenTraceState,
     capture_generalized_trace_state,
     capture_schwarz_trace_state,
     DiscreteOperatorTracePenalty,
@@ -108,12 +105,9 @@ from ._strategy import (
 
 __all__ = [
     "AdaptiveRefinementPlan",
-    "AitkenTracePlan",
     "AsynchronousSchwarzPlan",
     "AsynchronousSchwarzResult",
     "AsynchronousSchwarzState",
-    "AitkenTraceState",
-    "aitken_relax_trace_state",
     "capture_generalized_trace_state",
     "AdaptiveTopologyEvidence",
     "AdaptiveTopologyTransaction",

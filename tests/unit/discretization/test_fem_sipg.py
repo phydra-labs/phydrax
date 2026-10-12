@@ -89,3 +89,23 @@ def test_fem_sipg_scenario_1() -> None:
     assert bool(system.nullspace_policy.certificate.valid)
     assert jnp.linalg.norm(system.operator.mv(jnp.ones((6,)))) < 1.0e-12
     assert jnp.linalg.norm(right_hand_side) < 1.0e-12
+
+
+def test_sipg_constant_coefficient_and_constant_dirichlet_data_reproduce_constants() -> (
+    None
+):
+    # Diffusivity and Dirichlet data share one coefficient layout in the boundary
+    # action; execution must still bind that action's kernel.
+    discretization = _sipg_discretization()
+    form = phx.equations.fem.sipg_poisson_form(
+        "u",
+        1.0,
+        phx.equations.fem.SIPGPenaltyPolicy(12.0),
+        discretization.cell_domain,
+        discretization.interior_facet_domain,
+        (phx.equations.fem.sipg_dirichlet(discretization.exterior_facet_domain, 2.0),),
+    )
+    compiled = phx.equations.compile_finite_element_problem(form, discretization)
+    state = discretization.project("u", lambda points, args: 2.0 + 0.0 * points[..., 0])
+
+    assert jnp.linalg.norm(compiled.full_residual(state)) < 1.0e-12

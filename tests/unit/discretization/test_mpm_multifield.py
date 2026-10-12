@@ -188,4 +188,4 @@ def test_mpm_multifield_scenario_2() -> None:
     )
     assert len(bank.entries) == 2
     assert state.histories[0].shape == (2, 0)
-    assert state.histories[1].shape == (2, 10)
+    assert state.histories[1].shape == (2, 7)

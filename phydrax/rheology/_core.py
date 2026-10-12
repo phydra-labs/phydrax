@@ -8,13 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
 from ..qualification import CapabilityProfile, SupportTuple
 from ..typing import parse
 
@@ -33,70 +36,146 @@ ViscoelasticKind: TypeAlias = Literal[
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class GeneralizedNewtonianLaw:
-    kind: GeneralizedNewtonianKind
-    zero_shear_viscosity_pa_s: float
-    infinite_shear_viscosity_pa_s: float = 0.0
-    consistency_pa_s_n: float = 1.0
-    power_index: float = 1.0
-    time_constant_s: float = 1.0
-    yasuda_exponent: float = 2.0
-    yield_stress_pa: float = 0.0
-    regularization_s: float = 1.0e3
+@jax.custom_jvp
+def _exponential_quotient(value: Array) -> Array:
+    """(1-exp(-x))/x, with its exact removable value and derivative at zero."""
+    small = jnp.abs(value) <= jnp.sqrt(jnp.finfo(value.dtype).eps)
+    operand = jnp.where(small, 1.0, value)
+    series = 1.0 - value / 2 + value**2 / 6 - value**3 / 24
+    return jnp.where(small, series, -jnp.expm1(-value) / operand)
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "kind", parse(self.kind, GeneralizedNewtonianKind, "kind")
-        )
+
+@_exponential_quotient.defjvp
+def _exponential_quotient_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
+    (value,), (tangent,) = primals, tangents
+    small = jnp.abs(value) <= jnp.sqrt(jnp.finfo(value.dtype).eps)
+    operand = jnp.where(small, 1.0, value)
+    derivative = (jnp.expm1(-value) + value * jnp.exp(-value)) / operand**2
+    derivative = jnp.where(small, -0.5 + value / 3 - value**2 / 8, derivative)
+    return _exponential_quotient(value), derivative * tangent
+
+
+@final
+class GeneralizedNewtonianEvaluation(StrictModule):
+    """Apparent viscosity and pointwise domain evidence, including zero rate."""
+
+    viscosity_pa_s: Array
+    viscosity_defined: Array
+    finite: Array
+    successful: Array
+
+
+@final
+class GeneralizedNewtonianLaw(StrictModule):
+    """Generalized Newtonian law; ``regularization_s=0`` means unsmoothed yield."""
+
+    kind: GeneralizedNewtonianKind = eqx.field(static=True)
+    zero_shear_viscosity_pa_s: float = eqx.field(static=True)
+    infinite_shear_viscosity_pa_s: float = eqx.field(static=True)
+    consistency_pa_s_n: float = eqx.field(static=True)
+    power_index: float = eqx.field(static=True)
+    time_constant_s: float = eqx.field(static=True)
+    yasuda_exponent: float = eqx.field(static=True)
+    yield_stress_pa: float = eqx.field(static=True)
+    regularization_s: float = eqx.field(static=True)
+    law_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: GeneralizedNewtonianKind,
+        zero_shear_viscosity_pa_s: float,
+        infinite_shear_viscosity_pa_s: float = 0.0,
+        consistency_pa_s_n: float = 1.0,
+        power_index: float = 1.0,
+        time_constant_s: float = 1.0,
+        yasuda_exponent: float = 2.0,
+        yield_stress_pa: float = 0.0,
+        regularization_s: float = 1.0e3,
+    ) -> None:
+        kind_ = parse(kind, GeneralizedNewtonianKind, "kind")
         values = (
-            self.zero_shear_viscosity_pa_s,
-            self.infinite_shear_viscosity_pa_s,
-            self.consistency_pa_s_n,
-            self.power_index,
-            self.time_constant_s,
-            self.yasuda_exponent,
-            self.yield_stress_pa,
-            self.regularization_s,
+            zero_shear_viscosity_pa_s,
+            infinite_shear_viscosity_pa_s,
+            consistency_pa_s_n,
+            power_index,
+            time_constant_s,
+            yasuda_exponent,
+            yield_stress_pa,
+            regularization_s,
         )
         if (
             not all(isfinite(value) for value in values)
-            or self.zero_shear_viscosity_pa_s < 0
-            or self.infinite_shear_viscosity_pa_s < 0
-            or self.consistency_pa_s_n <= 0
-            or self.power_index <= 0
-            or self.time_constant_s <= 0
-            or self.yasuda_exponent <= 0
-            or self.yield_stress_pa < 0
-            or self.regularization_s <= 0
+            or zero_shear_viscosity_pa_s < 0
+            or infinite_shear_viscosity_pa_s < 0
+            or consistency_pa_s_n <= 0
+            or power_index <= 0
+            or time_constant_s <= 0
+            or yasuda_exponent <= 0
+            or yield_stress_pa < 0
+            or regularization_s < 0
         ):
             raise ValueError(
                 "Generalized-Newtonian parameters are outside physical bounds."
             )
+        self.kind = kind_
+        self.zero_shear_viscosity_pa_s = zero_shear_viscosity_pa_s
+        self.infinite_shear_viscosity_pa_s = infinite_shear_viscosity_pa_s
+        self.consistency_pa_s_n = consistency_pa_s_n
+        self.power_index = power_index
+        self.time_constant_s = time_constant_s
+        self.yasuda_exponent = yasuda_exponent
+        self.yield_stress_pa = yield_stress_pa
+        self.regularization_s = regularization_s
+        self.law_id = canonical_fingerprint(
+            {"kind": "generalized-newtonian-law", "law": kind_, "coefficients": values}
+        )
 
-    def viscosity(self, shear_rate_s_inv: ArrayLike, /) -> Array:
+    def viscosity(self, shear_rate_s_inv: ArrayLike, /) -> GeneralizedNewtonianEvaluation:
         rate = jnp.asarray(shear_rate_s_inv)
-        rate = eqx.error_if(
-            rate,
-            jnp.any(~jnp.isfinite(rate) | (rate < 0)),
-            "Shear rate must be finite and nonnegative.",
+        valid = jnp.isfinite(rate) & (rate >= 0)
+        positive = rate > 0
+        # Inactive quotients use a neutral operand, never a physical rate floor.
+        operand = jnp.where(positive, rate, 1.0)
+        plastic = self.consistency_pa_s_n * operand ** (self.power_index - 1.0)
+        zero_plastic = (
+            jnp.inf
+            if self.power_index < 1
+            else self.consistency_pa_s_n
+            if self.power_index == 1
+            else 0.0
         )
-        safe = jnp.maximum(rate, 1.0e-30)
-        if self.kind == "power-law":
-            return self.consistency_pa_s_n * safe ** (self.power_index - 1.0)
-        if self.kind == "carreau-yasuda":
-            return self.infinite_shear_viscosity_pa_s + (
-                self.zero_shear_viscosity_pa_s - self.infinite_shear_viscosity_pa_s
-            ) * (1.0 + (self.time_constant_s * rate) ** self.yasuda_exponent) ** (
-                (self.power_index - 1.0) / self.yasuda_exponent
-            )
-        plastic = self.consistency_pa_s_n * safe ** (self.power_index - 1.0)
-        yielded = (
-            self.yield_stress_pa * (1.0 - jnp.exp(-self.regularization_s * rate)) / safe
+        plastic = jnp.where(positive, plastic, zero_plastic)
+        match self.kind:
+            case "power-law":
+                value = plastic
+            case "carreau-yasuda":
+                value = self.infinite_shear_viscosity_pa_s + (
+                    self.zero_shear_viscosity_pa_s - self.infinite_shear_viscosity_pa_s
+                ) * (1.0 + (self.time_constant_s * rate) ** self.yasuda_exponent) ** (
+                    (self.power_index - 1.0) / self.yasuda_exponent
+                )
+            case "bingham" | "herschel-bulkley":
+                if self.regularization_s > 0:
+                    yielded = (
+                        self.yield_stress_pa
+                        * self.regularization_s
+                        * (_exponential_quotient(self.regularization_s * rate))
+                    )
+                else:
+                    yielded = jnp.where(
+                        positive,
+                        self.yield_stress_pa / operand,
+                        jnp.inf if self.yield_stress_pa > 0 else 0.0,
+                    )
+                value = plastic + yielded
+            case _:
+                assert_never(self.kind)
+        defined = valid & jnp.isfinite(value)
+        return GeneralizedNewtonianEvaluation(
+            value, defined, jnp.isfinite(value), defined
         )
-        if self.kind in ("bingham", "herschel-bulkley"):
-            return plastic + yielded
-        raise ValueError(f"Unknown generalized-Newtonian law {self.kind!r}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +396,7 @@ def rheology_candidate_profiles() -> tuple[CapabilityProfile, ...]:
 
 
 __all__ = [
+    "GeneralizedNewtonianEvaluation",
     "GeneralizedNewtonianKind",
     "GeneralizedNewtonianLaw",
     "ThixotropicLaw",

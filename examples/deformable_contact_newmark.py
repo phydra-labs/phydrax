@@ -35,23 +35,16 @@ def main() -> None:
         discretization,
     )
 
-    dynamic_surface = phx.discretization.prepare_cell_mesh_collision_surface(
-        mesh,
-        # ty: ignore[invalid-argument-type]
-        compiled.state_space,
-        body_id=0,
+    participant = phx.applications.contact.prepare_finite_element_contact_participant(
+        compiled,
+        inversion=phx.discretization.SimplexInversionStepPlan(cells, coordinates),
     )
     static_plan = phx.discretization.CollisionSurfacePlan(
         jnp.asarray((10, 11), dtype=jnp.int64),
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),), dtype=jnp.int32),
-        pair_policy=phx.discretization.ContactPairPolicy(
-            2,
-            # ty: ignore[unknown-argument]
-            body_ids=jnp.ones((2,), dtype=jnp.int64),
-            # ty: ignore[unknown-argument]
-            static_mask=jnp.ones((2,), dtype="bool"),
-        ),
+        body_ids=1,
+        static_mask=True,
     )
     static_surface = phx.discretization.PreparedCollisionSurface(
         static_plan,
@@ -63,35 +56,43 @@ def main() -> None:
             dtype=jnp.float64,
         ),
     )
-    scene = phx.discretization.PreparedCollisionScene((dynamic_surface, static_surface))
+    scene = phx.discretization.ContactParticipantScene(
+        (
+            participant.geometry,
+            phx.discretization.LinearContactParticipant(static_surface),
+        )
+    )
     search = phx.discretization.SweepAndPruneContactSearchPlan(
         edge_vertex_capacity=16,
         edge_edge_capacity=0,
         face_vertex_capacity=0,
         activation_distance=0.1,
+        envelope_radius=0.5,
     )
     contact = phx.applications.contact.ConvergentContactPotentialPlan(0.1, 50.0).prepare(
-        scene
+        scene,
+        rest_positions=jnp.concatenate((coordinates, static_surface.rest_positions)),
     )
     ccd = phx.discretization.InclusionCCDPlan()
-    inversion = phx.discretization.SimplexInversionStepPlan(cells, coordinates)
     mechanics = phx.applications.solid_mechanics.FiniteElementDynamicsState(
         jnp.zeros_like(coordinates),
         jnp.broadcast_to(jnp.asarray((0.0, -0.2)), coordinates.shape),
         jnp.zeros_like(coordinates),
     )
-    accepted = phx.applications.contact.ContactDynamicsState(mechanics)
-    plan = phx.applications.contact.prepare_finite_element_contact_dynamics(
-        compiled,
-        accepted,
+    plan = phx.applications.contact.MonolithicContactPlan(
+        (participant,),
         scene,
         contact,
         search,
         ccd,
-        inversion=inversion,
+        geometry_owner_indices=(0, None),
+        fixed_geometry_states=(None, jnp.zeros_like(coordinates)),
     )
-    result = phx.applications.contact.solve_finite_element_contact_step(
-        phx.applications.contact.prepare_finite_element_contact_step(plan, accepted, 0.05)
+    accepted = phx.applications.contact.initialize_monolithic_contact_state(
+        plan, (mechanics.displacement,), (mechanics,)
+    )
+    result = phx.applications.contact.solve_monolithic_contact_step(
+        phx.applications.contact.prepare_monolithic_contact_step(plan, accepted, 0.05)
     )
     if not bool(result.accepted):
         raise RuntimeError("Deformable-contact Newmark step was rejected")

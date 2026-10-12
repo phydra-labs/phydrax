@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -211,10 +212,12 @@ def test_conservative_fd_scenario_2() -> None:
         rhs,
         parameters=(
             phx.equations.PDEParameter(
-                "velocity", representation="vector", functional=True
+                "velocity", functional=True, representation="vector"
             ),
         ),
     )
+    problem = phx.equations.pde_ir_from_json(phx.equations.pde_ir_to_json(problem))
+    assert problem.parameters[0].representation == "vector"
     compiled = phx.equations.compile_finite_difference_pde(problem, grid)
     x = grid.axes[0].nodes
     state = x * (1.0 - x)
@@ -282,4 +285,68 @@ def _conservative_problem(rhs: Any, *, parameters: Any) -> Any:
                 component="upper",
             ),
         ),
+    )
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("form", ("scalar", "cell-scalar", "cell-diagonal"))
+def test_reduced_coefficient_forms_equal_the_full_tensor_under_strict_promotion(
+    form: str,
+) -> None:
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(6),
+            phx.discretization.UniformCellAxisSpec(5),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    x = grid.axes[0].nodes[:, None]
+    y = grid.axes[1].nodes[None, :]
+    scalar = 1.0 + x * x + 0.0 * y
+    diagonal = jnp.stack((scalar, 2.0 + 0.5 * y + 0.0 * x), axis=-1)
+    match form:
+        case "scalar":
+            coefficient = jnp.asarray(1.5)
+            tensor = jnp.broadcast_to(1.5 * jnp.eye(2), grid.shape + (2, 2))
+        case "cell-scalar":
+            coefficient = scalar
+            tensor = scalar[..., None, None] * jnp.eye(2).reshape((1, 1, 2, 2))
+        case _:
+            coefficient = diagonal
+            tensor = diagonal[..., :, None] * jnp.eye(2).reshape((1, 1, 2, 2))
+    state = jnp.sin(jnp.pi * x) * jnp.cos(0.5 * jnp.pi * y)
+    plan = phx.discretization.ConservativeDiffusionPlan(grid)
+
+    reduced = plan.prepare(coefficient).mv(state)
+    full = plan.prepare(tensor).mv(state)
+
+    np.testing.assert_allclose(reduced, full, rtol=1e-14, atol=1e-14)
+
+
+def test_nonuniform_two_material_constant_flux() -> None:
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.NonuniformCellAxisSpec(
+                np.asarray([0.0, 0.1, 0.5, 0.7, 1.0], dtype=np.float64)
+            ),
+        ),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]], dtype=jnp.float64))
+    x = grid.structured_axes[0].interval_centers
+    coefficient = jnp.where(x < 0.5, 1.0, 10.0)
+    flux = 1.0 / (0.5 + 0.5 / 10.0)
+    exact = jnp.where(x < 0.5, flux * x, flux * (0.5 + (x - 0.5) / 10.0))
+    operator = phx.discretization.ConservativeDiffusionPlan(
+        grid, boundaries={"x": ("dirichlet", "dirichlet")}, interpolation="harmonic"
+    ).prepare(coefficient)
+    np.testing.assert_allclose(
+        operator.fluxes(exact, coefficient, {"x": (0.0, 1.0)})[0],
+        flux,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        operator.apply(exact, boundary_values={"x": (0.0, 1.0)}),
+        0.0,
+        atol=1e-11,
     )

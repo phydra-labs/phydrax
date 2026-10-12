@@ -1,6 +1,6 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "0d24a807c13cf6bf5717265576dc1ea5c25072c0c9bd04c8f9eb0f3fdc2b4f30",
+  "ledger_id": "e90c71b10cc7c30b3686fb50e95cfef518d3075a795e7d99b17ddd194b43d79c",
   "sources": [
     {
       "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
@@ -62,6 +62,68 @@
       "source_id": "additive-foam",
       "source_reference_id": "e5873c03717082f7061e42dac8fd1d850351e9fc407a328708d72f6c6415e618",
       "technical_reviewer": "phydrax-source-metadata-audit-2026-09-20"
+    },
+    {
+      "archive_digest": "git-tree-sha1:22bf5ba2436d690145f7dadbe900236d32d73230",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "random-initial-measures",
+        "spectral-vanishing-viscosity",
+        "statistical-solutions",
+        "structure-functions"
+      ],
+      "copying_permitted": false,
+      "data_rights": "No source, constants, configuration, or data copied; formulas and defaults follow the cited publications.",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "GPL-3.0",
+      "license_digest": "sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+      "notice_required": true,
+      "provider_only": true,
+      "publications": [
+        {
+          "locator": "https://arxiv.org/abs/1903.12361",
+          "title": "On the convergence of the spectral viscosity method for the two-dimensional incompressible Euler equations with rough initial data"
+        },
+        {
+          "locator": "https://arxiv.org/abs/1909.06615",
+          "title": "Statistical solutions of the incompressible Euler equations"
+        },
+        {
+          "locator": "https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf",
+          "title": "Efficient computation of large-scale statistical solutions to incompressible fluid flows"
+        },
+        {
+          "locator": "https://arxiv.org/abs/2405.19101",
+          "title": "Poseidon: Efficient Foundation Models for PDEs"
+        }
+      ],
+      "relevant_documents": [
+        "LICENSE.md@sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+        "README.md@sha256:73f24879e878c29635c014d445ae5fba6b118cb6d5992dacdba04b9702db4cb7"
+      ],
+      "relevant_paths": [
+        "doc",
+        "experiments",
+        "include/azeban/equations",
+        "include/azeban/evolution",
+        "include/azeban/forcing",
+        "include/azeban/operations",
+        "scripts/generate_fbm_fourier.py",
+        "src/azeban/cuda/operations/cufft_mpi.cpp",
+        "src/azeban/equations/incompressible_euler_mpi.cpp",
+        "src/azeban/init",
+        "src/azeban/operations",
+        "src/azeban/simulation.cpp"
+      ],
+      "repository_url": "https://github.com/TobiasRohner/azeban",
+      "reuse_class": "strong-copyleft",
+      "review_status": "technically-reviewed",
+      "revision": "f34d2225ed849e4d851e3b995687f700eeaa163a",
+      "source_id": "azeban",
+      "source_reference_id": "41551024f65bf0c29a3a2fee43cb7b73383a13d28c5996a0cb183341a56e574b",
+      "technical_reviewer": "phydrax-periodic-flow-source-review"
     },
     {
       "archive_digest": "git-tree-sha1:3e2794d3b49c8a5ba052180297dabc2ded6630c6",
@@ -221,6 +283,48 @@
       "source_id": "iaea-fumex-public-report",
       "source_reference_id": "a57f5889ac66c8bf4a64855f9400b27af2ec1509d0a54bed25a18545202d3e7e",
       "technical_reviewer": "phydrax-public-document-technical-review-2026-09-30"
+    },
+    {
+      "archive_digest": "git-tree-sha1:f5d9cf6b51966b9bdadb7b9e5ee40d1fc200e6a4",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "effective-resistance",
+        "landscape-connectivity",
+        "randomized-shortest-paths",
+        "resistance-sketching"
+      ],
+      "copying_permitted": true,
+      "data_rights": "not-applicable",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "MIT",
+      "license_digest": "daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [
+        {
+          "locator": "doi:10.1137/080734029",
+          "title": "Graph sparsification by effective resistances"
+        }
+      ],
+      "relevant_documents": [
+        "LICENSE@sha256:daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+        "README.md@sha256:5323f68f1812928090ae811bb49a8160d24aae430d94848f6c885ae29517db5c"
+      ],
+      "relevant_paths": [
+        "src/jaxscape/graph.py",
+        "src/jaxscape/lcp_distance.py",
+        "src/jaxscape/resistance_distance.py",
+        "src/jaxscape/rsp_distance.py"
+      ],
+      "repository_url": "https://github.com/vboussange/jaxscape",
+      "reuse_class": "permissive",
+      "review_status": "technically-reviewed",
+      "revision": "5455ca4f0a5ebfe5f27f0b24c672e8e6948c73b4",
+      "source_id": "jaxscape",
+      "source_reference_id": "b00ffd899e352476d5f4976be2d774676dd0556eb8d1b0535b325347a89a9861",
+      "technical_reviewer": "phydrax-graph-connectivity-source-review"
     },
     {
       "archive_digest": "git-tree-sha1:ff344f9648661e0235472d43c236fdcb7e5d2c3c",

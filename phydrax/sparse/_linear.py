@@ -250,7 +250,8 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
     order. A direction whose widest output would pad beyond twice its routes
     plus outputs, or a traced relation, keeps the route scatter. Routes are
     construction-time structure: coefficients may be replaced in place, but new
-    routes require a new operator.
+    routes require a new operator. Empty route sets preserve the output extent,
+    including zero-dimensional coordinate spaces.
     """
 
     relation: SparseRelation
@@ -631,15 +632,11 @@ class _RowGatherLayout(StrictModule):
         ``reverse``.
         """
         if self.routes.shape[0] == 0:
-            # No valid routes. `jnp.take` returns an empty-axis operand unchanged
-            # rather than with the index shape, so the gather cannot run here.
-            fiber = (
-                ()
-                if coefficients.ndim == 1
-                else (coefficients.shape[2 if reverse else 1],)
-            )
+            # Empty gathers need no input access, even when that input is empty.
+            # Derive the output extent from the layout, not an empty take result.
+            fibers = coefficients.shape[2:] if reverse else coefficients.shape[1:2]
             return jnp.zeros(
-                self.routes.shape[1:] + fiber,
+                (self.routes.shape[1],) + fibers,
                 dtype=jnp.result_type(coefficients, values),
             )
         valid = self.routes < self.route_count

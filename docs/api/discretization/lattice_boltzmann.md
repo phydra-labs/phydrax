@@ -551,7 +551,6 @@ compressible total-energy or solid-mechanics model.
 
 ::: phydrax.discretization.discrete_velocity
     options:
-      force_inspection: false
       members:
         - SmoothCompressibleD2V17SpatialPlan
         - PreparedSmoothCompressibleD2V17SpatialDynamics

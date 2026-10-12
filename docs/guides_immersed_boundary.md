@@ -311,3 +311,155 @@ or condition failure, linear/nonlinear failure, divergence, gauge, slip, KKT res
 route inconsistency, contact failure, or failed conservation evidence. Mathematical
 solve differentiation is certified only when the primal and adjoint solve contracts,
 route/topology policy, event policy, and stochastic-key policy all pass.
+
+## Volume-fraction direct-forcing CFD–DEM
+
+`MACVolumeFractionIBCFDEMCouplingPlan` is a separate, first-order, single-device
+MAC/compliant-DEM route. It is **not** `MACPenaltyIBCFDEMCouplingPlan`: there are
+no regularized markers, penalty coefficient, or marker slip qualification.
+It is also not a sharp cut-cell interface-traction solver. The immersed regime
+is `volume-fraction-cfd-dem`, with its own candidate
+`VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE`. This tuple is not added to the existing
+six-regime `ImmersedDNSQualificationProfile` reference portfolio and inherits
+neither its campaigns nor any release/admission claim.
+
+### Bounded geometry, not exact cut volumes
+
+Prepare `MACSDFCutFractionPlan(operators, dynamics.shapes, subdivisions=4,
+maximum_unresolved_fraction=0.02, maximum_queries=...)`. Its canonical
+`AbstractPreparedRigidContactShape` query returns signed value \(s\), Lipschitz
+bound \(L\), evaluation error \(e\), and sign-support evidence. For a subbox
+with center-to-corner radius \(r\), it is definitely solid if
+\(s+Lr+e<0\), definitely fluid if \(s-Lr-e>0\), and unresolved otherwise.
+Union lower/upper bounds are built on the same subboxes, not by summing body
+fractions and clipping overlaps. Per-body bounds and midpoint estimates are
+reported separately. The estimate is explicitly bounded, **not an exact
+volume fraction**.
+
+The unresolved budget applies to **each cell**, not its domain average:
+`unresolved_fraction = fraction_upper - fraction_lower`. The dense query route
+has fixed capacity bounded by
+`body_capacity * cell_count * subdivisions**dimension`. The fixed query
+prefix may be smaller than this requirement; overflow then returns failure
+evidence and unknown bounds for unqueried regions, never a resized buffer.
+Inactive body lanes are excluded without treating their native unsupported
+queries as failures. Active unreliable sign/enclosure evidence fails closed.
+Superquadrics are refused at preparation because a certified signed enclosure
+is unavailable. The current route requires bounding spheres to remain wholly
+inside the grid, including on periodic grids: it does not construct periodic
+shape images. Nonperiodic boundary-intersecting solid fractions are refused.
+
+### Mixture inertia and external-fluid load
+
+Let \(\phi\) be the bounded solid-union estimate, \(\epsilon=1-\phi\),
+and let \(\rho_f,\rho_s>0\) be scalar intrinsic densities:
+
+\[
+\rho_m=\epsilon\rho_f+\phi\rho_s,\qquad
+\psi=\frac{\phi\rho_s}{\rho_m},\qquad
+\mathbf f_{\mathrm{IB}}
+=\rho_m\psi\frac{\mathbf u_s-\mathbf u^*}{\Delta t}.
+\]
+
+Intrinsic solid density must match the active DEM mass divided by canonical
+shape volume. Native centered interpolation maps body fractions and union
+fractions to MAC faces independently. The normalized interpolated body shares
+\(\alpha_b\) partition overlapping contributions. Rigid velocity is evaluated
+at the actual MAC face positions (and separately at cell centers), not at an
+approximate common quadrature point.
+
+For a supplied pressure-plus-viscous stress force density \(\mathbf b_\sigma\),
+the per-body face load density is
+
+\[
+\mathbf q_b=\alpha_b
+\left[\psi\mathbf b_\sigma-(1-\psi)\mathbf f_{\mathrm{IB}}\right].
+\]
+
+Force and COM torque use the face-dual measures and the exact lever arms of
+that same rigid-velocity map. This quadrature approximates a cell-volume
+integral while exactly preserving the discrete force, torque, and virtual-work
+adjoint identities. `pressure_viscous_load` and `pressure_viscous_torque` report
+the stress contribution separately.
+
+The reciprocal impulse ledger balances the **external-fluid**
+\((1-\psi)\mathbf f_{\mathrm{IB}}\) against the direct body reaction, not the
+entire mixture forcing. `fluid_internal_impulse` reports the remaining
+\(\psi\mathbf f_{\mathrm{IB}}\) contribution. Treating total mixture forcing
+as an equal-and-opposite external body force would count fictitious/internal
+acceleration as a physical hydrodynamic load. `torque_residual` uses the
+**world origin**; body torque itself uses the body COM.
+
+### One projection and an atomic transaction
+
+Initialize `MACVolumeFractionIBState` from canonical DEM state and the fluid
+owner's native packed density/momentum coordinates. Each
+`advance_mac_volume_fraction_ib_cfd_dem` attempt:
+
+1. evaluates bounded geometry at the accepted pose and replaces fluid density
+   by geometric mixture inertia while retaining physical velocity;
+2. constructs the native transport-plus-explicit-viscosity predictor with the
+   accepted pressure gradient, without invoking an already-projected rate;
+3. evaluates direct forcing, then performs **one** variable-density pressure
+   increment projection, accumulating that increment into the accepted pressure;
+4. reevaluates load with the new total pressure and viscous stress, applies
+   the hydraulic DEM kick, and calls native `step_detailed`;
+5. admits geometry at the candidate pose, converts the projected velocity
+   back to native donor-density momentum with that candidate mixture density,
+   and commits fluid, DEM, pressure, counters, and impulse ledgers together.
+
+Mixture density is recomputed from geometry each step, not independently
+advected as a miscible density. Failed step size, geometry, query capacity,
+native transport, coupling identities, pressure solve, DEM/contact, candidate
+geometry, or finite-state checks retain the **entire** accepted state. The
+attempted candidate, projection, DEM, and geometry evidence remain available.
+There is no hidden retry, projection fallback, or capacity growth.
+
+### Real sphere-settling candidate
+
+`examples/mac_volume_fraction_ib_cfd_dem.py` advances the actual coupled
+fluid and sphere, with no drag closure or force fitting. The periodic case
+uses the exact submerged gravitational load
+\(\mathbf g_{\mathrm{eff}}=(1-\rho_f/\rho_s)\mathbf g\); this is a
+weight-minus-Archimedes representation, not a periodic hydrostatic pressure.
+Settling speed is measured relative to the volume-mean fluid velocity.
+The sphere remains contained; periodic shape wrapping is not exercised.
+
+The integration comparator independently integrates the Clift–Grace–Weber
+standard sphere-drag correlation and solves its terminal-force balance. For
+\(\mathrm{Re}\le0.01\), \(C_D=24/\mathrm{Re}+9/2\); for
+\(0.01<\mathrm{Re}\le20\),
+\(C_D=(24/\mathrm{Re})[1+0.1315\mathrm{Re}^{0.82-0.05\log_{10}\mathrm{Re}}]\).
+The default bounded smoke has four cells across the diameter, box width nine
+diameters, and four subboxes per cell axis. Its **candidate 55%** speed,
+drag-at-observed-slip, and displacement tolerance allows coarse interface stress
+and periodic confinement; it is not an observed convergence bound or an approved
+drag accuracy. Late hydrodynamic force must separately balance the submerged
+weight within 15%, so a reference comparison cannot disguise continuing acceleration.
+No-drag free fall exceeds this tolerance. The example explicitly admits a
+per-cell unresolved budget of 1 and reports that evidence, rather than claiming
+the default 0.02 geometry criterion passed. Resolution/box refinement,
+hydrostatic walls, near-contact lubrication, turbulent wakes, arbitrary density
+ratios, distributed execution, and route-changing derivatives are not
+qualified by this small trajectory.
+
+### References and provenance
+
+- [Uhlmann (2005), JCP 209:448–476](https://doi.org/10.1016/j.jcp.2005.03.017),
+  [author manuscript](https://arxiv.org/pdf/1809.08170),
+  [§3.2 Eqs. (5)–(8)](https://arxiv.org/html/1809.08170#S3.E5):
+  desired-minus-predictor direct forcing and the translational-plus-rotational
+  rigid target velocity. [§3.3 Eq. (10)](https://arxiv.org/html/1809.08170#S3.E10)
+  gives the marker kernel's zeroth/first moment identities for force and torque.
+  Appendix B supplies the internal-fluid correction to hydrodynamic load.
+  Those marker-transfer identities motivate conservation but are not the
+  face-dual quadrature used by this volume-fraction route.
+- [Dave, Herrmann & Kasbaoui (2023), author manuscript](https://davehimanshu.github.io/publication/vfib/vfib.pdf),
+  §2.4: separate external and internal fluid stresses. Their surface-filtered
+  VFIB method is not the mass-fraction discrete formulation above; these
+  formulas are a Phydrax-owned derivation, not a claimed transcription of VFIB.
+- Clift, Grace & Weber, *Bubbles, Drops, and Particles*, Academic Press (1978),
+  ISBN 9780121769505; [primary bibliographic review](https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/article/abs/bubbles-drops-and-particles-by-r-clift-j-r-grace-and-m-e-weber-academic-press-1978-380-pp-2080-or-3200/B715AAB3FCD2C95EEC0FF1D6A817B1D0).
+  The low-Re coefficient transcription was independently checked in
+  [Subramanian's Clarkson notes](https://lin-web.clarkson.edu/projects/subramanian/ch330/notes/Drag%20on%20Spherical%20Particles%20and%20Steady%20Settling%20Velocities.pdf);
+  an original-book page scan is not part of the test provenance.

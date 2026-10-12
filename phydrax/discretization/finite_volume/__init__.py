@@ -911,6 +911,7 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
         "._unstructured_archive",
         "write_unstructured_fv_archive",
     ),
+    "StructuredFaceConductancePlan": ("._face_conductance", "StructuredFaceConductancePlan"),
 }
 
 _FACADE_EXPORT_MODULES = ()
@@ -1951,4 +1952,5 @@ __all__ = [
     "prepare_polyhedral_finite_volume_geometry",
     "HybridDiffusionBoundary",
     "HybridMimeticDiffusion",
+    "StructuredFaceConductancePlan",
 ]

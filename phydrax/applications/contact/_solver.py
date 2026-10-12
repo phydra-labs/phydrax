@@ -1,13 +1,12 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Sequence
 from enum import IntFlag
 from math import isfinite
-from typing import Any, cast, Protocol
+from typing import Any, assert_never, final
 
 import equinox as eqx
 import jax
@@ -15,998 +14,1179 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.contact import (
+from ..._tree_math import tree_add_scaled, tree_allfinite, tree_where
+from ...discretization.contact._ccd import (
     CertifiedAABBCCDPlan,
     collision_free_step_limit,
-    ContactCandidateEpoch,
     ContactSafetyEvidence,
     InclusionCCDPlan,
-    InversionStepEvidence,
-    PreparedCollisionScene,
-    simplex_inversion_step_limit,
-    SimplexInversionStepPlan,
+)
+from ...discretization.contact._guarantee import ContactCapability, ContactGuaranteeLevel
+from ...discretization.contact._participant import ContactParticipantScene
+from ...discretization.contact._search import (
+    ContactCandidateEpoch,
+    DenseContactSearchPlan,
     SweepAndPruneContactSearchPlan,
 )
-from ...equations import CompiledFiniteElementProblem
-from ...equations.fem import FiniteElementMassPolicy
-from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
-from ...optim import (
-    solve_trust_region_subproblem,
-    SteihaugToint,
-    TrustRegionQuadraticProblem,
+from ...linalg import BlockSpace, DualSpace, GMRES
+from ...nonlinear._newton import NewtonKrylov
+from ...nonlinear._types import (
+    NonlinearDiagnostics,
+    NonlinearResult,
+    NonlinearSystemProblem,
+    NonlinearTermination,
 )
-from ...typing import checked
-from ..solid_mechanics._fem_dynamics import (
-    FiniteElementDynamicsState,
-    ImplicitNewmarkMethod,
-)
+from ...typing import checked, parse
+from ..solid_mechanics._fem_dynamics import FiniteElementDynamicsState
 from ._friction import (
     ContactFrictionEvaluation,
     ContactFrictionState,
     PreparedLaggedCoulombFriction,
 )
+from ._implicit_participant import (
+    AbstractImplicitContactParticipant,
+    ContactKinematicLinearization,
+    ContactMeritMode,
+    ContactParticipantEvaluation,
+    ContactParticipantStepLimit,
+    linearize_contact_kinematics,
+    participant_residual,
+)
 from ._potential import ContactPotentialEvaluation, PreparedConvergentContactPotential
 
 
 ContactCCDPlan = InclusionCCDPlan | CertifiedAABBCCDPlan
+type ContactCoordinates = tuple[PyTree[Array], ...]
 
 
 class ContactRejectionReason(IntFlag):
     NONE = 0
-    NONFINITE = 1 << 0
-    SEARCH = 1 << 1
-    CCD = 1 << 2
-    INVERSION = 1 << 3
-    NONLINEAR = 1 << 4
-    LINE_SEARCH = 1 << 5
-    CONTACT = 1 << 6
-    ENERGY = 1 << 7
-    FRICTION = 1 << 8
+    SEARCH = 1 << 0
+    CCD = 1 << 1
+    PARTICIPANT = 1 << 2
+    NONLINEAR = 1 << 3
+    CONTACT = 1 << 4
+    NONFINITE = 1 << 5
+    FRICTION = 1 << 6
+    ENVELOPE = 1 << 7
+    POTENTIAL = 1 << 8
 
 
+@final
 class ContactSolvePolicy(StrictModule, NonTrainableState):
-    absolute_gradient: float = eqx.field(static=True)
-    relative_gradient: float = eqx.field(static=True)
-    absolute_step: float = eqx.field(static=True)
-    maximum_iterations: int = eqx.field(static=True)
-    maximum_line_search_steps: int = eqx.field(static=True)
-    armijo: float = eqx.field(static=True)
-    contraction: float = eqx.field(static=True)
-    initial_trust_radius: float = eqx.field(static=True)
-    maximum_trust_radius: float = eqx.field(static=True)
-    minimum_trust_radius: float = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
+    __strict_contract__ = True
+    merit: ContactMeritMode = eqx.field(static=True)
+    method: NewtonKrylov
+    termination: NonlinearTermination
+    maximum_lag_iterations: int = eqx.field(static=True)
+    lag_tolerance: float = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        absolute_gradient: float = 1.0e-8,
-        relative_gradient: float = 1.0e-8,
-        absolute_step: float = 1.0e-12,
-        maximum_iterations: int = 100,
-        maximum_line_search_steps: int = 24,
-        armijo: float = 1.0e-4,
-        contraction: float = 0.5,
-        initial_trust_radius: float = 1.0,
-        maximum_trust_radius: float = 1.0e4,
-        minimum_trust_radius: float = 1.0e-12,
+        merit: ContactMeritMode = "automatic",
+        method: NewtonKrylov | None = None,
+        termination: NonlinearTermination | None = None,
+        maximum_lag_iterations: int = 4,
+        lag_tolerance: float = 1e-8,
     ) -> None:
-        values = tuple(
-            float(value)
-            for value in (
-                absolute_gradient,
-                relative_gradient,
-                absolute_step,
-                armijo,
-                contraction,
-                initial_trust_radius,
-                maximum_trust_radius,
-                minimum_trust_radius,
-            )
-        )
-        if any(not isfinite(value) or value <= 0.0 for value in values):
-            raise ValueError("Contact solve controls must be finite and positive.")
-        if not values[3] < 1.0 or not values[4] < 1.0:
-            raise ValueError("Armijo and contraction values must lie below one.")
-        if not values[7] <= values[5] <= values[6]:
-            raise ValueError("Trust radii are inconsistently ordered.")
-        iterations = int(maximum_iterations)
-        search_steps = int(maximum_line_search_steps)
-        if iterations <= 0 or search_steps <= 0:
-            raise ValueError("Contact iteration limits must be positive.")
-        (
-            self.absolute_gradient,
-            self.relative_gradient,
-            self.absolute_step,
-            self.armijo,
-            self.contraction,
-            self.initial_trust_radius,
-            self.maximum_trust_radius,
-            self.minimum_trust_radius,
-        ) = values
-        self.maximum_iterations = iterations
-        self.maximum_line_search_steps = search_steps
-        self.policy_id = canonical_fingerprint(
-            {
-                "kind": "contact-solve-policy",
-                "values": tuple(value.hex() for value in values),
-                "maximum_iterations": iterations,
-                "maximum_line_search_steps": search_steps,
-            }
-        )
+        merit_ = parse(merit, ContactMeritMode, "merit")
+        method_ = NewtonKrylov() if method is None else method
+        termination_ = NonlinearTermination() if termination is None else termination
+        if not isinstance(method_, NewtonKrylov):
+            raise TypeError("method must be NewtonKrylov.")
+        if not isinstance(method_.linear_policy.method, GMRES):
+            raise ValueError("Monolithic contact requires nonsymmetric GMRES.")
+        if not isinstance(termination_, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination.")
+        if maximum_lag_iterations < 1:
+            raise ValueError("maximum_lag_iterations must be positive.")
+        if not isfinite(lag_tolerance) or lag_tolerance <= 0:
+            raise ValueError("lag_tolerance must be finite and positive.")
+        self.merit = merit_
+        self.method = method_
+        self.termination = termination_
+        self.maximum_lag_iterations = maximum_lag_iterations
+        self.lag_tolerance = lag_tolerance
 
 
-class ContactSolveDiagnostics(StrictModule):
-    converged: Array
-    iterations: Array
-    objective_evaluations: Array
-    gradient_evaluations: Array
-    hessian_actions: Array
-    linear_iterations: Array
-    line_search_evaluations: Array
-    direction_fallbacks: Array
-    initial_gradient_norm: Array
-    final_gradient_norm: Array
-    final_step_norm: Array
-    accepted_step_size: Array
-    trust_radius: Array
-    status_reason: Array
-    lag_iterations: Array
-    lag_residual: Array
-
-
-class ContactEnergyLedger(StrictModule):
-    initial_total: Array
-    final_total: Array
-    bulk_potential: Array
-    contact_potential: Array
-    inertial_potential: Array
-    friction_potential: Array
-    decrease: Array
-    finite: Array
-
-
-class ContactDynamicsState(StrictModule, NonTrainableState):
-    mechanics: FiniteElementDynamicsState
-    replay_epoch: ContactCandidateEpoch | None
-    friction_state: ContactFrictionState | None
-    state_version: Array
-    state_id: str = eqx.field(static=True)
+@final
+class MonolithicContactPlan(StrictModule, NonTrainableState):
+    participants: tuple[AbstractImplicitContactParticipant, ...]
+    contact_scene: ContactParticipantScene
+    contact: PreparedConvergentContactPotential
+    search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan
+    ccd: ContactCCDPlan
+    geometry_owner_indices: tuple[int | None, ...] = eqx.field(static=True)
+    fixed_geometry_states: tuple[PyTree[Array] | None, ...]
+    friction: PreparedLaggedCoulombFriction | None
+    policy: ContactSolvePolicy
+    dof_space: BlockSpace
+    linear_trajectory: bool = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
 
     @checked
     def __init__(
         self,
-        mechanics: FiniteElementDynamicsState,
+        participants: Sequence[AbstractImplicitContactParticipant],
+        contact_scene: ContactParticipantScene,
+        contact: PreparedConvergentContactPotential,
+        search: DenseContactSearchPlan | SweepAndPruneContactSearchPlan,
+        ccd: ContactCCDPlan,
         /,
         *,
-        replay_epoch: ContactCandidateEpoch | None = None,
-        friction_state: ContactFrictionState | None = None,
-        state_version: ArrayLike = 0,
+        geometry_owner_indices: Sequence[int | None],
+        fixed_geometry_states: Sequence[PyTree[Array] | None],
+        friction: PreparedLaggedCoulombFriction | None = None,
+        policy: ContactSolvePolicy | None = None,
     ) -> None:
-        if replay_epoch is not None and not isinstance(
-            replay_epoch, ContactCandidateEpoch
+        members = tuple(participants)
+        if not members or not all(
+            isinstance(p, AbstractImplicitContactParticipant) for p in members
         ):
-            raise TypeError("replay_epoch must be ContactCandidateEpoch or None.")
-        if friction_state is not None and not isinstance(
-            friction_state, ContactFrictionState
+            raise TypeError("participants must contain mechanics participants.")
+        ids = tuple(p.participant_id for p in members)
+        if len(set(ids)) != len(ids):
+            raise ValueError("Mechanics participant IDs must be unique.")
+        owners = tuple(geometry_owner_indices)
+        fixed = tuple(fixed_geometry_states)
+        if len(owners) != len(contact_scene.participants) or len(fixed) != len(owners):
+            raise ValueError(
+                "Each geometry participant requires an explicit owner binding."
+            )
+        validated_fixed: list[PyTree[Array] | None] = []
+        for geometry, owner, value in zip(
+            contact_scene.participants, owners, fixed, strict=True
         ):
-            raise TypeError("friction_state must be ContactFrictionState or None.")
-        version = jnp.asarray(state_version, dtype=jnp.int32)
-        if version.shape != ():
-            raise ValueError("state_version must be scalar.")
-        self.mechanics = mechanics
-        self.replay_epoch = replay_epoch
-        self.friction_state = friction_state
-        self.state_version = version
-        self.state_id = canonical_fingerprint(
+            if owner is None:
+                if value is None:
+                    raise ValueError("Fixed geometry requires an explicit configuration.")
+                validated_fixed.append(geometry.source_space.validate(value))
+            else:
+                if owner < 0 or owner >= len(members) or value is not None:
+                    raise ValueError("Geometry owner index/fixed state is invalid.")
+                if not geometry.source_space.compatible(
+                    members[owner].dof_space
+                ) or not geometry.tangent_space.compatible(members[owner].dof_space):
+                    raise ValueError("Geometry and mechanics DOF spaces must agree.")
+                validated_fixed.append(None)
+            if owner is not None and not geometry.capabilities & (
+                ContactCapability.LINEAR_TRAJECTORY
+                | ContactCapability.NONLINEAR_TRAJECTORY
+            ):
+                raise ValueError(
+                    "Nonlinear monolithic geometry requires a conservative full-path provider."
+                )
+        linear_trajectory = all(
+            owner is None
+            or bool(geometry.capabilities & ContactCapability.LINEAR_TRAJECTORY)
+            for geometry, owner in zip(contact_scene.participants, owners, strict=True)
+        )
+        if not linear_trajectory and isinstance(ccd, CertifiedAABBCCDPlan):
+            raise ValueError(
+                "Nonlinear enclosure paths cannot claim rounding-certified CCD without a rounding certificate."
+            )
+        if contact.scene.scene_id != contact_scene.scene_id:
+            raise ValueError("Contact potential must belong to this participant scene.")
+        if search.activation_distance != contact.plan.activation_distance:
+            raise ValueError("Search and barrier activation distances must agree.")
+        if friction is not None and friction.scene.scene_id != contact_scene.scene_id:
+            raise ValueError("Friction must belong to this participant scene.")
+        policy_ = ContactSolvePolicy() if policy is None else policy
+        if policy_.merit == "potential" and not all(p.has_potential for p in members):
+            raise ValueError(
+                "Potential merit requires every mechanics contribution to have a verified potential."
+            )
+        space = BlockSpace(tuple(p.dof_space for p in members), names=ids)
+        self.participants = members
+        self.contact_scene = contact_scene
+        self.contact = contact
+        self.search = search
+        self.ccd = ccd
+        self.geometry_owner_indices = owners
+        self.fixed_geometry_states = tuple(validated_fixed)
+        self.friction = friction
+        self.policy = policy_
+        self.dof_space = space
+        self.linear_trajectory = linear_trajectory
+        self.plan_id = canonical_fingerprint(
             {
-                "kind": "contact-dynamics-state",
-                "mechanics_layout": mechanics.layout_id,
-                "replay": None if replay_epoch is None else replay_epoch.epoch_id,
-                "friction": (
-                    None if friction_state is None else friction_state.prepared_id
+                "kind": "monolithic-contact",
+                "participants": ids,
+                "scene": contact_scene.scene_id,
+                "contact": contact.prepared_id,
+                "search": search.plan_id,
+                "ccd": ccd.plan_id,
+                "owners": owners,
+                "friction": None if friction is None else friction.prepared_id,
+                "merit": policy_.merit,
+                "method": policy_.method.method_id,
+                "termination": repr(policy_.termination),
+                "lag": (policy_.maximum_lag_iterations, policy_.lag_tolerance),
+                "numeric": array_tree_fingerprint(
+                    (members, contact, tuple(validated_fixed))
                 ),
+                "method_settings": repr(policy_.method),
             }
         )
 
+    def geometry_states(self, coordinates: ContactCoordinates, /) -> ContactCoordinates:
+        values: list[PyTree[Array]] = []
+        for owner, fixed in zip(
+            self.geometry_owner_indices, self.fixed_geometry_states, strict=True
+        ):
+            if owner is None:
+                if fixed is None:
+                    raise ValueError("Missing fixed geometry state.")
+                values.append(fixed)
+            else:
+                values.append(coordinates[owner])
+        return tuple(values)
 
-class FiniteElementContactDynamicsPlan(StrictModule, NonTrainableState):
-    problem: CompiledFiniteElementProblem
-    scene: PreparedCollisionScene
-    contact: PreparedConvergentContactPotential
-    search: SweepAndPruneContactSearchPlan
-    friction: PreparedLaggedCoulombFriction | None
-    ccd: ContactCCDPlan
-    inversion: SimplexInversionStepPlan | None
-    method: ImplicitNewmarkMethod
-    mass_policy: FiniteElementMassPolicy
-    mass_problem: CompiledFiniteElementProblem
-    mass_coefficient: Array
-    solve_policy: ContactSolvePolicy
-    subproblem: SteihaugToint
+
+@final
+class MonolithicContactState(StrictModule, NonTrainableState):
+    coordinates: ContactCoordinates
+    histories: tuple[PyTree[Array], ...]
+    time: Array
+    step: Array
+    state_version: Array
+    friction_state: ContactFrictionState | None
     plan_id: str = eqx.field(static=True)
+    state_id: str = eqx.field(static=True)
 
 
-class PreparedFiniteElementContactStep(StrictModule, NonTrainableState):
-    plan: FiniteElementContactDynamicsPlan
-    accepted: ContactDynamicsState
-    step_size: Array
-    args: Any
-    prepared_id: str = eqx.field(static=True)
-
-
-class FiniteElementContactResult(StrictModule):
-    previous: ContactDynamicsState
-    candidate: ContactDynamicsState
-    accepted_state: ContactDynamicsState
-    accepted: Array
-    rollback_applied: Array
-    diagnostics: ContactSolveDiagnostics
-    contact: ContactPotentialEvaluation
-    friction: ContactFrictionEvaluation | None
-    safety: ContactSafetyEvidence
-    inversion: InversionStepEvidence | None
-    energy: ContactEnergyLedger
-    rejection_reasons: Array
-    plan_id: str = eqx.field(static=True)
-
-    def promote(self, /) -> ContactDynamicsState:
-        return self.accepted_state
-
-
-class FiniteElementContactEquilibriumPlan(StrictModule, NonTrainableState):
-    problem: CompiledFiniteElementProblem
-    scene: PreparedCollisionScene
-    contact: PreparedConvergentContactPotential
-    search: SweepAndPruneContactSearchPlan
-    ccd: ContactCCDPlan
-    inversion: SimplexInversionStepPlan | None
-    solve_policy: ContactSolvePolicy
-    subproblem: SteihaugToint
-    plan_id: str = eqx.field(static=True)
-
-
-class FiniteElementContactEquilibriumResult(StrictModule):
-    previous: Array
-    candidate: Array
-    value: Array
-    accepted: Array
-    diagnostics: ContactSolveDiagnostics
-    contact: ContactPotentialEvaluation
-    safety: ContactSafetyEvidence
-    inversion: InversionStepEvidence | None
-    rejection_reasons: Array
-    plan_id: str = eqx.field(static=True)
-
-
-def _validate_common(
-    problem: CompiledFiniteElementProblem,
-    scene: PreparedCollisionScene,
-    contact: PreparedConvergentContactPotential,
-    search: SweepAndPruneContactSearchPlan,
-    ccd: ContactCCDPlan,
-    inversion: SimplexInversionStepPlan | None,
-    /,
-) -> ArraySpace:
-    if not isinstance(problem, CompiledFiniteElementProblem):
-        raise TypeError("problem must be CompiledFiniteElementProblem.")
-    if not problem.potential_compatible or len(problem.form.field_names) != 1:
-        raise ValueError(
-            "Finite-element contact requires one field and a form compiled from variational.Functional."
-        )
-    if not isinstance(problem.state_space, ArraySpace):
-        raise TypeError("Finite-element contact currently requires an ArraySpace state.")
-    if not isinstance(scene, PreparedCollisionScene):
-        raise TypeError("scene must be PreparedCollisionScene.")
-    if not problem.state_space.compatible(scene.source_space):
-        raise ValueError("Collision scene state space does not match the FE problem.")
-    if (
-        not isinstance(contact, PreparedConvergentContactPotential)
-        or contact.scene.scene_id != scene.scene_id
-    ):
-        raise ValueError("Prepared contact potential must belong to the collision scene.")
-    if not isinstance(search, SweepAndPruneContactSearchPlan):
-        raise TypeError("search must be SweepAndPruneContactSearchPlan.")
-    if search.activation_distance != contact.plan.activation_distance:
-        raise ValueError("Search and contact activation distances must agree exactly.")
-    if not isinstance(ccd, (InclusionCCDPlan, CertifiedAABBCCDPlan)):
-        raise TypeError("ccd must be a concrete contact CCD plan.")
-    if inversion is not None and not isinstance(inversion, SimplexInversionStepPlan):
-        raise TypeError("inversion must be SimplexInversionStepPlan or None.")
-    return problem.state_space
-
-
-def prepare_finite_element_contact_dynamics(
-    problem: CompiledFiniteElementProblem,
-    initial_state: ContactDynamicsState,
-    scene: PreparedCollisionScene,
-    contact: PreparedConvergentContactPotential,
-    search: SweepAndPruneContactSearchPlan,
-    ccd: ContactCCDPlan,
+@checked
+def initialize_monolithic_contact_state(
+    plan: MonolithicContactPlan,
+    coordinates: Sequence[PyTree[Array]],
+    histories: Sequence[PyTree[Array]],
     /,
     *,
-    inversion: SimplexInversionStepPlan | None = None,
-    friction: PreparedLaggedCoulombFriction | None = None,
-    method: ImplicitNewmarkMethod | None = None,
-    mass_coefficient: ArrayLike = 1.0,
-    mass_policy: FiniteElementMassPolicy | None = None,
-    solve_policy: ContactSolvePolicy | None = None,
-    subproblem: SteihaugToint | None = None,
-) -> FiniteElementContactDynamicsPlan:
-    space = _validate_common(problem, scene, contact, search, ccd, inversion)
-    if not isinstance(initial_state, ContactDynamicsState):
-        raise TypeError("initial_state must be ContactDynamicsState.")
-    for value in (
-        initial_state.mechanics.displacement,
-        initial_state.mechanics.velocity,
-        initial_state.mechanics.acceleration,
-    ):
-        space.validate(value)
-    if friction is not None and (
-        not isinstance(friction, PreparedLaggedCoulombFriction)
-        or friction.scene.scene_id != scene.scene_id
-    ):
-        raise ValueError("friction must be prepared for the contact collision scene.")
-    method_ = ImplicitNewmarkMethod() if method is None else method
-    mass_policy_ = FiniteElementMassPolicy() if mass_policy is None else mass_policy
-    solve_policy_ = ContactSolvePolicy() if solve_policy is None else solve_policy
-    subproblem_ = SteihaugToint() if subproblem is None else subproblem
-    if not isinstance(method_, ImplicitNewmarkMethod):
-        raise TypeError("method must be ImplicitNewmarkMethod or None.")
-    if not isinstance(mass_policy_, FiniteElementMassPolicy):
-        raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
-    if not isinstance(solve_policy_, ContactSolvePolicy):
-        raise TypeError("solve_policy must be ContactSolvePolicy or None.")
-    if not isinstance(subproblem_, SteihaugToint):
-        raise TypeError("subproblem must be SteihaugToint or None.")
-    mass = jnp.asarray(mass_coefficient, dtype=space.dtype)
-    if mass.shape != () or not bool(jnp.isfinite(mass)) or mass <= 0.0:
-        raise ValueError("mass_coefficient must be one positive finite scalar.")
-    mass_problem = problem._compile_unit_mass_problem(mass_policy_)
-    identifier = canonical_fingerprint(
+    time: ArrayLike = 0.0,
+) -> MonolithicContactState:
+    q = plan.dof_space.validate(tuple(coordinates))
+    history = tuple(histories)
+    if len(history) != len(q):
+        raise ValueError("Each mechanics participant requires a committed history.")
+    dtype = jax.tree.leaves(q)[0].dtype
+    time_ = jnp.asarray(time, dtype=dtype)
+    if time_.shape != () or not np.isfinite(np.asarray(time_)).all():
+        raise ValueError("time must be one finite scalar.")
+    frame = None
+    if plan.friction is not None:
+        positions = plan.contact_scene.positions(plan.geometry_states(q))
+        epoch = plan.search.build(plan.contact_scene, positions)
+        frame = plan.friction.build_state(positions, epoch, state_version=0)
+    return MonolithicContactState(
+        q,
+        history,
+        time_,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        frame,
+        plan.plan_id,
+        canonical_fingerprint({"kind": "monolithic-contact-state", "plan": plan.plan_id}),
+    )
+
+
+def _kinematic_linearizations(
+    plan: MonolithicContactPlan, coordinates: ContactCoordinates, /
+) -> tuple[ContactKinematicLinearization, ...]:
+    return tuple(
+        linearize_contact_kinematics(geometry, q)
+        for geometry, q in zip(
+            plan.contact_scene.participants,
+            plan.geometry_states(coordinates),
+            strict=True,
+        )
+    )
+
+
+@final
+class _ContactEvaluation(StrictModule):
+    participants: tuple[ContactParticipantEvaluation, ...]
+    contact: ContactPotentialEvaluation
+    friction: ContactFrictionEvaluation | None
+    successful: Array
+
+
+@final
+class _ContactTrajectory(StrictModule):
+    plan: MonolithicContactPlan
+    coordinates: ContactCoordinates
+    direction: ContactCoordinates
+
+    def __call__(
+        self, lower_time: Array, upper_time: Array, /
+    ) -> tuple[Array, Array, Array]:
+        first = jax.tree.map(
+            lambda q, dq: q + lower_time.astype(q.dtype) * dq,
+            self.coordinates,
+            self.direction,
+        )
+        second = jax.tree.map(
+            lambda q, dq: q + upper_time.astype(q.dtype) * dq,
+            self.coordinates,
+            self.direction,
+        )
+        first_states = self.plan.geometry_states(first)
+        second_states = self.plan.geometry_states(second)
+        lower: list[Array] = []
+        upper: list[Array] = []
+        successful = jnp.asarray(True, dtype=jnp.bool_)
+        for geometry, owner, q0, q1 in zip(
+            self.plan.contact_scene.participants,
+            self.plan.geometry_owner_indices,
+            first_states,
+            second_states,
+            strict=True,
+        ):
+            if owner is None:
+                positions = geometry.positions(q0)
+                lower.append(positions)
+                upper.append(positions)
+            else:
+                evidence = geometry.trajectory_bounds(q0, q1)
+                lower.append(evidence.lower)
+                upper.append(evidence.upper)
+                successful = (
+                    successful
+                    & evidence.finite
+                    & evidence.successful
+                    & (
+                        evidence.guarantee_level
+                        >= int(ContactGuaranteeLevel.ENCLOSURE_CONSERVATIVE)
+                    )
+                )
+        return (
+            jnp.concatenate(tuple(lower), axis=0),
+            jnp.concatenate(tuple(upper), axis=0),
+            successful,
+        )
+
+
+def _nonlinear_envelope_limit(
+    epoch: ContactCandidateEpoch, trajectory: _ContactTrajectory, maximum: Array, /
+) -> Array:
+    zero = jnp.zeros_like(maximum)
+
+    def enclosed(rate: Array) -> Array:
+        lower, upper, successful = trajectory(zero, rate)
+        extent = jnp.maximum(
+            jnp.abs(lower - epoch.reference_positions),
+            jnp.abs(upper - epoch.reference_positions),
+        )
+        squared_radius = jnp.sum(extent * extent, axis=-1)
+        return (
+            successful
+            & jnp.all(jnp.isfinite(squared_radius))
+            & jnp.all(squared_radius <= epoch.envelope_radius**2)
+        )
+
+    def bisect(_: None) -> Array:
+        def body(index: int, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
+            del index
+            lower, upper = bracket
+            midpoint = (lower + upper) * 0.5
+            valid = enclosed(midpoint)
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
+
+        lower, _ = jax.lax.fori_loop(0, 40, body, (zero, maximum))
+        return lower
+
+    limit = jax.lax.cond(enclosed(maximum), lambda _: maximum, bisect, None)
+    return jnp.where(enclosed(zero), limit, zero)
+
+
+@final
+class _ContactRuntime(StrictModule):
+    plan: MonolithicContactPlan
+    accepted: MonolithicContactState
+    epoch: ContactCandidateEpoch
+    step_size: Array | None
+    friction_state: ContactFrictionState | None
+    potential_merit: bool = eqx.field(static=True)
+
+    def __call__(
+        self, coordinates: ContactCoordinates, args: Any, /
+    ) -> tuple[ContactCoordinates, _ContactEvaluation]:
+        return self.residual(coordinates, args)
+
+    def evaluations(
+        self, coordinates: ContactCoordinates, args: Any, /
+    ) -> _ContactEvaluation:
+        values = tuple(
+            p.evaluate(q, h, qn, self.accepted.time, self.step_size, args)
+            for p, q, h, qn in zip(
+                self.plan.participants,
+                coordinates,
+                self.accepted.histories,
+                self.accepted.coordinates,
+                strict=True,
+            )
+        )
+        geometry = self.plan.geometry_states(coordinates)
+        positions = self.plan.contact_scene.positions(geometry)
+        contact = self.plan.contact.evaluate(
+            positions, self.epoch, participant_states=geometry
+        )
+        friction = None
+        if self.plan.friction is not None:
+            if self.friction_state is None or self.step_size is None:
+                raise ValueError(
+                    "Incremental friction requires a frozen frame and step size."
+                )
+            rates = tuple(
+                p.contact_velocity(q, h, qn, self.accepted.time, self.step_size, args)
+                for p, q, h, qn in zip(
+                    self.plan.participants,
+                    coordinates,
+                    self.accepted.histories,
+                    self.accepted.coordinates,
+                    strict=True,
+                )
+            )
+            geometry_rates = tuple(
+                geometry_member.tangent_space.zeros() if owner is None else rates[owner]
+                for geometry_member, owner in zip(
+                    self.plan.contact_scene.participants,
+                    self.plan.geometry_owner_indices,
+                    strict=True,
+                )
+            )
+            velocity = self.plan.contact_scene.velocities(geometry, geometry_rates)
+            friction = self.plan.friction.evaluate(
+                velocity, self.friction_state, participant_states=geometry
+            )
+        successful = contact.successful & self.epoch.successful
+        for value in values:
+            successful = (
+                successful
+                & value.successful
+                & value.admissible
+                & value.tangent_successful
+            )
+            if self.potential_merit:
+                successful = (
+                    successful
+                    & value.potential_consistency_checked
+                    & jnp.isfinite(value.potential_consistency_defect)
+                    & (
+                        value.potential_consistency_defect
+                        <= self.plan.policy.lag_tolerance
+                    )
+                )
+        if friction is not None:
+            successful = successful & friction.successful
+        return _ContactEvaluation(values, contact, friction, successful)
+
+    def residual(
+        self, coordinates: ContactCoordinates, args: Any, /
+    ) -> tuple[ContactCoordinates, _ContactEvaluation]:
+        evidence = self.evaluations(coordinates, args)
+        residual = tuple(
+            participant_residual(p, q, h, qn, self.accepted.time, self.step_size, args)
+            for p, q, h, qn in zip(
+                self.plan.participants,
+                coordinates,
+                self.accepted.histories,
+                self.accepted.coordinates,
+                strict=True,
+            )
+        )
+        result = list(residual)
+        linearizations = _kinematic_linearizations(self.plan, coordinates)
+        for force in (
+            evidence.contact.surface_force,
+            None if evidence.friction is None else evidence.friction.surface_force,
+        ):
+            if force is not None:
+                for index, (owner, linearization) in enumerate(
+                    zip(self.plan.geometry_owner_indices, linearizations, strict=True)
+                ):
+                    if owner is not None:
+                        begin, end = self.plan.contact_scene.vertex_offsets[
+                            index : index + 2
+                        ]
+                        value = linearization.tangent.transpose_mv(force[begin:end])
+                        result[owner] = tree_add_scaled(result[owner], value, -1.0)
+        return tuple(result), evidence
+
+    def potential(self, coordinates: ContactCoordinates, args: Any, /) -> Array:
+        energy = self.plan.contact.energy(
+            self.plan.contact_scene.positions(self.plan.geometry_states(coordinates)),
+            self.epoch,
+        )
+        for p, q, h, qn in zip(
+            self.plan.participants,
+            coordinates,
+            self.accepted.histories,
+            self.accepted.coordinates,
+            strict=True,
+        ):
+            contribution = p.potential(q, h, qn, self.accepted.time, self.step_size, args)
+            if contribution is None:
+                raise ValueError(
+                    "Potential merit encountered a nonconservative contribution."
+                )
+            energy = energy + contribution
+        if self.plan.friction is not None:
+            evidence = self.evaluations(coordinates, args)
+            if evidence.friction is None or self.step_size is None:
+                raise ValueError("Missing friction merit contribution.")
+            scale = self.plan.participants[0].contact_velocity_scale(self.step_size)
+            if scale is None:
+                raise ValueError("Friction has no conservative incremental potential.")
+            energy = energy + evidence.friction.energy / scale
+        return energy
+
+    def limits(
+        self, coordinates: ContactCoordinates, direction: ContactCoordinates, args: Any, /
+    ) -> tuple[ContactSafetyEvidence, tuple[ContactParticipantStepLimit, ...], Array]:
+        proposed = tree_add_scaled(coordinates, direction, 1.0)
+        start = self.plan.contact_scene.positions(self.plan.geometry_states(coordinates))
+        end = self.plan.contact_scene.positions(self.plan.geometry_states(proposed))
+        trajectory = (
+            None
+            if self.plan.linear_trajectory
+            else _ContactTrajectory(self.plan, coordinates, direction)
+        )
+        safety = collision_free_step_limit(
+            self.plan.ccd,
+            self.plan.contact_scene,
+            self.epoch,
+            start,
+            end,
+            trajectory_bounds=trajectory,
+        )
+        limits = tuple(
+            p.step_limit(q, dq, qn, self.accepted.time, self.step_size, args)
+            for p, q, dq, qn in zip(
+                self.plan.participants,
+                coordinates,
+                direction,
+                self.accepted.coordinates,
+                strict=True,
+            )
+        )
+        alpha = jnp.where(safety.successful & safety.conservative, safety.step_size, 0.0)
+        for limit in limits:
+            valid = (
+                limit.successful
+                & limit.conservative
+                & limit.guarantee.successful
+                & jnp.isfinite(limit.maximum_step)
+                & (limit.maximum_step >= 0.0)
+                & (limit.maximum_step <= 1.0)
+            )
+            alpha = jnp.minimum(alpha, jnp.where(valid, limit.maximum_step, 0.0))
+        if trajectory is not None:
+            return (
+                safety,
+                limits,
+                _nonlinear_envelope_limit(self.epoch, trajectory, alpha),
+            )
+        # Exact exit time from the frozen search envelope for each linear sample.
+        offset = start - self.epoch.reference_positions
+        movement = end - start
+        a = jnp.sum(movement * movement, axis=-1)
+        b = jnp.sum(offset * movement, axis=-1)
+        c = jnp.sum(offset * offset, axis=-1) - self.epoch.envelope_radius**2
+        safe_a = jnp.where(a > 0.0, a, 1.0)
+        discriminant = b * b - a * c
+        exits = (-b + jnp.sqrt(jnp.maximum(discriminant, 0.0))) / safe_a
+        exits = jnp.where(a > 0.0, exits, 1.0)
+        envelope_valid = jnp.all(c <= 0.0) & jnp.all(jnp.isfinite(exits))
+        envelope_alpha = jnp.where(
+            envelope_valid, jnp.minimum(1.0, jnp.min(exits, initial=1.0)), 0.0
+        )
+        return safety, limits, jnp.minimum(alpha, envelope_alpha)
+
+    def step_limit(
+        self, coordinates: ContactCoordinates, direction: ContactCoordinates, args: Any, /
+    ) -> Array:
+        return self.limits(coordinates, direction, args)[2]
+
+    def problem(self) -> NonlinearSystemProblem:
+        identifier = f"{self.plan.plan_id}/{self.epoch.epoch_id}"
+        return NonlinearSystemProblem(
+            self,
+            state_space=self.plan.dof_space,
+            residual_space=DualSpace(self.plan.dof_space),
+            has_aux=True,
+            validity=_contact_validity,
+            potential=_ContactPotentialAction(self) if self.potential_merit else None,
+            potential_id=f"{identifier}/potential" if self.potential_merit else None,
+            step_limit=_ContactStepLimitAction(self),
+            step_limit_id=f"{identifier}/safe-step",
+            problem_id=identifier,
+        )
+
+
+def _contact_validity(
+    coordinates: ContactCoordinates,
+    residual: ContactCoordinates,
+    evidence: _ContactEvaluation,
+    args: Any,
+    /,
+) -> Array:
+    del coordinates, residual, args
+    return evidence.successful
+
+
+@final
+class _ContactPotentialAction(StrictModule):
+    runtime: _ContactRuntime
+
+    def __call__(self, coordinates: ContactCoordinates, args: Any, /) -> Array:
+        return self.runtime.potential(coordinates, args)
+
+
+@final
+class _ContactStepLimitAction(StrictModule):
+    runtime: _ContactRuntime
+
+    def __call__(
+        self, coordinates: ContactCoordinates, direction: ContactCoordinates, args: Any, /
+    ) -> Array:
+        return self.runtime.step_limit(coordinates, direction, args)
+
+
+def _potential_mode(plan: MonolithicContactPlan, step_size: Array | None, /) -> bool:
+    compatible = all(p.has_potential for p in plan.participants)
+    if plan.friction is not None:
+        if step_size is None:
+            raise ValueError("Lagged friction is incremental-only.")
+        scales = tuple(p.contact_velocity_scale(step_size) for p in plan.participants)
+        compatible = (
+            compatible
+            and plan.linear_trajectory
+            and all(scale is not None for scale in scales)
+        )
+        if compatible:
+            host = tuple(np.asarray(scale) for scale in scales)
+            compatible = all(
+                np.isfinite(value).all() and np.array_equal(value, host[0])
+                for value in host
+            )
+    match plan.policy.merit:
+        case "automatic":
+            return compatible
+        case "potential":
+            if not compatible:
+                raise ValueError(
+                    "Potential merit requires compatible conservative contributions."
+                )
+            return True
+        case "residual":
+            return False
+        case unreachable:
+            assert_never(unreachable)
+
+
+@final
+class PreparedMonolithicContactStep(StrictModule, NonTrainableState):
+    plan: MonolithicContactPlan
+    accepted: MonolithicContactState
+    step_size: Array
+    args: Any
+    candidate_epoch: ContactCandidateEpoch
+    runtime: _ContactRuntime
+    prepared_id: str = eqx.field(static=True)
+
+    def kinematic_linearizations(
+        self, coordinates: ContactCoordinates, /
+    ) -> tuple[ContactKinematicLinearization, ...]:
+        return _kinematic_linearizations(self.plan, coordinates)
+
+    @property
+    def problem(self) -> NonlinearSystemProblem:
+        return self.runtime.problem()
+
+    def residual_jvp(
+        self,
+        coordinates: ContactCoordinates,
+        direction: ContactCoordinates,
+        args: Any = None,
+        /,
+    ) -> ContactCoordinates:
+        arguments = self.args if args is None else args
+        return jax.jvp(
+            lambda q: self.problem.residual(q, arguments), (coordinates,), (direction,)
+        )[1]
+
+
+@final
+class PreparedMonolithicContactEquilibrium(StrictModule, NonTrainableState):
+    plan: MonolithicContactPlan
+    initial: MonolithicContactState
+    args: Any
+    candidate_epoch: ContactCandidateEpoch
+    runtime: _ContactRuntime
+    prepared_id: str = eqx.field(static=True)
+
+    def kinematic_linearizations(
+        self, coordinates: ContactCoordinates, /
+    ) -> tuple[ContactKinematicLinearization, ...]:
+        return _kinematic_linearizations(self.plan, coordinates)
+
+    @property
+    def problem(self) -> NonlinearSystemProblem:
+        return self.runtime.problem()
+
+    def residual_jvp(
+        self,
+        coordinates: ContactCoordinates,
+        direction: ContactCoordinates,
+        args: Any = None,
+        /,
+    ) -> ContactCoordinates:
+        arguments = self.args if args is None else args
+        return jax.jvp(
+            lambda q: self.problem.residual(q, arguments), (coordinates,), (direction,)
+        )[1]
+
+
+def _prepare_runtime(
+    plan: MonolithicContactPlan,
+    accepted: MonolithicContactState,
+    step_size: Array | None,
+    args: Any,
+    /,
+) -> tuple[_ContactRuntime, str]:
+    if accepted.plan_id != plan.plan_id:
+        raise ValueError("Accepted state belongs to another monolithic plan.")
+    plan.dof_space.validate(accepted.coordinates)
+    potential = _potential_mode(plan, step_size)
+    if potential:
+        for participant, q, history in zip(
+            plan.participants, accepted.coordinates, accepted.histories, strict=True
+        ):
+            evidence = participant.evaluate(q, history, q, accepted.time, step_size, args)
+            consistent = (
+                np.asarray(evidence.potential_consistency_checked)
+                & np.isfinite(np.asarray(evidence.potential_consistency_defect))
+                & (
+                    np.asarray(evidence.potential_consistency_defect)
+                    <= plan.policy.lag_tolerance
+                )
+            )
+            if not consistent:
+                if plan.policy.merit == "potential":
+                    raise ValueError(
+                        "Potential merit requires verified residual-energy consistency."
+                    )
+                potential = False
+                break
+    positions = plan.contact_scene.positions(plan.geometry_states(accepted.coordinates))
+    epoch = plan.search.build(plan.contact_scene, positions)
+    frame = None
+    if plan.friction is not None:
+        frame = plan.friction.build_state(
+            positions, epoch, state_version=accepted.state_version
+        )
+    runtime = _ContactRuntime(plan, accepted, epoch, step_size, frame, potential)
+    return runtime, canonical_fingerprint(
         {
-            "kind": "finite-element-contact-dynamics-plan",
-            "problem": problem.compilation_id,
-            "scene": scene.scene_id,
-            "contact": contact.prepared_id,
-            "friction": None if friction is None else friction.prepared_id,
-            "search": search.plan_id,
-            "ccd": ccd.plan_id,
-            "inversion": None if inversion is None else inversion.plan_id,
-            "method": method_.method_id,
-            "mass_policy": mass_policy_.kind,
-            "mass": float(mass).hex(),
-            "solve": solve_policy_.policy_id,
+            "kind": "prepared-monolithic-contact",
+            "plan": plan.plan_id,
+            "epoch": epoch.epoch_id,
+            "mode": "equilibrium" if step_size is None else "incremental",
         }
     )
-    return FiniteElementContactDynamicsPlan(
-        problem,
-        scene,
-        contact,
-        search,
-        friction,
-        ccd,
-        inversion,
-        method_,
-        mass_policy_,
-        mass_problem,
-        mass,
-        solve_policy_,
-        subproblem_,
-        identifier,
-    )
 
 
-def prepare_finite_element_contact_step(
-    plan: FiniteElementContactDynamicsPlan,
-    accepted: ContactDynamicsState,
+@checked
+def prepare_monolithic_contact_step(
+    plan: MonolithicContactPlan,
+    accepted: MonolithicContactState,
     step_size: ArrayLike,
     /,
     *,
     args: Any = None,
-) -> PreparedFiniteElementContactStep:
-    if not isinstance(plan, FiniteElementContactDynamicsPlan):
-        raise TypeError("plan must be FiniteElementContactDynamicsPlan.")
-    if not isinstance(accepted, ContactDynamicsState):
-        raise TypeError("accepted must be ContactDynamicsState.")
-    dt = jnp.asarray(step_size, dtype=accepted.mechanics.displacement.dtype)
-    if dt.shape != () or not bool(jnp.isfinite(dt)) or dt <= 0.0:
-        raise ValueError("step_size must be one positive finite scalar.")
-    return PreparedFiniteElementContactStep(
-        plan,
-        accepted,
-        dt,
-        args,
-        canonical_fingerprint(
-            {
-                "kind": "prepared-finite-element-contact-step",
-                "plan": plan.plan_id,
-                "state": accepted.state_id,
-                "step_size": float(dt).hex(),
-            }
+) -> PreparedMonolithicContactStep:
+    dt = jnp.asarray(step_size, dtype=accepted.time.dtype)
+    if dt.shape != () or not np.isfinite(np.asarray(dt)).all() or np.asarray(dt) <= 0:
+        raise ValueError("step_size must be one finite positive scalar.")
+    runtime, identifier = _prepare_runtime(plan, accepted, dt, args)
+    return PreparedMonolithicContactStep(
+        plan, accepted, dt, args, runtime.epoch, runtime, identifier
+    )
+
+
+@checked
+def prepare_monolithic_contact_equilibrium(
+    plan: MonolithicContactPlan, initial: MonolithicContactState, /, *, args: Any = None
+) -> PreparedMonolithicContactEquilibrium:
+    runtime, identifier = _prepare_runtime(plan, initial, None, args)
+    return PreparedMonolithicContactEquilibrium(
+        plan, initial, args, runtime.epoch, runtime, identifier
+    )
+
+
+@final
+class ContactSolveDiagnostics(StrictModule):
+    converged: Array
+    iterations: Array
+    residual_evaluations: Array
+    jvp_actions: Array
+    linear_iterations: Array
+    line_search_evaluations: Array
+    initial_residual_norm: Array
+    final_residual_norm: Array
+    accepted_step_size: Array
+    lag_iterations: Array
+    lag_residual: Array
+    candidate_count: Array
+    overflow_count: Array
+    minimum_gap: Array
+    minimum_feature_margin: Array
+    potential_merit_used: Array
+    status_reason: Array
+
+
+@final
+class MonolithicContactResult(StrictModule):
+    """Atomic candidate and device-selected state with a host commit boundary.
+
+    ``accepted_state`` selects every numerical field but retains staged FEM
+    material trials and their previous static revisions, as standalone FEM
+    dynamics does. Use ``commit()`` before preparing the next material-bearing
+    step; candidates and participant evidence remain uncommitted.
+    """
+
+    previous: MonolithicContactState
+    candidate: MonolithicContactState
+    accepted_state: MonolithicContactState
+    accepted: Array
+    rollback_applied: Array
+    diagnostics: ContactSolveDiagnostics
+    participant_evidence: tuple[ContactParticipantEvaluation, ...]
+    contact: ContactPotentialEvaluation
+    friction: ContactFrictionEvaluation | None
+    safety: ContactSafetyEvidence
+    participant_step_limits: tuple[ContactParticipantStepLimit, ...]
+    rejection_reasons: Array
+    candidate_epoch: ContactCandidateEpoch
+    step_size: Array | None
+    arguments: Any
+    nonlinear: NonlinearResult
+    plan_id: str = eqx.field(static=True)
+
+    def commit(self, /) -> MonolithicContactState:
+        """Commit accepted FEM material trials and their static host revisions."""
+        if not any(
+            isinstance(history, FiniteElementDynamicsState)
+            and history.materials is not None
+            for history in self.candidate.histories
+        ):
+            return self.accepted_state
+        # Static material revisions cannot share a device conditional's PyTree
+        # with the previous revision. Numerical solving remains transformable.
+        if not bool(self.accepted):
+            return self.previous
+        histories: list[PyTree[Array]] = []
+        for history in self.candidate.histories:
+            if (
+                isinstance(history, FiniteElementDynamicsState)
+                and history.materials is not None
+            ):
+                history = eqx.tree_at(
+                    lambda value: value.materials, history, history.materials.commit()
+                )
+            histories.append(history)
+        return eqx.tree_at(
+            lambda value: value.histories, self.candidate, tuple(histories)
+        )
+
+    def rollback(self, /) -> MonolithicContactState:
+        return self.previous
+
+
+def _rejection_bit(condition: Array, reason: ContactRejectionReason, /) -> Array:
+    return jnp.where(
+        condition,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(int(reason), dtype=jnp.int32),
+    )
+
+
+def _accumulate_work(
+    previous: NonlinearDiagnostics, current: NonlinearDiagnostics, /
+) -> NonlinearDiagnostics:
+    return eqx.tree_at(
+        lambda d: (
+            d.iterations,
+            d.residual_evaluations,
+            d.jvp_evaluations,
+            d.jacobian_preparations,
+            d.linear_iterations,
+            d.accepted_steps,
+            d.rejected_steps,
+        ),
+        previous,
+        (
+            previous.iterations + current.iterations,
+            previous.residual_evaluations + current.residual_evaluations,
+            previous.jvp_evaluations + current.jvp_evaluations,
+            previous.jacobian_preparations + current.jacobian_preparations,
+            previous.linear_iterations + current.linear_iterations,
+            previous.accepted_steps + current.accepted_steps,
+            previous.rejected_steps + current.rejected_steps,
         ),
     )
 
 
-def prepare_finite_element_contact_equilibrium(
-    problem: CompiledFiniteElementProblem,
-    scene: PreparedCollisionScene,
-    contact: PreparedConvergentContactPotential,
-    search: SweepAndPruneContactSearchPlan,
-    ccd: ContactCCDPlan,
-    /,
-    *,
-    inversion: SimplexInversionStepPlan | None = None,
-    solve_policy: ContactSolvePolicy | None = None,
-    subproblem: SteihaugToint | None = None,
-) -> FiniteElementContactEquilibriumPlan:
-    _validate_common(problem, scene, contact, search, ccd, inversion)
-    solve_policy_ = ContactSolvePolicy() if solve_policy is None else solve_policy
-    subproblem_ = SteihaugToint() if subproblem is None else subproblem
-    if not isinstance(solve_policy_, ContactSolvePolicy) or not isinstance(
-        subproblem_, SteihaugToint
-    ):
-        raise TypeError("solve_policy/subproblem have incompatible types.")
-    identifier = canonical_fingerprint(
-        {
-            "kind": "finite-element-contact-equilibrium-plan",
-            "problem": problem.compilation_id,
-            "scene": scene.scene_id,
-            "contact": contact.prepared_id,
-            "search": search.plan_id,
-            "ccd": ccd.plan_id,
-            "inversion": None if inversion is None else inversion.plan_id,
-            "solve": solve_policy_.policy_id,
-        }
+def _solve(runtime: _ContactRuntime, args: Any, /) -> MonolithicContactResult:
+    plan = runtime.plan
+    previous = runtime.accepted
+    q = previous.coordinates
+    frame = runtime.friction_state
+    zero = jnp.asarray(0, dtype=previous.time.dtype)
+    root_result = plan.policy.method.solve(
+        runtime.problem(), q, termination=plan.policy.termination, args=args
     )
-    return FiniteElementContactEquilibriumPlan(
-        problem,
-        scene,
-        contact,
-        search,
-        ccd,
-        inversion,
-        solve_policy_,
-        subproblem_,
-        identifier,
-    )
-
-
-def _array_norm(space: ArraySpace, value: Array, /) -> Array:
-    return jnp.sqrt(jnp.maximum(jnp.real(space.inner(value, value)), 0.0))
-
-
-class _CoordinateRuntime(Protocol):
-    @property
-    def coordinates(self) -> Array: ...
-
-
-def _full_positions(
-    problem: CompiledFiniteElementProblem, state: Array, args: Any, /
-) -> Array:
-    full = problem.expand(state, args)
-    # The prepared nodal discretization validated this coordinate-bearing runtime.
-    runtime = cast(_CoordinateRuntime, problem._execution_context(args).runtime)
-    coordinates = runtime.coordinates
-    if full.shape != coordinates.shape:
-        raise ValueError(
-            "Certified inversion stepping requires nodal displacement matching FE coordinates."
-        )
-    return coordinates + full
-
-
-def _solve_contact_minimization(
-    *,
-    problem: CompiledFiniteElementProblem,
-    scene: PreparedCollisionScene,
-    contact: PreparedConvergentContactPotential,
-    search: SweepAndPruneContactSearchPlan,
-    ccd: ContactCCDPlan,
-    inversion: SimplexInversionStepPlan | None,
-    policy: ContactSolvePolicy,
-    subproblem: SteihaugToint,
-    initial: Array,
-    args: Any,
-    inertial_energy: Callable[[Array], Array],
-    extra_energy: Callable[[Array, ContactCandidateEpoch], Array],
-) -> tuple[
-    Array,
-    ContactCandidateEpoch,
-    ContactSolveDiagnostics,
-    ContactSafetyEvidence,
-    InversionStepEvidence | None,
-    ContactEnergyLedger,
-    int,
-]:
-    space = problem.state_space
-    if not isinstance(space, ArraySpace):
-        raise TypeError("Contact minimization requires ArraySpace.")
-    parameters = space.validate(initial)
-    trust_radius = jnp.asarray(policy.initial_trust_radius, dtype=parameters.dtype)
-    objective_evaluations = 0
-    gradient_evaluations = 0
-    hessian_actions = 0
-    linear_iterations = 0
-    line_evaluations = 0
-    fallbacks = 0
-    last_rate = jnp.asarray(0.0, dtype=parameters.dtype)
-    last_step_norm = jnp.asarray(jnp.inf, dtype=parameters.dtype)
-    last_safety: ContactSafetyEvidence | None = None
-    last_inversion: InversionStepEvidence | None = None
-    rejection = int(ContactRejectionReason.NONE)
-
-    def build_epoch(
-        value: Array, end_value: Array | None = None
-    ) -> ContactCandidateEpoch:
-        positions = scene.positions(value)
-        end_positions = None if end_value is None else scene.positions(end_value)
-        return search.build(
-            scene,
-            np.asarray(positions),
-            end_positions=None if end_positions is None else np.asarray(end_positions),
-        )
-
-    epoch = build_epoch(parameters)
-    if not bool(epoch.successful):
-        rejection |= int(ContactRejectionReason.SEARCH)
-
-    def total_energy(value: Array, current_epoch: ContactCandidateEpoch) -> Array:
-        return (
-            inertial_energy(value)
-            + problem.potential(value, args)
-            + contact.energy(scene.positions(value), current_epoch)
-            + extra_energy(value, current_epoch)
-        )
-
-    initial_energy = total_energy(parameters, epoch)
-    objective_evaluations += 1
-    initial_gradient_norm = jnp.asarray(jnp.inf, dtype=parameters.dtype)
-    final_gradient_norm = initial_gradient_norm
-    converged = False
-    iteration_count = 0
-
-    if rejection == int(ContactRejectionReason.NONE):
-        for iteration in range(policy.maximum_iterations):
-            iteration_count = iteration + 1
-            objective = lambda value, current_epoch=epoch: total_energy(
-                value, current_epoch
-            )
-            value, gradient = jax.value_and_grad(objective)(parameters)
-            objective_evaluations += 1
-            gradient_evaluations += 1
-            gradient_norm = _array_norm(space, gradient)
-            if iteration == 0:
-                initial_gradient_norm = gradient_norm
-            final_gradient_norm = gradient_norm
-            threshold = (
-                policy.absolute_gradient
-                + policy.relative_gradient * initial_gradient_norm
-            )
-            if bool(
-                jnp.isfinite(value)
-                & jnp.isfinite(gradient_norm)
-                & (gradient_norm <= threshold)
-            ):
-                converged = True
-                break
-            if not bool(jnp.isfinite(value) & jnp.all(jnp.isfinite(gradient))):
-                rejection |= int(ContactRejectionReason.NONFINITE)
-                break
-            _, hessian_action = jax.linearize(jax.grad(objective), parameters)
-            hessian = FunctionLinearOperator(
-                hessian_action,
-                source=space,
-                target=space,
-                properties=OperatorProperties(
-                    self_adjoint=True,
-                    evidence={"self_adjoint": "construction"},
-                ),
-                operator_id=f"contact-objective-hessian/{epoch.epoch_id}",
-                closure_convert=False,
-            )
-            trust = solve_trust_region_subproblem(
-                TrustRegionQuadraticProblem(hessian, gradient, trust_radius),
-                method=subproblem,
-            )
-            hessian_actions += int(trust.diagnostics.hessian_actions)
-            linear_iterations += int(trust.diagnostics.iterations)
-            direction = space.validate(trust.step)
-            slope = jnp.real(space.inner(gradient, direction))
-            if not bool(trust.successful & jnp.isfinite(slope) & (slope < 0.0)):
-                direction = -gradient
-                slope = -jnp.real(space.inner(gradient, gradient))
-                fallbacks += 1
-            proposed = parameters + direction
-            swept_epoch = build_epoch(parameters, proposed)
-            if not bool(swept_epoch.successful):
-                rejection |= int(ContactRejectionReason.SEARCH)
-                break
-            start_surface = scene.positions(parameters)
-            end_surface = scene.positions(proposed)
-            safety = collision_free_step_limit(
-                ccd,
-                scene,
-                swept_epoch,
-                np.asarray(start_surface),
-                np.asarray(end_surface),
-            )
-            last_safety = safety
-            if not bool(safety.successful):
-                rejection |= int(ContactRejectionReason.CCD)
-                break
-            safe_rate = safety.step_size
-            if inversion is not None:
-                start_full = _full_positions(problem, parameters, args)
-                end_full = _full_positions(problem, proposed, args)
-                inversion_evidence = simplex_inversion_step_limit(
-                    inversion, np.asarray(start_full), np.asarray(end_full)
-                )
-                last_inversion = inversion_evidence
-                if not bool(inversion_evidence.successful):
-                    rejection |= int(ContactRejectionReason.INVERSION)
-                    break
-                safe_rate = jnp.minimum(safe_rate, inversion_evidence.step_size)
-            rate = jnp.minimum(1.0, safe_rate)
-            accepted = False
-            accepted_epoch = epoch
-            candidate = parameters
-            for _ in range(policy.maximum_line_search_steps):
-                line_evaluations += 1
-                trial = parameters + rate * direction
-                trial_epoch = build_epoch(trial)
-                if not bool(trial_epoch.successful):
-                    rejection |= int(ContactRejectionReason.SEARCH)
-                    break
-                trial_value = total_energy(trial, trial_epoch)
-                objective_evaluations += 1
-                armijo_bound = value + policy.armijo * rate * slope
-                if bool(jnp.isfinite(trial_value) & (trial_value <= armijo_bound)):
-                    accepted = True
-                    candidate = trial
-                    accepted_epoch = trial_epoch
-                    break
-                rate = policy.contraction * rate
-            if rejection != int(ContactRejectionReason.NONE):
-                break
-            if not accepted:
-                rejection |= int(ContactRejectionReason.LINE_SEARCH)
-                break
-            step = candidate - parameters
-            last_step_norm = _array_norm(space, step)
-            last_rate = rate
-            parameters = candidate
-            epoch = accepted_epoch
-            if float(rate) >= 0.75 and bool(trust.diagnostics.boundary_hit):
-                trust_radius = jnp.minimum(
-                    policy.maximum_trust_radius, 2.0 * trust_radius
-                )
-            elif float(rate) < 0.25:
-                trust_radius = jnp.maximum(
-                    policy.minimum_trust_radius, 0.5 * trust_radius
-                )
-            if bool(last_step_norm <= policy.absolute_step):
-                objective = lambda value, current_epoch=epoch: total_energy(
-                    value, current_epoch
-                )
-                _, gradient = jax.value_and_grad(objective)(parameters)
-                objective_evaluations += 1
-                gradient_evaluations += 1
-                final_gradient_norm = _array_norm(space, gradient)
-                converged = bool(
-                    final_gradient_norm
-                    <= policy.absolute_gradient
-                    + policy.relative_gradient * initial_gradient_norm
-                )
-                if not converged:
-                    rejection |= int(ContactRejectionReason.NONLINEAR)
-                break
-        if not converged and rejection == int(ContactRejectionReason.NONE):
-            rejection |= int(ContactRejectionReason.NONLINEAR)
-
-    final_total = total_energy(parameters, epoch)
-    objective_evaluations += 1
-    bulk = problem.potential(parameters, args)
-    contact_energy = contact.energy(scene.positions(parameters), epoch)
-    inertia = inertial_energy(parameters)
-    friction_energy = extra_energy(parameters, epoch)
-    finite_energy = jnp.all(
-        jnp.isfinite(
-            jnp.stack(
-                (
-                    initial_energy,
-                    final_total,
-                    bulk,
-                    contact_energy,
-                    inertia,
-                    friction_energy,
-                )
-            )
-        )
-    )
-    ledger = ContactEnergyLedger(
-        initial_energy,
-        final_total,
-        bulk,
-        contact_energy,
-        inertia,
-        friction_energy,
-        initial_energy - final_total,
-        finite_energy,
-    )
-    if not bool(finite_energy):
-        rejection |= int(ContactRejectionReason.ENERGY)
-    diagnostics = ContactSolveDiagnostics(
-        jnp.asarray(converged),
-        jnp.asarray(iteration_count, dtype=jnp.int32),
-        jnp.asarray(objective_evaluations, dtype=jnp.int32),
-        jnp.asarray(gradient_evaluations, dtype=jnp.int32),
-        jnp.asarray(hessian_actions, dtype=jnp.int32),
-        jnp.asarray(linear_iterations, dtype=jnp.int32),
-        jnp.asarray(line_evaluations, dtype=jnp.int32),
-        jnp.asarray(fallbacks, dtype=jnp.int32),
-        initial_gradient_norm,
-        final_gradient_norm,
-        last_step_norm,
-        last_rate,
-        trust_radius,
-        jnp.asarray(rejection, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0.0, dtype=parameters.dtype),
-    )
-    if last_safety is None:
-        positions = scene.positions(parameters)
-        static_epoch = search.build(
-            scene, np.asarray(positions), end_positions=np.asarray(positions)
-        )
-        last_safety = collision_free_step_limit(
-            ccd, scene, static_epoch, np.asarray(positions), np.asarray(positions)
-        )
-    return parameters, epoch, diagnostics, last_safety, last_inversion, ledger, rejection
-
-
-def solve_finite_element_contact_step(
-    prepared: PreparedFiniteElementContactStep,
-    /,
-) -> FiniteElementContactResult:
-    if not isinstance(prepared, PreparedFiniteElementContactStep):
-        raise TypeError("prepared must be PreparedFiniteElementContactStep.")
-    plan = prepared.plan
-    previous = prepared.accepted
-    mechanics = previous.mechanics
-    predictor = plan.method.predictor(mechanics, prepared.step_size)
-    context = plan.problem._execution_context(prepared.args)
-    _, reduced_mass = plan.problem._mass_operators(
-        context,
-        plan.mass_coefficient,
-        plan.mass_policy,
-        plan.mass_problem,
-    )
-    acceleration_scale = plan.method.position_to_acceleration_scale(
-        prepared.step_size, mechanics.displacement.dtype
-    )
-
-    def inertial_energy(displacement: Array) -> Array:
-        delta = displacement - predictor
-        mass_delta = plan.problem.state_space.inverse_riesz(reduced_mass.mv(delta))
-        return (
-            0.5
-            * acceleration_scale
-            * jnp.real(plan.problem.state_space.inner(delta, mass_delta))
-        )
-
-    displacement = mechanics.displacement
-    friction_state = previous.friction_state
-    lag_iterations = 0
-    lag_residual = jnp.asarray(0.0, dtype=displacement.dtype)
-    friction_converged = plan.friction is None
-    friction_evaluation = None
-    maximum_lag_iterations = (
-        1 if plan.friction is None else plan.friction.plan.maximum_lag_iterations
-    )
-    result = None
-    for lag_iteration in range(maximum_lag_iterations):
-        lag_iterations = lag_iteration + 1
-        if plan.friction is None:
-            extra_energy = lambda value, current_epoch: jnp.asarray(
-                0.0, dtype=value.dtype
-            )
-        else:
-            friction = plan.friction
-            if friction_state is None:
-                initial_positions = plan.scene.positions(displacement)
-                initial_epoch = plan.search.build(
-                    plan.scene, np.asarray(initial_positions)
-                )
-                if not bool(initial_epoch.successful):
-                    raise ValueError(
-                        "Initial friction lag state requires a complete contact epoch."
-                    )
-                friction_state = friction.build_state(
-                    initial_positions,
-                    initial_epoch,
-                    state_version=previous.state_version,
-                )
-            velocity_scale = plan.method.position_to_velocity_scale(
-                prepared.step_size, displacement.dtype
-            )
-            active_friction_state = friction_state
-
-            def extra_energy(
-                value: Array,
-                current_epoch: ContactCandidateEpoch,
-                lag_state: ContactFrictionState = active_friction_state,
-                scale: Array = velocity_scale,
-            ) -> Array:
-                del current_epoch
-                velocity_value, _ = plan.method.rates(
-                    value, mechanics, prepared.step_size
-                )
-                surface_velocity = plan.scene.map_values(velocity_value)
-                return friction.energy(surface_velocity, lag_state) / scale
-
-        result = _solve_contact_minimization(
-            problem=plan.problem,
-            scene=plan.scene,
-            contact=plan.contact,
-            search=plan.search,
-            ccd=plan.ccd,
-            inversion=plan.inversion,
-            policy=plan.solve_policy,
-            subproblem=plan.subproblem,
-            initial=displacement,
-            args=prepared.args,
-            inertial_energy=inertial_energy,
-            extra_energy=extra_energy,
-        )
-        (
-            displacement,
-            epoch,
-            diagnostics,
-            safety,
-            inversion,
-            ledger,
-            rejection,
-        ) = result
-        if rejection != int(ContactRejectionReason.NONE):
-            break
-        if plan.friction is None:
-            friction_converged = True
-            break
-        velocity_value, _ = plan.method.rates(displacement, mechanics, prepared.step_size)
-        candidate_friction_state = plan.friction.build_state(
-            plan.scene.positions(displacement),
-            epoch,
+    sums = root_result.diagnostics
+    q = plan.dof_space.validate(root_result.state)
+    lag_count = jnp.asarray(1, dtype=jnp.int32)
+    lag_residual = zero
+    converged_lag = jnp.asarray(True, dtype=jnp.bool_)
+    if plan.friction is not None:
+        if frame is None:
+            raise ValueError("Missing frozen friction frame.")
+        friction = plan.friction
+        refreshed = friction.build_state(
+            plan.contact_scene.positions(plan.geometry_states(q)),
+            runtime.epoch,
             state_version=previous.state_version + 1,
         )
-        lag_residual = plan.friction.lag_residual(
-            active_friction_state, candidate_friction_state
+        lag_residual = friction.lag_residual(frame, refreshed)
+
+        def condition(
+            carry: tuple[
+                ContactCoordinates,
+                ContactFrictionState,
+                NonlinearResult,
+                NonlinearDiagnostics,
+                Array,
+                Array,
+            ],
+        ) -> Array:
+            coordinates, current_frame, result, work, count, defect = carry
+            del coordinates, current_frame, work
+            return (
+                result.successful
+                & (count < plan.policy.maximum_lag_iterations)
+                & (defect > plan.policy.lag_tolerance)
+            )
+
+        def body(
+            carry: tuple[
+                ContactCoordinates,
+                ContactFrictionState,
+                NonlinearResult,
+                NonlinearDiagnostics,
+                Array,
+                Array,
+            ],
+        ) -> tuple[
+            ContactCoordinates,
+            ContactFrictionState,
+            NonlinearResult,
+            NonlinearDiagnostics,
+            Array,
+            Array,
+        ]:
+            coordinates, current_frame, _, work, count, _ = carry
+            current_runtime = eqx.tree_at(
+                lambda r: r.friction_state, runtime, current_frame
+            )
+            result = plan.policy.method.solve(
+                current_runtime.problem(),
+                coordinates,
+                termination=plan.policy.termination,
+                args=args,
+            )
+            candidate_q = plan.dof_space.validate(result.state)
+            candidate_frame = friction.build_state(
+                plan.contact_scene.positions(plan.geometry_states(candidate_q)),
+                runtime.epoch,
+                state_version=previous.state_version + 1,
+            )
+            defect = friction.lag_residual(current_frame, candidate_frame)
+            updated_work = _accumulate_work(work, result.diagnostics)
+            return candidate_q, candidate_frame, result, updated_work, count + 1, defect
+
+        q, frame, root_result, sums, lag_count, lag_residual = jax.lax.while_loop(
+            condition, body, (q, refreshed, root_result, sums, lag_count, lag_residual)
         )
-        friction_evaluation = plan.friction.evaluate(
-            plan.scene.map_values(velocity_value), active_friction_state
-        )
-        if bool(lag_residual <= plan.friction.plan.lag_tolerance):
-            friction_state = candidate_friction_state
-            friction_converged = True
-            break
-        friction_state = candidate_friction_state
-    if result is None:
-        raise RuntimeError("Contact lag solve did not execute.")
-    diagnostics = eqx.tree_at(
-        lambda value: value.lag_iterations,
-        diagnostics,
-        jnp.asarray(lag_iterations, dtype=jnp.int32),
+        converged_lag = lag_residual <= plan.policy.lag_tolerance
+    final_runtime = eqx.tree_at(
+        lambda r: r.friction_state, runtime, frame, is_leaf=lambda item: item is None
     )
-    diagnostics = eqx.tree_at(
-        lambda value: value.lag_residual,
-        diagnostics,
+    residual, evidence = final_runtime.residual(q, args)
+    final_norm = jnp.sqrt(jnp.real(DualSpace(plan.dof_space).inner(residual, residual)))
+    physical_converged = final_norm <= plan.policy.termination.residual_threshold(
+        sums.initial_residual_norm
+    )
+    direction = jax.tree.map(lambda value, old: value - old, q, previous.coordinates)
+    safety, limits, alpha = runtime.limits(previous.coordinates, direction, args)
+    mechanics_valid = jnp.asarray(True, dtype=jnp.bool_)
+    potential_valid = jnp.asarray(True, dtype=jnp.bool_)
+    for participant, limit in zip(evidence.participants, limits, strict=True):
+        mechanics_valid = (
+            mechanics_valid
+            & participant.successful
+            & participant.admissible
+            & participant.tangent_successful
+            & limit.successful
+            & limit.conservative
+            & limit.guarantee.successful
+            & (limit.maximum_step == 1.0)
+        )
+        if runtime.potential_merit:
+            potential_valid = (
+                potential_valid
+                & participant.potential_consistency_checked
+                & jnp.isfinite(participant.potential_consistency_defect)
+                & (
+                    jnp.abs(participant.potential_consistency_defect)
+                    <= plan.policy.lag_tolerance
+                )
+            )
+    trajectory = _ContactTrajectory(plan, previous.coordinates, direction)
+    lower, upper, bounds_valid = trajectory(jnp.zeros_like(alpha), jnp.ones_like(alpha))
+    extent = jnp.maximum(
+        jnp.abs(lower - runtime.epoch.reference_positions),
+        jnp.abs(upper - runtime.epoch.reference_positions),
+    )
+    envelope_valid = bounds_valid & jnp.all(
+        jnp.sum(extent * extent, axis=-1) <= runtime.epoch.envelope_radius**2
+    )
+    rejection = _rejection_bit(runtime.epoch.successful, ContactRejectionReason.SEARCH)
+    rejection = rejection | _rejection_bit(
+        root_result.successful & physical_converged, ContactRejectionReason.NONLINEAR
+    )
+    rejection = rejection | _rejection_bit(
+        mechanics_valid, ContactRejectionReason.PARTICIPANT
+    )
+    rejection = rejection | _rejection_bit(
+        evidence.contact.successful, ContactRejectionReason.CONTACT
+    )
+    rejection = rejection | _rejection_bit(
+        safety.successful & safety.conservative & (safety.step_size >= 1.0),
+        ContactRejectionReason.CCD,
+    )
+    rejection = rejection | _rejection_bit(
+        envelope_valid, ContactRejectionReason.ENVELOPE
+    )
+    rejection = rejection | _rejection_bit(
+        potential_valid, ContactRejectionReason.POTENTIAL
+    )
+    friction_valid = converged_lag & (
+        jnp.asarray(True, dtype=jnp.bool_)
+        if evidence.friction is None
+        else evidence.friction.successful
+    )
+    rejection = rejection | _rejection_bit(
+        friction_valid, ContactRejectionReason.FRICTION
+    )
+    rejection = rejection | _rejection_bit(
+        tree_allfinite(q) & tree_allfinite(residual), ContactRejectionReason.NONFINITE
+    )
+    accepted = rejection == 0
+    advance = zero if runtime.step_size is None else runtime.step_size
+    candidate = MonolithicContactState(
+        q,
+        tuple(value.trial_history for value in evidence.participants),
+        previous.time + advance,
+        previous.step + jnp.asarray(runtime.step_size is not None, dtype=jnp.int32),
+        previous.state_version + 1,
+        frame,
+        plan.plan_id,
+        previous.state_id,
+    )
+    selected = tree_where(accepted, candidate, previous)
+    overflow = sum(
+        (batch.overflow.astype(jnp.int32) for batch in runtime.epoch.active_batches),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    diagnostics = ContactSolveDiagnostics(
+        accepted,
+        sums.iterations,
+        sums.residual_evaluations,
+        sums.jvp_evaluations,
+        sums.linear_iterations,
+        sums.residual_evaluations - sums.jacobian_preparations,
+        sums.initial_residual_norm,
+        final_norm,
+        alpha,
+        lag_count,
         lag_residual,
+        runtime.epoch.candidate_count,
+        overflow,
+        evidence.contact.minimum_gap,
+        evidence.contact.minimum_feature_margin,
+        jnp.asarray(runtime.potential_merit, dtype=jnp.bool_),
+        root_result.status,
     )
-    if not friction_converged:
-        rejection |= int(ContactRejectionReason.FRICTION)
-    velocity, acceleration = plan.method.rates(
-        displacement, mechanics, prepared.step_size
-    )
-    candidate_mechanics = FiniteElementDynamicsState(
-        displacement,
-        velocity,
-        acceleration,
-        time=mechanics.time + prepared.step_size,
-        step=mechanics.step + 1,
-        state_version=mechanics.state_version + 1,
-        materials=mechanics.materials,
-    )
-    candidate = ContactDynamicsState(
-        candidate_mechanics,
-        replay_epoch=epoch,
-        friction_state=friction_state,
-        state_version=previous.state_version + 1,
-    )
-    contact_evaluation = plan.contact.evaluate(plan.scene.positions(displacement), epoch)
-    if not bool(contact_evaluation.successful):
-        rejection |= int(ContactRejectionReason.CONTACT)
-    accepted = diagnostics.converged & (rejection == int(ContactRejectionReason.NONE))
-    accepted_state = candidate if bool(accepted) else previous
-    return FiniteElementContactResult(
+    return MonolithicContactResult(
         previous,
         candidate,
-        accepted_state,
+        selected,
         accepted,
         ~accepted,
         diagnostics,
-        contact_evaluation,
-        friction_evaluation,
+        evidence.participants,
+        evidence.contact,
+        evidence.friction,
         safety,
-        inversion,
-        ledger,
-        jnp.asarray(rejection, dtype=jnp.int32),
+        limits,
+        rejection,
+        runtime.epoch,
+        runtime.step_size,
+        args,
+        root_result,
         plan.plan_id,
     )
 
 
-def solve_finite_element_contact_equilibrium(
-    plan: FiniteElementContactEquilibriumPlan,
-    initial_displacement: ArrayLike,
-    /,
-    *,
-    args: Any = None,
-) -> FiniteElementContactEquilibriumResult:
-    if not isinstance(plan, FiniteElementContactEquilibriumPlan):
-        raise TypeError("plan must be FiniteElementContactEquilibriumPlan.")
-    initial = plan.problem.state_space.validate(initial_displacement)
-    zero_inertial = lambda value: jnp.asarray(0.0, dtype=value.dtype)
-    zero_extra = lambda value, current_epoch: jnp.asarray(0.0, dtype=value.dtype)
-    result = _solve_contact_minimization(
-        problem=plan.problem,
-        scene=plan.scene,
-        contact=plan.contact,
-        search=plan.search,
-        ccd=plan.ccd,
-        inversion=plan.inversion,
-        policy=plan.solve_policy,
-        subproblem=plan.subproblem,
-        initial=initial,
-        args=args,
-        inertial_energy=zero_inertial,
-        extra_energy=zero_extra,
-    )
-    displacement, epoch, diagnostics, safety, inversion, _, rejection = result
-    contact_evaluation = plan.contact.evaluate(plan.scene.positions(displacement), epoch)
-    if not bool(contact_evaluation.successful):
-        rejection |= int(ContactRejectionReason.CONTACT)
-    accepted = diagnostics.converged & (rejection == int(ContactRejectionReason.NONE))
-    value = plan.problem.potential(displacement, args) + contact_evaluation.energy
-    return FiniteElementContactEquilibriumResult(
-        initial,
-        displacement,
-        value,
-        accepted,
-        diagnostics,
-        contact_evaluation,
-        safety,
-        inversion,
-        jnp.asarray(rejection, dtype=jnp.int32),
-        plan.plan_id,
-    )
+@eqx.filter_jit
+@checked
+def solve_monolithic_contact_step(
+    prepared: PreparedMonolithicContactStep, /
+) -> MonolithicContactResult:
+    """Solve one step; call ``result.commit()`` to promote FEM material revisions."""
+    return _solve(prepared.runtime, prepared.args)
+
+
+@eqx.filter_jit
+@checked
+def solve_monolithic_contact_equilibrium(
+    prepared: PreparedMonolithicContactEquilibrium, /
+) -> MonolithicContactResult:
+    """Solve equilibrium; call ``result.commit()`` to promote FEM material revisions."""
+    return _solve(prepared.runtime, prepared.args)
 
 
 __all__ = [
-    "ContactDynamicsState",
-    "ContactEnergyLedger",
     "ContactRejectionReason",
-    "ContactSolveDiagnostics",
     "ContactSolvePolicy",
-    "FiniteElementContactDynamicsPlan",
-    "FiniteElementContactEquilibriumPlan",
-    "FiniteElementContactEquilibriumResult",
-    "FiniteElementContactResult",
-    "PreparedFiniteElementContactStep",
-    "prepare_finite_element_contact_dynamics",
-    "prepare_finite_element_contact_equilibrium",
-    "prepare_finite_element_contact_step",
-    "solve_finite_element_contact_equilibrium",
-    "solve_finite_element_contact_step",
+    "MonolithicContactPlan",
+    "MonolithicContactState",
+    "PreparedMonolithicContactStep",
+    "PreparedMonolithicContactEquilibrium",
+    "ContactSolveDiagnostics",
+    "MonolithicContactResult",
+    "initialize_monolithic_contact_state",
+    "prepare_monolithic_contact_step",
+    "prepare_monolithic_contact_equilibrium",
+    "solve_monolithic_contact_step",
+    "solve_monolithic_contact_equilibrium",
 ]

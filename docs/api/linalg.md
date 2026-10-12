@@ -37,6 +37,115 @@ contract holds for this solve: implicit contracts require convergence (the same
 evidence that guards the returned value's derivative), unrolled contracts
 require finite arithmetic, and a stopped contract is never valid.
 
+## Hermitian matrix functions and isotropic spectral maps
+
+`hermitian_log`, `hermitian_exp`, `hermitian_sqrt`, and
+`hermitian_inverse_sqrt` accept real symmetric or complex Hermitian matrices
+with arbitrary leading batch axes. Their `HermitianFunctionResult.value`
+has an exact first-order custom JVP and its transposed VJP: for
+`A = Q diag(λ) Qᴴ`, the directional derivative is
+`Q (L ∘ (Qᴴ Ê Q)) Qᴴ`, where `Ê = (E + Eᴴ)/2` and `L` is the
+stable divided-difference matrix, including the confluent `f′(λ)` limit.
+Repeated and nearly repeated spectra do not require differentiating an
+eigenvector basis. The value supports `jit`, `vmap`, `jvp`, `vjp`, `jacfwd`,
+`jacrev`, and `grad`; complex inputs use real-linear Hermitian derivatives,
+not a holomorphic extension. `HermitianPrecisionPolicy` governs compute,
+factorization, and output dtypes in both primal and derivative paths.
+
+`valid` reports the value domain and numerical evidence. `derivative_valid`
+also requires `minimum_eigenvalue > tolerance` for log, inverse square root,
+and square root; exp uses its value validity. In particular, the square root
+of a singular positive-semidefinite matrix can be value-valid while its true
+derivative is unbounded and `derivative_valid` is false. Eigenvalues are not
+clipped to repair invalid states.
+
+**Diagnostics are nondifferentiable.** Every function result's `spectrum`
+(including eigenvectors, gaps, rank, condition number, and precision evidence)
+is computed from a stopped input. Do not reconstruct differentiable matrix
+values from these eigenvectors: call the matrix function or spectral map.
+Standalone `HermitianSpectrum(matrix)` retains its original semantics and is
+not an alternative repeated-spectrum derivative API.
+The spectrum's immutable precision envelope is static PyTree metadata, not a
+device leaf, so complete function and spectral-map results can cross `jit` and
+`vmap` boundaries without discarding precision evidence.
+
+Consumers keep spectrum accesses diagnostic-only. Cardiovascular growth uses
+`hermitian_exp(-log_growth_tensor).value` for the inverse growth action rather
+than reconstructing it from stopped eigenvectors. The exact learned sampler's
+standalone prepared `HermitianSpectrum` is unaffected by this result cutover.
+
+For coupled principal-space laws, use the generic map:
+
+```python
+def hermitian_spectral_map(
+    matrix,
+    eigenvalue_map,
+    parameters,
+    /,
+    *,
+    function_id,
+    tolerance=1e-10,
+    precision=None,
+):
+    ...
+```
+
+`eigenvalue_map(λ, parameters)` receives one `(n,)` eigenvalue vector and returns
+`(principal, invariants)`. `principal` has shape `(k, n)`, with `k ≥ 1`;
+`invariants` is any PyTree of array leaves, including integer and Boolean
+leaves. `HermitianSpectralMapResult[Q]` returns `values` of shape
+`(..., k, n, n)`, the same invariant PyTree with leading matrix batch axes,
+stopped `spectrum`, `valid`, `derivative_valid`, and static `function_id`.
+Its constructor is
+`HermitianSpectralMapResult(values, invariants, spectrum, /, *, valid, derivative_valid, function_id)`;
+the elementary result constructor is
+`HermitianFunctionResult(value, spectrum, /, *, valid, derivative_valid, function_id)`.
+
+The callback must be a static, hashable callable (for example, a module-level
+function), not an array-capturing closure or bound method. Numerical
+`parameters` are a dynamic PyTree differentiated normally. Internal batching
+shares parameters across matrices; use an outer `vmap` for per-element
+parameters. The caller guarantees **permutation equivariance** of every
+principal output and **permutation invariance** of every invariant.
+The callback must be smooth on the chosen branch. Generic map validity
+reports finite-domain evidence, not certification of callback branch kinks;
+constitutive callers own branch admissibility and tangent validity.
+
+The map differentiates both eigenvalues and parameters, using `jacfwd` of
+the principal law. Off-diagonal response uses
+`Γᵢⱼ = (gᵢ − gⱼ)/(λᵢ − λⱼ)`, or the confluent
+`∂gᵢ/∂λᵢ − ∂gᵢ/∂λⱼ` when
+`|λᵢ − λⱼ| ≤ √eps · max(|λᵢ|, |λⱼ|, 1)`.
+Invariant tangents include eigenvalue and parameter terms; integer/Boolean
+leaves carry JAX `float0` tangents. Principal maps may call
+`phydrax.nonlinear.LocalRootPlan` or `VectorLocalRootPlan`; their implicit
+first derivatives compose with the spectral derivative.
+
+```python
+import jax.numpy as jnp
+from phydrax.linalg import hermitian_spectral_map
+
+def principal_law(eigenvalues, parameters):
+    scale, offset = parameters
+    principal = jnp.stack((scale * eigenvalues**3, eigenvalues + offset))
+    invariants = {"trace": jnp.sum(eigenvalues)}
+    return principal, invariants
+
+result = hermitian_spectral_map(
+    jnp.eye(3, dtype=jnp.float64),
+    principal_law,
+    (jnp.asarray(2.0, dtype=jnp.float64), jnp.asarray(0.1, dtype=jnp.float64)),
+    function_id="scaled-cube-and-shift",
+)
+```
+
+Only first-order AD is guaranteed. Forward-over-reverse second derivatives at
+degenerate spectra are unsupported; no second-order API is provided.
+`python -m benchmarks.hermitian_spectral` records synchronized value, JVP,
+and VJP phases for batches of 1, 1,000, and 100,000 3×3 matrices, separating
+lowering, compilation, first execution, and steady samples. Pass `--contended`
+when other workloads are active so the measurement condition is retained.
+
 ## First workflow
 
 ```python
@@ -2763,6 +2872,18 @@ runtime.
 
 ---
 ::: phydrax.linalg.HermitianPrecisionPolicy
+
+---
+
+::: phydrax.linalg.HermitianFunctionResult
+
+---
+
+::: phydrax.linalg.HermitianSpectralMapResult
+
+---
+
+::: phydrax.linalg.hermitian_spectral_map
 
 ---
 

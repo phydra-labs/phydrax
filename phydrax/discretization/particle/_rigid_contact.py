@@ -4,14 +4,19 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
 from ..._strict import StrictModule
-from ._dem_contact import DEMContactBatch
-from ._rigid_sphere import sphere_spin_velocity, SpherePairContactGeometry
-from ._sphere_clump import ClumpComponentPairBatch
+
+
+if TYPE_CHECKING:
+    from ._dem_contact import DEMContactBatch
+    from ._rigid_sphere import SpherePairContactGeometry
+    from ._sphere_clump import ClumpComponentPairBatch
 
 
 class RigidContactGeometry(StrictModule):
@@ -37,8 +42,17 @@ class RigidContactGeometry(StrictModule):
     feature_margin: Array
     successful: Array
     geometry_id: str = eqx.field(static=True)
+    left_owner_index: Array
+    right_owner_index: Array
+    normal_gradient: Array
+    surface_area_weight: Array
+    curvature_valid: Array
+    certificate_margin: Array
+    residual: Array
 
-    def as_contact_batch(self, /) -> DEMContactBatch:
+    def as_contact_batch(self, /, *, normal_moment: bool = True) -> DEMContactBatch:
+        from ._dem_contact import DEMContactBatch
+
         return DEMContactBatch(
             self.normal,
             self.gap,
@@ -51,6 +65,9 @@ class RigidContactGeometry(StrictModule):
             self.left_angular_velocity,
             self.right_angular_velocity,
             self.valid,
+            normal_gradient=self.normal_gradient,
+            surface_area_weight=self.surface_area_weight,
+            normal_moment=normal_moment,
         )
 
 
@@ -62,6 +79,9 @@ def sphere_contact_adapter(
     right_angular_velocity: Array,
     contact_keys: Array,
     /,
+    *,
+    left_owner_index: Array,
+    right_owner_index: Array,
 ) -> RigidContactGeometry:
     radius_sum = left_radius + right_radius
     effective_radius = jnp.where(
@@ -92,6 +112,13 @@ def sphere_contact_adapter(
         jnp.where(geometry.valid, jnp.abs(geometry.gap), jnp.inf),
         geometry.successful,
         "rigid-contact:sphere-pair",
+        left_owner_index,
+        right_owner_index,
+        geometry.normal,
+        jnp.ones_like(geometry.gap),
+        geometry.valid,
+        jnp.where(geometry.valid, jnp.abs(geometry.gap), jnp.inf),
+        jnp.zeros_like(geometry.gap),
     )
 
 
@@ -103,6 +130,8 @@ def clump_component_contact_geometry(
     *,
     distance_tolerance: float = 1.0e-12,
 ) -> RigidContactGeometry:
+    from ._rigid_sphere import sphere_spin_velocity
+
     displacement = pairs.left_position - pairs.right_position
     distance_squared = jnp.sum(displacement * displacement, axis=-1)
     distance = jnp.sqrt(distance_squared)
@@ -138,7 +167,8 @@ def clump_component_contact_geometry(
         pairs.left_radius * pairs.right_radius / radius_sum,
         0.0,
     )
-    feature = jnp.zeros(pairs.component_pair_keys.shape, dtype=jnp.int32)
+    left_feature = pairs.left_component
+    right_feature = pairs.right_component
     return RigidContactGeometry(
         jnp.where(valid[:, None], normal, 0.0),
         jnp.where(valid, gap, 0.0),
@@ -155,13 +185,20 @@ def clump_component_contact_geometry(
         left_angular_velocity,
         right_angular_velocity,
         pairs.component_pair_keys,
-        feature,
-        feature,
+        left_feature,
+        right_feature,
         valid,
         degenerate.astype(jnp.int32),
         jnp.where(valid, jnp.abs(gap), jnp.inf),
         ~jnp.any(degenerate),
         "rigid-contact:clump-component-spheres",
+        pairs.left_owner,
+        pairs.right_owner,
+        jnp.where(valid[:, None], normal, 0.0),
+        jnp.ones_like(gap),
+        valid,
+        jnp.where(valid, jnp.abs(gap), jnp.inf),
+        jnp.zeros_like(gap),
     )
 
 

@@ -405,7 +405,14 @@ def test_fixed_point_refuses_negative_evaluation_work() -> None:
         jax.block_until_ready(work(jnp.asarray([1.0, -0.5])))
 
 
-@pytest.mark.parametrize("method", [nl.FixedPointIteration(), nl.SteffensenIteration()])
+@pytest.mark.parametrize(
+    "method",
+    [
+        nl.FixedPointIteration(),
+        nl.FixedPointIteration(acceleration=nl.AitkenRelaxation()),
+        nl.SteffensenIteration(),
+    ],
+)
 @pytest.mark.parametrize("initially_converged", [False, True])
 @pytest.mark.parametrize("maximum_evaluations", [1, 4])
 def test_fixed_point_auxiliary_is_cached_at_the_returned_map_point(

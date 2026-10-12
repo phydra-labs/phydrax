@@ -110,6 +110,17 @@ LinearBackend: TypeAlias = Literal[
 ]
 
 
+def _derivative_uses_pcg(problem: AbstractLinearProblem, method: str, /) -> bool:
+    """PCG admission plus Euclidean pairing certifies coordinate SPD solves."""
+    return (
+        method == "pcg"
+        and _certified_self_adjoint(problem.operator)
+        and _certified_positive_definite(problem.operator)
+        and _has_euclidean_pairing(problem.operator.source)
+        and _has_euclidean_pairing(problem.operator.target)
+    )
+
+
 class LinearSolvePlan(StrictModule):
     """Immutable symbolic selection; all numerical state belongs to preparation."""
 
@@ -124,6 +135,7 @@ class LinearSolvePlan(StrictModule):
     problem_signature: str = eqx.field(static=True)
     backend: LinearBackend = eqx.field(static=True)
     method: str = eqx.field(static=True)
+    derivative_pcg: bool = eqx.field(static=True)
     reason: str = eqx.field(static=True)
     rejected: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -175,6 +187,9 @@ class LinearSolvePlan(StrictModule):
         self.problem_signature = _problem_structure(problem)
         self.backend = backend
         self.method, self.reason = values
+        # Derived from fingerprinted method/operator/space data and accepted by
+        # the same true-residual contract, so it is excluded from plan identity.
+        self.derivative_pcg = _derivative_uses_pcg(problem, method)
         self.rejected = tuple(str(value) for value in rejected)
         self.recycling_capacity = (
             0 if policy.recycling is None else policy.recycling.capacity
@@ -1840,7 +1855,7 @@ def _selected_estimate(
         if iterative
         else 0
     )
-    implicit_krylov_bytes = _implicit_storage_bytes(problem, policy, itemsize)
+    implicit_krylov_bytes = _implicit_storage_bytes(problem, policy, itemsize, method)
     krylov_basis_bytes_per_rhs = max(primal_krylov_bytes, implicit_krylov_bytes)
     operator_apply_workspace_bytes_per_rhs = (
         max(
@@ -2024,6 +2039,8 @@ def _krylov_storage_bytes(
         return batch_count * max(primal, recycling)
     if isinstance(problem, MinimumNormProblem):
         tangent = _minimum_norm_tangent_bytes(problem, itemsize)
+    elif _derivative_uses_pcg(problem, method.name):
+        tangent = 6 * columns * itemsize
     else:
         derivative_steps = policy.derivative_solve.maximum_steps or columns
         restart = _derivative_restart(method, derivative_steps, columns)
@@ -2087,6 +2104,7 @@ def _implicit_storage_bytes(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
     itemsize: int,
+    method: AbstractLinearMethod,
     /,
 ) -> int:
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
@@ -2107,6 +2125,8 @@ def _implicit_storage_bytes(
             problem, itemsize
         )
     dimension = problem.operator.source.size
+    if _derivative_uses_pcg(problem, method.name):
+        return prod(problem.operator.batch_shape or (1,)) * 6 * dimension * itemsize
     max_steps = policy.derivative_solve.maximum_steps or dimension
     restart = _derivative_restart(policy.method, max_steps, dimension)
     per_problem = ((2 * restart + 1) * dimension + (restart + 1) * restart) * itemsize

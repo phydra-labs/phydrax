@@ -1,5 +1,29 @@
 # MPM contact, friction, and nodal fields
 
+## Implicit shared-unknown contact
+
+The nodal impulse paths below remain explicit contact methods. They are not an
+inner stage of a monolithic Newton solve. For implicit MPM–ABD/FEM contact, bind
+an accepted-history-frozen MPM residual/JVP mechanics block and its geometry to
+the [monolithic contact plan](guides_monolithic_contact.md). Freeze particle/grid
+interpolation weights and transfer routes for the prepared step; return trial
+particle/material/grid history without private solves or early commit.
+`prepare_mpm_contact_participant` is geometry-only and does not itself provide
+this mechanics block. Contact cross blocks are assembled in the shared root.
+Search/envelope, CCD, domain, root, and friction-lag failures roll back all
+participants together. Non-associated material residuals retain nonsymmetric
+tangents and residual merit rather than an invented contact energy.
+
+`prepare_implicit_mpm_contact_participant(prepared, participant_id=...)` binds the
+pure prepared MPM residual. Its unknown is grid displacement (initially zero)
+relative to frozen accepted particles; its history is `MPMRuntimeState`.
+Bind `.particle_displacement_operator` through the existing geometry preparer
+with accepted particle positions. The MPM mechanics participant is
+residual-merit-only. Reprepare the pure residual and participant at **every**
+accepted boundary: stale time, accepted-step, or topology-generation evidence
+refuses the next solve. F-bar and axisymmetric paths without an admitted affine
+trajectory bound are refused rather than treated as linear sample trajectories.
+
 ## Rigid geometry contact
 
 `RigidMPMContactPlan` evaluates a compiled geometry signed distance and boundary

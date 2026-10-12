@@ -32,7 +32,14 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
-from ._ir import _exact_integer_literal, PDEExpression, PDEField, PDEProblemIR
+from ._ir import (
+    _evaluate_power,
+    _exact_integer_literal,
+    field_polynomial_degree,
+    PDEExpression,
+    PDEField,
+    PDEProblemIR,
+)
 from ._validate import validate_pde_ir
 
 
@@ -600,7 +607,7 @@ class _SpectralEvaluator(StrictModule):
             elif node.op == "negate":
                 result = -values[0]
             elif node.op == "power":
-                result = values[0] ** values[1]
+                result = _evaluate_power(node, values[0], values[1])
             elif node.op == "sin":
                 result = jnp.sin(values[0])
             elif node.op == "cos":
@@ -914,44 +921,6 @@ class CompiledSpectralDynamics(StrictModule):
         return self.drift(jnp.asarray(time), state, args)
 
 
-def _field_degree(expression: PDEExpression, /) -> int | None:
-    if expression.op == "field":
-        return 1
-    if expression.op in ("constant", "coordinate", "parameter"):
-        return 0
-    degrees = tuple(_field_degree(argument) for argument in expression.args)
-    if any(value is None for value in degrees):
-        return None
-    finite = tuple(int(value) for value in degrees if value is not None)
-    if expression.op in (
-        "add",
-        "negate",
-        "component",
-        "derivative",
-        "gradient",
-        "divergence",
-        "curl",
-        "laplacian",
-        "integral",
-    ):
-        return max(finite, default=0)
-    if expression.op in ("multiply", "dot"):
-        return sum(finite)
-    if expression.op == "divide":
-        return finite[0] if finite[1] == 0 else None
-    if expression.op == "power":
-        exponent = expression.args[1]
-        power = (
-            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
-        )
-        if power is None:
-            return None
-        return finite[0] * power if power >= 0 else None
-    if expression.op in ("sin", "cos", "exp", "log", "sqrt"):
-        return 0 if finite[0] == 0 else None
-    return None
-
-
 def _linear_symbol(
     expression: PDEExpression,
     field_name: str,
@@ -1227,7 +1196,7 @@ def compile_spectral_pde(
 
     time_coordinate, coordinate_axes = _coordinate_axes(problem, discretization)
     rhs = _evolution_rhs(problem, time_coordinate)
-    degrees = tuple(_field_degree(expression) for expression in rhs)
+    degrees = tuple(field_polynomial_degree(expression) for expression in rhs)
     nonlinear = any(value is None or value > 1 for value in degrees)
     required_degree = (
         None

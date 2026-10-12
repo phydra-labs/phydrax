@@ -214,12 +214,15 @@ def _differential_value_type(
             )
             return PDEValueType(representation, coordinate.size, dimension)
         case "divergence":
-            if (
-                operand.representation not in ("vector", "pseudovector")
-                or operand.components != coordinate.size
-            ):
+            one_dimensional_scalar = coordinate.size == 1 and operand.is_scalar
+            vector_field = (
+                operand.representation in ("vector", "pseudovector")
+                and operand.components == coordinate.size
+            )
+            if not (one_dimensional_scalar or vector_field):
                 raise ValueError(
-                    "divergence requires an explicitly vector-valued field matching its coordinate size."
+                    "divergence requires a vector-valued field matching its "
+                    "coordinate size, or the unique scalar component in one dimension."
                 )
             representation = (
                 "pseudoscalar" if operand.representation == "pseudovector" else "scalar"
@@ -272,6 +275,9 @@ def infer_expression_type(
                     f"Unknown or malformed parameter reference {node.symbol!r}."
                 )
             parameter = parameters[node.symbol]
+            representation = parameter.representation
+            if representation is None:
+                raise RuntimeError("PDE parameter representation was not canonicalized.")
             return PDEValueType(
                 parameter.representation,
                 parameter.components,

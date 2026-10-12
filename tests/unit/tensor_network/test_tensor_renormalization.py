@@ -4,6 +4,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -33,6 +34,45 @@ def _run(tensor: Any, method: Any, *, bond: int, steps: int) -> Any:
             steps=steps,
         ),
     )
+
+
+@pytest.mark.strict_jax
+def test_pair_partition_tensor_derivative_at_repeated_positive_weights() -> None:
+    identity = jnp.eye(2, dtype=jnp.float64)
+    perturbation = jnp.asarray(((0.2, 0.1), (0.1, -0.3)), dtype=jnp.float64)
+    onsite = jnp.asarray((2.0, 3.0), dtype=jnp.float64)
+
+    def build(parameter: jax.Array) -> jax.Array:
+        return tn.build_uniform_pair_partition_tensor(
+            identity + parameter * perturbation, site_weight=onsite
+        ).tensor.value
+
+    def linearized_reference(parameter: jax.Array) -> jax.Array:
+        root = identity + 0.5 * parameter * perturbation
+        return phx.ein.contract(
+            "su,sr,sd,sl,s->urdl", root, root, root, root, onsite, backend="jax"
+        )
+
+    zero = jnp.asarray(0.0, dtype=jnp.float64)
+    # Tensor construction owns host content identity; differentiate it eagerly.
+    forward = jax.jacfwd(build)(zero)
+    expected = jax.jacfwd(linearized_reference)(zero)
+    np.testing.assert_allclose(forward, expected, rtol=2e-12, atol=2e-12)
+
+    def objective(parameter: jax.Array) -> jax.Array:
+        return jnp.sum(build(parameter))
+
+    reverse = jax.grad(objective)(zero)
+    np.testing.assert_allclose(reverse, jnp.sum(expected), rtol=2e-12, atol=2e-12)
+
+
+def test_pair_partition_tensor_accepts_singular_positive_semidefinite_weights() -> None:
+    weights = jnp.diag(jnp.asarray((0.0, 4.0), dtype=jnp.float64))
+    result = tn.build_uniform_pair_partition_tensor(weights)
+    assert bool(result.evidence.accepted)
+    assert bool(result.evidence.positive_semidefinite)
+    expected = jnp.zeros((2, 2, 2, 2), dtype=jnp.float64).at[1, 1, 1, 1].set(16.0)
+    np.testing.assert_allclose(result.tensor.value, expected, atol=2e-12)
 
 
 def test_tensor_renormalization_scenario_1() -> None:

@@ -281,6 +281,111 @@ def _atomistic_sources() -> tuple[SourceReference, ...]:
     )
 
 
+def _periodic_flow_sources() -> tuple[SourceReference, ...]:
+    """Strong-copyleft solver reference; Phydrax implements cited publications only."""
+    return (
+        SourceReference.create(
+            "azeban",
+            "https://github.com/TobiasRohner/azeban",
+            "f34d2225ed849e4d851e3b995687f700eeaa163a",
+            "GPL-3.0",
+            SourceReuseClass.STRONG_COPYLEFT,
+            concepts=(
+                "spectral-vanishing-viscosity",
+                "statistical-solutions",
+                "structure-functions",
+                "random-initial-measures",
+            ),
+            archive_digest="git-tree-sha1:22bf5ba2436d690145f7dadbe900236d32d73230",
+            license_digest="sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+            relevant_paths=(
+                "doc",
+                "experiments",
+                "include/azeban/equations",
+                "include/azeban/evolution",
+                "include/azeban/forcing",
+                "include/azeban/operations",
+                "scripts/generate_fbm_fourier.py",
+                "src/azeban/cuda/operations/cufft_mpi.cpp",
+                "src/azeban/equations/incompressible_euler_mpi.cpp",
+                "src/azeban/init",
+                "src/azeban/operations",
+                "src/azeban/simulation.cpp",
+            ),
+            relevant_documents=(
+                "README.md@sha256:73f24879e878c29635c014d445ae5fba6b118cb6d5992dacdba04b9702db4cb7",
+                "LICENSE.md@sha256:33bc26d4498c183b703d1760ee45b8774d21d6e0178ca393dc715271840c7a21",
+            ),
+            publications=(
+                PublicationReference(
+                    "On the convergence of the spectral viscosity method for the two-dimensional incompressible Euler equations with rough initial data",
+                    "https://arxiv.org/abs/1903.12361",
+                ),
+                PublicationReference(
+                    "Statistical solutions of the incompressible Euler equations",
+                    "https://arxiv.org/abs/1909.06615",
+                ),
+                PublicationReference(
+                    "Efficient computation of large-scale statistical solutions to incompressible fluid flows",
+                    "https://www.sam.math.ethz.ch/sam_reports/reports_final/reports2024/2024-04_rev1.pdf",
+                ),
+                PublicationReference(
+                    "Poseidon: Efficient Foundation Models for PDEs",
+                    "https://arxiv.org/abs/2405.19101",
+                ),
+            ),
+            code_inspected=True,
+            behavior_inspected=False,
+            copying_permitted=False,
+            provider_only=True,
+            data_rights="No source, constants, configuration, or data copied; formulas and defaults follow the cited publications.",
+            technical_reviewer="phydrax-periodic-flow-source-review",
+            review_status=SourceReview.TECHNICALLY_REVIEWED,
+        ),
+    )
+
+
+def _graph_connectivity_sources() -> tuple[SourceReference, ...]:
+    """Inspected connectivity references; formulations are re-derived, not copied."""
+    return (
+        SourceReference.create(
+            "jaxscape",
+            "https://github.com/vboussange/jaxscape",
+            "5455ca4f0a5ebfe5f27f0b24c672e8e6948c73b4",
+            "MIT",
+            SourceReuseClass.PERMISSIVE,
+            concepts=(
+                "effective-resistance",
+                "landscape-connectivity",
+                "randomized-shortest-paths",
+                "resistance-sketching",
+            ),
+            archive_digest="git-tree-sha1:f5d9cf6b51966b9bdadb7b9e5ee40d1fc200e6a4",
+            license_digest="daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+            relevant_paths=(
+                "src/jaxscape/graph.py",
+                "src/jaxscape/lcp_distance.py",
+                "src/jaxscape/resistance_distance.py",
+                "src/jaxscape/rsp_distance.py",
+            ),
+            relevant_documents=(
+                "LICENSE@sha256:daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+                "README.md@sha256:5323f68f1812928090ae811bb49a8160d24aae430d94848f6c885ae29517db5c",
+            ),
+            publications=(
+                PublicationReference(
+                    "Graph sparsification by effective resistances",
+                    "doi:10.1137/080734029",
+                ),
+            ),
+            code_inspected=True,
+            copying_permitted=True,
+            technical_reviewer="phydrax-graph-connectivity-source-review",
+            review_status=SourceReview.TECHNICALLY_REVIEWED,
+        ),
+    )
+
+
 def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
     from ._nuclear_fuel_release_matrix import nuclear_fuel_source_references
 
@@ -288,7 +393,9 @@ def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
         (
             *(_source_reference(spec) for spec in _SOURCE_SPECS),
             *_atomistic_sources(),
+            *_periodic_flow_sources(),
             *nuclear_fuel_source_references(),
+            *_graph_connectivity_sources(),
         )
     )
 

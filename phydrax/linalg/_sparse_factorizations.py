@@ -36,6 +36,7 @@ from ._sparse_triangular import (
     _PreparedTriangularSubstitution,
     _solve_prepared_sparse_triangular,
     analyze_sparse_triangular,
+    solve_sparse_triangular,
     SparseTriangularAnalysis,
     SparseTriangularStatus,
 )
@@ -147,6 +148,8 @@ class SparseFactorizationPlan(StrictModule):
     strictly lower column, and the longest strictly upper row.
     ``ordering_id`` identifies the symmetric ordering ``permutation`` and
     ``ordering_work`` is its share of ``symbolic_work``.
+    ``value_dtype`` fixes the numeric dtype admitted by the resource estimate;
+    numeric refresh cannot widen retained factor or workspace allocations.
     """
 
     permutation: Array
@@ -178,6 +181,7 @@ class SparseFactorizationPlan(StrictModule):
     upper_width: int = eqx.field(static=True)
     ordering_id: str = eqx.field(static=True)
     ordering_work: int = eqx.field(static=True)
+    value_dtype: str = eqx.field(static=True)
     storage_plan: Any = None
 
     @property
@@ -378,7 +382,10 @@ class PreparedSparseFactorization(StrictModule):
         self,
         right_hand_side: ArrayLike,
         /,
+        *,
+        adjoint: bool = False,
     ) -> SparseFactorizationSolveResult:
+        """Solve with the prepared factors, optionally for the conjugate transpose."""
         rhs = jnp.asarray(right_hand_side)
         size = self.plan.shape[0]
         shared_vector = rhs.shape == (size,)
@@ -407,38 +414,79 @@ class PreparedSparseFactorization(StrictModule):
         if not jnp.issubdtype(rhs.dtype, jnp.inexact):
             raise TypeError("right_hand_side must use an inexact dtype.")
         batch_count = prod(self.batch_shape)
+        factors = self.factor_values.reshape((batch_count, -1))
         statuses = self.status.reshape((batch_count,))
         right_hand_sides = rhs.reshape((batch_count, size, rhs.shape[-1]))
 
         def solve_one(
             lower_substitution: _PreparedTriangularSubstitution,
             upper_substitution: _PreparedTriangularSubstitution,
+            factor_values: Array,
             factor_status: Array,
             value: Array,
         ) -> tuple[Array, Array, Array, Array]:
             permuted_rhs = value[self.plan.permutation]
-            lower = _solve_prepared_sparse_triangular(
-                self.plan.lower_analysis,
-                lower_substitution,
-                permuted_rhs,
-            )
             if self.plan.kind == "lu":
-                if self.plan.upper_analysis is None:
+                upper_analysis = self.plan.upper_analysis
+                upper_positions = self.plan.upper_positions
+                if upper_analysis is None or upper_positions is None:
                     raise ValueError("LU plan is missing upper triangular analysis.")
-                upper = _solve_prepared_sparse_triangular(
-                    self.plan.upper_analysis,
-                    upper_substitution,
-                    lower.value,
-                )
+                if adjoint:
+                    # The prepared substitutions orient L and U for the forward
+                    # solve; the conjugate-transpose solve U^H y = P b, L^H z = y
+                    # substitutes the unit-lower and upper factor values directly.
+                    lower_values = jnp.where(
+                        self.plan.lower_analysis.row_indices
+                        == self.plan.lower_analysis.indices,
+                        jnp.ones((), dtype=factor_values.dtype),
+                        factor_values[self.plan.lower_positions],
+                    )
+                    upper = solve_sparse_triangular(
+                        upper_analysis,
+                        factor_values[upper_positions],
+                        permuted_rhs,
+                        pivot_tolerance=self.plan.policy.pivot_tolerance,
+                        adjoint=True,
+                    )
+                    lower = solve_sparse_triangular(
+                        self.plan.lower_analysis,
+                        lower_values,
+                        upper.value,
+                        pivot_tolerance=self.plan.policy.pivot_tolerance,
+                        adjoint=True,
+                    )
+                    permuted_solution = lower.value
+                else:
+                    lower = _solve_prepared_sparse_triangular(
+                        self.plan.lower_analysis,
+                        lower_substitution,
+                        permuted_rhs,
+                    )
+                    upper = _solve_prepared_sparse_triangular(
+                        upper_analysis,
+                        upper_substitution,
+                        lower.value,
+                    )
+                    permuted_solution = upper.value
             else:
+                # Cholesky factors a self-adjoint operator: its adjoint solve
+                # is the forward solve.
+                lower = _solve_prepared_sparse_triangular(
+                    self.plan.lower_analysis,
+                    lower_substitution,
+                    permuted_rhs,
+                )
                 upper = _solve_prepared_sparse_triangular(
                     self.plan.lower_analysis,
                     upper_substitution,
                     lower.value,
                     transpose=True,
                 )
+                permuted_solution = upper.value
             solution = (
-                jnp.zeros_like(upper.value).at[self.plan.permutation].set(upper.value)
+                jnp.zeros_like(permuted_solution)
+                .at[self.plan.permutation]
+                .set(permuted_solution)
             )
             triangular_success = (lower.status == int(SparseTriangularStatus.SUCCESS)) & (
                 upper.status == int(SparseTriangularStatus.SUCCESS)
@@ -479,6 +527,7 @@ class PreparedSparseFactorization(StrictModule):
         value, status, lower_status, upper_status = jax.vmap(solve_one)(
             self.lower_substitution,
             self.upper_substitution,
+            factors,
             statuses,
             right_hand_sides,
         )
@@ -1375,6 +1424,7 @@ def prepare_sparse_factorization(
         upper_width=upper_width,
         ordering_id=prepared_ordering.ordering_id,
         ordering_work=ordering_work,
+        value_dtype=storage.values.dtype.name,
         storage_plan=storage_plan,
     )
 
@@ -1450,6 +1500,8 @@ def _eliminate_pivot(
     below = plan.column_positions[below]
     multipliers = values[below] / denominator
     values = values.at[jnp.where(below_valid, below, size)].set(multipliers, mode="drop")
+    if plan.kind == "lu" and plan.upper_width == 0:
+        return values, marker
     if plan.kind == "lu":
         right, right_valid = _window(
             plan.diagonal_positions[pivot] + 1,
@@ -1543,6 +1595,11 @@ def refresh_sparse_factorization_values(
         raise ValueError("Sparse factorization values must match the plan's input shape.")
     if not jnp.issubdtype(numeric_values.dtype, jnp.inexact):
         raise TypeError("Sparse factorization values must have an inexact dtype.")
+    if numeric_values.dtype.name != plan.value_dtype:
+        raise ValueError(
+            "Sparse factorization refresh requires an unchanged value dtype "
+            f"({plan.value_dtype}); got {numeric_values.dtype.name}."
+        )
 
     def factor_one(
         input_values: Array,

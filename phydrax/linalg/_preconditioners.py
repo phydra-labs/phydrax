@@ -159,6 +159,48 @@ class AbstractPreconditioner(AbstractComponentSlot):
 
 
 @runtime_checkable
+class _AdjointApplicablePreconditioner(Protocol):
+    def apply_adjoint(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]: ...
+
+
+class _TransposePreconditioner(AbstractPreconditioner):
+    """Algebraic transpose of an action that explicitly supplies its adjoint."""
+
+    inner: AbstractPreconditioner
+
+    def __init__(self, inner: AbstractPreconditioner, /) -> None:
+        if not isinstance(inner, _AdjointApplicablePreconditioner):
+            raise TypeError("A transposed preconditioner requires an adjoint action.")
+        self.inner = inner
+        self.space = inner.space
+        self.properties = inner.properties
+        self.preconditioner_id = canonical_fingerprint(
+            {"kind": "transpose-preconditioner", "inner": inner.preconditioner_id}
+        )
+
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        inner = self.inner
+        if not isinstance(inner, _AdjointApplicablePreconditioner):
+            raise TypeError("A transposed preconditioner requires an adjoint action.")
+        # JAX cotangents use the algebraic transpose, including complex arrays.
+        conjugated = jax.tree.map(jnp.conj, residual)
+        image = inner.apply_adjoint(conjugated, iteration=iteration)
+        return jax.tree.map(jnp.conj, image)
+
+
+@runtime_checkable
 class _CostedPreconditioner(Protocol):
     def cost_for(
         self,

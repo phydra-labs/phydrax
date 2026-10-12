@@ -174,9 +174,10 @@ def _kinematics_geomechanics() -> Any:
         10.0, 30.0, 0.05, 0.5, 0.2, 1.0
     )
     full_f = jnp.asarray([[[1.0, 0.15, 0.0], [0.0, 0.94, 0.0], [0.0, 0.0, 1.06]]])
+    dp_history = dp.initialize_state((1,), jnp.float64)
     dp_result = dp.evaluate(
         full_f,
-        dp.initialize_state((1,), jnp.float64),
+        dp_history,
         jnp.asarray((1.0,)),
         dp_parameters,
         0.0,
@@ -184,6 +185,13 @@ def _kinematics_geomechanics() -> Any:
     )
     geomechanics = {
         "successful": bool(dp_result.successful[0]),
+        "history_width": dp_history.shape[-1],
+        "identity_metric": bool(
+            jnp.array_equal(
+                dp_history[0, :6],
+                jnp.asarray((1.0, 1.0, 1.0, 0.0, 0.0, 0.0), dtype=jnp.float64),
+            )
+        ),
         "yield_residual": float(dp_result.diagnostics["yield_residual"][0]),
         "plastic_multiplier": float(dp_result.diagnostics["plastic_multiplier"][0]),
         "dissipation": float(dp_result.dissipation_increment[0]),
@@ -195,7 +203,10 @@ def _kinematics_geomechanics() -> Any:
         and kinematics["tangent_successful"],
     ), (
         geomechanics,
-        geomechanics["successful"] and geomechanics["dissipation"] >= 0.0,
+        geomechanics["successful"]
+        and geomechanics["history_width"] == 7
+        and geomechanics["identity_metric"]
+        and geomechanics["dissipation"] >= 0.0,
     )
 
 

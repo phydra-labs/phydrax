@@ -599,9 +599,18 @@ projection, boundary families, or production execution.
 
 The incompressible candidate generator is route separated:
 `tools/incompressible_flow_qualification.py` exposes `periodic-spectral`,
-`spectral-channel`, and `mac`, each with a required output path. The three canonical
-artifact paths are documented by the spectral and finite-volume guides and may be
-absent until generated. Each artifact binds exact support/input/reference/
+`periodic-spectral-vanishing-viscosity`, `periodic-statistical-solution`,
+`spectral-channel`, and `mac`, each with a required output path.
+The statistical route's candidate artifact is
+`benchmarks/incompressible_statistical_qualification.json`. All candidate paths
+are documented by the
+[incompressible API](api/solver/incompressible.md#route-qualified-candidate-evidence)
+and the spectral and finite-volume guides and may be absent until generated.
+The SVV route checks analytic ETDRK4 shear decay in 2D/3D, energy identities,
+and fixed-low-mode vanishing across declared resolutions. Every SVV case records
+operator-scaling admissibility and explicitly denies cited rough-data convergence;
+these operator checks are not full-method convergence or nonlinear-stability
+certificates. Each artifact binds exact support/input/reference/
 configuration identities and reports status plus failure or inconclusive reasons;
 `release_ready` remains false. Assembly only consumes passed existing artifacts and
 produces an unsigned `CapabilityProfile` candidate with `signed=false` and

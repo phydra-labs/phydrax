@@ -38,7 +38,7 @@ def _problem() -> Any:
         jnp.asarray([[0.8]]),
         jnp.asarray([[0.4]]),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
         ),
@@ -114,6 +114,9 @@ def _measure(backend: Any, repeats: Any = 10) -> Any:
     neighborhood = compiled.dynamics.neighborhood.build(state.kinematics.position)
     return {
         "backend": backend,
+        "shape_kind": compiled.dynamics.shapes.shape_kind,
+        "shape_id": compiled.dynamics.shapes.shape_id,
+        "contact_capacity": compiled.dynamics.contact_capacity,
         "particle_count": compiled.dynamics.bodies.capacity,
         "candidate_pair_count": int(candidates),
         "accepted_pair_count": int(neighborhood.pair_count),

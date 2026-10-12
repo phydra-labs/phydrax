@@ -204,6 +204,60 @@ def refuse_derivative_dependencies(
     )
 
 
+@partial(jax.custom_jvp, nondiff_argnums=(2,))
+def _first_order_leaf(
+    value: Array, dependencies: tuple[Array, ...], message: str, /
+) -> Array:
+    del dependencies, message
+    return value
+
+
+def _first_order_leaf_jvp(
+    message: str,
+    primals: tuple[Array, tuple[Array, ...]],
+    tangents: tuple[Any, tuple[Any, ...]],
+) -> tuple[Array, Array]:
+    value, dependencies = primals
+    value_tangent, _ = tangents
+    if isinstance(value_tangent, SymbolicZero):
+        value_tangent = jnp.zeros_like(value)
+    # A guarded coefficient survives transposition into first-order
+    # cotangents. Guarding only the tangent would lose the refusal on VJP.
+    coefficient = _refuse_dependency_leaf(jnp.ones_like(value), dependencies, message)
+    return _first_order_leaf(value, dependencies, message), coefficient * value_tangent
+
+
+_first_order_leaf.defjvp(_first_order_leaf_jvp, symbolic_zeros=True)
+
+
+def first_order_only(tree: Any, /, *, message: str) -> Any:
+    """Preserve raw input values and first derivatives; refuse nested AD.
+
+    Owners apply this identity carrier to all raw inexact inputs before their
+    first-order-only numerical route. Every first-order tangent is multiplied
+    by an identity coefficient whose dependence on all raw inputs is refused.
+    The coefficient survives reverse-mode transposition, so differentiating
+    either a tangent or a cotangent raises ``DERIVATIVE_UNSUPPORTED`` at trace
+    time, including mixed derivatives between different input leaves.
+    Static metadata and non-inexact leaves pass through unchanged.
+    """
+    message_ = str(message).strip()
+    if not message_:
+        raise ValueError("Derivative refusal message must be non-empty.")
+    dependencies = tuple(
+        leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf)
+    )
+    text = f"{DERIVATIVE_UNSUPPORTED}: {message_}"
+    return jax.tree.map(
+        lambda leaf: (
+            _first_order_leaf(leaf, dependencies, text)
+            if eqx.is_inexact_array(leaf)
+            else leaf
+        ),
+        tree,
+    )
+
+
 class AdmissibilityHeader(StrictModule, NonTrainableState):
     """Minimal JAX-native evidence shared by independently owned models.
 
@@ -355,6 +409,7 @@ __all__ = [
     "AdmissibilityTransitionRequest",
     "DerivativeFailureMode",
     "combine_admissibility",
+    "first_order_only",
     "guard_derivative_validity",
     "reason_bits_where",
     "refuse_derivative_dependencies",

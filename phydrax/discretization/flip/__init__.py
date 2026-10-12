@@ -38,6 +38,7 @@ from ._types import (
     FLIPRuntimeState,
     FLIPStepResult,
     FLIPTransferState,
+    FLIPViscousEvidence,
 )
 
 
@@ -73,5 +74,6 @@ __all__ = [
     "FLIPRuntimeState",
     "FLIPStepResult",
     "FLIPTransferState",
+    "FLIPViscousEvidence",
     "PreparedFLIPParticleTransfer",
 ]

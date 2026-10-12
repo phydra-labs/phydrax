@@ -8,6 +8,20 @@ Bundled astronomy demonstration assets (`leap_seconds.json`,
 bounded numerical examples distributed under CC0-1.0. Their manifests record
 source, checksum, coverage, and non-operational intended scope.
 
+NorSand4AI: A Comprehensive Triaxial Test Simulation Database for NorSand
+Constitutive Model Materials
+Authors: Luan Carlos de Sena Monteiro Ozelim, Michéle Dal Toé Casagrande,
+and André Luís Brasil Cavalcante.
+Source: NorSand4AI, DOI https://doi.org/10.5281/zenodo.8170537
+(NorSandTXL_H5.zip); accompanying article DOI 10.5194/gmd-17-3175-2024.
+Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/.
+The fixtures `tests/fixtures/geomechanics/norsand4ai*` extract selected
+drained/undrained HDF5 curves, attributes, and rows into JSON, preserving the
+recorded numerical columns and adding comparison-scope/error metadata.
+This selection and format conversion modifies the distribution, not the
+recorded source values; it does not imply author endorsement or workbook parity.
+
 The nuclear and axisymmetric tokamak substrates are independent native
 implementations informed by published equations, public format documentation,
 and interoperability vocabulary from TORAX, FreeGSNKE, DINA-IMAS, ALARA,

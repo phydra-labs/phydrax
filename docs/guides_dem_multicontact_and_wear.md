@@ -2,10 +2,10 @@
 
 ## Elastic half-space correction
 
-Pairwise soft-sphere overlap can overpredict deformation when one particle carries several simultaneous contacts. `ElasticHalfSpaceMulticontactPlan` adds a bounded fixed-point correction to `SoftSphereDEMMethodPlan`:
+Pairwise soft-sphere overlap can overpredict deformation when one particle carries several simultaneous contacts. `ElasticHalfSpaceMulticontactPlan` adds a bounded fixed-point correction to `CompliantDEMMethodPlan`:
 
 ```text
-method = phx.discretization.SoftSphereDEMMethodPlan(
+method = phx.discretization.CompliantDEMMethodPlan(
     contact,
     multicontact=phx.discretization.ElasticHalfSpaceMulticontactPlan(
         iterations=8,

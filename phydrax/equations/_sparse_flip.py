@@ -91,6 +91,10 @@ class CompiledSparseFLIPProblem(StrictModule, NonTrainableState):
 
         if not isinstance(problem, FLIPProblemIR):
             raise TypeError("problem must be FLIPProblemIR.")
+        if problem.viscous_law is not None:
+            raise ValueError(
+                "Compact FLIP does not support viscous_law; use the dense FLIP route."
+            )
         if not isinstance(transfer, PreparedSparseFLIPParticleTransfer):
             raise TypeError("transfer must be PreparedSparseFLIPParticleTransfer.")
         if not isinstance(projection, SparseMACFreeSurfaceProjectionPlan):

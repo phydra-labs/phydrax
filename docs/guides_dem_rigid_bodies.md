@@ -20,3 +20,14 @@ Owner contact reduction preserves equal/opposite force and computes torque about
 `RigidContactGeometry` carries normal, signed gap, overlap, effective radius, common contact point, owner/contact lever arms, relative point velocity, stable feature key, degeneracy code, and feature margin.
 
 Triangle walls have deterministic face/edge/vertex ownership. Convex polyhedra use face normals and all edge-cross-edge separating axes. Sphere-to-implicit contact requires declared distance-error and Lipschitz certificates. Convex and implicit paths do not claim Hertz/Mindlin curvature semantics.
+
+## Level-set grains and bounded initialization
+
+`LevelSetRigidShapeSetPlan` adds voxel grains to the same compliant engine,
+with shared templates, physical m² surface weights, symmetric half-weighted
+quadrature and raw-gradient conservative forces. Mass properties carry voxel
+error evidence or caller-supplied exact properties; fields never claim exact SDF
+semantics. The MPM–grain participant reuses the posed query and preserves
+action–reaction and common-point moments. `RandomSequentialPackingPlan` uses
+stable-ID addressed randomness and refuses incomplete initializations.
+See [level-set DEM](guides_level_set_dem.md) for units and supported laws.

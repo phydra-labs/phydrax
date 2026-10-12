@@ -17,6 +17,7 @@ shapes = phx.discretization.SuperquadricSetPlan(
     jnp.asarray([2.5, 2.5]),
     jnp.asarray([3.0, 3.0]),
     jnp.zeros((2,), dtype=jnp.int32),
+    contact_geometry=phx.discretization.SuperquadricContactPlan(iterations=24),
 )
 materials = phx.equations.DEMMaterialTable(
     jnp.asarray([2.0e5]),
@@ -24,32 +25,37 @@ materials = phx.equations.DEMMaterialTable(
     jnp.asarray([[0.8]]),
     jnp.asarray([[0.3]]),
 )
-dynamics = phx.discretization.SuperquadricDEMPlan(
-    shapes,
-    phx.discretization.SuperquadricContactPlan(iterations=24),
-    phx.discretization.DEMContactModelPlan(
-        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        tangential=phx.discretization.CundallStrackTangentialPlan(2.0e3),
+compiled = phx.equations.compile_discrete_element_problem(
+    phx.equations.DiscreteElementProblemIR(
+        "superquadric-collision", materials, gravity=jnp.zeros((3,))
     ),
-).prepare(
     particles,
-    materials,
-    phx.discretization.DenseParticleNeighborhoodPlan(1),
+    shapes,
+    phx.discretization.CompliantDEMMethodPlan(
+        phx.discretization.DEMContactModelPlan(
+            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+            tangential=phx.discretization.CundallStrackTangentialPlan(2.0e3),
+        )
+    ),
+    neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
 )
-state = dynamics.initialize_state(
+state = compiled.initialize_state(
+    0.0,
     jnp.asarray([[0.0, 0.0, 0.0], [1.18, 0.0, 0.0]]),
     jnp.asarray([[0.1, 0.0, 0.0], [-0.1, 0.0, 0.0]]),
-    jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
     jnp.asarray([[0.0, 0.0, 0.5], [0.0, 0.0, -0.5]]),
+    orientation=jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
 )
-result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-5))
+result = compiled.dynamics.step_detailed(
+    jnp.asarray(0, dtype=jnp.int32), jnp.asarray(0.0), state, jnp.asarray(1.0e-5), None
+)
 evaluation = result.evaluation
 if not bool(result.successful):
     raise RuntimeError("Superquadric collision step failed")
 print("successful=True")
-print(f"gap={float(evaluation.geometry.gap[0]):.6e}")
-print(f"contact_residual={float(evaluation.geometry.residual[0]):.6e}")
-print(f"normal_force={float(evaluation.contact.normal_force[0, 0]):.6e}")
+print(f"gap={float(evaluation.geometry.geometry.gap[0]):.6e}")
+print(f"contact_residual={float(evaluation.geometry.geometry.residual[0]):.6e}")
+print(f"normal_force={float(evaluation.particle_contact.normal_force[0, 0]):.6e}")
 print(
-    f"force_balance={float(jnp.linalg.norm(jnp.sum(evaluation.load.force, axis=0))):.6e}"
+    f"force_balance={float(jnp.linalg.norm(jnp.sum(evaluation.loads.total.force, axis=0))):.6e}"
 )

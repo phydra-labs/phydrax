@@ -17,6 +17,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._volumetric import MPMVolumetricStabilizationPlan
 
 
 class MPMDistributedPlan(StrictModule, NonTrainableState):
@@ -40,7 +41,17 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         particle_capacity_per_device: int,
         halo_blocks: int = 1,
         periodic_axes: Sequence[bool] | None = None,
+        volumetric_stabilization: MPMVolumetricStabilizationPlan | None = None,
     ) -> None:
+        stabilization = (
+            MPMVolumetricStabilizationPlan()
+            if volumetric_stabilization is None
+            else volumetric_stabilization
+        )
+        if stabilization.kind != "none":
+            raise ValueError(
+                "Distributed MPM volumetric stabilization requires projection halo exchange."
+            )
         grid = tuple(logical_grid_shape)
         block = tuple(block_shape)
         owners = np.asarray(block_owner, dtype=np.int32)

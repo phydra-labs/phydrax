@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Mapping
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,9 +40,17 @@ from ..discretization.mpm._commercial import (
     MPMIntendedUse,
     MPMSupportDecision,
 )
+from ..discretization.mpm._loads import (
+    LysmerKuhlemeyerDashpot,
+    PreparedMPMBoundaryLoad,
+)
 from ..discretization.particle import ParticleDiscretization
 from ..discretization.splatting import PreparedParticleGridSplat
 from ..typing import checked
+
+
+if TYPE_CHECKING:
+    from ..applications.solid_mechanics._loads import MechanicalLoadState
 
 
 MPMKinematics: TypeAlias = Literal[
@@ -224,16 +232,34 @@ class MaterialPointArguments(StrictModule):
 
     material_parameters: Any
     external_arguments: Any
+    mechanical_load_states: tuple[MechanicalLoadState, ...]
+    boundary_arguments: Any
 
     def __init__(
-        self, material_parameters: Any, external_arguments: Any = None, /
+        self,
+        material_parameters: Any,
+        external_arguments: Any = None,
+        /,
+        *,
+        mechanical_load_states: tuple[MechanicalLoadState, ...] = (),
+        boundary_arguments: Any = None,
     ) -> None:
+        from ..applications.solid_mechanics._loads import MechanicalLoadState
+
+        if not isinstance(mechanical_load_states, tuple):
+            raise TypeError("mechanical_load_states must be a tuple.")
+        if any(
+            not isinstance(state, MechanicalLoadState) for state in mechanical_load_states
+        ):
+            raise TypeError("mechanical_load_states must contain MechanicalLoadState.")
         self.material_parameters = material_parameters
         self.external_arguments = external_arguments
+        self.mechanical_load_states = mechanical_load_states
+        self.boundary_arguments = boundary_arguments
 
 
 class MaterialPointProblemIR(StrictModule):
-    """One homogeneous constitutive family and optional body acceleration."""
+    """One homogeneous constitutive family with canonical boundary and body loads."""
 
     name: str = eqx.field(static=True)
     material: AbstractMPMConstitutivePlan
@@ -242,6 +268,8 @@ class MaterialPointProblemIR(StrictModule):
     intended_use: MPMIntendedUse | None
     claim: MPMClaimTuple | None
     problem_id: str = eqx.field(static=True)
+    boundary_loads: tuple[PreparedMPMBoundaryLoad, ...]
+    dashpots: tuple[LysmerKuhlemeyerDashpot, ...]
 
     @checked
     def __init__(
@@ -255,6 +283,8 @@ class MaterialPointProblemIR(StrictModule):
         intended_use: MPMIntendedUse | None = None,
         claim: MPMClaimTuple | None = None,
         problem_id: str | None = None,
+        boundary_loads: tuple[PreparedMPMBoundaryLoad, ...] = (),
+        dashpots: tuple[LysmerKuhlemeyerDashpot, ...] = (),
     ) -> None:
         name_ = str(name)
         if not name_:
@@ -273,6 +303,12 @@ class MaterialPointProblemIR(StrictModule):
             raise TypeError("intended_use must be MPMIntendedUse or None.")
         if claim is not None and not isinstance(claim, MPMClaimTuple):
             raise TypeError("claim must be MPMClaimTuple or None.")
+        if not isinstance(boundary_loads, tuple) or not isinstance(dashpots, tuple):
+            raise TypeError("boundary_loads and dashpots must be tuples.")
+        if any(not isinstance(load, PreparedMPMBoundaryLoad) for load in boundary_loads):
+            raise TypeError("boundary_loads must contain PreparedMPMBoundaryLoad.")
+        if any(not isinstance(dashpot, LysmerKuhlemeyerDashpot) for dashpot in dashpots):
+            raise TypeError("dashpots must contain LysmerKuhlemeyerDashpot.")
         generated = canonical_fingerprint(
             {
                 "kind": "material-point-problem-ir",
@@ -283,6 +319,8 @@ class MaterialPointProblemIR(StrictModule):
                     None if intended_use is None else intended_use.intended_use_id
                 ),
                 "claim": None if claim is None else claim.claim_id,
+                "boundary_loads": tuple(load.prepared_id for load in boundary_loads),
+                "dashpots": tuple(dashpot.prepared_id for dashpot in dashpots),
             }
         )
         identifier = generated if problem_id is None else str(problem_id)
@@ -295,6 +333,8 @@ class MaterialPointProblemIR(StrictModule):
         self.intended_use = intended_use
         self.claim = claim
         self.problem_id = identifier
+        self.boundary_loads = boundary_loads
+        self.dashpots = dashpots
 
 
 class CompiledMaterialPointProblem(StrictModule):
@@ -400,6 +440,8 @@ def compile_material_point_problem(
         external_acceleration=problem.external_acceleration,
         external_acceleration_id=problem.external_acceleration_id,
         resource_policy=resource_policy,
+        boundary_loads=problem.boundary_loads,
+        dashpots=problem.dashpots,
     )
     transfer_key = DiscretizationKey(
         "mpm-particle-grid",

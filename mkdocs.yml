@@ -63,17 +63,17 @@ plugins:
         handlers:
             python:
                 options:
-                    force_inspection: true
                     extensions:
-                        - mkdocstrings_setup.py:RuntimeTypeAliases
-                    preload_modules:
-                        - mkdocstrings_setup
+                        - mkdocstrings_setup.py:PublicFacadeExports
+                        - mkdocstrings_setup.py:EquinoxConstructors
+                        - mkdocstrings_setup.py:ClassMemberListing
                     heading_level: 4
                     inherited_members: false
+                    merge_init_into_class: true
                     members_order: source
                     show_bases: false
                     show_signature: true
-                    show_if_no_docstring: false
+                    show_if_no_docstring: true
                     show_overloads: false
                     show_root_heading: true
                     show_signature_annotations: true
@@ -271,6 +271,7 @@ nav:
         - Strong-field QED: "guides_strong_field_qed.md"
         - Electromagnetic radiation sources: "electromagnetic_radiation_sources.md"
         - Free-surface FLIP: "guides_flip.md"
+        - μ(I) granular rheology: "guides_mu_i_granular_rheology.md"
         - Advanced particle-grid physics: "guides_advanced_particle_grid.md"
         - HEP production profiles: "guides_hep_production.md"
         - Full scientific HEP closure: "guides_hep_scientific_closure.md"
@@ -281,6 +282,7 @@ nav:
         - MPM schedules and adaptive time: "guides_mpm_schedules.md"
         - MPM constitutive extensions: "guides_mpm_constitutive_extensions.md"
         - MPM contact and fields: "guides_mpm_contact_fields.md"
+        - Saturated double-point MPM: "guides_mpm_double_point.md"
         - MPM particle domains: "guides_mpm_particle_domains.md"
         - MPM adaptive and implicit: "guides_mpm_adaptive_implicit.md"
         - MPM fracture and sparse storage: "guides_mpm_fracture_sparse.md"
@@ -288,9 +290,11 @@ nav:
         - Commercial MPM transfers: "guides_mpm_commercial_transfers.md"
         - Commercial MPM contact and implicit: "guides_mpm_commercial_contact_implicit.md"
         - Commercial MPM geomechanics: "guides_mpm_commercial_geomechanics.md"
+        - Geomechanics qualification: "guides_geomechanics_qualification.md"
         - Commercial MPM scale and operations: "guides_mpm_commercial_scale_operations.md"
         - Commercial MPM derivatives and VVUQ: "guides_mpm_commercial_derivatives_vvuq.md"
         - Discrete element method: "guides_discrete_element_method.md"
+        - Level-set DEM: "guides_level_set_dem.md"
         - Wet granular contact: "guides_wet_granular_contact.md"
         - Superquadric DEM: "guides_superquadric_dem.md"
         - Superquadric wall contact: "guides_superquadric_wall_contact.md"
@@ -302,6 +306,7 @@ nav:
         - Robotics muscle routes and MJX projections: "guides_robotics_muscle_routes.md"
         - Extended constrained and deformable mechanics: "guides_extended_mechanics.md"
         - Deformable contact: "guides_deformable_contact.md"
+        - Monolithic implicit contact: "guides_monolithic_contact.md"
         - Contact formulations and closure: "guides_contact_formulations.md"
         - Multiphysics and patch contact: "guides_contact_multiphysics.md"
         - Contact differentiation: "guides_contact_differentiation.md"
@@ -402,6 +407,7 @@ nav:
         - Large-eddy simulation: "guides_large_eddy_simulation.md"
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
+        - Statistical incompressible flow: "guides_statistical_incompressible_flow.md"
         - Fourier-modal Maxwell: "guides_fourier_modal_maxwell.md"
         - Optics: "guides_optics.md"
         - Optical photon transport: "guides_optical_photon_transport.md"
@@ -632,6 +638,7 @@ nav:
         - Member-network structural verification: "api/member_network.md"
         - Advanced structural evidence: "api/advanced_structural.md"
         - Linear algebra runtime: "api/linalg.md"
+        - Rheology: "api/rheology.md"
         - Algebra coordinate runtime: "api/linalg/algebra_coordinates.md"
         - External solver backends: "api/backends.md"
         - Sparse derivatives and streamed relations: "api/sparse_derivatives.md"

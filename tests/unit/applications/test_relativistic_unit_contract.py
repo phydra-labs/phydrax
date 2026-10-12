@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -229,6 +230,47 @@ def test_eulerian_frame_from_arbitrary_adm_is_jax_safe_and_invertible() -> None:
     assert bool(frame.admissible)
     assert bool(frame.tetrad.qualified)
     assert int(frame.frame_token) == 11
+
+
+@pytest.mark.strict_jax
+def test_eulerian_frame_derivatives_at_isotropic_spatial_metric() -> None:
+    units = _units()
+    geometry = _geometry(units)
+    identity = jnp.eye(3, dtype=jnp.float64)
+    direction = jnp.asarray(
+        ((0.2, 0.1, -0.04), (0.1, -0.3, 0.07), (-0.04, 0.07, 0.15)),
+        dtype=jnp.float64,
+    )
+
+    def triads(parameter: jax.Array) -> tuple[jax.Array, jax.Array]:
+        varied = eqx.tree_at(
+            lambda item: item.spatial_metric, geometry, identity + parameter * direction
+        )
+        frame = LocalRelativisticFramePlan.from_adm(
+            varied,
+            units,
+            jnp.zeros((4,), dtype=jnp.float64),
+            jnp.asarray(0.0, dtype=jnp.float64),
+            jnp.asarray(1.0, dtype=jnp.float64),
+            observer_id="eulerian-observer",
+            orientation_id="future-right-handed",
+        )
+        return frame.tetrad.vectors[1:, 1:], frame.tetrad.dual_covectors[1:, 1:]
+
+    zero = jnp.asarray(0.0, dtype=jnp.float64)
+    values, tangents = jax.jit(
+        lambda parameter: jax.jvp(triads, (parameter,), (jnp.ones_like(parameter),))
+    )(zero)
+    np.testing.assert_allclose(values[0], identity, atol=2e-12)
+    np.testing.assert_allclose(values[1], identity, atol=2e-12)
+    np.testing.assert_allclose(tangents[0], -0.5 * direction, atol=2e-12)
+    np.testing.assert_allclose(tangents[1], 0.5 * direction, atol=2e-12)
+
+    def objective(parameter: jax.Array) -> jax.Array:
+        return jnp.sum(triads(parameter)[0] * direction)
+
+    reverse = jax.jit(jax.grad(objective))(zero)
+    np.testing.assert_allclose(reverse, -0.5 * jnp.sum(direction**2), atol=2e-12)
 
 
 def test_invalid_unit_and_physical_domain_inputs_are_refused() -> None:

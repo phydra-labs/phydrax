@@ -17,11 +17,12 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
+from ._dem import DEMEvaluation, PreparedCompliantDEMDynamics
 from ._pairwise import scatter_pair_exchange, scatter_pair_sum
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
 from ._particle_internal_unstructured import ParticleInternalMeshMetrics
+from ._rigid_sphere import PreparedRigidSphereSet
 
 
 if TYPE_CHECKING:
@@ -151,7 +152,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        dynamics: PreparedSoftSphereDEMDynamics,
+        dynamics: PreparedCompliantDEMDynamics,
         evaluation: DEMEvaluation,
         conversion_batches: tuple[PreparedParticleInternalBatch, ...],
         conversion_state: ParticleConversionState,
@@ -161,10 +162,17 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         *,
         boundary_temperatures: ArrayLike | Sequence[float] = (),
     ) -> ParticleContactExchangeEvaluation:
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+        if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+            raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
         if not isinstance(evaluation, DEMEvaluation):
             raise TypeError("evaluation must be a DEMEvaluation.")
+        shapes = dynamics.shapes
+        if not isinstance(shapes, PreparedRigidSphereSet):
+            raise ValueError("Particle surface exchange requires sphere contact shapes.")
+        if dynamics.walls:
+            raise ValueError(
+                "Particle surface exchange requires implicit barriers, not facet-material triangle walls."
+            )
         batches = tuple(conversion_batches)
         materials = tuple(thermodynamic_materials)
         if len(batches) != len(conversion_state.batches) or len(batches) != len(
@@ -172,7 +180,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Conversion batches, state, and thermodynamics must match.")
         owner_temperature = jnp.zeros(
-            (dynamics.bodies.capacity,), dtype=dynamics.bodies.radii.dtype
+            (dynamics.bodies.capacity,), dtype=shapes.radii.dtype
         )
         owner_coverage = jnp.zeros((dynamics.bodies.capacity,), dtype=jnp.int32)
         surface_routes: list[ParticleInternalMeshMetrics | None] = []
@@ -210,15 +218,17 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         pairs = evaluation.neighborhood.pair_relation
         left = pairs.left_indices
         right = pairs.right_indices
-        material_left = dynamics.bodies.material_ids[left]
-        material_right = dynamics.bodies.material_ids[right]
+        material_left = dynamics.shapes.material_ids[left]
+        material_right = dynamics.shapes.material_ids[right]
         coefficient = self.conductance[material_left, material_right]
         overlap = evaluation.particle_contact.next_history.normal.previous_overlap
-        radius_left = dynamics.bodies.radii[left]
-        radius_right = dynamics.bodies.radii[right]
-        effective_radius = (
-            radius_left * radius_right / jnp.maximum(radius_left + radius_right, 1.0e-30)
-        )
+        geometry = evaluation.geometry.geometry
+        effective_radius = geometry.effective_radius
+        # Sphere witnesses place the common point halfway through the gap.
+        left_length = -jnp.sum(geometry.left_owner_arm * geometry.normal, axis=-1)
+        right_length = jnp.sum(geometry.right_owner_arm * geometry.normal, axis=-1)
+        radius_left = left_length - 0.5 * geometry.gap
+        radius_right = right_length - 0.5 * geometry.gap
         if self.area_mode is ContactAreaMode.CONSTANT:
             area = jnp.full_like(coefficient, self.constant_area)
         elif self.area_mode is ContactAreaMode.OVERLAP:
@@ -283,7 +293,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
                 (dynamics.bodies.capacity,), response.material_id, dtype=jnp.int32
             )
             wall_coefficient = self.conductance[
-                dynamics.bodies.material_ids, wall_material
+                dynamics.shapes.material_ids, wall_material
             ]
             wall_active = response.contact.active
             wall_heat = (

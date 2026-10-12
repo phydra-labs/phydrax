@@ -223,6 +223,30 @@ def sharp_union_certificate(
     )
 
 
+def level_set_interpolation_certificate(source: FieldCertificate, /) -> FieldCertificate:
+    """Downgrade a sampled field to sparse multilinear level-set guarantees.
+
+    Interpolation does not preserve exact signed distance, source zero sets,
+    enclosure bounds, or topology identity. Sign authority is at most local
+    within complete sparse stencils, never stronger than the source authority.
+    Derivatives are piecewise smooth and no safe sphere-tracing step is claimed.
+    """
+    return FieldCertificate(
+        zero_set_accuracy=ZeroSetAccuracy.APPROXIMATE,
+        sign_reliability=(
+            SignReliability.UNRELIABLE
+            if source.sign_reliability is SignReliability.UNRELIABLE
+            else SignReliability.LOCAL
+        ),
+        distance_semantics=DistanceSemantics.LEVEL_SET,
+        regularity=FieldRegularity.PIECEWISE_SMOOTH,
+        safe_step_factor=None,
+        validity_region="sparse_voxel_support",
+        parameter_differentiable=source.parameter_differentiable,
+        provenance=(*source.provenance, "multilinear_level_set_interpolation"),
+    )
+
+
 __all__ = [
     "ExactSDFEnclosureCertificate",
     "DistanceSemantics",
@@ -232,5 +256,6 @@ __all__ = [
     "SignReliability",
     "ZeroSetAccuracy",
     "exact_signed_distance_certificate",
+    "level_set_interpolation_certificate",
     "sharp_union_certificate",
 ]

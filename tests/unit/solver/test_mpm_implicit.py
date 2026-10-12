@@ -168,7 +168,30 @@ def test_implicit_contracts() -> None:
     )
 
     assert bool(detail.successful)
-    assert detail.accepted_state.particles.material_state.shape == (3, 10)
+    assert detail.accepted_state.particles.material_state.shape == (3, 7)
     np.testing.assert_allclose(
-        detail.accepted_state.particles.material_state[:, 9], 0.0, atol=1e-12
+        detail.accepted_state.particles.material_state[:, 6], 0.0, atol=1e-12
+    )
+
+
+def test_implicit_drucker_prager_step_from_rest() -> None:
+    material = phx.applications.solid_mechanics.DruckerPragerMPMConstitutivePlan()
+    compiled, position, volume = _compiled(material)
+    arguments = phx.equations.MaterialPointArguments(
+        phx.applications.solid_mechanics.DruckerPragerParameters(
+            8.0, 25.0, 10.0, 0.4, 0.2, 1.0
+        )
+    )
+    initial = compiled.initialize_state(
+        position, jnp.zeros_like(position), volume, arguments
+    )
+    detail = phx.solver.PreparedImplicitMPMDynamics(compiled.dynamics).step_detailed(
+        initial, 0.0005, arguments
+    )
+    assert bool(detail.successful)
+    assert bool(detail.diagnostics.tangent_successful)
+    np.testing.assert_allclose(
+        detail.accepted_state.particles.material_state,
+        initial.particles.material_state,
+        atol=1e-12,
     )

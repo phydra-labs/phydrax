@@ -1,5 +1,14 @@
 # Structured finite volume
 
+## Active-cell conductance
+
+::: phydrax.discretization.StructuredFaceConductancePlan
+
+The coefficient is conductivity integrated over omitted dimensions (2-D: sheet
+conductance). Each canonical active-cell edge has conductance `k_face * A / d`.
+Harmonic interpolation uses half-cell resistances on nonuniform grids; scalar,
+isotropic-cell, and per-axis diagonal coefficients are supported, not full tensors.
+
 ## Geometry and methods
 
 ::: phydrax.discretization.FiniteVolumePlan

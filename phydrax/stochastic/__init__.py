@@ -231,6 +231,14 @@ from ._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
+from ._periodic_power_law_field import (
+    FourierCoefficientLaw,
+    FourierSeriesBasis,
+    PeriodicPowerLawFieldPlan,
+    PeriodicPowerLawFieldRealization,
+    PowerLawSpectralAmplitude,
+    PreparedPeriodicPowerLawField,
+)
 from ._point_process import (
     evaluate_hawkes_likelihood,
     ExponentialHawkesProcess,
@@ -405,6 +413,12 @@ from ._wiener import LevyAreaKind, WienerAlgorithm, WienerRealization
 
 
 __all__ = [
+    "FourierCoefficientLaw",
+    "FourierSeriesBasis",
+    "PeriodicPowerLawFieldPlan",
+    "PeriodicPowerLawFieldRealization",
+    "PowerLawSpectralAmplitude",
+    "PreparedPeriodicPowerLawField",
     "ExponentialHawkesProcess",
     "HAWKES_NONFINITE",
     "HAWKES_NONPOSITIVE_INTENSITY",

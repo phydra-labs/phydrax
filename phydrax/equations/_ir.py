@@ -10,6 +10,8 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, final, Literal, TypeAlias
 
+from jax import Array, lax
+
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 from ..exterior._form_type import FiberProduct, FormValueSpec
@@ -185,30 +187,37 @@ class PDEField:
 class PDEParameter:
     """Named scalar, vector, or field-valued coefficient in a PDE problem.
 
-    ``representation`` declares the physical identity explicitly; it is never
-    inferred from ``components`` (a one-dimensional vector has one component).
+    ``representation`` declares the physical identity. When it is omitted, a
+    one-component parameter is a scalar and a multi-component parameter is a
+    vector; a one-component vector must declare ``representation="vector"``.
+    Scalar and pseudoscalar representations require exactly one component.
     """
 
     name: str
     value: float | tuple[float, ...] | None = None
-    representation: PDERepresentation = "scalar"
     components: int = 1
     dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
     functional: bool = False
+    representation: PDERepresentation | None = None
 
     def __post_init__(self) -> None:
         if not self.name or int(self.components) <= 0:
             raise ValueError(
                 "PDE parameters require a name and positive component count."
             )
-        object.__setattr__(
-            self,
-            "representation",
-            parse(self.representation, PDERepresentation, "representation"),
-        )
         object.__setattr__(self, "components", int(self.components))
-        if self.representation in ("scalar", "pseudoscalar") and self.components != 1:
+        representation = (
+            "scalar"
+            if self.representation is None and self.components == 1
+            else (
+                "vector"
+                if self.representation is None
+                else parse(self.representation, PDERepresentation, "representation")
+            )
+        )
+        object.__setattr__(self, "representation", representation)
+        if representation in ("scalar", "pseudoscalar") and self.components != 1:
             raise ValueError(
                 "PDE parameter scalar representations require exactly one component."
             )
@@ -409,6 +418,57 @@ class PDEExpression:
 
     def __neg__(self) -> "PDEExpression":
         return PDEExpression("negate", (self,))
+
+
+def depends_on_fields(expression: PDEExpression, /) -> bool:
+    """Whether an expression contains a solved-field reference."""
+    return expression.op == "field" or any(
+        depends_on_fields(argument) for argument in expression.args
+    )
+
+
+def field_polynomial_degree(expression: PDEExpression, /) -> int | None:
+    """Exact polynomial degree in fields, with field-free subtrees as coefficients."""
+    if not depends_on_fields(expression):
+        return 0
+    if expression.op == "field":
+        return 1
+    degrees = tuple(field_polynomial_degree(argument) for argument in expression.args)
+    if any(degree is None for degree in degrees):
+        return None
+    finite = tuple(degree for degree in degrees if degree is not None)
+    if expression.op in (
+        "add",
+        "negate",
+        "component",
+        "derivative",
+        "gradient",
+        "divergence",
+        "curl",
+        "laplacian",
+        "integral",
+    ):
+        return max(finite, default=0)
+    if expression.op in ("multiply", "dot"):
+        return sum(finite)
+    if expression.op == "divide":
+        return finite[0] if not depends_on_fields(expression.args[1]) else None
+    if expression.op == "power":
+        exponent = expression.args[1]
+        power = (
+            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+        )
+        return finite[0] * power if power is not None and power >= 0 else None
+    return None
+
+
+def _evaluate_power(
+    expression: PDEExpression, base: Array, exponent_value: Array, /
+) -> Array:
+    """Keep exact integer powers on their nonsingular native polynomial rule."""
+    exponent = expression.args[1]
+    power = _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+    return lax.integer_pow(base, power) if power is not None else base**exponent_value
 
 
 def as_expression(value: Any, /) -> PDEExpression:

@@ -140,7 +140,10 @@ def _action_coefficients(action: FiniteElementAction) -> tuple[Any, ...]:
 
 
 def _coefficient_layout_ids(action: FiniteElementAction) -> tuple[str, ...]:
-    return tuple(sorted(value.layout_id for value in _action_coefficients(action)))
+    # Layouts are a set: an action may consume several coefficients that share
+    # one layout (for example SIPG diffusivity and Dirichlet data), and workset
+    # signatures and kernel bindings must agree on the same canonical identity.
+    return tuple(sorted({value.layout_id for value in _action_coefficients(action)}))
 
 
 def _coefficient_fields(

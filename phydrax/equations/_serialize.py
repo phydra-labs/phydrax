@@ -144,8 +144,8 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
             {
                 "name": item.name,
                 "value": item.value,
-                "representation": item.representation,
                 "components": item.components,
+                "representation": item.representation,
                 "dimension": item.dimension.to_dict(),
                 "scale": list(item.scale),
                 "functional": item.functional,
@@ -314,8 +314,8 @@ def pde_ir_from_dict(value: Mapping[str, Any], /) -> PDEProblemIR:
         {
             "name",
             "value",
-            "representation",
             "components",
+            "representation",
             "dimension",
             "scale",
             "functional",
@@ -379,8 +379,8 @@ def pde_ir_from_dict(value: Mapping[str, Any], /) -> PDEProblemIR:
                     else float(item["value"])
                 )
             ),
-            representation=item["representation"],
             components=int(item.get("components", 1)),
+            representation=item["representation"],
             dimension=_dimension_from_dict(item["dimension"]),
             scale=tuple(item.get("scale", (1.0,))),
             functional=bool(item.get("functional", False)),
