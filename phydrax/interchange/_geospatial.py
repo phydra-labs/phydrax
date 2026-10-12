@@ -13,7 +13,9 @@ from dataclasses import asdict
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from numpy.typing import ArrayLike
 
 from .._external_resource import (
@@ -25,6 +27,8 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint, canoni
 from .._physical import SpatialCoordinateContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._axis import TensorGridPlan, UniformCellAxisSpec
+from ..discretization._tensor_support import PreparedTensorGrid
 from ..typing import checked
 from ..units import ANGLE, conversion_factor, DEGREE, LENGTH, UnitDefinition
 from ._inspection import _readonly_array
@@ -646,6 +650,72 @@ class QualifiedGeospatialGrid(StrictModule, NonTrainableState):
         )
 
 
+class GeospatialCellField(StrictModule, NonTrainableState):
+    """Pixel cell averages in increasing (north, east) tensor coordinates."""
+
+    grid: PreparedTensorGrid
+    values: Array
+    valid: Array
+    value_unit: UnitDefinition = eqx.field(static=True)
+    row_reversed: bool = eqx.field(static=True)
+    column_reversed: bool = eqx.field(static=True)
+    source_grid_id: str = eqx.field(static=True)
+    field_id: str = eqx.field(static=True)
+
+    def raster_to_tensor(self, array: ArrayLike, /) -> Array:
+        """Apply the recorded orientation flips without resampling."""
+        array = jnp.asarray(array)
+        if array.shape[:2] != self.grid.shape:
+            raise ValueError("Raster must begin with the field's (north, east) shape.")
+        result = jnp.flip(array, axis=0) if self.row_reversed else array
+        return jnp.flip(result, axis=1) if self.column_reversed else result
+
+    def tensor_to_raster(self, array: ArrayLike, /) -> Array:
+        """Invert the exact orientation mapping."""
+        return self.raster_to_tensor(array)
+
+
+@checked
+def geospatial_cell_field(
+    grid: QualifiedGeospatialGrid, spatial: SpatialCoordinateContract, /
+) -> GeospatialCellField:
+    """Convert qualified Cartesian pixels to native finite-volume cell averages."""
+    grid.contract.require_cartesian(spatial, dimensions=2)
+    if grid.contract.registration != "pixel":
+        raise ValueError("Cell averages require pixel registration, not gridline nodes.")
+    ny, nx = grid.values.shape
+    west, east, south, north = grid.region
+    prepared = TensorGridPlan(
+        (UniformCellAxisSpec(ny), UniformCellAxisSpec(nx)),
+        axis_names=("north", "east"),
+    ).prepare(np.asarray(((south, west), (north, east)), dtype=np.float64))
+    row_reversed = grid.orientation[1] == "decreasing"
+    column_reversed = grid.orientation[0] == "decreasing"
+    rows = slice(None, None, -1) if row_reversed else slice(None)
+    columns = slice(None, None, -1) if column_reversed else slice(None)
+    # The only host-to-device boundary for source values and validity.
+    values = jnp.asarray(grid.values[rows, columns])
+    valid = jnp.asarray(grid.valid[rows, columns], dtype=jnp.bool_)
+    field_id = canonical_fingerprint(
+        {
+            "kind": "geospatial-cell-field",
+            "source": grid.grid_id,
+            "grid": prepared.prepared_id,
+            "spatial": spatial.spatial_id,
+        }
+    )
+    return GeospatialCellField(
+        prepared,
+        values,
+        valid,
+        grid.value_unit,
+        row_reversed,
+        column_reversed,
+        grid.grid_id,
+        field_id,
+    )
+
+
 def _regular_axis(values: ArrayLike, name: str) -> tuple[np.ndarray, float]:
     raw = np.asarray(values)
     if raw.dtype.kind not in "iuf" or raw.ndim != 1 or raw.size < 2:
@@ -711,4 +781,10 @@ def _qualify_longitude_grid(
         )
 
 
-__all__ = ["GeospatialContract", "GeospatialTransform", "QualifiedGeospatialGrid"]
+__all__ = [
+    "GeospatialCellField",
+    "geospatial_cell_field",
+    "GeospatialContract",
+    "GeospatialTransform",
+    "QualifiedGeospatialGrid",
+]

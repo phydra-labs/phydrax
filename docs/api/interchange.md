@@ -16,6 +16,20 @@ Candidate and accepted frames are separate objects. A renderer or asynchronous
 publisher may consume them, but renderer handles and serialization methods are outside
 the inspection contract.
 
+## Cartesian raster cell fields
+
+::: phydrax.interchange.GeospatialCellField
+
+---
+
+::: phydrax.interchange.geospatial_cell_field
+
+Qualified horizontal Cartesian pixel rasters become increasing `(north, east)`
+tensor cell averages with validity preserved. Vertical metadata is not required
+or consumed by this two-dimensional conversion. Gridline nodes and geographic
+coordinates are refused: this adapter does not reproject or reinterpret point samples.
+
+
 ::: phydrax.interchange.AdapterReport
 
 ---

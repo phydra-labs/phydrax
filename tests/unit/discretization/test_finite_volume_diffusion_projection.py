@@ -8,6 +8,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -78,3 +79,18 @@ def test_finite_volume_diffusion_projection_scenario_1() -> None:
     _, expected = jax.jvp(lambda value: compiled(0.0, value), (state,), (tangent,))
 
     np.testing.assert_allclose(linearized(tangent), expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.strict_jax
+def test_uniform_harmonic_preserves_previous_formula() -> None:
+    for periodic in (False, True):
+        grid = _grid(4, periodic=periodic)
+        values = jnp.asarray([1.0, 3.0, 7.0, 0.0], dtype=jnp.float64)
+        faces = phx.discretization.FaceCoefficientPlan(grid).interpolate(values, "x")
+        left = jnp.roll(values, 1) if periodic else values[:-1]
+        right = values if periodic else values[1:]
+        expected = 2 * left * right / (left + right)
+        np.testing.assert_allclose(
+            faces if periodic else faces[1:-1], expected, rtol=1e-12
+        )
+        assert np.all(np.isfinite(faces))

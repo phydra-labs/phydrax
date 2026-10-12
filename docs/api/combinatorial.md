@@ -1,9 +1,103 @@
 # Native combinatorial optimization
 
 `phydrax.combinatorial` solves fixed finite decision problems whose objective is
-linear in an explicit feature representation. Every method in this namespace is
-JAX-native, batched, deterministic at ties, and independently certified. No host
-solver or callback is selected implicitly.
+linear in an explicit feature representation, and certified directed distance
+fields. The finite-decision oracles are JAX-native. Distance fields explicitly
+select their host provider or bounded device reference; host execution is never
+presented as a device-native scalable solver.
+
+## Directed shortest-path fields
+
+`ShortestPathFieldPlan(relation, source_count=1, method="host-dijkstra")`
+solves a multi-source nonnegative-cost field on a directed `EdgeRelation`.
+`solve(costs, sources, source_offsets=...)` returns distances (`+inf` for
+unreachable vertices), an acyclic predecessor forest, minimum hop counts,
+inherited path margins, numerical certificates, work evidence, and status.
+Invalid routes are impassable; nonfinite or negative valid-route costs produce
+statuses rather than runtime exceptions. Source offsets must be finite and may
+be negative. A supplied source dominated by another source's path is not a
+forest root; roots have predecessor `-1`, as do unreachable vertices.
+Source shape and integer kind are checked before conversion; range validation
+uses the original integer dtype before `int32` narrowing. Invalid indices,
+including overflowing signed/unsigned 64-bit indices, return `INVALID_SOURCE`
+without executing the host provider.
+
+
+The default **`host-dijkstra`** method intentionally synchronizes host/device
+execution using `jax.pure_callback` and SciPy sparse Dijkstra. Its callback
+constructs a minimum-hop tight forest, resolving the remaining tie by original
+edge ID. The callback is sequential under `vmap`; accelerator-resident inputs
+must transfer to the host. Device certificates use native sparse relation
+reductions. `sweeps=1` denotes one provider invocation, not one graph sweep;
+`work` counts valid input routes inspected (not SciPy heap operations).
+Results preserve the static `method` and `host_synchronization` provenance.
+
+Both methods enforce `maximum_work` (default 10 million) before execution.
+The host method also enforces `maximum_host_bytes` (default 268,435,456 bytes)
+before dispatching `pure_callback`, returning `HOST_BYTE_BUDGET_EXCEEDED`
+for byte refusal or `WORK_BUDGET_EXCEEDED` for work refusal. Refused fields
+have NaN distances, zero work/sweeps, and unavailable derivatives.
+The plan exposes static `host_projected_work` and `projected_host_bytes`;
+`projected_work` selects the chosen method's estimate. These estimates and
+budgets intentionally enter the plan's static structure/fingerprint.
+
+For vertex count `V`, route capacity `E` (including invalid routes), source count
+`S`, and `M=E+S`, the conservative host work estimate is
+`8*(V+1+M)*(bit_length(V+1)+bit_length(max(1,M)))`. It accounts for two
+Dijkstra traversals, duplicate sorting, and forest ordering. The peak-byte
+estimate is `17*E+12*S+88*E+32*S+256*M+160*(V+1)+16+65536`.
+Its terms reserve callback inputs; masked arrays and certificate temporaries;
+COO/unique scratch, both CSR graphs, and provider heap/workspace; vertex
+distance/hop/forest outputs and transfer copies; scalar outputs; and 64 KiB
+fixed provider/Python overhead. Multi-source offsets use one augmented source:
+the provider returns one distance row, not a dense `S*V` distance matrix.
+The estimates are admission bounds, not measurements of SciPy heap operations.
+
+**`bounded-relaxation-reference`** is a whole-edge, device-side early-terminating
+reference only. Its `projected_work` is the declared `V*E` route-lane bound.
+`maximum_work` defaults to 10 million; over-budget plans return
+`WORK_BUDGET_EXCEEDED` before running relaxation. `maximum_sweeps` applies only
+to this method. Reaching the bound without certification reports
+`MAXIMUM_SWEEPS_REACHED`. `work` is executed sweeps times route capacity.
+
+Zero-cost cycles cannot become predecessor cycles: parents have strictly fewer
+hops. A vertex's local margin compares every incoming candidate **other than
+its selected predecessor**, including equal candidates and competing source
+offsets. Path margins inherit the minimum along the forest. Consequently,
+ambiguity inherited from a tied parent is visible even when the child's own
+incoming edge is unique. `derivative_regular` requires success, passing Bellman,
+dual-feasibility and forest-tightness certificates, and every reachable path
+margin strictly greater than `tie_tolerance`.
+For a single fixed source, its margin is `+inf`: a nonnegative cycle cannot
+alter its offset. Descendants do not inherit irrelevant incoming-cycle gaps
+at that root. Multi-source incoming paths and source-offset competition remain
+part of the margin certificate.
+
+
+Distance differentiation uses a device-side custom VJP that accumulates
+cotangents in reverse hop order, once per forest vertex, into route costs and
+selected source offsets. Unreachable cotangents are ignored. At ties this
+returns the deterministic selected **Clarke subgradient**, not a claim of
+classical differentiability. Invalid forests fail closed with NaN gradients.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+relation = phx.sparse.EdgeRelation(
+    jnp.asarray([0, 1], dtype=jnp.int32),
+    jnp.asarray([1, 2], dtype=jnp.int32),
+    source_size=3, target_size=3,
+)
+plan = phx.combinatorial.ShortestPathFieldPlan(relation)
+field = plan.solve(jnp.asarray([1.0, 2.0]), jnp.asarray([0], dtype=jnp.int32))
+```
+
+::: phydrax.combinatorial.ShortestPathFieldPlan
+
+::: phydrax.combinatorial.ShortestPathFieldResult
+
+::: phydrax.combinatorial.ShortestPathFieldStatus
 
 ## Decision and feature spaces
 
