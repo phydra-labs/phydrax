@@ -243,3 +243,105 @@ def test_coclustering_rejects_complex_and_reports_negative_data_infeasible() -> 
     result = SpectralCoclustering(2, 2).fit_batch(MLBatch(negative))
     assert result.status == ML_INFEASIBLE
     assert result.diagnostics.degeneracy
+
+
+def test_streamed_spectral_modes_match_independent_dense_reference() -> None:
+    import numpy as np
+
+    from phydrax.linalg.eigen import DenseEigh
+
+    features = jnp.array([[-2.0], [2.0], [-1.8], [1.8]], dtype=jnp.float64)
+    partial = SpectralClustering(2, gamma=0.5).fit_batch(MLBatch(features))
+    assert partial.valid
+    assert partial.diagnostics.converged
+    assert jnp.all(partial.diagnostics.eigen_residuals < 1e-9)
+    points = np.asarray(features)
+    adjacency = np.exp(-0.5 * (points - points.T) ** 2)
+    np.fill_diagonal(adjacency, 0.0)
+    inverse = 1 / np.sqrt(adjacency.sum(axis=-1))
+    reference = np.linalg.eigvalsh(
+        np.eye(4) - inverse[:, None] * adjacency * inverse[None, :]
+    )
+    np.testing.assert_allclose(partial.diagnostics.eigenvalues, reference[:3], atol=1e-9)
+    dense = SpectralClustering(2, gamma=0.5, eigen_method=DenseEigh()).fit_batch(
+        MLBatch(features)
+    )
+    np.testing.assert_allclose(partial.model(features), dense.model(features), atol=1e-9)
+    np.testing.assert_allclose(
+        partial.diagnostics.eigenvalues, dense.diagnostics.eigenvalues[:3], atol=1e-9
+    )
+    assert partial.diagnostics.eigen_method == "restarted-lanczos"
+    assert dense.diagnostics.eigen_method == "dense-eigh"
+
+
+def test_streamed_spectral_refuses_unresolved_degeneracy() -> None:
+    degenerate = SpectralClustering(2).fit_batch(
+        MLBatch(jnp.zeros((5, 1), dtype=jnp.float64))
+    )
+    assert not degenerate.valid
+    assert not degenerate.diagnostics.converged
+    assert degenerate.diagnostics.degeneracy
+
+
+def test_dense_spectral_refuses_insufficient_workspace() -> None:
+    from phydrax.linalg.eigen import DenseEigh
+
+    features = jnp.array([[-2.0], [2.0], [-1.8], [1.8]], dtype=jnp.float64)
+    with pytest.raises(ValueError, match="Dense materialization"):
+        SpectralClustering(
+            2, eigen_method=DenseEigh(), dense_workspace_bytes=8
+        ).fit_batch(MLBatch(features))
+
+
+def test_dbscan_inclusive_radius_and_cross_tile_components() -> None:
+    import numpy as np
+
+    points = jnp.arange(130, dtype=jnp.float64)[:, None]
+    result = DBSCAN(
+        1, 130, radius=1.0, minimum_samples=2.0, workspace_bytes=256 * 1024
+    ).fit_batch(MLBatch(points))
+    assert result.valid
+    np.testing.assert_array_equal(result.model(points), np.zeros(130, dtype=np.int32))
+
+
+@pytest.mark.parametrize(
+    "spectral", [False, True], ids=["density-diagnostics", "spectral-diagnostics"]
+)
+def test_clustering_diagnostics_persist_numerical_and_static_evidence(
+    spectral: bool,
+) -> None:
+    import io
+
+    import equinox as eqx
+    import numpy as np
+
+    features = jnp.array([[-2.0], [2.0], [-1.8], [1.8]], dtype=jnp.float64)
+    recipe = (
+        SpectralClustering(2, gamma=0.5)
+        if spectral
+        else DBSCAN(2, 4, radius=0.3, minimum_samples=1.0)
+    )
+    result = recipe.fit_batch(MLBatch(features))
+    assert result.valid
+    diagnostics = result.diagnostics
+    buffer = io.BytesIO()
+    eqx.tree_serialise_leaves(buffer, diagnostics)
+    buffer.seek(0)
+    restored = eqx.tree_deserialise_leaves(buffer, diagnostics)
+    assert restored.method == diagnostics.method
+    assert restored.eigen_method == diagnostics.eigen_method
+    assert all(isinstance(leaf, jax.Array) for leaf in jax.tree.leaves(restored))
+    for actual, expected in zip(
+        jax.tree.leaves(restored), jax.tree.leaves(diagnostics), strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    if spectral:
+        np.testing.assert_array_equal(restored.eigenvalues, diagnostics.eigenvalues)
+        np.testing.assert_array_equal(
+            restored.eigen_residuals, diagnostics.eigen_residuals
+        )
+        assert restored.eigen_method == "restarted-lanczos"
+    else:
+        assert restored.eigenvalues is None
+        assert restored.eigen_residuals is None
+        assert restored.eigen_method is None

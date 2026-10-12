@@ -46,7 +46,7 @@ from ..design._schema import (
     ParameterBinding,
     ParameterId,
 )
-from ..simplicial import MeshQueryResult
+from ..simplicial import MeshQueryResult, TriangleBVH, TriangleMesh
 from ..simplicial._mesh import _closest_points_on_triangles
 from ._model import BRepBoundaryMap, BRepModel
 from ._patches import AbstractSurfacePatch
@@ -272,6 +272,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     model: BRepModel
     patch_bindings: tuple[_PatchBinding, ...] = eqx.field(static=True)
     corner_weights: Array
+    query_bvh: TriangleBVH
 
     def __init__(
         self,
@@ -282,6 +283,9 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         self.model = model
         self.patch_bindings = tuple(patch_bindings)
         self.corner_weights = jnp.asarray(corner_weights, dtype=jnp.float64)
+        self.query_bvh = TriangleBVH(
+            TriangleMesh(model.mesh_vertices, model.mesh_faces, source_id=model.model_id)
+        )
 
     @property
     def ambient_dimension(self) -> int:
@@ -358,29 +362,37 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         realization = self.realize(state)
         return realization.vertices[realization.faces]
 
-    def _query(self, state: DesignState, points: Array) -> MeshQueryResult:
+    def _nearest_query(
+        self, state: DesignState, points: Array, *, k: int
+    ) -> tuple[MeshQueryResult, Array, Array]:
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
-        triangles = self._triangles(state)
-        closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
-            flat, triangles
+        realization = self.realize(state)
+        tree = self.query_bvh.refit(realization.vertices)
+        selected = jax.lax.stop_gradient(tree.nearest_faces(flat, k=k).items)
+        selected_triangles = realization.vertices[realization.faces[selected]]
+        closest_by_selected = jax.vmap(_closest_points_on_triangles)(
+            flat, selected_triangles
         )
-        distance_sq = jnp.sum((closest_by_face - flat[:, None, :]) ** 2, axis=-1)
-        face = jnp.argmin(distance_sq, axis=-1).astype(jnp.int32)
-        closest = jnp.take_along_axis(closest_by_face, face[:, None, None], axis=1)[:, 0]
-        distance = jnp.sqrt(jnp.take_along_axis(distance_sq, face[:, None], axis=1)[:, 0])
-        triangle = triangles[face]
+        distance_squared = jnp.sum((closest_by_selected - flat[:, None, :]) ** 2, axis=-1)
+        closest = closest_by_selected[:, 0]
+        triangle = selected_triangles[:, 0]
         normal = jnp.cross(
             triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]
         )
         normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
-        return MeshQueryResult(
+        query = MeshQueryResult(
             closest_point=closest.reshape((*leading, 3)),
-            distance=distance.reshape(leading),
-            face_index=face.reshape(leading),
+            distance=jnp.sqrt(distance_squared[:, 0]).reshape(leading),
+            face_index=selected[:, 0].reshape(leading),
             normal=normal.reshape((*leading, 3)),
         )
+        # Distances are differentiated only after discrete traversal selected IDs.
+        return query, triangle, distance_squared
+
+    def _query(self, state: DesignState, points: Array) -> MeshQueryResult:
+        return self._nearest_query(state, points, k=1)[0]
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
         points_ = jnp.asarray(points, dtype=jnp.float64)
@@ -426,22 +438,12 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
-        triangles = self._triangles(state)
-        closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
-            flat, triangles
-        )
-        query = self._query(state, flat)
-        distance_sq = jnp.sum((closest_by_face - flat[:, None, :]) ** 2, axis=-1)
-        second_distance_sq = (
-            jnp.sort(distance_sq, axis=-1)[:, 1]
-            if triangles.shape[0] > 1
-            else jnp.full((flat.shape[0],), jnp.inf, dtype=distance_sq.dtype)
-        )
+        query, triangle, selected_distance_squared = self._nearest_query(state, flat, k=2)
         unique, regular, margin = triangle_query_evidence(
             flat,
-            triangles[query.face_index],
+            triangle,
             query.closest_point,
-            second_distance_sq,
+            selected_distance_squared[:, 1],
         )
         return represented_mesh_closest_point(
             points_,

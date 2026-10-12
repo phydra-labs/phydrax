@@ -424,34 +424,16 @@ def _point_cloud_edges(
     if k is not None and k < 0:
         raise ValueError("k must be non-negative.")
 
-    n = points.shape[0]
-    diff = points[None, :, :] - points[:, None, :]
-    dist = np.linalg.norm(diff, axis=-1)
-    edges: list[tuple[int, int]] = []
-
-    if radius is not None:
-        for receiver in range(n):
-            for sender in range(n):
-                if sender == receiver and not add_self_edges:
-                    continue
-                if dist[receiver, sender] <= radius:
-                    edges.append((sender, receiver))
-
-    if k is not None and k > 0:
-        for receiver in range(n):
-            order = np.argsort(dist[receiver], kind="stable")
-            chosen: list[int] = []
-            for sender in order:
-                if sender == receiver and not add_self_edges:
-                    continue
-                chosen.append(int(sender))
-                if len(chosen) >= k:
-                    break
-            edges.extend((sender, receiver) for sender in chosen)
-
-    if not edges:
-        return np.zeros((0, 2), dtype=np.int32)
-    return np.unique(np.asarray(edges, dtype=np.int32), axis=0)
+    source_idx, target_idx = _host_query_pairs(
+        points,
+        points,
+        None,
+        radius=radius,
+        k=k,
+        same_points=True,
+        include_self=add_self_edges,
+    )
+    return np.unique(np.column_stack((source_idx, target_idx)), axis=0)
 
 
 def point_cloud_to_graph(
@@ -560,63 +542,54 @@ def _validate_query_points(
     return source, target, box, target_points is None
 
 
-def _query_relative_and_distance(
+def _host_query_pairs(
     source: np.ndarray,
     target: np.ndarray,
     periodic_box: np.ndarray | None,
     /,
-) -> tuple[np.ndarray, np.ndarray]:
-    relative = target[:, None, :] - source[None, :, :]
-    relative = _minimum_image(relative, periodic_box)
-    distance = np.linalg.norm(relative, axis=-1)
-    return relative, distance
-
-
-def _radius_query_pairs(
-    distance: np.ndarray,
-    radius: float,
-    /,
     *,
+    radius: float | None,
+    k: int | None,
     same_points: bool,
     include_self: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
-    r = float(radius)
-    if r < 0:
+    """Enumerate exact candidates with one bounded source tile per target.
+
+    Only result indices and the current top-k survive a tile; stable merging
+    preserves source-index ties and the original target-major query order.
+    """
+    if radius is not None and float(radius) < 0:
         raise ValueError("radius must be non-negative.")
-    target_idx, source_idx = np.nonzero(distance <= r)
-    if same_points and not include_self:
-        keep = source_idx != target_idx
-        source_idx = source_idx[keep]
-        target_idx = target_idx[keep]
-    return source_idx.astype(np.int32), target_idx.astype(np.int32)
-
-
-def _knn_query_pairs(
-    distance: np.ndarray,
-    k: int,
-    /,
-    *,
-    same_points: bool,
-    include_self: bool,
-) -> tuple[np.ndarray, np.ndarray]:
-    k_int = int(k)
-    if k_int < 0:
+    if k is not None and int(k) < 0:
         raise ValueError("k must be non-negative.")
+    if radius is None and (k is None or k == 0):
+        return np.zeros((0,), dtype=np.int32), np.zeros((0,), dtype=np.int32)
     source_parts: list[int] = []
     target_parts: list[int] = []
-    if k_int == 0:
-        return np.zeros((0,), dtype=np.int32), np.zeros((0,), dtype=np.int32)
-    for target_index in range(distance.shape[0]):
-        order = np.argsort(distance[target_index], kind="stable")
-        chosen: list[int] = []
-        for source_index in order:
-            if same_points and not include_self and int(source_index) == target_index:
-                continue
-            chosen.append(int(source_index))
-            if len(chosen) >= k_int:
-                break
-        source_parts.extend(chosen)
-        target_parts.extend([target_index] * len(chosen))
+    for target_index, point in enumerate(target):
+        best_indices = np.zeros((0,), dtype=np.int32)
+        best_distance = np.zeros((0,), dtype=np.float64)
+        for start in range(0, source.shape[0], 256):
+            stop = min(start + 256, source.shape[0])
+            indices = np.arange(start, stop, dtype=np.int32)
+            relative = _minimum_image(point - source[start:stop], periodic_box)
+            distance = np.linalg.norm(relative, axis=-1)
+            keep = np.ones(indices.shape, dtype=np.bool_)
+            if same_points and not include_self:
+                keep &= indices != target_index
+            if radius is not None:
+                chosen = indices[keep & (distance <= float(radius))]
+                source_parts.extend(chosen.tolist())
+                target_parts.extend([target_index] * chosen.size)
+            if k is not None and k > 0:
+                merged_indices = np.concatenate((best_indices, indices[keep]))
+                merged_distance = np.concatenate((best_distance, distance[keep]))
+                order = np.argsort(merged_distance, kind="stable")[:k]
+                best_indices = merged_indices[order]
+                best_distance = merged_distance[order]
+        if k is not None:
+            source_parts.extend(best_indices.tolist())
+            target_parts.extend([target_index] * best_indices.size)
     return np.asarray(source_parts, dtype=np.int32), np.asarray(
         target_parts, dtype=np.int32
     )
@@ -864,10 +837,12 @@ def radius_query_graph(
         target_points,
         periodic_box,
     )
-    _relative, distance = _query_relative_and_distance(source, target, box)
-    source_idx, target_idx = _radius_query_pairs(
-        distance,
-        radius,
+    source_idx, target_idx = _host_query_pairs(
+        source,
+        target,
+        box,
+        radius=radius,
+        k=None,
         same_points=same_points,
         include_self=include_self,
     )
@@ -915,10 +890,12 @@ def knn_query_graph(
         target_points,
         periodic_box,
     )
-    _relative, distance = _query_relative_and_distance(source, target, box)
-    source_idx, target_idx = _knn_query_pairs(
-        distance,
-        k,
+    source_idx, target_idx = _host_query_pairs(
+        source,
+        target,
+        box,
+        radius=None,
+        k=k,
         same_points=same_points,
         include_self=include_self,
     )

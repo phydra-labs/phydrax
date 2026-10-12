@@ -397,3 +397,43 @@ def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measure
     assert jnp.allclose(evaluation.value, 2.0 * metric.value)
     assert evaluation.diagnostics.cross.problem.source_mass == 3.0
     assert evaluation.diagnostics.cross.problem.target_mass == 5.0
+
+
+@pytest.mark.parametrize("iterations", [1, 100], ids=["iteration-limit", "converged"])
+def test_unbalanced_default_blocks_preserve_dense_values_gradients_and_status(
+    iterations: int,
+) -> None:
+    points = jnp.asarray([[-0.9], [-0.2], [0.1], [0.7], [1.3]], dtype=jnp.float64)
+    targets = jnp.linspace(-1.1, 1.6, 263, dtype=jnp.float64)[:, None]
+    target = _measure(targets, jnp.linspace(0.1, 0.9, 263, dtype=jnp.float64))
+    weights = jnp.asarray([0.2, 0.7, 0.3, 0.4, 0.1], dtype=jnp.float64)
+    dense_solver = phx.transport.UnbalancedSinkhorn(
+        0.7, max_iterations=iterations, tolerance=1e-9, block_size=None
+    )
+    bounded_solver = phx.transport.UnbalancedSinkhorn(
+        0.7, max_iterations=iterations, tolerance=1e-9
+    )
+    problem = _problem(_measure(points, weights), target)
+    dense = dense_solver(problem)
+    bounded = bounded_solver(problem)
+    assert bounded.provenance.execution == "blockwise"
+    assert bounded.provenance.block_size == 256
+    assert dense.provenance.execution == "dense"
+    assert dense.provenance.block_size is None
+    assert bounded.diagnostics.status == dense.diagnostics.status
+    assert bool(bounded.converged) is (iterations == 100)
+    assert jnp.allclose(bounded.dense_plan(), dense.dense_plan(), rtol=1e-10, atol=1e-12)
+    assert jnp.allclose(
+        bounded.regularized_cost, dense.regularized_cost, rtol=1e-10, atol=1e-12
+    )
+    dense_gradient = jax.grad(
+        lambda values: (
+            dense_solver(_problem(_measure(values, weights), target)).regularized_cost
+        )
+    )(points)
+    bounded_gradient = jax.grad(
+        lambda values: (
+            bounded_solver(_problem(_measure(values, weights), target)).regularized_cost
+        )
+    )(points)
+    assert jnp.allclose(bounded_gradient, dense_gradient, rtol=1e-9, atol=1e-11)

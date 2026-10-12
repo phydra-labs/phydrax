@@ -1,0 +1,416 @@
+{
+  "bvh_doubling_ratios": [
+    1.0130372784681199,
+    1.0128694952744821
+  ],
+  "bvh_scaling_exponent": 0.01856778214606809,
+  "cases": [
+    {
+      "bvh": {
+        "compilation_seconds": 0.2277845,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 236011,
+          "flops": 42495,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 39272,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.241373875,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.008632125,
+          "mean_seconds": 0.005923199999999999,
+          "median_seconds": 0.005399375,
+          "min_seconds": 0.002341625,
+          "samples_seconds": [
+            0.007870542,
+            0.005372333,
+            0.002341625,
+            0.008632125,
+            0.005399375
+          ],
+          "std_seconds": 0.002215217464879148
+        }
+      },
+      "candidate": {
+        "compilation_seconds": 0.158121083,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 1303332,
+          "flops": 301632,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 393296,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.026761084,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.004676375,
+          "mean_seconds": 0.0023450835999999997,
+          "median_seconds": 0.001712167,
+          "min_seconds": 0.000406792,
+          "samples_seconds": [
+            0.000406792,
+            0.001712167,
+            0.004676375,
+            0.003887209,
+            0.001042875
+          ],
+          "std_seconds": 0.0016532619470694414
+        }
+      },
+      "capacity": 128,
+      "dense": {
+        "compilation_seconds": 0.117724333,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 1795876,
+          "flops": 429376,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 524368,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.031661959,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.002477542,
+          "mean_seconds": 0.0018005334000000001,
+          "median_seconds": 0.001662875,
+          "min_seconds": 0.001554292,
+          "samples_seconds": [
+            0.001662875,
+            0.002477542,
+            0.001700458,
+            0.0016075,
+            0.001554292
+          ],
+          "std_seconds": 0.0003421117612240772
+        }
+      },
+      "dense_workspace_bytes": 524288,
+      "paired_warm_median_ratio": 1.029642636999173,
+      "preparation_peak_bytes": 141851,
+      "prepared_bytes": 9108,
+      "selected_route": "dense"
+    },
+    {
+      "bvh": {
+        "compilation_seconds": 0.520274084,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 252011,
+          "flops": 42687,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 39784,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.073537,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.003781125,
+          "mean_seconds": 0.0024168996,
+          "median_seconds": 0.002518833,
+          "min_seconds": 0.000909083,
+          "samples_seconds": [
+            0.002930416,
+            0.002518833,
+            0.000909083,
+            0.001945041,
+            0.003781125
+          ],
+          "std_seconds": 0.0009624304536681287
+        }
+      },
+      "candidate": {
+        "compilation_seconds": 0.208042166,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 252011,
+          "flops": 42687,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 39784,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.060472125,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.004284292,
+          "mean_seconds": 0.0021409000000000003,
+          "median_seconds": 0.001588916,
+          "min_seconds": 0.001139875,
+          "samples_seconds": [
+            0.001588916,
+            0.002433375,
+            0.004284292,
+            0.001258042,
+            0.001139875
+          ],
+          "std_seconds": 0.0011632580561796253
+        }
+      },
+      "capacity": 256,
+      "dense": {
+        "compilation_seconds": 0.1610225,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 3574564,
+          "flops": 888128,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 1048656,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.028885666,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.009671917,
+          "mean_seconds": 0.0054505,
+          "median_seconds": 0.004740541,
+          "min_seconds": 0.002820417,
+          "samples_seconds": [
+            0.003741083,
+            0.006278542,
+            0.009671917,
+            0.002820417,
+            0.004740541
+          ],
+          "std_seconds": 0.0024020616099555817
+        }
+      },
+      "dense_workspace_bytes": 524288,
+      "paired_warm_median_ratio": 0.3351760906613823,
+      "preparation_peak_bytes": 151727,
+      "prepared_bytes": 18260,
+      "selected_route": "bvh"
+    },
+    {
+      "bvh": {
+        "compilation_seconds": 0.35602175,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 281195,
+          "flops": 42879,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 40296,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.08654075,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.022377416,
+          "mean_seconds": 0.0077167830000000005,
+          "median_seconds": 0.004083875,
+          "min_seconds": 0.001539666,
+          "samples_seconds": [
+            0.004083875,
+            0.006522625,
+            0.001539666,
+            0.004060333,
+            0.022377416
+          ],
+          "std_seconds": 0.007497794273788872
+        }
+      },
+      "candidate": {
+        "compilation_seconds": 0.2839615,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 281195,
+          "flops": 42879,
+          "generated_code_bytes": 0,
+          "output_bytes": 2216,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 40296,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.148691041,
+        "output_bytes": 2176,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.003324291,
+          "mean_seconds": 0.0023251166,
+          "median_seconds": 0.001936833,
+          "min_seconds": 0.001420459,
+          "samples_seconds": [
+            0.003037125,
+            0.001420459,
+            0.003324291,
+            0.001936833,
+            0.001906875
+          ],
+          "std_seconds": 0.0007279287061963143
+        }
+      },
+      "capacity": 512,
+      "dense": {
+        "compilation_seconds": 0.117569167,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 7131940,
+          "flops": 1838400,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 2097232,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.018409833,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.009664417,
+          "mean_seconds": 0.0070147918000000005,
+          "median_seconds": 0.00687025,
+          "min_seconds": 0.004985375,
+          "samples_seconds": [
+            0.006359125,
+            0.004985375,
+            0.009664417,
+            0.00687025,
+            0.007194792
+          ],
+          "std_seconds": 0.0015246138924440377
+        }
+      },
+      "dense_workspace_bytes": 524288,
+      "paired_warm_median_ratio": 0.2819159419235108,
+      "preparation_peak_bytes": 207569,
+      "prepared_bytes": 36564,
+      "selected_route": "bvh"
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        "1"
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        "1"
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "gate": {
+    "baseline_bytes": 2097232,
+    "candidate_bytes": 40296,
+    "capacity": 512,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "71fbfbec85696f68a2f754884a49b8f97e572281e36a21e6f44294811ebd6913",
+    "evidence_fields": [
+      "cases",
+      "environment",
+      "gate",
+      "polygon_pairs",
+      "route"
+    ],
+    "evidence_schema_signature": "b3ece60757b5e428707234877b80ed78126774dfbaa4c82de2c8e4381e6334ba",
+    "fingerprint": "3be51af4368ee625098ddaa082f299404408f374b989025ee54d1e8e01adb2e9",
+    "source_build_fingerprint": "298dcbd203cdf2478dfe0a1b107aea6c43c770fd98eb681354e0837c37b538a1"
+  },
+  "polygon_pair_doubling_ratios": [
+    1.0146103896103895
+  ],
+  "polygon_pairs": [
+    {
+      "capacity": 512,
+      "pair_count": 130304,
+      "peak_bytes": 4928,
+      "retained_pair_bytes": 0
+    },
+    {
+      "capacity": 1024,
+      "pair_count": 522752,
+      "peak_bytes": 5000,
+      "retained_pair_bytes": 0
+    }
+  ],
+  "process_peak_rss_bytes": 1517780992,
+  "route": "candidate",
+  "smallest_latency_adopts": true,
+  "timing_context": "Same-process paired samples; contention may remain.",
+  "workspace_formula": {
+    "auto": "dense when 64*Q*E <= dense_workspace_bytes, BVH otherwise",
+    "bvh": "O(min(Q,64)*(leaf_size + k + log2(E))); prepared topology and outputs excluded"
+  }
+}

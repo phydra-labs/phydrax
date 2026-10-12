@@ -1,0 +1,182 @@
+{
+  "cases": [
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.196598833,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 1794340,
+        "flops": 429760,
+        "generated_code_bytes": 0,
+        "output_bytes": 2728,
+        "source": "jax-geometry-segment-query",
+        "temporary_bytes": 524368,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 24009,
+      "logical_workspace_bytes": 131072,
+      "lowering_seconds": 0.173286042,
+      "output_bytes": 2688,
+      "prepared_bytes": 4612,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.032535125,
+        "mean_seconds": 0.012146888666666666,
+        "median_seconds": 0.002005833,
+        "min_seconds": 0.001899708,
+        "samples_seconds": [
+          0.032535125,
+          0.001899708,
+          0.002005833
+        ],
+        "std_seconds": 0.014416725268862696
+      }
+    },
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.274229625,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 3572004,
+        "flops": 888512,
+        "generated_code_bytes": 0,
+        "output_bytes": 2728,
+        "source": "jax-geometry-segment-query",
+        "temporary_bytes": 1048656,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 34703,
+      "logical_workspace_bytes": 262144,
+      "lowering_seconds": 0.041773667,
+      "output_bytes": 2688,
+      "prepared_bytes": 9220,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.003987791,
+        "mean_seconds": 0.0031556799999999997,
+        "median_seconds": 0.003546291,
+        "min_seconds": 0.001932958,
+        "samples_seconds": [
+          0.001932958,
+          0.003546291,
+          0.003987791
+        ],
+        "std_seconds": 0.0008831826460640328
+      }
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.175848458,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 7127332,
+        "flops": 1838784,
+        "generated_code_bytes": 0,
+        "output_bytes": 2728,
+        "source": "jax-geometry-segment-query",
+        "temporary_bytes": 2097232,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 58111,
+      "logical_workspace_bytes": 524288,
+      "lowering_seconds": 0.090842959,
+      "output_bytes": 2688,
+      "prepared_bytes": 18436,
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.017639459,
+        "mean_seconds": 0.012432806,
+        "median_seconds": 0.014579167,
+        "min_seconds": 0.005079792,
+        "samples_seconds": [
+          0.014579167,
+          0.005079792,
+          0.017639459
+        ],
+        "std_seconds": 0.005347364331734716
+      }
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "db6c1f1434ea635a8c3406a418dedd5a7305a4ab777c91f1426602cb275174a4",
+    "evidence_fields": [
+      "cases",
+      "environment",
+      "gate",
+      "route"
+    ],
+    "evidence_schema_signature": "049f964caf6c84c134ce583de5ffd2238437f3f78baae9ae064adbad7f3f217d",
+    "fingerprint": "a988e9d822ce45c4852be5ad7423456ac3a2758303141357a0ddde516d50c14c",
+    "source_build_fingerprint": "1429577a9898844f5f0523c4dd5f146e8c3933c1ff80261c2ae538a6b957935e"
+  },
+  "process_peak_rss_bytes": 1429635072,
+  "route": "baseline"
+}

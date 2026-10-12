@@ -156,13 +156,22 @@ solver = phx.transport.Sinkhorn(
   `early_stop=True` permits short-circuiting.
 - `store_history=True` retains residuals for each check. Leave it off in large repeated
   training loops unless the trace is needed.
-- `block_size=None` uses dense reductions. A positive block size evaluates compiled
-  cost and plan blocks without retaining the complete pairwise matrix.
+- Both `Sinkhorn` and `UnbalancedSinkhorn` default to `block_size=256`.
+  Explicit `block_size=None` uses dense reductions. A positive block size evaluates
+  compiled cost and plan blocks without retaining the complete pairwise matrix.
+  Result provenance records both `execution` and `block_size`; `None` means no
+  pair tile (dense or factorized execution).
+  `TransportProvenance.block_size` is static metadata, absent from device leaves:
+  blockwise execution requires a positive integer, while every other execution
+  mode requires `None`. The additional field changes provenance representation
+  and fingerprints; persisted result templates must include the chosen route
+  and block size. This default cutover changes provenance intentionally, not
+  the discrete transport problem.
 
 Dense and blockwise modes solve the same discrete problem. Blockwise mode bounds
-working memory but increases loop overhead; choose it when the source-by-target matrix
-is the bottleneck. `dense_plan()` always materializes that matrix, even after a
-blockwise solve. Prefer matrix-free `apply_source_to_target`,
+working memory but increases loop overhead; select the explicit dense route when
+that tradeoff is preferable. `dense_plan()` always materializes the pairwise matrix,
+even after a blockwise solve. Prefer matrix-free `apply_source_to_target`,
 `apply_target_to_source`, and their barycentric variants.
 
 ## 6. Treat convergence as part of the value

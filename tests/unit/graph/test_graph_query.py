@@ -7,6 +7,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -268,3 +270,132 @@ def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> No
     assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
     assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
     assert jnp.all(jnp.isfinite(gradient))
+
+
+@pytest.mark.parametrize("radius", [None, 0.5], ids=["knn", "inclusive-radius"])
+@pytest.mark.parametrize("source_tile", [1, 3, 8], ids=["singleton", "partial", "whole"])
+def test_blocked_neighbors_match_independent_masked_periodic_reference(
+    radius: float | None,
+    source_tile: int,
+) -> None:
+    source = np.asarray([[0.0], [0.5], [0.25], [0.75], [0.0]], dtype=np.float64)
+    target = source.copy()
+    source_mask = np.asarray([True, True, False, True, True], dtype=np.bool_)
+    target_mask = np.asarray([True, False, True, True, True], dtype=np.bool_)
+    relative = target[:, None, :] - source[None, :, :]
+    relative -= np.round(relative)
+    squared = np.sum(relative * relative, axis=-1)
+    valid = source_mask[None, :] & target_mask[:, None] & ~np.eye(5, dtype=np.bool_)
+    if radius is not None:
+        valid &= squared <= radius * radius
+    indices = np.argsort(np.where(valid, squared, np.inf), axis=-1, kind="stable")[:, :3]
+    expected_valid = np.take_along_axis(valid, indices, axis=1)
+    expected_squared = np.where(
+        expected_valid,
+        np.take_along_axis(squared, indices, axis=1),
+        0,
+    )
+    result = phx.graph.query_neighbors(
+        source,
+        target,
+        source_mask=source_mask,
+        target_mask=target_mask,
+        max_neighbors=3,
+        radius=radius,
+        periodic_lengths=(1.0,),
+        exclude_self=True,
+        source_chunk_size=source_tile,
+        target_chunk_size=2,
+    )
+    np.testing.assert_array_equal(result.indices[0], indices)
+    np.testing.assert_array_equal(result.mask[0], expected_valid)
+    np.testing.assert_array_equal(result.distance_squared[0], expected_squared)
+    np.testing.assert_array_equal(result.count[0], expected_valid.sum(axis=-1))
+    np.testing.assert_allclose(
+        result.relative[0],
+        np.where(
+            expected_valid[..., None],
+            np.take_along_axis(
+                relative,
+                indices[..., None],
+                axis=1,
+            ),
+            0,
+        ),
+    )
+    assert result.evidence.backend == "blocked"
+    assert bool(result.evidence.successful & result.evidence.complete)
+
+
+@pytest.mark.parametrize(
+    "kind", ["radius", "knn"], ids=["inclusive-radius", "stable-knn"]
+)
+def test_host_query_edges_match_brute_force_across_source_tiles(kind: str) -> None:
+    source = np.linspace(-1.0, 1.0, 261, dtype=np.float64)[:, None]
+    source[0] = source[260] = 0.5
+    target = np.asarray([[0.0], [0.5], [-0.5]], dtype=np.float64)
+    distance = np.linalg.norm(target[:, None, :] - source[None, :, :], axis=-1)
+    if kind == "radius":
+        target_ids, source_ids = np.nonzero(distance <= 0.5)
+        bundle = phx.graph.radius_query_graph(
+            source, target, radius=0.5, weight_kind=None
+        )
+    else:
+        source_ids = np.argsort(distance, axis=-1, kind="stable")[:, :4].reshape(-1)
+        target_ids = np.repeat(np.arange(3, dtype=np.int32), 4)
+        bundle = phx.graph.knn_query_graph(source, target, k=4)
+    np.testing.assert_array_equal(bundle.graph.edges["source_index"], source_ids)
+    np.testing.assert_array_equal(bundle.graph.edges["target_index"], target_ids)
+
+
+def test_graph_query_morton_overflow_refuses_neighbors() -> None:
+    source = jnp.full((8, 1), 0.25, dtype=jnp.float64)
+    plan = phx.discretization.spatial.MortonNeighborQueryPlan(
+        phx.discretization.spatial.MortonAddressPlan((0.0,), (1.0,), 8),
+        8,
+        1,
+        1,
+        maximum_candidates=2,
+    )
+    result = phx.graph.query_neighbors(source, jnp.asarray([[0.25]]), plan=plan)
+    assert not bool(result.evidence.complete)
+    assert not bool(result.evidence.successful)
+    assert not bool(jnp.any(result.mask))
+    np.testing.assert_array_equal(result.count, 0)
+
+
+@pytest.mark.parametrize("axis", ["source", "target"])
+def test_graph_query_refuses_nonpositive_chunk_size(axis: str) -> None:
+    with pytest.raises(ValueError, match="chunk_size must be positive"):
+        if axis == "source":
+            phx.graph.query_neighbors([[0.0]], [[0.0]], source_chunk_size=0)
+        else:
+            phx.graph.query_neighbors([[0.0]], [[0.0]], target_chunk_size=0)
+
+
+@pytest.mark.parametrize("axis", ["source", "target"])
+@pytest.mark.parametrize(
+    "tile", [None, True, 1.5, "2"], ids=["none", "boolean", "fractional", "string"]
+)
+def test_graph_query_refuses_noninteger_chunk_sizes(axis: str, tile: Any) -> None:
+    with pytest.raises(TypeError, match="chunk_size must be an integer"):
+        if axis == "source":
+            phx.graph.query_neighbors([[0.0]], [[0.0]], source_chunk_size=tile)
+        else:
+            phx.graph.query_neighbors([[0.0]], [[0.0]], target_chunk_size=tile)
+
+
+def test_blocked_neighbors_preserve_nonfinite_failure_routes() -> None:
+    source = np.asarray([[np.nan], [1.0], [0.0], [2.0], [np.inf]], dtype=np.float64)
+    expected = np.argsort(np.square(source[:, 0]), kind="stable")
+    result = phx.graph.query_neighbors(
+        source,
+        [[0.0]],
+        max_neighbors=5,
+        source_chunk_size=3,
+    )
+    np.testing.assert_array_equal(result.indices[0, 0], expected)
+    np.testing.assert_array_equal(result.mask, True)
+    np.testing.assert_array_equal(result.count, 5)
+    assert not bool(result.evidence.finite)
+    assert not bool(result.evidence.successful)

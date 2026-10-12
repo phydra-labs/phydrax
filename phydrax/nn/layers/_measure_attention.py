@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import assert_never, Literal, TypeAlias
 
+import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
@@ -107,12 +108,22 @@ def _blockwise_softmax_attention(
         dtype=query.dtype,
     )
     scale = _attention_scale(query)
-    for start in range(0, source_count, int(block_size)):
-        stop = min(source_count, start + int(block_size))
-        block_key = key[:, start:stop]
-        block_value = value[:, start:stop]
-        block_measure = measure[:, start:stop]
-        valid = block_measure > 0.0
+    tile = min(block_size, source_count)
+    tile_indices = jnp.arange(tile, dtype=jnp.int32)
+
+    def step(
+        index: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        running_max, running_sum, accumulator = carry
+        requested_start = index * tile
+        start = jnp.minimum(requested_start, source_count - tile)
+        block_key = jax.lax.dynamic_slice_in_dim(key, start, tile, axis=1)
+        block_value = jax.lax.dynamic_slice_in_dim(value, start, tile, axis=1)
+        block_measure = jax.lax.dynamic_slice_in_dim(measure, start, tile, axis=1)
+        # The final clamped slice overlaps its predecessor; exclude that prefix.
+        valid = (block_measure > 0.0) & (
+            (start + tile_indices >= requested_start)[None, :]
+        )
         logits = ein.contract("bhqd,bshd->bhqs", q, block_key) * scale
         logits = jnp.where(
             valid[:, None, None, :],
@@ -136,7 +147,14 @@ def _blockwise_softmax_attention(
         accumulator = accumulator * previous_scale[..., None] + ein.contract(
             "bhqs,bshd->bhqd", exponential, block_value
         )
-        running_max = updated_max
+        return updated_max, running_sum, accumulator
+
+    running_max, running_sum, accumulator = jax.lax.fori_loop(
+        0,
+        (source_count + tile - 1) // tile,
+        step,
+        (running_max, running_sum, accumulator),
+    )
     normalized = jnp.where(
         running_sum[..., None] > 0.0,
         accumulator
@@ -396,7 +414,15 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                             measure,
                             implementation="xla",
                         )
-                    case "auto" | "dense":
+                    case "auto":
+                        attended = _blockwise_softmax_attention(
+                            q_acc,
+                            k_acc,
+                            v_acc,
+                            measure,
+                            block_size=self.block_size,
+                        )
+                    case "dense":
                         attended = _dense_softmax_attention(q_acc, k_acc, v_acc, measure)
                     case _:
                         assert_never(self.execution)

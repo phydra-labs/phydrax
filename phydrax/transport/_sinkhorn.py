@@ -50,7 +50,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         min_iterations: int = 1,
         tolerance: ArrayLike = 1e-7,
         check_every: int = 5,
-        block_size: int | None = None,
+        block_size: int | None = 256,
         early_stop: bool = False,
         store_history: bool = False,
     ) -> None:
@@ -339,6 +339,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             "unrolled",
             problem.provenance.source,
             problem.provenance.target,
+            block_size=self.block_size,
         )
         return SinkhornResult(
             problem=problem,

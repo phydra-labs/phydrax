@@ -32,6 +32,7 @@ from ..neighbors._utils import distance_softmax_regularity
 
 ClusterInitialization: TypeAlias = Literal["random", "first", "k-means++"]
 EmptyClusterPolicy: TypeAlias = Literal["retain", "reseed", "error"]
+SpectralEigenMethod: TypeAlias = Literal["dense-eigh", "restarted-lanczos"]
 
 # Hard labels are locally constant between assignment boundaries and stopped.
 _HARD_LABEL_CONTRACT = DerivativeContract(
@@ -206,6 +207,14 @@ def initialize_centers(
 
 
 class ClusterDiagnostics(StrictModule):
+    """Consumer fit evidence, including spectral arrays and static method identity.
+
+    Spectral fits require matching ``eigenvalues`` and ``eigen_residuals`` arrays
+    with leading fitted case axes, plus static ``eigen_method`` metadata.
+    Non-spectral fits require all three fields to be ``None``. These numerical
+    leaves are part of the diagnostics' PyTree and persistence template.
+    """
+
     valid: Array
     status: Array
     objective: Array
@@ -217,6 +226,9 @@ class ClusterDiagnostics(StrictModule):
     converged: Array
     degeneracy: Array
     method: str = eqx.field(static=True)
+    eigenvalues: Array | None
+    eigen_residuals: Array | None
+    eigen_method: SpectralEigenMethod | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -232,7 +244,33 @@ class ClusterDiagnostics(StrictModule):
         converged: Any,
         degeneracy: Any = False,
         method: str,
+        eigenvalues: Array | None = None,
+        eigen_residuals: Array | None = None,
+        eigen_method: SpectralEigenMethod | None = None,
     ) -> None:
+        spectral = method == "spectral-clustering"
+        present = (
+            eigenvalues is not None,
+            eigen_residuals is not None,
+            eigen_method is not None,
+        )
+        if (spectral and not all(present)) or (not spectral and any(present)):
+            raise ValueError(
+                "Spectral evidence must be present only for spectral clustering."
+            )
+        if eigenvalues is not None and eigen_residuals is not None:
+            if eigenvalues.shape != eigen_residuals.shape:
+                raise ValueError("Eigenvalues and residuals must have identical shapes.")
+            if eigenvalues.shape[:-1] != jnp.shape(valid):
+                raise ValueError("Spectral evidence must match the fitted case axes.")
+        parsed_eigen_method = (
+            None
+            if eigen_method is None
+            else parse(eigen_method, SpectralEigenMethod, "eigen_method")
+        )
+        self.eigenvalues = eigenvalues
+        self.eigen_residuals = eigen_residuals
+        self.eigen_method = parsed_eigen_method
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)

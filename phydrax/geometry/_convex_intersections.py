@@ -230,43 +230,39 @@ def _self_intersection(
     """Whether non-adjacent edges touch; ``None`` when a sign is unresolved."""
 
     count = points.shape[0]
-    pairs = [
-        (first, second)
-        for first in range(count)
-        for second in range(first + 2, count)
-        if not (first == 0 and second == count - 1)
-    ]
-    if not pairs:
-        return False
-    first_index = np.asarray([pair[0] for pair in pairs], dtype=np.intp)
-    second_index = np.asarray([pair[1] for pair in pairs], dtype=np.intp)
-    a = points[first_index]
-    b = points[(first_index + 1) % count]
-    c = points[second_index]
-    d = points[(second_index + 1) % count]
-    signs = np.stack(
-        (
-            tracker.orient(a, b, c),
-            tracker.orient(a, b, d),
-            tracker.orient(c, d, a),
-            tracker.orient(c, d, b),
-        ),
-        axis=1,
-    )
-    if np.any(signs == 2):
-        return None
-    for row, (ab_c, ab_d, cd_a, cd_b) in enumerate(signs.tolist()):
-        if ab_c * ab_d < 0 and cd_a * cd_b < 0:
-            return True
-        touching = (
-            (ab_c == 0 and _on_segment(a[row], b[row], c[row]))
-            or (ab_d == 0 and _on_segment(a[row], b[row], d[row]))
-            or (cd_a == 0 and _on_segment(c[row], d[row], a[row]))
-            or (cd_b == 0 and _on_segment(c[row], d[row], b[row]))
-        )
-        if touching:
-            return True
-    return False
+    uncertain = False
+    intersects = False
+    for first in range(count):
+        stop = count - 1 if first == 0 else count
+        for start in range(first + 2, stop, 256):
+            second = np.arange(start, min(start + 256, stop), dtype=np.intp)
+            c = points[second]
+            d = points[(second + 1) % count]
+            a = np.broadcast_to(points[first], c.shape)
+            b = np.broadcast_to(points[(first + 1) % count], c.shape)
+            signs = np.stack(
+                (
+                    tracker.orient(a, b, c),
+                    tracker.orient(a, b, d),
+                    tracker.orient(c, d, a),
+                    tracker.orient(c, d, b),
+                ),
+                axis=1,
+            )
+            uncertain |= bool(np.any(signs == 2))
+            for row, (ab_c, ab_d, cd_a, cd_b) in enumerate(signs.tolist()):
+                if 2 in (ab_c, ab_d, cd_a, cd_b):
+                    continue
+                crosses = ab_c * ab_d < 0 and cd_a * cd_b < 0
+                touching = (
+                    (ab_c == 0 and _on_segment(a[row], b[row], c[row]))
+                    or (ab_d == 0 and _on_segment(a[row], b[row], d[row]))
+                    or (cd_a == 0 and _on_segment(c[row], d[row], a[row]))
+                    or (cd_b == 0 and _on_segment(c[row], d[row], b[row]))
+                )
+                intersects |= crosses or touching
+    # Uncertainty has priority even if another tile contains a certain crossing.
+    return None if uncertain else intersects
 
 
 def _prepare_polygon(

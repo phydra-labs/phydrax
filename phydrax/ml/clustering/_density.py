@@ -32,7 +32,9 @@ from .._contracts import (
     ML_SUCCESS,
     prediction_fit_contract,
 )
+from .._numerics._pairwise import pair_block_size
 from .._schema import AbstractFittedModel
+from ..neighbors._utils import blocked_case_top_k, gather_support
 from ._common import (
     active_data,
     ClusterDiagnostics,
@@ -107,14 +109,18 @@ class DensityClusterModel(AbstractFittedModel):
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
-        distance = self.core_distances(x)
-        nearest = jnp.argmin(distance, axis=-1)
-        sample_ndim = distance.ndim - len(self.case_shape) - 1
-        labels = self.core_labels.reshape(
-            self.case_shape + (1,) * sample_ndim + (self.core_points.shape[-2],)
+        indices, distances = blocked_case_top_k(
+            jnp.asarray(x),
+            self.core_points,
+            self.core_active,
+            self.case_shape,
+            "euclidean",
+            1,
         )
-        label = jnp.take_along_axis(labels, nearest[..., None], axis=-1).squeeze(-1)
-        minimum = jnp.min(distance, axis=-1)
+        label = gather_support(self.core_labels[..., None], indices, self.case_shape)[
+            ..., 0, 0
+        ]
+        minimum = distances[..., 0]
         return jax.lax.stop_gradient(
             jnp.where(minimum <= self.radius, label, -1).astype(jnp.int32)
         )
@@ -142,6 +148,54 @@ class DensityClusterModel(AbstractFittedModel):
         return jnp.where(total > 0.0, cluster_score / total, 0.0)
 
 
+def _radius_reduce(
+    x: Array,
+    active: Array,
+    radius: Array | float,
+    values: Array,
+    /,
+    *,
+    minimum: bool,
+    block_size: int = 64,
+) -> Array:
+    n = x.shape[0]
+    b = block_size
+    padded = ((n + b - 1) // b) * b
+    points = jnp.pad(x, ((0, padded - n), (0, 0)))
+    mask = jnp.pad(active, ((0, padded - n),))
+    fill = n if minimum else 0
+    source = jnp.pad(values, ((0, padded - n),), constant_values=fill)
+    output = jnp.full((padded,), fill, dtype=values.dtype)
+
+    def row_step(i: Array, output: Array) -> Array:
+        query = jax.lax.dynamic_slice_in_dim(points, i * b, b)
+        query_mask = jax.lax.dynamic_slice_in_dim(mask, i * b, b)
+
+        def column_step(j: Array, total: Array) -> Array:
+            support = jax.lax.dynamic_slice_in_dim(points, j * b, b)
+            support_mask = jax.lax.dynamic_slice_in_dim(mask, j * b, b)
+            value = jax.lax.dynamic_slice_in_dim(source, j * b, b)
+            difference = query[:, None, :] - support[None, :, :]
+            distance = jnp.sqrt(
+                jnp.maximum(
+                    jnp.real(jnp.sum(jnp.conj(difference) * difference, axis=-1)), 0.0
+                )
+            )
+            adjacency = (distance <= radius) & query_mask[:, None] & support_mask[None, :]
+            if minimum:
+                return jnp.minimum(
+                    total, jnp.min(jnp.where(adjacency, value[None, :], n), axis=-1)
+                )
+            return total + jnp.where(adjacency, value[None, :], 0.0).sum(axis=-1)
+
+        reduced = jax.lax.fori_loop(
+            0, padded // b, column_step, jnp.full((b,), fill, dtype=values.dtype)
+        )
+        return jax.lax.dynamic_update_slice_in_dim(output, reduced, i * b, axis=0)
+
+    return jax.lax.fori_loop(0, padded // b, row_step, output)[:n]
+
+
 def _density_one(
     x: Array,
     w: Array,
@@ -149,24 +203,48 @@ def _density_one(
     minimum_mass: float,
     cluster_capacity: int,
     core_capacity: int,
+    workspace_bytes: int = 4 * 1024 * 1024,
 ) -> tuple[Array, ...]:
     n, p = x.shape
     active = w > 0.0
-    distance = pairwise_distances(x, "euclidean")
-    adjacency = (distance <= radius) & active[:, None] & active[None, :]
-    neighborhood_mass = adjacency @ w
+    b = pair_block_size(
+        n, n, p, jnp.dtype(jnp.result_type(x, w)).itemsize, workspace_bytes
+    )
+    adjacency = None
+    if b >= n:
+        adjacency = (
+            (pairwise_distances(x, "euclidean") <= radius)
+            & active[:, None]
+            & active[None, :]
+        )
+        neighborhood_mass = adjacency @ w
+    else:
+        neighborhood_mass = _radius_reduce(
+            x, active, radius, w, minimum=False, block_size=b
+        )
     core = active & (neighborhood_mass >= minimum_mass)
     sentinel = jnp.asarray(n, dtype=jnp.int32)
     root = jnp.where(core, jnp.arange(n, dtype=jnp.int32), sentinel)
-    core_edges = adjacency & core[:, None] & core[None, :]
+    core_edges = None if adjacency is None else adjacency & core[:, None] & core[None, :]
 
     def propagate(_: Array, labels: Array) -> Array:
-        candidate = jnp.where(core_edges, labels[None, :], sentinel)
-        return jnp.where(core, jnp.minimum(labels, jnp.min(candidate, axis=-1)), sentinel)
+        if core_edges is None:
+            candidate = _radius_reduce(
+                x, core, radius, labels, minimum=True, block_size=b
+            )
+        else:
+            candidate = jnp.min(jnp.where(core_edges, labels[None, :], sentinel), axis=-1)
+        return jnp.where(core, jnp.minimum(labels, candidate), sentinel)
 
     root = jax.lax.fori_loop(0, n, propagate, root)
-    adjacent_root = jnp.min(
-        jnp.where(adjacency & core[None, :], root[None, :], sentinel), axis=-1
+    adjacent_root = (
+        _radius_reduce(
+            x, active, radius, jnp.where(core, root, sentinel), minimum=True, block_size=b
+        )
+        if adjacency is None
+        else jnp.min(
+            jnp.where(adjacency & core[None, :], root[None, :], sentinel), axis=-1
+        )
     )
     root = jnp.where(
         core,
@@ -175,9 +253,8 @@ def _density_one(
     )
     is_root = core & (root == jnp.arange(n, dtype=jnp.int32))
     cluster_count = jnp.sum(is_root)
-    cluster_label = jnp.sum(
-        is_root[None, :] & (jnp.arange(n)[None, :] < root[:, None]), axis=-1
-    ).astype(jnp.int32)
+    root_prefix = jnp.cumsum(is_root.astype(jnp.int32)) - is_root.astype(jnp.int32)
+    cluster_label = root_prefix[jnp.minimum(root, n - 1)]
     labels = jnp.where(root < sentinel, cluster_label, -1)
     within_capacity = labels < cluster_capacity
     labels = jnp.where(within_capacity, labels, -1)
@@ -218,6 +295,7 @@ def _fit_density(
     core_capacity: int,
     weight_policy: WeightPolicy,
     method: str,
+    workspace_bytes: int,
 ) -> FitResult:
     if cluster_capacity > batch.sample_count or core_capacity > batch.sample_count:
         raise ValueError("cluster and core capacities cannot exceed sample capacity.")
@@ -228,7 +306,13 @@ def _fit_density(
         case_count *= size
     outputs = jax.vmap(
         lambda values, weights: _density_one(
-            values, weights, radius, minimum_mass, cluster_capacity, core_capacity
+            values,
+            weights,
+            radius,
+            minimum_mass,
+            cluster_capacity,
+            core_capacity,
+            workspace_bytes // case_count,
         )
     )(x.reshape((case_count, n, p)), w.reshape((case_count, n)))
     (
@@ -313,6 +397,7 @@ class DBSCAN(AbstractRecipe):
     radius: float = eqx.field(static=True)
     minimum_samples: float = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -323,7 +408,10 @@ class DBSCAN(AbstractRecipe):
         radius: float = 0.5,
         minimum_samples: float = 5.0,
         weight_policy: WeightPolicy = "statistical",
+        workspace_bytes: int = 4 * 1024 * 1024,
     ) -> None:
+        if workspace_bytes <= 0:
+            raise ValueError("workspace_bytes must be positive.")
         if (
             cluster_capacity <= 0
             or core_capacity <= 0
@@ -336,6 +424,7 @@ class DBSCAN(AbstractRecipe):
         self.radius = float(radius)
         self.minimum_samples = float(minimum_samples)
         self.weight_policy = weight_policy
+        self.workspace_bytes = workspace_bytes
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
@@ -347,6 +436,7 @@ class DBSCAN(AbstractRecipe):
             core_capacity=self.core_capacity,
             weight_policy=self.weight_policy,
             method="dbscan",
+            workspace_bytes=self.workspace_bytes,
         )
 
 
@@ -355,6 +445,7 @@ class ConnectivityClustering(AbstractRecipe):
     representative_capacity: int = eqx.field(static=True)
     radius: float = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -364,13 +455,17 @@ class ConnectivityClustering(AbstractRecipe):
         *,
         radius: float = 1.0,
         weight_policy: WeightPolicy = "statistical",
+        workspace_bytes: int = 4 * 1024 * 1024,
     ) -> None:
+        if workspace_bytes <= 0:
+            raise ValueError("workspace_bytes must be positive.")
         if cluster_capacity <= 0 or representative_capacity <= 0 or radius <= 0.0:
             raise ValueError("invalid connectivity clustering configuration.")
         self.cluster_capacity = int(cluster_capacity)
         self.representative_capacity = int(representative_capacity)
         self.radius = float(radius)
         self.weight_policy = weight_policy
+        self.workspace_bytes = workspace_bytes
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
@@ -382,6 +477,7 @@ class ConnectivityClustering(AbstractRecipe):
             core_capacity=self.representative_capacity,
             weight_policy=self.weight_policy,
             method="connectivity-clustering",
+            workspace_bytes=self.workspace_bytes,
         )
 
 

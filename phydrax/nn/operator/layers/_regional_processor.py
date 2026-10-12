@@ -14,6 +14,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._strict import StrictModule
+from phydrax._validation import positive_integer
 
 from ...._model import register_artifact_value
 from ....graph import (
@@ -183,6 +184,10 @@ class RegionalGraphProcessor(StrictModule):
     deterministic, case-local K-nearest-neighbor graph. Regional quadrature
     enters every aggregation, and normalized weighted reductions keep the
     processor insensitive to a uniform rescaling of the measure.
+
+    ``target_chunk_size=64`` is a positive, non-boolean integer static field;
+    sources use tiles of 256. ``None`` is not supported. Tile sizes control
+    exact query workspace and participate in model structure and persistence.
     """
 
     processor: GraphProcessor | RepeatedGraphProcessor
@@ -192,7 +197,7 @@ class RegionalGraphProcessor(StrictModule):
     neighbors: int = eqx.field(static=True)
     radius: float | None = eqx.field(static=True)
     include_self: bool = eqx.field(static=True)
-    target_chunk_size: int | None = eqx.field(static=True)
+    target_chunk_size: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -206,7 +211,7 @@ class RegionalGraphProcessor(StrictModule):
         mlp_depth: int = 2,
         radius: float | None = None,
         include_self: bool = False,
-        target_chunk_size: int | None = None,
+        target_chunk_size: int = 64,
         shared: bool = True,
         edge_dropout: float = 0.0,
         residual_scale: float = 1.0,
@@ -223,8 +228,7 @@ class RegionalGraphProcessor(StrictModule):
             raise ValueError("width and mlp_depth must be positive.")
         if radius is not None and float(radius) <= 0.0:
             raise ValueError("radius must be positive when supplied.")
-        if target_chunk_size is not None and int(target_chunk_size) <= 0:
-            raise ValueError("target_chunk_size must be positive when supplied.")
+        target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
 
         if shared:
             block = _regional_block(
@@ -263,9 +267,7 @@ class RegionalGraphProcessor(StrictModule):
         self.neighbors = int(neighbors)
         self.radius = None if radius is None else float(radius)
         self.include_self = bool(include_self)
-        self.target_chunk_size = (
-            None if target_chunk_size is None else int(target_chunk_size)
-        )
+        self.target_chunk_size = target_chunk_size
 
     def __call__(
         self,

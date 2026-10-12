@@ -19,12 +19,28 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    FunctionLinearOperator,
+    MaterializationPolicy,
+    OperatorProperties,
+)
+from ...linalg.eigen import (
+    DenseEigh,
+    Eigenproblem,
+    eigensolve,
+    EigenSolvePolicy,
+    EigenTolerancePolicy,
+    RestartedLanczos,
+)
 from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
     ML_INSUFFICIENT_DATA,
+    ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
     prediction_fit_contract,
@@ -78,6 +94,102 @@ def _deterministic_embedding_kmeans(
     return centers, labels, mass
 
 
+def _rbf_action(x: Array, w: Array, gamma: Array, vector: Array) -> Array:
+    """Exact adjacency action with fixed-size pair tiles, excluding self edges."""
+    n = x.shape[0]
+    b = 64
+    padded = ((n + b - 1) // b) * b
+    points = jnp.pad(x, ((0, padded - n), (0, 0)))
+    weights = jnp.pad(w, ((0, padded - n),))
+    v = jnp.pad(vector, ((0, padded - n),))
+    output = jnp.zeros((padded,), dtype=w.dtype)
+
+    def row_step(i: Array, output: Array) -> Array:
+        query = jax.lax.dynamic_slice_in_dim(points, i * b, b)
+        qw = jax.lax.dynamic_slice_in_dim(weights, i * b, b)
+
+        def column_step(j: Array, total: Array) -> Array:
+            support = jax.lax.dynamic_slice_in_dim(points, j * b, b)
+            sw = jax.lax.dynamic_slice_in_dim(weights, j * b, b)
+            sv = jax.lax.dynamic_slice_in_dim(v, j * b, b)
+            difference = query[:, None, :] - support[None, :, :]
+            squared = jnp.real(jnp.sum(jnp.conj(difference) * difference, axis=-1))
+            adjacency = jnp.exp(-gamma * jnp.maximum(squared, 0.0)) * jnp.sqrt(
+                qw[:, None] * sw[None, :]
+            )
+            distinct = (i * b + jnp.arange(b))[:, None] != (j * b + jnp.arange(b))[
+                None, :
+            ]
+            return total + jnp.where(distinct, adjacency, 0.0) @ sv
+
+        value = jax.lax.fori_loop(
+            0, padded // b, column_step, jnp.zeros((b,), dtype=w.dtype)
+        )
+        return jax.lax.dynamic_update_slice_in_dim(output, value, i * b, axis=0)
+
+    return jax.lax.fori_loop(0, padded // b, row_step, output)[:n]
+
+
+def _partial_spectrum(
+    x: Array,
+    w: Array,
+    gamma: Array,
+    count: int,
+    method: RestartedLanczos,
+    component_tolerance: Array | float = 1e-7,
+) -> tuple[Array, Array, Array, Array, Array]:
+    n = x.shape[0]
+    degree = _rbf_action(x, w, gamma, jnp.ones_like(w))
+    inverse_root = jnp.where(degree > 0.0, jax.lax.rsqrt(degree), 0.0)
+
+    def action(vector: Array) -> Array:
+        normalized = inverse_root * _rbf_action(x, w, gamma, inverse_root * vector)
+        return jnp.where(w > 0.0, vector - normalized, 2.0 * vector)
+
+    space = ArraySpace((n,), dtype=w.dtype)
+    operator = FunctionLinearOperator(
+        action,
+        source=space,
+        target=space,
+        transpose_action=action,
+        properties=OperatorProperties(
+            self_adjoint=True, evidence={"self_adjoint": "construction"}
+        ),
+        operator_id="spectral-clustering-normalized-laplacian",
+    )
+    solved = eigensolve(
+        Eigenproblem(operator),
+        policy=EigenSolvePolicy(
+            method,
+            count=min(count, n - 1),
+            tolerance=EigenTolerancePolicy(relative=1e-10, absolute=1e-11),
+            key=jax.random.key(0),
+        ),
+    )
+    vectors = solved.eigenvectors
+    if not isinstance(vectors, Array):
+        raise TypeError("Spectral clustering requires an array eigenspace.")
+    residual = solved.diagnostics.residual_norms
+    values = solved.eigenvalues
+    if count == n:
+        # The one omitted eigenvalue is exactly the trace minus the retained sum.
+        # No omitted eigenvector is needed for the clustering embedding.
+        omitted = jnp.sum(jnp.where(w > 0.0, 1.0, 2.0)) - jnp.sum(values)
+        values = jnp.concatenate((values, omitted[None]))
+        residual = jnp.concatenate((residual, jnp.sum(residual)[None]))
+        vectors = jnp.pad(vectors, ((0, 0), (0, 1)))
+    gaps = jnp.diff(values)
+    certified = jnp.all(solved.converged & solved.mode_mask) & jnp.all(
+        gaps > residual[:-1] + residual[1:] + 1e-10
+    )
+    threshold_certified = jnp.all(
+        (values + residual < component_tolerance)
+        | (values - residual >= component_tolerance)
+    ) & (values[-1] - residual[-1] >= component_tolerance)
+    certified = certified & threshold_certified
+    return values, vectors, degree, certified, residual
+
+
 class SpectralClustering(AbstractRecipe):
     cluster_count: int = eqx.field(static=True)
     gamma: Array
@@ -85,6 +197,8 @@ class SpectralClustering(AbstractRecipe):
     kmeans_iterations: int = eqx.field(static=True)
     eigenvalue_tolerance: Array
     weight_policy: WeightPolicy = eqx.field(static=True)
+    eigen_method: DenseEigh | RestartedLanczos
+    dense_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -96,7 +210,14 @@ class SpectralClustering(AbstractRecipe):
         kmeans_iterations: int = 32,
         eigenvalue_tolerance: float = 1e-7,
         weight_policy: WeightPolicy = "statistical",
+        eigen_method: DenseEigh | RestartedLanczos | None = None,
+        dense_workspace_bytes: int = 64 * 1024 * 1024,
     ) -> None:
+        method = RestartedLanczos() if eigen_method is None else eigen_method
+        if not isinstance(method, (DenseEigh, RestartedLanczos)):
+            raise TypeError("eigen_method must be DenseEigh or RestartedLanczos.")
+        if dense_workspace_bytes <= 0:
+            raise ValueError("dense_workspace_bytes must be positive.")
         if cluster_count <= 0 or kmeans_iterations <= 0:
             raise ValueError("cluster_count and kmeans_iterations must be positive.")
         self.cluster_count = int(cluster_count)
@@ -107,6 +228,8 @@ class SpectralClustering(AbstractRecipe):
             eigenvalue_tolerance, "eigenvalue_tolerance"
         )
         self.weight_policy = weight_policy
+        self.eigen_method = method
+        self.dense_workspace_bytes = dense_workspace_bytes
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
@@ -114,21 +237,80 @@ class SpectralClustering(AbstractRecipe):
             raise ValueError("cluster_count cannot exceed sample capacity.")
         x, w, active, invalid = active_data(batch, self.weight_policy)
         n = batch.sample_count
-        distance = pairwise_distances(x, "squared-euclidean")
-        adjacency = jnp.exp(-self.gamma * distance) * jnp.sqrt(
-            w[..., :, None] * w[..., None, :]
-        )
-        pair_active = active[..., :, None] & active[..., None, :]
-        adjacency = jnp.where(pair_active & ~jnp.eye(n, dtype=jnp.bool_), adjacency, 0.0)
-        degree = jnp.sum(adjacency, axis=-1)
-        inverse_root = jnp.where(degree > 0.0, jax.lax.rsqrt(degree), 0.0)
-        normalized = inverse_root[..., :, None] * adjacency * inverse_root[..., None, :]
-        laplacian = jnp.eye(n, dtype=adjacency.dtype) - normalized
-        laplacian = jnp.where(pair_active, laplacian, 0.0)
-        laplacian = laplacian.at[..., jnp.arange(n), jnp.arange(n)].set(
-            jnp.where(active, jnp.diagonal(laplacian, axis1=-2, axis2=-1), 2.0)
-        )
-        eigenvalues, eigenvectors = jnp.linalg.eigh(laplacian)
+        case_count = w.size // n
+        if isinstance(self.eigen_method, DenseEigh):
+            workspace_entries = (6 + x.shape[-1]) * case_count * n * n
+            MaterializationPolicy(
+                max_entries=workspace_entries, max_bytes=self.dense_workspace_bytes
+            ).require(workspace_entries, jnp.result_type(x, w))
+            distance = pairwise_distances(x, "squared-euclidean")
+            adjacency = jnp.exp(-self.gamma * distance) * jnp.sqrt(
+                w[..., :, None] * w[..., None, :]
+            )
+            pair_active = active[..., :, None] & active[..., None, :]
+            adjacency = jnp.where(
+                pair_active & ~jnp.eye(n, dtype=jnp.bool_), adjacency, 0.0
+            )
+            degree = jnp.sum(adjacency, axis=-1)
+            inverse_root = jnp.where(degree > 0.0, jax.lax.rsqrt(degree), 0.0)
+            normalized = (
+                inverse_root[..., :, None] * adjacency * inverse_root[..., None, :]
+            )
+            laplacian = jnp.eye(n, dtype=adjacency.dtype) - normalized
+            laplacian = jnp.where(pair_active, laplacian, 0.0)
+            laplacian = laplacian.at[..., jnp.arange(n), jnp.arange(n)].set(
+                jnp.where(active, jnp.diagonal(laplacian, axis1=-2, axis2=-1), 2.0)
+            )
+            operator = DenseLinearOperator(
+                laplacian,
+                operator_id="spectral-clustering-dense-laplacian",
+                properties=OperatorProperties(
+                    self_adjoint=True, evidence={"self_adjoint": "construction"}
+                ),
+            )
+            solved = eigensolve(
+                Eigenproblem(operator),
+                policy=EigenSolvePolicy(
+                    self.eigen_method,
+                    count=n,
+                    materialization=MaterializationPolicy(
+                        max_entries=n * n, max_bytes=self.dense_workspace_bytes
+                    ),
+                ),
+            )
+            eigenvalues = solved.eigenvalues
+            eigenvectors = solved.eigenvectors
+            if not isinstance(eigenvectors, Array):
+                raise TypeError("Spectral clustering requires an array eigenspace.")
+            eigen_residuals = solved.diagnostics.residual_norms
+            certified = jnp.all(solved.converged & solved.mode_mask, axis=-1)
+        else:
+            if self.cluster_count >= n:
+                raise ValueError(
+                    "Partial spectral clustering requires an additional isolation mode; select budgeted DenseEigh."
+                )
+            cases = x.reshape((-1, n, x.shape[-1]))
+            weights = w.reshape((-1, n))
+            method = self.eigen_method
+            values, vectors, degrees, certification, residuals = jax.vmap(
+                lambda a, b: _partial_spectrum(
+                    a,
+                    b,
+                    self.gamma,
+                    self.cluster_count + 1,
+                    method,
+                    self.eigenvalue_tolerance,
+                )
+            )(cases, weights)
+            eigenvalues = values.reshape(batch.case_shape + (self.cluster_count + 1,))
+            eigen_residuals = residuals.reshape(
+                batch.case_shape + (self.cluster_count + 1,)
+            )
+            eigenvectors = vectors.reshape(batch.case_shape + (n, self.cluster_count + 1))
+            degree = degrees.reshape(batch.case_shape + (n,))
+            certified = certification.reshape(batch.case_shape) & (
+                eigenvalues[..., -1] > self.eigenvalue_tolerance
+            )
         embedding = eigenvectors[..., :, : self.cluster_count]
         pivot = jnp.argmax(jnp.abs(embedding), axis=-2)
         phase_value = jnp.take_along_axis(
@@ -170,6 +352,7 @@ class SpectralClustering(AbstractRecipe):
             & finite
             & ~invalid
             & ~component_overflow
+            & certified
             & jnp.all(active_clusters, axis=-1)
         )
         status = jnp.where(
@@ -178,7 +361,7 @@ class SpectralClustering(AbstractRecipe):
             jnp.where(
                 ~enough | component_overflow | ~jnp.all(active_clusters, axis=-1),
                 ML_INSUFFICIENT_DATA,
-                ML_SUCCESS,
+                jnp.where(certified, ML_SUCCESS, ML_NONCONVERGED),
             ),
         )
         model = SoftClusterModel(
@@ -193,9 +376,14 @@ class SpectralClustering(AbstractRecipe):
             cluster_mass=cluster_mass,
             active_clusters=active_clusters,
             empty_clusters_seen=~jnp.all(active_clusters, axis=-1),
-            converged=jnp.ones_like(valid),
-            degeneracy=disconnected,
+            converged=certified,
+            degeneracy=disconnected | ~certified,
             method="spectral-clustering",
+            eigenvalues=eigenvalues,
+            eigen_residuals=eigen_residuals,
+            eigen_method="dense-eigh"
+            if isinstance(self.eigen_method, DenseEigh)
+            else "restarted-lanczos",
         )
         contract = prediction_fit_contract(
             model._prediction_contract(),
