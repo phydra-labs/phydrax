@@ -23,3 +23,16 @@ separate.
   irreducibility.
 - Exact symbolic results remain provider-attributed unless Phydrax independently
   verifies the exact identity.
+
+## Krawczyk workspace admission
+
+`krawczyk_certificate` requires a dense center-Jacobian preconditioner for its
+interval enclosure. Its keyword-only `maximum_dense_workspace_bytes` defaults to
+64 MiB. Before evaluating the Jacobian, it admits the conservative float64 estimate
+`8 * (10*n*n + 12*n)` bytes, where `n` is the variable count, and refuses an
+over-budget request. The estimate covers dense factors, solve scratch, and interval
+matrices, not provider-private or polynomial-evaluation storage.
+
+`KrawczykCertificate.dense_workspace_bytes` and
+`KrawczykCertificate.maximum_dense_workspace_bytes` report the estimate and ceiling.
+Changing the admitted ceiling does not change the scientific `certificate_id`.
