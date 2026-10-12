@@ -442,15 +442,17 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
             raise ValueError(
                 "This basis does not define a closed modal derivative multiplier."
             )
+        # The real wavenumber scale is formed in the length dtype and carried
+        # into the coefficient dtype, avoiding implicit real-to-complex promotion.
         if self.family == "fourier":
-            scale = 2.0 * jnp.asarray(jnp.pi, dtype=values.dtype) / self.length
+            scale = 2.0 * (jnp.pi / self.length).astype(values.dtype)
             return (1j * scale * values) ** derivative_order
         if derivative_order % 2:
             raise ValueError(
                 "Odd sine/cosine derivatives map to a dual parity basis; request "
                 "physical derivative values instead of an endomorphism multiplier."
             )
-        scale = jnp.asarray(jnp.pi, dtype=values.dtype) / self.length
+        scale = (jnp.pi / self.length).astype(values.dtype)
         return (1j * scale * values) ** derivative_order
 
     def evaluate_basis(self, coordinates: ArrayLike, /, *, order: int = 0) -> Array:

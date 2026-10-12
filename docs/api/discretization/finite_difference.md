@@ -125,6 +125,19 @@
 
 ::: phydrax.equations.CompiledFiniteDifferenceDynamics
 
+---
+
+::: phydrax.equations.compile_finite_difference_pde
+
+## Stationary residual compilation
+
+::: phydrax.equations.compile_finite_difference_residual
+
+---
+
+::: phydrax.equations.CompiledFiniteDifferenceResidual
+
+
 ## Compact implicit line calculus
 
 ::: phydrax.discretization.CompactDerivativePlan

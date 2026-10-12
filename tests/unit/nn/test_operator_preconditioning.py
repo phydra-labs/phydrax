@@ -95,8 +95,8 @@ def _field_space(name: Any, support_id: Any, vector_space: Any) -> Any:
     )
 
 
-def _transfer(source: Any, target: Any, *, transfer_id: Any) -> Any:
-    matrix = jnp.eye(
+def _transfer(source: Any, target: Any, *, transfer_id: Any, scale: Any = 1.0) -> Any:
+    matrix = scale * jnp.eye(
         source.vector_space.size, dtype=source.vector_space.structure().dtype
     )
     return phx.discretization.FieldTransfer(
@@ -116,6 +116,7 @@ def _binding(
     gain: Any = 0.5,
     artifact_id: Any = "correction-artifact",
     normalization: Any = None,
+    correction_scale: Any = 1.0,
 ) -> Any:
     template = _template()
     support = template.input("residual").support_id
@@ -146,7 +147,12 @@ def _binding(
         residual_space,
         correction_space,
         _transfer(solver_space, residual_space, transfer_id="residual-transfer"),
-        _transfer(correction_space, solver_space, transfer_id="correction-transfer"),
+        _transfer(
+            correction_space,
+            solver_space,
+            transfer_id="correction-transfer",
+            scale=correction_scale,
+        ),
         residual_source_name="residual",
         correction_field_name="correction",
         condition_ids=("problem:diagonal", "boundary:homogeneous"),
@@ -235,6 +241,42 @@ def test_operator_preconditioning_scenario_1() -> None:
             correction_field_name="correction",
             condition_ids=("problem:diagonal",),
         )
+
+
+@pytest.mark.parametrize(
+    "correction_scale,same_action",
+    ((1.0, True), (2.0, False)),
+    ids=("equal-weights", "scaled-weights"),
+)
+def test_binding_identity_tracks_numerical_transfer_contents(
+    correction_scale: float, same_action: bool
+) -> None:
+    # Both bindings declare the same transfer IDs; only the numerical transfer
+    # weights may differ. Equal identities must imply equal corrections.
+    reference = _binding()
+    candidate = _binding(correction_scale=correction_scale)
+    residual = jnp.asarray([2.0, -4.0, 1.0], dtype=jnp.float32)
+    operator = phx.linalg.DenseLinearOperator(
+        jnp.diag(jnp.asarray([1.0, 2.0, 4.0], dtype=jnp.float32)),
+        source=reference.solver_space.vector_space,
+        target=reference.solver_space.vector_space,
+    )
+
+    reference_action = reference.prepare().apply(residual)
+    candidate_action = candidate.prepare().apply(residual)
+    reference_id = phx.nn.operator.TrainedOperatorPreconditioner(
+        reference.prepare(), operator
+    ).preconditioner_id
+    candidate_id = phx.nn.operator.TrainedOperatorPreconditioner(
+        candidate.prepare(), operator
+    ).preconditioner_id
+
+    assert candidate.correction_transfer.transfer_id == (
+        reference.correction_transfer.transfer_id
+    )
+    assert bool(jnp.array_equal(candidate_action, reference_action)) is same_action
+    assert (candidate.binding_id == reference.binding_id) is same_action
+    assert (candidate_id == reference_id) is same_action
 
 
 def test_operator_basis_lowers_with_hilbert_adjoint_and_rejects_dependent_modes() -> None:

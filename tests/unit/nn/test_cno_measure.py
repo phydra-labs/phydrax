@@ -1,3 +1,6 @@
+import hashlib
+import json
+from pathlib import Path
 from typing import Any
 
 import equinox as eqx
@@ -6,7 +9,9 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax.nn.operator.architectures import ConvolutionAxisPolicy
 from phydrax.nn.operator.architectures.spectral._cno import _coordinate_features
+from tests.unit.nn.test_operator_task_bundle import _trained
 
 
 def _batch(
@@ -171,6 +176,70 @@ def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract() -> None:
             model(batch)
 
 
+@pytest.mark.parametrize("architecture", ("CNO", "UNO"), ids=("cno", "uno"))
+def test_configured_support_plan_owns_axis_admission(architecture: str) -> None:
+    def model(plan: Any) -> Any:
+        match architecture:
+            case "CNO":
+                return phx.nn.operator.architectures.CNO(
+                    spatial_ndim=1, width=2, depth=1, support_plan=plan, key=jr.key(3)
+                )
+            case _:
+                return phx.nn.operator.architectures.UNO(
+                    spatial_ndim=1, widths=(2, 2), support_plan=plan, key=jr.key(3)
+                )
+
+    def batch(nodes: Any) -> Any:
+        axis = phx.nn.operator.OperatorAxis(
+            "x", nodes, quadrature_weights=jnp.full(nodes.shape, 1.0 / nodes.size)
+        )
+        return _batch(
+            jnp.ones(nodes.shape),
+            axis,
+            source_mask=None,
+            query_mask=None,
+            quadrature=axis.quadrature_weights,
+        )
+
+    uniform = batch((jnp.arange(8, dtype=jnp.float64) + 0.5) / 8)
+    graded = batch(jnp.asarray([0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.85, 0.95]))
+    bounded = model(
+        phx.nn.operator.architectures.ConvolutionSupportPlan(("dirichlet_sine",))
+    )
+    periodic = model(None)
+
+    bounded.operator_contract.validate(uniform).require_runtime()
+    with pytest.raises(ValueError, match="NONUNIFORM_AXIS"):
+        bounded.operator_contract.validate(graded).require_runtime()
+    with pytest.raises(ValueError, match="NONPERIODIC_AXIS"):
+        periodic.operator_contract.validate(uniform).require_runtime()
+
+
+@pytest.mark.parametrize(
+    "policy", ("dirichlet_sine", "neumann_cosine"), ids=("sine", "cosine")
+)
+def test_bounded_extension_keeps_physical_measure_nonnegative(
+    policy: ConvolutionAxisPolicy,
+) -> None:
+    layer = phx.nn.operator.architectures.AntiAliasedConvND(
+        spatial_ndim=1,
+        in_channels=1,
+        out_channels=2,
+        kernel_size=3,
+        activation=None,
+        circular=False,
+        extension_modes=(policy,),
+        key=jr.key(4),
+    )
+    values = jnp.sin(jnp.pi * (jnp.arange(8, dtype=jnp.float64) + 0.5) / 8)[:, None]
+
+    weighted = layer(values, quadrature=jnp.full((8,), 0.125, dtype=jnp.float64))
+    unweighted = layer(values)
+
+    # A uniform physical measure cancels in the measure-normalized convolution.
+    assert jnp.allclose(weighted, unweighted, rtol=1e-13, atol=1e-13)
+
+
 def test_cno_rejects_noncoincident_source_and_query_axes() -> None:
     source_axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -317,3 +386,122 @@ def test_uno_transports_masked_measure_and_zeros_invalid_queries() -> None:
     assert output[2] == 0.0
     assert output[5] == 0.0
     assert jnp.any(output[source_mask & query_mask] != 0.0)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("architecture", ("CNO", "UNO"), ids=("cno", "uno"))
+def test_bias_free_linear_operator_superposition_and_artifact(
+    architecture: str, tmp_path: Path
+) -> None:
+    nodes = jnp.arange(12, dtype=jnp.float64) / 12
+    quadrature = jnp.linspace(0.5, 1.5, 12, dtype=jnp.float64)
+    axis = phx.nn.operator.OperatorAxis(
+        "x", nodes, quadrature_weights=quadrature, basis="fourier", periodic=True
+    )
+    source_mask = jnp.asarray(
+        [True, True, False, True, True, True, True, False, True, True, True, True]
+    )
+    query_mask = jnp.asarray(
+        [True, True, True, True, True, True, True, True, True, True, True, False]
+    )
+    model = (
+        phx.nn.operator.architectures.CNO(
+            spatial_ndim=1,
+            width=3,
+            depth=2,
+            activation=None,
+            use_bias=False,
+            coordinate_embedding=False,
+            key=jr.key(71),
+        )
+        if architecture == "CNO"
+        else phx.nn.operator.architectures.UNO(
+            spatial_ndim=1,
+            widths=(3, 5, 7),
+            activation=None,
+            use_bias=False,
+            coordinate_embedding=False,
+            key=jr.key(71),
+        )
+    )
+
+    def evaluate(values: Any) -> Any:
+        return model(
+            _batch(
+                values,
+                axis,
+                source_mask=source_mask,
+                query_mask=query_mask,
+                quadrature=quadrature,
+            )
+        )
+
+    first = jnp.sin(2 * jnp.pi * nodes)
+    second = jnp.cos(4 * jnp.pi * nodes)
+    assert jnp.array_equal(evaluate(jnp.zeros_like(first)), jnp.zeros_like(first))
+    assert jnp.allclose(
+        evaluate(first + second),
+        evaluate(first) + evaluate(second),
+        atol=2e-12,
+        rtol=2e-12,
+    )
+    assert jnp.allclose(
+        evaluate(-2.5 * first), -2.5 * evaluate(first), atol=2e-12, rtol=2e-12
+    )
+    trained = _trained(
+        model=model,
+        dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
+            parameter_dtype="float64", compute_dtype="float64", reduction_dtype="float64"
+        ),
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+    assert jnp.allclose(
+        restored.execution_model(
+            _batch(
+                first,
+                axis,
+                source_mask=source_mask,
+                query_mask=query_mask,
+                quadrature=quadrature,
+            )
+        ),
+        evaluate(first),
+        atol=2e-12,
+        rtol=2e-12,
+    )
+
+
+@pytest.mark.parametrize(
+    ("architecture", "recipe_id", "artifact_id"),
+    (
+        (
+            "CNO",
+            "e7988660c27675a8485df0f9e3b2f03c05760d90be9e3caf84e3e0a261481ea3",
+            "ebc38d2f17ff06c5b2e22f2f9d3436b2f3a2ba62765aa1dddea1746ede742804",
+        ),
+        (
+            "UNO",
+            "2336510af15cf047bdfd68c745185d52cd033a577962f613796facd427e6719e",
+            "33da864ecbcaa3b703557a6c73e4cfdb56f844a5963964e6751b5f6b1cc42897",
+        ),
+    ),
+    ids=("cno", "uno"),
+)
+def test_default_cno_recipe_and_artifact_preserve_merge_base_identity(
+    architecture: str, recipe_id: str, artifact_id: str, tmp_path: Path
+) -> None:
+    model = (
+        phx.nn.operator.architectures.CNO(spatial_ndim=1, width=4, depth=1)
+        if architecture == "CNO"
+        else phx.nn.operator.architectures.UNO(spatial_ndim=1, widths=(4, 6))
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(
+        tmp_path, _trained(model=model)
+    )
+    manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
+    recipe_bytes = json.dumps(
+        manifest.execution_model_recipe, sort_keys=True, separators=(",", ":")
+    ).encode()
+    assert hashlib.sha256(recipe_bytes).hexdigest() == recipe_id
+    assert manifest.artifact_id == artifact_id

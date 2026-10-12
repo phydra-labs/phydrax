@@ -20,6 +20,7 @@ from ...domain import (
     PreparedFieldRouting,
     SubdomainCoverEvidence,
 )
+from ...nonlinear import AitkenRelaxation
 from .._functional_solver import FunctionalSolver
 from ._problem import FunctionalDecompositionProblem, GlobalScope, PairScope, PatchScope
 from ._strategy import (
@@ -43,12 +44,23 @@ def _strategy_payload(strategy: DecompositionTraining, /) -> dict[str, Any]:
             "fixed_patch_ids": strategy.fixed_patch_ids,
         }
     if isinstance(strategy, SchwarzDecompositionTraining):
+        relaxation = strategy.relaxation
+        relaxation_payload = (
+            {
+                "kind": "aitken",
+                "initial_relaxation": float(relaxation.initial_relaxation).hex(),
+                "minimum_relaxation": float(relaxation.minimum_relaxation).hex(),
+                "maximum_relaxation": float(relaxation.maximum_relaxation).hex(),
+            }
+            if isinstance(relaxation, AitkenRelaxation)
+            else relaxation
+        )
         return {
             "kind": "schwarz",
             "sweeps": strategy.sweeps,
             "inner_iterations": strategy.inner_iterations,
             "sweep": strategy.sweep,
-            "relaxation": strategy.relaxation,
+            "relaxation": relaxation_payload,
             "interface_tolerance": strategy.interface_tolerance,
         }
     raise TypeError("Unknown decomposition training strategy.")

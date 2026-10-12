@@ -55,6 +55,7 @@ from ...domain import (
     partition_of_unity_family,
 )
 from ...nn.parameters import ParameterSubspace
+from ...nonlinear import AitkenRelaxation
 from ...terms import ResidualPenalty
 from ...typing import PRNGKey
 from .._functional_kernel import (
@@ -69,6 +70,8 @@ from .._functional_training import FunctionalTrainingPlan
 from ._prepare import PreparedFunctionalDecomposition
 from ._problem import GlobalScope, PairScope, PatchScope
 from ._schwarz import (
+    _relax_aitken_sweep,
+    _validate_aitken_trace_state,
     capture_schwarz_trace_state,
     DiscreteTracePenalty,
     SchwarzTraceState,
@@ -155,11 +158,16 @@ class FunctionalDecompositionState(StrictModule):
     (optimizer state, semantic root key, and cursors; `None` for a patch that has
     not trained) and `kernel_checkpoint_ids[i]` the identity of the kernel that
     produced it, verified before a resumed run continues it.
+
+    `previous_increment` and `omega` retain complete-sweep Aitken acceleration
+    across resumed runs. Both are `None` for fixed-float relaxation.
     """
 
     functions: frozendict[str, DomainFunction]
     kernel_states: tuple[TrainingKernelState | None, ...]
     trace_state: SchwarzTraceState | None
+    previous_increment: Array | None
+    omega: Array | None
     kernel_checkpoint_ids: tuple[str | None, ...] = eqx.field(static=True)
     completed_sweeps: int = eqx.field(static=True)
     strategy: str = eqx.field(static=True)
@@ -173,13 +181,23 @@ class FunctionalDecompositionState(StrictModule):
         kernel_checkpoint_ids: Sequence[str | None] = (),
         completed_sweeps: int = 0,
         trace_state: SchwarzTraceState | None = None,
+        previous_increment: Array | None = None,
+        omega: Array | None = None,
         strategy: str,
     ) -> None:
         states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
+        if previous_increment is not None and previous_increment.ndim != 1:
+            raise ValueError("previous_increment must be a flattened trace vector.")
+        if omega is not None and omega.shape != ():
+            raise ValueError("omega must be a scalar array.")
+        if previous_increment is not None and omega is None:
+            raise ValueError("A previous Aitken increment requires omega.")
         self.functions = frozendict(functions)
         self.kernel_states = states
         self.kernel_checkpoint_ids = identities
         self.trace_state = trace_state
+        self.previous_increment = previous_increment
+        self.omega = omega
         self.completed_sweeps = int(completed_sweeps)
         self.strategy = str(strategy)
 
@@ -743,6 +761,30 @@ def _solve_blocks(
                 raise ValueError("Schwarz resume state has no trace exchange state.")
     else:
         trace_state = None
+    aitken = (
+        strategy.relaxation
+        if isinstance(strategy, SchwarzDecompositionTraining)
+        and isinstance(strategy.relaxation, AitkenRelaxation)
+        else None
+    )
+    previous_increment = None if state is None else state.previous_increment
+    omega = None if state is None else state.omega
+    if aitken is not None:
+        if trace_state is None:
+            raise ValueError("Aitken Schwarz relaxation requires trace exchange state.")
+        _validate_aitken_trace_state(trace_state)
+        if state is None:
+            omega = jnp.asarray(aitken.initial_relaxation, dtype=jnp.float64)
+        elif omega is None:
+            raise ValueError("Aitken Schwarz resume state has no omega.")
+    elif previous_increment is not None or omega is not None:
+        raise ValueError("Fixed relaxation resume state must not contain Aitken carry.")
+    capture_relaxation = (
+        strategy.relaxation
+        if isinstance(strategy, SchwarzDecompositionTraining)
+        and isinstance(strategy.relaxation, float)
+        else 1.0
+    )
     if isinstance(strategy, BlockDecompositionTraining):
         requested = (
             set(prepared.problem.cover.patch_ids)
@@ -768,6 +810,7 @@ def _solve_blocks(
         if session is not None and session.stop_requested:
             break
         snapshot = frozendict(functions)
+        sweep_entry_trace = trace_state
         if strategy.sweep == "jacobi":
             candidates = [
                 (patch_index, local(patch_index, snapshot, trace_state))
@@ -788,8 +831,8 @@ def _solve_blocks(
                     functions,
                     prepared.trace_batches,
                     sweep=sweep_index + 1,
-                    relaxation=strategy.relaxation,
-                    previous=trace_state,
+                    relaxation=capture_relaxation,
+                    previous=trace_state if aitken is None else None,
                 )
         elif strategy.sweep == "gauss-seidel":
             current = snapshot
@@ -801,8 +844,8 @@ def _solve_blocks(
                         current,
                         prepared.trace_batches,
                         sweep=sweep_index + 1,
-                        relaxation=strategy.relaxation,
-                        previous=trace_state,
+                        relaxation=capture_relaxation,
+                        previous=trace_state if aitken is None else None,
                     )
             functions = current
         else:
@@ -834,10 +877,16 @@ def _solve_blocks(
                         current,
                         prepared.trace_batches,
                         sweep=sweep_index + 1,
-                        relaxation=strategy.relaxation,
-                        previous=trace_state,
+                        relaxation=capture_relaxation,
+                        previous=trace_state if aitken is None else None,
                     )
             functions = current
+        if aitken is not None:
+            if sweep_entry_trace is None or trace_state is None or omega is None:
+                raise ValueError("Aitken Schwarz sweep has incomplete trace carry.")
+            trace_state, previous_increment, omega = _relax_aitken_sweep(
+                sweep_entry_trace, trace_state, aitken, previous_increment, omega
+            )
         completed = sweep_index + 1
         if session is not None:
             assert iteration_scope is not None
@@ -878,6 +927,8 @@ def _solve_blocks(
         kernel_checkpoint_ids=tuple(checkpoint_ids),
         completed_sweeps=completed,
         trace_state=trace_state,
+        previous_increment=previous_increment,
+        omega=omega,
         strategy=name,
     )
     return solver, state

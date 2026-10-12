@@ -214,9 +214,11 @@ class Linear(_AbstractBaseModel):
             # Weight is shaped (out, in); contract over the last dim of x.
             x_flat = contract("oi,...i->...o", w, x_flat)
         if self.random_weight_factorization and self.rwf_log_scales is not None:
-            x_flat = jnp.exp(self.rwf_log_scales) * x_flat
+            scales = jnp.exp(self.rwf_log_scales)
+            x_flat = scales.reshape((1,) * (x_flat.ndim - 1) + scales.shape) * x_flat
         if self.bias is not None:
-            x_flat = x_flat + self.bias
+            bias = self.bias.reshape((1,) * (x_flat.ndim - 1) + self.bias.shape)
+            x_flat = x_flat + bias
 
         x_flat = jnp.real(x_flat)
 

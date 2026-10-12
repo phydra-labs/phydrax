@@ -3,7 +3,7 @@
 #
 
 
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -683,3 +683,115 @@ def test_density_reaches_extensive_storage_only_through_a_certified_transfer() -
     )
     with pytest.raises(ValueError, match="certified conservative transfer"):
         _density_to_cell_integral(False)
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize(
+    "acceleration",
+    [
+        None,
+        phx.nonlinear.AndersonAcceleration(history=4),
+        phx.nonlinear.AitkenRelaxation(),
+    ],
+    ids=["none", "anderson", "aitken"],
+)
+def test_native_acceleration_reaches_same_certified_fixed_point(
+    acceleration: Any,
+) -> None:
+    graph, states, values = _linear_graph()
+    policy = cpl.ImplicitCouplingPolicy(
+        phx.nonlinear.FixedPointIteration(acceleration=acceleration),
+        phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-10, relative_residual=0.0, maximum_steps=80
+        ),
+        (
+            cpl.CouplingTolerance("a-input", absolute=1e-9),
+            cpl.CouplingTolerance("b-input", absolute=1e-9),
+        ),
+        fixed_point_sweep=cpl.CouplingSweep("jacobi"),
+    )
+    prepared = cpl.prepare_coupling(graph, states, values, policy=policy)
+    result = eqx.filter_jit(cpl.advance_coupling_window)(
+        prepared, prepared.reference_state, 1.0
+    )
+    assert bool(result.successful)
+    assert bool(result.converged)
+    np.testing.assert_allclose(
+        result.accepted_state.exchange_values, [[1.0 / 3.0], [2.0 / 3.0]], atol=1e-9
+    )
+    assert bool(jnp.all(result.diagnostics.exchange_certified))
+
+
+@final
+class _RefusalOnlyHost(cpl.AbstractHostCouplingParticipant):
+    subsystem_id: str = eqx.field(static=True, default="host")
+    input_ports: tuple[Any, ...] = ()
+    output_ports: tuple[Any, ...] = ()
+    rollback: cpl.HostRollback = eqx.field(static=True, default="restore")
+
+    def __init__(self) -> None:
+        self.subsystem_id = "host"
+        self.input_ports = ()
+        self.output_ports = ()
+        self.rollback = "restore"
+
+    @property
+    def derivative_support(self) -> Any:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    @property
+    def time_unit(self) -> Any:
+        return phx.units.SECOND
+
+    def communication_time(self) -> float:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def initial_outputs(self) -> tuple[Any, ...]:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def capture(self) -> Any:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def restore(self, checkpoint: Any, /) -> None:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def release(self, checkpoint: Any, /) -> None:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def evidence_id(self) -> str:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+    def advance_window(
+        self, window: Any, start_state: Any, inputs: Any, args: Any, /
+    ) -> Any:
+        raise AssertionError("Acceleration refusal must precede host lifecycle access.")
+
+
+@pytest.mark.parametrize(
+    ("acceleration", "kind"),
+    [
+        (phx.nonlinear.AndersonAcceleration(), "Anderson"),
+        (phx.nonlinear.AitkenRelaxation(), "Aitken"),
+    ],
+    ids=["anderson", "aitken"],
+)
+def test_host_refusal_names_actual_acceleration_kind(
+    acceleration: Any, kind: str
+) -> None:
+    graph, _, _ = _linear_graph()
+    policy = cpl.ImplicitCouplingPolicy(
+        phx.nonlinear.FixedPointIteration(acceleration=acceleration),
+        phx.nonlinear.NonlinearTermination(),
+        (
+            cpl.CouplingTolerance("a-input", absolute=1e-9),
+            cpl.CouplingTolerance("b-input", absolute=1e-9),
+        ),
+        fixed_point_sweep=cpl.CouplingSweep("jacobi"),
+    )
+    declaration = cpl.PartitionedCouplingDeclaration(
+        (*graph.subsystems, _RefusalOnlyHost()),
+        graph.exchanges,
+        policy,
+    )
+    with pytest.raises(ValueError, match=kind):
+        cpl.prepare_host_coupling(declaration, {}, t0=0.0, window_size=1.0)

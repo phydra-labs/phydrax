@@ -39,7 +39,12 @@ from ..._external_runtime import _host_only, ExternalDerivativeSupport
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...nonlinear import FixedPointIteration, NonlinearStatus, NonlinearTermination
+from ...nonlinear import (
+    AitkenRelaxation,
+    FixedPointIteration,
+    NonlinearStatus,
+    NonlinearTermination,
+)
 from ...units import UnitDefinition
 from .._partitioned_coupling_graph import (
     _prepare_coupling_plan,
@@ -387,8 +392,11 @@ def _admit_host_policy(
             "execute host participants."
         )
     if method.acceleration is not None:
+        kind = (
+            "Aitken" if isinstance(method.acceleration, AitkenRelaxation) else "Anderson"
+        )
         raise ValueError(
-            "Implicit host windows iterate a damped fixed-point sweep; Anderson "
+            f"Implicit host windows iterate a damped fixed-point sweep; {kind} "
             "acceleration is a traced native method and is not applied on the host."
         )
     unrestorable = [

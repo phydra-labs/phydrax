@@ -242,6 +242,10 @@ from ._fd_compile import (
     CompiledFiniteDifferenceDynamics,
     FiniteDifferenceCompilationPolicy,
 )
+from ._fd_residual_compile import (
+    compile_finite_difference_residual,
+    CompiledFiniteDifferenceResidual,
+)
 from ._finite_element_functional import FiniteElementFunctional
 from ._finite_element_material import (
     AbstractConstitutiveModel,
@@ -1189,6 +1193,7 @@ __all__ = [
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
+    "CompiledFiniteDifferenceResidual",
     "AbstractConstitutiveModel",
     "ConstitutiveModel",
     "LearnedConstitutiveModel",
@@ -1585,6 +1590,7 @@ __all__ = [
     "PreparedFDInterface",
     "compile_semidiscrete_dae",
     "compile_finite_difference_pde",
+    "compile_finite_difference_residual",
     "lower_fd_boundaries",
     "prepare_fd_boundary_runtime",
     "PreparedFDBoundaryPair",

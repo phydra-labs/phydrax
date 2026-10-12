@@ -29,7 +29,7 @@ def save_functional_decomposition_checkpoint(
     prepared: PreparedFunctionalDecomposition,
     /,
 ) -> Path:
-    """Atomically save one accepted completed decomposition sweep."""
+    """Atomically save one accepted completed sweep, including Aitken carry."""
     if not isinstance(state, FunctionalDecompositionState):
         raise TypeError("state must be a FunctionalDecompositionState.")
     if not isinstance(prepared, PreparedFunctionalDecomposition):
@@ -59,6 +59,8 @@ def save_functional_decomposition_checkpoint(
         "plan_id": prepared.plan.plan_id,
         "completed_sweeps": state.completed_sweeps,
         "strategy": state.strategy,
+        "has_previous_increment": state.previous_increment is not None,
+        "has_omega": state.omega is not None,
         "kernel_checkpoint_ids": list(state.kernel_checkpoint_ids),
         "accepted_sweep_boundary": True,
     }
@@ -73,7 +75,13 @@ def load_functional_decomposition_checkpoint(
     state_like: FunctionalDecompositionState,
     /,
 ) -> FunctionalDecompositionState:
-    """Verify and restore a decomposition checkpoint against exact run contracts."""
+    """Verify and restore a decomposition checkpoint against exact run contracts.
+
+    `state_like` must use the canonical state representation with matching
+    numerical leaf shapes and dtypes, kernel identities, and completed sweep.
+    For Aitken runs its `previous_increment` and `omega` must have the same
+    presence as the saved state; their values are restored from the checkpoint.
+    """
     if not isinstance(prepared, PreparedFunctionalDecomposition):
         raise TypeError("prepared must be a PreparedFunctionalDecomposition.")
     if not isinstance(state_like, FunctionalDecompositionState):
@@ -89,6 +97,8 @@ def load_functional_decomposition_checkpoint(
         "plan_id",
         "completed_sweeps",
         "strategy",
+        "has_previous_increment",
+        "has_omega",
         "kernel_checkpoint_ids",
         "accepted_sweep_boundary",
     }
@@ -115,6 +125,12 @@ def load_functional_decomposition_checkpoint(
     if manifest["kernel_checkpoint_ids"] != list(state_like.kernel_checkpoint_ids):
         raise ValueError(
             "Decomposition checkpoint patch kernel identities do not match state_like."
+        )
+    if manifest["has_previous_increment"] is not (
+        state_like.previous_increment is not None
+    ) or manifest["has_omega"] is not (state_like.omega is not None):
+        raise ValueError(
+            "Decomposition checkpoint Aitken carry structure does not match state_like."
         )
     state_name = manifest["state_file"]
     with _open_verified_state(

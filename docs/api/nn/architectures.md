@@ -1689,18 +1689,31 @@ promotion still requires benchmark evidence.
 
 `CNO` uses oversampled nonlinearities and band-limited resampling to prevent
 ordinary CNN aliasing. `UNO` adds a U-shaped multiresolution topology over the
-same representation-aware blocks. Both are periodic-Fourier operators on
-coincident endpoint-exclusive uniform tensor axes. Every source and query axis
-must be periodic, have finite distinct uniform nodes, and declare a `"uniform"`
-or `"fourier"` basis. Tuple calls construct the same periodic axes. Bounded,
-mixed-periodic, sine/cosine-basis, and nonuniform grids are rejected rather than
-silently passed through a periodic FFT.
+same representation-aware blocks. Both operate on coincident uniform tensor axes
+whose boundary semantics are declared by `ConvolutionSupportPlan`. The default
+plan is periodic Fourier on every axis: each source and query axis must then be
+periodic, have finite distinct uniform nodes, and declare a `"uniform"` or
+`"fourier"` basis, and tuple calls construct the same periodic axes. A bounded
+plan (`"dirichlet_sine"`, `"neumann_cosine"`, or `"polynomial"` per axis)
+requires nonperiodic, positively and uniformly spaced axes; the model's operator
+contract admits exactly the axes its plan declares, so bounded models train
+through `fit_operator` without being passed through a periodic FFT. Mixed or
+mismatched periodicity is rejected.
+
+`activation=None` removes the nonlinear activation and its oversampling round
+trip. `use_bias=False` removes biases from every affine sublayer: convolutions,
+lift and projection layers, residual skips, and UNO mergers. With
+`activation=None`, `use_bias=False`, and `coordinate_embedding=False`, CNO and
+UNO are linear in input values for fixed masks and quadrature. Defaults are
+unchanged.
 
 Periodic coordinate embedding uses `sin(2πi/N)` and `cos(2πi/N)` per axis, so
 the first and last sites remain circular neighbors without the seam introduced
-by a linear coordinate ramp. Local CNO convolutions circularly extend measured
-values and observed measure before a valid convolution; masks, quadrature, and
-values therefore wrap together. This latent extension is not physical
+by a linear coordinate ramp. Local periodic CNO convolutions circularly extend
+measured values and observed measure before a valid convolution; masks,
+quadrature, and values therefore wrap together. Bounded plans extend values
+oddly (`"dirichlet_sine"`) or evenly (`"neumann_cosine"`) while the physical
+measure and masks always reflect evenly. This latent extension is not physical
 Dirichlet, Neumann, or Robin enforcement. Physical boundary values belong to
 boundary lifts, prepared boundary runtimes, and output constraints.
 

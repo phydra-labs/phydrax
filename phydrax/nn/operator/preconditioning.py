@@ -379,6 +379,8 @@ class OperatorCorrectionBinding(StrictModule, ExplicitFreeze):
                 "model_correction_space": model_correction_space.field_space_id,
                 "residual_transfer": residual_transfer.transfer_id,
                 "correction_transfer": correction_transfer.transfer_id,
+                "residual_transfer_arrays": array_tree_fingerprint(residual_transfer),
+                "correction_transfer_arrays": array_tree_fingerprint(correction_transfer),
                 "residual_source": source_name,
                 "correction_field": field_name,
                 "conditions": list(conditions),

@@ -11,6 +11,7 @@ import equinox as eqx
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...nonlinear import AitkenRelaxation
 
 
 class JointDecompositionTraining(StrictModule, NonTrainableState):
@@ -75,7 +76,7 @@ class SchwarzDecompositionTraining(StrictModule, NonTrainableState):
     sweeps: int = eqx.field(static=True)
     inner_iterations: int = eqx.field(static=True)
     sweep: Literal["jacobi", "gauss-seidel", "colored"] = eqx.field(static=True)
-    relaxation: float = eqx.field(static=True)
+    relaxation: float | AitkenRelaxation = eqx.field(static=True)
     interface_tolerance: float | None = eqx.field(static=True)
 
     def __init__(
@@ -85,17 +86,21 @@ class SchwarzDecompositionTraining(StrictModule, NonTrainableState):
         /,
         *,
         sweep: Literal["jacobi", "gauss-seidel", "colored"] = "jacobi",
-        relaxation: float = 1.0,
+        relaxation: float | AitkenRelaxation = 1.0,
         interface_tolerance: float | None = None,
     ) -> None:
         sweeps_ = int(sweeps)
         inner_ = int(inner_iterations)
-        relaxation_ = float(relaxation)
+        relaxation_ = (
+            relaxation if isinstance(relaxation, AitkenRelaxation) else float(relaxation)
+        )
         if sweeps_ < 0 or inner_ < 0:
             raise ValueError("sweeps and inner_iterations must be non-negative.")
         if sweep not in ("jacobi", "gauss-seidel", "colored"):
             raise ValueError("sweep must be 'jacobi', 'gauss-seidel', or 'colored'.")
-        if not math.isfinite(relaxation_) or not 0.0 < relaxation_ <= 1.0:
+        if isinstance(relaxation_, float) and (
+            not math.isfinite(relaxation_) or not 0.0 < relaxation_ <= 1.0
+        ):
             raise ValueError("relaxation must be finite and in (0, 1].")
         if interface_tolerance is None:
             tolerance = None

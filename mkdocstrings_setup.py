@@ -7,6 +7,7 @@ import typing
 from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import griffe
 
 
@@ -52,6 +53,12 @@ class RuntimeTypeAliases(griffe.Extension):
     inspection reports. A `type` statement whose lazy value names a symbol bound
     only for type checking cannot be evaluated; inspection would fail and drop its
     whole module, so its value is documented from the source statement instead.
+
+    Equinox custom-derivative wrappers (`eqx.filter_custom_jvp`,
+    `eqx.filter_custom_vjp`) report `equinox._ad` as their module and expose no
+    wrapped function, so inspection would alias them to a nonexistent Equinox
+    member. The defining module documents the function from its source
+    definition, and a re-export resolves to the module its import statement names.
     """
 
     def on_alias_instance(
@@ -63,7 +70,11 @@ class RuntimeTypeAliases(griffe.Extension):
         **kwargs: Any,
     ) -> None:
         if isinstance(node, griffe.ObjectNode) and isinstance(agent, griffe.Inspector):
-            _document_type_alias(agent.current, alias.name, vars(node.obj)[alias.name])
+            value = vars(node.obj)[alias.name]
+            if isinstance(value, (eqx.filter_custom_jvp, eqx.filter_custom_vjp)):
+                _document_custom_derivative(agent, alias)
+            else:
+                _document_type_alias(agent.current, alias.name, value)
 
     def on_attribute_instance(
         self,
@@ -122,6 +133,49 @@ def _type_alias_source(module_path: Path, name: str, /) -> str:
         if isinstance(statement, ast.TypeAlias) and statement.name.id == name:
             return ast.unparse(statement.value)
     raise LookupError(f"{module_path} has no module-level `type {name}` statement")
+
+
+def _document_custom_derivative(agent: griffe.Inspector, alias: griffe.Alias, /) -> None:
+    parent = agent.current
+    if agent.filepath is None or not isinstance(parent, griffe.Module):
+        raise LookupError(
+            f"custom-derivative member {alias.name} requires a module source file"
+        )
+    source = agent.filepath.read_text(encoding="utf-8")
+    for statement in ast.parse(source).body:
+        if isinstance(statement, ast.FunctionDef) and statement.name == alias.name:
+            static = griffe.visit(
+                parent.path,
+                agent.filepath,
+                source,
+                docstring_parser=agent.docstring_parser,
+                docstring_options=agent.docstring_options,
+            )
+            parent.set_member(alias.name, static.members[alias.name])
+            return
+        if isinstance(statement, ast.ImportFrom):
+            for imported in statement.names:
+                if (imported.asname or imported.name) == alias.name:
+                    module = _import_from_module(parent.path, agent.filepath, statement)
+                    alias.target_path = f"{module}.{imported.name}"
+                    return
+    raise LookupError(f"{agent.filepath} neither defines nor imports {alias.name}")
+
+
+def _import_from_module(
+    module_path: str, filepath: Path, statement: ast.ImportFrom, /
+) -> str:
+    if statement.level == 0:
+        if statement.module is None:
+            raise LookupError(f"{filepath} has an import without a module")
+        return statement.module
+    # A package's `__init__` resolves level one to itself; a module to its package.
+    package = (
+        module_path if filepath.name == "__init__.py" else module_path.rpartition(".")[0]
+    )
+    for _ in range(statement.level - 1):
+        package = package.rpartition(".")[0]
+    return package if statement.module is None else f"{package}.{statement.module}"
 
 
 def _document_type_alias(

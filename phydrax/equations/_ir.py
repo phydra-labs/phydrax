@@ -10,6 +10,8 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, final, Literal, TypeAlias
 
+from jax import Array, lax
+
 from phydrax.units import DIMENSIONLESS, DimensionSignature
 
 from ..exterior._form_type import FiberProduct, FormValueSpec
@@ -395,6 +397,57 @@ class PDEExpression:
 
     def __neg__(self) -> "PDEExpression":
         return PDEExpression("negate", (self,))
+
+
+def depends_on_fields(expression: PDEExpression, /) -> bool:
+    """Whether an expression contains a solved-field reference."""
+    return expression.op == "field" or any(
+        depends_on_fields(argument) for argument in expression.args
+    )
+
+
+def field_polynomial_degree(expression: PDEExpression, /) -> int | None:
+    """Exact polynomial degree in fields, with field-free subtrees as coefficients."""
+    if not depends_on_fields(expression):
+        return 0
+    if expression.op == "field":
+        return 1
+    degrees = tuple(field_polynomial_degree(argument) for argument in expression.args)
+    if any(degree is None for degree in degrees):
+        return None
+    finite = tuple(degree for degree in degrees if degree is not None)
+    if expression.op in (
+        "add",
+        "negate",
+        "component",
+        "derivative",
+        "gradient",
+        "divergence",
+        "curl",
+        "laplacian",
+        "integral",
+    ):
+        return max(finite, default=0)
+    if expression.op in ("multiply", "dot"):
+        return sum(finite)
+    if expression.op == "divide":
+        return finite[0] if not depends_on_fields(expression.args[1]) else None
+    if expression.op == "power":
+        exponent = expression.args[1]
+        power = (
+            _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+        )
+        return finite[0] * power if power is not None and power >= 0 else None
+    return None
+
+
+def _evaluate_power(
+    expression: PDEExpression, base: Array, exponent_value: Array, /
+) -> Array:
+    """Keep exact integer powers on their nonsingular native polynomial rule."""
+    exponent = expression.args[1]
+    power = _exact_integer_literal(exponent.value) if exponent.op == "constant" else None
+    return lax.integer_pow(base, power) if power is not None else base**exponent_value
 
 
 def as_expression(value: Any, /) -> PDEExpression:
