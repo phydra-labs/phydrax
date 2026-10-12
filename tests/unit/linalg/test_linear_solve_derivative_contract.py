@@ -16,6 +16,8 @@ from phydrax import (
     DifferentiationRequest,
     GradientLevel,
 )
+from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
+from phydrax.sparse._linear import _SparseStoragePlan
 
 
 type DifferentiationMode = Literal["mathematical", "rhs-only", "algorithmic", "none"]
@@ -204,6 +206,67 @@ def test_primal_factor_route_derivatives_are_exact_factored_solves(
     np.testing.assert_allclose(gradient, cotangent @ reference, rtol=1.0e-9)
 
 
+def test_nonsymmetric_sparse_factor_preconditioned_cotangents_match_dense() -> None:
+    la = phx.linalg
+    size = 128
+    diagonal = np.arange(size, dtype=np.int32)
+    sources = np.concatenate((diagonal, diagonal[:-1], diagonal[1:]))
+    targets = np.concatenate((diagonal, diagonal[1:], diagonal[:-1]))
+    relation = EdgeRelation(sources, targets, source_size=size, target_size=size)
+    storage_plan = _SparseStoragePlan(relation)
+    space = la.ArraySpace((size,), dtype=jnp.float64)
+    # Upwind advection-diffusion: a nonsymmetric, weakly dominant M-matrix.
+    coefficients = jnp.asarray(
+        np.concatenate(
+            (np.full(size, 2.001), np.full(size - 1, -1.8), np.full(size - 1, -0.2))
+        )
+    )
+    rhs = jnp.cos(jnp.arange(size, dtype=jnp.float64) / 10.0)
+    weights = jnp.sin(jnp.arange(size, dtype=jnp.float64) / 13.0)
+    policy = la.LinearSolvePolicy(
+        la.GMRES(restart=4),
+        tolerance=la.TolerancePolicy(relative=1e-11, absolute=1e-12, max_steps=8),
+        differentiation=la.DifferentiationPolicy("mathematical"),
+        derivative_solve=la.LinearDerivativeSolvePolicy(
+            relative_tolerance=1e-11, absolute_tolerance=1e-12, maximum_steps=8
+        ),
+        preconditioning=la.PreconditioningPolicy(
+            la.SparseFactorizationPreconditionerBuilder(
+                la.SparseFactorizationPolicy("lu", ordering="approximate-minimum-degree")
+            )
+        ),
+    )
+
+    def observable(values: jax.Array, right: jax.Array) -> jax.Array:
+        operator = SparseCoordinateOperator(
+            relation,
+            values,
+            source=space,
+            target=space,
+            operator_id="upwind-advection-diffusion",
+            storage_plan=storage_plan,
+        )
+        result = la.solve(la.LinearSystem(operator), right, policy=policy)
+        return jnp.vdot(weights, result.value)
+
+    value, (coefficient_gradient, rhs_gradient) = jax.jit(
+        jax.value_and_grad(observable, argnums=(0, 1))
+    )(coefficients, rhs)
+    matrix = np.zeros((size, size), dtype=np.float64)
+    matrix[targets, sources] = np.asarray(coefficients)
+    solution = np.linalg.solve(matrix, np.asarray(rhs))
+    multiplier = np.linalg.solve(matrix.T, np.asarray(weights))
+    expected_coefficients = -multiplier[targets] * solution[sources]
+
+    assert np.all(np.isfinite(coefficient_gradient))
+    assert np.all(np.isfinite(rhs_gradient))
+    np.testing.assert_allclose(value, np.asarray(weights) @ solution, rtol=1e-9)
+    np.testing.assert_allclose(
+        coefficient_gradient, expected_coefficients, rtol=1e-9, atol=1e-10
+    )
+    np.testing.assert_allclose(rhs_gradient, multiplier, rtol=1e-9, atol=1e-10)
+
+
 def _well_conditioned_system() -> phx.linalg.LinearSystem:
     rng = np.random.default_rng(3)
     matrix = rng.standard_normal((20, 20)) + 20.0 * np.eye(20)
@@ -351,6 +414,91 @@ def test_complex_native_dense_solve_has_strict_dtype_jit_parameter_derivative(
         )
 
 
+def test_complex_multi_rhs_pcg_implicit_parameter_gradient_matches_dense_solve() -> None:
+    """A Hermitian, non-real operator needs columnwise complex transpose solves."""
+    space = phx.linalg.ArraySpace(
+        (3,), dtype=jnp.complex128, space_id="complex-multi-rhs:space"
+    )
+    base = jnp.asarray(
+        [
+            [1.2 + 0.3j, -0.4 + 0.7j, 0.2 - 0.5j],
+            [0.6 - 0.8j, 1.5 + 0.2j, -0.3 + 0.4j],
+            [-0.2 + 0.6j, 0.5 - 0.1j, 1.1 - 0.4j],
+        ],
+        dtype=jnp.complex128,
+    )
+    direction = jnp.asarray(
+        [
+            [0.2 - 0.1j, 0.3 + 0.4j, -0.1 + 0.2j],
+            [-0.4 + 0.2j, 0.1 - 0.3j, 0.2 + 0.1j],
+            [0.3 + 0.1j, -0.2 + 0.5j, 0.4 - 0.2j],
+        ],
+        dtype=jnp.complex128,
+    )
+    rhs = jnp.asarray(
+        [
+            [1.0 + 0.7j, -0.4 + 1.2j],
+            [0.3 - 1.1j, 1.4 + 0.2j],
+            [-0.8 + 0.5j, 0.6 - 0.9j],
+        ],
+        dtype=jnp.complex128,
+    )
+    probe = jnp.asarray(
+        [
+            [0.2 + 0.9j, 1.1 - 0.3j],
+            [-0.7 + 0.4j, 0.5 + 0.8j],
+            [1.3 - 0.6j, -0.2 + 0.7j],
+        ],
+        dtype=jnp.complex128,
+    )
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=1e-12, absolute=1e-14, max_steps=12
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("mathematical"),
+        derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(
+            relative_tolerance=1e-12, absolute_tolerance=1e-14, maximum_steps=12
+        ),
+    )
+
+    def matrix(theta: jax.Array) -> jax.Array:
+        factor = base + theta * direction
+        return factor.conj().T @ factor + 0.8 * jnp.eye(3, dtype=jnp.complex128)
+
+    def solve(theta: jax.Array) -> phx.linalg.LinearSolveResult:
+        # B^H B + cI with c > 0 certifies Euclidean Hermitian positive definiteness.
+        operator = phx.linalg.DenseLinearOperator(
+            matrix(theta),
+            source=space,
+            target=space,
+            operator_id="complex-multi-rhs:gram",
+            properties=_CERTIFIED_SPD,
+        )
+        problem = phx.linalg.LinearSystem(
+            operator, problem_id="complex-multi-rhs:problem"
+        )
+        return phx.linalg.solve_many(phx.linalg.prepare(problem, policy), rhs)
+
+    def objective(theta: jax.Array) -> jax.Array:
+        return jnp.real(jnp.vdot(probe, solve(theta).value))
+
+    def reference(theta: jax.Array) -> jax.Array:
+        return jnp.real(jnp.vdot(probe, jnp.linalg.solve(matrix(theta), rhs)))
+
+    theta = jnp.asarray(0.65, dtype=jnp.float64)
+    result = jax.jit(solve)(theta)
+    assert result.value.shape == (3, 2)
+    assert result.successful.tolist() == [True, True]
+    assert result.derivative_valid.tolist() == [True, True]
+    assert result.derivative_contract.route is DerivativeRoute.IMPLICIT
+    assert result.derivative_contract.level(OPERATOR) is GradientLevel.SMOOTH
+    value, gradient = jax.jit(jax.value_and_grad(objective))(theta)
+    expected_value, expected_gradient = jax.jit(jax.value_and_grad(reference))(theta)
+    np.testing.assert_allclose(value, expected_value, rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(gradient, expected_gradient, rtol=1e-10, atol=1e-12)
+
+
 def test_krylov_derivative_solves_reuse_the_prepared_primal_preconditioner() -> None:
     """An ill-conditioned SPD solve meets its derivative contract in one step.
 
@@ -482,3 +630,40 @@ def test_native_krylov_mathematical_rhs_shapes_preserve_tangent_and_adjoint(
         rtol=1e-8,
         atol=1e-10,
     )
+
+
+@pytest.mark.strict_jax
+def test_pcg_implicit_derivative_preserves_spd_and_independent_work_limit() -> None:
+    """SPD derivatives converge without restarted-GMRES stagnation."""
+    n = 96
+    host = (
+        np.diag(np.full(n, 2.0))
+        + np.diag(np.full(n - 1, -1.0), 1)
+        + np.diag(np.full(n - 1, -1.0), -1)
+    )
+    matrix = jnp.asarray(host, dtype=jnp.float64)
+    rhs = jnp.asarray(np.linspace(0.2, 1.0, n), dtype=jnp.float64)
+    cotangent = jnp.asarray(np.linspace(1.0, 0.2, n), dtype=jnp.float64)
+    properties = phx.linalg.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={"self_adjoint": "construction", "positive_definite": "construction"},
+    )
+    operator = phx.linalg.DenseLinearOperator(matrix, properties=properties)
+
+    def objective(value: jax.Array, maximum_steps: int) -> jax.Array:
+        policy = phx.linalg.LinearSolvePolicy(
+            phx.linalg.PCG(),
+            derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(
+                maximum_steps=maximum_steps
+            ),
+        )
+        result = phx.linalg.solve(phx.linalg.LinearSystem(operator), value, policy=policy)
+        return jnp.dot(result.value, cotangent)
+
+    gradient = jax.grad(lambda value: objective(value, n))(rhs)
+    np.testing.assert_allclose(
+        gradient, np.linalg.solve(host, np.asarray(cotangent)), rtol=1e-7, atol=1e-8
+    )
+    failed = jax.grad(lambda value: objective(value, 1))(rhs)
+    assert np.all(np.isnan(failed))

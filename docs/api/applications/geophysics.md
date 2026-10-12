@@ -50,6 +50,24 @@ storage owner.
 
 ## Seismic models, imaging, and source workflows
 
+`TravelTimeGraphPlan` constructs a symmetrized directed relation and delegates
+`length / wavespeed` costs to `ShortestPathFieldPlan(method="host-dijkstra")`.
+This method has an intentional SciPy host synchronization through
+`jax.pure_callback`, including under JIT; it is not a device-native eikonal
+solver. Travel-time gradients use the selected acyclic forest's device VJP.
+`converged` means certified success; `derivative_available` also requires every
+reachable inherited path margin to exceed `path_margin_tolerance_s`. Equal
+incoming candidates are retained in the alternative-path comparison, so an
+exact tie, or ambiguity inherited from a parent, suppresses the regularity
+claim while preserving the deterministic selected Clarke subgradient.
+The source is fixed, so its returned `path_margin_s` is `+inf` before applying
+the tolerance; incoming cycles at this root do not constrain descendant margins.
+`TravelTimeResult` preserves `field_status`, `bellman_residual`, `dual_residual`,
+and `reachable` from the owning field certificate rather than reducing failure
+evidence to a Boolean. The field plan applies work and peak host-byte admission
+before its callback, including when invoked through this travel-time adapter.
+
+
 ::: phydrax.applications.geophysics.seismic
     options:
       show_root_heading: true

@@ -61,6 +61,11 @@ from ._diffusion import (
     graph_denoising_loss,
     GraphPayloadKind,
 )
+from ._effective_resistance import (
+    EffectiveResistancePlan,
+    EffectiveResistanceResult,
+    EffectiveResistanceStatus,
+)
 from ._equivariant import (
     EquivariantGraphConvolution,
     euclidean_edge_features,
@@ -236,10 +241,19 @@ from ._query_batch import (
     QueryNeighborhood,
     QueryNeighborhoodEvidence,
 )
+from ._randomized_shortest_path import (
+    RandomizedShortestPathPlan,
+    RandomizedShortestPathResult,
+    RandomizedShortestPathStatus,
+)
 from ._route_payload import RouteLocal
 from ._simplicial import (
     SimplicialComplexGraph,
     triangle_mesh_to_simplicial_graph,
+)
+from ._sketched_resistance import (
+    SketchedEffectiveResistancePlan,
+    SketchedResistanceEmbedding,
 )
 from ._spectral import (
     graph_adjacency_apply,
@@ -283,6 +297,14 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "EffectiveResistancePlan",
+    "EffectiveResistanceResult",
+    "EffectiveResistanceStatus",
+    "SketchedEffectiveResistancePlan",
+    "SketchedResistanceEmbedding",
+    "RandomizedShortestPathPlan",
+    "RandomizedShortestPathResult",
+    "RandomizedShortestPathStatus",
     *_gauge_transport_all,
     "RouteLocal",
     "compat",

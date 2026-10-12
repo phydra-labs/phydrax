@@ -14,6 +14,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._admissibility import (
+    first_order_only,
     guard_derivative_validity,
     refuse_derivative_dependencies,
 )
@@ -176,3 +177,53 @@ def test_refusal_preserves_higher_derivatives_in_admitted_inputs() -> None:
     np.testing.assert_allclose(hessian, 6.0 * 2.0 * 9.0, rtol=1e-15)
     np.testing.assert_allclose(third, 6.0 * 9.0, rtol=1e-15)
     np.testing.assert_allclose(batched, (54.0, 108.0), rtol=1e-15)
+
+
+def _first_order_owner(x: jax.Array, y: jax.Array) -> jax.Array:
+    x, y = first_order_only((x, y), message="maximum_derivative_order=1")
+    return x**3 * y**2
+
+
+def test_first_order_carrier_preserves_primal_jvp_vjp_and_gradient() -> None:
+    value, tangent = jax.jvp(
+        _first_order_owner, (_X, _K), (jnp.ones_like(_X), jnp.ones_like(_K))
+    )
+    _, pullback = jax.vjp(_first_order_owner, _X, _K)
+    expected = (108.0, 48.0)
+    np.testing.assert_allclose(value, 72.0)
+    np.testing.assert_allclose(tangent, sum(expected))
+    np.testing.assert_allclose(pullback(jnp.asarray(1.0)), expected)
+    np.testing.assert_allclose(
+        jax.jit(jax.grad(_first_order_owner, (0, 1)))(_X, _K), expected
+    )
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        pytest.param(
+            lambda: jax.grad(jax.grad(_first_order_owner, 0), 0)(_X, _K),
+            id="grad-grad",
+        ),
+        pytest.param(
+            lambda: jax.jacfwd(jax.grad(_first_order_owner, 0), 1)(_X, _K),
+            id="forward-over-reverse-mixed",
+        ),
+        pytest.param(
+            lambda: jax.jacrev(jax.jacfwd(_first_order_owner, 0), 1)(_X, _K),
+            id="reverse-over-forward-mixed",
+        ),
+        pytest.param(lambda: jax.hessian(_first_order_owner, 0)(_X, _K), id="hessian"),
+        pytest.param(
+            lambda: jax.jacfwd(jax.jacfwd(_first_order_owner, 0), 0)(_X, _K),
+            id="forward-over-forward",
+        ),
+    ],
+)
+def test_first_order_carrier_refuses_nested_transforms(
+    route: Callable[[], object],
+) -> None:
+    with pytest.raises(
+        ValueError, match="derivative-unsupported: maximum_derivative_order=1"
+    ):
+        route()

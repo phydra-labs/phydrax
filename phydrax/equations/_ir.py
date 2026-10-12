@@ -193,6 +193,7 @@ class PDEParameter:
     dimension: DimensionSignature = DIMENSIONLESS
     scale: tuple[float, ...] = (1.0,)
     functional: bool = False
+    representation: PDERepresentation | None = None
 
     def __post_init__(self) -> None:
         if not self.name or int(self.components) <= 0:
@@ -200,6 +201,16 @@ class PDEParameter:
                 "PDE parameters require a name and positive component count."
             )
         object.__setattr__(self, "components", int(self.components))
+        representation = (
+            "scalar"
+            if self.representation is None and self.components == 1
+            else (
+                "vector"
+                if self.representation is None
+                else parse(self.representation, PDERepresentation, "representation")
+            )
+        )
+        object.__setattr__(self, "representation", representation)
         if not isinstance(self.dimension, DimensionSignature):
             raise TypeError("PDE parameter dimension must be a DimensionSignature.")
         scales = _finite_values(list(self.scale), "PDE parameter scale")

@@ -54,7 +54,11 @@ from ._policies import (
     LinearSolvePolicy,
     LSMR,
 )
-from ._preconditioners import AbstractPreconditioner
+from ._preconditioners import (
+    _AdjointApplicablePreconditioner,
+    _TransposePreconditioner,
+    AbstractPreconditioner,
+)
 from ._preconditioning import prepare_preconditioner, PreparedPreconditioner
 from ._prepared import PreparedLinearSolve
 from ._problems import (
@@ -346,10 +350,10 @@ def _bind_for_template(
     if template.problem_signature != _problem_structure(problem):
         raise ValueError("Numerical binding cannot change symbolic problem structure.")
     stop_arrays = selected_plan.policy.differentiation.mode in ("rhs-only", "none")
-    execution_problem = _stop_arrays(problem) if stop_arrays else problem
-    # Concrete plan arrays carry no tangent; evaluating stop_gradient eagerly
+    # Concrete problem and plan arrays carry no tangent; stopping them eagerly
     # keeps host symbolic data (sparse setup patterns) readable under traces.
     with jax.ensure_compile_time_eval():
+        execution_problem = _stop_arrays(problem) if stop_arrays else problem
         preparation_plan = (
             jax.tree.map(
                 lambda value: (
@@ -2474,10 +2478,18 @@ def _implicit_root_value(
             failure_mode=prepared.plan.policy.failure.mode,
         )
     initial = jax.lax.stop_gradient(initial)
+    block_action: Callable[[Array], Array] | None = None
     if isinstance(problem, LinearSystem):
+        # The tangent solve is evaluated at the primal operator: its arrays are
+        # stopped like the derivative preconditioner's, and derivatives with
+        # respect to them flow through the linearized residual instead.
+        stopped_operator = _stop_arrays(problem.operator)
 
         def residual(value: Array) -> Array:
             return _operator_action(problem.operator, value) - rhs
+
+        def block_action(value: Array) -> Array:
+            return _operator_action(stopped_operator, value)
 
     else:
 
@@ -2494,6 +2506,7 @@ def _implicit_root_value(
         initial,
         prepared.plan,
         _derivative_preconditioner(prepared, problem),
+        block_action,
     )
 
 
@@ -2506,14 +2519,13 @@ def _derivative_preconditioner(
 
     The tangent solve ``A dx = r`` shares the primal operator, so the prepared
     preconditioner of ``A`` accelerates it exactly as it does the primal. The
-    cotangent solve ``Aᵀ y = g`` reuses the same action: preconditioners expose
-    no transpose, and ``P ≈ A⁻¹`` is also ``P ≈ A⁻ᵀ`` for the self-adjoint
-    systems that dominate implicit differentiation. Both solves apply it as a
-    flexible right preconditioner and accept only the true residual of the
-    unpreconditioned system, so the accelerator never changes the accepted
-    derivative. Least-squares stationarity differentiates ``AᵀA``, which the
-    prepared action does not approximate. Its arrays are stopped: an
-    accelerator carries no derivative.
+    cotangent solve ``Aᵀ y = g`` uses its algebraic transpose when the action
+    supplies an adjoint; certified self-adjoint actions and actions without
+    that capability retain the primal accelerator. Both solves accept only
+    the true residual of the unpreconditioned system, so the accelerator never
+    changes the accepted derivative. Least-squares stationarity differentiates
+    ``AᵀA``, which the prepared action does not approximate. Its arrays are
+    stopped: an accelerator carries no derivative.
     """
     state = prepared.preconditioning_state
     if (
@@ -2856,17 +2868,48 @@ def _implicit_custom_root(
     initial: Array,
     plan: LinearSolvePlan,
     preconditioner: AbstractPreconditioner | None,
+    block_action: Callable[[Array], Array] | None,
     /,
 ) -> Array:
+    """Implicit root derivative with independently certified column solves.
+
+    ``block_action`` applies the primal operator to any number of right-hand
+    side columns. When supplied, each derivative column applies it to its own
+    single-column block, so k columns cost k column actions; otherwise every
+    column embeds into the full linearized block, which costs k block actions
+    per column.
+    """
+
+    transpose_preconditioner = (
+        _TransposePreconditioner(preconditioner)
+        if (
+            isinstance(preconditioner, _AdjointApplicablePreconditioner)
+            and not preconditioner.properties.certifies("self_adjoint")
+        )
+        else preconditioner
+    )
+
     def solve_columns(action: Callable[[Array], Array], rhs: Array) -> Array:
-        return _solve_independent_columns(action, rhs, plan, preconditioner)
+        return _solve_independent_columns(action, rhs, plan, preconditioner, block_action)
+
+    def transpose_columns(action: Callable[[Array], Array], rhs: Array) -> Array:
+        transposed = (
+            None
+            if block_action is None
+            else _transposed_block_action(
+                block_action, jnp.zeros(rhs.shape[:-1] + (1,), dtype=rhs.dtype)
+            )
+        )
+        return _solve_independent_columns(
+            action, rhs, plan, transpose_preconditioner, transposed
+        )
 
     def tangent_solve(linearized: Callable[[Array], Array], target: Array) -> Array:
         return jax.lax.custom_linear_solve(
             linearized,
             target,
             solve=solve_columns,
-            transpose_solve=solve_columns,
+            transpose_solve=transpose_columns,
         )
 
     return custom_root(
@@ -2877,11 +2920,29 @@ def _implicit_custom_root(
     )
 
 
+def _transposed_block_action(
+    block_action: Callable[[Array], Array], example: Array, /
+) -> Callable[[Array], Array]:
+    """Coordinate (not metric) transpose of the linearized action.
+
+    ``custom_linear_solve`` passes ``transpose_solve`` the transposed
+    linearization; a VJP of the linear block action is that same map.
+    """
+    _, transpose = jax.vjp(block_action, example)
+
+    def apply(value: Array) -> Array:
+        (image,) = transpose(value)
+        return image
+
+    return apply
+
+
 def _solve_independent_columns(
     action: Callable[[Array], Array],
     right_hand_side: Array,
     plan: LinearSolvePlan,
     preconditioner: AbstractPreconditioner | None,
+    block_action: Callable[[Array], Array] | None,
     /,
 ) -> Array:
     if right_hand_side.size == 0:
@@ -2895,7 +2956,7 @@ def _solve_independent_columns(
         def vector_action(vector: Array) -> Array:
             return action(vector.reshape(right_hand_side.shape)).reshape((dimension,))
 
-        return _callable_gmres(
+        return _callable_derivative_solve(
             vector_action,
             right_hand_side.reshape((dimension,)),
             plan,
@@ -2910,19 +2971,28 @@ def _solve_independent_columns(
         column = flattened_rhs[batch_index, :, rhs_index]
 
         def vector_action(vector: Array) -> Array:
-            embedded = (
-                jnp.zeros_like(flattened_rhs)
-                .at[
-                    batch_index,
-                    :,
-                    rhs_index,
-                ]
+            if block_action is None:
+                embedded = (
+                    jnp.zeros_like(flattened_rhs)
+                    .at[
+                        batch_index,
+                        :,
+                        rhs_index,
+                    ]
+                    .set(vector)
+                )
+                image = action(embedded.reshape(right_hand_side.shape))
+                return image.reshape(flattened_rhs.shape)[batch_index, :, rhs_index]
+            # Columns are independent, so only the operator batch is embedded.
+            single = (
+                jnp.zeros((batch_count, dimension, 1), dtype=right_hand_side.dtype)
+                .at[batch_index, :, 0]
                 .set(vector)
             )
-            image = action(embedded.reshape(right_hand_side.shape))
-            return image.reshape(flattened_rhs.shape)[batch_index, :, rhs_index]
+            image = block_action(single.reshape(batch_shape + (dimension, 1)))
+            return image.reshape((batch_count, dimension))[batch_index]
 
-        return _callable_gmres(vector_action, column, plan, preconditioner)
+        return _callable_derivative_solve(vector_action, column, plan, preconditioner)
 
     solved = jax.vmap(solve_instance)(jnp.arange(batch_count * rhs_count))
     solved = solved.reshape((batch_count, rhs_count, dimension))
@@ -3121,7 +3191,7 @@ def _checked_callable_value(
     )
 
 
-def _callable_gmres(
+def _callable_derivative_solve(
     action: Callable[[Array], Array],
     rhs: Array,
     plan: LinearSolvePlan,
@@ -3131,23 +3201,85 @@ def _callable_gmres(
     dimension = rhs.shape[0]
     policy = plan.policy.derivative_solve
     max_steps = policy.maximum_steps or dimension
-    restart = _derivative_restart(plan.policy.method, max_steps, dimension)
-    result = _run_callable_gmres(
-        action,
-        rhs,
-        max_steps=max_steps,
-        restart=restart,
-        stagnation_iterations=max_steps + 1,
-        relative=policy.relative_tolerance,
-        absolute=policy.absolute_tolerance,
-        preconditioner=preconditioner,
-    )
+    if plan.derivative_pcg:
+        result = _run_callable_pcg(
+            action,
+            rhs,
+            max_steps=max_steps,
+            relative=policy.relative_tolerance,
+            absolute=policy.absolute_tolerance,
+            preconditioner=preconditioner,
+        )
+    else:
+        restart = _derivative_restart(plan.policy.method, max_steps, dimension)
+        result = _run_callable_gmres(
+            action,
+            rhs,
+            max_steps=max_steps,
+            restart=restart,
+            stagnation_iterations=max_steps + 1,
+            relative=policy.relative_tolerance,
+            absolute=policy.absolute_tolerance,
+            preconditioner=preconditioner,
+        )
     return _checked_callable_value(
         result,
         plan.policy.failure.mode,
         message=(
             "Implicit linear derivative solve failed its independent residual contract."
         ),
+    )
+
+
+def _run_callable_pcg(
+    action: Callable[[Array], Array],
+    rhs: Array,
+    /,
+    *,
+    max_steps: int,
+    relative: float,
+    absolute: float,
+    preconditioner: AbstractPreconditioner | None,
+) -> _CallableLinearSolve:
+    """Independent Euclidean SPD derivative solve, certified by true residual."""
+    from .backends._native_krylov import _pcg_raw, _preconditioner_action
+
+    def inner(left: Array, right: Array) -> Array:
+        return jnp.vdot(left, right)
+
+    def identity(vector: Array, _: Array) -> Array:
+        return vector
+
+    precondition = (
+        identity
+        if preconditioner is None
+        else _preconditioner_action(preconditioner, preconditioner.space)
+    )
+    relative_ = jnp.asarray(relative, dtype=rhs.real.dtype)
+    absolute_ = jnp.asarray(absolute, dtype=rhs.real.dtype)
+    value, auxiliary, _ = _pcg_raw(
+        action,
+        rhs,
+        jnp.zeros_like(rhs),
+        inner,
+        precondition,
+        max_steps,
+        relative_,
+        absolute_,
+    )
+    residual_norm = auxiliary[1]
+    threshold = absolute_ + relative_ * jnp.linalg.norm(rhs)
+    finite = (
+        jnp.all(jnp.isfinite(rhs))
+        & jnp.all(jnp.isfinite(value))
+        & jnp.isfinite(residual_norm)
+    )
+    return _CallableLinearSolve(
+        value,
+        residual_norm,
+        auxiliary[0],
+        auxiliary[4],
+        finite & (residual_norm <= threshold),
     )
 
 

@@ -123,6 +123,167 @@ Use `graph_gradient` for node-to-edge differences, `graph_divergence` for
 edge-to-node conservation terms, and `graph_incidence_laplacian` for the
 incidence-form `div(grad(u))`.
 
+## Effective resistance and conductance sensitivity
+
+Effective resistance is a solve query rather than a residual penalty. For an
+undirected resistor network with conductances \(w_e>0\), inject one unit of
+current at node \(s\) and extract it at \(t\). The voltage difference is
+\(R_{st}\). `EffectiveResistancePlan` grounds one node per connected component
+and solves the reduced sparse Laplacian; it does not form a dense pseudoinverse.
+
+This three-node series circuit has edge conductances 2 and 3, so the analytic
+resistance between its endpoints is \(1/2+1/3=5/6\). The query-node ordering,
+not the full graph ordering, indexes the returned matrix:
+
+!!! example
+    ```python
+    import jax
+    import jax.numpy as jnp
+    import phydrax as phx
+
+    jax.config.update("jax_enable_x64", True)
+
+    relation = phx.sparse.EdgeRelation(
+        jnp.array([0, 1], dtype=jnp.int32),
+        jnp.array([1, 2], dtype=jnp.int32),
+        source_size=3,
+        target_size=3,
+        valid=jnp.array([True, True], dtype=jnp.bool_),
+    )
+    conductances = jnp.array([2.0, 3.0], dtype=jnp.float64)
+    plan = phx.graph.EffectiveResistancePlan(
+        relation,
+        jnp.array([0, 2], dtype=jnp.int32),
+        dtype=jnp.float64,
+        workspace_bytes=64 * 1024 * 1024,
+    )
+    result = jax.jit(lambda weights: plan.solve(weights))(conductances)
+
+    assert result.status == phx.graph.EffectiveResistanceStatus.SUCCESS
+    assert result.connected[0, 1]
+    assert jnp.all(result.derivative_regular)
+    assert jnp.allclose(result.resistance[0, 1], 5.0 / 6.0)
+    # Retain these alongside a reported resistance:
+    solve_evidence = (
+        result.solve_status,
+        result.residual_norm,
+        result.iterations,
+    )
+    ```
+
+Valid relation routes must be canonical (`source_indices < target_indices`).
+Parallel routes are distinct conductors; self-loops and reversed routes are
+refused. Invalid or nonpositive conductances on valid routes return
+`INVALID_CONDUCTANCE` without solving a substituted network. Solve failure
+returns `SOLVE_FAILED`; resistance values are `NaN` unless the overall status
+is `SUCCESS`. On success, disconnected pairs have `connected=False` and
+resistance `+inf`, rather than being classified as a solver failure.
+
+### Sensitivity and edge-current magnitude
+
+For a connected pair with a regular, converged solve, let \(\phi\) be its
+unit-current potential. Differentiating the resistance gives
+
+\[
+\frac{\partial R_{st}}{\partial w_e}
+=-(\phi_u-\phi_v)^2,\qquad
+|i_e|=w_e\sqrt{-\frac{\partial R_{st}}{\partial w_e}}.
+\]
+
+This derivative is with respect to **conductance**, not edge resistance.
+It recovers current magnitude, not its sign. In the series example both edges
+carry unit current, and the analytic derivatives are \(-1/4\) and \(-1/9\).
+The following continues the example, after checking the result evidence above:
+
+!!! example
+    ```python
+    def endpoint_resistance(weights: jax.Array) -> jax.Array:
+        return plan.solve(weights).resistance[0, 1]
+
+    sensitivity = jax.grad(endpoint_resistance)(conductances)
+    current_magnitude = conductances * jnp.sqrt(-sensitivity)
+
+    assert jnp.allclose(
+        sensitivity, jnp.array([-0.25, -1.0 / 9.0], dtype=jnp.float64)
+    )
+    assert jnp.allclose(
+        current_magnitude, jnp.ones((2,), dtype=jnp.float64)
+    )
+    ```
+
+Do not interpret gradients of disconnected `+inf` entries, invalid
+conductances, or unsuccessful solves as physical sensitivities. Inspect
+`derivative_regular` and numerical solve evidence at the conductances used
+for differentiation. PCG values and sensitivities remain numerical
+grounded-solve results, subject to convergence and floating-point error.
+
+### Typed-key resistance sketches
+
+When many pair queries would make a quadratic resistance matrix too costly,
+prepare a sketch over all nodes and query squared embedding distances:
+
+!!! example
+    ```python
+    sketch_plan = phx.graph.SketchedEffectiveResistancePlan(
+        relation,
+        sketch_dimension=128,
+        dtype=jnp.float64,
+        workspace_bytes=64 * 1024 * 1024,
+    )
+    key = jax.random.key(7)
+    embedding = sketch_plan.embed(conductances, key)
+    assert embedding.status == phx.graph.EffectiveResistanceStatus.SUCCESS
+    assert jnp.all(embedding.derivative_regular)
+
+    estimated_resistance = embedding.resistance(
+        jnp.array([0], dtype=jnp.int32),
+        jnp.array([2], dtype=jnp.int32),
+    )
+    # embedding.embedding has shape (128, 3).
+    # estimated_resistance is a random approximation, not exactly 5/6.
+    ```
+
+Only typed PRNG keys from `jax.random.key` are accepted; legacy
+`jax.random.PRNGKey` arrays are refused. Sketch-row randomness is addressed
+with `fold_in(key, row)`, so workspace-driven changes in RHS block size do
+not change the sketch. Keep `component_label`, `status`, `solve_status`,
+`residual_norm`, `iterations`, and `derivative_regular` with the embedding.
+Across different components `.resistance(...)` returns `+inf` on success;
+unsuccessful embeddings return `NaN` resistance values.
+
+The Spielman–Srivastava construction represents effective resistance as a
+squared Euclidean distance in an edge-space embedding, then applies a
+Johnson–Lindenstrauss random projection. Qualitatively, for a fixed graph,
+enough sketch rows preserve all node-pair resistances within a small
+multiplicative distortion with high probability. The dimension grows
+logarithmically with the number of nodes and inversely quadratically with
+the desired distortion, with additional dependence on the failure
+probability. This is a probabilistic projection guarantee, not a
+deterministic per-key error certificate; approximate linear solves contribute
+additional error. The API therefore requires an explicit `sketch_dimension`
+and does not select a dimension from epsilon or certify a requested
+distortion. The example's 128 rows illustrate usage, not a certified bound.
+
+Reference: Daniel A. Spielman and Nikhil Srivastava,
+["Graph Sparsification by Effective Resistances"](https://doi.org/10.1137/080734029),
+*SIAM Journal on Computing* **40**(6), 1913–1926 (2011).
+
+Both plans accept a `LinearSolvePolicy`, defaulting to PCG with refreshable
+Jacobi preconditioning, and solver-internal `SolveResourcePolicy` resources.
+The separate `workspace_bytes` budget bounds a logical outer-array inventory,
+including retained output, and chooses RHS blocks from the stricter primal
+and implicit-derivative estimates before allocating result arrays. Both plans
+expose `plan.block_size`, `plan.resource_estimate`, and `plan.plan_id`.
+The estimate names `output_bytes`, `primal_workspace_bytes`,
+`derivative_workspace_bytes`, and `budgeted_workspace_bytes`; the last is the
+maximum of the two workspace estimates and cannot exceed the supplied budget.
+Native solver workspace and Krylov constraints can further restrict blocking.
+A sketch avoids storing a dense all-pairs output but still budgets its retained
+`sketch_dimension * n` embedding, reduced solutions, and derivative sign rows.
+These logical quantities do not guarantee physical peak device memory:
+compiler/XLA temporaries are only measurable after lowering/compilation and
+are recorded separately by the resistance scaling benchmark.
+
 ## Hard graph value constraints
 
 Use `enforce_graph_values` when a graph node, edge, or graph-global subset should

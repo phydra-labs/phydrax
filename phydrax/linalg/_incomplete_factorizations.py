@@ -21,7 +21,7 @@ from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
-from ._preconditioning import AbstractPreconditionerBuilder
+from ._preconditioning import AbstractPreconditionerBuilder, PlannedPreconditionerSetup
 from ._properties import LinearCapabilityError
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._sparse_factorizations import (
@@ -29,6 +29,7 @@ from ._sparse_factorizations import (
     prepare_sparse_factorization,
     PreparedSparseFactorization,
     refresh_sparse_factorization,
+    SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
 )
@@ -87,8 +88,22 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         iteration: ArrayLike | None = None,
     ) -> PyTree[Array]:
         del iteration
+        return self._apply(residual, adjoint=False)
+
+    def apply_adjoint(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        """Apply the conjugate-transposed sparse factor inverse."""
+        del iteration
+        return self._apply(residual, adjoint=True)
+
+    def _apply(self, residual: PyTree[Any], /, *, adjoint: bool) -> PyTree[Array]:
         coordinates = self.space.flatten(self.space.validate(residual))
-        solved = self.factorization.solve(coordinates)
+        solved = self.factorization.solve(coordinates, adjoint=adjoint)
         value = eqx.error_if(
             solved.value,
             solved.status != int(SparseFactorizationStatus.SUCCESS),
@@ -179,28 +194,41 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
         *,
         materialization: MaterializationPolicy | None = None,
     ) -> PreconditionerCostEstimate:
+        return self.plan_setup(setup_operator, materialization=materialization).cost
+
+    def plan_setup(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PlannedPreconditionerSetup:
         # The setup operator already stores its sparse values, so nothing is
         # densely materialized; the plan charges the retained factor to
         # SolveResourcePolicy.preconditioner_bytes.
         del materialization
         self.properties_for(setup_operator)
         if not isinstance(setup_operator, AbstractSparseLinearOperator):
-            return PreconditionerCostEstimate(
-                component=self.builder_id,
-                accepted=False,
-                reason="sparse factorization requires canonical sparse operator storage",
+            return PlannedPreconditionerSetup(
+                PreconditionerCostEstimate(
+                    component=self.builder_id,
+                    accepted=False,
+                    reason="sparse factorization requires canonical sparse operator storage",
+                )
             )
         try:
             plan = prepare_sparse_factorization(setup_operator, self.policy())
         except LinearCapabilityError as error:
-            return PreconditionerCostEstimate(
-                component=self.builder_id,
-                accepted=False,
-                reason=str(error),
+            return PlannedPreconditionerSetup(
+                PreconditionerCostEstimate(
+                    component=self.builder_id,
+                    accepted=False,
+                    reason=str(error),
+                )
             )
         itemsize = setup_operator.sparse_storage().values.dtype.itemsize
         factor_entries = plan.factor_indices.size
-        return PreconditionerCostEstimate(
+        cost = PreconditionerCostEstimate(
             component=self.builder_id,
             storage_bytes=plan.factor_bytes,
             preparation_workspace_bytes=factor_entries * itemsize
@@ -212,6 +240,35 @@ class _AbstractSparseFactorizationBuilder(AbstractPreconditionerBuilder):
                 f"factor_nnz={plan.factor_nnz}, factor_bytes={plan.factor_bytes}, "
                 f"symbolic_work={plan.symbolic_work}"
             ),
+        )
+        return PlannedPreconditionerSetup(
+            cost, construction=plan, content_id=setup_operator.operator_id
+        )
+
+    def prepare_planned(
+        self,
+        planned: PlannedPreconditionerSetup,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> SparseFactorizationPreconditioner:
+        properties = self.properties_for(setup_operator)
+        if not isinstance(setup_operator, AbstractSparseLinearOperator):
+            raise TypeError("Sparse factorization requires a sparse operator.")
+        plan = planned.construction_for(setup_operator.operator_id)
+        if plan is None:
+            return self.prepare(setup_operator, materialization=materialization)
+        if not isinstance(plan, SparseFactorizationPlan):
+            raise ValueError(
+                "Sparse factor preparation requires its planned construction."
+            )
+        factorization = refresh_sparse_factorization(plan, setup_operator)
+        return SparseFactorizationPreconditioner(
+            setup_operator,
+            factorization,
+            properties=properties,
+            preconditioner_id=f"{self.builder_id}/{plan.plan_id}",
         )
 
     def prepare(

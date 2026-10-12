@@ -170,10 +170,13 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
             raise ValueError("Time-domain EM material does not match mesh cells.")
         operator, mass, _ = self._operators(material, dt)
         inverse = _hx_preconditioner(self.complex, operator)
+        # The default policy stores ``preconditioning=None``; Equinox only
+        # replaces a ``None`` node when it is declared a leaf.
         policy = eqx.tree_at(
             lambda value: value.preconditioning,
             self.policy,
             la.PreconditioningPolicy(inverse),
+            is_leaf=lambda node: node is None,
         )
         fields, residuals, energies, successes = [], [], [], []
         for source, previous, amplitude in zip(

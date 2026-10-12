@@ -117,6 +117,8 @@ from ._geodetic_formats import (
     SINEXPositionSolution,
 )
 from ._geospatial import (
+    geospatial_cell_field,
+    GeospatialCellField,
     GeospatialContract,
     GeospatialTransform,
     QualifiedGeospatialGrid,
@@ -289,6 +291,8 @@ __all__ = [
     "execute_coordinate_transform",
     "GeodeticDependencyError",
     "GeospatialContract",
+    "GeospatialCellField",
+    "geospatial_cell_field",
     "GeospatialTransform",
     "QualifiedGeospatialGrid",
     "ImportedBilbyResult",

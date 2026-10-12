@@ -57,6 +57,208 @@ return ordinary `DomainFunction`s, so they can be used directly as operators in
 
 ::: phydrax.operators.graph_euler_residual
 
+## Grounded-solve effective resistance
+
+`EffectiveResistancePlan` prepares a canonical undirected
+`phydrax.sparse.EdgeRelation` and a fixed list of query nodes. Valid routes
+must have `source_indices < target_indices`; parallel conductors are allowed,
+but self-loops and reversed routes are not. Conductances are dynamic,
+differentiable values, one per route, and must be finite and strictly positive
+on valid routes.
+
+The plan grounds the minimum-index node of each connected component and solves
+the reduced sparse Laplacian, without forming a dense pseudoinverse. The default
+policy uses PCG with refreshable Jacobi preconditioning; callers can supply a
+`phydrax.linalg.LinearSolvePolicy`. This is a **grounded-solve** route, not a
+claim of exact arithmetic: retain the solve evidence when interpreting values
+or gradients.
+
+`plan.solve(conductances)` returns an `EffectiveResistanceResult` with a
+`resistance` matrix of shape `(q, q)` in query-node order and a `connected`
+mask. On `EffectiveResistanceStatus.SUCCESS`, pairs in different components
+have resistance `+inf` and `connected=False`; disconnection is not a solve
+failure. Invalid conductances produce `INVALID_CONDUCTANCE`, and failed solves
+produce `SOLVE_FAILED`. Resistance values are `NaN` unless the overall status
+is `SUCCESS`. The result also exposes `solve_status`, `residual_norm`,
+`iterations`, and `derivative_regular`; check this evidence before using a
+conductance sensitivity.
+
+Preparation accepts `dtype` (default `jnp.float64`), solver-internal
+`resources: SolveResourcePolicy | None`, and an outer `workspace_bytes` budget
+(default 512 MiB). It bounds a logical outer-array inventory for both primal
+execution and the implicit conductance derivative, including retained output.
+Preparation chooses `plan.block_size` using the stricter inventory and refuses
+the plan before allocating result arrays if even one RHS column cannot fit.
+Native per-column solve workspace and Krylov constraints from
+`LinearSolvePolicy.resources` can further reduce the block size; solver
+internals remain under the native solve-cost contract, not this outer budget.
+
+`plan.resource_estimate` is a `dict[str, int]` with explicit byte quantities:
+
+| Key | Meaning |
+| --- | --- |
+| `output_bytes` | Floating-point result retained by the consumer: `q * q * dtype.itemsize` here, or `sketch_dimension * n * dtype.itemsize` for a sketch. |
+| `primal_workspace_bytes` | Retained output, mapped query/embedding values and solve evidence, RHS/potential/query blocks, and sketch row assembly/weights when applicable. |
+| `derivative_workspace_bytes` | Primal inventory plus output cotangent, all retained reduced solutions, query/potential cotangent and adjoint blocks, and accumulated/per-block conductance gradients; sketches also retain signs and RHS cotangents. |
+| `budgeted_workspace_bytes` | `max(primal_workspace_bytes, derivative_workspace_bytes)`, always at most the supplied `workspace_bytes`. |
+
+The remaining integer fields disaggregate these arrays. `rhs_bytes`,
+`potential_bytes`, and `query_block_bytes` describe the current block;
+`retained_query_bytes`, `retained_evidence_bytes`, `retained_potential_bytes`,
+and (for sketches) `retained_sign_bytes` account for all mapped columns,
+including the padded final block. `conductance_gradient_bytes` is one value
+per relation-capacity slot; `edge_gradient_block_bytes` accounts for per-column
+edge-gradient contributions. `output_bytes` does **not** include row assembly
+or derivative storage. Immutable topology, caller inputs, native solver
+internals, and downstream objectives are outside this outer inventory.
+
+These are conservative logical array inventories, not a bound on physical
+device peak memory: compiler/XLA temporaries, fusion, and buffer reuse are
+outside the planning guarantee. Compiler temporary memory is measurable only
+after lowering/compilation and is recorded separately for the primal and
+derivative by the scaling benchmark. `plan.plan_id` identifies
+relation indices/validity, query nodes, component roots, policy, dtype, and
+block size, never conductance values. A changed budget changes the ID only if
+it changes the selected block size.
+
+::: phydrax.graph.EffectiveResistancePlan
+
+---
+
+::: phydrax.graph.EffectiveResistanceResult
+
+---
+
+::: phydrax.graph.EffectiveResistanceStatus
+
+## Sketched effective resistance
+
+`SketchedEffectiveResistancePlan` prepares the same canonical relation with an
+explicit `sketch_dimension`. Its `.embed(conductances, key)` method requires a
+typed key created by `jax.random.key`, not a legacy `jax.random.PRNGKey`.
+Rademacher signs are addressed by sketch row using `fold_in`, so changing RHS
+block size does not change the random sketch.
+
+The returned `SketchedResistanceEmbedding` stores `embedding` with shape
+`(sketch_dimension, n)` and `component_label`. Its
+`.resistance(sources, targets)` method computes squared embedding distances
+for node pairs, returning `+inf` across components on success and `NaN` on
+failure. The embedding retains `status`, `solve_status`, `residual_norm`,
+`iterations`, `derivative_regular`, and `sketch_dimension`. Approximation error
+from random projection is separate from numerical linear-solve error.
+
+The sketch plan accepts the same solve policy, dtype, solver resources, and
+outer workspace budget as the grounded-solve plan. The retained embedding is
+included in both logical workspace estimates; the stricter implicit-derivative
+estimate determines blocking. It avoids a quadratic all-pairs output, but its
+retained embedding still costs `sketch_dimension * n` floating-point values.
+RHS/solution blocks have `n - component_count` coordinates per column, while
+embedding blocks have `n` values per row (not `sketch_dimension`).
+Choose the dimension explicitly; there is no automatic epsilon-to-dimension
+planning API. See the
+[worked resistance recipe](../../cookbook/graph_physics.md#effective-resistance-and-conductance-sensitivity)
+for sensitivity, typed-key usage, and the qualitative projection guarantee.
+
+::: phydrax.graph.SketchedEffectiveResistancePlan
+
+---
+
+::: phydrax.graph.SketchedResistanceEmbedding
+
+## Randomized shortest paths and free energy
+
+`RandomizedShortestPathPlan` prepares a directed `phydrax.sparse.EdgeRelation`
+(route source to route target is one transition; include both orientations for
+undirected graphs) and a fixed list of query nodes, used both as path sources and
+as absorbing targets. Its `.solve(affinities, costs, inverse_temperature)`
+method takes float64 per-route positive affinities, nonnegative path costs and a
+positive scalar `theta`. Affinities define the reference random walk by
+per-source max-shifted log normalization and a deterministic sum of exponentials,
+so finite positive affinities never overflow a value-space row sum. Common
+scaling of a source's affinities does not change the walk. Impassable transitions
+are expressed through relation validity, never zero affinity. Self-loop
+transitions are refused at construction.
+
+For target `t`, the free energy of the Boltzmann bag of hitting paths from node
+`i` is `phi_i = -(1/theta) log sum_paths prod p exp(-theta * cost)`, and
+`expected_cost` is the expected cost of those paths. `free_energy[a, b]` and
+`expected_cost[a, b]` describe paths from `nodes[a]` to `nodes[b]`; they are
+`+inf` where `nodes[a]` cannot reach `nodes[b]` (`reachable` is `False`), zero on
+the diagonal, and NaN in a failed target's column. `free_energy_distance` and
+`expected_cost_dissimilarity` are the symmetrized `(M + Mᵀ) / 2` forms. As
+`theta -> inf` the free energy tends to the shortest-path cost; as `theta -> 0`
+the expected cost tends to the reference walk's expected hitting cost, and when
+some paths escape into nodes that cannot reach the target, the free energy
+diverges like `-log(hit probability) / theta`.
+
+Partition functions span hundreds of decades across a graph at moderate
+`theta`, so the plan never solves for them. It solves the soft Bellman equation
+for `phi` itself with native Newton: the Jacobian `I - Pi` is the transient
+generator of the optimal (Doob-transformed) walk. This avoids partition-function
+dynamic range, not all ill-conditioning: near-closed transient classes can make
+the generator nearly singular, particularly at small `theta`. Rows near unit
+mass use a `log1p`/`expm1` form to reduce cancellation, but finite precision and
+solve tolerances still limit accuracy. The retained accuracy/conditioning gate
+samples path50, grid49, random40, and directed40 over `theta = 1e-9` through
+`1e3`; that measured envelope is not a guarantee for every graph or temperature.
+Successful values must be interpreted with the returned nonlinear/linear status
+and residual evidence. Each target's Newton solve starts from the
+pointwise minimum of two provable upper bounds: the single best augmented path
+(exact as `theta -> inf`, computed with `phydrax.combinatorial.ShortestPathFieldPlan`)
+and the Jensen bound `m - log(h) / theta` from the hitting probability and
+conditional hitting cost (exact to first order as `theta -> 0`). Seeds carry no
+derivative. One Newton correction at the converged stopped root carries the
+first-order implicit-function derivative `-J⁻¹ dG` through the linear solve.
+Only `linear_policy.differentiation.mode == "mathematical"` is admitted, because
+operator and right-hand-side derivatives are both required. Free energies and
+expected costs support first-order JVP, VJP, and gradients with respect to
+affinities, costs, and `theta`; `d(theta * phi) / d theta` equals expected cost.
+Plan and result expose immutable `maximum_derivative_order = 1` evidence without
+additional numerical device leaves. Nested JVP/VJP/grad and Hessian transforms
+raise `ValueError` with `DERIVATIVE_UNSUPPORTED` rather than returning incomplete
+higher derivatives. The first-order contract is included in plan identity.
+
+Construction prepares the Newton and walk-generator solve templates once on the
+host, including symbolic factorization; `.solve` only refreshes their numerics.
+The plan can therefore be closed over or passed as a traced argument to compiled
+code (`eqx.filter_jit`) without host re-planning.
+
+The default `linear_policy` is GMRES with a refreshable native sparse LU
+preconditioner (approximate-minimum-degree ordering). Its factor storage is
+charged exactly to `SolveResourcePolicy.preconditioner_bytes`, and it runs
+unchanged on any JAX device. Native numeric factorization is sequential in the
+number of pivots, so per-target cost grows quickly beyond roughly `10^4` nodes.
+On CPU, larger graphs can pass
+`LinearSolvePolicy(SparseLU(provider="jax-cpu"), resources=SolveResourcePolicy(factorization_bytes=...))`.
+SuperLU chooses its ordering internally, so the planner charges a conservative
+dense factor bound; the caller must raise that budget explicitly, and SuperLU's
+actual memory is managed by the provider rather than bounded by Phydrax
+planning. The result retains per-target `nonlinear_status`, `newton_iterations`,
+`residual_norm`, and `linear_status`; `status` is `INVALID_INPUT` for
+inadmissible values (no solve runs), `NONLINEAR_FAILED` or `LINEAR_SOLVE_FAILED`
+when any target fails. `workspace_bytes` budgets retained outputs, reach masks,
+and logical per-target derivative arrays; compiler temporaries and native solver
+internals are outside that estimate. `seed_maximum_work` caps the total seed work
+across all query targets (default `268_435_456`), and `seed_maximum_host_bytes`
+caps aggregate host callback bytes across those targets (default `268_435_456`).
+`resource_estimate` separates total `seed_work`, sequential callback peak
+`seed_host_peak_bytes`, and cumulative allocation/traffic estimate
+`seed_host_aggregate_bytes`; aggregate bytes are not peak live memory.
+The device reference seed has no host callback bytes. These budgets are admitted
+at construction before execution. `benchmarks/rsp_free_energy_gate.py` retains
+the qualification record, including failed partition-function routes as
+negative controls.
+
+::: phydrax.graph.RandomizedShortestPathPlan
+
+---
+
+::: phydrax.graph.RandomizedShortestPathResult
+
+---
+
+::: phydrax.graph.RandomizedShortestPathStatus
+
 ## Exact geometric query neighborhoods
 
 `query_neighbors` returns fixed-width `RowRelation` routes, minimum-image

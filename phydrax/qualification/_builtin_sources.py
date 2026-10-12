@@ -345,6 +345,47 @@ def _periodic_flow_sources() -> tuple[SourceReference, ...]:
     )
 
 
+def _graph_connectivity_sources() -> tuple[SourceReference, ...]:
+    """Inspected connectivity references; formulations are re-derived, not copied."""
+    return (
+        SourceReference.create(
+            "jaxscape",
+            "https://github.com/vboussange/jaxscape",
+            "5455ca4f0a5ebfe5f27f0b24c672e8e6948c73b4",
+            "MIT",
+            SourceReuseClass.PERMISSIVE,
+            concepts=(
+                "effective-resistance",
+                "landscape-connectivity",
+                "randomized-shortest-paths",
+                "resistance-sketching",
+            ),
+            archive_digest="git-tree-sha1:f5d9cf6b51966b9bdadb7b9e5ee40d1fc200e6a4",
+            license_digest="daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+            relevant_paths=(
+                "src/jaxscape/graph.py",
+                "src/jaxscape/lcp_distance.py",
+                "src/jaxscape/resistance_distance.py",
+                "src/jaxscape/rsp_distance.py",
+            ),
+            relevant_documents=(
+                "LICENSE@sha256:daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+                "README.md@sha256:5323f68f1812928090ae811bb49a8160d24aae430d94848f6c885ae29517db5c",
+            ),
+            publications=(
+                PublicationReference(
+                    "Graph sparsification by effective resistances",
+                    "doi:10.1137/080734029",
+                ),
+            ),
+            code_inspected=True,
+            copying_permitted=True,
+            technical_reviewer="phydrax-graph-connectivity-source-review",
+            review_status=SourceReview.TECHNICALLY_REVIEWED,
+        ),
+    )
+
+
 def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
     from ._nuclear_fuel_release_matrix import nuclear_fuel_source_references
 
@@ -354,6 +395,7 @@ def builtin_source_absorption_ledger() -> SourceAbsorptionLedger:
             *_atomistic_sources(),
             *_periodic_flow_sources(),
             *nuclear_fuel_source_references(),
+            *_graph_connectivity_sources(),
         )
     )
 
