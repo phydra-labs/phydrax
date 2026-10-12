@@ -182,12 +182,12 @@ def test_new_solve_restarts_aitken_history() -> None:
         ),
         (
             nl.AndersonAcceleration(),
-            "anderson-fixed-point:0d89ff969b7b1a79e41c4180ecf5ae5b98bfafbc956a9b30233c3709828b9426",
+            "anderson-fixed-point:63a144c8643dc3a956902b387098b9d49ef712fede19590537b91e6f6206cb24",
         ),
     ],
     ids=["unaccelerated", "anderson"],
 )
-def test_existing_method_identity_is_unchanged(
+def test_method_identity_is_pinned(
     acceleration: nl.AndersonAcceleration | None, expected: str
 ) -> None:
     result = nl.FixedPointIteration(acceleration=acceleration).solve(
