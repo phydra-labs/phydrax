@@ -344,9 +344,15 @@ def test_tspme_brosa_planella_scenario_1() -> None:
         thermal.particle_transport.negative.amount_rate_mol_s,
         isothermal.particle_transport.negative.amount_rate_mol_s,
     )
+    # Uniform concentration cancels separator diffusion to roundoff. Scale the
+    # absolute floor by the summed transport magnitudes, not the near-zero rate.
+    electrolyte_rate_scale = np.sum(
+        np.abs(np.asarray(isothermal.electrolyte_transport.amount_rate_mol_s))
+    )
     np.testing.assert_allclose(
         thermal.electrolyte_transport.amount_rate_mol_s,
         isothermal.electrolyte_transport.amount_rate_mol_s,
+        atol=8.0 * np.finfo(np.float64).eps * electrolyte_rate_scale,
     )
     np.testing.assert_allclose(thermal.voltage_v, isothermal.voltage_v, rtol=2.0e-6)
     assert (

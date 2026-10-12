@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Fixed
+- Sparse structural differentiation handles JAX's input-independent `empty`
+  allocation primitive, including absent direct-collocation constraint blocks,
+  without introducing false dependencies.
+- Mean-field planner refusal coverage follows the checked nominal signature's
+  diagnostic while retaining the explicit externality requirement.
+- Thermal/isothermal battery transport regression comparisons scale the
+  separator's cancellation-roundoff floor by summed electrolyte transport
+  magnitudes instead of applying a relative-only tolerance near zero.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.

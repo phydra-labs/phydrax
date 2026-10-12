@@ -159,6 +159,9 @@ def _prop_dispatch(
     match eqn.primitive.name:
         case "argmax" | "argmin":
             _prop_argmax(eqn, state_indices, state_bounds)
+        case "empty":
+            # Allocation has no input dependencies, including nonempty shapes.
+            _prop_zero_derivative(eqn, state_indices)
         # Zero derivative (piecewise constant, ∂f/∂x = 0 a.e.)
         case (
             "floor"  # ∂⌊x⌋/∂x = 0

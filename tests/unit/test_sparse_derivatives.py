@@ -687,3 +687,20 @@ def test_structural_trace_resolves_statically_passing_bounds_checks() -> None:
     expected = np.asarray(jax.jacfwd(checked)(jnp.ones((3,)), None)) != 0
     assert np.array_equal(_traced_pattern(plan, (3, 3)), expected)
     assert plan.coloring.num_colors == 1
+
+
+@pytest.mark.parametrize("size", (0, 2), ids=("empty-constraints", "allocated-values"))
+def test_structural_trace_handles_input_independent_allocation(size: int) -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((3 + size,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4])
+
+    def allocated(value: Any, _: Any) -> Any:
+        return jnp.concatenate((value**2, jnp.empty((size,), dtype=value.dtype)))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        allocated, point, source=source, target=target, compiler="auto"
+    )
+    expected = jax.jacfwd(allocated)(point, None)
+    assert np.array_equal(_traced_pattern(plan, (3 + size, 3)), expected != 0)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
