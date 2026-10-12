@@ -87,7 +87,7 @@ class PowerLaw(AbstractDistribution):
 
 
 class TruncatedNormal(AbstractDistribution):
-    """Normal law conditioned on one nonempty finite or infinite interval."""
+    """Scalar-event normal laws with broadcast batch parameters and support."""
 
     location: Array
     scale: Array
@@ -103,20 +103,24 @@ class TruncatedNormal(AbstractDistribution):
         low: ArrayLike,
         high: ArrayLike,
     ) -> None:
-        location_ = jnp.asarray(location, dtype=jnp.float64).reshape(())
-        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
-        low_ = jnp.asarray(low, dtype=jnp.float64).reshape(())
-        high_ = jnp.asarray(high, dtype=jnp.float64).reshape(())
-        if not bool(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0)):
+        location_, scale_, low_, high_ = jnp.broadcast_arrays(
+            jnp.asarray(location, dtype=jnp.float64),
+            jnp.asarray(scale, dtype=jnp.float64),
+            jnp.asarray(low, dtype=jnp.float64),
+            jnp.asarray(high, dtype=jnp.float64),
+        )
+        if not bool(
+            jnp.all(jnp.isfinite(location_) & jnp.isfinite(scale_) & (scale_ > 0.0))
+        ):
             raise ValueError(
                 "Truncated-normal location and scale must be finite and positive."
             )
-        if bool(jnp.isnan(low_) | jnp.isnan(high_) | (low_ >= high_)):
+        if bool(jnp.any(jnp.isnan(low_) | jnp.isnan(high_) | (low_ >= high_))):
             raise ValueError("Truncated-normal support must satisfy low < high.")
         lower = jsp.special.ndtr((low_ - location_) / scale_)
         upper = jsp.special.ndtr((high_ - location_) / scale_)
         mass = upper - lower
-        if not bool(jnp.isfinite(mass) & (mass > 0.0)):
+        if not bool(jnp.all(jnp.isfinite(mass) & (mass > 0.0))):
             raise ValueError(
                 "Truncated-normal support has no representable probability mass."
             )
@@ -127,8 +131,13 @@ class TruncatedNormal(AbstractDistribution):
         self.lower_cdf = lower
         self.mass = mass
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.location.shape
+
     def sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Array:
-        return self.icdf(jr.uniform(key, tuple(sample_shape), dtype=self.location.dtype))
+        shape = tuple(sample_shape) + self.batch_shape
+        return self.icdf(jr.uniform(key, shape, dtype=self.location.dtype))
 
     def icdf(self, value: ArrayLike, /) -> Array:
         probability = _open_unit_interval(value)

@@ -50,8 +50,21 @@ from ._block_preconditioning import (
     BlockFactorizationForm,
     BlockFactorizationPreconditioner,
     BlockFactorizationPreconditionerBuilder,
+    MappedBlockFactorizationPreconditioner,
+    MappedBlockFactorizationPreconditionerBuilder,
+)
+from ._block_probing import (
+    BoundedLUPreconditionerBuilder,
+    MatrixFreeLocalBlockPreconditionerBuilder,
+    ProbedBlockPreconditioner,
+    ProbedBlockSolveResult,
 )
 from ._block_scaled import contract_block_scaled
+from ._bordered import (
+    BorderedAssemblyEvidence,
+    BorderedBlockAssemblyPlan,
+    BorderedBlockLinearOperator,
+)
 from ._certificates import (
     CertificateEvidence,
     CertificateScope,
@@ -863,6 +876,15 @@ __all__ = [
     "BlockFactorizationForm",
     "BlockFactorizationPreconditioner",
     "BlockFactorizationPreconditionerBuilder",
+    "MappedBlockFactorizationPreconditioner",
+    "MappedBlockFactorizationPreconditionerBuilder",
+    "BoundedLUPreconditionerBuilder",
+    "MatrixFreeLocalBlockPreconditionerBuilder",
+    "ProbedBlockPreconditioner",
+    "ProbedBlockSolveResult",
+    "BorderedAssemblyEvidence",
+    "BorderedBlockAssemblyPlan",
+    "BorderedBlockLinearOperator",
     "BlockGMRES",
     "BlockLinearOperator",
     "BlockSpace",

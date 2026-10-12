@@ -416,8 +416,100 @@ class PreparedLaggedCoulombFriction(StrictModule, NonTrainableState):
         )
 
 
+class AxisymmetricInterfaceGeometry(StrictModule):
+    """Current matching-trace geometry in physical (r,z) coordinates."""
+
+    normal: Array
+    tangent: Array
+    normal_gap: Array
+    current_measure_ratio: Array
+    admissible: Array
+
+
+def axisymmetric_interface_geometry(
+    left_positions: ArrayLike,
+    right_positions: ArrayLike,
+    left_axial_tangent: ArrayLike,
+    right_axial_tangent: ArrayLike,
+    reference_radius: ArrayLike,
+    /,
+) -> AxisymmetricInterfaceGeometry:
+    left, right = jnp.asarray(left_positions), jnp.asarray(right_positions)
+    tangent_raw = (jnp.asarray(left_axial_tangent) + jnp.asarray(right_axial_tangent)) / 2
+    magnitude = jnp.linalg.norm(tangent_raw, axis=-1)
+    tangent = tangent_raw / magnitude[..., None]
+    normal = jnp.stack((tangent[..., 1], -tangent[..., 0]), axis=-1)
+    gap = jnp.sum((right - left) * normal, axis=-1)
+    ratio = (
+        left[..., 0]
+        / jnp.asarray(reference_radius)
+        * jnp.linalg.norm(jnp.asarray(left_axial_tangent), axis=-1)
+    )
+    valid = (
+        jnp.all(jnp.isfinite(normal), axis=-1)
+        & (magnitude > 0)
+        & (ratio > 0)
+        & (tangent_raw[..., 1] > 0)
+        & jnp.isfinite(gap)
+    )
+    return AxisymmetricInterfaceGeometry(normal, tangent, gap, ratio, valid)
+
+
+class CoulombInterfaceResponse(StrictModule):
+    """Monolithic friction residual and dissipated work for a scalar trace.
+
+    Force is exerted on the left body by the right. Slip is left minus right,
+    so force * slip <= 0. The natural map is covariant under reversal of the
+    tangent orientation; the paired traction is exactly equal and opposite.
+    """
+
+    residual: Array
+    friction_bound: Array
+    dissipated_work: Array
+    admissible: Array
+
+
+def coulomb_interface_response(
+    tangential_force: ArrayLike,
+    relative_slip: ArrayLike,
+    normal_force: ArrayLike,
+    coefficient: ArrayLike,
+    /,
+    *,
+    force_scale: ArrayLike,
+    slip_scale: ArrayLike,
+) -> CoulombInterfaceResponse:
+    """Exact stick/slip graph, with scales used only to condition its natural map."""
+    force, slip, normal, mu, fs, ss = jnp.broadcast_arrays(
+        jnp.asarray(tangential_force),
+        jnp.asarray(relative_slip),
+        jnp.asarray(normal_force),
+        jnp.asarray(coefficient),
+        jnp.asarray(force_scale),
+        jnp.asarray(slip_scale),
+    )
+    bound = mu * jnp.maximum(normal, 0.0)
+    projection = jnp.clip(force - fs * slip / ss, -bound, bound)
+    residual = (force - projection) / fs
+    dissipated = -force * slip
+    admissible = (
+        jnp.isfinite(residual)
+        & (normal >= 0)
+        & (mu >= 0)
+        & (fs > 0)
+        & (ss > 0)
+        & (jnp.abs(force) <= bound + fs * 1e-10)
+        & (dissipated >= -fs * ss * 1e-10)
+    )
+    return CoulombInterfaceResponse(residual, bound, dissipated, admissible)
+
+
 __all__ = [
     "ContactFrictionEvaluation",
+    "CoulombInterfaceResponse",
+    "AxisymmetricInterfaceGeometry",
+    "axisymmetric_interface_geometry",
+    "coulomb_interface_response",
     "ContactFrictionState",
     "LaggedCoulombFrictionPlan",
     "PreparedLaggedCoulombFriction",

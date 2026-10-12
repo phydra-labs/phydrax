@@ -22,6 +22,78 @@ Finite-step learning can reuse canonical solver coefficients through
 fluctuation--dissipation correction and an exact Gibbs-stationarity diagnostic;
 it does not label the local Gaussian transition as an exact SDE likelihood.
 
+## Periodic power-law random fields
+
+`PeriodicPowerLawFieldPlan` prepares bounded, member-addressed sampling in an
+all-Fourier `TensorSpectralDiscretization`. The orthonormal complex convention is
+$c_n=\sqrt V A(|k_n|)\xi_n$, with $A(k)=\mathrm{scale}\,k^{-\beta}$,
+zero mean, Euclidean cutoff, and exactly Hermitian coefficients. Before Leray
+projection, $\mathbb E|c_n|^2=V A(|k_n|)^2$ per component on every retained mode.
+The real latent laws are standard normal and uniform on $[-\sqrt3,\sqrt3]$.
+Reality is exact in modal space. A complex inverse FFT can still report
+machine-roundoff imaginary leakage on odd-length axes; no coefficient repair or
+silencing of that independent reconstruction diagnostic is performed.
+
+The tensor-trigonometric basis draws independent cosine/sine product latents.
+Its product series is normalized modewise by $2^{r/2}$, where $r$ counts nonzero
+frequency coordinates, to match that same complex spectrum. A sine factor at
+zero frequency vanishes; all even-axis Nyquist cosine and sine terms are
+excluded. Conversion uses deterministic separable folds, without colliding
+additions. `fractional_gaussian(H, spatial_dimension=d)` chooses $\beta=H+d/2$,
+from the continuum radial spectral scaling $k^{d-1}A(k)^2=k^{-1-2H}$.
+The product-series family is motivated by
+[Herde et al. (2024), Appendix B.2.2, Eq. (42)](https://arxiv.org/html/2405.19101v2#A2.E42),
+but this API uses unit-variance laws and modewise normalization rather than that
+paper's uniform $[-1,1]$ configuration. The Gaussian recipe describes a finite
+periodic field, not nonperiodic fBm; finite-band torus increments need not have
+an exact $2H$ exponent at all radii.
+
+Solenoidal generation requires `(d,)` components for `d=2` or `3`. The realization
+reports coefficient energy removed by Leray projection and subsequent
+restriction. Retained-band restriction gathers coefficients, zeros target
+Nyquist planes, and never reprojects: coefficients and cumulative energy evidence
+are bitwise transitive. Different domains, ranks, and refinement are refused.
+The baseline preprojection energy and current discretization are retained as
+dynamic provenance, making removed energy independent of restriction history.
+
+`plan_id` identifies the amplitude, parsed coefficient law and basis, component
+shape, and solenoidal policy once, independently of discretization and resources.
+`field_id` binds that `plan_id` to the scientific generation discretization.
+`prepared_id` also includes resource policies; changing these policies does not
+change addressed samples. `coefficient_realization_id` fingerprints the typed
+root key once, while `coupling_id` identifies its combination with the generation
+field. Subsets preserve both IDs. Coupled resolutions come from restriction,
+not independently preparing a second resolution with the same root.
+Member indices lie in `[0, 2**32)`; sampling requires typed `threefry2x32`
+PRNG keys. Legacy uint32 keys and non-member-separable batched RNG implementations
+(such as `rbg`) are refused.
+Fixed-size padded member lanes are masked. Memory admission includes padded
+output and live worksets and raises `phydrax.execution.MemoryBudgetError` with
+`budget="maximum_sample_bytes"`, `required_bytes`, and `limit_bytes` before
+numerical sampling. Invalid cap values remain `ValueError`; booleans, strings,
+and non-real scientific scalar parameters are refused with `TypeError`.
+`fractional_gaussian` requires a positive integral dimension and finite
+`0 < H < 1`.
+
+The sampling benchmark measures public preparation, the first `sample` and
+`restrict` calls (including compilation), and warmed calls. Compiler memory is
+reported for the public prepared restriction callable; the public sampler has
+host admission/key-identity work and no public lowering route. Its numerical
+gate checks an independent signed-mode gather and the analytic projected modal
+energy within five conservative normal-law standard errors.
+
+::: phydrax.stochastic.FourierCoefficientLaw
+
+::: phydrax.stochastic.FourierSeriesBasis
+
+::: phydrax.stochastic.PowerLawSpectralAmplitude
+
+::: phydrax.stochastic.PeriodicPowerLawFieldPlan
+
+::: phydrax.stochastic.PreparedPeriodicPowerLawField
+
+::: phydrax.stochastic.PeriodicPowerLawFieldRealization
+
 ## API sections
 
 - [State-space models and solver transition adapters](state_space.md)

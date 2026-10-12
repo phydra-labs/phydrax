@@ -320,6 +320,9 @@ def _operator_block_action(
         vector = input_space.unflatten(column)
         return output_space.flatten(action(vector))
 
+    if block_size == 1:
+        return one_column(coordinates[..., 0])[..., None]
+
     return jax.vmap(one_column, in_axes=-1, out_axes=-1)(coordinates)
 
 
@@ -761,16 +764,31 @@ class FunctionLinearOperator(AbstractLinearOperator):
             if closure_convert
             else function
         )
+        # Only identical callable and space owners share one conversion/validation.
+        same_action = transpose_action is function and source is target
         transpose_ = (
-            eqx.filter_closure_convert(transpose_action, target.structure())
-            if closure_convert and transpose_action is not None
-            else transpose_action
+            function_
+            if same_action
+            else (
+                eqx.filter_closure_convert(transpose_action, target.structure())
+                if closure_convert and transpose_action is not None
+                else transpose_action
+            )
         )
-        output = jax.eval_shape(function_, source.structure())
+
+        def evaluate_function(vector: PyTree[Array]) -> PyTree[Array]:
+            return function_(vector)
+
+        output = jax.eval_shape(evaluate_function, source.structure())
         if eqx.tree_equal(output, target.structure()) is not True:
             raise ValueError("function output structure must match target space.")
-        if transpose_ is not None:
-            transposed = jax.eval_shape(transpose_, target.structure())
+        if transpose_ is not None and not same_action:
+            transpose_function = transpose_
+
+            def evaluate_transpose(vector: PyTree[Array]) -> PyTree[Array]:
+                return transpose_function(vector)
+
+            transposed = jax.eval_shape(evaluate_transpose, target.structure())
             if eqx.tree_equal(transposed, source.structure()) is not True:
                 raise ValueError("transpose_action output must match source space.")
         self.source = source

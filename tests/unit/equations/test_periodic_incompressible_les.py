@@ -307,6 +307,9 @@ def test_periodic_les_zero_coefficient_matches_no_les_rhs_and_diagnostics() -> N
         baseline_diagnostics.semidiscrete_energy_rate,
     )
     np.testing.assert_array_equal(les_diagnostics.algebraic_les_dissipation, 0.0)
+    assert les_diagnostics.spectral_viscosity_id is None
+    np.testing.assert_array_equal(les_diagnostics.spectral_viscosity_dissipation, 0.0)
+    np.testing.assert_array_equal(les_diagnostics.spectral_viscosity_energy_rate, 0.0)
     coordinates = space.real_coordinates(component_shape=(3,))
     base_plan = phx.solver.ETDRKMethod(2)
     baseline_method = base_plan.prepare(

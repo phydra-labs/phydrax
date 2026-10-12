@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze, NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import (
     AbstractParticleNeighborhoodPlan,
@@ -81,7 +81,7 @@ class NativeAtomisticEvaluation(StrictModule):
     request: NativeAtomisticRequest
 
 
-class NativeAtomisticProvider(AbstractExternalAtomisticProvider):
+class NativeAtomisticProvider(AbstractExternalAtomisticProvider, ExplicitFreeze):
     """Serve one prepared native potential program through the provider boundary.
 
     Energy, forces, and stress come from one ``program.evaluate`` pass of the
@@ -90,6 +90,11 @@ class NativeAtomisticProvider(AbstractExternalAtomisticProvider):
     lifecycle; callers owning a state pass it to ``evaluate_state`` and keep the
     returned state. Stress is available exactly when the system is a fully
     periodic 3D cell and every program term owns cell derivatives.
+
+    This conditioned deployment intentionally freezes its prepared program,
+    including embedded learned potentials: every array below the provider is
+    FIXED. Internal position and cell derivatives still produce forces and
+    stress; the external provider exposes no trainable model coordinates.
     """
 
     program: PreparedAtomisticPotentialProgram
@@ -300,7 +305,7 @@ def _evaluate_native(
     return _native_evaluation(provider, request)
 
 
-class NativeAtomisticProviderPlan(StrictModule, NonTrainableState):
+class NativeAtomisticProviderPlan(StrictModule, ExplicitFreeze):
     """Recipe preparing one learned model as a native provider for any system.
 
     Periodic systems prepare an image-aware Verlet cache over a cell-list image
@@ -309,6 +314,11 @@ class NativeAtomisticProviderPlan(StrictModule, NonTrainableState):
     over ``finite_neighborhood``. ``deformation_margin`` bounds cell motion
     within one prepared image stencil before a fresh preparation is required.
     ``model_revision_id`` is the model's numeric revision at construction.
+
+    This immutable deployment recipe intentionally freezes its embedded model:
+    every array below the recipe is FIXED, while training uses ``model``
+    separately. A new numeric model revision requires a new recipe, preserving
+    the revision-bound provider and compiler identities.
     """
 
     model: AbstractAtomisticPotential

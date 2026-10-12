@@ -242,7 +242,11 @@ def _refreshed_run(
             jnp.asarray(jacobian.residual_evaluations, dtype=jnp.int32),
             zero_count,
         ),
-        jvp_evaluations=zero_count,
+        jvp_evaluations=jnp.where(
+            problem.trial_valid(state, args),
+            jnp.asarray(jacobian.setup_jvp_evaluations, dtype=jnp.int32),
+            zero_count,
+        ),
         vjp_evaluations=zero_count,
         jacobian_preparations=problem.trial_valid(state, args).astype(jnp.int32),
         linear_solves=zero_count,

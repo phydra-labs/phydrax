@@ -32,6 +32,36 @@ material identities.
 
 `ActivationNetworkPlan` freezes its nuclide and transition graph before execution. Flux-driven and decay transitions are distinct. Piecewise-constant irradiation uses native sparse matrix-exponential and phi-function actions. Negative inventories are not clipped.
 
+
+## Fuel exposure and gas production
+
+`HeavyMetalReference` fixes the initial heavy-metal mass and atom density.
+`ExposureState` and `advance_exposure` retain reference-denominated specific
+energy, FIMA, fission density, and fast fluence; changing current density cannot
+redefine burnup.
+
+`FissionGasYieldTable.endf_b_viii_0()` loads a digest-pinned, source-processed
+subset of cumulative Kr/Xe yields and recoverable fission energies. It is not
+a complete evaluated-data library or an implicit spectrum-collapse service.
+`HeliumProductionPlan` requires a yield mapping with exactly
+`FISSIONING_NUCLIDES`, an explicit helium `NuclideKey`, source provenance,
+an inventory template, and decay-only `InventoryTransition` values producing
+that isotope. `evaluate` consumes fission-rate density, normalized fractions
+in the canonical fissioning order, the identity-matching inventory in moles,
+and one positive reference volume.
+
+`HeliumProductionRates.ternary` is the fission-rate density times the declared
+yield mixture; `.decay` is the native transition source divided by that volume.
+Both are atoms/m³/s, and `.total` is their sum. Ternary yield data and decay
+transitions are caller-supplied, provenance-bound inputs, not a bundled
+universal helium coefficient. Fuel helium transport and its material support
+are separate from this production accounting.
+
+The coupled fuel-rod model is
+[`phydrax.applications.nuclear_fuel`](guides_nuclear_fuel.md); it uses this
+exposure and production accounting rather than a separate inventory or
+transport engine.
+
 ## Internal dosimetry
 
 `phydrax.nuclear.dosimetry` adds finite-support time-activity integration,
@@ -42,8 +72,10 @@ measurement fields, and medical-image support. See
 
 ## Scope
 
-The nuclear substrate does not provide a bundled evaluated-data or S-value
-library, ENDF processor, PET/SPECT reconstruction, continuous-energy or Monte
-Carlo transport, burnup management, biological effect, treatment prescription,
-or regulatory qualification. All capability profiles remain unreleased
-candidates until their declared gates have admitted evidence.
+The nuclear substrate does not provide a full bundled evaluated-data or S-value
+library, general ENDF processing, PET/SPECT reconstruction, continuous-energy or
+Monte Carlo transport, full fuel-cycle/burnup management, biological effect,
+treatment prescription, or regulatory qualification. The bounded fission-data
+extractor and reference exposure accounting do not imply those capabilities.
+Capability profiles remain unreleased candidates until their declared gates
+have admitted evidence.

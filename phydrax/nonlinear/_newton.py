@@ -58,6 +58,7 @@ from ..typing import checked, parse
 from ._components import admit_residual_components
 from ._domain_cond import domain_cond as _domain_cond
 from ._linearization import (
+    _jacobian_jvp_actions,
     _jacobian_solve_direction,
     _jacobian_solve_operator,
     _jacobian_solve_right_hand_side,
@@ -984,7 +985,11 @@ def _initial_root_state(
             jnp.asarray(prepared_jacobian.residual_evaluations, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
         ),
-        jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+        jvp_evaluations=jnp.where(
+            problem.trial_valid(state, args),
+            jnp.asarray(prepared_jacobian.setup_jvp_evaluations, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
         vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
         jacobian_preparations=problem.trial_valid(state, args).astype(jnp.int32),
         linear_solves=jnp.asarray(0, dtype=jnp.int32),
@@ -1295,6 +1300,7 @@ def _root_iteration_metrics(run: _RootState, /) -> NonlinearDiagnostics:
         final_linear_condition_estimate=run.final_linear_condition_estimate,
         final_linear_residual_norm=run.final_linear_residual_norm,
         final_linear_converged=run.final_linear_converged,
+        counts_complete=run.refresh_state.preconditioner_static is None,
     )
 
 
@@ -1623,6 +1629,7 @@ def _package_result(
         final_linear_condition_estimate=run.final_linear_condition_estimate,
         final_linear_residual_norm=run.final_linear_residual_norm,
         final_linear_converged=run.final_linear_converged,
+        counts_complete=run.refresh_state.preconditioner_static is None,
     )
     return NonlinearResult(
         state=jax.tree.map(precision.output, state),
@@ -2023,8 +2030,15 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     residual_evaluations=next_residual_evaluations,
                     jvp_evaluations=(
                         current_run.jvp_evaluations
-                        + jnp.sum(linear_result.diagnostics.matvec_count, dtype=jnp.int32)
-                        + 1
+                        + refreshed.astype(jnp.int32)
+                        * selected_jacobian.setup_jvp_evaluations
+                        + _jacobian_jvp_actions(
+                            selected_jacobian.operator,
+                            jnp.sum(
+                                linear_result.diagnostics.matvec_count, dtype=jnp.int32
+                            )
+                            + 1,
+                        )
                     ),
                     vjp_evaluations=current_run.vjp_evaluations,
                     jacobian_preparations=current_run.jacobian_preparations
@@ -2509,11 +2523,21 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     residual_evaluations=next_residual_evaluations,
                     jvp_evaluations=(
                         current_run.jvp_evaluations
-                        + jnp.sum(linear_result.diagnostics.matvec_count, dtype=jnp.int32)
-                        + search.evaluations
-                        + 1
+                        + refreshed.astype(jnp.int32)
+                        * selected_jacobian.setup_jvp_evaluations
+                        + _jacobian_jvp_actions(
+                            selected_jacobian.operator,
+                            jnp.sum(
+                                linear_result.diagnostics.matvec_count, dtype=jnp.int32
+                            )
+                            + search.evaluations
+                            + 1,
+                        )
                     ),
-                    vjp_evaluations=current_run.vjp_evaluations + 1,
+                    vjp_evaluations=current_run.vjp_evaluations
+                    + _jacobian_jvp_actions(
+                        selected_jacobian.operator, jnp.asarray(1, dtype=jnp.int32)
+                    ),
                     jacobian_preparations=current_run.jacobian_preparations
                     + refreshed.astype(jnp.int32),
                     linear_solves=current_run.linear_solves + 1,

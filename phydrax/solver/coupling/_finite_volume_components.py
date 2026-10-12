@@ -28,7 +28,7 @@ from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._trainable import NonTrainableState
+from ..._trainable import ExplicitFreeze, NonTrainableState
 from ..._validation import canonical_identifier
 from ...discretization import (
     AbstractSideFluxEvaluator,
@@ -177,7 +177,7 @@ class FiniteVolumeComponent(
     AbstractTraceComponent,
     AbstractCapacityComponent,
     AbstractReconstructionComponent,
-    NonTrainableState,
+    ExplicitFreeze,
 ):
     """One scalar field of a prepared cell-centered finite-volume diffusion problem.
 
@@ -193,6 +193,12 @@ class FiniteVolumeComponent(
     targets. ``reconstruction`` selects the published face state of side
     traces: the side cell average (default) or a coefficient-linear MUSCL face
     state.
+
+    This conditioned owner intentionally freezes its prepared diffusion data
+    and reconstruction: every array below the component is FIXED. Face traces
+    are prepared from that immutable reconstruction; trainable coupled inputs
+    remain explicit runtime parameter bindings, not embedded reconstruction
+    coordinates.
     """
 
     __strict_contract__ = True

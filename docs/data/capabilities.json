@@ -1,5 +1,5 @@
 {
-  "catalog_id": "f626c40e8e117840396e0da5ccfaea692b50d725360a4d043eb233135f6d4903",
+  "catalog_id": "a2c825a4336b10a43418bc08f4ff2c844be66998d8cdf32731d41de4471c16ae",
   "declarations": [
     {
       "capability": "accelerator.csr-1d",
@@ -1807,6 +1807,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.nonequilibrium_field"
+      ]
+    },
+    {
+      "capability": "application.nuclear-fuel",
+      "declaration_id": "397b0fb15c5c49ae42af3a2e303515144abf060cf5ccaf24e8c5b266b74e569d",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.nuclear_fuel",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.nuclear_fuel"
       ]
     },
     {
@@ -19066,6 +19088,154 @@
               "capability": "nonequilibrium-field.fermionic-second-born",
               "kind": "capability-support-tuple",
               "support_tuple_id": "6e5ce3f8a5bf3b5614fd4a655e807105097c55295f0a98679b9669b7b081b6a7"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "nuclear-fuel.performance",
+      "declaration_id": "ad5cd5cfe8d50862764514b28137f9cdf27db243c20aea6491e17a5d520dea3e",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.applications.nuclear_fuel",
+      "profiles": [
+        {
+          "dependencies": [],
+          "kind": "capability-profile",
+          "name": "nuclear-fuel.uo2-zircaloy.candidate",
+          "profile_id": "a29704256f2fe7e8b7cd3801502d528ab258aced538fa12ae73f9a864f8a63b5",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "nuclear-fuel.ancestry-and-fabrication-split",
+            "nuclear-fuel.ifpe-data-rights",
+            "nuclear-fuel.independent-locked-evaluation",
+            "nuclear-fuel.precommitted-observable-criteria",
+            "nuclear-fuel.runtime-precision-resources",
+            "nuclear-fuel.verification.V1",
+            "nuclear-fuel.verification.V10",
+            "nuclear-fuel.verification.V11",
+            "nuclear-fuel.verification.V12",
+            "nuclear-fuel.verification.V13",
+            "nuclear-fuel.verification.V14",
+            "nuclear-fuel.verification.V15",
+            "nuclear-fuel.verification.V2",
+            "nuclear-fuel.verification.V3",
+            "nuclear-fuel.verification.V4",
+            "nuclear-fuel.verification.V5",
+            "nuclear-fuel.verification.V6",
+            "nuclear-fuel.verification.V7",
+            "nuclear-fuel.verification.V8",
+            "nuclear-fuel.verification.V9"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "cladding": "zircaloy-4",
+                "fuel": "uo2-pellet",
+                "heat_treatment": "stress-relief-annealed",
+                "model_family": "mechanistic-gas-effective-diffusivity",
+                "regulatory_use": false,
+                "scattering_input": "required-spectrum-averaged-source-datum",
+                "support_kind": "source-bound-family-declaration"
+              },
+              "capability": "nuclear-fuel.performance",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "08e232cae78f45d010da49d358ae57089a8cf1f35507fbbcd50b55ed6be68615"
+            }
+          ],
+          "version": "candidate"
+        }
+      ],
+      "public_symbols": []
+    },
+    {
+      "capability": "nuclear-fuel.release-matrix",
+      "declaration_id": "c7d938cb7ffb113eaf553d5af0a71263fd982b87a971cf5b5527ba5c57208443",
+      "dependencies": [],
+      "disposition": "candidate",
+      "documentation": [],
+      "domain_maturity": "candidate",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-engineering-evaluation"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "candidate-not-release-authorized"
+      ],
+      "owner": "phydrax.qualification",
+      "profiles": [
+        {
+          "dependencies": [
+            "a29704256f2fe7e8b7cd3801502d528ab258aced538fa12ae73f9a864f8a63b5"
+          ],
+          "kind": "capability-profile",
+          "name": "nuclear-fuel.release-matrix.candidate",
+          "profile_id": "038c2ea45a9b21f567369388010652b98482268ff8c2a2019df0e0a7621ae8ec",
+          "provider": "phydrax",
+          "release_evidence": [],
+          "released": false,
+          "required_gates": [
+            "nuclear-fuel.ancestry-and-fabrication-split",
+            "nuclear-fuel.ifpe-data-rights",
+            "nuclear-fuel.independent-locked-evaluation",
+            "nuclear-fuel.precommitted-observable-criteria",
+            "nuclear-fuel.runtime-precision-resources",
+            "nuclear-fuel.verification.V1",
+            "nuclear-fuel.verification.V10",
+            "nuclear-fuel.verification.V11",
+            "nuclear-fuel.verification.V12",
+            "nuclear-fuel.verification.V13",
+            "nuclear-fuel.verification.V14",
+            "nuclear-fuel.verification.V15",
+            "nuclear-fuel.verification.V2",
+            "nuclear-fuel.verification.V3",
+            "nuclear-fuel.verification.V4",
+            "nuclear-fuel.verification.V5",
+            "nuclear-fuel.verification.V6",
+            "nuclear-fuel.verification.V7",
+            "nuclear-fuel.verification.V8",
+            "nuclear-fuel.verification.V9"
+          ],
+          "support_tuples": [
+            {
+              "attributes": {
+                "V1": "constant-cylinder-conduction",
+                "V10": "constant-stress-creep",
+                "V11": "rz-thermomechanics-mms",
+                "V12": "layered-rz-comparison",
+                "V13": "whole-history-balances",
+                "V14": "fault-rollback-and-restart",
+                "V15": "whole-history-refinement",
+                "V2": "nonlinear-cylinder-conduction",
+                "V3": "lame-generalized-plane-strain",
+                "V4": "finite-strain-inflation",
+                "V5": "free-thermal-expansion",
+                "V6": "shrink-fit-contact",
+                "V7": "booth-release",
+                "V8": "piecewise-temperature-gas",
+                "V9": "paired-gap-heat-exchange"
+              },
+              "capability": "nuclear-fuel.release-matrix",
+              "kind": "capability-support-tuple",
+              "support_tuple_id": "a2c3c209e11a22b39676abcdabe02ba4c9ccdb75d87e3fc9ba5fd371188c1f1a"
             }
           ],
           "version": "candidate"

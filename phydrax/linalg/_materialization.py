@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import DTypeLike
 
 from .._strict import StrictModule
 from ._properties import LinearCapabilityError
@@ -34,23 +35,21 @@ class MaterializationPolicy(StrictModule):
         self.max_entries = entries
         self.max_bytes = byte_count
 
+    def require(self, entries: int, dtype: DTypeLike, /) -> None:
+        """Refuse a dense materialization of ``entries`` values beyond this policy.
 
-def _require_materialization_budget(
-    entries: int,
-    dtype: jnp.dtype,
-    policy: MaterializationPolicy,
-    /,
-) -> None:
-    """Refuse a dense materialization of ``entries`` values beyond the policy."""
-    if entries > policy.max_entries:
-        raise LinearCapabilityError(
-            f"Dense materialization requires {entries} entries, exceeding the policy limit {policy.max_entries}."
-        )
-    required_bytes = entries * jnp.dtype(dtype).itemsize
-    if required_bytes > policy.max_bytes:
-        raise LinearCapabilityError(
-            f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {policy.max_bytes}."
-        )
+        Raises ``LinearCapabilityError`` when ``entries`` exceeds ``max_entries``
+        or ``entries`` values of ``dtype`` exceed ``max_bytes``.
+        """
+        if entries > self.max_entries:
+            raise LinearCapabilityError(
+                f"Dense materialization requires {entries} entries, exceeding the policy limit {self.max_entries}."
+            )
+        required_bytes = entries * jnp.dtype(dtype).itemsize
+        if required_bytes > self.max_bytes:
+            raise LinearCapabilityError(
+                f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {self.max_bytes}."
+            )
 
 
 def materialize(operator: object, policy: MaterializationPolicy, /) -> Array:
@@ -67,7 +66,7 @@ def materialize(operator: object, policy: MaterializationPolicy, /) -> Array:
     expected = operator.batch_shape + (operator.target.size, operator.source.size)
     target_dtypes = [spec.dtype for spec in jax.tree.leaves(operator.target.structure())]
     expected_dtype = jnp.dtype(jnp.result_type(*target_dtypes))
-    _require_materialization_budget(entries, expected_dtype, policy)
+    policy.require(entries, expected_dtype)
     matrix = jnp.asarray(operator._materialize())
     if matrix.shape != expected or matrix.dtype != expected_dtype:
         raise ValueError(

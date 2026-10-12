@@ -289,6 +289,22 @@ checkpoints have content-derived IDs; their immutable generations are monotonica
 numbered behind an atomically replaced durable pointer. A terminal checkpoint and
 terminal manifest are written after output drain unless output itself failed.
 
+`ProductionRunPlan(..., step_controller=controller)` replaces the nominal step by an
+`AbstractStepSizeController` proposal; `step_size` is then the first proposal and must
+lie in `[controller.minimum_step, controller.maximum_step]`. Each step attempts
+`min(controller.propose(state, time), end_time - time)`, clamped by the output schedule,
+so targets and `end_time` still land exactly; retries still reduce the attempt through
+the retry policy. `update` runs on device and is committed only for accepted steps.
+`IncrementLimitedStepController(increments, limits, ...)` scales the accepted step by
+`clip(safety * min_i(limit_i / |increment_i|), shrink, growth)` within the step bounds.
+The controller state is `ProductionRunState.controller_state`: it is created by
+`initial_state` (a caller-supplied controller state is refused), persisted in every
+checkpoint, and restored by `resume`, so a restarted run reproduces the uninterrupted
+run bitwise. Preflight counts steps with `maximum_step`; a run that exhausts
+`maximum_steps` before `end_time` fails with `step-capacity-exhausted`. The controller
+identity enters `plan_id` only when a controller is configured, and methods with an
+exact step or without step reduction refuse adaptive control.
+
 `StreamingMomentPlan` updates accepted-endpoint sample- or time-weighted mean,
 second moment, extrema, optional histogram, and fixed-capacity block totals. Its
 time window clips step intervals at `window_start` and `window_end`; block-mean
@@ -564,9 +580,18 @@ projection, boundary families, or production execution.
 
 The incompressible candidate generator is route separated:
 `tools/incompressible_flow_qualification.py` exposes `periodic-spectral`,
-`spectral-channel`, and `mac`, each with a required output path. The three canonical
-artifact paths are documented by the spectral and finite-volume guides and may be
-absent until generated. Each artifact binds exact support/input/reference/
+`periodic-spectral-vanishing-viscosity`, `periodic-statistical-solution`,
+`spectral-channel`, and `mac`, each with a required output path.
+The statistical route's candidate artifact is
+`benchmarks/incompressible_statistical_qualification.json`. All candidate paths
+are documented by the
+[incompressible API](api/solver/incompressible.md#route-qualified-candidate-evidence)
+and the spectral and finite-volume guides and may be absent until generated.
+The SVV route checks analytic ETDRK4 shear decay in 2D/3D, energy identities,
+and fixed-low-mode vanishing across declared resolutions. Every SVV case records
+operator-scaling admissibility and explicitly denies cited rough-data convergence;
+these operator checks are not full-method convergence or nonlinear-stability
+certificates. Each artifact binds exact support/input/reference/
 configuration identities and reports status plus failure or inconclusive reasons;
 `release_ready` remains false. Assembly only consumes passed existing artifacts and
 produces an unsigned `CapabilityProfile` candidate with `signed=false` and

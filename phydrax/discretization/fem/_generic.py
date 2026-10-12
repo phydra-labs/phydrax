@@ -18,6 +18,7 @@ from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 
+from ..._coordinate_measure import CoordinateFrame, CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1386,6 +1387,7 @@ class FiniteElementBlockGeometry(StrictModule, NonTrainableState):
     physical_gradients: Array
     physical_weights: Array
     measure: Array
+    coordinate_measure: CoordinateMeasurePlan | None = None
 
 
 class FiniteElementRuntimeData(StrictModule, NonTrainableState):
@@ -1396,6 +1398,7 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
     geometry_layout_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
+    coordinate_frame: CoordinateFrame = eqx.field(static=True, default="reference")
 
     @checked
     def __init__(
@@ -1406,6 +1409,7 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         *,
         numeric_version: str,
         geometry_layout_id: str | None = None,
+        coordinate_frame: CoordinateFrame = "reference",
     ) -> None:
         points = jnp.asarray(coordinates)
         if points.ndim != 2 or points.shape[1] != mesh.ambient_dimension:
@@ -1416,6 +1420,11 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         if not version:
             raise ValueError("numeric_version must be non-empty.")
         self.coordinates = points
+        from ...typing import parse
+
+        self.coordinate_frame = parse(
+            coordinate_frame, CoordinateFrame, "coordinate_frame"
+        )
         self.topology_id = mesh.topology_id
         layout_id = (
             mesh.geometry_layout_id
@@ -1432,6 +1441,11 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
                 "topology": mesh.topology_id,
                 "geometry_layout": layout_id,
                 "numeric_version": version,
+                **(
+                    {"coordinate_frame": self.coordinate_frame}
+                    if self.coordinate_frame != "reference"
+                    else {}
+                ),
             }
         )
 
@@ -1661,6 +1675,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
     coordinate_spec: CellGeometrySpec
     precision_policy: FiniteElementPrecisionPolicy
     coefficient_dtype: np.dtype = eqx.field(static=True)
+    coordinate_measure: CoordinateMeasurePlan | None
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -1675,6 +1690,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         coordinate_spec: CellGeometrySpec | None = None,
         coefficient_dtype: DTypeLike = jnp.float64,
+        coordinate_measure: CoordinateMeasurePlan | None = None,
     ) -> None:
         dtype = _coefficient_dtype(coefficient_dtype)
         _validate_mesh_geometry(mesh)
@@ -1701,6 +1717,21 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
             resolved_fields,
             coordinates,
         )
+        if coordinate_measure is not None:
+            if not isinstance(coordinate_measure, CoordinateMeasurePlan):
+                raise TypeError(
+                    "coordinate_measure must be CoordinateMeasurePlan or None."
+                )
+            _, _, coordinate_values = coordinates.resolve(mesh)
+            coordinate_measure.validate_coordinates(coordinate_values)
+            if coordinate_measure.kind == "axisymmetric-rz":
+                if mesh.topological_dimension != 2 or mesh.ambient_dimension != 2:
+                    raise ValueError(
+                        "Axisymmetric RZ requires a two-dimensional RZ mesh."
+                    )
+            elif coordinate_measure.kind != "cartesian":
+                if mesh.topological_dimension != 1 or mesh.ambient_dimension != 1:
+                    raise ValueError("Radial reductions require a one-dimensional mesh.")
         precision = (
             FiniteElementPrecisionPolicy()
             if precision_policy is None
@@ -1715,6 +1746,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         self.coordinate_spec = coordinates
         self.precision_policy = precision
         self.coefficient_dtype = dtype
+        self.coordinate_measure = coordinate_measure
         self.key = DiscretizationKey("finite_element", DiscretizationRole.PHYSICAL)
         self.capabilities = (
             DiscretizationCapability.PROJECTION,
@@ -1734,6 +1766,12 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
                 "coordinate_spec": coordinates.geometry_layout_id,
                 "precision_policy": precision.policy_id,
                 "coefficient_dtype": dtype.str,
+                **(
+                    {"coordinate_measure": coordinate_measure.plan_id}
+                    if coordinate_measure is not None
+                    and coordinate_measure.kind != "cartesian"
+                    else {}
+                ),
             }
         )
 
@@ -1806,6 +1844,8 @@ def _prepare_finite_element_field(
     coordinate_values: Array,
     precision_policy: FiniteElementPrecisionPolicy,
     /,
+    *,
+    coordinate_measure: CoordinateMeasurePlan | None = None,
 ) -> tuple[
     tuple[FiniteElementSpec, ...],
     FiniteElementDofMap,
@@ -1850,6 +1890,7 @@ def _prepare_finite_element_field(
             coordinate_element=coordinate_element,
             geometry_dofs=geometry_dofs,
             precision_policy=precision_policy,
+            coordinate_measure=coordinate_measure,
         )
         for block, element, coordinate_element, geometry_dofs in zip(
             mesh.blocks, elements, coordinate_elements, coordinate_dofs, strict=True
@@ -1916,6 +1957,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     measures: tuple[DiscreteMeasure, ...]
     precision_policy: FiniteElementPrecisionPolicy
     coefficient_dtype: np.dtype = eqx.field(static=True)
+    coordinate_measure: CoordinateMeasurePlan | None
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -1945,10 +1987,21 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 coordinate_dofs,
                 coordinate_values,
                 plan.precision_policy,
+                coordinate_measure=plan.coordinate_measure,
             )
             all_elements.append(elements)
             dof_maps.append(dof_map)
             field_spaces.append(field_space)
+            if (
+                plan.coordinate_measure is not None
+                and plan.coordinate_measure.kind != "cartesian"
+            ):
+                for geometry in geometries:
+                    plan.coordinate_measure.validate_coordinates(geometry.physical_points)
+                    if np.any(np.asarray(geometry.physical_weights) <= 0.0):
+                        raise ValueError(
+                            "Rotational volume quadrature must lie strictly off the axis."
+                        )
             all_geometries.append(geometries)
             if cell_measures is None:
                 cell_measures = jnp.concatenate(
@@ -1995,6 +2048,11 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             coordinate_values,
             numeric_version=version,
             geometry_layout_id=plan.coordinate_spec.geometry_layout_id,
+            coordinate_frame=(
+                plan.coordinate_measure.frame
+                if plan.coordinate_measure is not None
+                else "reference"
+            ),
         )
         self.dof_maps = tuple(dof_maps)
         self.elements = tuple(all_elements)
@@ -2007,6 +2065,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         self.key = plan.key
         self.precision_policy = plan.precision_policy
         self.coefficient_dtype = plan.coefficient_dtype
+        self.coordinate_measure = plan.coordinate_measure
         self.support = mesh.support
         self.block_space = BlockSpace(
             tuple(space.vector_space for space in spaces),
@@ -2037,6 +2096,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         /,
         *,
         numeric_version: str,
+        coordinate_frame: CoordinateFrame | None = None,
     ) -> FiniteElementRuntimeData:
         points = jnp.asarray(
             self.default_runtime.coordinates if coordinates is None else coordinates
@@ -2045,11 +2105,21 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             raise ValueError(
                 "Fixed-topology FE runtime coordinates must preserve coordinate shape."
             )
+        frame = (
+            self.default_runtime.coordinate_frame
+            if coordinate_frame is None
+            else coordinate_frame
+        )
+        if self.coordinate_measure is not None and frame != self.coordinate_measure.frame:
+            raise ValueError(
+                "Runtime coordinate frame must match the coordinate measure."
+            )
         return FiniteElementRuntimeData(
             self.mesh,
             points,
             numeric_version=numeric_version,
             geometry_layout_id=self.default_runtime.geometry_layout_id,
+            coordinate_frame=frame,
         )
 
     def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
@@ -2112,6 +2182,19 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         if len(self.dof_maps) != 1:
             raise ValueError("boundary_dof_mask is only unambiguous for one field.")
         return self.dof_maps[0].boundary_dof_mask
+
+    def axis_dof_mask(self, field_name: str, /) -> Array:
+        """Identify regular-axis DOFs for the owner's radial displacement condition.
+
+        Radial displacement must vanish here, unlike temperature or axial motion.
+        """
+        measure = self.coordinate_measure
+        if measure is None or measure.radial_axis is None:
+            raise ValueError(
+                "Axis DOFs require a declared rotational coordinate measure."
+            )
+        dof_map = self.dof_maps[self._field_index(field_name)]
+        return dof_map.dof_coordinates[..., measure.radial_axis] == 0.0
 
     @checked
     def dof_indices(
@@ -2423,6 +2506,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 coordinate_element=coordinate_element,
                 geometry_dofs=geometry_dofs,
                 precision_policy=self.precision_policy,
+                coordinate_measure=self.coordinate_measure,
             )
             for block, element, coordinate_element, geometry_dofs in zip(
                 self.mesh.blocks,
@@ -2456,6 +2540,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             reference_points=reference_points,
             reference_weights=reference_weights,
             precision_policy=self.precision_policy,
+            coordinate_measure=self.coordinate_measure,
         )
 
     @checked
@@ -2470,6 +2555,13 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             or runtime.geometry_layout_id != self.default_runtime.geometry_layout_id
         ):
             raise ValueError("Finite-element runtime does not match this discretization.")
+        if (
+            self.coordinate_measure is not None
+            and runtime.coordinate_frame != self.coordinate_measure.frame
+        ):
+            raise ValueError(
+                "Runtime coordinate frame must match the coordinate measure."
+            )
         field_index = self._field_index(field_name)
         geometries = self.evaluate_geometry(field_name, runtime.coordinates)
         mass_local = tuple(_local_mass_tensor(geometry) for geometry in geometries)
@@ -2538,10 +2630,18 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
 
 
 def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
+    weights = geometry.physical_weights
+    if (
+        geometry.coordinate_measure is not None
+        and geometry.coordinate_measure.kind != "cartesian"
+    ):
+        # Nodal quadrature at the axis cannot certify positive capacity.
+        valid = jnp.all(jnp.isfinite(weights) & (weights > 0.0), axis=-1)
+        weights = jnp.where(valid[:, None], weights, jnp.nan)
     if geometry.basis_values.ndim == 2:
         return ein.contract(
             "cq,qi,qj->cij",
-            geometry.physical_weights,
+            weights,
             geometry.basis_values,
             geometry.basis_values,
         )
@@ -2554,7 +2654,7 @@ def _local_mass_tensor(geometry: FiniteElementBlockGeometry, /) -> Array:
         )
     return ein.contract(
         "cq,cqiv,cqjv->cij",
-        geometry.physical_weights,
+        weights,
         geometry.basis_values,
         geometry.basis_values,
     )
@@ -2766,6 +2866,7 @@ def _prepare_block_geometry(
     coordinate_element: CellGeometryElement | None = None,
     geometry_dofs: ArrayLike | None = None,
     precision_policy: FiniteElementPrecisionPolicy,
+    coordinate_measure: CoordinateMeasurePlan | None = None,
 ) -> FiniteElementBlockGeometry:
     if (reference_points is None) != (reference_weights is None):
         raise ValueError(
@@ -2787,7 +2888,13 @@ def _prepare_block_geometry(
     if reference_points is None:
         points_, weights_ = _degree_aware_reference_rule(
             block.cell_kind,
-            max(element.degree, geometry_element.degree),
+            max(element.degree, geometry_element.degree)
+            + (
+                1
+                if coordinate_measure is not None
+                and coordinate_measure.kind == "spherical-radial"
+                else 0
+            ),
         )
     else:
         points_ = jnp.asarray(reference_points)
@@ -2860,6 +2967,20 @@ def _prepare_block_geometry(
     physical_weights = precision_policy.accumulation(
         measure_factor * reference_weights[None, :]
     )
+    if coordinate_measure is not None:
+        physical_weights = coordinate_measure.weight(
+            physical_points, physical_weights, frame=coordinate_measure.frame
+        )
+    if coordinate_measure is not None and coordinate_measure.radial_axis is not None:
+        coordinate_values = jnp.asarray(
+            mesh.coordinates if coordinates is None else coordinates
+        )
+        routes = block.vertices if geometry_dofs is None else jnp.asarray(geometry_dofs)
+        nodes = coordinate_values[routes]
+        valid = jnp.all(jnp.isfinite(nodes), axis=(-2, -1)) & jnp.all(
+            nodes[..., coordinate_measure.radial_axis] >= 0.0, axis=-1
+        )
+        physical_weights = jnp.where(valid[:, None], physical_weights, jnp.nan)
     return FiniteElementBlockGeometry(
         block_name=block.name,
         reference_points=reference_points,
@@ -2870,6 +2991,7 @@ def _prepare_block_geometry(
         physical_gradients=physical_gradients,
         physical_weights=physical_weights,
         measure=precision_policy.output(jnp.sum(physical_weights, axis=1)),
+        coordinate_measure=coordinate_measure,
     )
 
 

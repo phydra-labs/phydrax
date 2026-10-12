@@ -360,6 +360,7 @@ from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
     IncompressibleFlowProblem,
+    PeriodicAdvectiveCourantRestriction,
 )
 from ._integral_rewrite import (
     IntegralResidualProgram,
@@ -608,6 +609,7 @@ from ._mixed_dimensional import (
     ReservoirCouplingPlan,
 )
 from ._mixture_transport import (
+    brokaw_mixture_conductivity,
     MixtureAveragedTransportPlan,
     MixtureTransportEvaluation,
     StefanMaxwellEvidence,
@@ -1181,6 +1183,7 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
+    "PeriodicAdvectiveCourantRestriction",
     "CompiledFLIPProblem",
     "CompiledSparseFLIPProblem",
     "CompiledSpectralDynamics",
@@ -1438,6 +1441,7 @@ __all__ = [
     "StefanMaxwellEvidence",
     "StefanMaxwellTransportEvaluation",
     "StefanMaxwellTransportPlan",
+    "brokaw_mixture_conductivity",
     "BedloadSedimentPlan",
     "HydrostaticLayerCoupling",
     "MultilayerShallowWaterSystem",

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
+from ..._coordinate_measure import CoordinateMeasurePlan
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import (
@@ -244,6 +245,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
     coordinate_gathers: Array
     coordinate_hessians: Array
     reference_weights: Array
+    coordinate_measure: CoordinateMeasurePlan | None
 
     def __init__(
         self,
@@ -256,6 +258,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         /,
         *,
         coordinate_hessians: ArrayLike | None = None,
+        coordinate_measure: CoordinateMeasurePlan | None = None,
     ) -> None:
         layout = str(runtime_layout_id)
         kind = str(domain_kind)
@@ -291,6 +294,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         self.coordinate_gathers = gathers
         self.coordinate_hessians = hessians
         self.reference_weights = weights
+        self.coordinate_measure = coordinate_measure
         self.action_id = canonical_fingerprint(
             {
                 "kind": "finite-element-local-geometry-actions",
@@ -303,6 +307,12 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                     None if not hessians.size else array_tree_fingerprint(hessians)
                 ),
                 "reference_weights": array_tree_fingerprint(weights),
+                **(
+                    {"coordinate_measure": coordinate_measure.plan_id}
+                    if coordinate_measure is not None
+                    and coordinate_measure.kind != "cartesian"
+                    else {}
+                ),
             }
         )
 
@@ -356,9 +366,20 @@ class FiniteElementGeometryActions(LocalGeometryActions):
                 inverse,
                 inverse,
             )
+        weights = measure * self.reference_weights[None, :]
+        if self.coordinate_measure is not None:
+            weights = self.coordinate_measure.weight(
+                points, weights, frame=runtime.coordinate_frame
+            )
+            radius_axis = self.coordinate_measure.radial_axis
+            if radius_axis is not None:
+                valid = jnp.all(jnp.isfinite(coordinates)) & jnp.all(
+                    coordinates[..., radius_axis] >= 0.0
+                )
+                weights = jnp.where(valid, weights, jnp.nan)
         return LocalMetricResult(
             points,
-            measure * self.reference_weights[None, :],
+            weights,
             jacobian,
             inverse,
             inverse_hessian=inverse_hessian,
@@ -544,7 +565,13 @@ class FiniteElementLocalProvider(StrictModule):
                 ].degree
                 for name in names
             )
-            points, weights = _degree_aware_reference_rule(block.cell_kind, max(degrees))
+            degree = max(degrees)
+            if (
+                discretization.coordinate_measure is not None
+                and discretization.coordinate_measure.kind == "spherical-radial"
+            ):
+                degree += 1
+            points, weights = _degree_aware_reference_rule(block.cell_kind, degree)
             references = []
             gathers = []
             for name in names:
@@ -605,6 +632,7 @@ class FiniteElementLocalProvider(StrictModule):
                 discretization.coordinate_dofs[block_index][selected],
                 weights,
                 coordinate_hessians=coordinate_hessians,
+                coordinate_measure=discretization.coordinate_measure,
             )
             selected_domain = IntegrationDomain(
                 "cell",
@@ -648,6 +676,11 @@ class FiniteElementLocalProvider(StrictModule):
             != discretization.default_runtime.coordinates.shape
         ):
             raise ValueError("Finite-element runtime does not match the prepared layout.")
+        measure = discretization.coordinate_measure
+        if measure is not None and runtime.coordinate_frame != measure.frame:
+            raise ValueError(
+                "Runtime coordinate frame must match the coordinate measure."
+            )
 
 
 __all__ = [

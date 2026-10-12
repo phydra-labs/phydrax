@@ -399,3 +399,86 @@ def test_krylov_derivative_solves_reuse_the_prepared_primal_preconditioner() -> 
     np.testing.assert_allclose(tangent, reference_tangent, rtol=1e-8, atol=1e-10)
     np.testing.assert_allclose(rhs_gradient, adjoint, rtol=1e-8, atol=1e-10)
     np.testing.assert_allclose(scale_gradient, -adjoint @ laplacian @ value, rtol=1e-8)
+
+
+@pytest.mark.parametrize(
+    ("batch_shape", "rhs_count", "zero_rhs"),
+    [
+        ((), 1, False),
+        ((1,), 1, False),
+        ((), 3, False),
+        ((2,), 1, False),
+        ((), 1, True),
+    ],
+    ids=[
+        "single-column",
+        "singleton-batch",
+        "multiple-columns",
+        "multiple-batches",
+        "zero-rhs",
+    ],
+)
+def test_native_krylov_mathematical_rhs_shapes_preserve_tangent_and_adjoint(
+    batch_shape: tuple[int, ...], rhs_count: int, zero_rhs: bool
+) -> None:
+    """Batched direct primals retain the native implicit Krylov derivative route."""
+    base = np.broadcast_to(
+        np.asarray([[3.0, 0.2], [0.2, 2.0]], dtype=np.float64),
+        batch_shape + (2, 2),
+    )
+    shape = batch_shape + (2, rhs_count)
+    host_rhs = np.arange(np.prod(shape), dtype=np.float64).reshape(shape) + 0.5
+    if zero_rhs:
+        host_rhs = np.zeros(shape, dtype=np.float64)
+    rhs = jnp.asarray(host_rhs)
+    direction = jnp.sin(jnp.arange(rhs.size, dtype=jnp.float64)).reshape(shape)
+    cotangent = jnp.cos(jnp.arange(rhs.size, dtype=jnp.float64)).reshape(shape)
+    scale = jnp.asarray(1.2, dtype=jnp.float64)
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.DenseLU(),
+        tolerance=phx.linalg.TolerancePolicy(relative=1e-11, absolute=1e-12),
+        derivative_solve=phx.linalg.LinearDerivativeSolvePolicy(
+            route="krylov",
+            relative_tolerance=1e-10,
+            absolute_tolerance=1e-12,
+            maximum_steps=4,
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("mathematical"),
+    )
+
+    def result(
+        current_scale: jax.Array, current_rhs: jax.Array
+    ) -> phx.linalg.LinearSolveResult:
+        operator = phx.linalg.DenseLinearOperator(
+            current_scale * jnp.asarray(base), operator_id="derivative-rhs-shape-contract"
+        )
+        return phx.linalg.solve(
+            phx.linalg.LinearSystem(operator), current_rhs, policy=policy
+        )
+
+    def state(current_scale: jax.Array, current_rhs: jax.Array) -> jax.Array:
+        return result(current_scale, current_rhs).value
+
+    primal = result(scale, rhs)
+    _, tangent = jax.jvp(
+        state, (scale, rhs), (jnp.asarray(0.2, dtype=jnp.float64), direction)
+    )
+    _, pullback = jax.vjp(state, scale, rhs)
+    scale_gradient, rhs_gradient = pullback(cotangent)
+    matrix = 1.2 * base
+    expected = np.linalg.solve(matrix, host_rhs)
+    expected_tangent = np.linalg.solve(
+        matrix, np.asarray(direction) - 0.2 * (base @ expected)
+    )
+    expected_adjoint = np.linalg.solve(np.swapaxes(matrix, -1, -2), np.asarray(cotangent))
+    assert bool(jnp.all(primal.successful))
+    assert bool(jnp.all(primal.derivative_valid))
+    np.testing.assert_allclose(primal.value, expected, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(tangent, expected_tangent, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(rhs_gradient, expected_adjoint, rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(
+        scale_gradient,
+        -np.sum(expected_adjoint * (base @ expected)),
+        rtol=1e-8,
+        atol=1e-10,
+    )

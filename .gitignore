@@ -80,10 +80,18 @@ benchmarks/*
 !benchmarks/spline_de_rham.json
 !benchmarks/structured_cochain.py
 !benchmarks/structured_cochain.json
+# Statistical periodic-flow drivers and their measured evidence records.
+!benchmarks/periodic_increment_moments.py
+!benchmarks/periodic_increment_moments.json
+!benchmarks/periodic_power_law_fields.py
+!benchmarks/periodic_power_law_fields.json
+!benchmarks/incompressible_svv_qualification.json
+!benchmarks/incompressible_statistical_qualification.json
 !benchmarks/unstructured_maxwell.py
 !benchmarks/unstructured_maxwell.json
 !benchmarks/omniphysics_production_qualification.py
 !benchmarks/quantum_hall.py
+!benchmarks/nuclear_fuel_performance.py
 # Native Taylor contraction campaigns and scoped diagnostic evidence.
 !benchmarks/taylor_contraction_capacities.json
 !benchmarks/taylor_order_capacities.json

@@ -65,6 +65,35 @@ def _process_host_records(
     return records
 
 
+class MemoryBudgetError(MemoryError):
+    """Preflight refusal: an operation's admitted bytes exceed a declared budget.
+
+    ``budget`` names the owner's byte-cap parameter; ``required_bytes`` is the
+    owner's admission estimate for the refused work and ``limit_bytes`` the cap.
+    """
+
+    budget: str
+    required_bytes: int
+    limit_bytes: int
+
+    def __init__(self, budget: str, required_bytes: int, limit_bytes: int, /) -> None:
+        name = _identifier(budget, "budget")
+        for value, label in (
+            (required_bytes, "required_bytes"),
+            (limit_bytes, "limit_bytes"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{label} must be an integer.")
+            if value < 0:
+                raise ValueError(f"{label} must be non-negative.")
+        self.budget = name
+        self.required_bytes = required_bytes
+        self.limit_bytes = limit_bytes
+        super().__init__(
+            f"{name} admits {limit_bytes} bytes; the operation requires {required_bytes}."
+        )
+
+
 class DistributionMode(str, Enum):
     """How an operation may use the initialized resource allocation."""
 
@@ -674,6 +703,7 @@ __all__ = (
     "ExecutionGroupSpec",
     "ExecutionPolicy",
     "ExecutionResourceEvidence",
+    "MemoryBudgetError",
     "MemoryEnvelope",
     "RecoveryPolicy",
     "ResourceInventory",

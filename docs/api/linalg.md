@@ -236,6 +236,19 @@ Common operators include:
 `LocalBlockDiagonalLinearOperator` stores one dense local block per disjoint
 canonical block and applies all blocks without constructing a global matrix.
 It supports exact structured solves and fixed-size block extraction.
+`BorderedBlockAssemblyPlan` probes every declared coordinate action. Resolved
+off-local or outside-band couplings are refused. An owner may declare a
+nonnegative roundoff multiplier; the admissible relative omission is then
+`multiplier * coordinate_count * machine_epsilon`, measured independently for
+each column. The assembled operator exposes maximum absolute/relative omission,
+the limit, exactness, and acceptance as `BorderedAssemblyEvidence`. The default
+multiplier is zero and retains exact structural admission.
+
+`mv_block`, `transpose_mv_block`, and `adjoint_mv_block` retain the canonical
+column axis even for one column. Fused actions use their declared block route;
+generic single-column actions apply the ordinary vector action directly rather
+than introducing a size-one `vmap`. Multiple columns remain vectorized, with
+the same space, pairing, validation, dynamic-capture, and effect contracts.
 
 Addition, scalar multiplication, and `@` construct lazy sum, scaled, and
 composed operators. Materialization is explicit and bounded:
@@ -246,6 +259,11 @@ dense = phx.linalg.materialize(
     phx.linalg.MaterializationPolicy(max_entries=4, max_bytes=4096),
 )
 ```
+`MaterializationPolicy.require(entries, dtype)` applies the same entry and byte
+limits to a dense array that a caller forms itself, such as a stored Jacobian,
+and raises `LinearCapabilityError` before allocation when either limit is
+exceeded.
+
 `assemble_diagonal` and `assemble_uniform_blocks` expose exact structural
 extraction independently of dense materialization. An operator advertises
 diagonal assembly through `OperatorCapabilities.diagonal_assembly`; Jacobi uses
@@ -1065,6 +1083,35 @@ precedes Schur reconstruction and Schur-action refresh, preventing stale Schur
 state. Triangular forms remain nonsymmetric unless the complete action has
 independent valid evidence.
 
+The prepared `BlockFactorizationPreconditioner` retains its dynamic `pivot_action`
+and `schur_action`, plus `lower_block` and/or `upper_block` only when its declared
+form applies them. The constructor still admits a transient
+`SchurComplementLinearOperator` for validation and scientific provenance;
+`schur_operator_id` and the array-free `schur_input_ids` binding record that input
+identity without retaining the setup diagonal or an unused operator graph.
+Schur construction, factor preparation, application order, and native
+failure/property evidence for the same scientific binding are unchanged.
+
+Storage estimates charge the execution-required state. Builder preparation
+workspace still charges setup-only operator storage while the factors are
+prepared, rather than silently dropping it from resource admission. Refresh
+reconstructs the current Schur setup from the supplied setup operator and the
+refreshed pivot action.
+Cost reconstruction preserves the original declared Schur ID only when the
+current diagonal, lower, pivot-action, and upper input identities match the
+recorded binding, in that order. A different binding gets its current canonical
+Schur identity, not an old name inferred from equal dimensions or values.
+An identity-sensitive component may legitimately refuse that new binding;
+unchanged refusal behavior across genuinely different bindings is not claimed.
+
+This action-only state is an intentional prepared/PyTree representation cutover.
+Default and builder-generated identities change; an explicitly supplied
+`preconditioner_id` remains the caller's declared action ID. Whole-container,
+source, runtime, and persistence identities still bind the current representation.
+Old prepared field inventories are refused by the owning decoder: rebuild with
+current constructors and templates, not historical whole-object restores or an
+alias for the removed `schur_operator` field.
+
 ### Named block coordinates
 
 `BlockSelection` names members of an existing `BlockSpace` by path, so nested
@@ -1385,6 +1432,13 @@ derivatives; error mode raises. Matrix-free implicit actions use this checked
 native callable Krylov route; tree factorizations retain their native direct
 tangent and transpose solves.
 
+An implicit right-hand side with one independent batch and one column projects
+directly into the same native vector GMRES and restores its complete canonical
+shape, including leading singleton batch axes. It does not allocate a full
+zero embedding or introduce size-one batching. Multiple batches/columns retain
+their existing routing; preconditioning, tolerances, effects, and independent
+residual acceptance or failure poisoning are unchanged.
+
 `route="primal-factors"` declares that the derivative solves reuse the primal
 square direct factorization. The linearized residual of a linear system is the
 operator itself, so tangent solves reuse the prepared factors and cotangent
@@ -1412,6 +1466,27 @@ Prepared nonlinear linearizations use `prepare_linearization`, then
 `JacobianLinearOperator`. The artifact stores one primal evaluation plus JVP and
 VJP actions, so repeated products do not retrace an opaque callable. Sparse
 Jacobian and Hessian plans use the same prepared-linearization contract.
+
+Native transformation boundaries use short-lived named applications of their
+existing dynamic callables. Debug/source labeling does not stringify the whole
+stored-Jaxpr-bearing module. This avoids preparation-only work without adding a
+primal tape, eagerly preparing a transpose for forward-only consumers, hiding
+captured arrays as static data, or changing numerical/status/effect semantics.
+The callback/compiler identity changes intentionally; historical executable
+templates are not reused as current identities.
+
+The native implicit-root shape probe also uses a transient named application of
+its already closure-converted residual. It retains JAX's shape evaluation and
+invalid-output refusal semantics; hoisted residual arrays still enter the primal
+and derivative rules dynamically. Shape preparation does not execute residual
+effects or format the complete converted Jaxpr.
+
+`FunctionLinearOperator` reuses preparation when its forward and explicitly
+supplied transpose actions are the same callable object and both spaces are
+the same owner object. Distinct callables or distinct space owners retain
+independent conversion and shape validation, including shape-polymorphic
+actions. No equality-by-dimension or inferred self-adjointness is used; dynamic
+captures and application effects remain visible.
 
 ## Matrix-free Krylov, block methods, and recycling
 
@@ -1466,6 +1541,15 @@ excluded `LinearSubspace`. `RestartedLanczos` supplies a thick-restart
 matrix-free alternative. `DenseEigh` provides the bounded Phydrax-native full
 dense route for standard and generalized Hermitian problems. Generalized
 problems use a certified Cholesky reduction before the JAX Hermitian solve.
+Standard problems in an explicitly Euclidean coordinate pairing use the operator
+matrix directly: the identity metric needs no Cholesky factorization, triangular
+reduction, or basis backsolve. Non-Euclidean standard and generalized problems
+retain their pairing/metric reductions. Both routes compute the same original
+residual, orthogonality, normalization, status, resource, and provenance evidence.
+The complete smallest-algebraic route keeps `eigh`'s native ascending order
+without a redundant sort. For a Euclidean prepared spectrum the density kernel
+is the spectral operator itself, including the same attached Fréchet action;
+other pairings retain the covariant density construction.
 
 Every route retains per-mode residuals, convergence masks, pairing-aware
 orthogonality error, effective count, operator/metric application counts,

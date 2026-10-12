@@ -88,8 +88,12 @@ from ._coupling import (
 )
 from ._evolution_laws import FrictionWearEvolutionLaw
 from ._friction import (
+    axisymmetric_interface_geometry,
+    AxisymmetricInterfaceGeometry,
     ContactFrictionEvaluation,
     ContactFrictionState,
+    coulomb_interface_response,
+    CoulombInterfaceResponse,
     LaggedCoulombFrictionPlan,
     PreparedLaggedCoulombFriction,
     smooth_coulomb_potential,
@@ -352,6 +356,10 @@ __all__ = [
     "ContactEvolutionResponse",
     "ContactFluxAssembly",
     "ContactFrictionEvaluation",
+    "CoulombInterfaceResponse",
+    "AxisymmetricInterfaceGeometry",
+    "axisymmetric_interface_geometry",
+    "coulomb_interface_response",
     "ContactFrictionState",
     "ContactGraphPlan",
     "ContactImpulseAssembly",

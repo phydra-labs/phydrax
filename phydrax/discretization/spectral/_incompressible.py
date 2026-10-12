@@ -136,6 +136,79 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
         )
         return pressure * self.admissibility_mask
 
+    def velocity_from_vorticity(
+        self, vorticity: ArrayLike, /, *, tolerance: float
+    ) -> Array:
+        """Mean-zero torus Biot--Savart, including optional leading member axes.
+
+        With ``exp(+ik·x)`` and ``curl(u)=∂x u_y-∂y u_x``, the 2D formula is
+        ``psi_hat=omega_hat/|k|²``, ``u_hat=(ik_y,-ik_x)*psi_hat``.
+        In 3D it is ``i k × omega_hat/|k|²``. The zero mode and forbidden
+        Nyquist planes are zero. Nonfinite data, relative mean above tolerance,
+        and 3D longitudinal vorticity above tolerance are refused using
+        ``eqx.error_if`` (also under jit), never silently projected away.
+        """
+        if not 0 <= tolerance < 1:
+            raise ValueError("tolerance must be finite and in [0,1).")
+        value = jnp.asarray(vorticity)
+        dimension = self.spatial_dimension
+        suffix = self.discretization.modal_shape + (() if dimension == 2 else (3,))
+        if value.ndim < len(suffix) or value.shape[-len(suffix) :] != suffix:
+            raise ValueError(f"Vorticity must end in modal shape {suffix}.")
+        if not jnp.issubdtype(value.dtype, jnp.complexfloating):
+            raise TypeError("Vorticity must use complex modal coefficients.")
+        axes = tuple(range(value.ndim - len(suffix), value.ndim))
+        norm = jnp.sqrt(jnp.sum(jnp.abs(value) ** 2, axis=axes))
+        zero = self.wavenumber_squared == 0
+        mean = value * (zero if dimension == 2 else zero[..., None])
+        mean_norm = jnp.sqrt(jnp.sum(jnp.abs(mean) ** 2, axis=axes))
+        value = eqx.error_if(
+            value,
+            jnp.any(~jnp.isfinite(value)) | jnp.any(mean_norm > tolerance * norm),
+            "Biot--Savart requires finite mean-zero vorticity.",
+        )
+        inverse = self.inverse_wavenumber_squared
+        if dimension == 2:
+            psi = value * inverse
+            velocity = jnp.stack(
+                (1j * self.wavenumbers[1] * psi, -1j * self.wavenumbers[0] * psi),
+                axis=-1,
+            )
+        else:
+            wave = jnp.stack(self.wavenumbers, axis=-1)
+            dot = jnp.sum(wave * value, axis=-1)
+            longitudinal = dot[..., None] * wave * inverse[..., None]
+            longitudinal_norm = jnp.sqrt(jnp.sum(jnp.abs(longitudinal) ** 2, axis=axes))
+            value = eqx.error_if(
+                value,
+                jnp.any(longitudinal_norm > tolerance * norm),
+                "Biot--Savart requires solenoidal 3D vorticity.",
+            )
+            velocity = 1j * jnp.cross(wave, value) * inverse[..., None]
+        return velocity * self.admissibility_mask[..., None]
+
+    def vorticity_from_velocity(self, velocity: ArrayLike, /) -> Array:
+        """Modal curl, inverse to mean-zero solenoidal torus Biot--Savart.
+
+        Optional leading member axes are preserved. In 2D the result is scalar
+        (no channel axis); in 3D it has three components. Forbidden Nyquist
+        planes are zero, exactly as in ``velocity_from_vorticity``.
+        """
+        value = jnp.asarray(velocity)
+        if (
+            value.ndim < len(self.state_shape)
+            or value.shape[-len(self.state_shape) :] != self.state_shape
+        ):
+            raise ValueError(f"Velocity must end in modal shape {self.state_shape}.")
+        if not jnp.issubdtype(value.dtype, jnp.complexfloating):
+            raise TypeError("Velocity must use complex modal coefficients.")
+        value = value * self.admissibility_mask[..., None]
+        if self.spatial_dimension == 2:
+            return 1j * (
+                self.wavenumbers[0] * value[..., 1] - self.wavenumbers[1] * value[..., 0]
+            )
+        return 1j * jnp.cross(jnp.stack(self.wavenumbers, axis=-1), value)
+
     def divergence_norm(self, state: ArrayLike, /) -> Array:
         return GeometryPrecisionPolicy().norm(self.divergence(state).reshape((-1,)))
 
@@ -152,6 +225,8 @@ class IncompressibleSpectralDiagnostics(StrictModule):
     forcing_power: Array
     molecular_energy_rate: Array
     molecular_dissipation: Array
+    spectral_viscosity_energy_rate: Array
+    spectral_viscosity_dissipation: Array
     algebraic_les_energy_rate: Array
     algebraic_les_dissipation: Array
     algebraic_les_energy_identity_defect: Array
@@ -180,6 +255,7 @@ class IncompressibleSpectralDiagnostics(StrictModule):
     finite: Array
     projector_id: str = eqx.field(static=True)
     dynamic_les_id: str | None = eqx.field(static=True)
+    spectral_viscosity_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -189,6 +265,8 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         forcing_power: ArrayLike,
         molecular_energy_rate: ArrayLike,
         molecular_dissipation: ArrayLike,
+        spectral_viscosity_energy_rate: ArrayLike,
+        spectral_viscosity_dissipation: ArrayLike,
         algebraic_les_energy_rate: ArrayLike,
         algebraic_les_dissipation: ArrayLike,
         algebraic_les_energy_identity_defect: ArrayLike,
@@ -217,6 +295,7 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         finite: ArrayLike,
         projector_id: str,
         dynamic_les_id: str | None,
+        spectral_viscosity_id: str | None,
     ) -> None:
         identifier = str(projector_id)
         if not identifier:
@@ -226,6 +305,8 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         self.forcing_power = jnp.asarray(forcing_power)
         self.molecular_energy_rate = jnp.asarray(molecular_energy_rate)
         self.molecular_dissipation = jnp.asarray(molecular_dissipation)
+        self.spectral_viscosity_energy_rate = jnp.asarray(spectral_viscosity_energy_rate)
+        self.spectral_viscosity_dissipation = jnp.asarray(spectral_viscosity_dissipation)
         self.algebraic_les_energy_rate = jnp.asarray(algebraic_les_energy_rate)
         self.algebraic_les_dissipation = jnp.asarray(algebraic_les_dissipation)
         self.algebraic_les_energy_identity_defect = jnp.asarray(
@@ -268,6 +349,7 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.projector_id = identifier
         self.dynamic_les_id = None if dynamic_les_id is None else str(dynamic_les_id)
+        self.spectral_viscosity_id = spectral_viscosity_id
 
 
 __all__ = ["IncompressibleSpectralDiagnostics", "PeriodicLerayProjector"]
