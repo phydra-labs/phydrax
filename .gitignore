@@ -105,6 +105,10 @@ benchmarks/*
 !benchmarks/shortest_path_field_scaling.json
 !benchmarks/rsp_free_energy_gate.py
 !benchmarks/rsp_free_energy_gate.json
+# Workspace-bounded memory campaigns, their dev baselines, and adoption gates.
+!benchmarks/_memory.py
+!benchmarks/memory_*.py
+!benchmarks/memory_*.json
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv
