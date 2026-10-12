@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Finite-element sparse assembly keeps traced DOF routes on device, allowing
+  prepared mass actions inside mixed-method coupling scans without NumPy
+  tracer conversion. Namespace and grouped-derivative refusal tests now reflect
+  the public periodic certificate and explicit-coordinate-axis contract.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
