@@ -144,3 +144,35 @@ def test_varying_stage_shift_requires_fresh_numerics() -> None:
         reused.attempt_history.jacobian_preparations,
         refreshed.attempt_history.jacobian_preparations,
     )
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_runtime_scalar_arguments_rebind_temporal_static_context(reuse: bool) -> None:
+    system = phx.dynamics.DifferentialAlgebraicSystem(
+        linear_residual,
+        state_shape=(1,),
+        structure=phx.dynamics.DAEStructure(("differential",)),
+        system_id="runtime-static-reuse",
+    )
+    problem = phx.solver.DifferentialAlgebraicProblem(
+        system,
+        jnp.ones(1, dtype=jnp.float64),
+        initial_state_rate=-jnp.ones(1, dtype=jnp.float64),
+        args=1.0,
+        problem_id="runtime-static-reuse",
+    )
+    grid = phx.dynamics.TimeGrid(
+        jnp.arange(5, dtype=jnp.float64) * 0.125, time_id="runtime-static-reuse"
+    )
+    prepared = phx.solver.prepare_dae(
+        problem,
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            method=phx.solver.BDFMethod(1),
+            temporal_reuse=phx.solver.DAETemporalReusePolicy(enabled=reuse),
+        ),
+    )
+    result = phx.solver.solve_dae(prepared, args=2.0)
+    assert bool(result.successful)
+    assert jnp.allclose(result.states[:, 0], 1.25 ** -jnp.arange(5), atol=1e-10)
+    assert prepared.problem.args == 1.0

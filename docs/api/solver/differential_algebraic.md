@@ -292,6 +292,11 @@ stage. The fixed-grid scan retains the last numerical preparation and its
 age/shift/work evidence internally; an event history reset invalidates reuse age.
 Fresh preparation is constructed only inside the selected branch, including on
 the adaptive route.
+Runtime model arguments may replace the prepared argument PyTree. A changed tree,
+array shape/dtype, or non-array argument value binds fresh stage numerics once
+before the temporal scan so its retained numerical/static context stays aligned.
+Changing only array values preserves the ordinary guarded refresh path and the
+prepared template identities.
 
 `DAEStepHistory` records accepted times, step sizes, BDF orders, local error ratios,
 source attempt indices, and requested-time mappings. `DAEAttemptHistory` records every

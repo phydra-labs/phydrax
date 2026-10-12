@@ -3618,6 +3618,38 @@ def _solve_prepared_events_jvp(
     return primal, tangent
 
 
+def _bind_stage_argument_layout(
+    prepared: PreparedDAESolve, args: Any, /
+) -> PreparedDAESolve:
+    """Bind changed argument structure before creating fixed-shape temporal state."""
+    stage_arguments = prepared.stage_solve.args
+    if not isinstance(stage_arguments, ImplicitStageArguments):
+        raise TypeError("Prepared DAE stages require ImplicitStageArguments.")
+    old_arrays, old_static = eqx.partition(stage_arguments.model_args, eqx.is_array)
+    new_arrays, new_static = eqx.partition(args, eqx.is_array)
+    old_shapes = tuple(
+        (value.shape, value.dtype) for value in jax.tree.leaves(old_arrays)
+    )
+    new_shapes = tuple(
+        (value.shape, value.dtype) for value in jax.tree.leaves(new_arrays)
+    )
+    if eqx.tree_equal(old_static, new_static) and old_shapes == new_shapes:
+        return prepared
+    arguments = eqx.tree_at(
+        lambda value: value.model_args,
+        stage_arguments,
+        args,
+        is_leaf=lambda value: value is None,
+    )
+    stage_solve = refresh_nonlinear(
+        prepared.stage_solve,
+        prepared.stage_problem,
+        prepared.stage_solve.state,
+        args=arguments,
+    )
+    return eqx.tree_at(lambda value: value.stage_solve, prepared, stage_solve)
+
+
 def solve_dae(
     problem_or_prepared: DifferentialAlgebraicProblem | PreparedDAESolve,
     time_grid: TimeGrid | None = None,
@@ -3655,6 +3687,7 @@ def solve_dae(
             "continuation cannot be combined with initial_state or initial_state_rate."
         )
     runtime_args = prepared.problem.args if args is _DEFAULT_ARGS else args
+    prepared = _bind_stage_argument_layout(prepared, runtime_args)
     if prepared.plan.policy.adaptive is not None:
         from ._dae_adaptive import solve_adaptive_dae
 

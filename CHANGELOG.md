@@ -4,7 +4,8 @@
 
 ### Fixed
 - Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
-  and combined work evidence; avoid eager adaptive numerical refresh.
+  and combined work evidence; bind changed runtime argument contexts before the
+  temporal scan and avoid eager adaptive numerical refresh.
 - Reject nonfinite Clarabel inputs before provider execution while preserving
   `NONFINITE_INPUT` and independent valid batch cases.
 - Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
