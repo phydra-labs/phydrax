@@ -1,6 +1,6 @@
 {
   "kind": "source-absorption-ledger",
-  "ledger_id": "280c704ccbc3b0ebc3082c30ef28d5fc694a7574c9d8abd3de3852bf5c852208",
+  "ledger_id": "e90c71b10cc7c30b3686fb50e95cfef518d3075a795e7d99b17ddd194b43d79c",
   "sources": [
     {
       "archive_digest": "git-tree-sha1:e8e8a48d2f6dae23e2f14a6c6e9fd1f5638f75cf",
@@ -283,6 +283,48 @@
       "source_id": "iaea-fumex-public-report",
       "source_reference_id": "a57f5889ac66c8bf4a64855f9400b27af2ec1509d0a54bed25a18545202d3e7e",
       "technical_reviewer": "phydrax-public-document-technical-review-2026-09-30"
+    },
+    {
+      "archive_digest": "git-tree-sha1:f5d9cf6b51966b9bdadb7b9e5ee40d1fc200e6a4",
+      "behavior_inspected": false,
+      "code_inspected": true,
+      "concepts": [
+        "effective-resistance",
+        "landscape-connectivity",
+        "randomized-shortest-paths",
+        "resistance-sketching"
+      ],
+      "copying_permitted": true,
+      "data_rights": "not-applicable",
+      "kind": "source-reference",
+      "legal_reviewer": "unreviewed",
+      "license": "MIT",
+      "license_digest": "daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+      "notice_required": true,
+      "provider_only": false,
+      "publications": [
+        {
+          "locator": "doi:10.1137/080734029",
+          "title": "Graph sparsification by effective resistances"
+        }
+      ],
+      "relevant_documents": [
+        "LICENSE@sha256:daa2b5d3053360fb529ee4ca62f105bcb45c294a6170d3affeb2c48864792baa",
+        "README.md@sha256:5323f68f1812928090ae811bb49a8160d24aae430d94848f6c885ae29517db5c"
+      ],
+      "relevant_paths": [
+        "src/jaxscape/graph.py",
+        "src/jaxscape/lcp_distance.py",
+        "src/jaxscape/resistance_distance.py",
+        "src/jaxscape/rsp_distance.py"
+      ],
+      "repository_url": "https://github.com/vboussange/jaxscape",
+      "reuse_class": "permissive",
+      "review_status": "technically-reviewed",
+      "revision": "5455ca4f0a5ebfe5f27f0b24c672e8e6948c73b4",
+      "source_id": "jaxscape",
+      "source_reference_id": "b00ffd899e352476d5f4976be2d774676dd0556eb8d1b0535b325347a89a9861",
+      "technical_reviewer": "phydrax-graph-connectivity-source-review"
     },
     {
       "archive_digest": "git-tree-sha1:ff344f9648661e0235472d43c236fdcb7e5d2c3c",

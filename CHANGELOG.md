@@ -166,6 +166,51 @@
   `reference_positions`, re-expressed with its routes and wrap counts by
   `with_representation_offsets`; array fingerprints of image neighborhood
   states and evidence change accordingly, without a compatibility alias.
+- `SparseCoordinateOperator` with an empty route set preserves zero-dimensional and
+  rectangular output shapes in forward, transpose, and adjoint actions, restoring
+  relative-boundary cochain harmonic preprocessing and certificates.
+- Frequency- and time-domain geophysical EM plans install their native
+  preconditioner into a default solve policy whose `preconditioning` is `None`.
+- Structured diffusion reshapes tensor-identity coefficients explicitly instead of
+  relying on rank promotion.
+- Implicit root derivative setups (`tangent_linear_setup`/`adjoint_linear_setup`)
+  rebase coordinates only for incompatible state/residual spaces, like
+  `linear_setup`, so sparse operators keep the canonical storage that sparse
+  factorization preconditioner builders require in derivative solves.
+- Linear-solve binding stops problem arrays while keeping host sparse topology and
+  storage plans concrete, so jitted Newton solves with an explicit sparse Jacobian
+  and a sparse-factorization preconditioner builder no longer report falsely
+  changed relation routes.
+- Prepared sparse factorizations support `solve(..., adjoint=True)`, sparse
+  factor preconditioners expose `apply_adjoint`, and implicit Krylov cotangent
+  solves use that transpose action instead of the primal action. Reverse-mode
+  derivatives of factor-preconditioned GMRES solves on nonsymmetric operators no
+  longer stagnate into fail-closed NaN; preconditioners without an adjoint and
+  certified self-adjoint actions keep the prior behavior.
+- Sparse LU, ILU, and incomplete-Cholesky preconditioner builders retain their
+  host symbolic factorization plan in planned setups and refresh exactly that
+  plan during numeric binding, so host-prepared templates bind operators whose
+  topology and storage plans are traced (for example, a prepared plan passed to
+  `eqx.filter_jit`); a genuinely changed route pattern still raises.
+- Sparse factorization plans reject numeric dtype changes before allocation, so
+  retained factor/preconditioner byte evidence cannot be bypassed by binding
+  wider values; unmatched planned preconditioner content prepares afresh while
+  matching corrupt payloads and changed routes still fail. Sparse LU also handles
+  valid lower-triangular patterns whose upper update window is empty.
+- Shortest-path host Dijkstra admits projected work and peak host bytes before
+  entering `jax.pure_callback`, and source bounds are checked in the caller's
+  original integer dtype before safe int32 narrowing. Fixed single-source roots
+  and descendants no longer inherit irrelevant incoming-cycle margin; seismic
+  travel-time results preserve field status, reachability, and Bellman/dual
+  certificate evidence.
+- Cartesian raster cell-field conversion qualifies exactly its two represented
+  horizontal dimensions; absent, depth-positive-down, or otherwise unrelated
+  vertical metadata no longer rejects a valid north/east pixel grid.
+- Randomized shortest paths require mathematical linear differentiation,
+  normalize arbitrary finite positive affinities in log space without row-sum
+  overflow, refuse nested AD beyond their declared first-order implicit contract,
+  and admit aggregate seed work plus peak/aggregate host-callback byte evidence
+  before execution.
 
 ### Added
 - `phydrax.nonlinear.AitkenRelaxation` provides bounded Irons–Tuck relaxation for
@@ -223,6 +268,59 @@
   `periodic-spectral-vanishing-viscosity` and `periodic-statistical-solution`
   qualification routes, a leakage-safe `periodic_flow_operator_dataset`
   adapter, and the statistical incompressible-flow guide.
+- `phydrax.graph.EffectiveResistancePlan`: grounded-solve effective resistance
+  between fixed query nodes of canonical undirected conductance graphs (parallel
+  conductors allowed). Each connected component is grounded at its minimum-index
+  root, so the reduced system is SPD by construction; cross-component pairs are
+  `+inf` with `connected=False`; invalid conductances branch to
+  `INVALID_CONDUCTANCE` without solving a substituted system. Prepared native PCG
+  templates are refreshed per call; RHS blocks use the stricter logical primal or
+  derivative byte estimate, with retained output and disaggregated evidence.
+  Compiler/XLA temporaries remain post-lowering benchmark evidence rather than a
+  planning guarantee. Per-column solve evidence is retained, and gradients with
+  respect to conductances use the native implicit solve.
+- `phydrax.graph.SketchedEffectiveResistancePlan`: Spielman--Srivastava
+  Rademacher resistance embeddings with a caller-chosen sketch dimension,
+  row-addressed typed-key signs (block-size invariant), the same grounding,
+  component, conductance, and byte-budget contracts.
+- `phydrax.discretization.finite_volume.StructuredFaceConductancePlan`: two-point
+  face conductances `k_face * A / d` over the active cells of a structured grid as a
+  canonical edge relation; coefficients are conductivity integrated over omitted
+  dimensions (sheet conductance in 2-D), isotropic or per-axis diagonal.
+- `phydrax.interchange.geospatial_cell_field` and `GeospatialCellField`: qualified
+  pixel-registered Cartesian rasters become increasing-coordinate tensor grids with
+  validity masks and exact raster/tensor reorientation.
+- `phydrax.combinatorial.ShortestPathFieldPlan`: multi-source nonnegative-cost
+  distance fields with an acyclic minimum-hop predecessor forest, inherited path
+  margins, Bellman/dual/tightness certificates, and a forest adjoint returning a
+  deterministic Clarke subgradient at ties. Methods are an explicit host Dijkstra
+  provider (`jax.pure_callback`, recorded host synchronization, with work and peak
+  host-byte admission) and a work-budgeted device relaxation reference.
+- `phydrax.graph.RandomizedShortestPathPlan`: directed randomized-shortest-path
+  free energies, expected costs, and their symmetrized distances between fixed
+  query nodes. Each absorbing target solves the soft Bellman equation for the free
+  energy with native Newton (Jacobian = transient generator of the optimal walk)
+  instead of a partition-function linear system, so accuracy holds across
+  hundreds of decades of path weight; small temperatures use an exact
+  `log1p`/`expm1` row form. Newton starts from the minimum of the augmented
+  shortest path and the Jensen hitting-cost bound (both provable upper bounds),
+  and one exact Newton correction at the root carries first-order implicit
+  derivatives with respect to affinities, costs, and inverse temperature under a
+  mathematical linear policy. `maximum_derivative_order=1` is immutable evidence;
+  nested AD fails closed instead of returning an incomplete Hessian. Unreachable
+  pairs are `+inf`, failed targets NaN with per-target nonlinear and linear
+  evidence, and inadmissible inputs never enter a solve.
+- Source ledger records the inspected landscape-connectivity reference.
+  `benchmarks/rsp_free_energy_gate.py` positively qualifies the shipped route
+  (90-digit references with exact normalization, Jacobian conditioning, limits,
+  grid scaling, differentiation) and retains the naive, augmented-potential, and
+  physical-cost-scaled partition-function routes as negative controls: they fail
+  through conditioning or normwise loss of underflowing partition values.
+- Retained effective-resistance, shortest-path, and RSP benchmark records carry
+  canonical source/build, exact-driver, and evidence-field identities plus their
+  complete invocation, import-resolution, environment, policy, provider, and
+  resource configuration; shortest-path scaling writes finite JSON atomically in
+  canonical workload order.
 - Prepared bounded streamed relation execution, seeded reductions, fragment
   replay, receiver epilogues, resource admission, and failure evidence. PaiNN,
   NequIP, selected graph operators, and meshfree constitutive/conservation
@@ -2352,6 +2450,36 @@
   change and checkpoints written before this change are refused at restore.
   `IncompressibleSpectralDiagnostics` and `BetaPlaneBudgets` gain always-present
   spectral-viscosity terms.
+- Finite-volume `"harmonic"` face interpolation is now the distance-weighted
+  series transmissibility `(h_l + h_r) k_l k_r / (h_l k_r + h_r k_l)`, so face
+  flux is exact across piecewise-constant coefficients on nonuniform axes; values
+  on uniform axes are unchanged up to rounding. Periodic wrap faces use the wrap
+  center distance. `ConservativeDiffusionPlan` and every consumer of
+  `FaceCoefficientPlan` change numerically on nonuniform grids with coefficient
+  jumps.
+- `PDEParameter` stores explicit canonical representation metadata (defaulting to
+  scalar for one component and vector otherwise), so one-component vectors are
+  representable in 1-D divergence contracts. PDE IR parameter records and
+  canonical hashes change; prior payloads without `representation` are refused
+  rather than inferred during restore.
+- `TravelTimeGraphPlan.solve` runs on `ShortestPathFieldPlan` (host Dijkstra with
+  a device forest adjoint) instead of a fixed V−1-sweep relaxation; the local loop
+  and `iteration_count` are removed. Fixed source margins remain `+inf`, descendants
+  ignore irrelevant incoming cycles at that root, and exact competing paths report
+  zero inherited margin. `TravelTimeResult` now retains field status, reachability,
+  Bellman residual, and dual residual; `derivative_available` follows certified
+  field regularity.
+- Implicit derivatives of certified Euclidean SPD `PCG` plans solve their tangent
+  and cotangent systems with native PCG, reusing the primal preconditioner, instead
+  of restarted GMRES. Independent true-residual acceptance and fail-closed
+  derivative behavior are unchanged; other square-system routes keep GMRES.
+- Implicit Krylov derivatives of `LinearSystem` solves apply the stopped primal
+  operator to each derivative column (cotangents through its VJP transpose)
+  instead of embedding every column in the full right-hand-side block. Memory and
+  operator work for k right-hand sides drop from O(k²) to O(k) block columns; on a
+  128×128 grounded Laplacian with 32 columns, backward compiler temporaries fall
+  from 1.49 GB to 128 MB and time by about 10×. Least-squares stationarity keeps
+  block embedding.
 - `phydrax.special.dawsn` evaluates real arguments with
   `jax.scipy.special.dawsn`, public since JAX 0.11.0, instead of a vendored copy
   of the same Cody--Paciorek--Thacher kernel. Finite values and derivatives are
