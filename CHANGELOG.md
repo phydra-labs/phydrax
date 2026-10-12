@@ -19,6 +19,10 @@
   (for example SIPG diffusivity and Dirichlet data) execute again: workset
   signatures and kernel bindings now agree on the canonical set of coefficient
   layouts. Identities of actions without repeated layouts are unchanged.
+- The API reference documents functions wrapped by `eqx.filter_custom_jvp` or
+  `eqx.filter_custom_vjp` (such as `phydrax.nonlinear.implicit_root_output`) from
+  their source definitions; forced inspection previously aliased them to a
+  nonexistent Equinox member and failed the strict documentation build.
 - `tools/incompressible_spectral_benchmarks.py` reads the periodic
   `advective_energy_rate` diagnostic instead of a nonexistent attribute that a
   type-checker suppression had hidden; the emitted invariant key is renamed
