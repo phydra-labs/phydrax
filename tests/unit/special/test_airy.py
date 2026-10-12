@@ -152,3 +152,17 @@ def test_airy_scenario_1() -> None:
             [float(value) for value in expected],
             rtol=rtol,
         )
+
+
+def test_float32_central_series_keeps_accuracy_near_cancellation() -> None:
+    values = jnp.linspace(-5.0, 3.0, 401, dtype=jnp.float32)
+    reference = np.stack(scipy.special.airy(np.asarray(values)))
+    for evaluate in (phx.special.airy, jax.jit(phx.special.airy)):
+        actual = evaluate(values)
+        assert all(component.dtype == jnp.float32 for component in actual)
+        np.testing.assert_allclose(
+            np.stack([np.asarray(component) for component in actual]),
+            reference,
+            rtol=5e-7,
+            atol=2e-7,
+        )
