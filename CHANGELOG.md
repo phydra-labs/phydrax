@@ -40,6 +40,9 @@
   JAX programs while retaining them as dynamic Equinox leaves; frozen spectral
   closures and progressive MAC controls pass the unchanged hidden-state audit,
   and callable updates preserve forward/transpose actions and operator IDs.
+- Learned meshfree metric projections prepare bounded rank and retained-spectrum
+  certificates for native implicit cotangents, restoring weighted-projector
+  gradients and training without weakening fail-closed pseudoinverse audits.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.
