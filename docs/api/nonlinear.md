@@ -240,6 +240,25 @@ without forming normal equations. Coefficient solves and mapping evaluations
 are counted exactly. Conditioning, residual growth, and nonfinite candidates
 restart the fixed-capacity history.
 
+`FixedPointIteration(acceleration=AitkenRelaxation())` applies one bounded
+Irons–Tuck scalar to the complete fixed-point increment. With
+`r_k = mapping(x_k) - x_k` and `delta = r_k - r_{k-1}`, it computes
+`omega_k = -omega_{k-1} * Re(vdot(r_{k-1}, delta)) / Re(vdot(delta, delta))`,
+then advances `x_{k+1} = x_k + omega_k * r_k`. The first step uses
+`initial_relaxation` (default `1.0`). Bounds must be finite and satisfy
+`0 < minimum_relaxation <= initial_relaxation <= maximum_relaxation`;
+their defaults are `0.05` and `1.5`. A zero denominator or nonfinite candidate
+retains the previous coefficient, followed by clipping. Additional damping is
+refused: Aitken requires `damping=1.0`.
+
+Aitken uses one mapping evaluation per step after the initial evaluation and
+performs zero coefficient solves. It allocates no Anderson history. One scalar
+applied to a PyTree assumes commensurate or nondimensionalized coordinates.
+`diagnostics.acceleration_restarts` counts safeguard retentions for Aitken,
+versus history restarts for Anderson; ordinary clipping is not a retention.
+Fixed-point methods expose terminal iteration evidence, not per-step coefficients.
+Each new solve starts fresh increment/coefficient history.
+
 `FixedPointProblem(mapping, evaluation_work=True)` declares a mapping that returns
 `(mapped_state, work)`, where `work` is a fixed-structure PyTree of non-negative
 integer arrays: the owner-reported work of that one evaluation.
@@ -489,8 +508,8 @@ An opaque residual closure hides its components and is recorded as undeclared
 determinism and regularity in `NonlinearResult.component_evidence`.
 
 `implicit_fixed_point_result` is the fixed-point form. Its primal is one stopped
-damped Picard or Anderson `FixedPointIteration` solve of `state = mapping(state,
-args)`; it rejects any other method with `TypeError` and never switches to a Newton
+damped Picard, Anderson, or Aitken `FixedPointIteration` solve of
+`state = mapping(state, args)`; it rejects any other method with `TypeError` and never switches to a Newton
 primal. The accepted state is the root of `mapping(state, args) - state`, so tangent
 and adjoint derivatives solve with `I - d mapping/d state` matrix-free. Fixed-point
 iteration owns no linear policy, so `derivative_policy` must declare the tangent
@@ -668,6 +687,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ---
 
 ::: phydrax.nonlinear.AndersonAcceleration
+
+---
+
+::: phydrax.nonlinear.AitkenRelaxation
 
 ---
 

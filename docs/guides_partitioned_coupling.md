@@ -271,6 +271,24 @@ Pass `FixedPointIteration`, an explicit `fixed_point_sweep`, and physical per-po
 `CouplingTolerance` values. Existing `AndersonAcceleration` supplies safeguarded
 fixed-capacity acceleration.
 
+#### Native Aitken relaxation
+
+Use `phx.nonlinear.FixedPointIteration(acceleration=phx.nonlinear.AitkenRelaxation())`
+for bounded Irons–Tuck relaxation of the complete interface increment. The
+default coefficient is `1.0`, clipped between `0.05` and `1.5`; finite bounds
+must satisfy `0 < minimum <= initial <= maximum`. Zero secant denominators and
+nonfinite candidates retain the previous coefficient, then clip it.
+`acceleration_restarts` counts these safeguard retentions. Additional damping
+is refused (`damping` must be `1.0`). After the initial map evaluation, Aitken
+uses one fixed-point evaluation per step and no coefficient solve.
+
+One coefficient acts on the entire interface PyTree, so coordinates must be
+commensurate or nondimensionalized; coupling one scalar quantity is the simplest
+case. Physical per-port tolerances still certify the accepted result. This
+acceleration is native only: host-orchestrated windows refuse both Anderson and
+Aitken and identify the requested kind. Host windows retain damped unaccelerated
+fixed-point sweeps.
+
 The fixed-point method may use Jacobi or Gauss--Seidel iteration. Its returned iterate
 is re-evaluated once with the same sweep before acceptance, and the physical exchange
 residual of that final evaluation decides certification. Under a Gauss--Seidel sweep a
