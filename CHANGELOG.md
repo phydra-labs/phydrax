@@ -2505,6 +2505,9 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- PDE parameters record their value representation in the canonical problem IR;
+  problem hashes and finite-difference compilation IDs change accordingly, and
+  the pinned finite-difference dynamics compilation IDs are updated.
 - Breaking constitutive cutover: J2, Drucker–Prager, and Mohr–Coulomb histories
   store six packed `C_p⁻¹` entries plus hardening (width 7). Canonical finite-strain
   MCC replaces simplified MCC: `ModifiedCamClayParameters(mu0, alpha0, M, lambda,
