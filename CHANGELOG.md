@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Randomized moment objectives recognize independent, unbiased Monte Carlo and
+  scrambled-QMC product replicate means; deterministic or unscrambled product
+  factors still refuse unbiased losses rather than claiming an iid sampling law.
+- Gravothermal SIDM conservation regression tolerances scale extensive energy
+  balance defects by thermal energy instead of imposing an absolute unit-sized
+  roundoff threshold; physical energy diagnostics and acceptance are unchanged.
 - Taylor chains lower admitted scalar divergence in one dimension as the
   coordinate derivative without vector-component indexing; multidimensional
   scalar divergence remains refused. Quadrilateral field-view tests and
