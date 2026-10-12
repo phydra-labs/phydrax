@@ -400,6 +400,44 @@ def test_sparse_derivatives_scenario_1() -> None:
     )
 
 
+def test_numeric_derivative_refresh_preserves_operator_carry_under_jit() -> None:
+    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    point = jnp.asarray([1.5, -0.5], dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        lambda value, scale: scale * value**2,
+        point,
+        source=space,
+        target=space,
+        sample_args=jnp.asarray(2.0),
+        structure=phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2)),
+        compiler="native",
+    )
+    initial = plan.operator(point, jnp.asarray(2.0))
+
+    @eqx.filter_jit
+    def accumulated(
+        runtime_plan: phx.sparse.SparseDerivativePlan,
+        operator: phx.sparse.SparseCoordinateOperator,
+        scales: jax.Array,
+    ) -> jax.Array:
+        def step(
+            previous: phx.sparse.SparseCoordinateOperator, scale: jax.Array
+        ) -> tuple[phx.sparse.SparseCoordinateOperator, jax.Array]:
+            del previous
+            refreshed = runtime_plan.operator(point, scale)
+            return refreshed, refreshed.mv(jnp.ones_like(point))
+
+        _, actions = jax.lax.scan(step, operator, scales)
+        return jnp.sum(actions)
+
+    scales = jnp.asarray([0.8, 1.1, 1.7], dtype=jnp.float64)
+    value, gradient = jax.value_and_grad(
+        lambda values: accumulated(plan, initial, values)
+    )(scales)
+    np.testing.assert_allclose(value, 2 * np.sum(point) * np.sum(scales), atol=1e-12)
+    np.testing.assert_allclose(gradient, np.full(3, 2 * np.sum(point)), atol=1e-12)
+
+
 def test_rectangular_pytree_jacobian_preserves_coordinate_semantics() -> None:
     source = phx.linalg.PyTreeSpace(
         {

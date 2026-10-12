@@ -157,6 +157,7 @@ class SparseDerivativePlan(StrictModule):
     hessian_contract: SparseHessianContract | None
     precision: SparseDerivativePrecisionPolicy = eqx.field(static=True)
     coefficient_scale: Array
+    _operator_template: SparseCoordinateOperator
     argument_structure: Any = eqx.field(static=True)
     argument_specs: tuple[tuple[tuple[int, ...], str], ...] = eqx.field(static=True)
     derivative_kind: SparseDerivativeKind = eqx.field(static=True)
@@ -224,6 +225,17 @@ class SparseDerivativePlan(StrictModule):
         self.derivative_kind = derivative_kind
         self.chunk_size = chunk
         self.plan_id = identifier
+        # Host-prepared topology owns nnz and gather layouts. Numeric refresh
+        # replaces only coefficients, including when the plan itself is traced.
+        self._operator_template = SparseCoordinateOperator(
+            coloring.pattern.relation,
+            scale,
+            source=source,
+            target=target,
+            properties=properties,
+            operator_id=f"{identifier}:operator",
+            accumulation_dtype=precision.accumulation,
+        )
 
     @property
     def pattern(self) -> SparsePattern:
@@ -279,14 +291,10 @@ class SparseDerivativePlan(StrictModule):
     ) -> SparseCoordinateOperator:
         """Evaluate this derivative as a structured sparse linear operator."""
 
-        return SparseCoordinateOperator(
-            self.pattern.relation,
+        return eqx.tree_at(
+            lambda operator: operator.coefficients,
+            self._operator_template,
             self.coefficients(point, args),
-            source=self.source,
-            target=self.target,
-            properties=self.properties,
-            operator_id=f"{self.plan_id}:operator",
-            accumulation_dtype=self.precision.accumulation,
         )
 
 
