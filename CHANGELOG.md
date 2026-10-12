@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Float32 Airy central-series accumulation uses widened working precision to
+  prevent cancellation loss near the negative central/asymptotic boundary,
+  while preserving float32 outputs and the existing derivative contracts.
 - Adaptive MAC rollout refusal coverage follows the checked method contract:
   SBDF2 is rejected as a non-`AbstractFixedStepMethod` with otherwise valid
   controller/policy inputs; the superseded unreachable special-case is removed.
