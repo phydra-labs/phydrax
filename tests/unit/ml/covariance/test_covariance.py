@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
@@ -29,6 +30,7 @@ from phydrax.ml.covariance import (
     StreamingGaussianMoments,
     WeightedCovariance,
 )
+from phydrax.ml.covariance._estimators import _precision_and_logdet
 
 
 _DATA = jnp.array(
@@ -367,3 +369,64 @@ def test_covariance_configuration_fails_closed() -> None:
         WeightedCovariance(weight_policy="none")
     with pytest.raises(eqx.EquinoxRuntimeError, match="finite and positive"):
         GraphicalLasso(regularization=0.0)
+
+
+@pytest.mark.parametrize("complex_values", (False, True))
+def test_covariance_precision_and_logdet_match_numpy(complex_values: bool) -> None:
+    data = np.asarray(_DATA)
+    if complex_values:
+        data = data + 1j * np.flip(data, axis=-1)
+    cases = np.stack((data, data * 2))
+    model = (
+        EmpiricalCovariance(regularization=0.03).fit_batch(MLBatch(cases)).as_trainable()
+    )
+    assert isinstance(model, CovarianceModel)
+    covariance = np.asarray(model.covariance)
+    np.testing.assert_allclose(
+        model.precision, np.linalg.inv(covariance), rtol=1e-10, atol=1e-10
+    )
+    np.testing.assert_allclose(
+        model.log_determinant, np.linalg.slogdet(covariance)[1], rtol=1e-10, atol=1e-10
+    )
+
+
+def test_covariance_non_pd_factor_does_not_report_valid_precision_or_logdet() -> None:
+    precision, logdet = _precision_and_logdet(
+        jnp.asarray([[1.0, 0.0], [0.0, -2.0]], dtype=jnp.float64)
+    )
+    assert np.all(np.isnan(np.asarray(precision)))
+    assert np.isnan(np.asarray(logdet))
+
+
+def test_robust_covariance_solve_distances_match_numpy_updates() -> None:
+    data = np.asarray(_DATA).copy()
+    data[-1] *= 4.0
+    mean = data.mean(axis=0)
+    covariance = (data - mean).T @ (data - mean) / data.shape[0]
+
+    def regularized(matrix: np.ndarray) -> np.ndarray:
+        scale = max(np.trace(matrix) / matrix.shape[0], 1.0)
+        floor = 0.03 * scale
+        values, vectors = np.linalg.eigh(matrix + floor * np.eye(matrix.shape[0]))
+        return (vectors * np.maximum(values, floor)) @ vectors.T
+
+    for _ in range(2):
+        centered = data - mean
+        action = np.linalg.solve(regularized(covariance), centered.T).T
+        distance = np.sum(centered * action, axis=1)
+        weights = np.minimum(1.0, 1.2 / np.sqrt(distance))
+        mean = np.sum(weights[:, None] * data, axis=0) / np.sum(weights)
+        centered = data - mean
+        covariance = centered.T @ (weights[:, None] * centered) / np.sum(weights)
+    model = (
+        RobustCovariance(
+            max_iterations=2, tolerance=0.0, huber_delta=1.2, regularization=0.03
+        )
+        .fit_batch(MLBatch(data))
+        .as_trainable()
+    )
+    assert isinstance(model, CovarianceModel)
+    np.testing.assert_allclose(model.mean, mean, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        model.covariance, regularized(covariance), rtol=1e-10, atol=1e-10
+    )

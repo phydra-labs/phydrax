@@ -24,6 +24,12 @@
 - London/PTV capacities reject booleans and fractional truncation; failed London
   inductance solves expose native status through explicit refusals, including at
   cable bridges. Seeded PTV trajectory identity excludes execution capacities.
+- Bound iterative GP covariance actions and action-whitened variational kernel
+  products by the computation workspace policy, without full observation covariance.
+- Make matrix-free RKHS correction use exact blocked functional Gram actions,
+  direct diagonals, and bounded identity-defect certification with failure evidence.
+- Reuse one native Cholesky factor for covariance precision and log-determinant;
+  robust distances use solve actions, and invalid factors cannot report valid geometry.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
@@ -2583,6 +2589,9 @@
   and method evidence; unresolved eigenspaces report invalid/nonconverged results.
 - Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
   prepared query hierarchies; source model and revision identities are unchanged.
+- Structured Laplace stores diagonal or low-rank precision state and applies
+  covariance and sampling scales without dense reconstruction. Full curvature
+  remains dense; structured result archive leaves and their fingerprints change.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.

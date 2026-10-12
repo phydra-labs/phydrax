@@ -583,6 +583,39 @@ class ProductFieldKernelMetric(StrictModule):
     ) -> KernelGram:
         return kernel_functional_gram(self, left, right)
 
+    def functional_gram_action(
+        self,
+        left: KernelFunctional,
+        rhs: ArrayLike,
+        right: KernelFunctional | None = None,
+        /,
+        *,
+        row_block_size: int = 32,
+        column_block_size: int = 32,
+    ) -> Array:
+        """Apply exact functional covariance using bounded row and point tiles."""
+        right_ = left if right is None else right
+        _validate_gram_blocks(self, left, right_, row_block_size, column_block_size)
+        value = jnp.asarray(rhs)
+        if value.ndim not in (1, 2) or value.shape[0] != right_.row_count:
+            raise ValueError("Gram RHS must be a vector or matrix matching right rows.")
+        vector = value.ndim == 1
+        block = value[:, None] if vector else value
+        dtype = _functional_gram_dtype(self, left, right_, block)
+        result = jnp.zeros((left.row_count, block.shape[1]), dtype=dtype)
+        for left_term in left.terms:
+            for right_term in right_.terms:
+                result = result + _term_gram_action(
+                    self,
+                    left_term,
+                    right_term,
+                    block,
+                    dtype,
+                    row_block_size,
+                    column_block_size,
+                )
+        return result[:, 0] if vector else result
+
     def representer(
         self,
         functional: KernelFunctional,
@@ -833,9 +866,216 @@ def kernel_functional_diagonal(
     metric: ProductFieldKernelMetric,
     functional: KernelFunctional,
     /,
+    *,
+    row_block_size: int = 32,
+    column_block_size: int = 32,
 ) -> Array:
-    """Return the functional covariance diagonal in declared row order."""
-    return jnp.real(jnp.diag(kernel_functional_gram(metric, functional).matrix))
+    """Compute the real covariance diagonal without a Gram matrix or spectrum."""
+    _validate_gram_blocks(
+        metric, functional, functional, row_block_size, column_block_size
+    )
+    dtype = _functional_gram_dtype(metric, functional, functional)
+    result = jnp.zeros((functional.row_count,), dtype=dtype)
+    for left in functional.terms:
+        for right in functional.terms:
+            result = result + _term_gram_diagonal(
+                metric, left, right, dtype, row_block_size, column_block_size
+            )
+    return jnp.real(result)
+
+
+def _validate_gram_blocks(
+    metric: ProductFieldKernelMetric,
+    left: KernelFunctional,
+    right: KernelFunctional,
+    row_size: int,
+    point_size: int,
+) -> None:
+    if not isinstance(metric, ProductFieldKernelMetric):
+        raise TypeError("metric must be a ProductFieldKernelMetric.")
+    if not isinstance(left, KernelFunctional) or not isinstance(right, KernelFunctional):
+        raise TypeError("Gram actions require KernelFunctional inputs.")
+    if any(
+        not isinstance(size, Integral) or isinstance(size, bool) or size <= 0
+        for size in (row_size, point_size)
+    ):
+        raise ValueError("Gram block sizes must be positive integers.")
+    for term in (*left.terms, *right.terms):
+        metric._validate_term(term)
+
+
+def _functional_gram_dtype(
+    metric: ProductFieldKernelMetric,
+    left: KernelFunctional,
+    right: KernelFunctional,
+    rhs: Array | None = None,
+) -> jnp.dtype:
+    values = [
+        metric.block(a.field_name, a.points[0], b.field_name, b.points[0])
+        for a in left.terms
+        for b in right.terms
+    ]
+    coefficients = [term.coefficients for term in (*left.terms, *right.terms)]
+    return jnp.result_type(*values, *coefficients, *(() if rhs is None else (rhs,)))
+
+
+def _gram_point_values(
+    metric: ProductFieldKernelMetric,
+    left: KernelFunctionalTerm,
+    right: KernelFunctionalTerm,
+    left_points: Array,
+    right_points: Array,
+) -> Array:
+    values = []
+    for left_order in left.derivative_orders:
+        right_values = []
+        for right_order in right.derivative_orders:
+            derivative = _differentiate_block(
+                lambda first, second: metric.block(
+                    left.field_name, first, right.field_name, second
+                ),
+                left_order,
+                right_order,
+            )
+            right_values.append(
+                jax.vmap(
+                    lambda first: jax.vmap(lambda second: derivative(first, second))(
+                        right_points
+                    )
+                )(left_points)
+            )
+        values.append(jnp.stack(tuple(right_values), axis=2))
+    return jnp.stack(tuple(values), axis=1)
+
+
+def _gram_indices(index: int, size: int, count: int) -> tuple[Array, Array]:
+    indices = index * size + jnp.arange(size, dtype=jnp.int32)
+    return jnp.minimum(indices, count - 1), indices < count
+
+
+def _term_gram_action(
+    metric: ProductFieldKernelMetric,
+    left: KernelFunctionalTerm,
+    right: KernelFunctionalTerm,
+    rhs: Array,
+    dtype: jnp.dtype,
+    row_size: int,
+    point_size: int,
+) -> Array:
+    # Contract source rows before evaluating point pairs: the retained source
+    # response is point × derivative × fiber × RHS, never row × row.
+    def source_rows(index: int, accumulated: Array) -> Array:
+        row, valid = _gram_indices(index, row_size, right.row_count)
+        selected_rhs = rhs[row] * valid[:, None]
+        return accumulated + ein.contract(
+            "jqsb,jk->qsbk", right.coefficients[row], selected_rhs
+        )
+
+    source = jax.lax.fori_loop(
+        0,
+        (right.row_count + row_size - 1) // row_size,
+        source_rows,
+        jnp.zeros((*right.coefficients.shape[1:], rhs.shape[1]), dtype=dtype),
+    )
+    rows = (left.row_count + row_size - 1) // row_size
+    result = jnp.zeros((rows * row_size, rhs.shape[1]), dtype=dtype)
+
+    def left_block(index: int, output: Array) -> Array:
+        li, lm = _gram_indices(index, point_size, left.points.shape[0])
+        response = jnp.zeros(
+            (point_size, len(left.derivative_orders), left.fiber_dimension, rhs.shape[1]),
+            dtype=dtype,
+        )
+
+        def right_block(right_index: int, accumulated: Array) -> Array:
+            ri, rm = _gram_indices(right_index, point_size, right.points.shape[0])
+            values = _gram_point_values(
+                metric, left, right, left.points[li], right.points[ri]
+            )
+            selected = source[ri] * rm[:, None, None, None]
+            return accumulated + ein.contract("ptqsab,qsbk->ptak", values, selected)
+
+        response = jax.lax.fori_loop(
+            0,
+            (right.points.shape[0] + point_size - 1) // point_size,
+            right_block,
+            response,
+        )
+        response = response * lm[:, None, None, None]
+
+        def row_block(row_index: int, accumulated: Array) -> Array:
+            row, valid = _gram_indices(row_index, row_size, left.row_count)
+            coefficients = left.coefficients[row[:, None], li[None, :]]
+            contribution = ein.contract("ipta,ptak->ik", jnp.conj(coefficients), response)
+            start = row_index * row_size
+            previous = jax.lax.dynamic_slice_in_dim(accumulated, start, row_size)
+            return jax.lax.dynamic_update_slice_in_dim(
+                accumulated, previous + contribution * valid[:, None], start, axis=0
+            )
+
+        return jax.lax.fori_loop(0, rows, row_block, output)
+
+    result = jax.lax.fori_loop(
+        0,
+        (left.points.shape[0] + point_size - 1) // point_size,
+        left_block,
+        result,
+    )
+    return result[: left.row_count]
+
+
+def _term_gram_diagonal(
+    metric: ProductFieldKernelMetric,
+    left: KernelFunctionalTerm,
+    right: KernelFunctionalTerm,
+    dtype: jnp.dtype,
+    row_size: int,
+    point_size: int,
+) -> Array:
+    rows = (left.row_count + row_size - 1) // row_size
+
+    def row_block(row_index: int, output: Array) -> Array:
+        row, valid = _gram_indices(row_index, row_size, left.row_count)
+
+        def left_block(index: int, accumulated: Array) -> Array:
+            li, lm = _gram_indices(index, point_size, left.points.shape[0])
+            a = (
+                jnp.conj(left.coefficients[row[:, None], li[None, :]])
+                * lm[None, :, None, None]
+            )
+
+            def right_block(right_index: int, total: Array) -> Array:
+                ri, rm = _gram_indices(right_index, point_size, right.points.shape[0])
+                b = (
+                    right.coefficients[row[:, None], ri[None, :]]
+                    * rm[None, :, None, None]
+                )
+                values = _gram_point_values(
+                    metric, left, right, left.points[li], right.points[ri]
+                )
+                return total + ein.contract("ipta,ptqsab,iqsb->i", a, values, b)
+
+            return jax.lax.fori_loop(
+                0,
+                (right.points.shape[0] + point_size - 1) // point_size,
+                right_block,
+                accumulated,
+            )
+
+        diagonal = jax.lax.fori_loop(
+            0,
+            (left.points.shape[0] + point_size - 1) // point_size,
+            left_block,
+            jnp.zeros((row_size,), dtype=dtype),
+        )
+        return jax.lax.dynamic_update_slice_in_dim(
+            output, diagonal * valid, row_index * row_size, axis=0
+        )
+
+    result = jax.lax.fori_loop(
+        0, rows, row_block, jnp.zeros((rows * row_size,), dtype=dtype)
+    )
+    return result[: left.row_count]
 
 
 def kernel_functional_representer(
