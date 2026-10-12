@@ -20,6 +20,13 @@
   retained spectrum within native materialization bounds, restoring audited
   quadratic-quadrature incompatibility witnesses while uncertified residuals
   remain unresolved.
+- PIC Gauss-bound and Coulomb-energy regressions use the canonical diagonal
+  Hodge accessor after the native exterior-calculus cutover, preserving their
+  physical bounds and field-reference tolerances.
+- Cubical spline-Whitney chains integrate every strictly positive endpoint
+  interval, including roundoff-sized knot slivers; exhausted segment capacity
+  reports incomplete paths instead of discarding their nonzero contributions.
+  Prescribed-charge Cherenkov runs no longer falsely report failed deposition.
 - Reacting-flow regressions distinguish exact source-process invariants from
   roundoff in SSPRK transport and conservative-content reconstruction introduced
   by the coupled finite-volume runtime (`c46ef0dd5`) and balance-law source
