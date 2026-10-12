@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Fixed
+- Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
+  in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
+  batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
+  rematerialization remain intact; learned coupled-interface accelerator
+  gradients no longer replay zero finite-element geometry.
+- Bubble-cloud FMM coupling uses native matrix-free PCG with true-residual
+  confirmation instead of accepting Lineax CG recurrence termination; declared
+  tolerances and iteration budgets are unchanged. Prepared linear-solver identity
+  intentionally records the native PCG route.
+- SPH density-diffusion variance evidence reduces the dynamic active mask on
+  device and excludes inactive density slots, remaining valid in compiled
+  fixed-step rollouts without host tracer conversion.
+- Structural sparse differentiation handles JAX empty allocations as
+  input-independent values without claiming backend-dependent contents are
+  constants; zero-sized battery collocation blocks now compile.
+- Structural control-flow tracing consumes current JAX scan input-tree metadata
+  and unified nested-program constants instead of removed parameter names and
+  closed-program wrappers. While-loop condition and body captures bind to their
+  own lanes, preserving Jacobian sparsity in battery direct collocation.
+- Meshfree moment-obstruction regression coverage requests native SVD rank
+  certification explicitly; adaptation documentation distinguishes certified
+  infeasibility from unresolved approximate-null Krylov evidence.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.

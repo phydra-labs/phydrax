@@ -170,7 +170,9 @@ def test_dense_coupled_accelerations_match_a_direct_reference() -> None:
     forcing = np.zeros(5)
     for index in range(5):
         member = jax.tree.map(lambda leaf, index=index: leaf[index], members)
-        single = model.rates(member, jnp.asarray(0, dtype=jnp.int32), jnp.asarray(time), drive)
+        single = model.rates(
+            member, jnp.asarray(0, dtype=jnp.int32), jnp.asarray(time), drive
+        )
         inertia[index] = float(single.inertia_fraction) * initial[index]
         forcing[index] = float(single.acceleration) * inertia[index]
     separation = np.linalg.norm(points[:, None] - points[None], axis=-1)
@@ -186,6 +188,7 @@ def test_fmm_route_matches_the_dense_route_within_its_declared_tolerance() -> No
     count = 125
     points, radii, initial, velocity = _cloud_state(count, 2)
     corrections = {}
+    resources = bd.BubbleCloudResourcePolicy(maximum_dense_entries=count * count)
     for route in ("dense", "fmm"):
         group = bd.BubbleSpeciesGroup(
             _model(tension=0.072),
@@ -200,11 +203,33 @@ def test_fmm_route_matches_the_dense_route_within_its_declared_tolerance() -> No
             bd.HarmonicPressureDrive(2.0e4, 2.0 * np.pi * 1.0e5),
             np.array([1.0e-6]),
             route=route,
-            resources=bd.BubbleCloudResourcePolicy(maximum_dense_entries=count * count),
+            resources=resources,
         )
         prepared = plan.prepare()
         rates = prepared.rates(prepared.initial_state, 2.5e-7)
         assert bool(rates.coupling_successful)
+        if route == "fmm":
+            terms = prepared.local_terms(
+                prepared.initial_state, jnp.asarray(2.5e-7, dtype=jnp.float64)
+            )
+            explicit = prepared.coupling.field(
+                prepared.initial_state.position,
+                2.0 * terms.radius * terms.velocity**2,
+            )
+            scale = terms.radius / jnp.sqrt(terms.inertia)
+            rhs_norm = float(
+                jnp.linalg.norm(scale * (terms.forcing - explicit.potential))
+            )
+            # Success and reported evidence must use the same true-residual
+            # tolerance, including its absolute term for this small scaled RHS.
+            assert float(
+                rates.coupling_residual
+            ) * rhs_norm <= resources.coupling_tolerance * (1.0 + rhs_norm)
+            assert (
+                0
+                < int(rates.coupling_iterations)
+                <= (resources.maximum_coupling_iterations)
+            )
         corrections[route] = np.asarray(rates.acceleration - rates.uncoupled_acceleration)
     error = np.max(np.abs(corrections["fmm"] - corrections["dense"]))
     assert error <= FMM_COUPLING_TOLERANCE * np.max(np.abs(corrections["dense"]))
@@ -213,14 +238,41 @@ def test_fmm_route_matches_the_dense_route_within_its_declared_tolerance() -> No
 FMM_COUPLING_TOLERANCE = 1.0e-5
 
 
+def test_fmm_coupling_preserves_iteration_budget_failure_evidence() -> None:
+    group = bd.BubbleSpeciesGroup(
+        _model(tension=0.072),
+        np.array([8.0e-6, 10.0e-6]),
+        np.array([[0.0, 0.0, 0.0], [80.0e-6, 0.0, 0.0]]),
+        bubble_ids=(0, 1),
+        initial_radii=np.array([8.4e-6, 9.5e-6]),
+    )
+    resources = bd.BubbleCloudResourcePolicy(
+        maximum_coupling_iterations=1,
+        fmm_depth=2,
+        fmm_order=1,
+    )
+    prepared = bd.BubbleCloudPlan(
+        (group,),
+        bd.HarmonicPressureDrive(2.0e4, 2.0 * np.pi * 1.0e5),
+        np.array([1.0e-6]),
+        route="fmm",
+        resources=resources,
+    ).prepare()
+
+    rates = prepared.rates(prepared.initial_state, 2.5e-7)
+
+    assert not bool(rates.coupling_successful)
+    assert int(rates.coupling_iterations) == resources.maximum_coupling_iterations
+    assert bool(jnp.isfinite(rates.coupling_residual))
+    assert float(rates.coupling_residual) > resources.coupling_tolerance
+
+
 def test_fmm_overlap_certificate_matches_dense_contact_semantics() -> None:
     radius = 10.0e-6
     group = bd.BubbleSpeciesGroup(
         _model(),
         np.full(3, radius),
-        np.array(
-            [[0.0, 0.0, 0.0], [3.0 * radius, 0.0, 0.0], [1.0e-3, 0.0, 0.0]]
-        ),
+        np.array([[0.0, 0.0, 0.0], [3.0 * radius, 0.0, 0.0], [1.0e-3, 0.0, 0.0]]),
         bubble_ids=(0, 1, 2),
     )
     drive = bd.ConstantPressureDrive(0.0)
