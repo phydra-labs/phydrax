@@ -6,6 +6,10 @@
 - Adaptive MAC rollout refusal coverage follows the checked method contract:
   SBDF2 is rejected as a non-`AbstractFixedStepMethod` with otherwise valid
   controller/policy inputs; the superseded unreachable special-case is removed.
+- Signed point transfers certify the reduced conservation operator's rank and
+  retained spectrum within native materialization bounds, restoring audited
+  quadratic-quadrature incompatibility witnesses while uncertified residuals
+  remain unresolved.
 - Reacting-flow regressions distinguish exact source-process invariants from
   roundoff in SSPRK transport and conservative-content reconstruction introduced
   by the coupled finite-volume runtime (`c46ef0dd5`) and balance-law source
