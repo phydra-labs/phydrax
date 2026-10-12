@@ -3,10 +3,54 @@
 #
 
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
+
+
+@pytest.mark.strict_jax
+@pytest.mark.parametrize("consumer", ("generator", "purification", "retract"))
+def test_density_spectral_consumers_at_isotropic_density(consumer: str) -> None:
+    density = 0.5 * jnp.eye(2, dtype=jnp.complex128)
+    direction = jnp.asarray(
+        ((0.2, 0.1 + 0.05j), (0.1 - 0.05j, -0.2)), dtype=jnp.complex128
+    )
+    manifold = phx.metrix.BuresDensityManifold(2)
+
+    def evaluate(parameter: jax.Array) -> jax.Array:
+        perturbation = jnp.asarray(parameter, dtype=direction.dtype) * direction
+        match consumer:
+            case "generator":
+                return phx.metrix.faithful_density_from_generator(perturbation)
+            case "purification":
+                return phx.metrix.principal_purification(density + perturbation)
+            case "retract":
+                return manifold.retract(density, perturbation)
+            case _:
+                raise ValueError(f"Unknown density consumer: {consumer}")
+
+    scale = {"generator": 0.5, "purification": np.sqrt(0.5), "retract": 1.0}[consumer]
+    zero = jnp.asarray(0.0, dtype=jnp.float64)
+    _, tangent = jax.jit(
+        lambda value: jax.jvp(evaluate, (value,), (jnp.ones_like(value),))
+    )(zero)
+    np.testing.assert_allclose(
+        tangent,
+        jnp.asarray(scale, dtype=direction.dtype) * direction,
+        rtol=2e-12,
+        atol=2e-12,
+    )
+
+    def objective(parameter: jax.Array) -> jax.Array:
+        return jnp.real(jnp.vdot(direction, evaluate(parameter)))
+
+    gradient = jax.jit(jax.grad(objective))(zero)
+    np.testing.assert_allclose(
+        gradient, scale * jnp.real(jnp.vdot(direction, direction)), atol=2e-12
+    )
 
 
 def test_cy_quantum_geometry_scenario_1() -> None:

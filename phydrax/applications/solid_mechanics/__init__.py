@@ -47,6 +47,7 @@ from ._fem_dynamics import (
     PreparedFiniteElementDynamicsStep,
     solve_finite_element_dynamics_step,
 )
+from ._finite_strain_material import FiniteStrainConstitutiveModel
 from ._force_density import (
     BatchedForceDensityResult,
     force_density_equilibrium,
@@ -183,8 +184,10 @@ from ._models import (
     neo_hookean_form,
     neo_hookean_functional,
 )
+from ._mpm_cam_clay import ModifiedCamClayMPMConstitutivePlan, ModifiedCamClayParameters
 from ._mpm_coupled_fields import (
     BiotPoromechanicsParameters,
+    effective_pore_pressure_first_piola,
     MPMCoupledBoundaryPlan,
     MPMCoupledFieldState,
     MPMCoupledLinearization,
@@ -193,6 +196,14 @@ from ._mpm_coupled_fields import (
     MPMPhysicalFieldPlan,
     PreparedMPMCoupledFieldOperator,
     ThermalMPMParameters,
+)
+from ._mpm_double_point import (
+    cell_to_faces,
+    MixedMPMPressureEvidence,
+    MixedMPMPressureOperator,
+    MPMToMACFaceTransferEvidence,
+    MPMToMACFaceTransferPlan,
+    PreparedMPMToMACFaceTransfer,
 )
 from ._mpm_fracture import (
     MPMPhaseFieldParameters,
@@ -206,13 +217,11 @@ from ._mpm_general_plane_stress import (
 from ._mpm_geomechanics import (
     DruckerPragerMPMConstitutivePlan,
     DruckerPragerParameters,
-    GeomechanicalFailureEvidence,
-    ModifiedCamClayMPMConstitutivePlan,
-    ModifiedCamClayParameters,
-    MohrCoulombMPMConstitutivePlan,
-    MohrCoulombParameters,
     NonlocalSofteningPlan,
 )
+from ._mpm_mohr_coulomb import MohrCoulombMPMConstitutivePlan, MohrCoulombParameters
+from ._mpm_mu_i import MuIMPMConstitutivePlan
+from ._mpm_norsand import NorSandMPMConstitutivePlan, NorSandParameters
 from ._mpm_plane_stress import PlaneStressMPMConstitutivePlan
 from ._mpm_plasticity import (
     finite_strain_j2_plane_stress_plan,
@@ -232,6 +241,7 @@ from ._plane_stress_fields import (
     plane_stress_hyperelastic_response,
     PlaneStressFieldResponse,
 )
+from ._principal_hencky import PrestressedMaterialState
 from ._rod_advanced_actuation import (
     AffineMagneticActuationPlan,
     combine_rod_constitutive_controls,
@@ -573,6 +583,7 @@ __all__ = [
     "FiniteElementDynamicsResult",
     "FiniteElementDynamicsState",
     "FiniteElementEnergyWorkLedger",
+    "FiniteStrainConstitutiveModel",
     "FiniteStrainJ2MPMConstitutivePlan",
     "FiniteStrainJ2Parameters",
     "FixedNodalLoadModel",
@@ -611,18 +622,28 @@ __all__ = [
     "DruckerPragerMPMConstitutivePlan",
     "DruckerPragerParameters",
     "GeneralPlaneStressMPMConstitutivePlan",
-    "GeomechanicalFailureEvidence",
     "MPMCoupledBoundaryPlan",
     "MPMCoupledFieldState",
     "MPMCoupledLinearization",
     "MPMCoupledResidual",
     "MPMFieldRole",
+    "cell_to_faces",
+    "effective_pore_pressure_first_piola",
+    "MixedMPMPressureEvidence",
+    "MixedMPMPressureOperator",
+    "MPMToMACFaceTransferEvidence",
+    "MPMToMACFaceTransferPlan",
+    "PreparedMPMToMACFaceTransfer",
     "MPMMaterialOrientation",
     "MPMPhysicalFieldPlan",
     "ModifiedCamClayMPMConstitutivePlan",
     "ModifiedCamClayParameters",
     "MohrCoulombMPMConstitutivePlan",
     "MohrCoulombParameters",
+    "MuIMPMConstitutivePlan",
+    "NorSandMPMConstitutivePlan",
+    "NorSandParameters",
+    "PrestressedMaterialState",
     "NonlocalSofteningPlan",
     "OrientedMPMConstitutivePlan",
     "PreparedMPMCoupledFieldOperator",

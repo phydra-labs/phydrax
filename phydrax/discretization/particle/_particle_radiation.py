@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
+from ._dem import DEMEvaluation, PreparedCompliantDEMDynamics
 from ._pairwise import scatter_pair_exchange
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
@@ -106,7 +106,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        dynamics: PreparedSoftSphereDEMDynamics,
+        dynamics: PreparedCompliantDEMDynamics,
         evaluation: DEMEvaluation,
         conversion_batches: tuple[PreparedParticleInternalBatch, ...],
         conversion_state: ParticleConversionState,
@@ -115,6 +115,12 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         *,
         wall_temperatures: ArrayLike | Sequence[float] = (),
     ) -> ParticleRadiationEvaluation:
+        if dynamics.shapes.shape_kind != "sphere":
+            raise ValueError("Particle radiation requires sphere contact shapes.")
+        if dynamics.walls:
+            raise ValueError(
+                "Particle radiation requires implicit barriers, not facet-material triangle walls."
+            )
         batches = tuple(conversion_batches)
         materials = tuple(thermodynamic_materials)
         if len(batches) != len(conversion_state.batches) or len(batches) != len(
@@ -164,8 +170,8 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         pairs = evaluation.neighborhood.pair_relation
         left = pairs.left_indices
         right = pairs.right_indices
-        left_material = dynamics.bodies.material_ids[left]
-        right_material = dynamics.bodies.material_ids[right]
+        left_material = dynamics.shapes.material_ids[left]
+        right_material = dynamics.shapes.material_ids[right]
         emissivity = _effective_emissivity(
             self.particle_emissivity[left_material],
             self.particle_emissivity[right_material],
@@ -195,7 +201,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         boundary_heat = []
         wall_source = jnp.zeros_like(wall_temperature)
         for index, response in enumerate(evaluation.boundaries):
-            particle_emissivity = self.particle_emissivity[dynamics.bodies.material_ids]
+            particle_emissivity = self.particle_emissivity[dynamics.shapes.material_ids]
             effective = _effective_emissivity(
                 particle_emissivity,
                 self.wall_emissivity[index],

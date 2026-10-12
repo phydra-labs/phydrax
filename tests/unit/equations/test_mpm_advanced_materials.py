@@ -90,6 +90,8 @@ def test_mpm_advanced_materials_scenario_1() -> None:
         10.0, 30.0, 0.15, 2.0
     )
     history = material.initialize_state((1,), jnp.float64)
+    assert history.shape == (1, 7)
+    assert jnp.array_equal(history[0], jnp.asarray((1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)))
     deformation = jnp.asarray([[[1.0, 0.18, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
     response = material.evaluate(
         deformation, history, jnp.asarray((1.0,)), parameters, 0.0, 0.01
@@ -99,8 +101,10 @@ def test_mpm_advanced_materials_scenario_1() -> None:
     assert int(response.branch_code[0]) == 1
     assert response.dissipation_increment[0] > 0.0
     assert response.diagnostics["plastic_multiplier"][0] > 0.0
-    assert abs(response.diagnostics["plastic_determinant"][0] - 1.0) < 1e-9
-    assert response.trial_state[0, 9] > 0.0
+    a, b, c, d, e, f = response.trial_state[0, :6]
+    determinant = a * b * c + 2 * d * e * f - a * d * d - b * e * e - c * f * f
+    assert abs(determinant - 1.0) < 1e-9
+    assert response.trial_state[0, 6] > 0.0
 
     linearized = material.evaluate_linearized(
         deformation, history, jnp.asarray((1.0,)), parameters, 0.0, 0.01

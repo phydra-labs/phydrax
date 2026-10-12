@@ -47,7 +47,11 @@ class VectorLocalRootDiagnostics(StrictModule):
 
 
 class VectorLocalRootPlan(StrictModule, NonTrainableState):
-    """Bounded one-to-three component root with implicit-function derivatives."""
+    """Bounded vector root with forward/reverse implicit-function derivatives.
+
+    ``solve_with_diagnostics`` reports accepted Newton updates, excluding
+    iterations after convergence and unsuccessful linear-solve attempts.
+    """
 
     dimension: int = eqx.field(static=True)
     maximum_steps: int = eqx.field(static=True)
@@ -105,18 +109,32 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         )
         return result.value, result
 
-    def _newton(self, residual: Callable[[Array], Array], guess: Array) -> Array:
-        def body(_: int | Array, value: Array) -> Array:
+    def _newton(
+        self, residual: Callable[[Array], Array], guess: Array
+    ) -> tuple[Array, Array]:
+        def body(_: int | Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
+            value, iterations = carry
             current = residual(value)
             jacobian = jax.jacfwd(residual)(value)
             delta, solve = self._solve_linear(jacobian, current)
             candidate = value - delta
             converged = jnp.linalg.norm(current) <= self.tolerance
-            return jnp.where(converged | ~solve.successful, value, candidate)
+            update = ~converged & solve.successful
+            return (
+                jnp.where(update, candidate, value),
+                iterations + update.astype(jnp.int32),
+            )
 
-        return jax.lax.fori_loop(0, self.maximum_steps, body, guess)
+        return jax.lax.fori_loop(
+            0,
+            self.maximum_steps,
+            body,
+            (guess, jnp.asarray(0, dtype=jnp.int32)),
+        )
 
-    def solve(self, residual: Callable[[Array], Array], initial: ArrayLike, /) -> Array:
+    def _solve(
+        self, residual: Callable[[Array], Array], initial: ArrayLike, /
+    ) -> tuple[Array, Array]:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         initial_ = jnp.asarray(initial)
@@ -127,7 +145,9 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         if not jnp.issubdtype(initial_.dtype, jnp.inexact):
             raise TypeError("Vector local root initial state must have an inexact dtype.")
 
-        def solve_fn(function: Callable[[Array], Array], guess: Array) -> Array:
+        def solve_fn(
+            function: Callable[[Array], Array], guess: Array
+        ) -> tuple[Array, Array]:
             return self._newton(function, guess)
 
         def tangent_solve(
@@ -135,15 +155,32 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         ) -> Array:
             basis = jnp.eye(self.dimension, dtype=right_hand_side.dtype)
             matrix = jax.vmap(linearize)(basis).T
-            value, _ = self._solve_linear(matrix, right_hand_side)
-            return value
 
-        return custom_root(residual, initial_, solve_fn, tangent_solve)
+            def solve_tangent(_: Callable[[Array], Array], rhs: Array) -> Array:
+                return self._solve_linear(matrix, rhs)[0]
+
+            def solve_transpose(_: Callable[[Array], Array], rhs: Array) -> Array:
+                return self._solve_linear(matrix.T, rhs)[0]
+
+            # Native solve evidence may depend on the RHS (finite/refinement
+            # guards). The IFT action is linear nonetheless; explicitly own its
+            # transpose instead of transposing those diagnostic predicates.
+            return jax.lax.custom_linear_solve(
+                linearize,
+                right_hand_side,
+                solve=solve_tangent,
+                transpose_solve=solve_transpose,
+            )
+
+        return custom_root(residual, initial_, solve_fn, tangent_solve, has_aux=True)
+
+    def solve(self, residual: Callable[[Array], Array], initial: ArrayLike, /) -> Array:
+        return self._solve(residual, initial)[0]
 
     def solve_with_diagnostics(
         self, residual: Callable[[Array], Array], initial: ArrayLike, /
     ) -> tuple[Array, VectorLocalRootDiagnostics]:
-        root = self.solve(residual, initial)
+        root, iterations = self._solve(residual, initial)
         value = residual(root)
         jacobian = jax.jacfwd(residual)(root)
         identity = jnp.eye(self.dimension, dtype=root.dtype)
@@ -167,7 +204,7 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         converged = finite & jnp.all(inverse.successful) & (norm <= self.tolerance)
         return root, VectorLocalRootDiagnostics(
             converged,
-            jnp.asarray(self.maximum_steps, dtype=jnp.int32),
+            iterations,
             value,
             norm,
             jacobian,

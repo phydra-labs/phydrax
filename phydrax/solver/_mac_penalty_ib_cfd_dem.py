@@ -18,7 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, tree_where
 from ..discretization.finite_volume._incompressible import FaceVelocity
-from ..discretization.particle import DEMRuntimeState, RigidSphereKinematics
+from ..discretization.particle import DEMRuntimeState, RigidBodyKinematics
 from ..equations._mac_penalty_ib_cfd_dem import (
     evaluate_mac_penalty_ib_cfd_dem,
     MACPenaltyIBCFDEMCouplingPlan,
@@ -192,23 +192,36 @@ def _hydrodynamic_kick(
     /,
 ) -> DEMRuntimeState:
     bodies = coupling.dynamics.bodies
-    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    mobile = (state.body_properties.active & ~bodies.fixed_mask)[:, None]
     velocity = state.kinematics.velocity + scale * (
-        bodies.inverse_masses[:, None] * force
+        state.body_properties.inverse_masses[:, None] * force
     )
-    angular_velocity = state.kinematics.angular_velocity + scale * (
-        bodies.inverse_inertias[:, None] * torque
-    )
+    properties = state.body_properties
+    if bodies.ambient_dimension == 2:
+        angular_acceleration = properties.inverse_inertia_com[:, None] * torque
+    else:
+        angular_acceleration = (properties.inverse_inertia_com @ torque[..., None])[
+            ..., 0
+        ]
+    angular_velocity = state.kinematics.angular_velocity + scale * angular_acceleration
     velocity = jnp.where(mobile, velocity, 0.0)
     angular_velocity = jnp.where(mobile, angular_velocity, 0.0)
-    kinematics = RigidSphereKinematics(
+    kinematics = RigidBodyKinematics(
         state.kinematics.position,
         velocity,
+        state.kinematics.orientation,
         angular_velocity,
     )
-    kinetic_energy = 0.5 * jnp.sum(
-        bodies.particles.safe_masses[:, None] * velocity**2
-    ) + 0.5 * jnp.sum(bodies.inertias[:, None] * angular_velocity**2)
+    kinetic_energy = 0.5 * jnp.sum(properties.masses[:, None] * velocity**2)
+    if bodies.ambient_dimension == 2:
+        kinetic_energy = kinetic_energy + 0.5 * jnp.sum(
+            properties.inertia_com[:, None] * angular_velocity**2
+        )
+    else:
+        kinetic_energy = kinetic_energy + 0.5 * jnp.sum(
+            angular_velocity
+            * (properties.inertia_com @ angular_velocity[..., None])[..., 0]
+        )
     updated = eqx.tree_at(lambda value: value.kinematics, state, kinematics)
     return eqx.tree_at(lambda value: value.energy.kinetic_energy, updated, kinetic_energy)
 

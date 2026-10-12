@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from math import comb, isfinite
+from itertools import combinations
+from math import ceil, comb, isfinite, log2
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -16,6 +18,12 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg._small_batched import determinant_small_linear, SmallLinearSolvePlan
+from ...typing import checked
+
+
+_TRIANGLE_DETERMINANT = SmallLinearSolvePlan(2)
+_TETRAHEDRON_DETERMINANT = SmallLinearSolvePlan(3)
 
 
 class InversionStatus(IntEnum):
@@ -30,6 +38,7 @@ class SimplexInversionStepPlan(StrictModule, NonTrainableState):
 
     cells: Array
     reference_positions: Array
+    reference_measure: Array
     minimum_ratio: float = eqx.field(static=True)
     time_tolerance: float = eqx.field(static=True)
     numerical_error: float = eqx.field(static=True)
@@ -102,7 +111,8 @@ class SimplexInversionStepPlan(StrictModule, NonTrainableState):
         if np.any(reference_measure == 0.0) or np.any(~np.isfinite(reference_measure)):
             raise ValueError("Reference simplex cells must be nondegenerate.")
         self.cells = jnp.asarray(topology, dtype=jnp.int32)
-        self.reference_positions = jnp.asarray(reference)
+        self.reference_positions = jnp.asarray(reference, dtype=jnp.float64)
+        self.reference_measure = jnp.asarray(reference_measure, dtype=jnp.float64)
         (
             self.minimum_ratio,
             self.time_tolerance,
@@ -141,14 +151,6 @@ class InversionStepEvidence(StrictModule):
         return self.status == int(InversionStatus.SUCCESS)
 
 
-def _det2(first: np.ndarray, second: np.ndarray, /) -> np.floating:
-    return first[0] * second[1] - first[1] * second[0]
-
-
-def _det3(first: np.ndarray, second: np.ndarray, third: np.ndarray, /) -> float:
-    return float(np.dot(first, np.cross(second, third)))
-
-
 def _simplex_determinants(cells: np.ndarray, /) -> np.ndarray:
     edges = cells[:, 1:] - cells[:, :1]
     if cells.shape[-1] == 2:
@@ -157,172 +159,202 @@ def _simplex_determinants(cells: np.ndarray, /) -> np.ndarray:
 
 
 def _determinant_power_coefficients(
-    start: np.ndarray,
-    end: np.ndarray,
-    orientation: float,
-    threshold: float,
-    /,
-) -> np.ndarray:
-    start_edges = start[1:] - start[0]
-    end_edges = end[1:] - end[0]
-    delta = end_edges - start_edges
-    if start.shape[1] == 2:
-        coefficients = np.asarray(
-            (
-                _det2(start_edges[0], start_edges[1]),
-                _det2(delta[0], start_edges[1]) + _det2(start_edges[0], delta[1]),
-                _det2(delta[0], delta[1]),
-            ),
-            dtype=np.float64,
+    start: Array, end: Array, reference_measure: Array, /
+) -> Array:
+    dimension = start.shape[1]
+    edges = start[1:] - start[:1]
+    delta = end[1:] - end[:1] - edges
+    determinant_plan = (
+        _TRIANGLE_DETERMINANT if dimension == 2 else _TETRAHEDRON_DETERMINANT
+    )
+    # Multilinearity produces the exact degree-d determinant polynomial.
+    coefficients = []
+    for order in range(dimension + 1):
+        coefficient = jnp.zeros((), dtype=start.dtype)
+        for columns in combinations(range(dimension), order):
+            matrix = jnp.stack(
+                tuple(
+                    delta[row] if row in columns else edges[row]
+                    for row in range(dimension)
+                )
+            )
+            coefficient += determinant_small_linear(determinant_plan, matrix)
+        coefficients.append(coefficient)
+    return jnp.stack(coefficients) * jnp.sign(reference_measure)
+
+
+def _power_to_bernstein(power: Array, /) -> Array:
+    degree = power.shape[0] - 1
+    return jnp.stack(
+        tuple(
+            sum(
+                (comb(index, order) / comb(degree, order)) * power[order]
+                for order in range(index + 1)
+            )
+            for index in range(degree + 1)
         )
-    else:
-        coefficients = np.asarray(
-            (
-                _det3(start_edges[0], start_edges[1], start_edges[2]),
-                _det3(delta[0], start_edges[1], start_edges[2])
-                + _det3(start_edges[0], delta[1], start_edges[2])
-                + _det3(start_edges[0], start_edges[1], delta[2]),
-                _det3(delta[0], delta[1], start_edges[2])
-                + _det3(delta[0], start_edges[1], delta[2])
-                + _det3(start_edges[0], delta[1], delta[2]),
-                _det3(delta[0], delta[1], delta[2]),
-            ),
-            dtype=np.float64,
-        )
-    coefficients *= orientation
-    coefficients[0] -= threshold
-    return coefficients
+    )
 
 
-def _power_to_bernstein(power: np.ndarray, /) -> np.ndarray:
-    degree = power.size - 1
-    bernstein = np.zeros_like(power)
-    for index in range(degree + 1):
-        bernstein[index] = sum(
-            comb(index, order) / comb(degree, order) * power[order]
-            for order in range(index + 1)
-        )
-    return bernstein
-
-
-def _split_bernstein(values: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
-    degree = values.size - 1
-    levels = [np.asarray(values, dtype=np.float64)]
+def _split_bernstein(values: Array, /) -> tuple[Array, Array]:
+    degree = values.shape[0] - 1
+    levels = [values]
     for _ in range(degree):
         levels.append(0.5 * (levels[-1][:-1] + levels[-1][1:]))
-    left = np.asarray([levels[index][0] for index in range(degree + 1)])
-    right = np.asarray([levels[degree - index][index] for index in range(degree + 1)])
+    left = jnp.stack(tuple(levels[index][0] for index in range(degree + 1)))
+    right = jnp.stack(tuple(levels[degree - index][index] for index in range(degree + 1)))
     return left, right
 
 
+type _CellCarry = tuple[Array, Array, Array, Array, Array, Array, Array]
+
+
 def _cell_limit(
-    plan: SimplexInversionStepPlan,
-    start: np.ndarray,
-    end: np.ndarray,
-    reference_measure: float,
-    /,
-) -> tuple[float, int, bool, bool]:
-    orientation = 1.0 if reference_measure > 0.0 else -1.0
-    threshold = plan.minimum_ratio * abs(reference_measure)
-    power = _determinant_power_coefficients(start, end, orientation, threshold)
+    plan: SimplexInversionStepPlan, start: Array, end: Array, reference_measure: Array, /
+) -> tuple[Array, Array, Array, Array]:
+    power = _determinant_power_coefficients(start, end, reference_measure)
+    power = power.at[0].add(-plan.minimum_ratio * jnp.abs(reference_measure))
     bernstein = _power_to_bernstein(power) - plan.numerical_error
-    if bernstein[0] <= 0.0:
-        return 0.0, 1, True, False
-    stack: list[tuple[float, float, np.ndarray]] = [(0.0, 1.0, bernstein)]
-    iterations = 0
-    while stack:
-        if iterations >= plan.maximum_iterations:
-            return 0.0, iterations, False, True
-        lower, upper, coefficients = stack.pop()
-        iterations += 1
-        if np.all(coefficients > 0.0):
-            continue
-        if upper - lower <= plan.time_tolerance:
-            return lower, iterations, False, False
-        left, right = _split_bernstein(coefficients)
-        midpoint = 0.5 * (lower + upper)
-        stack.append((midpoint, upper, right))
-        stack.append((lower, midpoint, left))
-    return np.inf, iterations, False, False
+    invalid = bernstein[0] <= 0.0
+    capacity = max(2, ceil(-log2(plan.time_tolerance)) + 3)
+    lower = jnp.zeros((capacity,), dtype=start.dtype)
+    upper = jnp.zeros((capacity,), dtype=start.dtype).at[0].set(1.0)
+    stack = (
+        jnp.zeros((capacity, plan.dimension + 1), dtype=start.dtype).at[0].set(bernstein)
+    )
+    infinity = jnp.full((), jnp.inf, dtype=start.dtype)
+    initial = (
+        lower,
+        upper,
+        stack,
+        jnp.where(invalid, 0, 1).astype(jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.where(invalid, jnp.zeros_like(infinity), infinity),
+        jnp.asarray(False, dtype=jnp.bool_),
+    )
+
+    def condition(carry: _CellCarry) -> Array:
+        return (carry[3] > 0) & (carry[4] < plan.maximum_iterations) & ~carry[6]
+
+    def body(carry: _CellCarry) -> _CellCarry:
+        lowers, uppers, coefficients, size, iterations, toi, exhausted = carry
+        index = size - 1
+        low, high, values = lowers[index], uppers[index], coefficients[index]
+        free = jnp.all(values > 0.0)
+        terminal = high - low <= plan.time_tolerance
+        midpoint = 0.5 * (low + high)
+        split = ~free & ~terminal
+        room = (index + 1 < capacity) & (midpoint > low) & (midpoint < high)
+        unresolved = ~free & terminal
+        left, right = _split_bernstein(values)
+        next_index = jnp.minimum(index + 1, capacity - 1)
+        lowers = lowers.at[index].set(midpoint).at[next_index].set(low)
+        uppers = uppers.at[index].set(high).at[next_index].set(midpoint)
+        coefficients = coefficients.at[index].set(right).at[next_index].set(left)
+        size = jnp.where(unresolved, 0, jnp.where(split & room, index + 2, index))
+        return (
+            lowers,
+            uppers,
+            coefficients,
+            size,
+            iterations + 1,
+            jnp.where(unresolved, low, toi),
+            exhausted | (split & ~room),
+        )
+
+    result = jax.lax.while_loop(condition, body, initial)
+    exhausted = result[6] | (result[3] > 0)
+    return (
+        jnp.where(exhausted, jnp.zeros_like(infinity), result[5]),
+        jnp.where(invalid, 1, result[4]).astype(jnp.int32),
+        invalid,
+        exhausted,
+    )
 
 
+type _InversionCarry = tuple[Array, Array, Array, Array, Array]
+
+
+@checked
 def simplex_inversion_step_limit(
     plan: SimplexInversionStepPlan,
     start_positions: ArrayLike,
     end_positions: ArrayLike,
     /,
 ) -> InversionStepEvidence:
-    if not isinstance(plan, SimplexInversionStepPlan):
-        raise TypeError("plan must be SimplexInversionStepPlan.")
-    start = np.asarray(start_positions, dtype=np.float64)
-    end = np.asarray(end_positions, dtype=np.float64)
-    expected = np.asarray(plan.reference_positions).shape
-    finite = (
-        start.shape == expected
-        and end.shape == expected
-        and np.all(np.isfinite(start))
-        and np.all(np.isfinite(end))
+    """Bound the entire linear simplex path, including interior orientation loss."""
+    start = jnp.asarray(start_positions, dtype=plan.reference_positions.dtype)
+    end = jnp.asarray(end_positions, dtype=start.dtype)
+    expected = plan.reference_positions.shape
+    if start.shape != expected or end.shape != expected:
+        raise ValueError("Inversion positions must match reference_positions.")
+    finite = jnp.all(jnp.isfinite(start)) & jnp.all(jnp.isfinite(end))
+    determinant_plan = (
+        _TRIANGLE_DETERMINANT if plan.dimension == 2 else _TETRAHEDRON_DETERMINANT
     )
-    if not finite:
-        return InversionStepEvidence(
-            jnp.asarray(0.0),
-            jnp.asarray(0.0),
-            jnp.asarray(-1, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.asarray(jnp.nan),
-            jnp.asarray(int(InversionStatus.NONFINITE_INPUT), dtype=jnp.int32),
-            jnp.asarray(False),
-            jnp.asarray(True),
-            plan.plan_id,
-        )
-    topology = np.asarray(plan.cells, dtype=np.int32)
-    reference_measure = _simplex_determinants(
-        np.asarray(plan.reference_positions)[topology]
+    reference_measure = plan.reference_measure
+    cells_start = start[plan.cells]
+    start_measure = determinant_small_linear(
+        determinant_plan, cells_start[:, 1:] - cells_start[:, :1]
     )
-    start_measure = _simplex_determinants(start[topology])
-    ratio = np.sign(reference_measure) * start_measure / np.abs(reference_measure)
-    minimum_ratio = float(np.min(ratio))
-    earliest = np.inf
-    limiting_cell = -1
-    intervals = 0
-    initial_invalid = False
-    exhausted = False
-    for cell in range(topology.shape[0]):
-        limit, count, initial, work_exhausted = _cell_limit(
-            plan,
-            start[topology[cell]],
-            end[topology[cell]],
-            float(reference_measure[cell]),
+    ratio = start_measure / reference_measure
+    initial = (
+        jnp.full((), jnp.inf, dtype=start.dtype),
+        jnp.asarray(-1, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(False, dtype=jnp.bool_),
+        jnp.asarray(False, dtype=jnp.bool_),
+    )
+
+    def body(cell: Array, carry: _InversionCarry) -> _InversionCarry:
+        earliest, limiting, intervals, invalid, exhausted = carry
+        limit, count, initial_invalid, work_limit = _cell_limit(
+            plan, start[plan.cells[cell]], end[plan.cells[cell]], reference_measure[cell]
         )
-        intervals += count
-        initial_invalid = initial_invalid or initial
-        exhausted = exhausted or work_exhausted
-        if limit < earliest:
-            earliest = limit
-            limiting_cell = cell
-    if initial_invalid:
-        status = InversionStatus.INITIAL_INVALID
-        step = 0.0
-    elif exhausted:
-        status = InversionStatus.WORK_LIMIT
-        step = 0.0
-    else:
-        status = InversionStatus.SUCCESS
-        step = (
-            1.0
-            if not np.isfinite(earliest)
-            else min(1.0, plan.conservative_rescaling * earliest)
+        return (
+            jnp.minimum(earliest, limit),
+            jnp.where(limit < earliest, cell, limiting),
+            intervals + count,
+            invalid | initial_invalid,
+            exhausted | work_limit,
         )
-    reported = 1.0 if not np.isfinite(earliest) else earliest
+
+    earliest, limiting, intervals, invalid, exhausted = jax.lax.cond(
+        finite,
+        lambda _: jax.lax.fori_loop(0, plan.cells.shape[0], body, initial),
+        lambda _: initial,
+        None,
+    )
+    status = jnp.where(
+        ~finite,
+        int(InversionStatus.NONFINITE_INPUT),
+        jnp.where(
+            invalid,
+            int(InversionStatus.INITIAL_INVALID),
+            jnp.where(
+                exhausted, int(InversionStatus.WORK_LIMIT), int(InversionStatus.SUCCESS)
+            ),
+        ),
+    ).astype(jnp.int32)
+    reported = jnp.where(jnp.isfinite(earliest), earliest, jnp.ones_like(earliest))
+    step = jnp.where(
+        status == int(InversionStatus.SUCCESS),
+        jnp.where(
+            jnp.isfinite(earliest),
+            plan.conservative_rescaling * earliest,
+            jnp.ones_like(earliest),
+        ),
+        jnp.zeros_like(earliest),
+    )
     return InversionStepEvidence(
-        jnp.asarray(step),
-        jnp.asarray(reported),
-        jnp.asarray(limiting_cell, dtype=jnp.int32),
-        jnp.asarray(intervals, dtype=jnp.int32),
-        jnp.asarray(minimum_ratio),
-        jnp.asarray(int(status), dtype=jnp.int32),
-        jnp.asarray(True),
-        jnp.asarray(True),
+        step,
+        reported,
+        limiting,
+        intervals,
+        jnp.where(finite, jnp.min(ratio), jnp.full((), jnp.nan, dtype=start.dtype)),
+        status,
+        finite,
+        jnp.asarray(True, dtype=jnp.bool_),
         plan.plan_id,
     )
 

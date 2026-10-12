@@ -47,7 +47,7 @@ boundaries.
     ```
 """
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from . import advanced, coupling, maxwell
 from ._adaptive_tdvp import (
@@ -1498,6 +1498,12 @@ from ._mac_viscous import (
     MACSBDF2State,
     MACSBDF2StepResult,
 )
+from ._mac_volume_fraction_ib_cfd_dem import (
+    advance_mac_volume_fraction_ib_cfd_dem,
+    MACVolumeFractionIBState,
+    MACVolumeFractionIBStepResult,
+    MACVolumeFractionIBStepStatus,
+)
 from ._marker_flow_checkpoint import (
     MarkerFlowCheckpointPayload,
     MarkerFlowCheckpointPlan,
@@ -1582,8 +1588,10 @@ from ._material_point_fracture import (
 from ._material_point_implicit import (
     ImplicitMPMDiagnostics,
     ImplicitMPMMethodPlan,
+    ImplicitMPMResidualEvaluation,
     ImplicitMPMStepResult,
     PreparedImplicitMPMDynamics,
+    PreparedImplicitMPMResidual,
 )
 from ._material_point_output import (
     MPMBoundedOutputBuffer,
@@ -2855,6 +2863,19 @@ _FACADE_EXPORT_MODULES = (
 
 
 def __getattr__(name: str) -> Any:
+    # Application phase operators load only after solver exports initialize.
+    if name in (
+        "advance_double_point_mpm_step",
+        "DoublePointMPMPlan",
+        "DoublePointMPMState",
+        "DoublePointMPMStatus",
+        "DoublePointMPMStepResult",
+        "MixedMPMProjectionResult",
+        "project_double_point_velocity",
+    ):
+        from importlib import import_module
+
+        return import_module("._mpm_double_point", __package__).__dict__[name]
     if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
         from importlib import import_module
 
@@ -3738,6 +3759,10 @@ __all__ = [
     "MACVariableDensityProjectionPlan",
     "MACVariableDensityProjectionResult",
     "MACVariableDensityRateProjectionResult",
+    "MACVolumeFractionIBState",
+    "MACVolumeFractionIBStepResult",
+    "MACVolumeFractionIBStepStatus",
+    "advance_mac_volume_fraction_ib_cfd_dem",
     "MACCompartmentBlockOperator",
     "MACCompartmentBlockVector",
     "MACCompartmentConstraint",
@@ -4459,8 +4484,17 @@ __all__ = [
     "MPMAdaptiveStatus",
     "ImplicitMPMDiagnostics",
     "ImplicitMPMMethodPlan",
+    "ImplicitMPMResidualEvaluation",
     "ImplicitMPMStepResult",
     "PreparedImplicitMPMDynamics",
+    "PreparedImplicitMPMResidual",
+    "advance_double_point_mpm_step",
+    "DoublePointMPMPlan",
+    "DoublePointMPMState",
+    "DoublePointMPMStatus",
+    "DoublePointMPMStepResult",
+    "MixedMPMProjectionResult",
+    "project_double_point_velocity",
     "MPMPhaseFieldEvidence",
     "MPMPhaseFieldFracturePlan",
     "MPMPhaseFieldRuntimeState",
@@ -5135,3 +5169,14 @@ __all__ += [
     "write_projector_monte_carlo_checkpoint",
     "write_projector_monte_carlo_result",
 ]
+
+if TYPE_CHECKING:
+    from ._mpm_double_point import (
+        advance_double_point_mpm_step,
+        DoublePointMPMPlan,
+        DoublePointMPMState,
+        DoublePointMPMStatus,
+        DoublePointMPMStepResult,
+        MixedMPMProjectionResult,
+        project_double_point_velocity,
+    )

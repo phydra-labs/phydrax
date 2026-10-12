@@ -770,3 +770,96 @@ provenance. Admission does not change or retry the owner route.
 ---
 
 ::: phydrax.applications.incompressible_flow.ImmersedRuntimeAdmissionResult
+
+## Volume-fraction immersed CFD–DEM
+
+This first-order direct-forcing route is distinct from regularized marker
+penalty coupling and sharp cut-cell interface traction. Its candidate
+`volume-fraction-cfd-dem` support tuple is not part of the existing six-regime
+immersed DNS reference portfolio.
+
+`MACSDFCutFractionPlan` binds canonical prepared rigid-shape signed queries
+to fixed cell/subbox/query capacities. It returns per-body estimates, union
+lower/upper bounds, an explicitly bounded midpoint estimate, unresolved
+fraction, sign reliability, domain support, and overflow evidence. The
+unresolved threshold applies **per cell**. Unsupported active queries,
+superquadrics without certified bounds, capacity overflow, and uncontained
+bodies are not silently repaired. Periodic fluid boundaries do not imply
+periodic posed-shape images.
+
+`MACVolumeFractionIBCFDEMCouplingPlan` requires identical MAC operator
+identities for its fluid, geometry, and projection owners, positive scalar
+intrinsic densities, and solid density consistent with active DEM mass/volume.
+Mixture inertia is \(\rho_m=(1-\phi)\rho_f+\phi\rho_s\) and solid mass
+fraction is \(\psi=\phi\rho_s/\rho_m\). Centered geometric face fractions
+define direct forcing
+\(\mathbf f_{\rm IB}=\rho_m\psi(\mathbf u_s-\mathbf u^*)/\Delta t\).
+Normalized per-body shares partition overlaps. Body load density is
+\(\alpha_b[\psi\mathbf b_\sigma-(1-\psi)\mathbf f_{\rm IB}]\).
+The load/rigid-velocity pullback uses actual face locations and face-dual
+measures, retaining discrete force, torque, and work identities while
+approximating volume integration.
+
+`MACVolumeFractionIBEvaluation` separates pressure/viscous loads from direct
+reaction. Its impulse residual balances **external-fluid**
+\((1-\psi)\mathbf f_{\rm IB}\), not total mixture forcing; the internal
+impulse is separately reported. Torque residual is about the world origin,
+while body torque is about its COM.
+
+`MACVolumeFractionIBState.initialize` accepts the fluid owner's native packed
+density/momentum state and optional pressure. An advance builds unprojected
+native transport/viscous prediction including the accepted pressure gradient,
+evaluates direct forcing, performs **one** variable-density pressure-increment
+projection, and evaluates final total-pressure/viscous loads. It then
+advances native compliant DEM, and admits candidate-pose geometry. Accepted
+fluid coordinates use candidate geometric mixture density and preserve the
+projected physical velocity through native donor-density momentum. Geometry
+owns next-step density; the miscible-density transport result does not replace
+it. Fluid, DEM, pressure, impulse ledgers, and counters commit atomically.
+
+Invalid step size, geometry/capacity/support, transport, force/torque/work
+identity, projection, DEM, or candidate-pose admission failure retains the
+entire previous accepted state. `MACVolumeFractionIBStepResult` preserves
+candidate state, `evaluation`, `pressure_projection`, `dem_step`,
+`candidate_cut_fraction`, and status. No retries or capacity growth are
+performed. See the [immersed-boundary guide](../../guides_immersed_boundary.md#volume-fraction-direct-forcing-cfddem)
+for the discrete formulas, reference attribution, real sphere-settling
+candidate tolerance, and limitations.
+
+::: phydrax.equations.MACSDFCutFractionPlan
+
+---
+
+::: phydrax.equations.MACSDFCutFractionEvaluation
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBCFDEMCouplingPlan
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBEvaluation
+
+---
+
+::: phydrax.equations.MACVolumeFractionIBStatus
+
+---
+
+::: phydrax.equations.evaluate_mac_volume_fraction_ib_cfd_dem
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBState
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBStepResult
+
+---
+
+::: phydrax.solver.MACVolumeFractionIBStepStatus
+
+---
+
+::: phydrax.solver.advance_mac_volume_fraction_ib_cfd_dem

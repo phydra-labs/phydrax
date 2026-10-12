@@ -19,18 +19,20 @@ from .._trainable import NonTrainableState
 from ..discretization import DiscretizationBundle, DiscretizationRecord
 from ..discretization.particle import (
     AbstractParticleNeighborhoodPlan,
+    AbstractRigidContactShapePlan,
     CellListParticleNeighborhoodPlan,
+    CompliantDEMMethodPlan,
     DEMDiagnostics,
     DEMStepRestriction,
     HierarchicalRadiusParticleNeighborhoodPlan,
     ImplicitDEMBarrier,
+    LevelSetPenaltyNormalPlan,
     ParticleDiscretization,
     ParticleExecutionPolicy,
     ParticlePairKeySpace,
     ParticlePrecisionPolicy,
-    PreparedSoftSphereDEMDynamics,
-    RigidSphereSetPlan,
-    SoftSphereDEMMethodPlan,
+    PreparedCompliantDEMDynamics,
+    TriangleWallPlan,
     VerletParticleNeighborhoodPlan,
 )
 from ..discretization.particle._dem import DEMExternalLoad, DEMRuntimeState
@@ -42,12 +44,13 @@ ExternalDEMLoad = Callable[[Array, Array, Array, Array, Any], DEMExternalLoad]
 
 
 class DiscreteElementProblemIR(StrictModule, NonTrainableState):
-    """Material, gravity, barriers, and optional external load for spherical DEM."""
+    """Materials, gravity, boundaries, and loads for compliant rigid-body DEM."""
 
     name: str = eqx.field(static=True)
     materials: DEMMaterialTable
     gravity: Array
     barriers: tuple[ImplicitDEMBarrier, ...]
+    walls: tuple[TriangleWallPlan, ...]
     external_load: ExternalDEMLoad | None
     external_load_id: str | None = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -61,6 +64,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         *,
         gravity: ArrayLike,
         barriers: Sequence[ImplicitDEMBarrier] = (),
+        walls: Sequence[TriangleWallPlan] = (),
         external_load: ExternalDEMLoad | None = None,
         external_load_id: str | None = None,
         problem_id: str | None = None,
@@ -76,6 +80,9 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         barriers_ = tuple(barriers)
         if any(not isinstance(value, ImplicitDEMBarrier) for value in barriers_):
             raise TypeError("barriers must contain ImplicitDEMBarrier values.")
+        walls_ = tuple(walls)
+        if any(not isinstance(value, TriangleWallPlan) for value in walls_):
+            raise TypeError("walls must contain TriangleWallPlan values.")
         if external_load is not None and not callable(external_load):
             raise TypeError("external_load must be callable or None.")
         if external_load is None and external_load_id is not None:
@@ -89,6 +96,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
                 "materials": materials.material_id,
                 "gravity": gravity_host.tolist(),
                 "barriers": [value.barrier_id for value in barriers_],
+                "walls": [value.wall_id for value in walls_],
                 "external_load": external_load_id,
             }
         )
@@ -99,6 +107,7 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
         self.materials = materials
         self.gravity = jnp.asarray(gravity_host)
         self.barriers = barriers_
+        self.walls = walls_
         self.external_load = external_load
         self.external_load_id = (
             None if external_load_id is None else str(external_load_id)
@@ -107,10 +116,10 @@ class DiscreteElementProblemIR(StrictModule, NonTrainableState):
 
 
 class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
-    """Compiled spherical DEM problem with fixed-step state initialization."""
+    """Compiled shape-generic DEM problem with fixed-step initialization."""
 
     problem: DiscreteElementProblemIR
-    dynamics: PreparedSoftSphereDEMDynamics
+    dynamics: PreparedCompliantDEMDynamics
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
@@ -118,7 +127,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
     def __init__(
         self,
         problem: DiscreteElementProblemIR,
-        dynamics: PreparedSoftSphereDEMDynamics,
+        dynamics: PreparedCompliantDEMDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
     ) -> None:
@@ -142,6 +151,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
         angular_velocity: ArrayLike | None = None,
         /,
         *,
+        orientation: ArrayLike | None = None,
         args: Any = None,
     ) -> DEMRuntimeState:
         return self.dynamics.initialize_state(
@@ -149,6 +159,7 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
             position,
             velocity,
             angular_velocity,
+            orientation=orientation,
             args=args,
         )
 
@@ -165,40 +176,58 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
 def compile_discrete_element_problem(
     problem: DiscreteElementProblemIR,
     particles: ParticleDiscretization,
-    spheres: RigidSphereSetPlan,
-    method: SoftSphereDEMMethodPlan,
+    shapes: AbstractRigidContactShapePlan,
+    method: CompliantDEMMethodPlan,
     /,
     *,
     neighborhood: AbstractParticleNeighborhoodPlan,
     execution: ParticleExecutionPolicy | None = None,
     precision: ParticlePrecisionPolicy | None = None,
 ) -> CompiledDiscreteElementProblem:
-    """Compile one fixed-capacity spherical soft-contact DEM problem."""
+    """Compile fixed-capacity compliant contact over prepared rigid shapes."""
 
     if not isinstance(problem, DiscreteElementProblemIR):
         raise TypeError("problem must be a DiscreteElementProblemIR.")
     if not isinstance(particles, ParticleDiscretization):
         raise TypeError("particles must be a ParticleDiscretization.")
-    if not isinstance(spheres, RigidSphereSetPlan):
-        raise TypeError("spheres must be a RigidSphereSetPlan.")
-    if not isinstance(method, SoftSphereDEMMethodPlan):
-        raise TypeError("method must be a SoftSphereDEMMethodPlan.")
+    if not isinstance(shapes, AbstractRigidContactShapePlan):
+        raise TypeError("shapes must be an AbstractRigidContactShapePlan.")
+    if not isinstance(method, CompliantDEMMethodPlan):
+        raise TypeError("method must be a CompliantDEMMethodPlan.")
     if not isinstance(neighborhood, AbstractParticleNeighborhoodPlan):
         raise TypeError("neighborhood must be an AbstractParticleNeighborhoodPlan.")
     if problem.gravity.shape != (particles.ambient_dimension,):
         raise ValueError("Problem gravity does not match particle ambient dimension.")
-    bodies = spheres.prepare(particles)
+    if (shapes.shape_kind == "level_set") != isinstance(
+        method.contact.normal, LevelSetPenaltyNormalPlan
+    ):
+        raise ValueError(
+            "Level-set shapes require surface-area penalty laws; point shapes require point-force laws."
+        )
+    prepared_shapes = shapes.prepare(particles)
+    bodies = prepared_shapes.bodies
     active_mask = np.asarray(particles.active_mask, dtype=np.bool_)
-    body_radii = np.asarray(bodies.radii, dtype=np.float64)
-    body_materials = np.asarray(bodies.material_ids)
+    body_radii = np.asarray(prepared_shapes.bounding_radii, dtype=np.float64)
+    body_materials = np.asarray(prepared_shapes.material_ids)
     active_materials = body_materials[active_mask]
-    if np.any(active_materials >= problem.materials.material_count):
-        raise ValueError("Rigid-sphere material ID is out of range.")
+    contact_materials = np.asarray(prepared_shapes.contact_material_ids)
+    if np.any(contact_materials >= problem.materials.material_count):
+        raise ValueError("Shape material ID is out of range.")
     interaction_extents = method.contact.interaction_extents_for_radii(
         body_radii[active_mask],
         active_materials,
         problem.materials.material_count,
     )
+    if prepared_shapes.shape_kind == "clump":
+        maximum_bound = float(np.max(body_radii[active_mask]))
+        material_extents = method.contact.interaction_extents_for_radii(
+            np.full(contact_materials.shape, maximum_bound, dtype=np.float64),
+            contact_materials,
+            problem.materials.material_count,
+        )
+        interaction_extents = body_radii[active_mask] + float(
+            np.max(material_extents) - maximum_bound
+        )
     required = 2.0 * float(np.max(interaction_extents))
     if isinstance(neighborhood, HierarchicalRadiusParticleNeighborhoodPlan):
         hierarchy_radii = np.asarray(neighborhood.interaction_radii, dtype=np.float64)
@@ -239,14 +268,15 @@ def compile_discrete_element_problem(
     prepared_neighborhood = neighborhood.prepare(particles)
     key_space = ParticlePairKeySpace(particles)
     contact_model = method.contact.prepare(problem.materials, particles.ambient_dimension)
-    dynamics = PreparedSoftSphereDEMDynamics(
-        bodies,
+    dynamics = PreparedCompliantDEMDynamics(
+        prepared_shapes,
         prepared_neighborhood,
         key_space,
         contact_model,
         method,
         problem.materials,
         barriers=problem.barriers,
+        walls=tuple(wall.prepare() for wall in problem.walls),
         gravity=problem.gravity,
         external_load=problem.external_load,
         external_load_id=problem.external_load_id,
@@ -262,10 +292,10 @@ def compile_discrete_element_problem(
     )
     body_record = DiscretizationRecord(
         bodies.key,
-        "rigid-sphere-properties",
+        "rigid-body-properties",
         bodies.prepared_id,
         dependency_key_ids=(particles.key.key_id,),
-        resource_evidence_id=bodies.resource_evidence_id,
+        resource_evidence_id=bodies.preparation.report_id,
     )
     neighborhood_record = DiscretizationRecord(
         prepared_neighborhood.key,
@@ -277,7 +307,7 @@ def compile_discrete_element_problem(
     )
     method_record = DiscretizationRecord(
         dynamics.key,
-        "soft-sphere-dem-dynamics",
+        "compliant-dem-dynamics",
         dynamics.prepared_id,
         dependency_key_ids=(
             particles.key.key_id,

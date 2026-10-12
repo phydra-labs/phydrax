@@ -147,9 +147,15 @@ def _validate_prepared_tolerance(
     )
 
 
-def _globalization_id(method: NewtonKrylov | NewtonTrustRegion, /) -> str:
+def _globalization_id(
+    method: NewtonKrylov | NewtonTrustRegion, problem: NonlinearSystemProblem, /
+) -> str:
     if isinstance(method, NewtonKrylov):
-        return "residual-armijo"
+        return (
+            "potential-armijo"
+            if problem.potential_function is not None
+            else "residual-armijo"
+        )
     return "dogleg-residual-trust-region"
 
 
@@ -165,7 +171,7 @@ def _prepared_provenance(
         problem_id=problem.problem_id,
         method_id=method.method_id,
         derivative_id=method.jacobian_policy.policy_id,
-        globalization_id=_globalization_id(method),
+        globalization_id=_globalization_id(method, problem),
         linear_plan_id=plan.plan_id,
         precision_policy_id=precision.policy_id,
         notes=f"linear-method={plan.method};linear-backend={plan.backend}",
@@ -231,9 +237,10 @@ def _refreshed_run(
         residual_norm=residual_norm,
         step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
         iteration=zero_count,
-        residual_evaluations=jnp.asarray(
-            jacobian.residual_evaluations * problem.trial_valid(state, args),
-            dtype=jnp.int32,
+        residual_evaluations=jnp.where(
+            problem.trial_valid(state, args),
+            jnp.asarray(jacobian.residual_evaluations, dtype=jnp.int32),
+            zero_count,
         ),
         jvp_evaluations=zero_count,
         vjp_evaluations=zero_count,
@@ -340,6 +347,10 @@ def refresh_nonlinear(
         raise ValueError("Nonlinear refreshes must preserve problem_id.")
     if problem.trial_validity_id != prepared.problem.trial_validity_id:
         raise ValueError("Nonlinear refreshes must preserve trial_validity_id.")
+    if problem.potential_id != prepared.problem.potential_id:
+        raise ValueError("Nonlinear refreshes must preserve potential_id.")
+    if problem.step_limit_id != prepared.problem.step_limit_id:
+        raise ValueError("Nonlinear refreshes must preserve step_limit_id.")
     admit_residual_components(problem, args, implicit=False)
     state = problem.validate_state(initial_state)
     jacobian = prepare_jacobian(problem, state, prepared.method.jacobian_policy, args)

@@ -74,7 +74,12 @@ def test_dem_shapes_bonds_scenario_1() -> None:
     bodies = phx.discretization.RigidSphereSetPlan(
         jnp.asarray([0.5]), jnp.asarray([0])
     ).prepare(particles)
-    kinematics = bodies.kinematics(jnp.asarray([[0.0, 0.0, 0.4]]), jnp.zeros((1, 3)))
+    kinematics = bodies.bodies.kinematics(
+        jnp.asarray([[0.0, 0.0, 0.4]]),
+        jnp.zeros((1, 3)),
+        jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
+        jnp.zeros((1, 3)),
+    )
     wall = phx.discretization.TriangleWallPlan(
         jnp.asarray([[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]]),
         jnp.asarray([[0, 1, 2]]),

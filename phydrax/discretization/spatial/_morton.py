@@ -215,10 +215,16 @@ class MortonAddressPlan(StrictModule):
             raise ValueError(
                 f"points must have trailing dimension {self.dimension}; got shape {values.shape}."
             )
-        lower = jnp.asarray(self.lower, dtype=values.dtype)
-        upper = jnp.asarray(self.upper, dtype=values.dtype)
+        lower = jnp.broadcast_to(
+            jnp.asarray(self.lower, dtype=values.dtype), values.shape
+        )
+        upper = jnp.broadcast_to(
+            jnp.asarray(self.upper, dtype=values.dtype), values.shape
+        )
         extent = upper - lower
-        periodic = jnp.asarray(self.periodic_axes, dtype=jnp.bool_)
+        periodic = jnp.broadcast_to(
+            jnp.asarray(self.periodic_axes, dtype=jnp.bool_), values.shape
+        )
         finite_components = jnp.isfinite(values)
         finite = jnp.all(finite_components, axis=-1)
         safe = jnp.where(finite_components, values, lower)

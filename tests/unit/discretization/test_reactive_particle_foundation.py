@@ -49,7 +49,7 @@ def _dem(
             jnp.full((particle_count,), 0.5),
             jnp.zeros((particle_count,), dtype=jnp.int32),
         ),
-        phx.discretization.SoftSphereDEMMethodPlan(selected),
+        phx.discretization.CompliantDEMMethodPlan(selected),
         neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(
             particle_count * (particle_count - 1) // 2
             if maximum_pairs is None
@@ -122,28 +122,40 @@ def test_reactive_particle_foundation_scenario_1() -> None:
         jnp.asarray([[0.8]]),
         jnp.asarray([[0.4]]),
     )
-    plan = phx.discretization.SuperquadricDEMPlan(
-        shapes,
-        phx.discretization.SuperquadricContactPlan(),
-        phx.discretization.DEMContactModelPlan(
-            phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "superquadric-foundation", material, gravity=jnp.zeros((3,))
         ),
+        particles,
+        shapes,
+        phx.discretization.CompliantDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
+            ),
+            maximum_overlap_fraction=0.25,
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
     )
-    dynamics = plan.prepare(
-        particles, material, phx.discretization.DenseParticleNeighborhoodPlan(1)
-    )
-    state = dynamics.initialize_state(
+    dynamics = compiled.dynamics
+    state = compiled.initialize_state(
+        0.0,
         jnp.asarray([[0.0, 0.0, 0.0], [0.9, 0.0, 0.0]]),
         jnp.zeros((2, 3)),
-        jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
         jnp.zeros((2, 3)),
+        orientation=jnp.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
     )
-    evaluation = dynamics.evaluate(state, jnp.asarray(1.0e-4))
-    step = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-4))
+    evaluation = dynamics.evaluate(jnp.asarray(0.0), state, jnp.asarray(1.0e-4), None)
+    step = dynamics.step_detailed(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        state,
+        jnp.asarray(1.0e-4),
+        None,
+    )
     assert evaluation.successful
-    assert jnp.allclose(evaluation.geometry.gap, -0.1, atol=1.0e-8)
-    assert jnp.allclose(evaluation.geometry.effective_radius, 0.25, rtol=2.0e-3)
-    assert jnp.allclose(evaluation.load.force[0], -evaluation.load.force[1])
+    assert jnp.allclose(evaluation.geometry.geometry.gap, -0.1, atol=1.0e-8)
+    assert jnp.allclose(evaluation.geometry.geometry.effective_radius, 0.25, rtol=2.0e-3)
+    assert jnp.allclose(evaluation.loads.total.force[0], -evaluation.loads.total.force[1])
     assert step.successful
     contact = phx.discretization.DEMContactModelPlan(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
@@ -165,7 +177,7 @@ def test_reactive_particle_foundation_scenario_1() -> None:
         phx.discretization.RigidSphereSetPlan(
             jnp.full((3,), 0.5), jnp.zeros((3,), dtype=jnp.int32)
         ),
-        phx.discretization.SoftSphereDEMMethodPlan(
+        phx.discretization.CompliantDEMMethodPlan(
             contact,
             multicontact=phx.discretization.ElasticHalfSpaceMulticontactPlan(
                 iterations=8, convergence_tolerance=1.0e-4
@@ -250,7 +262,7 @@ def test_reactive_particle_foundation_scenario_2() -> None:
         jnp.zeros((2, 3)),
     )
     dem_state = eqx.tree_at(
-        lambda value: value.body_properties.active,
+        lambda value: value.body_properties.population.active,
         dem_state,
         jnp.asarray([True, False]),
     )
@@ -325,9 +337,10 @@ def test_reactive_particle_foundation_scenario_2() -> None:
     bodies = phx.discretization.RigidSphereSetPlan(
         jnp.asarray([0.5]), jnp.asarray([0])
     ).prepare(particles)
-    kinematics = bodies.kinematics(
+    kinematics = bodies.bodies.kinematics(
         jnp.asarray([[0.0, 0.0, 0.4]]),
         jnp.asarray([[1.0, 0.0, -1.0]]),
+        jnp.asarray([[1.0, 0.0, 0.0, 0.0]]),
         jnp.zeros((1, 3)),
     )
     wall = phx.discretization.TriangleWallPlan(

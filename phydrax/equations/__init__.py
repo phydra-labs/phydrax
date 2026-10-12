@@ -54,12 +54,13 @@ from ._barotropic import (
 )
 from ._barotropic_euler import BarotropicEulerSystem
 from ._cfd_dem import (
-    AbstractHydrodynamicClosurePlan,
+    AbstractInterphaseDragLaw,
     CFDEMCouplingEvaluation,
     evaluate_unresolved_cfd_dem,
     FluidParticleSample,
-    HydrodynamicClosureResult,
-    StokesDragPlan,
+    InterphaseDragCorrelation,
+    InterphaseDragEvaluation,
+    InterphaseDragLawPlan,
     UnresolvedCFDEMCouplingPlan,
 )
 from ._channel_flow import (
@@ -295,7 +296,12 @@ from ._finite_volume_verification import (
     sod_verification_case,
     woodward_colella_verification_case,
 )
-from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
+from ._flip import (
+    compile_flip_problem,
+    CompiledFLIPProblem,
+    FLIPProblemIR,
+    FLIPViscousLaw,
+)
 from ._flip_inspection import flip_inspection_frames
 from ._force_free import (
     ForceFreeConstraintEvaluation,
@@ -525,6 +531,14 @@ from ._mac_variable_density import (
     MACVariableDensityState,
     MACVariableDensityStepRestriction,
     MACVariableDensityStepResult,
+)
+from ._mac_volume_fraction_ib_cfd_dem import (
+    evaluate_mac_volume_fraction_ib_cfd_dem,
+    MACSDFCutFractionEvaluation,
+    MACSDFCutFractionPlan,
+    MACVolumeFractionIBCFDEMCouplingPlan,
+    MACVolumeFractionIBEvaluation,
+    MACVolumeFractionIBStatus,
 )
 from ._manufactured import (
     ManufacturedConvergencePlan,
@@ -1185,6 +1199,7 @@ __all__ = [
     "compile_sparse_flip_problem",
     "flip_inspection_frames",
     "FLIPProblemIR",
+    "FLIPViscousLaw",
     "SparseFLIPDiagnostics",
     "SparseFLIPRuntimeState",
     "SparseFLIPStepResult",
@@ -1374,6 +1389,11 @@ __all__ = [
     "MACPenaltyIBCFDEMCouplingPlan",
     "MACPenaltyIBEvaluation",
     "MACPenaltyIBStatus",
+    "MACSDFCutFractionEvaluation",
+    "MACSDFCutFractionPlan",
+    "MACVolumeFractionIBCFDEMCouplingPlan",
+    "MACVolumeFractionIBEvaluation",
+    "MACVolumeFractionIBStatus",
     "CompiledLatticeBoltzmannProblem",
     "LatticeBoltzmannProblem",
     "compile_lattice_boltzmann_problem",
@@ -1444,6 +1464,7 @@ __all__ = [
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
     "evaluate_mac_penalty_ib_cfd_dem",
+    "evaluate_mac_volume_fraction_ib_cfd_dem",
     "compile_mac_incompressible_flow",
     "PeriodicAlgebraicLESPlan",
     "PeriodicAlgebraicLESStage",
@@ -1611,11 +1632,12 @@ __all__ = [
     "DEMMaterialTable",
     "DiscreteElementProblemIR",
     "compile_discrete_element_problem",
-    "AbstractHydrodynamicClosurePlan",
+    "AbstractInterphaseDragLaw",
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
-    "HydrodynamicClosureResult",
-    "StokesDragPlan",
+    "InterphaseDragCorrelation",
+    "InterphaseDragEvaluation",
+    "InterphaseDragLawPlan",
     "UnresolvedCFDEMCouplingPlan",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",

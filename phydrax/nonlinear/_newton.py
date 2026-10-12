@@ -56,6 +56,7 @@ from ..linalg import (
 )
 from ..typing import checked, parse
 from ._components import admit_residual_components
+from ._domain_cond import domain_cond as _domain_cond
 from ._linearization import (
     _jacobian_solve_direction,
     _jacobian_solve_operator,
@@ -207,7 +208,7 @@ def _linear_failure_status(status: Any, /) -> Array:
 
 
 class RootLineSearch(StrictModule):
-    """Armijo search over the squared physical residual norm."""
+    """Armijo search with optional declared potential and conservative path bound."""
 
     initial_rate: float = eqx.field(static=True)
     contraction: float = eqx.field(static=True)
@@ -540,17 +541,59 @@ def _root_line_search(
         )
     )
     scalar_dtype = merit.dtype
+    if problem.potential_function is not None:
+        potential_merit, potential_directional = jax.jvp(
+            lambda candidate: problem.potential(candidate, args),
+            (state,),
+            (direction,),
+        )
+        merit = potential_merit.astype(scalar_dtype)
+        directional_derivative = potential_directional.astype(scalar_dtype)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
+    bound_valid = jnp.asarray(True, dtype=jnp.bool_)
+    bound_finite = jnp.asarray(True, dtype=jnp.bool_)
+    if problem.step_limit_function is not None:
+        declared_limit = problem.step_limit(state, direction, args)
+        bound_finite = jnp.isfinite(declared_limit)
+        bound_valid = bound_finite & (declared_limit > 0.0) & (declared_limit <= 1.0)
+        limit = declared_limit.astype(scalar_dtype)
+        if declared_limit.dtype != scalar_dtype:
+            limit = jnp.where(
+                limit.astype(declared_limit.dtype) > declared_limit,
+                jnp.nextafter(limit, jnp.full_like(limit, -jnp.inf)),
+                limit,
+            )
+        bound_valid = bound_valid & (limit > 0.0)
+        initial_rate = jnp.where(
+            bound_valid, jnp.minimum(initial_rate, limit), jnp.zeros_like(limit)
+        )
+    merit_finite = (
+        jnp.asarray(True, dtype=jnp.bool_)
+        if problem.potential_function is None
+        else jnp.isfinite(merit) & jnp.isfinite(directional_derivative)
+    )
+    merit_valid = merit_finite & (
+        jnp.asarray(True, dtype=jnp.bool_)
+        if problem.potential_function is None
+        else directional_derivative < 0.0
+    )
+    minimum_rate = (
+        jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
+        if problem.step_limit_function is None
+        else jnp.minimum(
+            jnp.asarray(policy.minimum_rate, dtype=scalar_dtype), initial_rate
+        )
+    )
     initial_carry = (
         state,
         residual,
         auxiliary,
         initial_rate,
         jnp.asarray(False),
-        jnp.asarray(False),
+        merit_finite & ~merit_valid,
         jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
+        (~bound_valid & bound_finite).astype(jnp.int32),
+        (~bound_finite | ~merit_finite).astype(jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
     )
 
@@ -587,6 +630,14 @@ def _root_line_search(
                     precision,
                 )
             )
+            if problem.potential_function is not None:
+                candidate_merit = _domain_cond(
+                    trial_valid,
+                    lambda _: problem.potential(candidate, args).astype(scalar_dtype),
+                    lambda _: jnp.asarray(jnp.inf, dtype=scalar_dtype),
+                    None,
+                )
+                finite = finite & (~trial_valid | jnp.isfinite(candidate_merit))
             sufficient = candidate_merit <= (
                 merit + policy.sufficient_decrease * rate * directional_derivative
             )
@@ -594,7 +645,7 @@ def _root_line_search(
             next_rate = jnp.where(
                 use,
                 rate,
-                jnp.maximum(rate * policy.contraction, policy.minimum_rate),
+                jnp.maximum(rate * policy.contraction, minimum_rate),
             )
             return (
                 tree_where(use, candidate, accepted_state),
@@ -609,8 +660,11 @@ def _root_line_search(
                 skipped_evaluations + (~trial_valid).astype(jnp.int32),
             )
 
-        can_attempt = (~accepted) & (
-            (evaluations - skipped_evaluations) < maximum_evaluations
+        can_attempt = (
+            bound_valid
+            & merit_valid
+            & (~accepted)
+            & ((evaluations - skipped_evaluations) < maximum_evaluations)
         )
         return jax.lax.cond(can_attempt, attempt, lambda _: carry, operand=None)
 
@@ -925,9 +979,10 @@ def _initial_root_state(
         residual_norm=residual_norm,
         step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
         iteration=jnp.asarray(0, dtype=jnp.int32),
-        residual_evaluations=jnp.asarray(
-            prepared_jacobian.residual_evaluations * problem.trial_valid(state, args),
-            dtype=jnp.int32,
+        residual_evaluations=jnp.where(
+            problem.trial_valid(state, args),
+            jnp.asarray(prepared_jacobian.residual_evaluations, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
         ),
         jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
         vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
@@ -1695,7 +1750,11 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 termination,
                 self.jacobian_policy,
                 self.jacobian_refresh,
-                "residual-armijo",
+                (
+                    "potential-armijo"
+                    if problem.potential_function is not None
+                    else "residual-armijo"
+                ),
                 args,
                 precision_,
             )
@@ -2037,7 +2096,11 @@ class NewtonKrylov(AbstractNonlinearMethod):
             termination,
             self.jacobian_policy,
             self.jacobian_refresh,
-            "residual-armijo",
+            (
+                "potential-armijo"
+                if problem.potential_function is not None
+                else "residual-armijo"
+            ),
             args,
             precision_,
         )

@@ -22,8 +22,8 @@ from ..discretization.finite_volume._mac_marker_transfer import (
     PreparedMACMarkerTransfer,
 )
 from ..discretization.particle import (
-    PreparedSoftSphereDEMDynamics,
-    RigidSphereKinematics,
+    PreparedCompliantDEMDynamics,
+    RigidBodyKinematics,
     sphere_lever_torque,
     sphere_spin_velocity,
 )
@@ -83,7 +83,7 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
     """Prepared unit-density MAC penalty coupling to spherical DEM bodies."""
 
     fluid: CompiledMACIncompressibleDynamics
-    dynamics: PreparedSoftSphereDEMDynamics
+    dynamics: PreparedCompliantDEMDynamics
     marker_owner: Array
     penalty: IBPenaltyPlan
     transfer: PreparedMACMarkerTransfer
@@ -93,12 +93,16 @@ class MACPenaltyIBCFDEMCouplingPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         fluid: CompiledMACIncompressibleDynamics,
-        dynamics: PreparedSoftSphereDEMDynamics,
+        dynamics: PreparedCompliantDEMDynamics,
         marker_owner: ArrayLike,
         penalty: IBPenaltyPlan,
         transfer: PreparedMACMarkerTransfer,
         /,
     ) -> None:
+        if dynamics.shapes.shape_kind != "sphere":
+            raise ValueError(
+                "MAC penalty immersed coupling requires sphere contact shapes."
+            )
         if fluid.algebraic_les is not None:
             raise ValueError(
                 "MAC penalty immersed coupling does not support active algebraic LES."
@@ -189,7 +193,7 @@ def _face_resultant(plan: MACPenaltyIBCFDEMCouplingPlan, value: FaceVelocity, /)
 
 def evaluate_mac_penalty_ib_cfd_dem(
     plan: MACPenaltyIBCFDEMCouplingPlan,
-    kinematics: RigidSphereKinematics,
+    kinematics: RigidBodyKinematics,
     fluid_velocity: FaceVelocity,
     step_size: ArrayLike,
     /,
@@ -198,8 +202,8 @@ def evaluate_mac_penalty_ib_cfd_dem(
 
     if not isinstance(plan, MACPenaltyIBCFDEMCouplingPlan):
         raise TypeError("plan must be MACPenaltyIBCFDEMCouplingPlan.")
-    if not isinstance(kinematics, RigidSphereKinematics):
-        raise TypeError("kinematics must be RigidSphereKinematics.")
+    if not isinstance(kinematics, RigidBodyKinematics):
+        raise TypeError("kinematics must be RigidBodyKinematics.")
     bodies = plan.dynamics.bodies
     expected_position = (bodies.capacity, bodies.ambient_dimension)
     expected_angular = (bodies.capacity, bodies.angular_dimension)

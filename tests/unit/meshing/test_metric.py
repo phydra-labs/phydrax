@@ -1,6 +1,7 @@
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -55,6 +56,39 @@ def _anisotropic_metrics(count: Any, seed: Any) -> Any:
 
 def _determinant_sizes(values: Any) -> Any:
     return np.linalg.det(values) ** (-1.0 / (2 * values.shape[-1]))
+
+
+@pytest.mark.strict_jax
+def test_log_euclidean_metric_interpolation_derivatives_at_isotropy() -> None:
+    identity = jnp.eye(2, dtype=jnp.float64)
+    samples = jnp.stack((2.0 * identity, 3.0 * identity))
+    weights = jnp.asarray((0.25, 0.75), dtype=jnp.float64)
+    direction = jnp.asarray(
+        (((0.2, 0.1), (0.1, -0.3)), ((-0.1, 0.04), (0.04, 0.25))),
+        dtype=jnp.float64,
+    )
+
+    def interpolate(value: jax.Array) -> jax.Array:
+        return meshing.interpolate_mesh_metric(value, weights)
+
+    value, tangent = jax.jit(
+        lambda tensors, perturbation: jax.jvp(interpolate, (tensors,), (perturbation,))
+    )(samples, direction)
+    scale = 2.0**0.25 * 3.0**0.75
+    expected = scale * (0.25 * direction[0] / 2.0 + 0.75 * direction[1] / 3.0)
+    np.testing.assert_allclose(value, scale * identity, rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(tangent, expected, rtol=2e-12, atol=2e-12)
+
+    def objective(tensors: jax.Array) -> jax.Array:
+        return jnp.sum(interpolate(tensors) * identity)
+
+    reverse = jax.jit(jax.grad(objective))(samples)
+    np.testing.assert_allclose(
+        reverse,
+        jnp.stack((scale * 0.25 / 2.0 * identity, scale * 0.75 / 3.0 * identity)),
+        rtol=2e-12,
+        atol=2e-12,
+    )
 
 
 def test_metric_structural_contract_refuses_transformed_shape_and_dtype() -> None:

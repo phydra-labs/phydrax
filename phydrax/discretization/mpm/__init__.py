@@ -83,6 +83,7 @@ from ._fracture import (
     MPMFieldPartitionFracturePlan,
     MPMFractureTopologyState,
 )
+from ._geometry import MPMGeometryKind, MPMGeometryPlan
 from ._lifecycle_amr import (
     MPMAMRPlan,
     MPMAMRTopologyJournal,
@@ -93,6 +94,13 @@ from ._lifecycle_amr import (
     MPMPageTablePlan,
     MPMPageTableState,
     MPMParticleLifecyclePlan,
+)
+from ._loads import (
+    LysmerKuhlemeyerDashpot,
+    MPMBoundaryLoadResult,
+    MPMBoundaryState,
+    MPMDashpotResult,
+    PreparedMPMBoundaryLoad,
 )
 from ._method import ExplicitMPMMethodPlan, MPMResourcePolicy
 from ._qualification_commercial import (
@@ -127,13 +135,14 @@ from ._storage import (
     BlockSparseMPMNodalStoragePlan,
     DenseMPMNodalStoragePlan,
 )
-from ._transfer import APICGatherResult
+from ._transfer import APICGatherResult, build_apic_route_payload, gather_apic
 from ._types import (
     MPMDiagnostics,
     MPMEnergyLedger,
     MPMGridState,
     MPMLimitingProcess,
     MPMParticleState,
+    MPMPredictorResult,
     MPMPreparationEvidence,
     MPMRejectionReason,
     MPMRunStatus,
@@ -155,6 +164,10 @@ from ._velocity_transfer import (
     PICFLIPTransferPlan,
     PICTransferPlan,
     TransferredVelocityAdvectionPlan,
+)
+from ._volumetric import (
+    MPMVolumetricStabilizationKind,
+    MPMVolumetricStabilizationPlan,
 )
 
 

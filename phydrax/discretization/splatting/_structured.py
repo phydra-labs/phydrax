@@ -75,6 +75,10 @@ class ParticleGridSplatState(StrictModule):
     invalid_geometry_count: Array
     successful: Array
     prepared_id: str = eqx.field(static=True)
+    cell_average_gradients: Array | None
+    hoop_gradients: Array | None
+    radial_parity: Array | None
+    cell_average_hoop_gradients: Array | None
 
     @checked
     def __init__(
@@ -95,6 +99,10 @@ class ParticleGridSplatState(StrictModule):
         invalid_geometry_count: ArrayLike,
         successful: ArrayLike,
         prepared_id: str,
+        cell_average_gradients: ArrayLike | None = None,
+        hoop_gradients: ArrayLike | None = None,
+        radial_parity: ArrayLike | None = None,
+        cell_average_hoop_gradients: ArrayLike | None = None,
     ) -> None:
         source_shape = stencil.support.shape
         supported = jnp.asarray(supported_mask, dtype=jnp.bool_)
@@ -130,6 +138,20 @@ class ParticleGridSplatState(StrictModule):
         self.invalid_geometry_count = jnp.asarray(invalid_geometry_count, dtype=jnp.int32)
         self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.prepared_id = identifier
+        self.cell_average_gradients = (
+            None
+            if cell_average_gradients is None
+            else jnp.asarray(cell_average_gradients)
+        )
+        self.hoop_gradients = (
+            None if hoop_gradients is None else jnp.asarray(hoop_gradients)
+        )
+        self.radial_parity = None if radial_parity is None else jnp.asarray(radial_parity)
+        self.cell_average_hoop_gradients = (
+            None
+            if cell_average_hoop_gradients is None
+            else jnp.asarray(cell_average_hoop_gradients)
+        )
 
     @property
     def captured_fractions(self) -> Array:

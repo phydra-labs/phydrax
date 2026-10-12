@@ -26,7 +26,7 @@ Planar-face Hertz contact combines superquadric curvature with zero wall curvatu
 
 ## Dynamics and observables
 
-`SuperquadricDEMPlan` accepts prepared triangle walls. Wall responses contribute particle force/torque, equal-and-opposite reaction, contact history, and wall work. Existing facet traction, Finnie wear, and servo-control surfaces accept superquadric wall responses through the common rigid-contact geometry contract.
+`DiscreteElementProblemIR(walls=(wall_plan,))` supplies triangle walls to the shared compiler; `CompliantDEMMethodPlan(..., wall_geometry=SuperquadricTriangleContactPlan())` selects the witness solver. Initialize through `compiled.initialize_state(..., orientation=orientation)`. `evaluation.boundaries` contains barriers followed by triangle-wall responses, including `particle_force`/`particle_torque`, equal-and-opposite `reaction_force`/`reaction_torque`, contact history, flat shared `geometry`, and wall power. Triangle responses retain the shape-specific `triangle_witness` used by facet traction and Finnie wear. Moments use owner arms at the common force point, including the half-gap offset rather than an uncorrected surface-witness arm.
 
 AABB distance against the superquadric bounding radius and interaction range provides the fail-closed broad phase; dense routes remain the correctness authority.
 

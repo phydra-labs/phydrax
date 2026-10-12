@@ -275,6 +275,53 @@ class PreparedMACVariationalViscosityAction(StrictModule, NonTrainableState):
                 )
         return self.momentum.precision.reduction(potential)
 
+    def cell_shear_rate(
+        self,
+        velocity: FaceVelocity,
+        boundary_stage: MACBoundaryStageData | None = None,
+        /,
+    ) -> Array:
+        """Return ``sqrt(2 S_d:S_d)`` with the action's staggered derivatives.
+
+        Squared edge shear is averaged to adjacent cells, not interpolated
+        before squaring. Wall half-cell derivatives retain the same convention
+        as the variational potential.
+        """
+        stage = (
+            self.homogeneous_boundary_stage
+            if boundary_stage is None
+            else self.momentum.boundaries.validate_stage(boundary_stage)
+        )
+        values = self.momentum.boundaries.enforce(
+            self.momentum.operators.validate_velocity(velocity), stage
+        )
+        normal = tuple(
+            self._normal_derivative(value, axis) for axis, value in enumerate(values)
+        )
+        divergence = sum(normal[1:], start=normal[0])
+        squared = 2.0 * sum(
+            (value - divergence / self.dimension) ** 2 for value in normal
+        )
+        axes = self.momentum.operators.discretization.grid.structured_axes
+        for first in range(self.dimension):
+            for second in range(first + 1, self.dimension):
+                shear = self._tangential_derivative(
+                    values[first], first, second, stage, homogeneous=False
+                ) + self._tangential_derivative(
+                    values[second], second, first, stage, homogeneous=False
+                )
+                cell_squared = shear**2
+                for axis in (first, second):
+                    moved = jnp.moveaxis(cell_squared, axis, 0)
+                    averaged = (
+                        0.5 * (moved + jnp.roll(moved, -1, axis=0))
+                        if axes[axis].periodic
+                        else 0.5 * (moved[:-1] + moved[1:])
+                    )
+                    cell_squared = jnp.moveaxis(averaged, 0, axis)
+                squared = squared + cell_squared
+        return jnp.sqrt(squared)
+
     def dissipation_potential(
         self,
         velocity: FaceVelocity,

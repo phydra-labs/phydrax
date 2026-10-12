@@ -432,6 +432,9 @@ def _eulerian_adm_tetrad(
         tolerance=tolerance_,
     )
     spectral_valid = inverse_sqrt.valid & square_root.valid & scale_valid
+    spectral_derivative_valid = (
+        inverse_sqrt.derivative_valid & square_root.derivative_valid & scale_valid
+    )
     convention = units.convention
     future_sign = convention.future_time_orientation
     final_spatial_sign = convention.spacetime_orientation * future_sign
@@ -535,7 +538,7 @@ def _eulerian_adm_tetrad(
         gram,
         units.metric,
         domain_valid=domain.physically_valid & spectral_valid,
-        derivative_valid=domain.derivative_valid & spectral_valid,
+        derivative_valid=domain.derivative_valid & spectral_derivative_valid,
         tolerance=tolerance_,
         evidence_id=canonical_fingerprint(
             {"kind": "eulerian-adm-tetrad-inner-products", "tetrad": tetrad_id}
@@ -574,7 +577,7 @@ def _eulerian_adm_tetrad(
         domain.physically_valid,
         physical,
         qualified,
-        domain.derivative_valid & spectral_valid & physical,
+        domain.derivative_valid & spectral_derivative_valid & physical,
         convention=convention,
         domain=domain,
         tetrad_id=tetrad_id,

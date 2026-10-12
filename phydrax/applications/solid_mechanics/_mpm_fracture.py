@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import final
 
 import equinox as eqx
 import jax
@@ -19,16 +19,53 @@ from ...equations import (
     AbstractImplicitMPMConstitutivePlan,
     MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
+    MPMKinematics,
     MPMLinearizedConstitutiveResponse,
+)
+from ...linalg import (
+    hermitian_log,
+    hermitian_spectral_map,
+    SmallLinearSolvePlan,
+    solve_small_linear,
 )
 from ...typing import checked
 from ._models import NeoHookeanParameters
 
 
-# Per-particle (stress, trial state, energy, wave speed, valid, tensile energy).
-_PhaseFieldPointOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+# Stress, history, energy, wave speed, validity, tensile energy, split regularity.
+type _PhaseFieldPointOutputs = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
+def _split_principal(
+    logarithmic: Array, parameters: tuple[Array, Array, Array]
+) -> tuple[Array, dict[str, Array]]:
+    """Permutation-equivariant AT2 split with invariant energy and kink evidence."""
+    shear, bulk, dimension = parameters
+    positive = jnp.maximum(logarithmic, 0.0)
+    negative = jnp.minimum(logarithmic, 0.0)
+    trace = jnp.sum(logarithmic)
+    positive_trace = jnp.maximum(trace, 0.0)
+    negative_trace = jnp.minimum(trace, 0.0)
+    # Plane strain has one identically zero, inactive out-of-plane strain.
+    active_zero = jnp.sum(logarithmic == 0.0, dtype=jnp.int32) > (3 - dimension)
+    confluent_tolerance = jnp.sqrt(jnp.finfo(logarithmic.dtype).eps) * jnp.maximum(
+        jnp.max(jnp.abs(logarithmic)), 1.0
+    )
+    mixed_sign = (logarithmic[:, None] > 0.0) & (logarithmic[None, :] < 0.0)
+    mixed_confluent = jnp.any(
+        mixed_sign
+        & (jnp.abs(logarithmic[:, None] - logarithmic[None, :]) <= confluent_tolerance)
+    )
+    return jnp.stack((positive, negative)), {
+        "positive_energy": shear * jnp.sum(positive**2) + 0.5 * bulk * positive_trace**2,
+        "negative_energy": shear * jnp.sum(negative**2) + 0.5 * bulk * negative_trace**2,
+        "positive_trace": positive_trace,
+        "negative_trace": negative_trace,
+        "split_derivative_valid": ~active_zero & ~mixed_confluent & (trace != 0.0),
+    }
+
+
+@final
 class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
     material: NeoHookeanParameters
     critical_energy_release_rate: Array
@@ -64,17 +101,30 @@ class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
         self.residual_stiffness = values[2]
 
 
+@final
 class PhaseFieldNeoHookeanMPMConstitutivePlan(
     AbstractImplicitMPMConstitutivePlan,
     NonTrainableState,
 ):
-    """Spectral tension/compression split with particle damage/history state."""
+    """AT2 spectral Hencky split with particle damage/history state.
+
+    H = log(FᵀF)/2 is evaluated through the Hermitian spectral substrate.
+    ψ± = G H±:H± + K <tr H>±²/2 retains this material's elastic energy convention.
+    With fixed damage d, T = ∂ψ/∂H and P = F⁻ᵀ T because T commutes with H.
+    This explicit first-Piola update needs only first-order spectral derivatives;
+    differentiating a spectral energy gradient would require unsupported second
+    derivatives at repeated spectra. Primal stress is finite at split kinks, but
+    the algorithmic tangent is certified only away from active principal-strain
+    zeros, mixed-sign confluent pairs, and tr H = 0. The plane-strain zero is inactive.
+    Invalid kinematics or history retain committed history, without clipping.
+    """
 
     dimension: int = eqx.field(static=True)
-    kinematics: str = eqx.field(static=True)
+    kinematics: MPMKinematics = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
+    solve_plan: SmallLinearSolvePlan
 
     def __init__(self, dimension: int, /) -> None:
         dimension_ = int(dimension)
@@ -99,6 +149,7 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
                 "damage": "AT2",
             }
         )
+        self.solve_plan = SmallLinearSolvePlan(3)
 
     def initialize_state(
         self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
@@ -111,28 +162,6 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         embedded = jnp.eye(3, dtype=deformation.dtype)
         return embedded.at[:2, :2].set(deformation)
 
-    @staticmethod
-    def _split_energy(
-        embedded: Array, parameters: MPMPhaseFieldParameters
-    ) -> tuple[Array, Array, Array]:
-        right_cauchy = embedded.T @ embedded
-        eigenvalues = jnp.linalg.eigvalsh(right_cauchy)
-        valid = jnp.all(eigenvalues > 0.0) & jnp.all(jnp.isfinite(eigenvalues))
-        logarithmic = 0.5 * jnp.log(jnp.where(eigenvalues > 0.0, eigenvalues, 1.0))
-        positive = jnp.maximum(logarithmic, 0.0)
-        negative = jnp.minimum(logarithmic, 0.0)
-        positive_trace = jnp.maximum(jnp.sum(logarithmic), 0.0)
-        negative_trace = jnp.minimum(jnp.sum(logarithmic), 0.0)
-        positive_energy = (
-            parameters.material.shear_modulus * jnp.sum(positive**2)
-            + 0.5 * parameters.material.bulk_modulus * positive_trace**2
-        )
-        negative_energy = (
-            parameters.material.shear_modulus * jnp.sum(negative**2)
-            + 0.5 * parameters.material.bulk_modulus * negative_trace**2
-        )
-        return positive_energy, negative_energy, valid
-
     def _point(
         self,
         deformation: Array,
@@ -140,20 +169,34 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         density: Array,
         parameters: MPMPhaseFieldParameters,
     ) -> _PhaseFieldPointOutputs:
-        damage = jnp.clip(state[0], 0.0, 1.0)
-        history = jnp.maximum(state[1], 0.0)
-
-        def degraded_energy(value: Array) -> Array:
-            embedded = self._embed(value)
-            positive, negative, _ = self._split_energy(embedded, parameters)
-            degradation = (1.0 - damage) ** 2 + parameters.residual_stiffness
-            return degradation * positive + negative
-
-        energy = degraded_energy(deformation)
-        stress = jax.grad(degraded_energy)(deformation)
         embedded = self._embed(deformation)
-        positive, _, split_valid = self._split_energy(embedded, parameters)
-        next_history = jnp.maximum(history, positive)
+        probe = solve_small_linear(self.solve_plan, embedded.T, jnp.zeros_like(embedded))
+        domain = probe.successful & (probe.determinant > 0.0)
+        # Domain rejection is explicit: the identity only keeps the rejected
+        # numerical branch finite, and never becomes an accepted deformation.
+        safe_deformation = jnp.where(domain, embedded, jnp.eye(3, dtype=embedded.dtype))
+        logarithm = hermitian_log(safe_deformation.T @ safe_deformation, tolerance=0.0)
+        split = hermitian_spectral_map(
+            0.5 * logarithm.value,
+            _split_principal,
+            (
+                parameters.material.shear_modulus,
+                parameters.material.bulk_modulus,
+                jnp.asarray(self.dimension, dtype=jnp.int32),
+            ),
+            function_id="mpm-at2-hencky-split",
+        )
+        invariants = split.invariants
+        positive = invariants["positive_energy"]
+        degradation = (1.0 - state[0]) ** 2 + parameters.residual_stiffness
+        energy = degradation * positive + invariants["negative_energy"]
+        hencky_stress = 2.0 * parameters.material.shear_modulus * (
+            degradation * split.values[0] + split.values[1]
+        ) + parameters.material.bulk_modulus * (
+            degradation * invariants["positive_trace"] + invariants["negative_trace"]
+        ) * jnp.eye(3, dtype=embedded.dtype)
+        piola = solve_small_linear(self.solve_plan, safe_deformation.T, hencky_stress)
+        stress = piola.value[: self.dimension, : self.dimension]
         speed = jnp.sqrt(
             (
                 parameters.material.bulk_modulus
@@ -162,14 +205,35 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
             / jnp.where(density > 0.0, density, 1.0)
         )
         valid = (
-            split_valid
+            domain
+            & logarithm.valid
+            & split.valid
+            & piola.successful
+            & jnp.all(jnp.isfinite(state))
+            & (state[0] >= 0.0)
+            & (state[0] <= 1.0)
+            & (state[1] >= 0.0)
             & jnp.all(jnp.isfinite(stress))
             & jnp.isfinite(energy)
             & jnp.isfinite(speed)
             & (density > 0.0)
         )
-        trial = jnp.asarray((damage, next_history), dtype=deformation.dtype)
-        return stress, trial, energy, speed, valid, positive
+        trial = jnp.stack((state[0], jnp.maximum(state[1], positive)))
+        split_regular = (
+            valid
+            & logarithm.derivative_valid
+            & split.derivative_valid
+            & invariants["split_derivative_valid"]
+        )
+        return (
+            jnp.where(valid, stress, jnp.zeros_like(stress)),
+            jnp.where(valid, trial, state),
+            jnp.where(valid, energy, 0.0),
+            jnp.where(valid, speed, 0.0),
+            valid,
+            jnp.where(valid, positive, 0.0),
+            split_regular,
+        )
 
     @checked
     def evaluate(
@@ -198,7 +262,7 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
             state.reshape((-1, 2)),
             density.reshape((-1,)),
         )
-        stress, trial, energy, speed, valid, positive = outputs
+        stress, trial, energy, speed, valid, positive, split_regular = outputs
         dissipation = parameters.critical_energy_release_rate * jnp.maximum(
             trial[:, 0] - state.reshape((-1, 2))[:, 0], 0.0
         )
@@ -211,7 +275,10 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
             branch_code=(trial[:, 0] > 0.0).astype(jnp.int32).reshape(batch_shape),
             successful=valid.reshape(batch_shape),
             admissible=valid.reshape(batch_shape),
-            diagnostics={"tensile_energy_density": positive.reshape(batch_shape)},
+            diagnostics={
+                "tensile_energy_density": positive.reshape(batch_shape),
+                "split_derivative_valid": split_regular.reshape(batch_shape),
+            },
         )
 
     def evaluate_linearized(
@@ -254,7 +321,11 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
                 self.dimension,
             )
         )
-        successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
+        successful = (
+            response.successful
+            & response.diagnostics["split_derivative_valid"]
+            & jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
+        )
         return MPMLinearizedConstitutiveResponse(response, tangent, successful)
 
 

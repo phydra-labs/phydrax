@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum, IntFlag
-from typing import TYPE_CHECKING
+from typing import Any, final, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,11 +14,18 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..splatting._structured import ParticleGridSplatState
+from ..splatting._types import SplatDepositResult, SplatRouteScatterResult
+from ._boundary import PrescribedGridVelocityResult
+from ._contact import MPMGridConstraintResult
+from ._transfer import APICGatherResult
 
 
 if TYPE_CHECKING:
+    from ...equations._material_point import MPMConstitutiveResponse
     from ..spatial import SparseBlockTopologyState
     from ._lifecycle_amr import MPMLifecycleState
+    from ._loads import MPMBoundaryLoadResult, MPMBoundaryState, MPMDashpotResult
 
 
 class MPMRunStatus(IntEnum):
@@ -77,6 +84,7 @@ class MPMParticleState(StrictModule):
     reference_energy_density: Array
     maximum_wave_speed: Array
     material_state: Array
+    physical_deformation_gradient: Array | None = None
 
 
 class MPMRuntimeState(StrictModule):
@@ -91,6 +99,7 @@ class MPMRuntimeState(StrictModule):
     velocity_field_slots: Array
     storage_state: SparseBlockTopologyState | None
     lifecycle_state: MPMLifecycleState | None
+    boundary_states: tuple[MPMBoundaryState, ...]
 
     def __init__(
         self,
@@ -105,6 +114,7 @@ class MPMRuntimeState(StrictModule):
         velocity_field_slots: ArrayLike | None = None,
         storage_state: SparseBlockTopologyState | None = None,
         lifecycle_state: MPMLifecycleState | None = None,
+        boundary_states: tuple[MPMBoundaryState, ...] = (),
         /,
     ) -> None:
         self.particles = particles
@@ -140,6 +150,7 @@ class MPMRuntimeState(StrictModule):
             raise ValueError("MPM particle ownership slots must have capacity shape.")
         self.storage_state = storage_state
         self.lifecycle_state = lifecycle_state
+        self.boundary_states = boundary_states
 
 
 class MPMGridState(StrictModule):
@@ -152,6 +163,11 @@ class MPMGridState(StrictModule):
     external_force: Array
     velocity_after: Array
     active: Array
+
+    @property
+    def velocity(self) -> Array:
+        """Current nodal velocity, with the same leading field axis."""
+        return self.velocity_after
 
 
 class MPMStepRestriction(StrictModule):
@@ -202,6 +218,52 @@ class MPMTransferEvidence(StrictModule):
     successful: Array
 
 
+@final
+class _MPMGridTrial(StrictModule):
+    """Frozen P2G attempt; constitutive updates remain uncommitted."""
+
+    active: Array
+    storage_state: SparseBlockTopologyState | None
+    execution_routes: ParticleGridSplatState
+    mass: Array
+    acceleration_external: Array
+    increment_force: Array
+    mass_result: SplatDepositResult
+    scattered: SplatRouteScatterResult
+    route_payload: Array
+    density: Array
+    identity: Array
+    schedule_p2g_success: Array
+    scheduled_deformation: Array | None
+    scheduled_material: MPMConstitutiveResponse | None
+    first_gather: APICGatherResult | None
+    load_results: tuple[MPMBoundaryLoadResult, ...]
+    damped_velocity: Array
+    grid: MPMGridState
+    restriction: MPMStepRestriction
+    stable: Array
+    external_ok: Array
+
+
+@final
+class MPMPredictorResult(StrictModule):
+    """One frozen grid attempt; only finalization can commit its material state."""
+
+    state: MPMRuntimeState
+    step_size: Array
+    arguments: Any
+    routes: ParticleGridSplatState
+    grid: MPMGridState
+    trial: _MPMGridTrial
+    contact_result: MPMGridConstraintResult
+    boundary_result: PrescribedGridVelocityResult
+    successful: Array
+    rejection_reasons: Array
+    status: Array
+    initial_valid: Array
+    prepared_id: str = eqx.field(static=True)
+
+
 class MPMEnergyLedger(StrictModule):
     particle_kinetic_before: Array
     grid_kinetic_before: Array
@@ -226,6 +288,8 @@ class MPMDiagnostics(StrictModule):
     maximum_jacobian: Array
     material_admissible: Array
     finite: Array
+    boundary_loads: tuple[MPMBoundaryLoadResult, ...] = ()
+    dashpots: tuple[MPMDashpotResult, ...] = ()
 
 
 class MPMStepResult(StrictModule):
@@ -259,6 +323,7 @@ __all__ = [
     "MPMLimitingProcess",
     "MPMParticleState",
     "MPMPreparationEvidence",
+    "MPMPredictorResult",
     "MPMRejectionReason",
     "MPMRunStatus",
     "MPMRuntimeState",

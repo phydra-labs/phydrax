@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
+from jax.typing import ArrayLike
 from jaxtyping import PyTree
 
 from .._precision import PrecisionEvidenceEnvelope
@@ -170,7 +171,7 @@ class SensitivityEvidence(StrictModule):
 
 
 class SolutionMapDerivative(StrictModule):
-    value: PyTree[Array]
+    value: PyTree[ArrayLike]
     evidence: SensitivityEvidence
 
 
@@ -357,6 +358,16 @@ def root_solution_jvp(
     )
 
 
+def _negative_argument_cotangent(value: ArrayLike, /) -> ArrayLike:
+    return jnp.negative(value) if eqx.is_inexact_array(value) else value
+
+
+def _qualified_argument_cotangent(value: ArrayLike, successful: Array, /) -> ArrayLike:
+    if not eqx.is_inexact_array(value):
+        return value
+    return jnp.where(successful, value, jnp.full_like(value, jnp.nan))
+
+
 def root_solution_vjp(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],
@@ -366,6 +377,11 @@ def root_solution_vjp(
     *,
     policy: SensitivityPolicy | None = None,
 ) -> SolutionMapDerivative:
+    """Return an implicit covector with discrete argument roles preserved.
+
+    Boolean and integer argument leaves retain JAX's ``float0`` tangent-space
+    representation. Failure NaNs apply only to inexact covector leaves.
+    """
     policy_ = SensitivityPolicy("implicit-reverse") if policy is None else policy
     if policy_.mode not in ("implicit-forward", "implicit-reverse"):
         raise ValueError("root_solution_vjp requires an implicit sensitivity mode.")
@@ -385,7 +401,9 @@ def root_solution_vjp(
         lambda current_args: problem.residual(state, current_args),
         args,
     )
-    argument_cotangent = jax.tree.map(jnp.negative, pullback(adjoint_value)[0])
+    argument_cotangent = jax.tree.map(
+        _negative_argument_cotangent, pullback(adjoint_value)[0]
+    )
     derivative_residual = tree_subtract(
         transposed.mv(adjoint_value),
         cotangent,
@@ -394,11 +412,7 @@ def root_solution_vjp(
     status = _implicit_status(system, linear_result, finite, condition, policy_)
     successful = status == int(SensitivityStatus.SUCCESS)
     argument_cotangent = jax.tree.map(
-        lambda value: jnp.where(
-            successful,
-            value,
-            jnp.full_like(value, jnp.nan),
-        ),
+        lambda value: _qualified_argument_cotangent(value, successful),
         argument_cotangent,
     )
     return SolutionMapDerivative(

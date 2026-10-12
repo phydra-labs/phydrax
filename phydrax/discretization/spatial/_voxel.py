@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
+from typing import final
 
 import equinox as eqx
 import jax
@@ -56,6 +57,21 @@ class SparseVoxelQueryResult(StrictModule):
     weights: jax.Array
 
 
+@final
+class SparseVoxelDifferentialQueryResult(StrictModule):
+    """Multilinear values and physical-coordinate derivatives.
+
+    ``gradient`` has shape ``values.shape + (dimension,)``. Unsupported
+    values and gradients are NaN; sparse background is not interpolation data.
+    ``stencil_complete`` reports topology support independently of finiteness.
+    """
+
+    values: jax.Array
+    gradient: jax.Array
+    supported: jax.Array
+    stencil_complete: jax.Array
+
+
 class SparseVoxelDepositResult(StrictModule):
     """Deposited brick values and source support evidence."""
 
@@ -90,7 +106,10 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             raise ValueError(
                 f"integer_coordinates must have trailing dimension {self.dimension}."
             )
-        periodic = jnp.asarray(self.address_plan.periodic_axes, dtype=jnp.bool_)
+        periodic = jnp.broadcast_to(
+            jnp.asarray(self.address_plan.periodic_axes, dtype=jnp.bool_),
+            coordinates.shape,
+        )
         resolution = self.address_plan.resolution
         in_bounds_components = periodic | (
             (coordinates >= 0) & (coordinates < resolution)
@@ -145,22 +164,25 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
         upper = jnp.asarray(self.address_plan.upper)
         extent = upper - lower
         return (
-            lower
-            + extent * (integer.astype(extent.dtype) + 0.5) / self.address_plan.resolution
+            lower[None, None, :]
+            + extent[None, None, :]
+            * (integer.astype(extent.dtype) + 0.5)
+            / self.address_plan.resolution
         )
 
-    def interpolation_stencil(
+    def _interpolation_coordinates(
         self, points: jax.Array
-    ) -> tuple[SparseVoxelLookup, jax.Array, jax.Array]:
+    ) -> tuple[SparseVoxelLookup, jax.Array, jax.Array, jax.Array]:
+        """Locate all corners once, retaining their local cell coordinates."""
         values = jnp.asarray(points)
         if values.ndim != 2 or values.shape[1] != self.dimension:
             raise ValueError(f"points must have shape (count, {self.dimension}).")
         encoding = self.address_plan.encode(values)
         lower = jnp.asarray(self.address_plan.lower, dtype=values.dtype)
         upper = jnp.asarray(self.address_plan.upper, dtype=values.dtype)
-        index_coordinate = (encoding.coordinates - lower) / (
-            upper - lower
-        ) * self.address_plan.resolution - 0.5
+        index_coordinate = (encoding.coordinates - lower[None, :]) / (upper - lower)[
+            None, :
+        ] * self.address_plan.resolution - 0.5
         base = jnp.floor(index_coordinate).astype(jnp.int64)
         fraction = index_coordinate - base.astype(index_coordinate.dtype)
         corners = jnp.asarray(
@@ -168,7 +190,13 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
         )
         integer = base[:, None, :] + corners[None, :, :]
         lookup = self.lookup_integer(integer)
-        weights = jnp.ones((values.shape[0], corners.shape[0]), dtype=values.dtype)
+        return lookup, fraction, corners, encoding.in_domain
+
+    def interpolation_stencil(
+        self, points: jax.Array
+    ) -> tuple[SparseVoxelLookup, jax.Array, jax.Array]:
+        lookup, fraction, corners, in_domain = self._interpolation_coordinates(points)
+        weights = jnp.ones((fraction.shape[0], corners.shape[0]), dtype=fraction.dtype)
         for axis in range(self.dimension):
             axis_weight = jnp.where(
                 corners[None, :, axis] == 1,
@@ -176,7 +204,6 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
                 1.0 - fraction[:, None, axis],
             )
             weights = weights * axis_weight
-        in_domain = encoding.in_domain
         return lookup, weights, in_domain
 
     def deposit_multilinear(
@@ -328,6 +355,90 @@ class SparseVoxelField(StrictModule):
             weights=weights,
         )
 
+    def sample_multilinear_with_gradient(
+        self, points: jax.Array, /
+    ) -> SparseVoxelDifferentialQueryResult:
+        """Evaluate the interpolant and its analytic physical gradient.
+
+        Cell selection is discrete and derivatives can jump at cell faces.
+        Every corner must be supported, including zero-weight corners. Constant
+        background mode never authorizes a missing corner for this query.
+        """
+        lookup, fraction, corners, in_domain = self.grid._interpolation_coordinates(
+            points
+        )
+        safe_bricks = jnp.maximum(lookup.brick_slots, 0)
+        safe_local = jnp.maximum(lookup.local_slots, 0)
+        gathered = self.values[safe_bricks, safe_local].astype(
+            jnp.result_type(self.values.dtype, fraction.dtype)
+        )
+        trailing_rank = gathered.ndim - 2
+        corner_values = jnp.where(
+            lookup.supported.reshape(lookup.supported.shape + (1,) * trailing_rank),
+            gathered,
+            jnp.asarray(jnp.nan, dtype=gathered.dtype),
+        )
+        weights = jnp.ones(fraction.shape[:1] + corners.shape[:1], dtype=fraction.dtype)
+        spacing = (
+            jnp.asarray(self.grid.address_plan.upper, dtype=fraction.dtype)
+            - jnp.asarray(self.grid.address_plan.lower, dtype=fraction.dtype)
+        ) / self.grid.address_plan.resolution
+        derivatives: list[jax.Array] = []
+        for axis in range(self.grid.dimension):
+            axis_weight = jnp.where(
+                corners[None, :, axis] == 1,
+                fraction[:, None, axis],
+                1.0 - fraction[:, None, axis],
+            )
+            weights = weights * axis_weight
+            derivative = jnp.broadcast_to(
+                jnp.where(corners[None, :, axis] == 1, 1.0, -1.0) / spacing[axis],
+                weights.shape,
+            )
+            for other_axis in range(self.grid.dimension):
+                if other_axis != axis:
+                    derivative = derivative * jnp.where(
+                        corners[None, :, other_axis] == 1,
+                        fraction[:, None, other_axis],
+                        1.0 - fraction[:, None, other_axis],
+                    )
+            derivatives.append(derivative)
+        derivative_weights = jnp.stack(derivatives, axis=-1)
+        sampled = jnp.sum(
+            weights.reshape(weights.shape + (1,) * trailing_rank) * corner_values,
+            axis=1,
+        )
+        gradient = jnp.sum(
+            derivative_weights.reshape(
+                weights.shape + (1,) * trailing_rank + (self.grid.dimension,)
+            )
+            * corner_values[..., None],
+            axis=1,
+        )
+        stencil_complete = in_domain & jnp.all(lookup.supported, axis=1)
+        finite_corners = jnp.all(
+            jnp.isfinite(corner_values), axis=tuple(range(1, corner_values.ndim))
+        )
+        finite_gradient = jnp.all(
+            jnp.isfinite(gradient), axis=tuple(range(1, gradient.ndim))
+        )
+        finite_values = jnp.all(jnp.isfinite(sampled), axis=tuple(range(1, sampled.ndim)))
+        supported = stencil_complete & finite_corners & finite_values & finite_gradient
+        return SparseVoxelDifferentialQueryResult(
+            values=jnp.where(
+                supported.reshape(supported.shape + (1,) * trailing_rank),
+                sampled,
+                jnp.asarray(jnp.nan, dtype=sampled.dtype),
+            ),
+            gradient=jnp.where(
+                supported.reshape(supported.shape + (1,) * (trailing_rank + 1)),
+                gradient,
+                jnp.asarray(jnp.nan, dtype=gradient.dtype),
+            ),
+            supported=supported,
+            stencil_complete=stencil_complete,
+        )
+
 
 class SparseVoxelGridPlan(StrictModule):
     """Prepare a fixed-resolution sparse voxel topology in aligned bricks."""
@@ -448,6 +559,7 @@ __all__ = [
     "PreparedSparseVoxelGrid",
     "SparseVoxelBuildEvidence",
     "SparseVoxelDepositResult",
+    "SparseVoxelDifferentialQueryResult",
     "SparseVoxelField",
     "SparseVoxelGridPlan",
     "SparseVoxelLookup",

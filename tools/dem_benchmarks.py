@@ -33,7 +33,7 @@ def _configuration(count_per_axis: Any = 8) -> Any:
         jnp.asarray([[0.8]]),
         jnp.asarray([[0.4]]),
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         phx.discretization.DEMContactModelPlan(
             phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
             tangential=phx.discretization.CundallStrackTangentialPlan(2.5e3),
@@ -148,6 +148,9 @@ def _measure(backend: Any, kernel_backend: Any, repeats: Any = 20) -> Any:
     return {
         "backend": backend,
         "kernel_backend": kernel_backend,
+        "shape_kind": compiled.dynamics.shapes.shape_kind,
+        "shape_id": compiled.dynamics.shapes.shape_id,
+        "contact_capacity": compiled.dynamics.contact_capacity,
         "particle_count": compiled.dynamics.bodies.capacity,
         "pair_capacity": compiled.dynamics.neighborhood.pair_capacity,
         "active_contacts": int(diagnostics.active_contacts),

@@ -246,6 +246,29 @@ class NonlinearScalingPolicy(StrictModule):
         return problem_, scaling
 
 
+def _scaled_potential(
+    problem: NonlinearSystemProblem,
+    scaling: NonlinearScaling,
+    state: PyTree[Array],
+    args: Any,
+    /,
+) -> Array:
+    return problem.potential(scaling.to_physical_state(state), args)
+
+
+def _scaled_step_limit(
+    problem: NonlinearSystemProblem,
+    scaling: NonlinearScaling,
+    state: PyTree[Array],
+    direction: PyTree[Array],
+    args: Any,
+    /,
+) -> Array:
+    return problem.step_limit(
+        scaling.to_physical_state(state), scaling.to_physical_state(direction), args
+    )
+
+
 class ScaledRootSystem(AbstractNonlinearSystemTransformation):
     """Fixed diagonal scaling represented as a canonical root transformation."""
 
@@ -383,6 +406,18 @@ class ScaledRootSystem(AbstractNonlinearSystemTransformation):
                 )
             ),
             trial_validity_id=problem.trial_validity_id,
+            potential=(
+                None
+                if problem.potential_function is None
+                else eqx.Partial(_scaled_potential, problem, scaling)
+            ),
+            potential_id=problem.potential_id,
+            step_limit=(
+                None
+                if problem.step_limit_function is None
+                else eqx.Partial(_scaled_step_limit, problem, scaling)
+            ),
+            step_limit_id=problem.step_limit_id,
             linear_setup=(
                 None
                 if problem.linear_setup_function is None

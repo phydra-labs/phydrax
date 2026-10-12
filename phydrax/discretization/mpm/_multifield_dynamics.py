@@ -15,7 +15,7 @@ from ..._tree_math import tree_allfinite, tree_where
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._boundary import PrescribedGridVelocityResult
 from ._contact import MPMGridConstraintResult
-from ._phases import advance_grid_velocity, normalize_grid_momentum, update_deformation
+from ._phases import advance_grid_velocity, normalize_grid_momentum
 from ._schedule import (
     AffineMUSLMPMSchedule,
     PostAdvectionMUSLMPMSchedule,
@@ -105,10 +105,13 @@ def multifield_step_detailed(
         if dynamics.method.transfer.requires_affine_state
         else jnp.zeros_like(particle.affine_velocity)
     )
-    storage_state = dynamics._build_storage(routes, state.storage_state)
+    storage_state = dynamics._build_storage(
+        routes, state.storage_state, state.boundary_states
+    )
     execution_routes = dynamics._mapped_routes(routes, storage_state)
     mass_results = []
     momenta = []
+    reflected_source_momenta = []
     internal_forces = []
     external_forces = []
     mass_gradients = []
@@ -128,7 +131,12 @@ def multifield_step_detailed(
             particle.deformation_gradient,
             external,
             owned,
+            physical_deformation_gradient=particle.physical_deformation_gradient,
         )
+        if dynamics.geometry.kind == "axisymmetric":
+            reflected_source_momenta.append(
+                compensated_sum(payload[..., :dimension], axis=(0, 1))
+            )
         scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
         momentum = scattered.values[..., :dimension]
         internal = scattered.values[..., dimension : 2 * dimension]
@@ -163,7 +171,9 @@ def multifield_step_detailed(
             owned = active & (slots == field)
             gathered = gather_apic(
                 execution_routes,
-                normalized[field].velocity.reshape((dynamics.grid_count, dimension)),
+                dynamics._axis_velocity(
+                    normalized[field].velocity, storage_state
+                ).reshape((dynamics.grid_count, dimension)),
                 owned,
                 (
                     dynamics.method.transfer.maximum_condition
@@ -177,8 +187,16 @@ def multifield_step_detailed(
                 pre_gradient,
             )
             pre_successful = pre_successful & gathered.successful
-        scheduled_deformation = update_deformation(
-            particle.deformation_gradient, pre_gradient, dt
+        scheduled_deformation = dynamics._update_deformation(
+            execution_routes,
+            particle.deformation_gradient,
+            pre_gradient,
+            dt,
+            mass,
+            active,
+            field_slots=slots,
+            reference_volume=particle.reference_volume,
+            physical_deformation_gradient=particle.physical_deformation_gradient,
         )
         scheduled_material = dynamics.material.evaluate(
             scheduled_deformation,
@@ -203,6 +221,9 @@ def multifield_step_detailed(
                 scheduled_deformation,
                 external,
                 owned,
+                physical_deformation_gradient=dynamics._update_physical_deformation(
+                    particle.physical_deformation_gradient, pre_gradient, dt
+                ),
             )
             scattered = dynamics._scatter_route_payload(routes, storage_state, payload)
             internal = scattered.values[..., dimension : 2 * dimension]
@@ -229,6 +250,40 @@ def multifield_step_detailed(
     velocity_before = jnp.where(grid_active[..., None], velocity_before, 0.0)
     grid_acceleration = jnp.where(grid_active[..., None], grid_acceleration, 0.0)
     velocity_trial = jnp.where(grid_active[..., None], velocity_trial, 0.0)
+    initial_loads = []
+    load_ok = jnp.asarray(True)
+    for field in range(field_count):
+        loads, _ = dynamics._boundary_load_results(
+            state, velocity_before[field], dt, arguments, storage_state, field_slot=field
+        )
+        initial_loads.append(loads)
+        if loads or dynamics.dashpots:
+            field_force = jnp.zeros_like(velocity_before[field])
+            for result in loads:
+                field_force = field_force + result.force
+                load_ok = (
+                    load_ok
+                    & result.successful
+                    & jnp.all(grid_active[field, ..., None] | (result.force == 0.0))
+                )
+            external_force = external_force.at[field].add(field_force)
+            safe_mass = jnp.where(grid_active[field], grid_mass[field], 1.0)
+            acceleration = jnp.where(
+                grid_active[field, ..., None], field_force / safe_mass[..., None], 0.0
+            )
+            forced = velocity_trial[field] + dt * acceleration
+            damped, damping_ok = dynamics._damped_velocity(
+                velocity_before[field],
+                forced,
+                grid_mass[field],
+                grid_active[field],
+                dt,
+                storage_state,
+                field_slot=field,
+            )
+            load_ok = load_ok & damping_ok
+            grid_acceleration = grid_acceleration.at[field].add(acceleration)
+            velocity_trial = velocity_trial.at[field].set(damped)
 
     rigid_results = []
     rigid_velocity = []
@@ -328,6 +383,12 @@ def multifield_step_detailed(
             boundary_results.append(result)
             boundary_velocity.append(result.velocity)
         grid_after = jnp.stack(tuple(boundary_velocity))
+    if dynamics.geometry.kind == "axisymmetric":
+        boundary_results = [
+            dynamics._axis_boundary(result, grid_mass[field], storage_state)
+            for field, result in enumerate(boundary_results)
+        ]
+        grid_after = jnp.stack(tuple(result.velocity for result in boundary_results))
 
     gathers = tuple(
         apply_velocity_transfer(
@@ -343,6 +404,7 @@ def multifield_step_detailed(
     )
     next_velocity = jnp.zeros_like(particle.velocity)
     next_gradient = jnp.zeros_like(particle.deformation_gradient)
+    kinematic_routes = execution_routes
     next_advection = jnp.zeros_like(particle.velocity)
     next_affine = jnp.zeros_like(particle.affine_velocity)
     gather_successful = jnp.asarray(True)
@@ -375,16 +437,19 @@ def multifield_step_detailed(
             trial_position = particle.position + dt * next_advection
             second_input = dynamics.splat.plan.assignment.update_input(
                 trial_position,
-                particle.deformation_gradient,
+                particle.deformation_gradient
+                if particle.physical_deformation_gradient is None
+                else particle.physical_deformation_gradient,
                 state.assignment_input,
             )
-            second_routes = dynamics.splat.build(
+            second_routes = dynamics._build_routes(
                 trial_position, assignment_input=second_input
             )
         second_execution_routes = dynamics._mapped_routes(second_routes, storage_state)
         second_masses = []
         second_momenta = []
         second_normalized = []
+        reflected_second_momenta = []
         second_route_digest = _route_digest(second_routes)
         for field in range(field_count):
             owned = active & (slots == field)
@@ -392,25 +457,30 @@ def multifield_step_detailed(
             mass_result = dynamics._deposit_content(
                 second_routes, storage_state, field_mass
             )
-            if (
+            affine_second = (
                 isinstance(
                     dynamics.method.schedule,
                     (AffineMUSLMPMSchedule, PostAdvectionMUSLMPMSchedule),
                 )
                 and dynamics.method.schedule.second_transfer_mode
                 == "apic-affine-momentum"
-            ):
+            )
+            if dynamics.geometry.kind == "axisymmetric" or affine_second:
                 payload = build_apic_route_payload(
                     second_execution_routes,
                     mass,
                     next_velocity,
-                    next_affine,
+                    next_affine if affine_second else jnp.zeros_like(next_affine),
                     particle.reference_volume,
                     jnp.zeros_like(particle.first_piola),
                     particle.deformation_gradient,
                     jnp.zeros_like(particle.velocity),
                     owned,
                 )
+                if dynamics.geometry.kind == "axisymmetric":
+                    reflected_second_momenta.append(
+                        compensated_sum(payload[..., :dimension], axis=(0, 1))
+                    )
                 momentum_result = dynamics._scatter_route_payload(
                     second_routes, storage_state, payload
                 )
@@ -512,6 +582,26 @@ def multifield_step_detailed(
                     second_constraint_work = second_constraint_work + boundary.work
                     second_successful = second_successful & boundary.successful
             second_after = jnp.stack(tuple(second_values))
+        if dynamics.geometry.kind == "axisymmetric":
+            regularity_results = tuple(
+                dynamics._axis_boundary(
+                    PrescribedGridVelocityResult(
+                        second_after[field],
+                        jnp.zeros((dimension,), dtype=second_after.dtype),
+                        jnp.zeros((), dtype=second_after.dtype),
+                        jnp.asarray(True),
+                    ),
+                    second_mass_grid[field],
+                    storage_state,
+                )
+                for field in range(field_count)
+            )
+            second_after = jnp.stack(
+                tuple(result.velocity for result in regularity_results)
+            )
+            second_constraint_work = second_constraint_work + compensated_sum(
+                jnp.stack(tuple(result.work for result in regularity_results))
+            )
         second_gradient = jnp.zeros_like(next_gradient)
         for field in range(field_count):
             owned = active & (slots == field)
@@ -536,6 +626,7 @@ def multifield_step_detailed(
                 & gathered.successful
             )
         next_gradient = second_gradient
+        kinematic_routes = second_execution_routes
         total_particle_mass = jnp.sum(jnp.where(active, mass, 0.0))
         total_second_mass = jnp.sum(second_mass_grid)
         second_mass_defect = jnp.abs(
@@ -545,6 +636,8 @@ def multifield_step_detailed(
             jnp.where(active[:, None], mass[:, None] * next_velocity, 0.0),
             axis=0,
         )
+        if dynamics.geometry.kind == "axisymmetric":
+            source_momentum = jnp.sum(jnp.stack(tuple(reflected_second_momenta)), axis=0)
         target_momentum = jnp.sum(
             jnp.stack(tuple(second_momenta)).reshape((-1, dimension)), axis=0
         )
@@ -554,8 +647,16 @@ def multifield_step_detailed(
         candidate_deformation = scheduled_deformation
         material = scheduled_material
     else:
-        candidate_deformation = update_deformation(
-            particle.deformation_gradient, next_gradient, dt
+        candidate_deformation = dynamics._update_deformation(
+            kinematic_routes,
+            particle.deformation_gradient,
+            next_gradient,
+            dt,
+            mass,
+            active,
+            field_slots=slots,
+            reference_volume=particle.reference_volume,
+            physical_deformation_gradient=particle.physical_deformation_gradient,
         )
         material = dynamics.material.evaluate(
             candidate_deformation,
@@ -566,13 +667,18 @@ def multifield_step_detailed(
             dt,
         )
     identity = jnp.broadcast_to(
-        jnp.eye(dimension, dtype=grid_mass.dtype), candidate_deformation.shape
+        jnp.eye(dynamics.constitutive_dimension, dtype=grid_mass.dtype),
+        candidate_deformation.shape,
     )
     determinant = solve_small_linear(
-        SmallLinearSolvePlan(dimension), candidate_deformation, identity
+        SmallLinearSolvePlan(dynamics.constitutive_dimension),
+        candidate_deformation,
+        identity,
     ).determinant
     material_ok = jnp.all((~active) | (material.successful & material.admissible))
     jacobian_ok = jnp.all((~active) | (jnp.isfinite(determinant) & (determinant > 0.0)))
+    if dynamics.geometry.kind == "axisymmetric":
+        jacobian_ok = jacobian_ok & jnp.all(~active | (candidate_position[:, 0] > 0.0))
     maximum_wave = jnp.max(
         jnp.where(active, particle.maximum_wave_speed, 0.0), initial=0.0
     )
@@ -636,8 +742,46 @@ def multifield_step_detailed(
         material.reference_energy_density,
         material.maximum_wave_speed,
         material.trial_state,
+        dynamics._update_physical_deformation(
+            particle.physical_deformation_gradient,
+            pre_gradient
+            if isinstance(dynamics.method.schedule, USFMPMSchedule)
+            else next_gradient,
+            dt,
+        ),
+    )
+    jacobian_ok = jacobian_ok & dynamics._physical_deformation_admissible(
+        candidate.physical_deformation_gradient, active
     )
     finite = tree_allfinite(candidate)
+    final_loads = []
+    final_dashpots = []
+    candidate_boundaries = list(state.boundary_states)
+    for field in range(field_count):
+        loads, damping = dynamics._final_boundary_load_results(
+            state,
+            velocity_before[field],
+            grid_after[field],
+            dt,
+            arguments,
+            storage_state,
+            initial_loads[field],
+            field_slot=field,
+            force_velocity=velocity_trial[field],
+        )
+        indices = tuple(
+            index
+            for index, load in enumerate(dynamics.boundary_loads)
+            if load.field_slot == field
+        )
+        for index, result in zip(indices, loads, strict=True):
+            candidate_boundaries[index] = result.candidate_state
+        for result in (*loads, *damping):
+            load_ok = load_ok & result.successful
+        final_loads.extend(loads)
+        final_dashpots.extend(damping)
+        for result in damping:
+            external_force = external_force.at[field].add(result.force)
     successful = (
         execution_routes.successful
         & (
@@ -646,6 +790,7 @@ def multifield_step_detailed(
             else storage_state.evidence.successful
         )
         & external_ok
+        & load_ok
         & gather_successful
         & schedule_pre_successful
         & second_successful
@@ -658,7 +803,11 @@ def multifield_step_detailed(
     )
     accepted_particle = tree_where(successful, candidate, particle)
     candidate_input = dynamics.splat.plan.assignment.update_input(
-        candidate_position, candidate_deformation, state.assignment_input
+        candidate_position,
+        candidate_deformation
+        if candidate.physical_deformation_gradient is None
+        else candidate.physical_deformation_gradient,
+        state.assignment_input,
     )
     accepted_input = tree_where(successful, candidate_input, state.assignment_input)
     accepted_storage = tree_where(successful, storage_state, state.storage_state)
@@ -697,6 +846,7 @@ def multifield_step_detailed(
         state.velocity_field_slots,
         accepted_storage,
         state.lifecycle_state,
+        tree_where(successful, tuple(candidate_boundaries), state.boundary_states),
     )
     candidate_state = MPMRuntimeState(
         candidate,
@@ -710,12 +860,15 @@ def multifield_step_detailed(
         state.velocity_field_slots,
         storage_state,
         state.lifecycle_state,
+        tuple(candidate_boundaries),
     )
     particle_mass = compensated_sum(jnp.where(active, mass, 0.0))
     target_mass = compensated_sum(grid_mass)
     particle_momentum = compensated_sum(
         jnp.where(active[:, None], mass[:, None] * particle.velocity, 0.0), axis=0
     )
+    if dynamics.geometry.kind == "axisymmetric":
+        particle_momentum = jnp.sum(jnp.stack(tuple(reflected_source_momenta)), axis=0)
     target_momentum = compensated_sum(grid_momentum.reshape((-1, dimension)), axis=0)
     aggregate_momentum = jnp.sum(grid_momentum, axis=0)
     aggregate_active = jnp.any(grid_active, axis=0)
@@ -733,7 +886,9 @@ def multifield_step_detailed(
         aggregate_active.reshape((-1,)),
     )
     angular_valid = jnp.asarray(
-        dimension > 1 and not any(dynamics.particle_domain.periodic)
+        dynamics.geometry.kind == "cartesian"
+        and dimension > 1
+        and not any(dynamics.particle_domain.periodic)
     )
     angular_defect = jnp.where(
         angular_valid, _relative(particle_angular, target_angular), 0.0
@@ -771,9 +926,19 @@ def multifield_step_detailed(
         particle.affine_velocity,
         routes.second_moments,
         active,
+        first_moment=routes.first_moments
+        if dynamics.geometry.kind == "axisymmetric"
+        else None,
     )
     particle_kinetic_after = apic_particle_kinetic_energy(
-        mass, next_velocity, next_affine, routes.second_moments, active
+        mass,
+        next_velocity,
+        next_affine,
+        routes.second_moments,
+        active,
+        first_moment=routes.first_moments
+        if dynamics.geometry.kind == "axisymmetric"
+        else None,
     )
     grid_kinetic_before = compensated_sum(
         0.5 * grid_mass * jnp.sum(velocity_before**2, axis=-1)
@@ -794,6 +959,8 @@ def multifield_step_detailed(
     boundary_work = compensated_sum(
         jnp.stack(tuple(result.work for result in boundary_results))
     )
+    for result in (*final_loads, *final_dashpots):
+        boundary_work = boundary_work + result.work
     rigid_work = compensated_sum(
         jnp.stack(tuple(result.work for result in rigid_results))
     )
@@ -843,6 +1010,8 @@ def multifield_step_detailed(
         jnp.max(jnp.where(active, determinant, 0.0)),
         material_ok,
         finite,
+        tuple(final_loads),
+        tuple(final_dashpots),
     )
     reasons = jnp.where(successful, 0, int(MPMRejectionReason.NONFINITE)).astype(
         jnp.int32

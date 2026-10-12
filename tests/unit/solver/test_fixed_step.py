@@ -293,11 +293,19 @@ def test_fixed_step_composes_accepted_step_transforms() -> None:
 def test_fixed_step_saves_and_atomically_freezes_structured_state() -> None:
     def step(step_index: Any, time: Any, state: Any, step_size: Any, args: Any) -> Any:
         del time, step_size, args
-        candidate = {
-            "position": state["position"] + 1.0,
-            "route": state["route"] + 1,
-            "active": ~state["active"],
-        }
+        candidate = eqx.tree_at(
+            lambda value: (
+                value.kinematics.position,
+                value.particle_history.pair_keys,
+                value.body_properties.population.active,
+            ),
+            state,
+            (
+                state.kinematics.position + 1.0,
+                state.particle_history.pair_keys + 1,
+                ~state.body_properties.population.active,
+            ),
+        )
         successful = step_index < 1
         accepted = jax.tree.map(
             lambda proposed, current: jnp.where(successful, proposed, current),
@@ -315,18 +323,46 @@ def test_fixed_step_saves_and_atomically_freezes_structured_state() -> None:
             jnp.zeros(()),
         )
 
-    initial = {
-        "position": jnp.asarray([0.0]),
-        "route": jnp.asarray([4], dtype=jnp.int32),
-        "active": jnp.asarray([True]),
-    }
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.asarray([0, 1], dtype=jnp.int64),
+        jnp.ones((2,), dtype=jnp.float64),
+        ambient_dimension=2,
+    ).prepare()
+    compiled = phx.equations.compile_discrete_element_problem(
+        phx.equations.DiscreteElementProblemIR(
+            "structured-test",
+            phx.equations.DEMMaterialTable(
+                jnp.asarray([1.0e5]),
+                jnp.asarray([0.25]),
+                jnp.asarray([[1.0]]),
+                jnp.asarray([[0.0]]),
+            ),
+            gravity=jnp.zeros((2,), dtype=jnp.float64),
+        ),
+        particles,
+        phx.discretization.RigidSphereSetPlan(
+            jnp.full((2,), 0.1, dtype=jnp.float64),
+            jnp.zeros((2,), dtype=jnp.int32),
+        ),
+        phx.discretization.CompliantDEMMethodPlan(
+            phx.discretization.DEMContactModelPlan(
+                phx.discretization.LinearSpringDashpotNormalPlan(1.0)
+            )
+        ),
+        neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(1),
+    )
+    initial = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [1.0, 0.0]]),
+        jnp.zeros((2, 2)),
+    )
     problem = phx.solver.FixedStepProblem(
         phx.solver.CallableFixedStepMethod(step, "structured-test-step"),
         initial,
         t0=0.0,
         t1=0.03,
         step_size=0.01,
-        state_geometry=phx.discretization.DEMStateGeometry("structured-test"),
+        state_geometry=compiled.dynamics.state_geometry,
     )
 
     solution = phx.solver.solve_fixed_step(problem)
@@ -334,11 +370,13 @@ def test_fixed_step_saves_and_atomically_freezes_structured_state() -> None:
     assert not solution.successful
     assert jnp.array_equal(solution.valid, jnp.asarray([True, True, False, False]))
     assert jnp.array_equal(
-        solution.states["position"][:, 0], jnp.asarray([0.0, 1.0, 1.0, 1.0])
+        solution.states.kinematics.position[:, 0, 0], jnp.asarray([0.0, 1.0, 1.0, 1.0])
     )
-    assert jnp.array_equal(solution.states["route"][:, 0], jnp.asarray([4, 5, 5, 5]))
     assert jnp.array_equal(
-        solution.states["active"][:, 0],
+        solution.states.particle_history.pair_keys[:, 0, 0], jnp.asarray([0, 1, 1, 1])
+    )
+    assert jnp.array_equal(
+        solution.states.body_properties.population.active[:, 0],
         jnp.asarray([True, False, False, False]),
     )
 

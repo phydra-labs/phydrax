@@ -3127,7 +3127,7 @@ def _g21_dem_vjp(*, drift_on_replay: Any) -> Any:
         phx.discretization.RigidSphereSetPlan(
             jnp.asarray([0.5, 0.5]), jnp.asarray([0, 0])
         ),
-        phx.discretization.SoftSphereDEMMethodPlan(
+        phx.discretization.CompliantDEMMethodPlan(
             phx.discretization.DEMContactModelPlan(
                 phx.discretization.LinearSpringDashpotNormalPlan(1.0e4)
             )

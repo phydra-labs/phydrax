@@ -948,6 +948,13 @@ class PreparedTriangularShell(StrictModule, NonTrainableState):
             jnp.where(valid, feature_margin, jnp.inf),
             successful,
             f"shell-self-contact/{self.prepared_id}",
+            left_owner_index=pairs[:, 0],
+            right_owner_index=pairs[:, 1],
+            normal_gradient=jnp.where(mask_vector, normal, zero_vector),
+            surface_area_weight=jnp.ones_like(gap),
+            curvature_valid=valid & (effective_radius > 0.0),
+            certificate_margin=jnp.where(valid, feature_margin, jnp.inf),
+            residual=jnp.zeros_like(gap),
         )
 
     def evaluate(

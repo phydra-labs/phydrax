@@ -70,6 +70,39 @@ def _unit_source_envelope(time: Array, args: object) -> Array:
     return jnp.ones_like(time)
 
 
+def test_matrix_constitutive_material_preserves_isotropic_maps_and_evidence() -> None:
+    bridge = _bridge((2, 2))
+    layout = phx.solver.maxwell.MaxwellCochainLayout(bridge, "tez")
+    electric_matrix = 2.0 * jnp.eye(layout.electric_count, dtype=jnp.float64)
+    magnetic_matrix = 3.0 * jnp.eye(layout.magnetic_count, dtype=jnp.float64)
+    material = phx.solver.maxwell.MatrixMaxwellConstitutivePlan(
+        electric_matrix, magnetic_matrix
+    ).prepare(bridge, layout)
+    electric = jnp.arange(layout.electric_count, dtype=jnp.float64)
+    magnetic = jnp.arange(layout.magnetic_count, dtype=jnp.float64)
+
+    @jax.jit
+    def round_trip(electric: Array, magnetic: Array) -> tuple[Array, Array]:
+        return (
+            material.electric_field(material.electric_displacement(electric, None), None),
+            material.magnetic_field(material.magnetic_flux(magnetic, None), None),
+        )
+
+    restored = round_trip(electric, magnetic)
+    np.testing.assert_allclose(restored[0], electric, atol=2e-12)
+    np.testing.assert_allclose(restored[1], magnetic, atol=2e-12)
+    np.testing.assert_allclose(material.evidence.electric_minimum_eigenvalue, 2.0)
+    np.testing.assert_allclose(material.evidence.magnetic_minimum_eigenvalue, 3.0)
+    np.testing.assert_allclose(material.evidence.electric_condition_number, 1.0)
+    np.testing.assert_allclose(material.evidence.magnetic_condition_number, 1.0)
+
+    invalid = electric_matrix.at[0, 0].set(-1.0)
+    with pytest.raises(ValueError, match="constitutive map is not positive definite"):
+        phx.solver.maxwell.MatrixMaxwellConstitutivePlan(
+            invalid, magnetic_matrix
+        ).prepare(bridge, layout)
+
+
 def test_maxwell_platform_scenario_1() -> None:
     bridge = _bridge((2, 2, 2))
     with pytest.raises(ValueError, match="resource budget"):

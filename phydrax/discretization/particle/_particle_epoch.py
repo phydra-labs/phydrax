@@ -18,7 +18,12 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleSetPlan
-from ._dem import DEMResolvedLoad, DEMRuntimeState, PreparedSoftSphereDEMDynamics
+from ._dem import (
+    CompliantDEMBodyProperties,
+    DEMResolvedLoad,
+    DEMRuntimeState,
+    PreparedCompliantDEMDynamics,
+)
 from ._dem_contact_state import DEMContactHistory, remap_dem_contact_history
 from ._dem_liquid import DEMLiquidState
 from ._neighborhood import AbstractParticleNeighborhoodPlan, DenseParticleNeighborhoodPlan
@@ -28,9 +33,9 @@ from ._pair_state import (
     particle_wall_interaction_keys,
     ParticlePairKeySpace,
 )
-from ._particle_morphology import ParticleDynamicBodyProperties
 from ._population import _NO_IDENTITY_WORD, ParticlePopulationState
-from ._rigid_sphere import RigidSphereKinematics, RigidSphereSetPlan
+from ._rigid_body import RigidBodyKinematics
+from ._rigid_sphere import PreparedRigidSphereSet, RigidSphereSetPlan
 from ._verlet import PreparedVerletParticleNeighborhood, VerletParticleNeighborhoodPlan
 
 
@@ -129,7 +134,7 @@ class ParticleCapacityRequest(StrictModule, NonTrainableState):
 
 
 class ParticleExecutionEpoch(StrictModule):
-    dynamics: PreparedSoftSphereDEMDynamics
+    dynamics: PreparedCompliantDEMDynamics
     state: DEMRuntimeState
     ever_occupied: Array
     retired: Array
@@ -151,12 +156,12 @@ class ParticleEpochTransition(StrictModule):
 
 
 def initialize_particle_execution_epoch(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     state: DEMRuntimeState,
     /,
 ) -> ParticleExecutionEpoch:
-    if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-        raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+    if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+        raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
     if not isinstance(state, DEMRuntimeState):
         raise TypeError("state must be DEMRuntimeState.")
     capacity = dynamics.bodies.capacity
@@ -218,7 +223,7 @@ def _pad(array: Array, capacity: int, fill: Any = 0, /) -> Array:
     return jnp.concatenate((array, padding), axis=0)
 
 
-def _zero_resolved_load(dynamics: PreparedSoftSphereDEMDynamics, /) -> DEMResolvedLoad:
+def _zero_resolved_load(dynamics: PreparedCompliantDEMDynamics, /) -> DEMResolvedLoad:
     zero = dynamics._zero_load()
     return DEMResolvedLoad(
         zero,
@@ -281,6 +286,9 @@ def grow_particle_execution_epoch(
     if not isinstance(request, ParticleCapacityRequest):
         raise TypeError("request must be ParticleCapacityRequest.")
     old_dynamics = epoch.dynamics
+    old_shapes = old_dynamics.shapes
+    if not isinstance(old_shapes, PreparedRigidSphereSet):
+        raise ValueError("Particle capacity growth requires sphere contact shapes.")
     old_state = epoch.state
     old_capacity = old_dynamics.bodies.capacity
     available = int(np.count_nonzero(~np.asarray(epoch.ever_occupied)))
@@ -328,10 +336,9 @@ def grow_particle_execution_epoch(
         active_mask=jnp.ones((target,), dtype=jnp.bool_),
         coordinate_dtype=old_dynamics.bodies.particles.plan.coordinate_dtype,
     ).prepare(numeric_version=str(int(np.asarray(epoch.epoch_index)) + 1))
-    old_body_plan = old_dynamics.bodies.plan
-    static_radii = jnp.where(
-        old_state.body_properties.radii > 0.0, old_state.body_properties.radii, 1.0
-    )
+    old_body_plan = old_shapes.plan
+    physical_radii = old_shapes.radii * old_state.body_properties.shape_scale
+    static_radii = jnp.where(physical_radii > 0.0, physical_radii, 1.0)
     body_plan = RigidSphereSetPlan(
         _pad(static_radii, target, 1.0),
         _pad(old_body_plan.material_ids, target, 0),
@@ -340,7 +347,7 @@ def grow_particle_execution_epoch(
     bodies = body_plan.prepare(particles)
     neighborhood_plan = _grown_neighborhood_plan(old_dynamics.neighborhood.plan, target)
     neighborhood = neighborhood_plan.prepare(particles)
-    new_dynamics = PreparedSoftSphereDEMDynamics(
+    new_dynamics = PreparedCompliantDEMDynamics(
         bodies,
         neighborhood,
         ParticlePairKeySpace(particles),
@@ -374,12 +381,18 @@ def grow_particle_execution_epoch(
         old_population.next_id_hi,
         old_population.next_id_lo,
     )
-    properties = ParticleDynamicBodyProperties(
+    inertia_com = _pad(old_state.body_properties.inertia_com, target, 1.0)
+    if old_dynamics.bodies.ambient_dimension == 3:
+        inertia_com = inertia_com.at[old_capacity:].set(
+            jnp.eye(3, dtype=inertia_com.dtype)
+        )
+    properties = CompliantDEMBodyProperties(
         population,
         _pad(old_state.body_properties.inverse_masses, target, 0.0),
-        _pad(old_state.body_properties.radii, target, 0.0),
-        _pad(old_state.body_properties.inertias, target, 1.0),
-        _pad(old_state.body_properties.inverse_inertias, target, 0.0),
+        _pad(jnp.where(old_state.body_properties.active, 1.0, 0.0), target, 0.0),
+        inertia_com,
+        _pad(old_state.body_properties.inverse_inertia_com, target, 0.0),
+        new_dynamics.shapes.shape_id,
     )
     neighborhood_state = new_dynamics.neighborhood.build(position, active_mask=active)
     new_keys = new_dynamics.pair_key_space.keys(neighborhood_state.pair_relation)
@@ -429,8 +442,11 @@ def grow_particle_execution_epoch(
             old_state.liquid.successful,
         )
     )
+    orientation = _pad(old_state.kinematics.orientation, target, 0.0)
+    if new_dynamics.bodies.ambient_dimension == 3:
+        orientation = orientation.at[old_capacity:, 0].set(1.0)
     staged = DEMRuntimeState(
-        RigidSphereKinematics(position, velocity, angular),
+        RigidBodyKinematics(position, velocity, orientation, angular),
         properties,
         particle_history,
         tuple(boundary_histories),

@@ -552,6 +552,27 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+- **Geomechanics MPM**: canonical multiplicative plasticity, MCC, NorSand,
+  prestress, B-bar/F-bar stabilization, axisymmetry, loads, and absorbing dashpots.
+  See [Constitutive extensions](guides_mpm_constitutive_extensions.md) and
+  [Material point method](guides_material_point_method.md).
+- **Granular rheology**: differentiable partially regularized μ(I), dense
+  viscous FLIP, and elastic–viscoplastic MPM with disconnection evidence.
+  See [μ(I) rheology](guides_mu_i_granular_rheology.md) and [Rheology API](api/rheology.md).
+- **Compliant grains and fluids**: unified shape-aware DEM, certified level-set
+  contact, packing, MPM–grain balance, interphase drag, and volume-fraction coupling.
+  See [Level-set DEM](guides_level_set_dem.md), [CFD–DEM](guides_cfd_dem.md),
+  and [Immersed boundaries](guides_immersed_boundary.md).
+- **Saturated double-point MPM**: solid/fluid motion, implicit drag, mixed pressure
+  projection, and atomic rollback. See [Double-point MPM](guides_mpm_double_point.md).
+- **Monolithic contact**: FEM/MPM/IGA/rod and affine-body participants, matrix-free
+  Newton–GMRES, CCD safety, and sensitivities.
+  See [Monolithic implicit contact](guides_monolithic_contact.md).
+- **Candidate qualification**: bounded reference campaigns and solver evidence
+  with explicit gaps, not production approval.
+  See [Geomechanics qualification](guides_geomechanics_qualification.md).
+
+
 Native partitioned multiphysics coupling compiles exact participant ports and
 forward/paired-adjoint `FieldTransfer` exchanges into deterministic graph stages.
 Explicit Jacobi/Gauss–Seidel sweeps remain distinct from physically certified

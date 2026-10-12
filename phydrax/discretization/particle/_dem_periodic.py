@@ -24,7 +24,7 @@ from ._pairwise import particle_pair_geometry
 
 
 if TYPE_CHECKING:
-    from ._dem import DEMEvaluation, DEMRuntimeState, PreparedSoftSphereDEMDynamics
+    from ._dem import DEMEvaluation, DEMRuntimeState, PreparedCompliantDEMDynamics
 
 
 class DEMPeriodicCellState(StrictModule):
@@ -547,11 +547,13 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
 
 
 def dem_bulk_stress(
-    dynamics: PreparedSoftSphereDEMDynamics,
+    dynamics: PreparedCompliantDEMDynamics,
     state: DEMRuntimeState,
     evaluation: DEMEvaluation,
     /,
 ) -> DEMBulkStress:
+    if dynamics.shapes.shape_kind != "sphere":
+        raise ValueError("Periodic DEM bulk stress requires sphere contact shapes.")
     cell_state = state.periodic_cell
     if cell_state is None:
         raise ValueError("DEM state has no deforming periodic cell.")

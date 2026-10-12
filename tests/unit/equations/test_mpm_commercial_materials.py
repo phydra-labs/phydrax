@@ -10,7 +10,7 @@ import numpy as np
 import phydrax as phx
 
 
-def test_mpm_commercial_materials_scenario_1() -> None:
+def test_oriented_general_plane_stress_response_and_tangent() -> None:
     rotation = phx.applications.solid_mechanics.MPMMaterialOrientation(
         jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     )
@@ -37,72 +37,10 @@ def test_mpm_commercial_materials_scenario_1() -> None:
     assert jnp.linalg.norm(response.diagnostics["plane_stress_residual"][0]) < 1e-9
     assert response.diagnostics["transverse_director"][0, 2] > 0.0
     assert bool(linearized.tangent_successful[0])
-    deformation = jnp.asarray([[[1.0, 0.16, 0.0], [0.0, 0.92, 0.0], [0.0, 0.0, 1.08]]])
-    density = jnp.asarray((1.0,))
-    dp = phx.applications.solid_mechanics.DruckerPragerMPMConstitutivePlan()
-    dp_parameters = phx.applications.solid_mechanics.DruckerPragerParameters(
-        10.0, 30.0, 0.05, 0.5, 0.2, 1.0
-    )
-    dp_response = dp.evaluate(
-        deformation,
-        dp.initialize_state((1,), jnp.float64),
-        density,
-        dp_parameters,
-        0.0,
-        0.01,
-    )
-    assert bool(dp_response.successful[0])
-    assert dp_response.dissipation_increment[0] >= 0.0
-    assert jnp.isfinite(dp_response.diagnostics["yield_residual"][0])
-    assert jnp.isfinite(
-        dp.evaluate_linearized(
-            deformation,
-            dp.initialize_state((1,), jnp.float64),
-            density,
-            dp_parameters,
-            0.0,
-            0.01,
-        ).algorithmic_tangent
-    ).all()
 
-    mc = phx.applications.solid_mechanics.MohrCoulombMPMConstitutivePlan()
-    mc_parameters = phx.applications.solid_mechanics.MohrCoulombParameters(
-        10.0, 30.0, 0.05, 0.6, 0.1, 1.0
-    )
-    mc_response = mc.evaluate(
-        deformation,
-        mc.initialize_state((1,), jnp.float64),
-        density,
-        mc_parameters,
-        0.0,
-        0.01,
-    )
-    assert bool(mc_response.successful[0])
-    assert int(mc_response.branch_code[0]) in (0, 1, 2, 3)
-    assert mc_response.dissipation_increment[0] >= 0.0
-    material = phx.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan(
-        initial_preconsolidation_pressure=2.0,
-        initial_void_ratio=0.8,
-    )
-    parameters = phx.applications.solid_mechanics.ModifiedCamClayParameters(
-        8.0, 25.0, 1.2, 0.5
-    )
-    deformation = jnp.asarray([[[0.98, 0.0, 0.0], [0.0, 0.98, 0.0], [0.0, 0.0, 0.98]]])
-    response = material.evaluate(
-        deformation,
-        material.initialize_state((1,), jnp.float64),
-        jnp.asarray((1.0,)),
-        parameters,
-        0.0,
-        0.01,
-    )
-    assert bool(response.successful[0])
-    assert response.diagnostics["preconsolidation_pressure"][0] > 0.0
-    assert response.diagnostics["void_ratio"][0] > 0.0
 
-    softening = phx.applications.solid_mechanics.NonlocalSofteningPlan(
-        0.05, viscosity=0.01
-    )
+def test_nonlocal_softening_regularizes_history() -> None:
+    softening = phx.applications.solid_mechanics.NonlocalSofteningPlan(viscosity=0.01)
     regularized = softening.regularize(
         jnp.asarray((1.0, 2.0)), jnp.asarray((1.5, 1.5)), 0.01
     )

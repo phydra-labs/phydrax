@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from math import pi
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -21,7 +20,8 @@ from .._trainable import NonTrainableState
 from ..typing import checked
 from ._measure import DiscreteMeasure
 from .particle._core import ParticleDiscretization, ParticleSetPlan
-from .particle._pairwise import particle_pair_geometry, ParticlePairRelation
+from .particle._pairwise import ParticlePairRelation
+from .particle._rigid_contact import RigidContactGeometry
 from .splatting import ParticleGridSplatPlan, PreparedParticleGridSplat
 
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from .particle._dem import (
         DEMEvaluation,
         DEMRuntimeState,
-        PreparedSoftSphereDEMDynamics,
+        PreparedCompliantDEMDynamics,
     )
 
 
@@ -169,7 +169,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         masses: ArrayLike,
         particle_volumes: ArrayLike,
         active_mask: ArrayLike,
-        pair_relation: ParticlePairRelation,
+        pair_relation: ParticlePairRelation | RigidContactGeometry,
         pair_displacement: ArrayLike,
         pair_force: ArrayLike,
         pair_active: ArrayLike,
@@ -194,15 +194,14 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             )
         if active.shape != mass.shape:
             raise ValueError("active_mask must have particle-capacity shape.")
-        if pair_relation.capacity != self.pair_capacity:
+        route_valid = pair_relation.valid
+        if route_valid.shape != (self.pair_capacity,):
             raise ValueError(
-                "Pair relation capacity does not match coarse-graining preparation."
+                "Contact route capacity does not match coarse-graining preparation."
             )
         displacement = jnp.asarray(pair_displacement, dtype=position.dtype)
         force = jnp.asarray(pair_force, dtype=position.dtype)
-        interaction_active = (
-            jnp.asarray(pair_active, dtype=jnp.bool_) & pair_relation.valid
-        )
+        interaction_active = jnp.asarray(pair_active, dtype=jnp.bool_) & route_valid
         pair_shape = (self.pair_capacity, self.ambient_dimension)
         if displacement.shape != pair_shape or force.shape != pair_shape:
             raise ValueError(f"Pair displacement and force must have shape {pair_shape}.")
@@ -248,7 +247,11 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             momentum[:, None, :] * constituents[:, :, None],
         )
 
-        right = pair_relation.right_indices
+        right = (
+            pair_relation.right_owner_index
+            if isinstance(pair_relation, RigidContactGeometry)
+            else pair_relation.right_indices
+        )
         segment_origin = position[right]
         nodes = self.quadrature_nodes.astype(position.dtype)
         weights = self.quadrature_weights.astype(position.dtype)
@@ -355,7 +358,7 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
 
     def evaluate_dem(
         self,
-        dynamics: PreparedSoftSphereDEMDynamics,
+        dynamics: PreparedCompliantDEMDynamics,
         state: DEMRuntimeState,
         evaluation: DEMEvaluation,
         /,
@@ -363,27 +366,19 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
         from .particle._dem import (
             DEMEvaluation,
             DEMRuntimeState,
-            PreparedSoftSphereDEMDynamics,
+            PreparedCompliantDEMDynamics,
         )
 
-        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
-            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+        if not isinstance(dynamics, PreparedCompliantDEMDynamics):
+            raise TypeError("dynamics must be PreparedCompliantDEMDynamics.")
         if not isinstance(state, DEMRuntimeState):
             raise TypeError("state must be DEMRuntimeState.")
         if not isinstance(evaluation, DEMEvaluation):
             raise TypeError("evaluation must be DEMEvaluation.")
-        pairs = evaluation.neighborhood.pair_relation
-        geometry = particle_pair_geometry(
-            state.kinematics.position,
-            pairs,
-            box=evaluation.neighborhood.box,
-            cell_vectors=(
-                None if state.periodic_cell is None else state.periodic_cell.vectors
-            ),
-        )
-        radii = state.body_properties.radii
+        geometry = evaluation.geometry.geometry
         particle_volume = (
-            pi * radii**2 if self.ambient_dimension == 2 else (4.0 * pi / 3.0) * radii**3
+            dynamics.shapes.volumes
+            * state.body_properties.shape_scale**self.ambient_dimension
         )
         noncontact_force = (
             evaluation.loads.total.force - evaluation.loads.particle_contact.force
@@ -394,8 +389,8 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             state.body_properties.masses,
             particle_volume,
             state.body_properties.active,
-            pairs,
-            geometry.displacement,
+            geometry,
+            geometry.right_owner_arm - geometry.left_owner_arm,
             evaluation.particle_contact.pair_force,
             evaluation.particle_contact.active,
             external_force=noncontact_force,

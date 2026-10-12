@@ -359,7 +359,7 @@ class _BallKernel(GeometryKernel):
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, radius = self._parameters(state)
-        return _finite_norm(points_ - center) - radius
+        return _finite_norm(points_ - jnp.broadcast_to(center, points_.shape)) - radius
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
@@ -367,7 +367,7 @@ class _BallKernel(GeometryKernel):
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, _ = self._parameters(state)
-        direction = points_ - center
+        direction = points_ - jnp.broadcast_to(center, points_.shape)
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 

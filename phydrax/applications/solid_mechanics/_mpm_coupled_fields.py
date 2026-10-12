@@ -18,6 +18,49 @@ import phydrax.linalg as la
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg._small_batched import SmallLinearSolvePlan, solve_small_linear
+
+
+def effective_pore_pressure_first_piola(
+    deformation_gradient: ArrayLike,
+    pore_pressure: ArrayLike,
+    biot_coefficient: ArrayLike,
+    /,
+) -> Array:
+    """Return total-stress increment ``-alpha J p F^-T`` (tension-positive).
+
+    Leading pressure/coefficient axes broadcast to the deformation batch. A
+    failed native solve or nonpositive Jacobian returns nonfinite stress, so the
+    MPM attempt rejects it rather than committing a repaired deformation.
+    """
+    deformation = jnp.asarray(deformation_gradient)
+    if not jnp.issubdtype(deformation.dtype, jnp.inexact):
+        deformation = deformation.astype(jnp.float64)
+    if (
+        deformation.ndim < 2
+        or deformation.shape[-1] != deformation.shape[-2]
+        or deformation.shape[-1] not in (1, 2, 3)
+    ):
+        raise ValueError(
+            "Pore-pressure stress requires square 1D, 2D, or 3D deformation."
+        )
+    pressure = jnp.asarray(pore_pressure, dtype=deformation.dtype)
+    coefficient = jnp.asarray(biot_coefficient, dtype=deformation.dtype)
+    scale = jnp.broadcast_to(-coefficient * pressure, deformation.shape[:-2])
+    right_hand_side = scale[..., None, None] * jnp.broadcast_to(
+        jnp.eye(deformation.shape[-1], dtype=deformation.dtype), deformation.shape
+    )
+    result = solve_small_linear(
+        SmallLinearSolvePlan(deformation.shape[-1]),
+        jnp.swapaxes(deformation, -1, -2),
+        right_hand_side,
+    )
+    valid = result.successful & (result.determinant > 0.0) & jnp.isfinite(scale)
+    return jnp.where(
+        valid[..., None, None],
+        result.determinant[..., None, None] * result.value,
+        jnp.asarray(jnp.nan, dtype=deformation.dtype),
+    )
 
 
 class MPMFieldRole(IntEnum):
@@ -423,6 +466,7 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
 
 __all__ = [
     "BiotPoromechanicsParameters",
+    "effective_pore_pressure_first_piola",
     "MPMCoupledBoundaryPlan",
     "MPMCoupledFieldState",
     "MPMCoupledLinearization",

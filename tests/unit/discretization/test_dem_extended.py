@@ -48,7 +48,7 @@ def _compile(
         tangential=tangential,
         rotational=rotational,
     )
-    method = phx.discretization.SoftSphereDEMMethodPlan(
+    method = phx.discretization.CompliantDEMMethodPlan(
         contact, maximum_overlap_fraction=maximum_overlap
     )
     problem = phx.equations.DiscreteElementProblemIR(

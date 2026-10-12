@@ -41,6 +41,11 @@ class FLIPMethodPlan(StrictModule, NonTrainableState):
     liquid_fraction_threshold: float = eqx.field(static=True)
     extrapolation_layers: int = eqx.field(static=True)
     cfl_fraction: float = eqx.field(static=True)
+    viscous_tolerance: float = eqx.field(static=True)
+    maximum_picard_iterations: int = eqx.field(static=True)
+    maximum_viscous_linear_iterations: int = eqx.field(static=True)
+    picard_damping: float = eqx.field(static=True)
+    resource_policy: FLIPResourcePolicy
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -51,6 +56,11 @@ class FLIPMethodPlan(StrictModule, NonTrainableState):
         liquid_fraction_threshold: float = 0.05,
         extrapolation_layers: int = 3,
         cfl_fraction: float = 0.5,
+        viscous_tolerance: float = 1.0e-7,
+        maximum_picard_iterations: int = 50,
+        maximum_viscous_linear_iterations: int = 500,
+        picard_damping: float = 1.0,
+        resource_policy: FLIPResourcePolicy | None = None,
     ) -> None:
         pic = float(pic_fraction)
         threshold = float(liquid_fraction_threshold)
@@ -64,6 +74,22 @@ class FLIPMethodPlan(StrictModule, NonTrainableState):
             raise ValueError("extrapolation_layers must be nonnegative.")
         if not np.isfinite(cfl) or cfl <= 0.0:
             raise ValueError("cfl_fraction must be positive and finite.")
+        tolerance = float(viscous_tolerance)
+        picard = int(maximum_picard_iterations)
+        linear = int(maximum_viscous_linear_iterations)
+        damping = float(picard_damping)
+        if not np.isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("viscous_tolerance must be positive and finite.")
+        if picard <= 0 or linear <= 0:
+            raise ValueError("Viscous iteration bounds must be positive.")
+        if not np.isfinite(damping) or not 0.0 < damping <= 1.0:
+            raise ValueError("picard_damping must lie in (0,1].")
+        policy = FLIPResourcePolicy() if resource_policy is None else resource_policy
+        self.viscous_tolerance = tolerance
+        self.maximum_picard_iterations = picard
+        self.maximum_viscous_linear_iterations = linear
+        self.picard_damping = damping
+        self.resource_policy = policy
         self.pic_fraction = pic
         self.liquid_fraction_threshold = threshold
         self.extrapolation_layers = layers
@@ -75,6 +101,11 @@ class FLIPMethodPlan(StrictModule, NonTrainableState):
                 "liquid_fraction_threshold": threshold,
                 "extrapolation_layers": layers,
                 "cfl_fraction": cfl,
+                "viscous_tolerance": tolerance,
+                "maximum_picard_iterations": picard,
+                "maximum_viscous_linear_iterations": linear,
+                "picard_damping": damping,
+                "resource_policy": policy.policy_id,
             }
         )
 

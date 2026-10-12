@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, final, Literal
 
 import equinox as eqx
 import jax
@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import checked
+from ...typing import checked, parse
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
     evaluate_dem_cohesion,
@@ -35,6 +35,9 @@ from ._pair_state import INTERACTION_KEY_WIDTH
 from ._rigid_sphere import sphere_lever_torque
 
 
+type ContactMeasureKind = Literal["point_force", "surface_area"]
+
+
 class DEMContactBatch(StrictModule):
     """Contact geometry and kinematics aligned to one fixed-capacity route batch."""
 
@@ -49,6 +52,49 @@ class DEMContactBatch(StrictModule):
     left_angular_velocity: Array
     right_angular_velocity: Array
     valid: Array
+    normal_gradient: Array
+    surface_area_weight: Array
+    measure_kind: ContactMeasureKind = eqx.field(static=True)
+    normal_moment: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        normal: Array,
+        gap: Array,
+        overlap: Array,
+        effective_radius: Array,
+        left_arm: Array,
+        right_arm: Array,
+        normal_velocity: Array,
+        tangential_velocity: Array,
+        left_angular_velocity: Array,
+        right_angular_velocity: Array,
+        valid: Array,
+        *,
+        normal_gradient: Array | None = None,
+        surface_area_weight: Array | None = None,
+        measure_kind: ContactMeasureKind = "point_force",
+        normal_moment: bool = True,
+    ) -> None:
+        if not isinstance(normal_moment, bool):
+            raise TypeError("normal_moment must be a bool.")
+        self.normal = normal
+        self.gap = gap
+        self.overlap = overlap
+        self.effective_radius = effective_radius
+        self.left_arm = left_arm
+        self.right_arm = right_arm
+        self.normal_velocity = normal_velocity
+        self.tangential_velocity = tangential_velocity
+        self.left_angular_velocity = left_angular_velocity
+        self.right_angular_velocity = right_angular_velocity
+        self.valid = valid
+        self.normal_gradient = normal if normal_gradient is None else normal_gradient
+        self.surface_area_weight = (
+            jnp.ones_like(gap) if surface_area_weight is None else surface_area_weight
+        )
+        self.measure_kind = parse(measure_kind, ContactMeasureKind, "measure_kind")
+        self.normal_moment = normal_moment
 
 
 class DEMNormalResponse(StrictModule):
@@ -292,6 +338,129 @@ class LinearSpringDashpotNormalPlan(AbstractDEMNormalContactPlan):
             jnp.where(active, batch.overlap, 0.0),
             active,
             finite,
+        )
+
+
+@final
+class LevelSetPenaltyNormalPlan(AbstractDEMNormalContactPlan):
+    """Surface energy density Ψ = k_A δ²/2; k_A has units N/m³.
+
+    Damping c_A has units N·s/m³. Physical area weights integrate both;
+    the conservative force uses the raw field gradient, not its unit normal.
+    """
+
+    stiffness_per_area: Array
+    damping_per_area: Array
+    normal_law_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        stiffness_per_area: ArrayLike,
+        /,
+        *,
+        damping_per_area: ArrayLike = 0.0,
+        normal_law_id: str | None = None,
+    ) -> None:
+        stiffness = np.asarray(stiffness_per_area, dtype=np.float64)
+        damping = np.asarray(damping_per_area, dtype=np.float64)
+        for values, positive in ((stiffness, True), (damping, False)):
+            if values.ndim not in (0, 2) or (
+                values.ndim == 2
+                and (
+                    values.shape[0] != values.shape[1]
+                    or not np.array_equal(values, values.T)
+                )
+            ):
+                raise ValueError(
+                    "Per-area coefficients must be scalar or symmetric square tables."
+                )
+            if np.any(~np.isfinite(values)) or np.any(
+                values <= 0.0 if positive else values < 0.0
+            ):
+                raise ValueError(
+                    "Per-area stiffness must be positive and damping nonnegative."
+                )
+        self.stiffness_per_area = jnp.asarray(stiffness)
+        self.damping_per_area = jnp.asarray(damping)
+        generated = canonical_fingerprint(
+            {
+                "kind": "level-set-penalty-normal",
+                "coefficients": array_tree_fingerprint(
+                    {"stiffness": stiffness, "damping": damping}
+                ),
+            }
+        )
+        self.normal_law_id = generated if normal_law_id is None else normal_law_id
+        if not self.normal_law_id:
+            raise ValueError("normal_law_id must be nonempty.")
+
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        previous_history: DEMContactHistory,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
+        /,
+    ) -> DEMNormalResponse:
+        del previous_history, left_radius, right_radius
+        if batch.measure_kind != "surface_area":
+            raise ValueError(
+                "Level-set penalty requires physical surface-area contact measures."
+            )
+        stiffness = (
+            _pair_parameter(
+                self.stiffness_per_area,
+                left_material,
+                right_material,
+                materials.material_count,
+            ).astype(batch.gap.dtype)
+            * batch.surface_area_weight
+        )
+        damping = (
+            _pair_parameter(
+                self.damping_per_area,
+                left_material,
+                right_material,
+                materials.material_count,
+            ).astype(batch.gap.dtype)
+            * batch.surface_area_weight
+        )
+        active = (
+            batch.valid
+            & (batch.overlap > 0.0)
+            & (left_inverse_mass + right_inverse_mass > 0.0)
+        )
+        norm = _safe_vector_norm(batch.normal_gradient)
+        trial = stiffness * batch.overlap * norm - damping * batch.normal_velocity
+        force = jnp.where(active, jnp.maximum(trial, 0.0), 0.0)
+        energy = jnp.where(active, 0.5 * stiffness * batch.overlap**2, 0.0)
+        loss = jnp.where(active, damping * batch.normal_velocity**2 * step_size, 0.0)
+        successful = (
+            jnp.all(jnp.isfinite(force))
+            & jnp.all(jnp.isfinite(energy))
+            & jnp.all(~batch.valid | (batch.surface_area_weight > 0.0))
+        )
+        zeros = jnp.zeros_like(force)
+        return DEMNormalResponse(
+            force,
+            force,
+            stiffness,
+            damping,
+            jnp.abs(trial),
+            energy,
+            loss,
+            zeros,
+            zeros,
+            zeros,
+            jnp.where(active, batch.overlap, 0.0),
+            active,
+            successful,
         )
 
 
@@ -673,6 +842,76 @@ class CundallStrackTangentialPlan(AbstractDEMTangentialContactPlan):
         )
 
 
+@final
+class LevelSetTangentialContactPlan(AbstractDEMTangentialContactPlan):
+    """Cundall–Strack history with explicit per-area stiffness and damping."""
+
+    stiffness_per_area: Array
+    damping_per_area: Array
+    tangential_law_id: str = eqx.field(static=True)
+
+    def __init__(
+        self, stiffness_per_area: ArrayLike, /, *, damping_per_area: ArrayLike = 0.0
+    ) -> None:
+        coefficients = LevelSetPenaltyNormalPlan(
+            stiffness_per_area, damping_per_area=damping_per_area
+        )
+        self.stiffness_per_area = coefficients.stiffness_per_area
+        self.damping_per_area = coefficients.damping_per_area
+        self.tangential_law_id = canonical_fingerprint(
+            {
+                "kind": "level-set-area-tangential",
+                "coefficients": coefficients.normal_law_id,
+            }
+        )
+
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        transported_displacement: Array,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
+        /,
+    ) -> DEMTangentialResponse:
+        del left_inverse_mass, right_inverse_mass, left_radius, right_radius
+        if batch.measure_kind != "surface_area":
+            raise ValueError("Per-area tangential law requires surface-area measures.")
+        stiffness = (
+            _pair_parameter(
+                self.stiffness_per_area,
+                left_material,
+                right_material,
+                materials.material_count,
+            ).astype(batch.gap.dtype)
+            * batch.surface_area_weight
+        )
+        damping = (
+            _pair_parameter(
+                self.damping_per_area,
+                left_material,
+                right_material,
+                materials.material_count,
+            ).astype(batch.gap.dtype)
+            * batch.surface_area_weight
+        )
+        return _tangential_response(
+            batch,
+            normal,
+            transported_displacement,
+            stiffness,
+            damping,
+            materials.pair_friction(left_material, right_material),
+            step_size,
+        )
+
+
 class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
     tangential_law_id: str = eqx.field(static=True)
 
@@ -855,6 +1094,18 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError(
                 "rotational must be an AbstractDEMRotationalContactPlan or None."
+            )
+        if isinstance(normal, LevelSetPenaltyNormalPlan) and (
+            cohesion is not None or rotational is not None
+        ):
+            raise ValueError(
+                "Surface-area penalty contact does not support cohesion or rolling laws."
+            )
+        if tangential is not None and isinstance(
+            normal, LevelSetPenaltyNormalPlan
+        ) != isinstance(tangential, LevelSetTangentialContactPlan):
+            raise ValueError(
+                "Surface-area penalty requires an explicitly per-area tangential law."
             )
         generated = canonical_fingerprint(
             {
@@ -1160,17 +1411,28 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
                 self.materials,
                 self.ambient_dimension,
             )
-        normal_force = normal.force_magnitude[:, None] * batch.normal
+        if batch.measure_kind == "surface_area":
+            if not isinstance(self.plan.normal, LevelSetPenaltyNormalPlan):
+                raise ValueError(
+                    "Surface-area routes require a per-area penalty normal law."
+                )
+            elastic = jnp.where(normal.active, normal.stiffness * batch.overlap, 0.0)
+            projected = elastic * _safe_vector_norm(batch.normal_gradient)
+            normal_force = (
+                elastic[:, None] * batch.normal_gradient
+                + (normal.force_magnitude - projected)[:, None] * batch.normal
+            )
+        else:
+            normal_force = normal.force_magnitude[:, None] * batch.normal
         cohesion_force = cohesion.force_magnitude[:, None] * batch.normal
         pair_force = normal_force + cohesion_force + tangential.force
+        moment_force = pair_force if batch.normal_moment else tangential.force
         left_torque = (
-            sphere_lever_torque(batch.left_arm, tangential.force, self.ambient_dimension)
+            sphere_lever_torque(batch.left_arm, moment_force, self.ambient_dimension)
             + rotational.left_torque
         )
         right_torque = (
-            sphere_lever_torque(
-                batch.right_arm, -tangential.force, self.ambient_dimension
-            )
+            sphere_lever_torque(batch.right_arm, -moment_force, self.ambient_dimension)
             + rotational.right_torque
         )
         active = normal.active | cohesion.active
@@ -1205,6 +1467,12 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
         no_tension_margin = jnp.min(
             jnp.where(batch.valid, normal.no_tension_margin, jnp.inf)
         )
+        measure_valid = (
+            jnp.all(~batch.valid | (batch.surface_area_weight > 0.0))
+            if batch.measure_kind == "surface_area"
+            else jnp.all(~batch.valid | (batch.surface_area_weight == 1.0))
+            & jnp.all(~batch.valid[:, None] | (batch.normal_gradient == batch.normal))
+        )
         successful = (
             normal.successful
             & cohesion.successful
@@ -1212,6 +1480,9 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             & rotational.successful
             & transport_success
             & self.materials.admissible()
+            & measure_valid
+            & jnp.all(~batch.valid | jnp.isfinite(batch.surface_area_weight))
+            & jnp.all(~batch.valid[:, None] | jnp.isfinite(batch.normal_gradient))
             & jnp.all(jnp.isfinite(pair_force))
             & jnp.all(jnp.isfinite(left_torque))
             & jnp.all(jnp.isfinite(right_torque))
@@ -1486,6 +1757,8 @@ def _validate_batch_inputs(
     if (
         batch.overlap.shape != (capacity,)
         or batch.effective_radius.shape != (capacity,)
+        or batch.normal_gradient.shape != vector_shape
+        or batch.surface_area_weight.shape != (capacity,)
         or batch.left_arm.shape != vector_shape
         or batch.right_arm.shape != vector_shape
         or batch.tangential_velocity.shape != vector_shape
@@ -1537,6 +1810,7 @@ __all__ = [
     "AbstractDEMNormalContactPlan",
     "AbstractDEMRotationalContactPlan",
     "AbstractDEMTangentialContactPlan",
+    "ContactMeasureKind",
     "ConstantRollingResistancePlan",
     "CundallStrackTangentialPlan",
     "DEMContactBatch",
@@ -1548,6 +1822,8 @@ __all__ = [
     "DEMTangentialResponse",
     "HertzNormalContactPlan",
     "LinearSpringDashpotNormalPlan",
+    "LevelSetPenaltyNormalPlan",
+    "LevelSetTangentialContactPlan",
     "MindlinTangentialContactPlan",
     "PreparedDEMContactModel",
     "ThorntonLinearPlasticNormalPlan",

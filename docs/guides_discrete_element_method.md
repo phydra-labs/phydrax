@@ -1,11 +1,11 @@
 # Discrete element method
 
-Phydrax provides an experimental, fixed-capacity, JAX-native soft-contact discrete element method. The primary compiled equation path covers two- and three-dimensional rigid spheres. A separate three-dimensional `SuperquadricDEMPlan` reuses neighborhoods, stable pair identities, compositional contact, deterministic reductions, and rigid-body integration for smooth convex superquadrics.
+Phydrax provides an experimental, fixed-capacity, JAX-native compliant discrete element method. `CompliantDEMMethodPlan` and `PreparedCompliantDEMDynamics` use one compiler, contact history, force reduction, and rigid-body stepper for spheres, sphere clumps, smooth convex superquadrics, and closed convex polyhedra. Shape-specific geometry never falls back to bounding-sphere contact.
 
 ## Supported contract
 
-- isotropic disks in 2-D and spheres in 3-D;
-- dynamic mass, radius, and inertia updates from accepted morphology;
+- isotropic disks in 2-D and spheres in 3-D, rigid sphere clumps, smooth convex superquadrics, and convex polyhedra;
+- dynamic mass, uniform shape scale, and COM inertia updates from accepted morphology;
 - linear spring–dashpot, Hertz, or Thornton plastic normal response;
 - optional DMT, prescribed linear bridges, fitted Bagheri bridges, and near-contact lubrication;
 - optional Cundall–Strack or Mindlin tangential history;
@@ -19,7 +19,14 @@ Phydrax provides an experimental, fixed-capacity, JAX-native soft-contact discre
 - branchwise differentiation through one realized contact route;
 - balance-audited particle-to-continuum density, momentum, and contact-stress fields.
 
-Sphere orientation is intentionally absent because it cannot affect isotropic sphere geometry. Rigid clumps and superquadrics carry explicit orientation and angular state.
+All shapes use `RigidBodyKinematics` and `PreparedRigidBodySet`. Spheres default to identity orientation, which cannot affect their isotropic geometry. Clumps, superquadrics, and convex bodies require explicit `orientation=` at initialization; angular velocity remains the fourth positional argument. Three-dimensional orientation is a normalized scalar-first quaternion. `CompliantDEMBodyProperties` stores population, inverse masses, shape scale, body-frame COM inertia, and inverse COM inertia (scalar per 2-D body, tensor per 3-D body). Its static `shape_id` binds properties to the prepared shape and rejects mismatched morphology updates or mixed-shape batches.
+
+Sphere-capacity growth rebases the scale coordinate while preserving physical
+radius. For frozen source and target prepared radii, the tangent chart relation
+is `R_old ds_old = R_new ds_new`; `pullback_particle_epoch_transition` therefore
+multiplies target scale covectors by `R_old / R_new`. Rotation, tensor-inertia,
+and load covectors retain their physical frames and original owner lanes, and
+the returned record restores the source prepared-shape identity.
 
 ## Problem construction
 
@@ -49,7 +56,7 @@ contact = phx.discretization.DEMContactModelPlan(
     ),
 )
 
-method = phx.discretization.SoftSphereDEMMethodPlan(contact)
+method = phx.discretization.CompliantDEMMethodPlan(contact)
 problem_ir = phx.equations.DiscreteElementProblemIR(
     "granular-problem",
     materials,
@@ -81,6 +88,8 @@ problem = phx.solver.FixedStepProblem(
 solution = phx.solver.solve_fixed_step(problem)
 ```
 
+`compiled.dynamics.state_geometry` composes the native rigid-body pose chart with additive continuous contact/history state and frozen discrete routes. It does not add quaternion components as Euclidean state: 3-D points store four quaternion components, while local, tangent, and cotangent orientation roles carry three angular components per body. `project_tangent` maps ambient quaternion vectors to those roles. Retraction/inverse retraction and their JVP/VJP actions preserve this distinction; 2-D orientation uses the principal-angle chart. Stable contact keys and discrete neighborhood decisions stay fixed within a chart.
+
 ## Pair identity and contact memory
 
 Neighborhood slots are not physical contact identity. A cell-list rebuild may move the same physical pair to another slot. `ParticlePairKeySpace` maps canonical stable particle IDs to collision-free triangular ordinals. `match_particle_pair_keys` then remaps the complete `DEMContactHistory` tree by sorting old keys and searching new keys.
@@ -97,6 +106,12 @@ overlap = max(−gap, 0)
 ```
 
 The normal points from the right endpoint to the left endpoint. Both lever arms terminate at one common soft-contact point, preserving the action–reaction angular-momentum identity. An overlapping pair with coincident centers is undefined and rejects the step rather than receiving an arbitrary normal.
+
+`RigidContactGeometry` records owner indices, stable feature keys, a common contact point, owner and contact arms, raw `normal_gradient`, unit normal, point weight, curvature validity, and certificate margins. S8 point contacts use `normal_gradient=normal`, `surface_area_weight=1`, and `measure_kind="point_force"`; stiffness keeps force-per-displacement units. `DEMEvaluation.geometry` is a fixed-capacity `RigidContactGeometryBatch` with candidate/active counts, overflow, and success evidence. Clump component forces and common-point moments reduce to owner bodies; same-owner component pairs are excluded.
+
+`maximum_contact_routes` bounds shape-generated routes independently of broad-phase pair capacity. Overflow refuses the complete candidate, never truncates contacts. The bound covers every valid broad-phase candidate, including positive-gap routes that may carry cohesion; it is not sized only from overlapping contacts. Hertz additionally requires valid physical curvature; sharp convex features do not acquire an inferred effective radius.
+
+Clump mass, inertia, and volume use additive component measures, not geometric union measures: overlapping pebble material is counted additively. Convex templates must be closed, consistently outward-oriented triangle shells; preparation refuses open, inconsistent, or inward shells rather than silently flipping faces. Their exact shell volume/COM/inertia are prepared once, and the shape set centers local vertices at COM.
 
 ## Linear spring–dashpot contact
 
@@ -134,7 +149,7 @@ wall work is separated from contact balance loss.
 
 ## Timestep and overlap evidence
 
-`compiled.step_restriction()` reports linear contact-period and Rayleigh estimates. It does not silently choose or adapt the timestep. `SoftSphereDEMMethodPlan.maximum_overlap_fraction` is the hard runtime admissibility guard; exceeding it rejects the complete structured step atomically.
+`compiled.step_restriction()` reports contact-period and applicable Rayleigh estimates. It does not silently choose or adapt the timestep. `CompliantDEMMethodPlan.maximum_overlap_fraction` is the hard runtime admissibility guard; exceeding it rejects the complete structured step atomically.
 
 ## Differentiation
 
@@ -157,13 +172,14 @@ The following reject the candidate step without partially accepting state:
 - out-of-domain cell-list position;
 - invalid material parameters or IDs;
 - overlapping coincident centers;
+- invalid shape queries, unsupported curvature, or contact-route overflow;
 - nonfinite loads or state;
 - ill-defined tangential-frame transport;
 - capillary-fit domain or conserved-liquid balance violation;
 - deforming-cell conditioning, unique-image, or strain-increment failure;
 - excessive relative overlap.
 
-Detailed failure inputs can be replayed through `PreparedSoftSphereDEMDynamics.step_detailed`.
+Detailed failure inputs can be replayed through `PreparedCompliantDEMDynamics.step_detailed`.
 
 ## Accepted-step energy ledger
 
@@ -173,6 +189,11 @@ the average endpoint velocity and records contact stored-energy change,
 prescribed-wall work, deforming-cell work, signed contact balance loss, and
 closure residual. Rejected candidates expose their candidate ledger but
 preserve the accepted `DEMEnergyLedgerState` exactly.
+
+External-load callbacks return one COM force and world-frame torque per body.
+`PreparedRigidBodySet.load` converts payloads to the prepared dtype and requires
+the exact body-count and physical-vector dimensions; broadcasting a single
+body's force over the whole population is rejected.
 
 Contact balance loss is a discrete accounting quantity, not automatically pure
 thermodynamic dissipation. Normal viscous, tangential constitutive, rolling, and
@@ -276,4 +297,4 @@ wall, or out-of-envelope deformation is silently accepted.
 
 ## Current maturity and limitations
 
-The original spherical forward path is evidence-backed but each newly enabled law, shape, coupling, sensitivity, and backend retains its own support-matrix status. Distributed execution remains explicitly unsupported. Convex polyhedron contact uses linear penalty semantics until a separately qualified effective-curvature law exists; implicit contact does not infer Hertz curvature from sampled fields. Superquadric wall contact and rigid nonsmooth complementarity are not implemented.
+The original spherical forward path is evidence-backed but each newly enabled law, shape, coupling, sensitivity, and backend retains its own support-matrix status. Distributed execution remains explicitly unsupported. Convex polyhedron contact uses linear penalty semantics until physical effective curvature is supplied and qualified; implicit contact does not infer Hertz curvature from sampled fields. Superquadric triangle-wall witnesses feed the shared stepper. Radius-dependent CFD, reactive morphology, insertion, and periodic specializations remain explicitly sphere-only rather than treating a nonspherical bound as a physical radius.

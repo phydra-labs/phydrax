@@ -236,7 +236,15 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         pressure: ArrayLike | None = None,
         boundary_stage: MACBoundaryStageData | None = None,
         geometry: QualifiedSharpGeometry | None = None,
+        incremental: bool = False,
     ) -> MACFreeSurfaceProjectionResult:
+        """Project absolute pressure, or its increment about ``pressure``.
+
+        Incremental mode uses homogeneous pressure data for the correction,
+        retains physical velocity/wall boundary data, and returns total pressure
+        with the solved correction in ``pressure_increment``. The caller must
+        include the previous pressure force in its momentum predictor.
+        """
         values = self.operators.validate_velocity(velocity)
         if geometry is not None and (
             not isinstance(geometry, QualifiedSharpGeometry)
@@ -312,7 +320,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 )
             )
             boundary_gradient = self.boundaries.pressure_gradient(
-                jnp.zeros_like(integrated_before), stage, homogeneous=False
+                jnp.zeros_like(integrated_before), stage, homogeneous=incremental
             )
             boundary_divergence = self.operators.divergence(
                 tuple(
@@ -364,14 +372,18 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 self.prepared_linear,
                 LinearSystem(operator, problem_id=self.problem_id),
             )
-            linear = solve(prepared, rhs, initial_guess=incoming_)
+            linear = solve(
+                prepared,
+                rhs,
+                initial_guess=jnp.zeros_like(incoming_) if incremental else incoming_,
+            )
             pressure_candidate = jnp.where(
                 all_liquid,
                 masked_gauge(linear.value),
                 jnp.where(liquid, linear.value, 0.0),
             )
             gradient = self.boundaries.pressure_gradient(
-                pressure_candidate, stage, homogeneous=False
+                pressure_candidate, stage, homogeneous=incremental
             )
             corrected_candidate = tuple(
                 component - coefficient * derivative
@@ -440,6 +452,11 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 & jnp.isfinite(residual_norm)
                 & jnp.isfinite(divergence_norm)
             )
+            total_candidate = (
+                incoming_ + pressure_candidate if incremental else pressure_candidate
+            )
+            if incremental:
+                finite = finite & jnp.all(jnp.isfinite(total_candidate))
             converged = (
                 any_liquid
                 & stage.successful
@@ -452,7 +469,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 jnp.where(converged, candidate, original)
                 for candidate, original in zip(corrected_candidate, values, strict=True)
             )
-            pressure_value = jnp.where(converged, pressure_candidate, incoming_)
+            pressure_value = jnp.where(converged, total_candidate, incoming_)
             integrated_after = self.operators.divergence(
                 tuple(
                     opened * value
@@ -491,7 +508,11 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             return MACFreeSurfaceProjectionResult(
                 corrected,
                 pressure_value,
-                pressure_value - incoming_,
+                (
+                    jnp.where(converged, pressure_candidate, 0.0)
+                    if incremental
+                    else pressure_value - incoming_
+                ),
                 liquid,
                 divergence_before,
                 divergence_after,

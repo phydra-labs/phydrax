@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,14 +14,28 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...typing import checked
+from ...typing import checked, parse
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ._core import ParticleDiscretization
-from ._pairwise import ParticlePairGeometry, ParticlePairRelation
+from ._pair_state import ParticlePairKeySpace
+from ._pairwise import particle_pair_geometry, ParticlePairGeometry, ParticlePairRelation
+from ._rigid_body import PreparedRigidBodySet, RigidBodyKinematics, RigidBodySetPlan
+from ._rigid_shape import (
+    AbstractPreparedRigidContactShape,
+    AbstractRigidContactShapePlan,
+    bounded_contact_geometry,
+    CompliantContactShapeKind,
+    RigidContactGeometryBatch,
+)
+from ._signed_field import (
+    exact_signed_field_result,
+    posed_signed_field_coordinates,
+    PosedSignedFieldQueryResult,
+)
 
 
-class RigidSphereSetPlan(StrictModule, NonTrainableState):
+@final
+class RigidSphereSetPlan(AbstractRigidContactShapePlan):
     """Rigid spherical properties attached to one material-particle support."""
 
     radii: Array
@@ -28,6 +44,7 @@ class RigidSphereSetPlan(StrictModule, NonTrainableState):
     fixed_mask: Array
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
+    shape_kind: CompliantContactShapeKind = eqx.field(static=True)
 
     def __init__(
         self,
@@ -96,12 +113,32 @@ class RigidSphereSetPlan(StrictModule, NonTrainableState):
         self.fixed_mask = jnp.asarray(fixed_host, dtype=jnp.bool_)
         self.key = key
         self.plan_id = identifier
+        self.shape_kind = parse("sphere", CompliantContactShapeKind, "shape_kind")
+
+    def rigid_body_plan(self, particles: ParticleDiscretization, /) -> RigidBodySetPlan:
+        if self.radii.shape != (particles.capacity,):
+            raise ValueError("Rigid-sphere properties must match particle capacity.")
+        factor = 0.5 if particles.ambient_dimension == 2 else 0.4
+        inertia = (
+            factor * particles.safe_masses * self.radii * self.radii
+            if self.inertias is None
+            else self.inertias
+        )
+        if particles.ambient_dimension == 3:
+            inertia = inertia[:, None, None] * jnp.eye(3, dtype=inertia.dtype)[None, :, :]
+        return RigidBodySetPlan(
+            self.material_ids,
+            inertia,
+            fixed_mask=self.fixed_mask,
+            name="rigid-sphere-bodies",
+        )
 
     def prepare(self, particles: ParticleDiscretization, /) -> PreparedRigidSphereSet:
         return PreparedRigidSphereSet(self, particles)
 
 
-class PreparedRigidSphereSet(StrictModule, NonTrainableState):
+@final
+class PreparedRigidSphereSet(AbstractPreparedRigidContactShape):
     """Prepared isotropic rigid-sphere mass and rotational data."""
 
     plan: RigidSphereSetPlan
@@ -115,6 +152,7 @@ class PreparedRigidSphereSet(StrictModule, NonTrainableState):
     key: DiscretizationKey
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
+    bodies: PreparedRigidBodySet
 
     @checked
     def __init__(
@@ -143,7 +181,7 @@ class PreparedRigidSphereSet(StrictModule, NonTrainableState):
         preparation = PreparationReport(
             diagnostics=(
                 "isotropic rigid spheres",
-                "sphere orientation is physically unobservable and omitted",
+                "sphere orientation does not alter analytic contact geometry",
                 "fixed bodies retain reaction loads with zero inverse inertia and mass",
             ),
             resource_counts={
@@ -163,13 +201,114 @@ class PreparedRigidSphereSet(StrictModule, NonTrainableState):
         self.fixed_mask = fixed
         self.key = plan.key
         self.preparation = preparation
+        self.bodies = plan.rigid_body_plan(particles).prepare(particles)
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-rigid-sphere-set",
                 "plan": plan.plan_id,
                 "particles": particles.prepared_id,
                 "preparation": preparation.report_id,
+                "bodies": self.bodies.prepared_id,
+                "contact_measure": "point_force",
             }
+        )
+
+    @property
+    def contact_material_ids(self) -> Array:
+        return self.material_ids
+
+    @property
+    def shape_kind(self) -> CompliantContactShapeKind:
+        return self.plan.shape_kind
+
+    @property
+    def shape_id(self) -> str:
+        return self.prepared_id
+
+    @property
+    def routes_per_pair(self) -> int:
+        return 1
+
+    @property
+    def bounding_radii(self) -> Array:
+        return self.radii
+
+    @property
+    def volumes(self) -> Array:
+        return (
+            jnp.pi * self.radii**2
+            if self.ambient_dimension == 2
+            else (4.0 / 3.0) * jnp.pi * self.radii**3
+        )
+
+    def evaluate_signed_field_query(
+        self,
+        kinematics: RigidBodyKinematics,
+        body_indices: Array,
+        world_points: Array,
+        /,
+        *,
+        shape_scale: Array | None = None,
+    ) -> PosedSignedFieldQueryResult:
+        local, indices, scale, supported = posed_signed_field_coordinates(
+            kinematics,
+            body_indices,
+            world_points,
+            self.particles.active_mask,
+            shape_scale=shape_scale,
+            rotate=False,
+        )
+        value = scale * (jnp.linalg.norm(local, axis=-1) - self.radii[indices])
+        return exact_signed_field_result(value, supported, self.shape_id)
+
+    def pair_geometry(
+        self,
+        kinematics: RigidBodyKinematics,
+        shape_scale: Array,
+        pairs: ParticlePairRelation,
+        pair_key_space: ParticlePairKeySpace,
+        /,
+        *,
+        maximum_contact_routes: int,
+        center_geometry: ParticlePairGeometry | None = None,
+        distance_tolerance: float = 1.0e-12,
+    ) -> RigidContactGeometryBatch:
+        from ._rigid_contact import sphere_contact_adapter
+
+        centers = (
+            particle_pair_geometry(kinematics.position, pairs)
+            if center_geometry is None
+            else center_geometry
+        )
+        radii = self.radii * shape_scale
+        sphere_geometry = sphere_pair_contact_geometry(
+            self,
+            RigidSphereKinematics(
+                kinematics.position, kinematics.velocity, kinematics.angular_velocity
+            ),
+            pairs,
+            centers,
+            radii=radii,
+            distance_tolerance=distance_tolerance,
+        )
+        keys = pair_key_space.keys(pairs)
+        geometry = sphere_contact_adapter(
+            sphere_geometry,
+            radii[pairs.left_indices],
+            radii[pairs.right_indices],
+            kinematics.angular_velocity[pairs.left_indices],
+            kinematics.angular_velocity[pairs.right_indices],
+            keys.keys,
+            left_owner_index=pairs.left_indices,
+            right_owner_index=pairs.right_indices,
+        )
+        return bounded_contact_geometry(
+            geometry,
+            keys,
+            maximum_contact_routes,
+            self.shape_id,
+            left_material_ids=self.material_ids[pairs.left_indices],
+            right_material_ids=self.material_ids[pairs.right_indices],
         )
 
     @property

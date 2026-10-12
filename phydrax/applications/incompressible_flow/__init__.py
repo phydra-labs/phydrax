@@ -110,6 +110,7 @@ from ._immersed_support import (
     LBM_BODY_SUPPORT_TUPLE,
     PRESCRIBED_MARKER_SUPPORT_TUPLE,
     RESOLVED_CFD_DEM_SUPPORT_TUPLE,
+    VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE,
 )
 from ._learned_training import (
     FixedGridStressOperatorModel,
@@ -264,6 +265,7 @@ __all__ = [
     "PreparedSpectralChannelProduction",
     "PreparedStructuredMACProduction",
     "RESOLVED_CFD_DEM_SUPPORT_TUPLE",
+    "VOLUME_FRACTION_CFD_DEM_SUPPORT_TUPLE",
     "SolenoidalHermitianFourierBasis",
     "SolenoidalOUForcingAdvance",
     "SolenoidalOUForcingPlan",

@@ -380,6 +380,10 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
             validity=valid,
             trial_validity=problem.trial_validity_function,
             trial_validity_id=problem.trial_validity_id,
+            potential=problem.potential_function,
+            potential_id=problem.potential_id,
+            step_limit=problem.step_limit_function,
+            step_limit_id=problem.step_limit_id,
             has_aux=True,
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )
@@ -409,6 +413,16 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
         return preconditioner.state_space.validate(state)
 
 
+def _reconstructed_potential(
+    problem: NonlinearSystemProblem,
+    preconditioner: AbstractRightNonlinearPreconditioner,
+    latent: PyTree[Array],
+    args: Any,
+    /,
+) -> Array:
+    return problem.potential(preconditioner.reconstruct(latent, args), args)
+
+
 class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
     """Latent-coordinate system with explicit physical reconstruction."""
 
@@ -421,6 +435,11 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
         preconditioner: AbstractRightNonlinearPreconditioner,
         /,
     ) -> None:
+        if problem.step_limit_function is not None:
+            raise ValueError(
+                "Right preconditioning cannot transport a linear-path step_limit "
+                "through an arbitrary nonlinear reconstruction."
+            )
         _require_compatible_space(
             problem.state_space, preconditioner.target, "state_space"
         )
@@ -456,6 +475,12 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
                 )
             ),
             trial_validity_id=problem.trial_validity_id,
+            potential=(
+                None
+                if problem.potential_function is None
+                else eqx.Partial(_reconstructed_potential, problem, preconditioner)
+            ),
+            potential_id=problem.potential_id,
             has_aux=True,
             problem_id=f"{problem.problem_id}/{self.transformation_id}",
         )

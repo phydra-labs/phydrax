@@ -24,6 +24,7 @@ from ..discretization import (
     DiscretizationRole,
     StructuredAxis,
 )
+from ..discretization.finite_volume import MACFreeSurfaceViscousMeasurePlan
 from ..discretization.flip import (
     FLIPDiagnostics,
     FLIPMethodPlan,
@@ -35,20 +36,28 @@ from ..discretization.flip import (
     FLIPStepResult,
     PreparedFLIPParticleTransfer,
 )
+from ..discretization.flip._viscous import viscous_flip_stage
+from ..rheology import GeneralizedNewtonianLaw, MuILaw, MuIParameters
 from ..typing import checked
 
 
 if TYPE_CHECKING:
     from ..solver._mac_free_surface import MACFreeSurfaceProjectionPlan
+    from ..solver._mac_variational_viscosity import MACVariationalViscosityPlan
+
+
+type FLIPViscousLaw = GeneralizedNewtonianLaw | MuILaw
 
 
 class FLIPProblemIR(StrictModule, NonTrainableState):
-    """Constant-density inviscid free-surface FLIP problem declaration."""
+    """Constant-density free-surface FLIP with optional implicit viscous stress."""
 
     name: str = eqx.field(static=True)
     reference_density: float = eqx.field(static=True)
     acceleration: Array
     solid_geometry_source_id: str | None = eqx.field(static=True)
+    viscous_law: FLIPViscousLaw | None = eqx.field(static=True)
+    mu_i_parameters: MuIParameters | None
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -59,6 +68,8 @@ class FLIPProblemIR(StrictModule, NonTrainableState):
         /,
         *,
         solid_geometry_source_id: str | None = None,
+        viscous_law: FLIPViscousLaw | None = None,
+        mu_i_parameters: MuIParameters | None = None,
     ) -> None:
         identifier = str(name)
         density = float(reference_density)
@@ -78,6 +89,19 @@ class FLIPProblemIR(StrictModule, NonTrainableState):
         )
         if solid_source == "":
             raise ValueError("solid_geometry_source_id must be nonempty or None.")
+        if viscous_law is not None and not isinstance(
+            viscous_law, (GeneralizedNewtonianLaw, MuILaw)
+        ):
+            raise TypeError(
+                "viscous_law must be GeneralizedNewtonianLaw, MuILaw, or None."
+            )
+        if isinstance(viscous_law, MuILaw):
+            if not isinstance(mu_i_parameters, MuIParameters):
+                raise TypeError("MuILaw requires MuIParameters.")
+        elif mu_i_parameters is not None:
+            raise ValueError("mu_i_parameters requires MuILaw.")
+        self.viscous_law = viscous_law
+        self.mu_i_parameters = mu_i_parameters
         self.reference_density = density
         self.acceleration = force
         self.solid_geometry_source_id = solid_source
@@ -88,6 +112,7 @@ class FLIPProblemIR(StrictModule, NonTrainableState):
                 "reference_density": density,
                 "acceleration_shape": list(force.shape),
                 "solid_geometry_source_id": solid_source,
+                **({} if viscous_law is None else {"viscous_law": viscous_law.law_id}),
             }
         )
 
@@ -144,6 +169,8 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
     geometry: QualifiedSharpGeometry | None
     solid_boundary: FLIPSolidBoundaryPlan | None
     compilation_id: str = eqx.field(static=True)
+    viscosity: MACVariationalViscosityPlan | None
+    viscous_measures: MACFreeSurfaceViscousMeasurePlan | None
 
     def initialize_state(
         self,
@@ -152,6 +179,7 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
         /,
         *,
         time: ArrayLike = 0.0,
+        initial_pressure: ArrayLike | None = None,
     ) -> FLIPRuntimeState:
         position_ = jnp.asarray(position, dtype=self.transfer.particles.safe_masses.dtype)
         velocity_ = jnp.asarray(velocity, dtype=position_.dtype)
@@ -161,9 +189,45 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
         active = self.transfer.particles.active_mask[:, None]
         position_ = jnp.where(active, position_, 0.0)
         velocity_ = jnp.where(active, velocity_, 0.0)
-        pressure = jnp.zeros(
-            self.projection.operators.discretization.cell_shape, dtype=position_.dtype
+        shape = self.projection.operators.discretization.cell_shape
+        if isinstance(self.problem.viscous_law, MuILaw) and initial_pressure is None:
+            raise ValueError("MuILaw FLIP requires an admitted initial_pressure field.")
+        pressure = (
+            jnp.zeros(shape, dtype=position_.dtype)
+            if initial_pressure is None
+            else jnp.asarray(initial_pressure, dtype=position_.dtype)
         )
+        if pressure.shape != shape:
+            raise ValueError(f"initial_pressure must have cell shape {shape}.")
+        pressure = eqx.error_if(
+            pressure, jnp.any(~jnp.isfinite(pressure)), "initial_pressure must be finite."
+        )
+        if isinstance(self.problem.viscous_law, MuILaw):
+            initial_transfer = self.transfer.particle_to_grid(
+                self.transfer.build(position_),
+                velocity_,
+                self.problem.reference_density,
+                geometry=self.geometry,
+            )
+            liquid = (
+                initial_transfer.liquid_fraction >= self.method.liquid_fraction_threshold
+            )
+            fluid = (
+                jnp.ones_like(liquid)
+                if self.geometry is None
+                else self.geometry.cell_active
+            )
+            admitted = (
+                initial_transfer.successful
+                & jnp.any(liquid & fluid)
+                & jnp.any(~liquid & fluid)
+                & jnp.all(jnp.where(~liquid, pressure == 0.0, True))
+            )
+            pressure = eqx.error_if(
+                pressure,
+                ~admitted,
+                "MuILaw requires a free surface and zero atmospheric-gauge pressure in air.",
+            )
         geometry_id = "" if self.geometry is None else self.geometry.realization_id
         geometry_epoch = (
             jnp.asarray(-1, dtype=jnp.int32)
@@ -231,14 +295,104 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
         )
         boundary_stage = self.projection.boundaries.evaluate(state.time, None)
         forced = self.projection.boundaries.enforce(forced, boundary_stage)
-        projected = self.projection.project(
-            forced,
-            liquid,
-            dt,
-            pressure=state.pressure,
-            boundary_stage=boundary_stage,
-            geometry=self.geometry,
-        )
+        viscous = None
+        viscous_success = jnp.asarray(True)
+        if self.problem.viscous_law is not None:
+            if self.viscosity is None or self.viscous_measures is None:
+                raise ValueError(
+                    "Viscous FLIP compilation is missing its prepared stage."
+                )
+            measures = self.viscous_measures.evaluate_cell_fraction(
+                liquid.astype(dt.dtype), 0.0, solid=self.geometry
+            )
+            fluid = (
+                jnp.ones_like(liquid)
+                if self.geometry is None
+                else self.geometry.cell_active
+            )
+            pressure_admitted = (
+                jnp.any(~liquid & fluid) & jnp.all(jnp.isfinite(state.pressure))
+                if isinstance(self.problem.viscous_law, MuILaw)
+                else jnp.asarray(True)
+            )
+            # Incremental pressure correction: viscosity must not absorb the
+            # accepted pressure's support of gravity (Goda 1979; van Kan 1986).
+            operators = self.projection.operators
+            pressure_liquid = liquid & fluid
+            previous_pressure = jnp.where(pressure_liquid, state.pressure, 0.0)
+            volumes = operators.discretization.cell_volumes
+            denominator = jnp.sum(jnp.where(pressure_liquid, volumes, 0.0))
+            mean = jnp.sum(volumes * previous_pressure) / jnp.where(
+                denominator > 0.0, denominator, 1.0
+            )
+            previous_pressure = jnp.where(
+                jnp.all(pressure_liquid | ~fluid),
+                jnp.where(pressure_liquid, previous_pressure - mean, 0.0),
+                previous_pressure,
+            )
+            face_inverse = operators.interpolate_inverse_momentum(
+                jnp.full(
+                    operators.discretization.cell_shape,
+                    dt / self.projection.density,
+                    dtype=operators.pressure_space.dtype,
+                )
+            )
+            gradient = self.projection.boundaries.pressure_gradient(
+                previous_pressure, boundary_stage, homogeneous=False
+            )
+            pressure_impulse = tuple(
+                coefficient * derivative
+                for coefficient, derivative in zip(face_inverse, gradient, strict=True)
+            )
+            predictor_terms = (forced, pressure_impulse)
+            forced = tuple(
+                component - impulse
+                for component, impulse in zip(forced, pressure_impulse, strict=True)
+            )
+            if self.geometry is not None:
+                forced = tuple(
+                    jnp.where(opened > 0.0, component, wall)
+                    for component, opened, wall in zip(
+                        forced,
+                        self.geometry.face_open_fraction,
+                        self.geometry.wall_velocity,
+                        strict=True,
+                    )
+                )
+            forced = self.projection.boundaries.enforce(forced, boundary_stage)
+            forced, viscous = viscous_flip_stage(
+                self.viscosity,
+                self.problem.viscous_law,
+                self.problem.mu_i_parameters,
+                self.method,
+                measures,
+                forced,
+                state.pressure,
+                liquid,
+                dt,
+                boundary_stage,
+                pressure_admitted,
+                predictor_terms=predictor_terms,
+            )
+            viscous_success = viscous.successful
+            projected = self.projection.project(
+                forced,
+                liquid,
+                dt,
+                pressure=state.pressure,
+                boundary_stage=boundary_stage,
+                geometry=self.geometry,
+                incremental=True,
+            )
+        else:
+            projected = self.projection.project(
+                forced,
+                liquid,
+                dt,
+                pressure=state.pressure,
+                boundary_stage=boundary_stage,
+                geometry=self.geometry,
+            )
         post_grid, post_support = self._extrapolate(projected.velocity, pre_support)
         g2p = self.transfer.grid_to_particle(
             routes, pre_grid, post_grid, geometry=self.geometry
@@ -331,6 +485,7 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
             & collision_success
             & stable
             & finite
+            & viscous_success
         )
         reason = jnp.asarray(int(FLIPRejectionReason.NONE), dtype=jnp.int32)
         reason = jnp.where(
@@ -354,6 +509,15 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
             reason,
             reason | int(FLIPRejectionReason.COLLISION),
         )
+        if viscous is not None:
+            reason = jnp.where(
+                viscous.successful, reason, reason | int(FLIPRejectionReason.VISCOSITY)
+            )
+            reason = jnp.where(
+                viscous.closure_successful & viscous.pressure_admitted,
+                reason,
+                reason | int(FLIPRejectionReason.VISCOSITY_CLOSURE),
+            )
         geometry_epoch = (
             jnp.asarray(-1, dtype=jnp.int32)
             if self.geometry is None
@@ -369,6 +533,10 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
                 int(FLIPRunStatus.INVALID_STATE),
             ),
         )
+        if viscous is not None:
+            failed_status = jnp.where(
+                ~viscous.successful, int(FLIPRunStatus.VISCOSITY_FAILED), failed_status
+            )
         candidate = FLIPRuntimeState(
             FLIPParticleState(next_position, next_velocity),
             projected.pressure,
@@ -415,6 +583,7 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
             successful,
             solid,
             geometry_id,
+            viscous,
         )
 
 
@@ -442,6 +611,11 @@ def compile_flip_problem(
         raise ValueError("FLIP transfer and projection must share one MAC grid.")
     if problem.acceleration.shape != (transfer.dimension,):
         raise ValueError("FLIP acceleration dimension must match particles and grid.")
+    if (
+        isinstance(problem.viscous_law, MuILaw)
+        and projection.density != problem.reference_density
+    ):
+        raise ValueError("MuILaw physical pressure requires matching projection density.")
     if (geometry is None) != (solid_boundary is None):
         raise ValueError(
             "Qualified FLIP solid geometry and collision plan must be supplied together."
@@ -463,6 +637,12 @@ def compile_flip_problem(
             raise ValueError("FLIP compilation rejects failed sharp geometry.")
         if np.any(np.asarray(geometry.swept_cell_measure_rate) != 0.0):
             raise ValueError("FLIP sharp composition currently requires static geometry.")
+        if problem.viscous_law is not None:
+            raise ValueError(
+                "FLIP compilation does not support an embedded-wall viscous stage: "
+                "exact cut-cell essential stress affine offsets are not implemented. "
+                "Solid geometry is supported only with viscous_law=None."
+            )
         from ..solver._mac_sharp_interface import MACSharpInterfaceProjectionPlan
 
         topology = MACSharpInterfaceProjectionPlan(
@@ -473,6 +653,37 @@ def compile_flip_problem(
                 "Static FLIP sharp composition currently requires one connected fluid component."
             )
     particles = transfer.particles
+    viscosity = None
+    viscous_measures = None
+    if problem.viscous_law is not None:
+        from ..discretization.finite_volume import MACMomentumPlan
+        from ..solver._mac_variational_viscosity import MACVariationalViscosityPlan
+
+        cells = np.prod(projection.operators.discretization.cell_shape)
+        faces = sum(
+            np.prod(layout.shape)
+            for layout in projection.operators.discretization.face_layouts
+        )
+        itemsize = projection.operators.pressure_space.dtype.itemsize
+        # Conservative matrix-free Picard/Krylov admission; no dense matrix.
+        workspace_bytes = (64 * faces + 32 * cells) * itemsize
+        state_bytes = (faces + cells) * itemsize
+        if (
+            workspace_bytes > method.resource_policy.maximum_workspace_bytes
+            or state_bytes > method.resource_policy.maximum_state_bytes
+        ):
+            raise ValueError("Viscous FLIP exceeds its declared resource policy.")
+        momentum = MACMomentumPlan(
+            projection.operators, boundaries=projection.boundaries
+        ).prepare()
+        viscosity = MACVariationalViscosityPlan(
+            momentum,
+            tolerance=1.0e-4 * method.viscous_tolerance,
+            maximum_iterations=method.maximum_viscous_linear_iterations,
+        )
+        viscous_measures = MACFreeSurfaceViscousMeasurePlan(
+            projection.operators, problem.reference_density
+        )
     residual_key = DiscretizationKey(
         "flip_free_surface",
         DiscretizationRole.RESIDUAL,
@@ -531,7 +742,14 @@ def compile_flip_problem(
         geometry,
         solid_boundary,
         identifier,
+        viscosity,
+        viscous_measures,
     )
 
 
-__all__ = ["CompiledFLIPProblem", "FLIPProblemIR", "compile_flip_problem"]
+__all__ = [
+    "CompiledFLIPProblem",
+    "FLIPProblemIR",
+    "FLIPViscousLaw",
+    "compile_flip_problem",
+]

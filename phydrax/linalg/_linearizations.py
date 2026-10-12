@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 from jax import Array
 from jaxtyping import PyTree
 
@@ -74,6 +75,33 @@ class PreparedLinearization(StrictModule):
         return self.source.validate(self.pullback(self.target.validate(cotangent)))
 
 
+@runtime_checkable
+class _OutputStructuredCallable(Protocol):
+    @property
+    def out_struct(self) -> PyTree[Any]: ...
+
+    def __call__(self, point: PyTree[Any], /) -> PyTree[Any]: ...
+
+
+def _restore_auxiliary_arrays(
+    auxiliary: PyTree[Any], structure: PyTree[Any], /
+) -> PyTree[Any]:
+    def restore(value: Any, specification: Any) -> Any:
+        if isinstance(specification, jax.ShapeDtypeStruct):
+            result = jnp.asarray(value, dtype=specification.dtype)
+            if result.shape != specification.shape:
+                raise ValueError("Linearization auxiliary array shape changed.")
+            return result
+        return value
+
+    return jax.tree.map(
+        restore,
+        auxiliary,
+        structure,
+        is_leaf=lambda value: isinstance(value, jax.ShapeDtypeStruct),
+    )
+
+
 def prepare_linearization(
     function: Callable[[PyTree[Any]], PyTree[Any]],
     point: PyTree[Any],
@@ -85,7 +113,11 @@ def prepare_linearization(
     policy: LinearizationPolicy | None = None,
     linearization_id: str | None = None,
 ) -> PreparedLinearization:
-    """Evaluate once and retain reusable JVP/VJP actions."""
+    """Evaluate once and retain reusable JVP/VJP actions.
+
+    Auxiliary outputs retain their declared array/static roles, including
+    constant boolean and integer diagnostic arrays. Static metadata is unchanged.
+    """
     if not callable(function):
         raise TypeError("function must be callable.")
     policy_ = LinearizationPolicy() if policy is None else policy
@@ -97,12 +129,20 @@ def prepare_linearization(
     point_ = source_.validate(point)
     converted = eqx.filter_closure_convert(function, source_.structure())
     executed = (
-        jax.checkpoint(converted)
+        eqx.filter_checkpoint(converted)
         if policy_.rematerialization == "rematerialize"
         else converted
     )
     if has_aux:
+        if not isinstance(converted, _OutputStructuredCallable):
+            raise TypeError("Closure conversion must retain its output structure.")
+        output_structure = converted.out_struct
+        if not isinstance(output_structure, tuple) or len(output_structure) != 2:
+            raise ValueError("Auxiliary linearization must return (value, auxiliary).")
         primal, pushforward, auxiliary = jax.linearize(executed, point_, has_aux=True)
+        # A closure-converted jaxpr can return constant array outputs as Python
+        # literals. Restore only its declared array roles; metadata stays static.
+        auxiliary = _restore_auxiliary_arrays(auxiliary, output_structure[1])
     else:
         primal, pushforward = jax.linearize(executed, point_)
         auxiliary = None
