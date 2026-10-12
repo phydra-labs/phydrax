@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,14 +16,13 @@ import numpy as np
 from jax import Array
 from jaxtyping import PyTree
 
-from phydrax.ein import contract
-
 from .._strict import StrictModule
+from ..typing import parse
 from ._operators import AbstractLinearOperator, DenseLinearOperator
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._policies import LinearSolvePolicy
 from ._problems import LinearSystem
-from ._runtime import solve
+from ._runtime import prepare, solve
 from ._spaces import (
     _coordinate_dtype,
     AbstractVectorSpace,
@@ -31,6 +30,7 @@ from ._spaces import (
     BlockSpace,
     DualSpace,
     PyTreeSpace,
+    RHSLayout,
 )
 from .krylov import (
     arnoldi,
@@ -39,6 +39,9 @@ from .krylov import (
     KrylovBreakdownStatus,
     lanczos,
 )
+
+
+StochasticProbeExecution: TypeAlias = Literal["batched", "parallel"]
 
 
 _LanczosProbeSample: TypeAlias = tuple[
@@ -460,26 +463,6 @@ def _batched_probe_statistics(
     return samples, estimate, standard_error
 
 
-def _batched_dense_probes(
-    operator: DenseLinearOperator,
-    key: Array,
-    count: int,
-    /,
-) -> Array:
-    batch_count = int(np.prod(operator.batch_shape))
-    keys = jr.split(key, batch_count * count)
-    flattened = jax.vmap(
-        lambda probe_key: jr.rademacher(
-            probe_key,
-            (operator.source.size,),
-            dtype=_coordinate_dtype(operator.source),
-        )
-    )(keys)
-    batched = flattened.reshape(operator.batch_shape + (count, operator.source.size))
-    probe_axis = len(operator.batch_shape)
-    return jnp.moveaxis(batched, probe_axis, 0)
-
-
 def _batched_dense_stochastic(
     operator: DenseLinearOperator,
     key: Array,
@@ -488,6 +471,7 @@ def _batched_dense_stochastic(
     *,
     quantity: str,
     scalar_function: Callable[[Array], Array] | None = None,
+    batch_size: int = 4,
 ) -> StochasticEstimate:
     if not isinstance(operator.source, (ArraySpace, PyTreeSpace)) or not isinstance(
         operator.source.pairing,
@@ -497,41 +481,41 @@ def _batched_dense_stochastic(
             "Batched exact probe actions currently require a Euclidean coordinate "
             "pairing; no implicit similarity transform is performed."
         )
-    probes = _batched_dense_probes(operator, key, count)
     matrix = operator.matrix
+    dtype = _coordinate_dtype(operator.source)
     if quantity == "trace":
         eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
         if scalar_function is None:
             raise ValueError("Trace estimation requires a scalar function.")
         multipliers = scalar_function(eigenvalues)
-        action_matrix = contract(
-            "...ik,...k,...jk->...ij",
-            eigenvectors,
-            multipliers,
-            jnp.conj(eigenvectors),
-            backend="jax",
-        )
-    elif quantity == "diagonal":
-        action_matrix = matrix
-    elif quantity == "inverse-diagonal":
-        identity = jnp.eye(operator.source.size, dtype=matrix.dtype)
-        action_matrix = jnp.linalg.solve(matrix, identity)
-    else:
+    elif quantity != "diagonal":
         raise ValueError("Unknown batched stochastic quantity.")
-    images = contract(
-        "...ij,p...j->p...i",
-        action_matrix,
-        probes,
-        backend="jax",
-    )
-    element_samples = jnp.conj(probes) * images
-    raw_samples = (
-        jnp.sum(element_samples, axis=-1) if quantity == "trace" else element_samples
+
+    def one(index: Array) -> Array:
+        probe = _addressed_rademacher_probe(
+            key, index, operator.source.size, dtype, operator.batch_shape
+        )
+        if quantity == "trace":
+            projection = jnp.matmul(
+                jnp.conj(jnp.swapaxes(eigenvectors, -1, -2)), probe[..., None]
+            )[..., 0]
+            images = jnp.matmul(eigenvectors, (multipliers * projection)[..., None])[
+                ..., 0
+            ]
+        else:
+            images = jnp.matmul(matrix, probe[..., None])[..., 0]
+        element_samples = jnp.conj(probe) * images
+        return (
+            jnp.sum(element_samples, axis=-1) if quantity == "trace" else element_samples
+        )
+
+    raw_samples = jax.lax.map(
+        one, jnp.arange(count, dtype=jnp.int32), batch_size=batch_size
     )
     probe_finite = (
-        jnp.all(jnp.isfinite(raw_samples), axis=-1)
-        if raw_samples.ndim > probes.ndim - 1
-        else jnp.isfinite(raw_samples)
+        jnp.isfinite(raw_samples)
+        if quantity == "trace"
+        else jnp.all(jnp.isfinite(raw_samples), axis=-1)
     )
     samples, estimate, standard_error = _batched_probe_statistics(
         raw_samples,
@@ -573,7 +557,7 @@ def _batched_dense_stochastic(
         matvec_count=jnp.full(operator.batch_shape, count, dtype=jnp.int32),
         adjoint_matvec_count=jnp.zeros(operator.batch_shape, dtype=jnp.int32),
         diagnostics=diagnostics,
-        method="batched-dense-exact-probe-action",
+        method=f"batched-dense-exact-probe-action-batch-{batch_size}",
         quantity=quantity,
     )
 
@@ -586,6 +570,8 @@ def stochastic_trace(
     key: Array,
     num_probes: int = 16,
     max_dimension: int = 32,
+    batch_size: int = 4,
+    execution: StochasticProbeExecution = "batched",
 ) -> StochasticEstimate:
     """Stochastic Lanczos quadrature for the algebraic trace of ``f(A)``."""
     if not isinstance(operator, AbstractLinearOperator):
@@ -598,6 +584,8 @@ def stochastic_trace(
         raise TypeError("scalar_function must be callable.")
     _require_square_root_pairing(operator.source)
     count = _positive_int(num_probes, "num_probes")
+    batch = _positive_int(batch_size, "batch_size")
+    execution = parse(execution, StochasticProbeExecution, "execution")
     dimension = min(_positive_int(max_dimension, "max_dimension"), operator.source.size)
     if operator.batch_shape:
         if not isinstance(operator, DenseLinearOperator):
@@ -610,17 +598,16 @@ def stochastic_trace(
             count,
             quantity="trace",
             scalar_function=scalar_function,
+            batch_size=batch if execution == "batched" else count,
         )
-    probes = jax.vmap(lambda probe: _whiten_coordinates(operator.source, probe))(
-        _rademacher_probes(
-            key,
-            count,
-            operator.source.size,
-            _coordinate_dtype(operator.source),
-        )
-    )
 
-    def one(coordinates: Array) -> _LanczosProbeSample:
+    def one(index: Array) -> _LanczosProbeSample:
+        coordinates = _whiten_coordinates(
+            operator.source,
+            _addressed_rademacher_probe(
+                key, index, operator.source.size, _coordinate_dtype(operator.source)
+            ),
+        )
         decomposition = lanczos(
             _coordinate_action(operator),
             coordinates,
@@ -704,7 +691,11 @@ def stochastic_trace(
         probe_finite,
         matvec_counts,
         adjoint_matvec_counts,
-    ) = jax.vmap(one)(probes)
+    ) = (
+        jax.lax.map(one, jnp.arange(count, dtype=jnp.int32), batch_size=batch)
+        if execution == "batched"
+        else jax.vmap(one)(jnp.arange(count, dtype=jnp.int32))
+    )
     samples, estimate, standard_error = _masked_statistics(raw_samples, usable)
     finite = jnp.all(usable) & jnp.all(jnp.isfinite(estimate))
     converged = finite & jnp.all(probe_converged)
@@ -732,7 +723,7 @@ def stochastic_trace(
         matvec_count=jnp.sum(matvec_counts, dtype=jnp.int32),
         adjoint_matvec_count=jnp.sum(adjoint_matvec_counts, dtype=jnp.int32),
         diagnostics=diagnostics,
-        method="stochastic-lanczos-quadrature",
+        method=f"stochastic-lanczos-quadrature-{execution}",
         quantity="trace",
     )
 
@@ -744,6 +735,8 @@ def stochastic_log_determinant(
     key: Array,
     num_probes: int = 16,
     max_dimension: int = 32,
+    batch_size: int = 4,
+    execution: StochasticProbeExecution = "batched",
 ) -> StochasticEstimate:
     if not operator.properties.certifies("positive_definite"):
         raise ValueError(
@@ -755,6 +748,8 @@ def stochastic_log_determinant(
         key=key,
         num_probes=num_probes,
         max_dimension=max_dimension,
+        batch_size=batch_size,
+        execution=execution,
     )
     return StochasticEstimate(
         estimate=result.estimate,
@@ -858,6 +853,7 @@ def estimate_inverse_diagonal(
     key: Array,
     num_probes: int = 32,
     solve_policy: LinearSolvePolicy | None = None,
+    batch_size: int = 4,
 ) -> StochasticEstimate:
     """Hutchinson estimate of diag(A⁻¹) with solve-status evidence."""
     if not isinstance(operator, AbstractLinearOperator):
@@ -865,43 +861,74 @@ def estimate_inverse_diagonal(
     if not operator.source.compatible(operator.target):
         raise ValueError("Inverse diagonal estimation requires an endomorphism.")
     count = _positive_int(num_probes, "num_probes")
-    if operator.batch_shape:
-        if not isinstance(operator, DenseLinearOperator):
-            raise ValueError(
-                "Batched inverse diagonal estimation requires DenseLinearOperator."
-            )
-        return _batched_dense_stochastic(
-            operator,
-            key,
-            count,
-            quantity="inverse-diagonal",
+    batch = min(_positive_int(batch_size, "batch_size"), count)
+    if operator.batch_shape and not isinstance(operator, DenseLinearOperator):
+        raise ValueError(
+            "Batched inverse diagonal estimation requires DenseLinearOperator."
         )
-    probes = _rademacher_probes(
-        key,
-        count,
-        operator.source.size,
-        _coordinate_dtype(operator.source),
-    )
 
-    def one(probe: Array) -> _SolveProbeSample:
-        physical = operator.target.unflatten(probe)
-        result = solve(LinearSystem(operator), physical, policy=solve_policy)
-        sample = jnp.conj(probe) * operator.source.flatten(result.value)
-        diagnostics = result.diagnostics
-        sample_finite = jnp.all(jnp.isfinite(sample))
-        successful = (
-            result.successful & diagnostics.converged & diagnostics.finite & sample_finite
+    layout = RHSLayout((batch,))
+    prepared = prepare(LinearSystem(operator), solve_policy, rhs_layout=layout)
+    padding = (-count) % batch
+    chunks = jnp.arange(count + padding, dtype=jnp.int32).reshape((-1, batch))
+
+    def one(indices: Array) -> _SolveProbeSample:
+        probe = jax.vmap(
+            lambda index: _addressed_rademacher_probe(
+                key,
+                index,
+                operator.source.size,
+                _coordinate_dtype(operator.source),
+                operator.batch_shape,
+            )
+        )(indices)
+        events = jax.vmap(operator.target.unflatten)(
+            probe.reshape((-1, operator.target.size))
         )
+        physical = jax.tree.map(
+            lambda value: jnp.moveaxis(
+                value.reshape(probe.shape[:-1] + value.shape[1:]), 0, -1
+            ),
+            events,
+        )
+        result = solve(prepared, physical, rhs_layout=layout)
+        result_events = jax.tree.map(
+            lambda value: jnp.moveaxis(value, -1, 0).reshape(
+                (-1,) + value.shape[len(operator.batch_shape) : -1]
+            ),
+            result.value,
+        )
+        images = jax.vmap(operator.source.flatten)(result_events).reshape(probe.shape)
+        sample = jnp.conj(probe) * images
+        diagnostics = result.diagnostics
+        sample_finite = jnp.all(jnp.isfinite(sample), axis=-1)
+        if operator.batch_shape:
+            successful_status = jnp.moveaxis(result.successful, -1, 0)
+            diagnostic_converged = jnp.moveaxis(diagnostics.converged, -1, 0)
+            diagnostic_finite = jnp.moveaxis(diagnostics.finite, -1, 0)
+        else:
+            successful_status = result.successful
+            diagnostic_converged = diagnostics.converged
+            diagnostic_finite = diagnostics.finite
+        successful = (
+            successful_status & diagnostic_converged & diagnostic_finite & sample_finite
+        )
+
+        def probe_axis(value: Array) -> Array:
+            return jnp.moveaxis(value, -1, 0) if operator.batch_shape else value
+
         return (
-            sample,
+            jnp.where(
+                successful[..., None], sample, jnp.asarray(jnp.nan, dtype=sample.dtype)
+            ),
             successful,
-            result.status,
-            diagnostics.iterations,
-            diagnostics.residual_norm,
-            diagnostics.relative_residual,
-            diagnostics.finite & sample_finite,
-            diagnostics.matvec_count,
-            diagnostics.adjoint_matvec_count,
+            probe_axis(result.status),
+            probe_axis(diagnostics.iterations),
+            probe_axis(diagnostics.residual_norm),
+            probe_axis(diagnostics.relative_residual),
+            diagnostic_finite & sample_finite,
+            probe_axis(diagnostics.matvec_count),
+            probe_axis(diagnostics.adjoint_matvec_count),
         )
 
     (
@@ -914,11 +941,15 @@ def estimate_inverse_diagonal(
         probe_finite,
         matvec_counts,
         adjoint_matvec_counts,
-    ) = jax.vmap(one)(probes)
-    samples, estimate, standard_error = _masked_statistics(
+    ) = jax.tree.map(
+        lambda value: value.reshape((-1,) + value.shape[2:])[:count],
+        jax.lax.map(one, chunks),
+    )
+    _, estimate, standard_error = _batched_probe_statistics(
         raw_samples,
         probe_converged,
     )
+    samples = raw_samples
     probe_statuses = jnp.where(
         ~probe_finite,
         int(StochasticProbeStatus.NONFINITE),
@@ -938,8 +969,8 @@ def estimate_inverse_diagonal(
         matvec_count=matvec_counts,
         adjoint_matvec_count=adjoint_matvec_counts,
     )
-    finite = jnp.all(probe_converged) & jnp.all(jnp.isfinite(estimate))
-    converged = finite & jnp.all(probe_converged)
+    finite = jnp.all(probe_converged, axis=0) & jnp.all(jnp.isfinite(estimate), axis=-1)
+    converged = finite & jnp.all(probe_converged, axis=0)
     return StochasticEstimate(
         estimate=estimate,
         standard_error=standard_error,
@@ -949,12 +980,12 @@ def estimate_inverse_diagonal(
         probe_converged=probe_converged,
         probe_statuses=probe_statuses,
         probe_error_estimates=residual_norms,
-        iterations=jnp.sum(iterations, dtype=jnp.int32),
+        iterations=jnp.sum(iterations, axis=0, dtype=jnp.int32),
         num_probes=count,
-        matvec_count=jnp.sum(matvec_counts, dtype=jnp.int32),
-        adjoint_matvec_count=jnp.sum(adjoint_matvec_counts, dtype=jnp.int32),
+        matvec_count=jnp.sum(matvec_counts, axis=0, dtype=jnp.int32),
+        adjoint_matvec_count=jnp.sum(adjoint_matvec_counts, axis=0, dtype=jnp.int32),
         diagnostics=diagnostics,
-        method="hutchinson-solve",
+        method=f"hutchinson-prepared-block-solve-batch-{batch}",
         quantity="inverse-diagonal",
     )
 
@@ -1045,6 +1076,33 @@ def _whole_krylov_space_certified(
     )
 
 
+def _addressed_rademacher_probe(
+    key: Array,
+    index: Array,
+    size: int,
+    dtype: Any,
+    batch_shape: tuple[int, ...] = (),
+) -> Array:
+    coordinate_dtype = np.dtype(dtype)
+    real_dtype = np.empty((), dtype=coordinate_dtype).real.dtype
+    probe_key = jr.fold_in(key, index)
+    if not batch_shape:
+        return jr.rademacher(probe_key, (size,), dtype=real_dtype).astype(
+            coordinate_dtype
+        )
+    batch_count = int(np.prod(batch_shape))
+    keys = jax.vmap(lambda instance: jr.fold_in(probe_key, instance))(
+        jnp.arange(batch_count, dtype=jnp.int32)
+    )
+    return (
+        jax.vmap(
+            lambda instance_key: jr.rademacher(instance_key, (size,), dtype=real_dtype)
+        )(keys)
+        .astype(coordinate_dtype)
+        .reshape(batch_shape + (size,))
+    )
+
+
 def _rademacher_probes(
     key: Array,
     count: int,
@@ -1052,13 +1110,9 @@ def _rademacher_probes(
     dtype: Any,
     /,
 ) -> Array:
-    coordinate_dtype = np.dtype(dtype)
-    real_dtype = np.empty((), dtype=coordinate_dtype).real.dtype
-    return jr.rademacher(
-        key,
-        (count, size),
-        dtype=real_dtype,
-    ).astype(coordinate_dtype)
+    return jax.vmap(lambda index: _addressed_rademacher_probe(key, index, size, dtype))(
+        jnp.arange(count, dtype=jnp.int32)
+    )
 
 
 def _require_square_root_pairing(space: AbstractVectorSpace, /) -> None:

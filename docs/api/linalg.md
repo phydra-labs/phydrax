@@ -37,6 +37,80 @@ contract holds for this solve: implicit contracts require convergence (the same
 evidence that guards the returned value's derivative), unrolled contracts
 require finite arithmetic, and a stopped contract is never valid.
 
+## Certified banded spectral brackets
+
+The native certificate substrate never materializes a dense matrix. Scalar bands
+use the `BandedLinearOperator` convention
+`bands[upper_bandwidth + row - column, column] = A[row, column]`.
+Inputs are unbatched real or complex arrays with float32 or wider components.
+Block-banded matrices are supplied in their scalar band layout; rectangular
+matrices additionally declare `rows`. All results are immutable `StrictModule`
+objects with scalar JAX leaves, usable under `jit` and `vmap`.
+
+```python
+banded_definiteness_certificate(
+    bands, /, *, bandwidth, shift=0.0, upper=False
+)
+banded_eigenvalue_brackets(
+    bands, /, *, bandwidth, relative_tolerance=1e-8, max_steps=80
+)
+banded_singular_value_brackets(
+    bands, /, *, rows, lower_bandwidth, upper_bandwidth,
+    relative_tolerance=1e-8, max_steps=80
+)
+banded_singular_value_certificate(
+    bands, /, *, rows, lower_bandwidth, upper_bandwidth, threshold
+)
+```
+
+Hermitian functions require both exactly conjugate triangles in
+`(2*bandwidth+1, n)` storage. `banded_definiteness_certificate` tests
+`H-shift*I ≻ 0`, or `shift*I-H ≻ 0` when `upper=True`.
+`BandedDefinitenessCertificate` returns `certified`, `status`, `minimal_pivot`,
+and `rounding_margin`: the pivot is the smallest observed lower interval
+endpoint and the margin is the largest propagated Schur-entry radius.
+Interval-enclosed band Cholesky scans rows, using O(n b²) work and O(n b)
+memory. Positive lower pivot endpoints certify definiteness; a strictly negative
+upper pivot endpoint after positive previous pivots certifies a negative
+direction. A pivot interval containing zero proves neither.
+
+`BandedEigenvalueBrackets` and `BandedSingularValueBrackets` report
+`minimum_lower`, `minimum_upper`, `maximum_lower`, `maximum_upper`, `status`,
+`steps`, `minimum_width`, `maximum_width`, `minimal_pivot`,
+`minimum_rounding_floor`, and `maximum_rounding_floor`.
+The singular-value result additionally exposes `condition_upper_bound`
+(infinity when the minimum lower bound is zero). Gershgorin initializes
+outward enclosures; bounded, traceable interval subdivision tightens them.
+Convergence requires both endpoint widths to be at most the larger of the
+requested relative tolerance times the smaller endpoint magnitude and the
+attainable arithmetic floor. Each floor starts with the outward-rounding scale
+and incorporates twice the largest Schur-entry radius of inconclusive tests
+for that endpoint. This acknowledges when refinement has reached its arithmetic
+resolution; it never changes or weakens the enclosing endpoints. Applications
+requiring a tighter width must inspect the explicit width and floor evidence.
+Singular-value subdivision uses this criterion on the squared spectrum before
+outward-rounded square roots; its reported floors are converted to singular
+value units at the lower endpoint.
+`max_steps=0` returns the initial bounds.
+
+Singular certificates form interval-enclosed `AᴴA` bands of bandwidth at most
+`lower_bandwidth + upper_bandwidth`, including Gram-formation rounding error.
+This also accepts upper-banded triangular QR factors without a special route.
+`banded_singular_value_certificate` uses only one definiteness test of the
+shifted Gram matrix to prove `σ_min ≥ threshold`; `threshold` is nonnegative.
+The minimum is the column-map minimum: wide matrices have minimum zero and
+cannot receive a positive-threshold full-column-rank certificate.
+
+`BandedSpectrumStatus.CERTIFIED` (0) means the query was proved or both brackets
+converged. `BRACKET_NOT_CONVERGED` (1) means the step limit, rounding uncertainty,
+or invalid dynamic input prevented certification. `INDEFINITE_AT_SHIFT` (2)
+means a negative direction was proved for a definiteness query. In particular,
+a false direct certificate is not automatically a rank-deficiency claim.
+Unconverged brackets remain valid enclosures and finite condition upper bounds
+remain certified; invalid Hermitian/nonfinite inputs return unbounded brackets.
+Normal-equation rounding can prevent tight small-singular-value bounds for very
+ill-conditioned matrices: consumers must retain and honor this evidence.
+
 ## Hermitian matrix functions and isotropic spectral maps
 
 `hermitian_log`, `hermitian_exp`, `hermitian_sqrt`, and
@@ -256,13 +330,22 @@ composed operators. Materialization is explicit and bounded:
 ```python
 dense = phx.linalg.materialize(
     operator,
-    phx.linalg.MaterializationPolicy(max_entries=4, max_bytes=4096),
+    phx.linalg.MaterializationPolicy(
+        max_entries=4, max_bytes=4096, max_workspace_bytes=64 * 1024 * 1024
+    ),
 )
 ```
 `MaterializationPolicy.require(entries, dtype)` applies the same entry and byte
 limits to a dense array that a caller forms itself, such as a stored Jacobian,
 and raises `LinearCapabilityError` before allocation when either limit is
 exceeded.
+
+`max_workspace_bytes` independently bounds the logical dense/gather workspace
+(64 MiB by default); `require_workspace(bytes)` refuses it before execution.
+The policy-aware operator hook `_materialize_admitted(policy)` admits the full
+route by default. Specialized selected blocks use bounded parent actions instead.
+The workspace field participates in plan/preconditioner identities just like
+the existing entry and output-byte limits.
 
 `assemble_diagonal` and `assemble_uniform_blocks` expose exact structural
 extraction independently of dense materialization. An operator advertises
@@ -426,6 +509,15 @@ the exact fixed-rank tangent of the weighted pseudoinverse, including its
 nullspace term, and is refused unless the factorization's singular-value gap
 certifies a locally constant rank.
 
+Weighted, regularized, or damped least-squares implicit derivatives apply the
+stationarity action `A* W A + R* R + damping**2 I` to one RHS column at a
+time, retaining the executed DenseSVD active-space projection where applicable.
+Independent column certification does not embed each column in a full RHS
+block. Full pseudoinverse derivatives apply their Moore–Penrose tangent
+complements associatively on the smaller coordinate side, without square
+identity buffers; complex conjugation and fixed-rank admission are unchanged.
+
+
 The metric transform `B = A S` of a weighted objective is
 `A @ DiagonalLinearOperator(s)`, and the relaxed objective
 `0.5 ||z||^2 + rho/2 ||D^-1 (B z - b)||^2` is
@@ -571,6 +663,15 @@ before any numeric setup runs.
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
 | `GMRES`, `PCG`, `MINRES`, `FGMRES`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `LSMR` retains the real Euclidean unweighted envelope |
 | `ConjugateGradient`, `BiCGStab` | `lineax` | Lineax-backed Euclidean or diagonal-metric methods; CG additionally requires real coordinates |
+
+Host sparse prepared state retains shape/batch metadata and provider factors,
+not a second CSR copy. SuperLU and CHOLMOD accept matrix RHS blocks using one
+prepared factorization. UMFPACK retains a numeric factorization and applies its
+vector-only solve to each column without refactoring. SPQR's public matrix-RHS
+backslash factors once per solve block; it does not provide a reusable solve
+handle, so a later call factors again. These host routes remain non-JIT and
+non-differentiable; JAX's sparse route keeps its device CSR and per-column solve.
+
 
 `DenseLU` solves canonical coordinates and accepts any declared Hilbert pairing.
 `DenseCholesky`, `DenseQR`, and `DenseSVD` currently require the metric used by
@@ -750,6 +851,14 @@ pseudoinverse_result = svd_factorization.materialize_pseudoinverse()
 Prepared dense factorizations support leading operator batches. Explicit
 `LinearSubspace` nullspace artifacts remain unbatched, so a batched
 factorization truthfully reports `nullspaces=False`.
+
+`determinant_sign()` and `log_abs_determinant()` reuse prepared LU or Cholesky
+factors. Cholesky evaluates `2 * sum(log(abs(diag(L))))`, including for leading
+batches and diagonal metric similarities, without refactoring the matrix.
+Its mathematical derivative uses the prepared solve. An invalid Cholesky
+factor reports NaN determinant values and its solve retains failure status;
+it never substitutes an indefinite matrix's otherwise finite `slogdet`.
+
 
 ### Pairings
 
@@ -1149,11 +1258,29 @@ column paths end at different depths. `select_block_operator(A, rows, columns)`
 returns the exact block grid `restrict(rows) @ A @ prolong(columns)`. It indexes
 explicit grids instead of composing them, descends identity-ordered
 `MappedBlockLinearOperator` values and the canonical coordinate view used by
-Newton solves, and wraps only opaque leaves; every block keeps the materialization
-and transpose capabilities of its source. A selection covering every block
-regroups an N-field operator into the explicit 2 by 2 grid consumed by
+Newton solves, and wraps only opaque leaves. Selected leaves retain transpose
+capabilities and can materialize even when the parent forbids dense output.
+A selection covering every block regroups an N-field operator into the explicit
+2 by 2 grid consumed by
 `BlockFactorizationPreconditionerBuilder`. A principal compression by one path
 selection inherits self-adjoint and definiteness claims.
+
+Selected-block materialization gathers only the requested parent action columns
+and rows, preserving selection order. At most 32 columns run together, further
+bounded by `max_workspace_bytes`; a single column that does not fit is refused
+before any parent action. The gathering workspace is O(B × (source + target)),
+not the size of the parent matrix. This bounds gathering buffers, not opaque
+scratch internal to a user-supplied action. Direct private materialization of a
+selected leaf also uses parent actions, one column at a time.
+
+`ConstraintOperatorPlan` and `prepare_constraint_operator` solve canonical
+identity columns in blocks bounded by both materialization and solve workspace
+policies. Their certificates incrementally reduce `||MRM-M||`, `||MR-I||`, and
+`||MR||` without a target-dimension-squared identity/projector. Full-row-rank
+constraints explicitly check `MR-I`; generalized constraints retain its norm via
+the scalar trace identity. Nullspace, pairing minimum-norm, compatibility, and
+native failed-solve checks remain enforced. The retained generalized right
+inverse is still source-dimension × target-dimension.
 
 `SubspaceCorrectionTerm` consumes named transfers directly. When its restriction
 and prolongation are named block transfers, the local setup operator is that exact
@@ -2037,6 +2164,12 @@ dimension, confidence level, and absolute/relative stopping tolerances.
 Self-adjoint evidence is mandatory; log determinants additionally require
 positive-definite evidence.
 
+Unbatched adaptive SLQ generates only the current probe batch. Each probe is
+addressed by `jax.random.fold_in(key, absolute_probe_index)`, so changing the
+batch size does not change its sample (historical keyed samples intentionally
+change). Workspace evidence charges the batch's probe/Krylov/action storage
+plus retained scalar samples and diagnostics, not a maximum-capacity probe bank.
+
 ## Linear matrix equations
 
 `MatrixEquationTerm` represents `c A X B`; `MatrixEquationProblem` sums such
@@ -2183,6 +2316,35 @@ indicator from an available or certified bound and retain convergence,
 derivative validity, Krylov breakdown, effective dimension, Taylor
 degree/scaling, setup/action/transpose work, and retained/workspace bytes.
 `.successful` is true only for `MatrixFunctionStatus.SUCCESS`.
+
+`stochastic_trace(..., execution="batched", batch_size=4)` bounds simultaneous
+Lanczos work. The closed `StochasticProbeExecution` selector also admits
+`"parallel"` for a fully vectorized probe route; the result's method records
+the chosen route. `stochastic_log_determinant` exposes the same controls.
+`estimate_inverse_diagonal(..., batch_size=4)` prepares the solve once and
+solves probe columns in bounded native multi-RHS chunks; its returned
+`samples` intentionally occupies O(probes × dimension) storage. Solve failures
+remain visible per probe and are excluded from successful statistics.
+All stochastic trace, log-determinant, diagonal, inverse-diagonal, and adaptive
+probes now share absolute-index `fold_in` addressing. Historical keyed samples
+intentionally change; replay and probe values are independent of the execution
+batch size and requested probe capacity. Fixed trace and inverse-diagonal routes
+generate only the current probe batch rather than retaining a probe bank.
+
+Batched `matrix_function_action` defaults to actions: certified self-adjoint
+Euclidean operators project RHS blocks into the eigenspace; non-Euclidean
+self-adjoint operators use pairing-aware Lanczos actions. Non-self-adjoint
+operators use bounded Arnoldi actions with their convergence evidence, and resolvents
+solve the shifted system directly against the RHS block rather than an identity.
+`MatrixFunctionPolicy("dense", max_workspace_bytes=...)` explicitly requests
+the dense exact matrix-function route. It refuses before execution when the
+conservative function-workspace estimate exceeds the byte budget (64 MiB by
+default). Batched `auto` therefore intentionally changes numerical method and
+provenance; it no longer implicitly constructs a dense exact function matrix.
+The eigenspace action has a divided-difference first-order JVP, including the
+confluent limit at repeated eigenvalues, without reconstructing a dense function
+matrix. Resolvent RHS-action workspace is O(n × RHS count); the native dense
+factorization still owns O(n²) factor storage, reported separately in benchmarks.
 
 `TaylorExponentialPolicy` selects the explicit scaled full-degree Taylor route
 for `matrix_exponential_action`. It is not selected by

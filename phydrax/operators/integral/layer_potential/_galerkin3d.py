@@ -140,6 +140,7 @@ class LaplaceSingleLayerDP0GalerkinPolicy3D(StrictModule, NonTrainableState):
                     else {
                         "entries": dense_oracle.max_entries,
                         "bytes": dense_oracle.max_bytes,
+                        "workspace_bytes": dense_oracle.max_workspace_bytes,
                     }
                 ),
             }
