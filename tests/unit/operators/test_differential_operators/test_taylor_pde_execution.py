@@ -934,15 +934,27 @@ def test_partial_native_divergence_ownership_and_case_resources_refuse() -> None
         refused.term.loss({"u": field}, key=jr.key(0))
 
 
-def test_scalar_and_one_component_vector_keep_distinct_operator_types() -> None:
+def test_one_dimensional_scalar_and_vector_divergence_match_the_derivative() -> None:
     domain = _domain(1)
     expression = PDEExpression.field("u").divergence("x")
     scalar = domain.Function("x")(lambda x: x[0] ** 3)
-    with pytest.raises(ValueError):
+    scalar_divergence = compile_pde_expression(
+        expression,
+        _problem(expression, size=1),
+        fields={"u": scalar},
+        differential_backend="jet",
+    )
+    if not isinstance(scalar_divergence, DomainFunction):
+        raise TypeError("A differential expression must compile to a DomainFunction.")
+    point = jnp.asarray([0.4], dtype=jnp.float64)
+    scalar_value = scalar_divergence.func(point, key=jr.key(0))
+    assert jnp.asarray(scalar_value).shape == ()
+    np.testing.assert_allclose(scalar_value, 3.0 * point[0] ** 2, atol=1e-9)
+    with pytest.raises(ValueError, match="vector-valued field"):
         compile_pde_expression(
             expression,
-            _problem(expression, size=1),
-            fields={"u": scalar},
+            _problem(expression),
+            fields={"u": _domain().Function("x")(lambda x: x[0] ** 3)},
             differential_backend="jet",
         )
     compiled = _compile(

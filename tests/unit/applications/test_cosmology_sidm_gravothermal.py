@@ -147,8 +147,11 @@ def test_cosmology_sidm_gravothermal_scenario_1() -> None:
         jnp.sum(result.diagnostics.thermal_energy_before),
         rtol=3.0e-13,
     )
+    # The defect subtracts extensive thermal energies, so its roundoff tolerance
+    # must use the same energy scale as the conservation comparison above.
+    energy_scale = float(jnp.sum(jnp.abs(result.diagnostics.thermal_energy_before)))
     np.testing.assert_allclose(
-        result.diagnostics.energy_balance_defect, 0.0, atol=3.0e-13
+        result.diagnostics.energy_balance_defect, 0.0, atol=3.0e-13 * energy_scale
     )
     assert bool(result.diagnostics.total_energy_valid)
     assert abs(float(result.diagnostics.total_energy_defect)) <= (

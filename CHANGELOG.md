@@ -83,6 +83,26 @@
   Cholesky determinants directly from factors, including invalid-factor evidence.
 - Bound selected-block gathering and constraint right-inverse certificates without
   parent densification or target-space-square identity/projector buffers.
+- Randomized moment objectives recognize independent, unbiased Monte Carlo and
+  scrambled-QMC product replicate means; deterministic or unscrambled product
+  factors still refuse unbiased losses rather than claiming an iid sampling law.
+- Gravothermal SIDM conservation regression tolerances scale extensive energy
+  balance defects by thermal energy instead of imposing an absolute unit-sized
+  roundoff threshold; physical energy diagnostics and acceptance are unchanged.
+- Taylor chains lower admitted scalar divergence in one dimension as the
+  coordinate derivative without vector-component indexing; multidimensional
+  scalar divergence remains refused. Quadrilateral field-view tests and
+  reconstruction documentation now exercise the native default point locator.
+- Dense fractional Gaussian regression coverage checks exact seeded replay and
+  independent analytic covariance instead of a platform-specific byte hash of
+  LAPACK-based samples; realization and coupling identifier pins remain intact.
+- Native LSMR and minimum-norm witness audits explicitly cast real
+  normalization and recurrence scalars to their vector dtype, preserving
+  complex Bloch seam projections under strict JAX dtype promotion.
+- Finite-element sparse assembly keeps traced DOF routes on device, allowing
+  prepared mass actions inside mixed-method coupling scans without NumPy
+  tracer conversion. Namespace and grouped-derivative refusal tests now reflect
+  the public periodic certificate and explicit-coordinate-axis contract.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.

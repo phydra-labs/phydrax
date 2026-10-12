@@ -3019,18 +3019,18 @@ def _assemble_local_operator(
         block_index = len(source_parts)
         transform = dof_map.cell_transforms[block_index]
         values = ein.contract("cai,cab,cbj->cij", transform, values, transform)
-        indices = np.asarray(cell_dofs, dtype=np.int32)
+        indices = jnp.asarray(cell_dofs, dtype=jnp.int32)
         width = indices.shape[1]
-        components = np.arange(component_count, dtype=np.int32)
+        components = jnp.arange(component_count, dtype=jnp.int32)
         flat = indices[..., None] * component_count + components
         source_parts.append(
-            np.broadcast_to(
+            jnp.broadcast_to(
                 flat[:, None, :, :],
                 (indices.shape[0], width, width, component_count),
             ).reshape((-1,))
         )
         target_parts.append(
-            np.broadcast_to(
+            jnp.broadcast_to(
                 flat[:, :, None, :],
                 (indices.shape[0], width, width, component_count),
             ).reshape((-1,))
@@ -3042,8 +3042,8 @@ def _assemble_local_operator(
             ).reshape((-1,))
         )
     relation = EdgeRelation(
-        np.concatenate(source_parts),
-        np.concatenate(target_parts),
+        jnp.concatenate(source_parts),
+        jnp.concatenate(target_parts),
         source_size=dof_map.global_dof_count * component_count,
         target_size=dof_map.global_dof_count * component_count,
     )
