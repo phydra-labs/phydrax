@@ -2547,7 +2547,8 @@
   eigenspace derivatives use confluent divided differences.
 - `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
   in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
-  dense-local bordered identities. Existing policy-derived identities change.
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
