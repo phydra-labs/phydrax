@@ -455,3 +455,88 @@ def test_memory_summary_refuses_unsupported_record(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         build_summary(tmp_path)
+
+
+def test_memory_summary_uses_native_mpc_retention_evidence(tmp_path: Path) -> None:
+    filename = "memory_control_horizon.json"
+    (tmp_path / filename).write_text(
+        json.dumps(_committed_memory_record(filename)), encoding="utf-8"
+    )
+    cases = build_summary(tmp_path)["records"][0]["cases"]
+    native = {case["case"]: case for case in cases if case["case"].startswith("S11/")}
+    assert set(native) == {"S11/dense", "S11/sparse"}
+    assert native["S11/dense"]["disposition"] == "reference-only"
+    assert (
+        native["S11/sparse"]["metrics"]["retained_bytes"]["disposition"]
+        == "bounded-growth"
+    )
+    assert all(
+        "compiler.temporary_bytes" not in case["metrics"] for case in native.values()
+    )
+
+
+def test_memory_summary_groups_action_products_before_scaling_size(
+    tmp_path: Path,
+) -> None:
+    filename = "memory_optim_interior_point.json"
+    (tmp_path / filename).write_text(
+        json.dumps(_committed_memory_record(filename)), encoding="utf-8"
+    )
+    cases = build_summary(tmp_path)["records"][0]["cases"]
+    actions = [case for case in cases if case["case"].startswith("actions/")]
+    assert len(actions) == 2
+    assert all(case["capacities"] == [8, 16, 32] for case in actions)
+    assert all(case["case"].endswith("/products=16") for case in actions)
+
+
+@pytest.mark.parametrize(
+    ("family", "added_fields"),
+    [
+        ("fem_assembly", ("compiler_route", "requested_tensor_families")),
+        (
+            "polynomial_preparation",
+            ("compiler_scaling_exponent", "declared_scaling_exponent", "gate"),
+        ),
+        ("linalg_solves", ("auxiliary",)),
+    ],
+)
+def test_memory_summary_verifies_exact_additive_evidence_fields(
+    tmp_path: Path, family: str, added_fields: tuple[str, ...]
+) -> None:
+    for filename in (f"memory_{family}.json", f"memory_{family}_baseline.json"):
+        (tmp_path / filename).write_text(
+            json.dumps(_committed_memory_record(filename)), encoding="utf-8"
+        )
+    entry = build_summary(tmp_path)["records"][0]
+    assert entry["evidence_extension_fields"] == sorted(added_fields)
+    assert entry["baseline_comparisons"] > 0
+
+
+@pytest.mark.parametrize("family", ["linalg_spectral", "structured_transfer"])
+def test_memory_summary_preserves_missing_baseline_provenance(
+    tmp_path: Path, family: str
+) -> None:
+    for filename in (f"memory_{family}.json", f"memory_{family}_baseline.json"):
+        (tmp_path / filename).write_text(
+            json.dumps(_committed_memory_record(filename)), encoding="utf-8"
+        )
+    entry = build_summary(tmp_path)["records"][0]
+    assert entry["disposition"] == "baseline-identity-missing"
+    assert entry["baseline_comparisons"] == 0
+    assert entry["baseline_driver_fingerprint"] is None
+
+
+def test_memory_summary_checks_reactor_stencil_without_false_power_bound(
+    tmp_path: Path,
+) -> None:
+    filename = "memory_reactor_diffusion.json"
+    candidate = _committed_memory_record(filename)
+    (tmp_path / filename).write_text(json.dumps(candidate), encoding="utf-8")
+    metrics = build_summary(tmp_path)["records"][0]["cases"][0]["metrics"]
+    # Affine a*cells-b storage can have a fitted exponent slightly above one.
+    assert metrics["retained_bytes"]["exponent"] > 1.0
+    assert metrics["retained_bytes"]["disposition"] == "observed-only"
+    candidate["records"][0]["sparse_capacity"] += 1
+    (tmp_path / filename).write_text(json.dumps(candidate), encoding="utf-8")
+    with pytest.raises(ValueError, match="sparse capacity"):
+        build_summary(tmp_path)

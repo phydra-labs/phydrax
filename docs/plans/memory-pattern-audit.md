@@ -101,3 +101,19 @@ are not portable thresholds. The aggregate summary is deterministically ordered
 and has no timestamps or schema/version fields. `--check` recomputes and compares
 that summary without rewriting it. Update the summary after any observed candidate
 or baseline record changes; never seed measurements with guessed bytes.
+
+Baseline artifacts lacking recorded driver/evidence identities receive
+`baseline-identity-missing`; they are not cross-record comparisons even when the
+environment matches. This currently applies to the historical linalg-spectral,
+ocean-shell, and structured-transfer baselines. Their candidate scaling and any
+same-record paired evidence remain available without inventing historical provenance.
+
+Exact additive evidence fields are recognized only for the reviewed FEM
+(`compiler_route`, `requested_tensor_families`), polynomial
+(`compiler_scaling_exponent`, `declared_scaling_exponent`, `gate`), and linalg-solve
+(`auxiliary`) records; common case controls and comparison metrics must still
+match. Other evidence-identity changes fail closed. Native MPC preparation uses
+host retained bytes rather than nonexistent compiler memory, and interior-point
+action products remain fixed while scaling problem size. Reactor preparation
+checks its exact sparse-stencil capacity formula; its reported host and retained
+fits remain observations, not an invented power-law bound on affine storage.

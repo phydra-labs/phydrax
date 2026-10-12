@@ -6,6 +6,7 @@ phydrax/_numerics/_quadrature_rules.py	gauss_kronrod_data	array-cache	bounded/st
 phydrax/_trainable.py	_code_global_names	array-cache	bounded/static: Count-bounded 4096-entry frozenset-of-name metadata cache; values contain no numerical arrays.
 phydrax/_trainable.py	_terminal_types	array-cache	bounded/static: Keyless singleton containing two terminal owner types; no array payload.
 phydrax/_typing_plan.py	_compiled_parse_form	array-cache	bounded/static: Count-bounded 4096-entry compiled annotation-contract metadata; does not cache numerical values.
+phydrax/algebraic/_certification.py	krawczyk_certificate	inverse-by-identity	bounded/static: Every preconditioner entry is required by the interval enclosure; 8*(10*n*n+12*n) dense bytes are admitted before the Jacobian under maximum_dense_workspace_bytes (default 64MiB).
 phydrax/applications/astrodynamics/_regularization.py	PreparedCloseEncounterSegment.propagate	dense-derivative	bounded/static: Fixed Kustaanheimo-Stiefel position map has a 3-by-4 physical Jacobian.
 phydrax/applications/astrophysics/_wcs.py	TangentSipWcsPlan.pixel_to_world.step	dense-derivative	bounded/static: TAN-SIP admission fixes two pixel coordinates and a 2-by-2 Newton residual Jacobian.
 phydrax/applications/compressible_flow/_qualification.py	ManufacturedViscousNSPlan.evaluate.point_terms	dense-derivative	bounded/static: Scalar-time state derivative and flux divergence over admitted spatial dimensions 1, 2, or 3, not state-sized square derivatives.

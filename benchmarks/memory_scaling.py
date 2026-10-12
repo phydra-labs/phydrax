@@ -183,6 +183,7 @@ def _simple(record: dict[str, Any], family: str) -> list[Case]:
             None,
         ),
         "covariance_estimators": ("records", "dimension", "retained_bytes", None, None),
+        "reactor_diffusion": ("records", "cells", "retained_bytes", None, None),
     }
     path, capacity, metric, maximum, gate_path = specifications[family]
     rows = _rows(record, path)
@@ -233,6 +234,12 @@ def _simple(record: dict[str, Any], family: str) -> list[Case]:
                 "logical_block_pair_bytes": None,
             }
         )
+    if family == "reactor_diffusion":
+        case.metrics["host_peak_bytes"] = None
+        for row in rows:
+            cells, groups = row["cells"], row["groups"]
+            if row["sparse_capacity"] != cells * groups**2 + 2 * (cells - 1) * groups:
+                raise ValueError("Reactor sparse capacity disagrees with the stencil.")
     return [case]
 
 
@@ -757,6 +764,16 @@ def _extension_cases(record: dict[str, Any], family: str) -> list[Case]:
                             raise ValueError(
                                 "Control horizon growth exceeds the declared linear ratio."
                             )
+                else:
+                    # Native QP preparation has host retention evidence, not an
+                    # XLA compiler program. Sparse storage scales with horizon;
+                    # the explicit dense alternative remains reference evidence.
+                    case.metric = "retained_bytes"
+                    case.maximum_exponent = 1.0 if route == "sparse" else None
+                    case.metrics["host_peak_bytes"] = None
+                    case.disposition = (
+                        "unconditional" if route == "sparse" else "reference-only"
+                    )
             elif family == "dae":
                 dimension, batch, reuse = key
                 if (
@@ -825,6 +842,7 @@ _SIMPLE = frozenset(
         "open_loop_games",
         "open_loop_games_players",
         "covariance_estimators",
+        "reactor_diffusion",
     )
 )
 _NAMED = frozenset(
@@ -996,11 +1014,18 @@ def _supplemental(record: dict[str, Any], family: str) -> list[Case]:
                 )
             )
     elif family == "optim_interior_point":
-        for (route,), rows in _groups(_rows(record, "actions"), ("route",)).items():
+        for (route, products), rows in _groups(
+            _rows(record, "actions"), ("route", "products")
+        ).items():
             if route not in ("prepared-actions", "reconstructed-actions"):
                 raise ValueError("Unsupported interior-point action route.")
             cases.append(
-                Case(f"actions/{route}", rows, "products", disposition="evidence-only")
+                Case(
+                    f"actions/{route}/products={products}",
+                    rows,
+                    "size",
+                    disposition="evidence-only",
+                )
             )
     elif family == "structured_laplace" and "diagonal_fit_latency" in record:
         cases.append(
@@ -1096,6 +1121,8 @@ def _match_controls(
         "source_capacity",
         "target_capacity",
         "sample_count",
+        "groups",
+        "products",
     )
     for current, old in zip(candidate, baseline):
         for key in controls:
@@ -1190,7 +1217,13 @@ def _baseline_rows(
             if family in ("csr", "csr_capacity", "polymer_lag", "polynomial_preparation")
             else (
                 "records"
-                if family in ("limber", "structured_transfer", "covariance_estimators")
+                if family
+                in (
+                    "limber",
+                    "structured_transfer",
+                    "covariance_estimators",
+                    "reactor_diffusion",
+                )
                 else "cases"
             )
         )
@@ -1469,10 +1502,47 @@ def build_summary(directory: Path, *, output: Path | None = None) -> dict[str, A
                     ),
                 }
             )
-            if comparable and _evidence_identity(identity) != _evidence_identity(
+            if comparable and not baseline_identity:
+                comparable = False
+                summary["disposition"] = "baseline-identity-missing"
+                summary["reason"] = (
+                    "Baseline has no driver/evidence identity; not compared."
+                )
+            elif comparable and _evidence_identity(identity) != _evidence_identity(
                 baseline_identity
             ):
-                raise ValueError(f"Baseline evidence identity mismatch in {path.name}.")
+                extensions = {
+                    "fem_assembly": {"compiler_route", "requested_tensor_families"},
+                    "polynomial_preparation": {
+                        "compiler_scaling_exponent",
+                        "declared_scaling_exponent",
+                        "gate",
+                    },
+                    "linalg_solves": {"auxiliary"},
+                }
+                current_schema = _evidence_identity(identity)
+                old_schema = _evidence_identity(baseline_identity)
+                current_fields = (
+                    current_schema.get("fields")
+                    if isinstance(current_schema, dict)
+                    else identity.get("evidence_fields")
+                )
+                old_fields = (
+                    old_schema.get("fields")
+                    if isinstance(old_schema, dict)
+                    else baseline_identity.get("evidence_fields")
+                )
+                extra = extensions.get(family)
+                if (
+                    extra is None
+                    or not isinstance(current_fields, list)
+                    or not isinstance(old_fields, list)
+                    or set(current_fields) != set(old_fields) | extra
+                ):
+                    raise ValueError(
+                        f"Baseline evidence identity mismatch in {path.name}."
+                    )
+                summary["evidence_extension_fields"] = sorted(extra)
             if comparable:
                 _match_configuration(record, baseline, family)
         summary["cases"] = [

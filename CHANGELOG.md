@@ -6,6 +6,9 @@
 - Memory-pattern auditing now uses deterministic AST findings and exact justified
   symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
   memory-scaling ratchet recomputes recorded ratio gates in matching environments.
+  Integrated records now include native MPC retention, grouped interior-point
+  actions, and sparse reactor preparation; missing historical baseline provenance
+  stays explicitly non-compared.
 - Replace dense derivative intermediates in SSM invariance, ADM geometry,
   geometric/stochastic divergence, horizontal brackets, monopole diagonals,
   probabilistic ODE sensitivities, and SING support checks with exact bounded actions.
