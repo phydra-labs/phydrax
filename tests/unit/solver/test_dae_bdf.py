@@ -103,7 +103,8 @@ def test_dae_bdf_scenario_1() -> None:
     )
     assert jnp.all(attempts.nonlinear_iterations >= 0)
     assert jnp.all(attempts.residual_evaluations > 0)
-    assert jnp.all(attempts.jacobian_preparations > 0)
+    assert jnp.all(attempts.jacobian_preparations >= 0)
+    assert attempts.jacobian_preparations[0] > 0
     assert jnp.all(attempts.linear_solves >= 0)
     assert jnp.all(attempts.numeric_refreshes >= 1)
     assert jnp.all(solution.residual_norm <= solution.residual_threshold)

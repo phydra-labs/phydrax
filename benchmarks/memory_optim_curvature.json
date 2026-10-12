@@ -1,0 +1,398 @@
+{
+  "baseline": false,
+  "cases": [
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.4968205,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 14113,
+        "flops": 1231,
+        "generated_code_bytes": 0,
+        "output_bytes": 856,
+        "source": "curvature",
+        "temporary_bytes": 8641,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 16131,
+      "logical_bytes": 600,
+      "lowering_seconds": 0.351589583,
+      "name": "curvature",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000336708,
+        "mean_seconds": 0.000336708,
+        "median_seconds": 0.000336708,
+        "min_seconds": 0.000336708,
+        "samples_seconds": [
+          0.000336708
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.050376625,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 1092,
+        "flops": 32,
+        "generated_code_bytes": 0,
+        "output_bytes": 576,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 12291,
+      "logical_bytes": 528,
+      "lowering_seconds": 0.015000333,
+      "name": "sensitivity",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.006043167,
+        "mean_seconds": 0.006043167,
+        "median_seconds": 0.006043167,
+        "min_seconds": 0.006043167,
+        "samples_seconds": [
+          0.006043167
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.750959792,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 166818,
+        "flops": 37219,
+        "generated_code_bytes": 0,
+        "output_bytes": 122,
+        "source": "sensitivity-certification",
+        "temporary_bytes": 26288,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": 288.000000000024,
+      "host_peak_bytes": 8577,
+      "logical_bytes": 42,
+      "lowering_seconds": 1.840600458,
+      "name": "sensitivity-certification",
+      "rank": 32,
+      "status": 0,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.002075375,
+        "mean_seconds": 0.002075375,
+        "median_seconds": 0.002075375,
+        "min_seconds": 0.002075375,
+        "samples_seconds": [
+          0.002075375
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.763413625,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 52961,
+        "flops": 2543,
+        "generated_code_bytes": 0,
+        "output_bytes": 1752,
+        "source": "curvature",
+        "temporary_bytes": 33729,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 26139,
+      "logical_bytes": 1240,
+      "lowering_seconds": 0.578741875,
+      "name": "curvature",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000615709,
+        "mean_seconds": 0.000615709,
+        "median_seconds": 0.000615709,
+        "min_seconds": 0.000615709,
+        "samples_seconds": [
+          0.000615709
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.037744042,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 2116,
+        "flops": 64,
+        "generated_code_bytes": 0,
+        "output_bytes": 1088,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 11811,
+      "logical_bytes": 1040,
+      "lowering_seconds": 0.024030416,
+      "name": "sensitivity",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000237333,
+        "mean_seconds": 0.000237333,
+        "median_seconds": 0.000237333,
+        "min_seconds": 0.000237333,
+        "samples_seconds": [
+          0.000237333
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.72820225,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 431188,
+        "flops": 74096,
+        "generated_code_bytes": 0,
+        "output_bytes": 122,
+        "source": "sensitivity-certification",
+        "temporary_bytes": 50160,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": 576.000000000093,
+      "host_peak_bytes": 9545,
+      "logical_bytes": 42,
+      "lowering_seconds": 0.480394083,
+      "name": "sensitivity-certification",
+      "rank": 64,
+      "status": 0,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.001379584,
+        "mean_seconds": 0.001379584,
+        "median_seconds": 0.001379584,
+        "min_seconds": 0.001379584,
+        "samples_seconds": [
+          0.001379584
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 1.697900917,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 204385,
+        "flops": 5167,
+        "generated_code_bytes": 0,
+        "output_bytes": 3544,
+        "source": "curvature",
+        "temporary_bytes": 133057,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 46945,
+      "logical_bytes": 2520,
+      "lowering_seconds": 1.598907333,
+      "name": "curvature",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.003899417,
+        "mean_seconds": 0.003899417,
+        "median_seconds": 0.003899417,
+        "min_seconds": 0.003899417,
+        "samples_seconds": [
+          0.003899417
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 0.047975708,
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 4164,
+        "flops": 128,
+        "generated_code_bytes": 0,
+        "output_bytes": 2112,
+        "source": "sensitivity",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": null,
+      "host_peak_bytes": 13811,
+      "logical_bytes": 2064,
+      "lowering_seconds": 0.008637833,
+      "name": "sensitivity",
+      "rank": null,
+      "status": null,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000963292,
+        "mean_seconds": 0.000963292,
+        "median_seconds": 0.000963292,
+        "min_seconds": 0.000963292,
+        "samples_seconds": [
+          0.000963292
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 0.939719125,
+      "compiler": {
+        "argument_bytes": 0,
+        "bytes_accessed": 1034968,
+        "flops": 149843,
+        "generated_code_bytes": 0,
+        "output_bytes": 122,
+        "source": "sensitivity-certification",
+        "temporary_bytes": 97392,
+        "unavailable_reason": null
+      },
+      "condition_upper_bound": 1152.000000000366,
+      "host_peak_bytes": 11537,
+      "logical_bytes": 42,
+      "lowering_seconds": 0.5176545,
+      "name": "sensitivity-certification",
+      "rank": 128,
+      "status": 0,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.012137709,
+        "mean_seconds": 0.012137709,
+        "median_seconds": 0.012137709,
+        "min_seconds": 0.012137709,
+        "samples_seconds": [
+          0.012137709
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "compiler_gates": {
+    "curvature": {
+      "baseline_bytes": 172865,
+      "candidate_bytes": 133057,
+      "capacity": 64,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    },
+    "sensitivity": {
+      "baseline_bytes": 131072,
+      "candidate_bytes": 0,
+      "capacity": 64,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5
+    }
+  },
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "b4933606b25da53342e3bf77a2fed6c4b28fffbe7fe4f8b7dd9902f692f34aa8",
+    "evidence_fields": [
+      "cases",
+      "environment"
+    ],
+    "evidence_schema_signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c",
+    "fingerprint": "b3ae2152118e9e5069338c4d5dd4544ea3d3f9f987c094c3f3fc72ea3daae91d",
+    "source_build_fingerprint": "53587eba3f92e6489cb4cb7f291260c0b4a9a035e55ce6d16313263383a725f0"
+  },
+  "logical_scaling_exponents": {
+    "curvature": 1.0351946639456993,
+    "sensitivity": 0.9834165680324006,
+    "sensitivity-certification": 0.0
+  },
+  "process_peak_rss_bytes": 1816428544,
+  "temporary_scaling_exponents": {
+    "curvature": 1.9723511598011128,
+    "sensitivity": null,
+    "sensitivity-certification": 0.9446994427638702
+  }
+}

@@ -197,7 +197,12 @@ def _problem(
     )
 
 
-def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr() -> None:
+@pytest.mark.parametrize(
+    "route", ["batched", "reverse-scan", "checkpointed-reverse-scan"]
+)
+def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr(
+    route: phx.control.ILQRLinearizationRoute,
+) -> None:
     horizon = 5
     a = jnp.array(
         [
@@ -279,6 +284,7 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr() -> None:
         regularization=0.0,
         gradient_tolerance=1e-7,
         cost_tolerance=1e-10,
+        linearization_policy=phx.control.ILQRLinearizationPolicy(route),
     )
     lqr_trajectory = problem.rollout(lqr.policy, jnp.asarray(0.0))
 
@@ -292,6 +298,64 @@ def test_ilqr_reduces_exactly_to_affine_finite_horizon_lqr() -> None:
     np.testing.assert_allclose(
         ilqr.policy.feedback, lqr.feedback_gain, rtol=2e-6, atol=2e-6
     )
+
+
+def test_ilqr_scan_routes_match_nonlinear_trajectory_and_evidence() -> None:
+    problem = _nonlinear_problem("pendulum")
+    initial = jnp.zeros((problem.time_grid.num_steps, 1))
+    baseline = solve_ilqr(problem, initial, max_iterations=4, regularization=1e-4)
+    for route in ("reverse-scan", "checkpointed-reverse-scan"):
+        candidate = solve_ilqr(
+            problem,
+            initial,
+            max_iterations=4,
+            regularization=1e-4,
+            linearization_policy=phx.control.ILQRLinearizationPolicy(route),
+        )
+        for actual, expected in (
+            (candidate.trajectory.states, baseline.trajectory.states),
+            (candidate.trajectory.controls, baseline.trajectory.controls),
+            (candidate.policy.feedback, baseline.policy.feedback),
+            (
+                candidate.diagnostics.objective_history,
+                baseline.diagnostics.objective_history,
+            ),
+            (
+                candidate.diagnostics.gradient_norm_history,
+                baseline.diagnostics.gradient_norm_history,
+            ),
+        ):
+            np.testing.assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+        np.testing.assert_array_equal(candidate.status, baseline.status)
+        assert candidate.diagnostics.linearization_route == route
+
+
+def test_ilqr_batched_budget_refuses_before_linearization() -> None:
+    problem = _nonlinear_problem("pendulum")
+    initial = jnp.zeros((problem.time_grid.num_steps, 1))
+    with pytest.raises(ValueError, match="reverse-scan.*checkpointed-reverse-scan"):
+        phx.control.prepare_ilqr(
+            phx.control.plan_ilqr(
+                problem,
+                linearization_policy=phx.control.ILQRLinearizationPolicy(
+                    max_batched_bytes=1
+                ),
+            ),
+            problem,
+            initial,
+        )
+    for route in ("reverse-scan", "checkpointed-reverse-scan"):
+        prepared = phx.control.prepare_ilqr(
+            phx.control.plan_ilqr(
+                problem,
+                linearization_policy=phx.control.ILQRLinearizationPolicy(
+                    route, max_batched_bytes=1
+                ),
+            ),
+            problem,
+            initial,
+        )
+        assert prepared.plan.linearization_policy.route == route
 
 
 def _nonlinear_problem(kind: Any) -> Any:
@@ -379,7 +443,12 @@ def _nonlinear_problem(kind: Any) -> Any:
     )
 
 
-def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient() -> None:
+@pytest.mark.parametrize(
+    "route", ["batched", "reverse-scan", "checkpointed-reverse-scan"]
+)
+def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient(
+    route: phx.control.ILQRLinearizationRoute,
+) -> None:
     dt = 0.2
     horizon = 6
 
@@ -422,7 +491,13 @@ def test_ilqr_reported_gradient_agrees_with_direct_open_loop_gradient() -> None:
         return total + terminal_cost(problem.time_grid.times[-1], state, None)
 
     direct_norm = jnp.linalg.norm(jax.grad(objective)(initial_controls))
-    result = solve_ilqr(problem, initial_controls, max_iterations=2, regularization=1e-5)
+    result = solve_ilqr(
+        problem,
+        initial_controls,
+        max_iterations=2,
+        regularization=1e-5,
+        linearization_policy=phx.control.ILQRLinearizationPolicy(route),
+    )
     np.testing.assert_allclose(
         result.diagnostics.gradient_norm_history[0], direct_norm, rtol=2e-6, atol=2e-6
     )
@@ -465,3 +540,31 @@ def test_ilqr_rejects_explicit_finite_rollback_and_retains_transition_evidence()
     np.testing.assert_array_equal(evidence.attempted, jnp.asarray([True, False]))
     assert int(evidence.first_failure_step) == 0
     assert int(evidence.first_failure_status) == failure_status
+
+
+@pytest.mark.parametrize(
+    "route", ["batched", "reverse-scan", "checkpointed-reverse-scan"]
+)
+def test_ilqr_single_stage_failure_preserves_curvature_evidence(
+    route: phx.control.ILQRLinearizationRoute,
+) -> None:
+    problem = _problem(
+        lambda context, state, control, args: state + control,
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([0.2]),
+        lambda time, state, control, args: -0.5 * control[0] ** 2,
+        None,
+        state_shape=(1,),
+        control_shape=(1,),
+        problem_id="single-stage-indefinite",
+    )
+    result = solve_ilqr(
+        problem,
+        jnp.zeros((1, 1)),
+        regularization=0.0,
+        max_iterations=1,
+        linearization_policy=phx.control.ILQRLinearizationPolicy(route),
+    )
+    assert int(result.status) == ILQRStatus.BACKWARD_PASS_NOT_POSITIVE_DEFINITE
+    assert int(result.diagnostics.failed_step) == 0
+    assert result.diagnostics.regularized_minimum_curvature_history[0] == -1.0

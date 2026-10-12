@@ -28,7 +28,6 @@ from ..discretization import (
 from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem, TimeGrid
 from ..nonlinear import (
     AbstractNonlinearMethod,
-    implicit_root_result,
     NewtonKrylov,
     NewtonTrustRegion,
     NonlinearStatus,
@@ -38,6 +37,12 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ..nonlinear._implicit import _attach_implicit_root_derivative
+from ..nonlinear._prepared import (
+    _seed_nonlinear_continuation,
+    _solve_prepared_nonlinear_stateful,
+)
+from ..nonlinear._types import NonlinearResult
 from ..typing import checked, parse
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
@@ -395,6 +400,7 @@ class DAERegularityPolicy(StrictModule):
     interval: int = eqx.field(static=True)
     condition_limit: float | None = eqx.field(static=True)
     failure: DAERegularityFailureMode = eqx.field(static=True)
+    probe_batch_size: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -404,6 +410,7 @@ class DAERegularityPolicy(StrictModule):
         interval: int = 1,
         condition_limit: float | None = None,
         failure: DAERegularityFailureMode = "record",
+        probe_batch_size: int | None = None,
     ) -> None:
         mode = parse(mode, DAERegularityMode, "mode")
         interval_ = int(interval)
@@ -413,10 +420,14 @@ class DAERegularityPolicy(StrictModule):
         if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
             raise ValueError("condition_limit must be finite and exceed one.")
         failure = parse(failure, DAERegularityFailureMode, "failure")
+        batch = None if probe_batch_size is None else int(probe_batch_size)
+        if batch is not None and batch < 1:
+            raise ValueError("probe_batch_size must be positive or None.")
         self.mode = mode
         self.interval = interval_
         self.condition_limit = limit
         self.failure = failure
+        self.probe_batch_size = batch
 
 
 class DAESolvePolicy(StrictModule):
@@ -1893,6 +1904,7 @@ class _FixedDAEAttemptDiagnostics(StrictModule):
     setup_refreshes: Array
     numeric_refreshes: Array
     domain_failures: Array
+    stale_retries: Array
 
 
 class _FixedDAERegularityArchive(StrictModule):
@@ -1935,10 +1947,21 @@ class _FixedDAEEventCarry(StrictModule):
     regularity: _FixedDAERegularityArchive
     events: Any
     terminal_status: Array
+    temporal: _DAETemporalState
 
 
-_FixedDAECarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+class _DAETemporalState(StrictModule):
+    retained: Any
+    age: Array
+    alpha: Array
+    iterations: Array
+
+
+_FixedDAECarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, _DAETemporalState
+]
 _FixedDAEStepOutput: TypeAlias = tuple[
+    Array,
     Array,
     Array,
     Array,
@@ -1965,6 +1988,125 @@ _FixedDAEStepOutput: TypeAlias = tuple[
     Array,
 ]
 _StageRegularityProbe: TypeAlias = tuple[Array, Array, Array, Array]
+
+
+def _solve_temporal_stage(
+    prepared: PreparedDAESolve,
+    temporal: _DAETemporalState,
+    predictor: Array,
+    arguments: ImplicitStageArguments,
+) -> tuple[NonlinearResult, _DAETemporalState, Array]:
+    """Reuse guarded numerics, then retry an uncertified stale root freshly."""
+    policy = prepared.plan.policy
+    _, retained_static = eqx.partition(prepared.stage_solve, eqx.is_array)
+    retained = eqx.combine(temporal.retained, retained_static)
+    alpha_ratio = jnp.maximum(
+        arguments.shift / temporal.alpha, temporal.alpha / arguments.shift
+    )
+    iteration_refresh = (
+        jnp.asarray(False)
+        if policy.temporal_reuse.refresh_after_iterations is None
+        else temporal.iterations >= policy.temporal_reuse.refresh_after_iterations
+    )
+    reuse = (
+        policy.temporal_reuse.enabled
+        & (temporal.age > 0)
+        & (temporal.age < policy.temporal_reuse.maximum_jacobian_age)
+        & (alpha_ratio <= policy.temporal_reuse.maximum_alpha_ratio)
+        & ~iteration_refresh
+    )
+    increment = predictor - arguments.rate_reference
+
+    def seed(use_retained: bool) -> Any:
+        seeded = (
+            _seed_nonlinear_continuation(
+                retained,
+                prepared.stage_problem,
+                increment,
+                args=arguments,
+                defer_refresh_steps=policy.nonlinear_termination.maximum_steps,
+            )
+            if use_retained
+            else refresh_nonlinear(
+                retained, prepared.stage_problem, increment, args=arguments
+            )
+        )
+        return eqx.partition(seeded, eqx.is_array)[0]
+
+    seeded_dynamic = lax.cond(reuse, lambda _: seed(True), lambda _: seed(False), None)
+    seeded = eqx.combine(seeded_dynamic, retained_static)
+    stopped = jax.tree.map(
+        lambda value: lax.stop_gradient(value) if eqx.is_array(value) else value, seeded
+    )
+    result, retained_result = _solve_prepared_nonlinear_stateful(stopped)
+    threshold = policy.nonlinear_termination.residual_threshold(
+        result.diagnostics.initial_residual_norm
+    )
+    certified = (
+        (result.status == int(NonlinearStatus.SUCCESS))
+        & jnp.all(jnp.isfinite(result.state))
+        & jnp.isfinite(result.diagnostics.final_residual_norm)
+        & (result.diagnostics.final_residual_norm <= threshold)
+    )
+    retry = reuse & ~certified
+    retained_dynamic = eqx.partition(retained_result, eqx.is_array)[0]
+
+    def fresh_retry(_: None) -> tuple[NonlinearResult, Any]:
+        refreshed = eqx.combine(seed(False), retained_static)
+        fresh, fresh_retained = _solve_prepared_nonlinear_stateful(
+            jax.tree.map(
+                lambda value: lax.stop_gradient(value) if eqx.is_array(value) else value,
+                refreshed,
+            )
+        )
+        # Both attempts own real work; only the fresh certificate is authoritative.
+        diagnostics = eqx.tree_at(
+            lambda value: (
+                value.iterations,
+                value.residual_evaluations,
+                value.jacobian_preparations,
+                value.linear_solves,
+                value.linear_iterations,
+                value.rejected_steps,
+                value.setup_refreshes,
+                value.numeric_refreshes,
+                value.domain_failures,
+            ),
+            fresh.diagnostics,
+            (
+                fresh.diagnostics.iterations + result.diagnostics.iterations,
+                fresh.diagnostics.residual_evaluations
+                + result.diagnostics.residual_evaluations,
+                fresh.diagnostics.jacobian_preparations
+                + result.diagnostics.jacobian_preparations,
+                fresh.diagnostics.linear_solves + result.diagnostics.linear_solves,
+                fresh.diagnostics.linear_iterations
+                + result.diagnostics.linear_iterations,
+                fresh.diagnostics.rejected_steps + result.diagnostics.rejected_steps,
+                fresh.diagnostics.setup_refreshes + result.diagnostics.setup_refreshes,
+                fresh.diagnostics.numeric_refreshes
+                + result.diagnostics.numeric_refreshes,
+                fresh.diagnostics.domain_failures + result.diagnostics.domain_failures,
+            ),
+        )
+        fresh = eqx.tree_at(lambda value: value.diagnostics, fresh, diagnostics)
+        return fresh, eqx.partition(fresh_retained, eqx.is_array)[0]
+
+    result, retained_dynamic = lax.cond(
+        retry, fresh_retry, lambda _: (result, retained_dynamic), None
+    )
+    implicit_result = _attach_implicit_root_derivative(seeded, result)
+    next_temporal = _DAETemporalState(
+        retained_dynamic,
+        jnp.where(
+            ~reuse | retry | (result.diagnostics.jacobian_preparations > 0),
+            1,
+            temporal.age + 1,
+        ).astype(jnp.int32),
+        arguments.shift,
+        result.diagnostics.iterations,
+    )
+    return implicit_result, next_temporal, retry.astype(jnp.int32)
 
 
 def _solve_prepared(
@@ -2017,6 +2159,7 @@ def _solve_prepared(
             state_history,
             rate_history,
             history_times,
+            temporal,
         ) = carry
         index, target_time, step_size = inputs
         if isinstance(policy.method, ThetaMethod):
@@ -2036,7 +2179,7 @@ def _solve_prepared(
                 index + 1,
             )
 
-        def solve_step(_: None) -> _FixedDAEStepOutput:
+        def solve_step(_: None) -> tuple[_FixedDAEStepOutput, _DAETemporalState]:
             if isinstance(policy.method, ThetaMethod):
                 arguments = endpoint_theta_stage_arguments(
                     policy.method,
@@ -2054,13 +2197,12 @@ def _solve_prepared(
                     order=order,
                     model_args=args,
                 )
-            refreshed = refresh_nonlinear(
-                prepared.stage_solve,
-                prepared.stage_problem,
-                predictor - arguments.rate_reference,
-                args=arguments,
+            nonlinear_result, next_temporal, stale_retry = _solve_temporal_stage(
+                prepared,
+                temporal,
+                predictor,
+                arguments,
             )
-            nonlinear_result = implicit_root_result(refreshed)
             increment = jnp.asarray(nonlinear_result.state)
             state = arguments.physical_state(increment)
             state_rate = arguments.state_rate(increment)
@@ -2137,9 +2279,10 @@ def _solve_prepared(
                 diagnostics.final_linear_condition_estimate,
                 diagnostics.final_linear_residual_norm,
                 diagnostics.final_linear_converged,
-            )
+                stale_retry,
+            ), next_temporal
 
-        def skip_step(_: None) -> _FixedDAEStepOutput:
+        def skip_step(_: None) -> tuple[_FixedDAEStepOutput, _DAETemporalState]:
             nan_state = jnp.full_like(previous, jnp.nan)
             zero = jnp.asarray(0, dtype=jnp.int32)
             infinity = jnp.asarray(jnp.inf, dtype=previous.real.dtype)
@@ -2168,9 +2311,10 @@ def _solve_prepared(
                 jnp.asarray(jnp.nan, dtype=previous.real.dtype),
                 jnp.asarray(jnp.nan, dtype=previous.real.dtype),
                 jnp.asarray(False),
-            )
+                zero,
+            ), temporal
 
-        output = lax.cond(prior_valid, solve_step, skip_step, operand=None)
+        output, next_temporal = lax.cond(prior_valid, solve_step, skip_step, operand=None)
         state, state_rate, valid, *_ = output
         next_state_history = jnp.concatenate(
             (state[None, ...], state_history[:-1]), axis=0
@@ -2190,6 +2334,7 @@ def _solve_prepared(
             next_state_history,
             next_rate_history,
             next_history_times,
+            next_temporal,
         )
         return next_carry, output
 
@@ -2212,6 +2357,12 @@ def _solve_prepared(
         state_history,
         rate_history,
         history_times,
+        _DAETemporalState(
+            eqx.partition(prepared.stage_solve, eqx.is_array)[0],
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(1.0, dtype=times.dtype),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
     )
     _, outputs = lax.scan(
         scan_step,
@@ -2243,6 +2394,7 @@ def _solve_prepared(
         final_linear_condition,
         final_linear_residual,
         final_linear_converged,
+        stale_retries,
     ) = outputs
     initial_status = jnp.where(
         initialization.valid,
@@ -2345,7 +2497,7 @@ def _solve_prepared(
         setup_refreshes=setup_refreshes,
         numeric_refreshes=numeric_refreshes,
         domain_failures=domain_failures,
-        stale_jacobian_retries=jnp.zeros_like(indices),
+        stale_jacobian_retries=stale_retries,
         linear_rejections=_linear_failure(nonlinear_status).astype(jnp.int32),
         residual_certifications=nonlinear_status_valid.astype(jnp.int32),
         valid=nonlinear_status_valid,
@@ -2413,12 +2565,33 @@ def _solve_prepared(
 
             return lax.cond(requested, probe, skip, operand=None)
 
+        if policy.regularity.probe_batch_size is None:
+            probes = jax.vmap(probe_regularity)(indices, step_states)
+        else:
+            requested_indices = indices[:: policy.regularity.interval]
+            requested_probes = lax.map(
+                lambda index: probe_regularity(index, step_states[index]),
+                requested_indices,
+                batch_size=policy.regularity.probe_batch_size,
+            )
+            probes = (
+                jnp.full_like(indices, int(DAERegularityStatus.NOT_RUN))
+                .at[requested_indices]
+                .set(requested_probes[0]),
+                jnp.full_like(indices, -1).at[requested_indices].set(requested_probes[1]),
+                jnp.full(indices.shape, jnp.nan, dtype=step_states.real.dtype)
+                .at[requested_indices]
+                .set(requested_probes[2]),
+                jnp.zeros(indices.shape, dtype=jnp.bool_)
+                .at[requested_indices]
+                .set(requested_probes[3]),
+            )
         (
             stage_regularity_status,
             stage_regularity_rank,
             stage_regularity_condition,
             stage_regularity_valid,
-        ) = jax.vmap(probe_regularity)(indices, step_states)
+        ) = probes
     else:
         (
             consistency_status,
@@ -2712,7 +2885,7 @@ def _solve_prepared_events_primal(
         jnp.zeros((capacity,), dtype=jnp.int32),
         jnp.zeros((capacity,), dtype=jnp.bool_),
         _FixedDAEAttemptDiagnostics(
-            *(jnp.zeros((capacity,), dtype=jnp.int32) for _ in range(9))
+            *(jnp.zeros((capacity,), dtype=jnp.int32) for _ in range(10))
         ),
         _FixedDAERegularityArchive(
             jnp.full(
@@ -2732,6 +2905,12 @@ def _solve_prepared_events_primal(
                 int(DAETerminationStatus.INITIALIZATION_FAILED),
                 dtype=jnp.int32,
             ),
+        ),
+        _DAETemporalState(
+            eqx.partition(prepared.stage_solve, eqx.is_array)[0],
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(1.0, dtype=dtype),
+            jnp.asarray(0, dtype=jnp.int32),
         ),
     )
     differential_equations = system.structure.differential_equation_mask(state_shape)
@@ -2768,13 +2947,12 @@ def _solve_prepared_events_primal(
                 order=order,
                 model_args=args,
             )
-            seeded = refresh_nonlinear(
-                prepared.stage_solve,
-                prepared.stage_problem,
-                predictor - arguments.rate_reference,
-                args=arguments,
+            nonlinear, next_temporal, stale_retry = _solve_temporal_stage(
+                prepared,
+                value.temporal,
+                predictor,
+                arguments,
             )
-            nonlinear = implicit_root_result(seeded)
             increment = jnp.asarray(nonlinear.state)
             candidate_state = arguments.physical_state(increment)
             candidate_rate = arguments.state_rate(increment)
@@ -3015,6 +3193,9 @@ def _solve_prepared_events_primal(
                 value.attempt_diagnostics.domain_failures.at[attempt_index].set(
                     diagnostics.domain_failures
                 ),
+                value.attempt_diagnostics.stale_retries.at[attempt_index].set(
+                    stale_retry
+                ),
             )
             regularity_state = jnp.where(
                 event_seen,
@@ -3202,6 +3383,11 @@ def _solve_prepared_events_primal(
                 regularity_,
                 events,
                 terminal,
+                eqx.tree_at(
+                    lambda state: state.age,
+                    next_temporal,
+                    jnp.where(reset_history, 0, next_temporal.age).astype(jnp.int32),
+                ),
             )
 
         return lax.cond(active, execute, lambda value: value, current), None
@@ -3299,7 +3485,6 @@ def _solve_prepared_events_primal(
         if policy.failure == "error"
         else carry.node_states
     )
-    zeros = jnp.zeros((capacity,), dtype=jnp.int32)
     return DifferentialAlgebraicSolution(
         times=times,
         states=node_states,
@@ -3340,7 +3525,7 @@ def _solve_prepared_events_primal(
             setup_refreshes=carry.attempt_diagnostics.setup_refreshes,
             numeric_refreshes=carry.attempt_diagnostics.numeric_refreshes,
             domain_failures=carry.attempt_diagnostics.domain_failures,
-            stale_jacobian_retries=zeros,
+            stale_jacobian_retries=carry.attempt_diagnostics.stale_retries,
             linear_rejections=_linear_failure(carry.attempt_nonlinear_status).astype(
                 jnp.int32
             ),
@@ -3433,6 +3618,38 @@ def _solve_prepared_events_jvp(
     return primal, tangent
 
 
+def _bind_stage_argument_layout(
+    prepared: PreparedDAESolve, args: Any, /
+) -> PreparedDAESolve:
+    """Bind changed argument structure before creating fixed-shape temporal state."""
+    stage_arguments = prepared.stage_solve.args
+    if not isinstance(stage_arguments, ImplicitStageArguments):
+        raise TypeError("Prepared DAE stages require ImplicitStageArguments.")
+    old_arrays, old_static = eqx.partition(stage_arguments.model_args, eqx.is_array)
+    new_arrays, new_static = eqx.partition(args, eqx.is_array)
+    old_shapes = tuple(
+        (value.shape, value.dtype) for value in jax.tree.leaves(old_arrays)
+    )
+    new_shapes = tuple(
+        (value.shape, value.dtype) for value in jax.tree.leaves(new_arrays)
+    )
+    if eqx.tree_equal(old_static, new_static) and old_shapes == new_shapes:
+        return prepared
+    arguments = eqx.tree_at(
+        lambda value: value.model_args,
+        stage_arguments,
+        args,
+        is_leaf=lambda value: value is None,
+    )
+    stage_solve = refresh_nonlinear(
+        prepared.stage_solve,
+        prepared.stage_problem,
+        prepared.stage_solve.state,
+        args=arguments,
+    )
+    return eqx.tree_at(lambda value: value.stage_solve, prepared, stage_solve)
+
+
 def solve_dae(
     problem_or_prepared: DifferentialAlgebraicProblem | PreparedDAESolve,
     time_grid: TimeGrid | None = None,
@@ -3470,6 +3687,7 @@ def solve_dae(
             "continuation cannot be combined with initial_state or initial_state_rate."
         )
     runtime_args = prepared.problem.args if args is _DEFAULT_ARGS else args
+    prepared = _bind_stage_argument_layout(prepared, runtime_args)
     if prepared.plan.policy.adaptive is not None:
         from ._dae_adaptive import solve_adaptive_dae
 

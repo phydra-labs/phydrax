@@ -30,6 +30,11 @@
   direct diagonals, and bounded identity-defect certification with failure evidence.
 - Reuse one native Cholesky factor for covariance precision and log-determinant;
   robust distances use solve actions, and invalid factors cannot report valid geometry.
+- Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
+  and combined work evidence; bind changed runtime argument contexts before the
+  temporal scan and avoid eager adaptive numerical refresh.
+- Reject nonfinite Clarabel inputs before provider execution while preserving
+  `NONFINITE_INPUT` and independent valid batch cases.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
@@ -293,6 +298,13 @@
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
   explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
+- Exact byte-admitted dense, action-scan, and checkpointed causal adjoints, with
+  recurrent-NN and causal HMC policy forwarding and route evidence.
+- Explicit bounded periodic DAE regularity probe batches with ordered certificates.
+- Byte-admitted batched and low-memory reverse/checkpointed iLQR linearization
+  policies with route provenance.
+- Streaming inverse-residual certificates with bounded multi-RHS workspace,
+  all-direction rank admission, and conservative condition bounds.
 - Native certified banded and block-banded spectral/singular-value enclosures,
   condition bounds, and rank-threshold certificates without densification, with
   traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
@@ -2592,6 +2604,23 @@
 - Structured Laplace stores diagonal or low-rank precision state and applies
   covariance and sampling scales without dense reconstruction. Full curvature
   remains dense; structured result archive leaves and their fingerprints change.
+- Residual-graph curvature is a deterministic factor-local operator, with
+  operator damping and matrix-free Schur/LSMR solves; dense materialization is
+  explicit and byte-admitted. Curvature persistence leaves intentionally change.
+- Structured optimization and KKT sensitivity use sparse derivative actions and
+  prepared matrix-free linearizations, with explicit bounded dense-SVD selection
+  and retained rank, condition, convergence, and refusal evidence.
+- Filter interior-point trial derivatives use selectable bounded batches, while
+  rejected trials retain value-only evaluation and accepted derivative reuse.
+- MPC compiles sparse by default; differentiable and dense-method MPC requires
+  explicit bounded dense compilation. MPC and iLQR policy identities record the
+  selected representation, route, and admission budgets.
+- MAC segmented shadowing defaults to exact block-banded QR least squares, with
+  explicit bounded dense SVD and native rank/condition certification. Plan and
+  result identities record the solve route.
+- Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
+  qualification derivatives use owner controls and active rows while preserving
+  case parallelism and KKT certificates.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.

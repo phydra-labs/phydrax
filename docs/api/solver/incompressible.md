@@ -666,6 +666,22 @@ current combined restriction, and transactional Lagrangian history. See
 
 ::: phydrax.solver.MACSegmentedShadowingPlan
 
+`MACSegmentedShadowingPlan` defaults to `solve_route="block-banded"`: exact
+local QR elimination retains only sample blocks and adjacent continuity blocks,
+with workspace linear in segment count at fixed state size, segment length, and
+tangent dimension. `solve_route="dense-svd"` keeps the global minimum-norm SVD
+route explicitly selectable under `dense_workspace_bytes` (512 MiB by default).
+Admission occurs before constructing the global design. The zero-regularization
+dense route reuses its solve SVD for singular diagnostics.
+
+The selected route is reported in the result and included in plan identity.
+Block-banded singular brackets and numerical-full-rank certification are native
+banded diagnostics; an uncertified rank refuses and names `dense-svd`, rather than
+silently changing rank truncation or solving normal equations. Regularization
+changes the solve, not the unregularized condition/rank certificate. Continuity,
+flow-neutral projection, observable responses, and replay evidence are unchanged.
+
+
 ## Resolved, distributed, and moving-geometry execution
 
 ### Fixed immersed MAC LES

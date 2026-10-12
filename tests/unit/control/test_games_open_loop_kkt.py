@@ -634,3 +634,129 @@ def test_refresh_and_filtered_jit_preserve_topology_and_change_numeric_solution(
     assert refreshed.prepared_id == prepared.prepared_id
     assert refreshed.plan.plan_id == prepared.plan.plan_id
     assert refreshed.numeric_version == prepared.numeric_version + 1
+
+
+def test_weighted_stationarity_and_owner_qualification_match_finite_differences() -> None:
+    from phydrax.control.games._open_loop_kkt import (
+        _constraint_qualification,
+        _kkt_quantities,
+        _KKTArguments,
+        _single_case_values,
+    )
+
+    partition = PlayerControlPartition(("one", "two"), (1, 1))
+    constraints = OpenLoopGameConstraints(
+        partition,
+        (
+            _path_block(
+                lambda time, state, control, args: (
+                    control[0] + 2.0 * control[1] + 0.1 * state[0]
+                ),
+                "first-owner-equality",
+                owner="one",
+                participants=("one", "two"),
+                scope=GameConstraintScope.PLAYER_OWNED_COUPLED,
+                equality=True,
+                state_dependent=True,
+                control_dependencies=("one", "two"),
+            ),
+            _path_block(
+                lambda time, state, control, args: 3.0 * control[0] + control[1] - 0.5,
+                "second-owner-inequality",
+                owner="two",
+                participants=("one", "two"),
+                scope=GameConstraintScope.PLAYER_OWNED_COUPLED,
+                control_dependencies=("one", "two"),
+            ),
+        ),
+    )
+    problem = _problem(
+        partition,
+        constraints,
+        (
+            lambda context, state, control, args: (
+                control[0] ** 2 + 0.3 * control[1] ** 2 + state[0] ** 2
+            ),
+            lambda context, state, control, args: (
+                2.0 * control[1] ** 2
+                + 0.7 * control[0] * control[1]
+                + 0.2 * state[0] ** 2
+            ),
+        ),
+        (_zero_terminal, _zero_terminal),
+        horizon=2,
+        nonlinear_dynamics=True,
+    )
+    problem = NonlinearOpenLoopGameProblem(
+        problem.dynamics,
+        problem.time_grid,
+        jnp.asarray([[0.1], [0.4]], dtype=jnp.float64),
+        partition,
+        stage_costs=problem.stage_costs,
+        terminal_costs=problem.terminal_costs,
+        constraints=constraints,
+        problem_id="owner-oracle-batched",
+    )
+    plan = plan_open_loop_game_kkt(problem)
+    arguments = _KKTArguments(plan, problem, None)
+    controls = jnp.asarray(
+        [[0.1, 0.2, -0.1, 0.5], [0.1, 0.2, -0.1, 0.5]], dtype=jnp.float64
+    )
+    equalities = jnp.asarray([[0.4, -0.7], [-0.2, 0.9]], dtype=jnp.float64)
+    inequalities = jnp.asarray([[0.8, 0.3], [0.1, 0.6]], dtype=jnp.float64)
+    operator, auxiliary = _kkt_quantities((controls, equalities, inequalities), arguments)
+    raw, combined = auxiliary[1], auxiliary[4]
+    reference = np.zeros(controls.shape, dtype=np.float64)
+    expected_rank = np.zeros((2, 2), dtype=np.int32)
+    expected_count = np.zeros((2, 2), dtype=np.int32)
+    for case in range(2):
+        primal = np.asarray(controls[case])
+        derivative = np.empty((2 + raw.shape[-1], primal.size), dtype=np.float64)
+        for column in range(primal.size):
+            delta = np.zeros_like(primal)
+            delta[column] = 1e-5
+            plus, _ = _single_case_values(
+                problem, None, problem.initial_state[case], jnp.asarray(primal + delta)
+            )
+            minus, _ = _single_case_values(
+                problem, None, problem.initial_state[case], jnp.asarray(primal - delta)
+            )
+            derivative[:, column] = (np.asarray(plus) - np.asarray(minus)) / 2e-5
+        for player, owners in enumerate(plan.owned_control_indices):
+            seed = np.zeros(derivative.shape[0], dtype=np.float64)
+            seed[player] = 1.0
+            rows = []
+            flags = []
+            for block_index in plan.multiplier_layout.player_block_indices[player]:
+                start, stop = plan.constraint_layout.block_slices[block_index]
+                rows.extend(range(start, stop))
+                flags.extend(
+                    [plan.constraint_layout.equalities[block_index]] * (stop - start)
+                )
+            for multiplier, (row, owner_indices) in enumerate(
+                zip(
+                    plan.multiplier_physical_rows,
+                    plan.multiplier_owner_indices,
+                    strict=True,
+                )
+            ):
+                if owner_indices == owners:
+                    seed[2 + row] += float(combined[case, multiplier])
+            reference[case, list(owners)] = (seed @ derivative)[list(owners)]
+            active = np.asarray(flags) | (
+                np.abs(np.asarray(raw[case])[rows])
+                <= max(
+                    plan.feasibility_tolerance, plan.constraint_qualification_tolerance
+                )
+            )
+            expected_count[case, player] = np.sum(active)
+            expected_rank[case, player] = np.linalg.matrix_rank(
+                derivative[2 + np.asarray(rows), :][:, list(owners)] * active[:, None],
+                tol=1e-6,
+            )
+    np.testing.assert_allclose(operator[0], reference, atol=2e-8, rtol=2e-8)
+    rank, count, qualified, finite = _constraint_qualification(arguments, controls, raw)
+    np.testing.assert_array_equal(rank, expected_rank)
+    np.testing.assert_array_equal(count, expected_count)
+    np.testing.assert_array_equal(qualified, expected_rank == expected_count)
+    assert jnp.all(finite)

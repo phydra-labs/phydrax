@@ -181,3 +181,42 @@ def test_fixed_bound_roles_participate_in_conic_structure_identity() -> None:
     prepared = phx.optim.prepare_convex_program(fixed, _policy())
     with pytest.raises(ValueError, match="structure"):
         phx.optim.refresh_convex_program(prepared, interval)
+
+
+@pytest.mark.parametrize("field", ["quadratic", "linear", "matrix", "rhs"])
+def test_clarabel_refuses_nonfinite_input_without_losing_finite_cases(field: str) -> None:
+    quadratic = jnp.ones((2, 1, 1), dtype=jnp.float64)
+    linear = -jnp.ones((2, 1), dtype=jnp.float64)
+    matrix = -jnp.ones((2, 1, 1), dtype=jnp.float64)
+    rhs = jnp.zeros((2, 1), dtype=jnp.float64)
+    match field:
+        case "quadratic":
+            quadratic = quadratic.at[1, 0, 0].set(jnp.nan)
+        case "linear":
+            linear = linear.at[1, 0].set(jnp.nan)
+        case "matrix":
+            matrix = matrix.at[1, 0, 0].set(jnp.nan)
+        case "rhs":
+            rhs = rhs.at[1, 0].set(jnp.nan)
+    problem = phx.optim.ConicProgram(
+        quadratic,
+        linear,
+        matrix,
+        rhs,
+        phx.optim.NonnegativeCone(1),
+        problem_id=f"clarabel-nonfinite-{field}",
+    )
+    result = phx.optim.solve_conic_program(problem, policy=_policy())
+    np.testing.assert_array_equal(
+        result.status,
+        [
+            phx.optim.ConvexProgramStatus.OPTIMAL,
+            phx.optim.ConvexProgramStatus.NONFINITE_INPUT,
+        ],
+    )
+    np.testing.assert_array_equal(result.valid, [True, False])
+    np.testing.assert_allclose(result.primal[0], [1.0], atol=1e-7)
+    assert np.all(np.isnan(result.primal[1]))
+    assert result.iterations[1] == 0
+    assert not result.certificate.primal_ray_valid[1]
+    assert not result.certificate.dual_ray_valid[1]

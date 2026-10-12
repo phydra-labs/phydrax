@@ -466,6 +466,15 @@ shared-pattern `SparseLinearMap` values constructed directly from stage data.
 The sparse compilation does not retain a dense canonical copy. Sparse
 coefficients may carry case batches while preserving one route pattern.
 Representation choice is explicit; there is no size-based switch.
+Dense compilation preflights the horizon and case-batch payload against
+`max_dense_bytes` (256 MiB by default) before allocating canonical matrices.
+Over-budget compilation refuses and names the sparse alternative; it never switches
+representations silently.
+
+`RecedingHorizonMPC` and `solve_receding_horizon_mpc` select sparse compilation
+and Clarabel by default. Select `LinearControlCompilationPolicy("dense")`
+explicitly to use a dense solver or differentiable MPC. Standalone QP compilation
+keeps its bounded dense default.
 
 ### Prepared QPs
 
@@ -477,6 +486,10 @@ bound roles, problem identity, policy, and sparse pattern. The one-shot
 
 Inspect `qp_result.status`, `valid`, `certificate`, `provenance`, bound multipliers,
 and KKT diagnostics rather than assuming a returned primal is usable.
+Clarabel rejects nonfinite program coefficients before invoking the provider,
+reporting `NONFINITE_INPUT` with zero solver iterations for that case. A genuinely
+nonfinite provider result remains `NONFINITE_OUTPUT`; valid cases in the same
+batch continue independently.
 
 ### Receding-horizon warm starts
 
@@ -508,8 +521,8 @@ window QP; the exact affine handoffs then compose the window derivatives into on
 tangents; `vjp(states_cotangent, controls_cotangent)` returns a
 specification-shaped cotangent whose time grid is zero.
 
-Admission is explicit and fails before solving: the compilation must be dense
-(the sparse conic compilation has no QP sensitivity), the controller has no
+Admission is explicit and fails before solving: the controller must explicitly select
+`LinearControlCompilationPolicy("dense")` (the sparse default has no QP sensitivity), the controller has no
 `warm_start_policy` (there is no warm-start derivative), and solver regularization
 is zero. `DensePrimalDualQP` differentiates the window solution implicitly with
 `ConvexDifferentiationPolicy("active-set-kkt")` (default) or `"barrier-kkt"`;
@@ -610,6 +623,24 @@ numeric binding used to interpret the primal and dual decision rows.
 declared transition. Differential dynamics require an explicit
 `DifferentialControlFlow`; iLQR never selects or retries an integration method.
 Initial controls have shape `case_shape + (num_steps,) + control_shape`.
+
+`linearization_policy=ILQRLinearizationPolicy()` keeps the parallel `"batched"`
+default, admitted against `max_batched_bytes` (256 MiB by default).
+`"reverse-scan"` builds each stage Jacobian/Hessian inside the reverse Riccati
+recursion; `"checkpointed-reverse-scan"` additionally rematerializes each local
+backward step in differentiated execution. Both scan routes retain only
+required gradient and policy outputs, not horizon-wide local derivative stacks.
+The batched route refuses above its byte budget and names both scan alternatives.
+No route is chosen implicitly. `ILQRDiagnostics.linearization_route` reports the
+selection, and the route and budget participate in the plan identity.
+
+For horizon `T`, local state size `n`, control size `m`, and case count `C`,
+the batched local-model payload is bounded by
+`C * (T * (2*n*n + 2*n*m + m*m + n + 2*m) + n*n + n) * itemsize`.
+Scan stage workspace is independent of `T`; required trajectories, gradients,
+and gains still scale linearly with the horizon.
+
+::: phydrax.control.ILQRLinearizationPolicy
 
 The `regularization` value is the exact fixed diagonal shift in every backward pass; it
 is not increased adaptively. A non-positive-definite shifted block, failed initial
@@ -992,6 +1023,14 @@ Prepared repeated solves use `OpenLoopVEPlan`, `PreparedOpenLoopVE`,
 `prepare_open_loop_game_kkt`, `refresh_open_loop_game_kkt`, and
 `solve_prepared_open_loop_game_kkt`. Refresh preserves player, constraint,
 multiplier, case, and horizon topology.
+
+Nonlinear private open-loop stationarity contracts a reusable case-local VJP with
+each player's objective and private multiplier weights, then selects only that
+player's owned controls. It does not form the all-cost/all-constraint Jacobian.
+Constraint qualification differentiates active residuals only against owner
+control columns (inactive rows are fixed-capacity zeros); case-axis `vmap`
+parallelism and original unscaled KKT/certificate semantics remain unchanged.
+
 
 The constrained status inventory is `GameFeasibilityStatus`, `OpenLoopVEStatus`,
 `OpenLoopGNEStatus`, `OpenLoopGameKKTStatus`, and
