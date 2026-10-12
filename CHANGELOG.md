@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Fixed
+- Prepare compatible spline incidence, traces, and local-support quadrature Gram
+  actions without global dense matrices; preserve realization and operator IDs.
+- Assemble only requested finite-element mass or stiffness tensors; paired assembly
+  continues sharing geometry evaluation.
+- Prepare sparse structured multigrid transfers and fixed-width SBP rows without
+  quadratic host temporaries; certify conservation and complete SBP identities.
+- Stream Fourier split-form pairs with linear retained storage and bounded chunks,
+  preserving interaction ordering and conservation/entropy evidence.
+- Reuse certified native banded factors for B-spline field reconstruction and
+  transpose/adjoint derivatives; bound banded LU compilation with counted loops.
+- Evaluate diffusion-factor Kolmogorov drift terms with one exact JVP rather than
+  materializing observable Jacobians.
+- Enumerate polynomial multiindices only after combinatorial admission and execute
+  product graphs with adjacent-level working storage.
 - Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
   without changing stationarity, complex tangents, rank admission, or failure evidence.
 - Reuse prepared sparse factors across supported multi-RHS solves and evaluate
@@ -259,6 +273,8 @@
   before execution.
 
 ### Added
+- Explicit bounded target chunking for direct layer potentials, retaining parallel
+  defaults and reporting target policy and logical workspace evidence.
 - Native certified banded and block-banded spectral/singular-value enclosures,
   condition bounds, and rank-threshold certificates without densification, with
   traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
@@ -2514,6 +2530,15 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Cut-cochain transfers use budgeted component SVD actions with one global relative
+  singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
+  outputs. Connected components retain quadratic factor storage up to the budget.
+- Prepared spline, structured transfer, Fourier split-form, and field-reconstruction
+  persistence templates use sparse/local-support representations and must be
+  recreated. Input/configuration and documented operator IDs remain unchanged;
+  Fourier certificate-derived IDs may change at roundoff.
+- Direct layer-potential plan and report identities include explicit target policy
+  and workspace metadata; recreate persistence templates with their new fields.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.

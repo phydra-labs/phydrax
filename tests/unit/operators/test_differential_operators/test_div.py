@@ -1,3 +1,6 @@
+from typing import Any
+
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -89,5 +92,3 @@ def test_divergence_jvp_engine_matches_default_and_requires_ad_backend() -> None
     assert jnp.allclose(jvp, reference, atol=1e-6)
     with pytest.raises(ValueError, match="backend='ad'"):
         div(vector, backend="fd", ad_engine="jvp")
-
-

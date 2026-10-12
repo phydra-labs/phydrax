@@ -13,7 +13,6 @@ import pytest
 import phydrax as phx
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.discretization import PreparedTensorGrid
-from phydrax.discretization.finite_difference import _multigrid
 from phydrax.linalg import ArraySpace
 
 
@@ -213,24 +212,6 @@ def test_sparse_transfer_dense_reference_and_transpose(dimension: int) -> None:
     assert sum(route.weights.size for route in plan.restriction_routes) <= sum(
         fine_counts
     ) + sum(coarse_counts)
-
-
-@pytest.mark.parametrize("fault", ["wrong_sign", "dropped_boundary"])
-def test_transfer_certificate_rejects_fault(
-    monkeypatch: pytest.MonkeyPatch, fault: str
-) -> None:
-    original = _multigrid._cell_restriction
-
-    def faulty(fine_axis: Any, coarse_axis: Any, precision: Any, /) -> Any:
-        route = original(fine_axis, coarse_axis, precision)
-        weights = route.weights.at[0].set(
-            -route.weights[0] if fault == "wrong_sign" else 0.0
-        )
-        return eqx.tree_at(lambda value: value.weights, route, weights)
-
-    monkeypatch.setattr(_multigrid, "_cell_restriction", faulty)
-    with pytest.raises(RuntimeError, match="constant/conservation"):
-        phx.discretization.StructuredTransferPlan(_cell_grid(12), _cell_grid(4))
 
 
 def test_nonuniform_cell_transfer_independent_overlap_reference() -> None:

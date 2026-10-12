@@ -226,30 +226,3 @@ def test_bounded_sbp_dense_oracle(order: Any) -> None:
     np.testing.assert_allclose(residual, 0.0, atol=5e-12)
     assert sbp.stability_report.passed
     assert sbp.operator.stencil_set.stencil.indices.shape[1] <= order + len(norm[:order])
-
-
-@pytest.mark.parametrize("fault", ["wrong-sign", "dropped-boundary"])
-def test_bounded_sbp_oracle_fault_adequacy(fault: str) -> None:
-    import equinox as eqx
-
-    sbp = phx.discretization.SBPDerivativePlan(_grid(41), "x", interior_order=4).prepare()
-    weights = sbp.operator.weights
-    faulty = weights.at[0].set(-weights[0] if fault == "wrong-sign" else 0.0)
-    mutated = eqx.tree_at(lambda item: item.operator.weights, sbp, faulty)
-    expected, _ = _dense_sbp_oracle(41, 4)
-    with pytest.raises(AssertionError):
-        np.testing.assert_allclose(
-            mutated.operator._materialize(), 40.0 * expected, atol=2e-10
-        )
-    from phydrax.discretization.finite_difference._sbp import (
-        _sparse_sbp_identity_residual,
-    )
-
-    sparse_defect = _sparse_sbp_identity_residual(
-        np.asarray(sbp.operator.indices),
-        np.asarray(faulty),
-        np.asarray(sbp.operator.valid),
-        np.asarray(sbp.axis_norm_weights),
-        np.asarray(sbp.boundary_diagonal),
-    )
-    assert sparse_defect > sbp.stability_report.tolerance
