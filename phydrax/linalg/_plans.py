@@ -296,6 +296,7 @@ class LinearSolvePlan(StrictModule):
                 "materialization": {
                     "max_entries": policy.materialization.max_entries,
                     "max_bytes": policy.materialization.max_bytes,
+                    "max_workspace_bytes": policy.materialization.max_workspace_bytes,
                 },
                 "resources": {
                     "factorization_bytes": policy.resources.factorization_bytes,
@@ -2365,6 +2366,7 @@ def _method_configuration(
                     else {
                         "max_entries": assembly.materialization.max_entries,
                         "max_bytes": assembly.materialization.max_bytes,
+                        "max_workspace_bytes": assembly.materialization.max_workspace_bytes,
                     }
                 ),
             }

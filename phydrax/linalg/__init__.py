@@ -702,6 +702,7 @@ from ._spectral import (
     stochastic_trace,
     StochasticEstimate,
     StochasticProbeDiagnostics,
+    StochasticProbeExecution,
     StochasticProbeStatus,
 )
 from ._structure_compiler import (
@@ -1253,6 +1254,7 @@ __all__ = [
     "CompatibilityPolicy",
     "GaugePolicy",
     "StochasticProbeDiagnostics",
+    "StochasticProbeExecution",
     "StochasticProbeStatus",
     "StackedLinearOperator",
     "StochasticEstimate",

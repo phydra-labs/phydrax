@@ -1,0 +1,195 @@
+{
+  "benchmark_identity": {
+    "benchmark_driver_fingerprint": "99faf345e07f81c0f4a3e1f1419a6a050ac183b33a3c4027964e4c7c5d25811e",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "process_peak_rss_bytes",
+        "scaling_exponents"
+      ],
+      "signature": "ef7749f6a6a7a390706349a9e73952c0fa6caaeb258f866245aab1c15fef71d9"
+    },
+    "fingerprint": "412b87b0bbfea7f8d4494f32f07e1e2b783b12f760d583bd34b37c9195ac7fe8",
+    "source_build_fingerprint": "cad80dea9338de0bd547f9c706093a1fa270e0adc864b9818af0882705bb4327"
+  },
+  "cases": [
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.606727792,
+      "compiler": {
+        "argument_bytes": 40960,
+        "bytes_accessed": 624954,
+        "flops": 36598,
+        "generated_code_bytes": 0,
+        "output_bytes": 168,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 133224,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1932938,
+      "logical_input_bytes": 40960,
+      "lowering_seconds": 1.401258708,
+      "route": "eigenvalue-brackets",
+      "rows": 1024
+    },
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.41594275,
+      "compiler": {
+        "argument_bytes": 40960,
+        "bytes_accessed": 2147231,
+        "flops": 153090,
+        "generated_code_bytes": 0,
+        "output_bytes": 53,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 471896,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1837461,
+      "logical_input_bytes": 40960,
+      "lowering_seconds": 1.055690333,
+      "route": "singular-threshold",
+      "rows": 1024
+    },
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.668504,
+      "compiler": {
+        "argument_bytes": 81920,
+        "bytes_accessed": 1246809,
+        "flops": 72438,
+        "generated_code_bytes": 0,
+        "output_bytes": 168,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 264296,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1828589,
+      "logical_input_bytes": 81920,
+      "lowering_seconds": 1.126957666,
+      "route": "eigenvalue-brackets",
+      "rows": 2048
+    },
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.4196215,
+      "compiler": {
+        "argument_bytes": 81920,
+        "bytes_accessed": 4292925,
+        "flops": 305666,
+        "generated_code_bytes": 0,
+        "output_bytes": 53,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 942936,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1831507,
+      "logical_input_bytes": 81920,
+      "lowering_seconds": 0.953274,
+      "route": "singular-threshold",
+      "rows": 2048
+    },
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.482822333,
+      "compiler": {
+        "argument_bytes": 163840,
+        "bytes_accessed": 2584453,
+        "flops": 127734,
+        "generated_code_bytes": 0,
+        "output_bytes": 168,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 526440,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1825192,
+      "logical_input_bytes": 163840,
+      "lowering_seconds": 1.244320916,
+      "route": "eigenvalue-brackets",
+      "rows": 4096
+    },
+    {
+      "bandwidth": 2,
+      "compilation_seconds": 0.574043875,
+      "compiler": {
+        "argument_bytes": 163840,
+        "bytes_accessed": 8518741,
+        "flops": 610818,
+        "generated_code_bytes": 0,
+        "output_bytes": 53,
+        "source": "jax-banded-spectrum",
+        "temporary_bytes": 1885016,
+        "unavailable_reason": null
+      },
+      "executed": false,
+      "host_allocation_peak_bytes": 1888275,
+      "logical_input_bytes": 163840,
+      "lowering_seconds": 2.1798405,
+      "route": "singular-threshold",
+      "rows": 4096
+    }
+  ],
+  "command": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/linalg-workspace-bounds/benchmarks/memory_banded_spectrum.py --sizes 1024 2048 4096",
+  "configuration": {
+    "bandwidth": 2,
+    "dtype": "float64",
+    "memory": "O(n*b)",
+    "new_capability_no_baseline": true,
+    "sizes": [
+      1024,
+      2048,
+      4096
+    ],
+    "work": "O(n*b^2)"
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "process_peak_rss_bytes": 1549926400,
+  "scaling_exponents": {
+    "eigenvalue-brackets": 0.9912075540725057,
+    "singular-threshold": 0.999017960706883
+  }
+}

@@ -1,0 +1,574 @@
+{
+  "auxiliary": {
+    "logdet": [
+      {
+        "diagonal_workspace_bytes": 256,
+        "max_error": 1.4210854715202004e-14,
+        "retained_bytes": 16901,
+        "size": 32,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000557208,
+          "mean_seconds": 0.0005190625,
+          "median_seconds": 0.0005190625,
+          "min_seconds": 0.000480917,
+          "samples_seconds": [
+            0.000557208,
+            0.000480917
+          ],
+          "std_seconds": 3.8145500000000016e-05
+        }
+      },
+      {
+        "diagonal_workspace_bytes": 512,
+        "max_error": 5.684341886080802e-14,
+        "retained_bytes": 66565,
+        "size": 64,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.0009385,
+          "mean_seconds": 0.000904042,
+          "median_seconds": 0.000904042,
+          "min_seconds": 0.000869584,
+          "samples_seconds": [
+            0.0009385,
+            0.000869584
+          ],
+          "std_seconds": 3.4458000000000015e-05
+        }
+      },
+      {
+        "diagonal_workspace_bytes": 1024,
+        "max_error": 0.0,
+        "retained_bytes": 264197,
+        "size": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000681375,
+          "mean_seconds": 0.000609042,
+          "median_seconds": 0.000609042,
+          "min_seconds": 0.000536709,
+          "samples_seconds": [
+            0.000681375,
+            0.000536709
+          ],
+          "std_seconds": 7.2333e-05
+        }
+      }
+    ],
+    "nuisance": [
+      {
+        "factor_bytes": 8192,
+        "host_peak_bytes": 917839,
+        "normal_residual": 2.864375403532904e-14,
+        "retained_bytes": 35368,
+        "size": 32,
+        "successful": true,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.544028709,
+          "mean_seconds": 0.5066064795,
+          "median_seconds": 0.5066064795,
+          "min_seconds": 0.46918425,
+          "samples_seconds": [
+            0.46918425,
+            0.544028709
+          ],
+          "std_seconds": 0.03742222949999999
+        }
+      },
+      {
+        "factor_bytes": 32768,
+        "host_peak_bytes": 737579,
+        "normal_residual": 2.7977620220553945e-14,
+        "retained_bytes": 136232,
+        "size": 64,
+        "successful": true,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.437014416,
+          "mean_seconds": 0.4161516875,
+          "median_seconds": 0.4161516875,
+          "min_seconds": 0.395288959,
+          "samples_seconds": [
+            0.437014416,
+            0.395288959
+          ],
+          "std_seconds": 0.02086272850000001
+        }
+      },
+      {
+        "factor_bytes": 131072,
+        "host_peak_bytes": 941251,
+        "normal_residual": 2.2504220709151923e-13,
+        "retained_bytes": 534568,
+        "size": 128,
+        "successful": true,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.867476875,
+          "mean_seconds": 0.6682469375,
+          "median_seconds": 0.6682469375,
+          "min_seconds": 0.469017,
+          "samples_seconds": [
+            0.469017,
+            0.867476875
+          ],
+          "std_seconds": 0.1992299375
+        }
+      }
+    ],
+    "pseudoinverse": [
+      {
+        "columns": 4,
+        "compilation_seconds": 0.047731084,
+        "compiler": {
+          "argument_bytes": 3072,
+          "bytes_accessed": 27136,
+          "flops": 10768,
+          "generated_code_bytes": 0,
+          "output_bytes": 1024,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 4224,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.00446025,
+        "max_error": 5.2670184186309754e-11,
+        "rows": 32,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000211,
+          "mean_seconds": 0.0001964375,
+          "median_seconds": 0.0001964375,
+          "min_seconds": 0.000181875,
+          "samples_seconds": [
+            0.000211,
+            0.000181875
+          ],
+          "std_seconds": 1.4562500000000008e-05
+        }
+      },
+      {
+        "columns": 32,
+        "compilation_seconds": 0.054676167,
+        "compiler": {
+          "argument_bytes": 3072,
+          "bytes_accessed": 29952,
+          "flops": 10880,
+          "generated_code_bytes": 0,
+          "output_bytes": 1024,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 4224,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.004347208,
+        "max_error": 5.208995040861808e-11,
+        "rows": 4,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.0002305,
+          "mean_seconds": 0.0001621665,
+          "median_seconds": 0.0001621665,
+          "min_seconds": 9.3833e-05,
+          "samples_seconds": [
+            0.0002305,
+            9.3833e-05
+          ],
+          "std_seconds": 6.833349999999999e-05
+        }
+      },
+      {
+        "columns": 4,
+        "compilation_seconds": 0.075761958,
+        "compiler": {
+          "argument_bytes": 6144,
+          "bytes_accessed": 52736,
+          "flops": 21520,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 8320,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.005375458,
+        "max_error": 4.44675962718577e-11,
+        "rows": 64,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000991958,
+          "mean_seconds": 0.000625458,
+          "median_seconds": 0.000625458,
+          "min_seconds": 0.000258958,
+          "samples_seconds": [
+            0.000991958,
+            0.000258958
+          ],
+          "std_seconds": 0.0003665
+        }
+      },
+      {
+        "columns": 64,
+        "compilation_seconds": 0.098690625,
+        "compiler": {
+          "argument_bytes": 6144,
+          "bytes_accessed": 58624,
+          "flops": 21760,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 8320,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.007036125,
+        "max_error": 2.1177084391643675e-11,
+        "rows": 4,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000173625,
+          "mean_seconds": 0.000119,
+          "median_seconds": 0.000119,
+          "min_seconds": 6.4375e-05,
+          "samples_seconds": [
+            0.000173625,
+            6.4375e-05
+          ],
+          "std_seconds": 5.4625e-05
+        }
+      },
+      {
+        "columns": 4,
+        "compilation_seconds": 0.053801625,
+        "compiler": {
+          "argument_bytes": 12288,
+          "bytes_accessed": 103936,
+          "flops": 43024,
+          "generated_code_bytes": 0,
+          "output_bytes": 4096,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 16512,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.006228333,
+        "max_error": 1.0623130847209339e-11,
+        "rows": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000165542,
+          "mean_seconds": 0.000128625,
+          "median_seconds": 0.000128625,
+          "min_seconds": 9.1708e-05,
+          "samples_seconds": [
+            0.000165542,
+            9.1708e-05
+          ],
+          "std_seconds": 3.6917e-05
+        }
+      },
+      {
+        "columns": 128,
+        "compilation_seconds": 0.078903333,
+        "compiler": {
+          "argument_bytes": 12288,
+          "bytes_accessed": 115968,
+          "flops": 43520,
+          "generated_code_bytes": 0,
+          "output_bytes": 4096,
+          "source": "pseudoinverse-tangent",
+          "temporary_bytes": 16512,
+          "unavailable_reason": null
+        },
+        "largest_square_entries": 16,
+        "lowering_seconds": 0.010690208,
+        "max_error": 1.7636555844219304e-11,
+        "rows": 4,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.007770042,
+          "mean_seconds": 0.0039701879999999995,
+          "median_seconds": 0.0039701879999999995,
+          "min_seconds": 0.000170334,
+          "samples_seconds": [
+            0.007770042,
+            0.000170334
+          ],
+          "std_seconds": 0.0037998539999999996
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "compilation_seconds": 0.9530265,
+      "compiler": {
+        "argument_bytes": 3584,
+        "bytes_accessed": 1030284,
+        "flops": 146133,
+        "generated_code_bytes": 0,
+        "output_bytes": 1536,
+        "source": "least-squares-jvp",
+        "temporary_bytes": 138896,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 2.902658416,
+      "max_error": 6.217248937900877e-15,
+      "output_bytes": 1536,
+      "rhs_count": 16,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.002246042,
+        "mean_seconds": 0.0016367500000000002,
+        "median_seconds": 0.0016367500000000002,
+        "min_seconds": 0.001027458,
+        "samples_seconds": [
+          0.002246042,
+          0.001027458
+        ],
+        "std_seconds": 0.0006092920000000001
+      }
+    },
+    {
+      "compilation_seconds": 1.008105625,
+      "compiler": {
+        "argument_bytes": 5632,
+        "bytes_accessed": 2107124,
+        "flops": 290261,
+        "generated_code_bytes": 0,
+        "output_bytes": 3072,
+        "source": "least-squares-jvp",
+        "temporary_bytes": 275536,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 1.126045917,
+      "max_error": 5.995204332975845e-15,
+      "output_bytes": 3072,
+      "rhs_count": 32,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.002645042,
+        "mean_seconds": 0.0018338959999999998,
+        "median_seconds": 0.0018338959999999998,
+        "min_seconds": 0.00102275,
+        "samples_seconds": [
+          0.002645042,
+          0.00102275
+        ],
+        "std_seconds": 0.0008111459999999999
+      }
+    },
+    {
+      "compilation_seconds": 0.942979458,
+      "compiler": {
+        "argument_bytes": 9728,
+        "bytes_accessed": 4181682,
+        "flops": 579317,
+        "generated_code_bytes": 0,
+        "output_bytes": 6144,
+        "source": "least-squares-jvp",
+        "temporary_bytes": 548816,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.990650167,
+      "max_error": 5.995204332975845e-15,
+      "output_bytes": 6144,
+      "rhs_count": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.003406542,
+        "mean_seconds": 0.002598646,
+        "median_seconds": 0.002598646,
+        "min_seconds": 0.00179075,
+        "samples_seconds": [
+          0.003406542,
+          0.00179075
+        ],
+        "std_seconds": 0.0008078959999999999
+      }
+    },
+    {
+      "compilation_seconds": 0.822498666,
+      "compiler": {
+        "argument_bytes": 17920,
+        "bytes_accessed": 8330118,
+        "flops": 1157429,
+        "generated_code_bytes": 0,
+        "output_bytes": 12288,
+        "source": "least-squares-jvp",
+        "temporary_bytes": 1095760,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 1.085502583,
+      "max_error": 5.995204332975845e-15,
+      "output_bytes": 12288,
+      "rhs_count": 128,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001863542,
+        "mean_seconds": 0.0016803755,
+        "median_seconds": 0.0016803755,
+        "min_seconds": 0.001497209,
+        "samples_seconds": [
+          0.001863542,
+          0.001497209
+        ],
+        "std_seconds": 0.00018316649999999997
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 8358480,
+    "candidate_bytes": 1095760,
+    "capacity": 128,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "f5b0d67da6a32f4fa539b78f3e030c18758354fd92d063cb9371233c613475bb",
+    "evidence_fields": [
+      "auxiliary",
+      "cases",
+      "environment",
+      "gate",
+      "identity",
+      "peak_rss_bytes",
+      "scaling_exponent",
+      "sparse"
+    ],
+    "evidence_schema_signature": "68c4b9f2022bc76cba5ad11dbbb7e702d754eefe159b08c5d4e2695f56718b50",
+    "fingerprint": "77608cd0c910eb768057f398941ac461d2c2ef024b8bf4a36c1167fe77a233c9",
+    "source_build_fingerprint": "705421d3ca44281778a7f02b26cb02af76b7208e03f1691d4f884bf38653ed9e"
+  },
+  "peak_rss_bytes": 1643102208,
+  "scaling_exponent": 0.993364637898713,
+  "sparse": [
+    {
+      "factorization_seconds": 0.000234458,
+      "factorizations_per_preparation": 1,
+      "factorizations_per_solve": 0,
+      "host_peak_bytes": 6448,
+      "provider": "scipy-superlu",
+      "relative_residual": 1.8007073897275943e-16,
+      "rhs_count": 16,
+      "route": "reusable-factor",
+      "solve": {
+        "count": 2,
+        "max_seconds": 1.3625e-05,
+        "mean_seconds": 1.1979e-05,
+        "median_seconds": 1.1979e-05,
+        "min_seconds": 1.0333e-05,
+        "samples_seconds": [
+          1.3625e-05,
+          1.0333e-05
+        ],
+        "std_seconds": 1.6460000000000008e-06
+      }
+    },
+    {
+      "factorization_seconds": 0.000234458,
+      "factorizations_per_preparation": 1,
+      "factorizations_per_solve": 0,
+      "host_peak_bytes": 9552,
+      "provider": "scipy-superlu",
+      "relative_residual": 1.7996649034979516e-16,
+      "rhs_count": 32,
+      "route": "reusable-factor",
+      "solve": {
+        "count": 2,
+        "max_seconds": 1.1084e-05,
+        "mean_seconds": 1.02295e-05,
+        "median_seconds": 1.02295e-05,
+        "min_seconds": 9.375e-06,
+        "samples_seconds": [
+          9.375e-06,
+          1.1084e-05
+        ],
+        "std_seconds": 8.545e-07
+      }
+    },
+    {
+      "factorization_seconds": 0.000234458,
+      "factorizations_per_preparation": 1,
+      "factorizations_per_solve": 0,
+      "host_peak_bytes": 15696,
+      "provider": "scipy-superlu",
+      "relative_residual": 1.8973074936092765e-16,
+      "rhs_count": 64,
+      "route": "reusable-factor",
+      "solve": {
+        "count": 2,
+        "max_seconds": 1.7667e-05,
+        "mean_seconds": 1.5416999999999998e-05,
+        "median_seconds": 1.5416999999999998e-05,
+        "min_seconds": 1.3167e-05,
+        "samples_seconds": [
+          1.3167e-05,
+          1.7667e-05
+        ],
+        "std_seconds": 2.2499999999999996e-06
+      }
+    },
+    {
+      "factorization_seconds": 0.000234458,
+      "factorizations_per_preparation": 1,
+      "factorizations_per_solve": 0,
+      "host_peak_bytes": 27984,
+      "provider": "scipy-superlu",
+      "relative_residual": 1.916435952995661e-16,
+      "rhs_count": 128,
+      "route": "reusable-factor",
+      "solve": {
+        "count": 2,
+        "max_seconds": 2.7791e-05,
+        "mean_seconds": 2.7249999999999998e-05,
+        "median_seconds": 2.7249999999999998e-05,
+        "min_seconds": 2.6709e-05,
+        "samples_seconds": [
+          2.7791e-05,
+          2.6709e-05
+        ],
+        "std_seconds": 5.409999999999987e-07
+      }
+    }
+  ]
+}

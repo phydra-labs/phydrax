@@ -182,6 +182,43 @@ def test_production_foundations_scenario_1() -> None:
     np.testing.assert_allclose(result.parameters, truth, atol=1e-12)
     assert result.successful
 
+    ridge = np.asarray([[0.6, 0.1], [0.1, 0.4]])
+    mean = np.asarray([0.2, -0.1])
+    profiled = LinearNuisancePlan(
+        design,
+        diagonal,
+        layout,
+        ("offset", "slope"),
+        prior_precision=ridge,
+        prior_mean=mean,
+    )
+    data = np.asarray([1.2, -0.4, 0.7, 2.1])
+    prediction = np.asarray([0.1, 0.2, -0.3, 0.5])
+    host_design = np.asarray(design)
+    precision = np.diag(1.0 / np.arange(1, 5, dtype=np.float64))
+    normal = host_design.T @ precision @ host_design + ridge
+    normal_rhs = host_design.T @ precision @ (data - prediction) + ridge @ mean
+    expected_parameters = np.linalg.solve(normal, normal_rhs)
+    profiled_result = profiled.evaluate(data, prediction)
+    np.testing.assert_allclose(
+        profiled_result.parameters, expected_parameters, rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        profiled_result.normal_residual,
+        normal @ expected_parameters - normal_rhs,
+        atol=1e-12,
+    )
+    assert bool(profiled_result.successful)
+    sensitivity = jax.jacfwd(
+        lambda values: profiled.evaluate(values, jnp.asarray(prediction)).parameters
+    )(jnp.asarray(data))
+    np.testing.assert_allclose(
+        sensitivity,
+        np.linalg.solve(normal, host_design.T @ precision),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
     # ty: ignore[invalid-argument-type]
     graph = GraphMetricPrior([1.0, 1.0], [0], [1], [2.0], gradient_precision=1.0)
     # ty: ignore[invalid-argument-type]
