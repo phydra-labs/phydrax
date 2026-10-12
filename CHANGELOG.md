@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
 - Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
   without changing stationarity, complex tangents, rank admission, or failure evidence.
 - Reuse prepared sparse factors across supported multi-RHS solves and evaluate
