@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Chemical-species refusal coverage expects `TypeError` for noninteger charge
+  dtypes, matching the catalog's intentional wrong-kind contract correction;
+  fractional charges remain rejected without conversion or truncation.
 - Residual-penalty source refusal coverage now matches the checked-signature
   diagnostic introduced by nominal-boundary migration; invalid integration
   plans still raise `TypeError` rather than bypassing typed sources.
