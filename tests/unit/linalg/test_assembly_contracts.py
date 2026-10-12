@@ -698,6 +698,159 @@ def test_batched_banded_structured_solve_preserves_batch_and_rhs_axes() -> None:
     assert jnp.all(result.successful)
 
 
+@pytest.mark.parametrize("adjoint", [False, True], ids=["transpose", "adjoint"])
+def test_prepared_complex_banded_transformed_solve_reuses_factors(
+    adjoint: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.linalg.backends import _jax_structured
+
+    bands = jnp.asarray(
+        [
+            [0.0, 1.0 + 2.0j, -0.5j],
+            [0.0, 4.0 - 0.5j, 3.0 + 1.0j],
+            [2.0 - 1.0j, -1.0 + 0.25j, 0.0],
+        ],
+        dtype=jnp.complex128,
+    )
+    dense = jnp.asarray(
+        [
+            [0.0, 1.0 + 2.0j, 0.0],
+            [2.0 - 1.0j, 4.0 - 0.5j, -0.5j],
+            [0.0, -1.0 + 0.25j, 3.0 + 1.0j],
+        ],
+        dtype=jnp.complex128,
+    )
+    operator = la.BandedLinearOperator(bands, lower_bandwidth=1, upper_bandwidth=1)
+    prepared = la.prepare(
+        la.LinearSystem(operator), la.LinearSolvePolicy(la.StructuredDirect())
+    )
+    rhs = jnp.asarray(
+        [[1.0 + 2.0j, 2.0 - 1.0j], [3.0 - 1.0j, -2.0j], [4.0j, 0.5]],
+        dtype=jnp.complex128,
+    )
+
+    def refuse_new_factorization(operator: la.BandedLinearOperator) -> None:
+        del operator
+        raise RuntimeError("Prepared solve must not factor the operator again.")
+
+    monkeypatch.setattr(_jax_structured, "_prepare_banded_lu", refuse_new_factorization)
+    result = (
+        la.solve_adjoint(prepared, rhs, rhs_layout=la.RHSLayout((2,)))
+        if adjoint
+        else la.solve_transpose(prepared, rhs, rhs_layout=la.RHSLayout((2,)))
+    )
+    expected = jnp.linalg.solve(jnp.conj(dense.T) if adjoint else dense.T, rhs)
+    assert jnp.all(result.successful)
+    assert jnp.allclose(result.value, expected, rtol=2e-12, atol=2e-12)
+    assert jnp.all(result.diagnostics.relative_residual < 2e-12)
+
+
+def test_prepared_banded_primal_factor_derivatives_match_dense(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from phydrax.linalg.backends import _jax_structured
+
+    dense = jnp.asarray([[0.0, 2.0, 0.0], [1.0, 4.0, -1.0], [0.0, 0.5, 3.0]])
+    operator = la.BandedLinearOperator(
+        jnp.asarray([[0.0, 2.0, -1.0], [0.0, 4.0, 3.0], [1.0, 0.5, 0.0]]),
+        lower_bandwidth=1,
+        upper_bandwidth=1,
+    )
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.StructuredDirect(),
+            derivative_solve=la.LinearDerivativeSolvePolicy(route="primal-factors"),
+        ),
+    )
+
+    def refuse_new_factorization(operator: la.BandedLinearOperator) -> None:
+        del operator
+        raise RuntimeError("Prepared derivative must not factor the operator again.")
+
+    monkeypatch.setattr(_jax_structured, "_prepare_banded_lu", refuse_new_factorization)
+
+    def action(rhs: jax.Array) -> jax.Array:
+        return la.solve(prepared, rhs, rhs_layout=la.RHSLayout((2,))).value
+
+    rhs = jnp.arange(6.0).reshape((3, 2)) + 1.0
+    tangent = jnp.asarray([[0.5, -1.0], [2.0, 0.25], [1.0, -0.5]])
+    value, pushforward = jax.jvp(action, (rhs,), (tangent,))
+    _, pullback = jax.vjp(action, rhs)
+    assert jnp.allclose(value, jnp.linalg.solve(dense, rhs), atol=2e-12)
+    assert jnp.allclose(pushforward, jnp.linalg.solve(dense, tangent), atol=2e-12)
+    assert jnp.allclose(
+        pullback(tangent)[0], jnp.linalg.solve(dense.T, tangent), atol=2e-12
+    )
+
+
+@pytest.mark.parametrize("transpose", [False, True], ids=["primal", "transpose"])
+def test_wider_banded_lu_pivoting_matches_dense(transpose: bool) -> None:
+    dense = jnp.asarray(
+        [
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [1.0, 4.0, 2.0, 0.0, 0.0],
+            [3.0, -1.0, 5.0, 1.0, 0.0],
+            [0.0, 2.0, 1.0, 6.0, -1.0],
+            [0.0, 0.0, 2.0, 1.0, 4.0],
+        ],
+        dtype=jnp.float64,
+    )
+    operator = la.BandedLinearOperator(
+        jnp.asarray(
+            [
+                [0.0, 1.0, 2.0, 1.0, -1.0],
+                [0.0, 4.0, 5.0, 6.0, 4.0],
+                [1.0, -1.0, 1.0, 1.0, 0.0],
+                [3.0, 2.0, 2.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        ),
+        lower_bandwidth=2,
+        upper_bandwidth=1,
+    )
+    prepared = la.prepare(
+        la.LinearSystem(operator), la.LinearSolvePolicy(la.StructuredDirect())
+    )
+    rhs = jnp.arange(15.0, dtype=jnp.float64).reshape((5, 3)) + 1.0
+    result = (
+        la.solve_transpose(prepared, rhs, rhs_layout=la.RHSLayout((3,)))
+        if transpose
+        else la.solve(prepared, rhs, rhs_layout=la.RHSLayout((3,)))
+    )
+    assert jnp.all(result.successful)
+    assert jnp.allclose(
+        result.value,
+        jnp.linalg.solve(dense.T if transpose else dense, rhs),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+
+
+@pytest.mark.parametrize("operation", ["primal", "transpose", "adjoint"])
+def test_singular_banded_prepared_solves_preserve_failure_status(operation: str) -> None:
+    operator = la.BandedLinearOperator(
+        jnp.zeros((3, 4), dtype=jnp.complex128),
+        lower_bandwidth=1,
+        upper_bandwidth=1,
+    )
+    prepared = la.prepare(
+        la.LinearSystem(operator), la.LinearSolvePolicy(la.StructuredDirect())
+    )
+    rhs = jnp.ones((4, 2), dtype=jnp.complex128)
+    match operation:
+        case "primal":
+            result = la.solve(prepared, rhs, rhs_layout=la.RHSLayout((2,)))
+        case "transpose":
+            result = la.solve_transpose(prepared, rhs, rhs_layout=la.RHSLayout((2,)))
+        case "adjoint":
+            result = la.solve_adjoint(prepared, rhs, rhs_layout=la.RHSLayout((2,)))
+        case _:
+            raise ValueError("Unknown test operation.")
+    assert jnp.all(result.status == int(la.LinearSolveStatus.SINGULAR))
+    assert not bool(jnp.any(result.successful))
+
+
 def _bordered_roundoff_case(
     leakage: float, multiplier: float, /
 ) -> tuple[la.BorderedBlockAssemblyPlan, la.DenseLinearOperator, jax.Array]:

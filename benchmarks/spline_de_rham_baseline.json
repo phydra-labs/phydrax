@@ -1,0 +1,313 @@
+{
+  "cases": [
+    {
+      "compilation": {
+        "compilation_seconds": 0.359329625,
+        "lowering_seconds": 1.164767333
+      },
+      "compiler": {
+        "argument_bytes": 192,
+        "bytes_accessed": 35984,
+        "flops": 4263,
+        "generated_code_bytes": 0,
+        "output_bytes": 536,
+        "source": "xla",
+        "temporary_bytes": 4960,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        16,
+        24,
+        9
+      ],
+      "first_execution_seconds": 0.001721541,
+      "geometry": "separable",
+      "host_allocation_peak_bytes": 57672784,
+      "intervals": 2,
+      "preparation_seconds": 55.901044959,
+      "process_peak_rss_bytes": 1852178432,
+      "refresh_host_peak_bytes": null,
+      "refresh_seconds": null,
+      "retained_array_bytes": 30851,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.00010225,
+        "mean_seconds": 0.00010225,
+        "median_seconds": 0.00010225,
+        "min_seconds": 0.00010225,
+        "samples_seconds": [
+          0.00010225
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.650409416,
+        "lowering_seconds": 0.339710833
+      },
+      "compiler": {
+        "argument_bytes": 192,
+        "bytes_accessed": 50216,
+        "flops": 8349,
+        "generated_code_bytes": 0,
+        "output_bytes": 536,
+        "source": "xla",
+        "temporary_bytes": 4704,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        16,
+        24,
+        9
+      ],
+      "first_execution_seconds": 0.016447958,
+      "geometry": "mapped",
+      "host_allocation_peak_bytes": 42935485,
+      "intervals": 2,
+      "preparation_seconds": 76.321193084,
+      "process_peak_rss_bytes": 2102116352,
+      "refresh_host_peak_bytes": 19165501,
+      "refresh_seconds": 50.052303667,
+      "retained_array_bytes": 97371,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000644875,
+        "mean_seconds": 0.000644875,
+        "median_seconds": 0.000644875,
+        "min_seconds": 0.000644875,
+        "samples_seconds": [
+          0.000644875
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.993647833,
+        "lowering_seconds": 0.820662833
+      },
+      "compiler": {
+        "argument_bytes": 480,
+        "bytes_accessed": 99708,
+        "flops": 13231,
+        "generated_code_bytes": 0,
+        "output_bytes": 1272,
+        "source": "xla",
+        "temporary_bytes": 8288,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        36,
+        60,
+        25
+      ],
+      "first_execution_seconds": 0.00149775,
+      "geometry": "separable",
+      "host_allocation_peak_bytes": 48387058,
+      "intervals": 4,
+      "preparation_seconds": 145.593080041,
+      "process_peak_rss_bytes": 2376450048,
+      "refresh_host_peak_bytes": null,
+      "refresh_seconds": null,
+      "retained_array_bytes": 91939,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.00054025,
+        "mean_seconds": 0.00054025,
+        "median_seconds": 0.00054025,
+        "min_seconds": 0.00054025,
+        "samples_seconds": [
+          0.00054025
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.652441291,
+        "lowering_seconds": 0.367982084
+      },
+      "compiler": {
+        "argument_bytes": 480,
+        "bytes_accessed": 224212,
+        "flops": 42685,
+        "generated_code_bytes": 0,
+        "output_bytes": 1272,
+        "source": "xla",
+        "temporary_bytes": 8096,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        36,
+        60,
+        25
+      ],
+      "first_execution_seconds": 0.0271625,
+      "geometry": "mapped",
+      "host_allocation_peak_bytes": 34027453,
+      "intervals": 4,
+      "preparation_seconds": 134.310733417,
+      "process_peak_rss_bytes": 2568765440,
+      "refresh_host_peak_bytes": 18623979,
+      "refresh_seconds": 43.742152542,
+      "retained_array_bytes": 721019,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.014443167,
+        "mean_seconds": 0.014443167,
+        "median_seconds": 0.014443167,
+        "min_seconds": 0.014443167,
+        "samples_seconds": [
+          0.014443167
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 1.120777083,
+        "lowering_seconds": 0.458989459
+      },
+      "compiler": {
+        "argument_bytes": 1440,
+        "bytes_accessed": 288576,
+        "flops": 55239,
+        "generated_code_bytes": 0,
+        "output_bytes": 3704,
+        "source": "xla",
+        "temporary_bytes": 18016,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        100,
+        180,
+        81
+      ],
+      "first_execution_seconds": 0.022568709,
+      "geometry": "separable",
+      "host_allocation_peak_bytes": 48666788,
+      "intervals": 8,
+      "preparation_seconds": 147.823917875,
+      "process_peak_rss_bytes": 2778497024,
+      "refresh_host_peak_bytes": null,
+      "refresh_seconds": null,
+      "retained_array_bytes": 314435,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.024216125,
+        "mean_seconds": 0.024216125,
+        "median_seconds": 0.024216125,
+        "min_seconds": 0.024216125,
+        "samples_seconds": [
+          0.024216125
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.977223458,
+        "lowering_seconds": 0.378926625
+      },
+      "compiler": {
+        "argument_bytes": 1440,
+        "bytes_accessed": 1538712,
+        "flops": 345285,
+        "generated_code_bytes": 0,
+        "output_bytes": 3704,
+        "source": "xla",
+        "temporary_bytes": 16736,
+        "unavailable_reason": null
+      },
+      "dof_counts": [
+        100,
+        180,
+        81
+      ],
+      "first_execution_seconds": 0.0029315,
+      "geometry": "mapped",
+      "host_allocation_peak_bytes": 33344201,
+      "intervals": 8,
+      "preparation_seconds": 94.599339,
+      "process_peak_rss_bytes": 2979758080,
+      "refresh_host_peak_bytes": 18640989,
+      "refresh_seconds": 40.793407792,
+      "retained_array_bytes": 7657755,
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000952208,
+        "mean_seconds": 0.000952208,
+        "median_seconds": 0.000952208,
+        "min_seconds": 0.000952208,
+        "samples_seconds": [
+          0.000952208
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "88d3d193f8354ea558423038d559f4ffdf6e8e4214ef6fa29def41e90e046258",
+    "evidence_schema": {
+      "fields": [
+        "compilation",
+        "compiler",
+        "dof_counts",
+        "first_execution_seconds",
+        "geometry",
+        "host_allocation_peak_bytes",
+        "intervals",
+        "preparation_seconds",
+        "process_peak_rss_bytes",
+        "refresh_host_peak_bytes",
+        "refresh_seconds",
+        "retained_array_bytes",
+        "warm"
+      ],
+      "signature": "e6e46b2f55a71f28c66ea90579ecac55524149970ec5fd9edb7962aded7888fb"
+    },
+    "fingerprint": "d7fd7626e3e405f6d660db42901be45e8481ae22d8d6abf6c4112cad13bf8873",
+    "source_build_fingerprint": "5131b04f9d74f23aac1e1ad42a60690fb46f1e6dceca0874283371ce8813e5da"
+  },
+  "kind": "spline-de-rham-capacity-campaign",
+  "mapped_host_scaling_exponent": -0.12287150240551226,
+  "separable_host_scaling_exponent": -0.08190856530428586
+}

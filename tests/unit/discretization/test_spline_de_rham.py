@@ -24,8 +24,10 @@ from phydrax.linalg import (
     DenseLinearOperator,
     MaterializationPolicy,
     materialize,
+    OperatorPairing,
     OperatorProperties,
 )
+from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
 
 
 def _annulus(point: Array) -> Array:
@@ -109,6 +111,130 @@ def test_kronecker_hodge_matches_independent_quadrature(degree: int) -> None:
         rtol=2e-9,
         atol=2e-9,
     )
+
+
+@pytest.mark.parametrize("degree", [0, 1, 2])
+def test_mapped_local_hodge_matches_scipy_gram(degree: int) -> None:
+    grid = BSplineGrid.open_uniform(2, 2)
+    complex_ = SplineDeRhamComplex(
+        (grid, grid),
+        geometry=_Stretch(jnp.asarray(1.7, dtype=jnp.float64)),
+        geometry_id="local-support-stretch",
+    )
+    reference = _independent_gram(complex_, degree)
+    factors = tuple(
+        1.7 / (1.7**2 if 0 in component.component_axes else 1.0)
+        for component in complex_.spaces[degree].components
+    )
+    for offset, component, factor in zip(
+        complex_.spaces[degree].component_offsets,
+        complex_.spaces[degree].components,
+        factors,
+        strict=True,
+    ):
+        reference[offset : offset + component.coefficient_count] *= factor
+    value = jnp.linspace(-0.4, 1.2, complex_.dof_count(degree), dtype=jnp.float64)
+    np.testing.assert_allclose(
+        complex_.hodge_star(degree, value),
+        reference @ np.asarray(value),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+
+
+def test_mapped_one_form_hodge_retains_metric_cross_terms() -> None:
+    grid = BSplineGrid.open_uniform(1, 1, interval=(0.0, 1.0))
+
+    def shear(point: Array) -> Array:
+        return jnp.stack((point[0] + 0.3 * point[1], point[1]))
+
+    complex_ = SplineDeRhamComplex(
+        (grid, grid), geometry=shear, geometry_id="affine-shear"
+    )
+    roots, weights = np.polynomial.legendre.leggauss(4)
+    points = np.stack(
+        np.meshgrid((roots + 1) / 2, (roots + 1) / 2, indexing="ij"), axis=-1
+    ).reshape((-1, 2))
+    weights = (weights[:, None] * weights[None, :] / 4).reshape((-1,))
+    references = []
+    for component in complex_.spaces[1].components:
+        values = np.ones((points.shape[0], 1), dtype=np.float64)
+        for axis, axis_grid in enumerate(component.grids):
+            knots = np.asarray(axis_grid.knots)
+            factor = BSpline.design_matrix(
+                points[:, axis], knots, axis_grid.degree
+            ).toarray()
+            if axis in component.component_axes:
+                p = axis_grid.degree + 1
+                factor *= (
+                    p
+                    / (
+                        knots[p : p + axis_grid.coefficient_count]
+                        - knots[: axis_grid.coefficient_count]
+                    )
+                )[None, :]
+            values = (values[:, :, None] * factor[:, None, :]).reshape(
+                (points.shape[0], -1)
+            )
+        references.append(values)
+    metric = np.asarray([[1.0, 0.3], [0.3, 1.09]], dtype=np.float64)
+    inverse = np.linalg.inv(metric)
+    gram = np.block(
+        [
+            [
+                inverse[c, d] * references[c].T @ (weights[:, None] * references[d])
+                for d in range(2)
+            ]
+            for c in range(2)
+        ]
+    )
+    value = jnp.linspace(-0.8, 0.7, complex_.dof_count(1), dtype=jnp.float64)
+    np.testing.assert_allclose(
+        complex_.hodge_star(1, value), gram @ np.asarray(value), atol=2e-12
+    )
+
+
+@pytest.mark.parametrize("periodic", [(False, False), (True, False), (True, True)])
+def test_incidence_routes_match_dense_coefficient_difference(
+    periodic: tuple[bool, bool],
+) -> None:
+    grid = BSplineGrid.open_uniform(1, 1)
+    complex_ = SplineDeRhamComplex((grid, grid), periodic=periodic)
+    for degree, operator in enumerate(complex_.absolute_complex.differentials):
+        assert isinstance(operator, SparseCoordinateOperator)
+        assert isinstance(operator.relation, EdgeRelation)
+        source, target = complex_.spaces[degree : degree + 2]
+        reference = np.zeros((target.dof_count, source.dof_count), dtype=np.float64)
+        for target_offset, target_component in zip(
+            target.component_offsets, target.components, strict=True
+        ):
+            for axis_position, axis in enumerate(target_component.component_axes):
+                source_axes = tuple(
+                    a for a in target_component.component_axes if a != axis
+                )
+                source_index = tuple(c.component_axes for c in source.components).index(
+                    source_axes
+                )
+                component = source.components[source_index]
+                for index in np.ndindex(target_component.coefficient_shape):
+                    upper = list(index)
+                    upper[axis] = (upper[axis] + 1) % component.coefficient_shape[axis]
+                    row = target_offset + np.ravel_multi_index(
+                        index, target_component.coefficient_shape
+                    )
+                    lower_column = source.component_offsets[
+                        source_index
+                    ] + np.ravel_multi_index(index, component.coefficient_shape)
+                    upper_column = source.component_offsets[
+                        source_index
+                    ] + np.ravel_multi_index(tuple(upper), component.coefficient_shape)
+                    reference[row, lower_column] -= (-1) ** axis_position
+                    reference[row, upper_column] += (-1) ** axis_position
+        rows, columns = np.nonzero(reference)
+        np.testing.assert_array_equal(operator.relation.source_indices, columns)
+        np.testing.assert_array_equal(operator.relation.target_indices, rows)
+        np.testing.assert_array_equal(operator.coefficients, reference[rows, columns])
+    np.testing.assert_array_equal(complex_.d_squared_defects, 0.0)
 
 
 @pytest.mark.parametrize("dimension", [2, 3])
@@ -278,6 +404,29 @@ class _Stretch(StrictModule):
 
     def __call__(self, point: Array, /) -> Array:
         return point.at[0].set(self.scale * point[0])
+
+
+def test_mapped_refresh_preserves_pinned_realization_and_operator_ids() -> None:
+    grid = BSplineGrid.open_uniform(2, 2)
+    complex_ = SplineDeRhamComplex(
+        (grid, grid),
+        geometry=_Stretch(jnp.asarray(1.7, dtype=jnp.float64)),
+        geometry_id="local-support-stretch",
+    )
+    identifier = "e10357cae112175906677718a0d2fcc7204c07448aa23bb4f945d56ac425a28e"
+    assert complex_.realization_id == identifier
+    refreshed = complex_.refresh_geometry(_Stretch(jnp.asarray(2.1, dtype=jnp.float64)))
+    assert refreshed.realization_id == identifier
+    for degree in range(3):
+        space = refreshed.absolute_complex.space(degree)
+        assert isinstance(space, ArraySpace)
+        assert isinstance(space.pairing, OperatorPairing)
+        assert space.pairing.operator.operator_id == f"{identifier}:{degree}:gram"
+        if degree < 2:
+            assert (
+                refreshed.absolute_complex.differential(degree).operator_id
+                == f"{identifier}:d:{degree}"
+            )
 
 
 def test_prepared_metric_refresh_is_jittable_and_differentiable() -> None:
