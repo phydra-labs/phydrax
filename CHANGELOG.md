@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Learned meshfree metric projections prepare bounded rank and retained-spectrum
+  certificates for native implicit cotangents, restoring weighted-projector
+  gradients and training without weakening fail-closed pseudoinverse audits.
 - Randomized moment objectives recognize independent, unbiased Monte Carlo and
   scrambled-QMC product replicate means; deterministic or unscrambled product
   factors still refuse unbiased losses rather than claiming an iid sampling law.
