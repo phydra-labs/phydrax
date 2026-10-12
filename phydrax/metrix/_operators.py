@@ -120,15 +120,17 @@ def _connection_divergence_point(
     coordinates: Array,
     /,
 ) -> Array:
+    from ..operators.differential import exact_state_divergence
+
     values = jnp.asarray(field(coordinates))
     dimension = connection.chart.dimension
     if values.shape != (dimension,):
         raise ValueError(
             f"Divergence requires a pointwise vector shape {(dimension,)}; got {values.shape}."
         )
-    derivative = jax.jacfwd(field)(coordinates)
+    derivative_trace = exact_state_divergence(field, coordinates)
     coefficients = connection.coefficients(coordinates)
-    return jnp.trace(derivative) + ein.contract("iik,k->", coefficients, values)
+    return derivative_trace + ein.contract("iik,k->", coefficients, values)
 
 
 def connection_divergence(

@@ -1,5 +1,6 @@
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -301,3 +302,42 @@ def test_production_closure_scenario_2() -> None:
     assert axes["rom-reduced"].kind == phx.execution.LogicalAxisKind.MODEL
     assert requirements.dtypes == ("float64",)
     assert not requirements.allows_distributed_output
+
+
+def test_ssm_invariance_direction_matches_dense_and_gradient() -> None:
+    rng = np.random.default_rng(711)
+    exponents = jnp.asarray([[1, 0], [0, 1], [2, 0], [1, 1], [0, 2]])
+    evidence = phx.dynamics.identification.SpectralSubmanifoldEvidence(
+        jnp.asarray([-1.0, -2.0]),
+        jnp.asarray(1.0),
+        spectral_quotient=2,
+        minimum_resonance_detuning=0.1,
+    )
+    model = phx.dynamics.identification.SpectralSubmanifoldModel(
+        jnp.asarray(rng.normal(size=(6, 5))),
+        jnp.asarray(rng.normal(size=(2, 5))),
+        exponents,
+        evidence,
+        validity_radius=10.0,
+        observation_contract_id="directional-state",
+        partition_id="directional-ssm",
+    )
+    point = jnp.asarray(rng.normal(size=2))
+
+    def field(state: jax.Array) -> jax.Array:
+        return jnp.sin(state) + state**2
+
+    def dense(value: jax.Array) -> jax.Array:
+        return jax.jacfwd(model.decode)(value) @ model.flow(value) - field(
+            model.decode(value)
+        )
+
+    np.testing.assert_allclose(
+        model.invariance_residual(point, field), dense(point), atol=2e-12, rtol=2e-12
+    )
+    np.testing.assert_allclose(
+        jax.jacfwd(lambda q: model.invariance_residual(q, field))(point),
+        jax.jacfwd(dense)(point),
+        atol=2e-11,
+        rtol=2e-12,
+    )

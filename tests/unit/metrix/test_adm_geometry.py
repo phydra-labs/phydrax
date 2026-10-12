@@ -8,6 +8,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import opt_einsum as oe
 import pytest
 
@@ -165,3 +166,49 @@ def test_adm_extrinsic_curvature_and_sourced_constraints_match_flat_flrw() -> No
     assert jnp.allclose(constraints.momentum, 0.0, atol=1e-10)
     assert constraints.maximum_absolute < 1e-10
     assert jnp.allclose(derivative, 12.0 * expansion_rate)
+
+
+def test_adm_selected_derivatives_match_dense_and_gradient() -> None:
+    rng = np.random.default_rng(712)
+    metric = phx.metrix.adm_metric(
+        lambda q: jnp.exp(0.1 * q[0]),
+        lambda q: jnp.sin(q[1:]) + 0.2 * q[0],
+        lambda q: jnp.diag(jnp.exp(0.2 * q[1:] + 0.3 * q[0])),
+        chart=_chart("directional-adm"),
+    )
+    point = jnp.asarray(rng.normal(size=4))
+
+    def dense(q: jax.Array) -> jax.Array:
+        decomposition = phx.metrix.decompose_adm_metric(metric, q)
+
+        def spatial(x: jax.Array) -> jax.Array:
+            return phx.metrix.decompose_adm_metric(metric, x).spatial_metric
+
+        def shift(x: jax.Array) -> jax.Array:
+            fields = phx.metrix.decompose_adm_metric(metric, x)
+            return fields.spatial_metric @ fields.shift
+
+        slice_metric = phx.metrix.RiemannianMetric(
+            lambda x: spatial(q.at[1:].set(x)),
+            chart=phx.metrix.CoordinateChart("directional-slice", ("x", "y", "z")),
+        )
+        connection = phx.metrix.LeviCivitaConnection(slice_metric).coefficients(q[1:])
+        covariant = jax.jacfwd(shift)(q)[:, 1:].T - jnp.einsum(
+            "kij,k->ij", connection, shift(q)
+        )
+        return (covariant + covariant.T - jax.jacfwd(spatial)(q)[..., 0]) / (
+            2.0 * decomposition.lapse
+        )
+
+    np.testing.assert_allclose(
+        phx.metrix.adm_extrinsic_curvature(metric, point),
+        dense(point),
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        jax.jacfwd(lambda q: phx.metrix.adm_extrinsic_curvature(metric, q))(point),
+        jax.jacfwd(dense)(point),
+        atol=1e-12,
+        rtol=1e-12,
+    )
