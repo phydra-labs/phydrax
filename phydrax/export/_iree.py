@@ -572,22 +572,30 @@ def _runtime_dependent(
 
 @dataclass(frozen=True, slots=True)
 class _BufferFlow:
-    """Directed buffer identity: views, barriers, loop and branch carries.
+    """Directed buffer identity: views, barriers, loop carries and in-place results.
 
     ``transparent`` holds the (operation, operand) uses that only forward a
     buffer; every other use consumes it.
+    ``updates`` distinguishes the new contents after a write: reading a completed
+    tape is not a second consumer of its initial allocation.
     """
 
     forward: dict[Any, list[Any]]
     backward: dict[Any, list[Any]]
     transparent: set[tuple[Any, int]]
+    updates: set[tuple[Any, Any]]
 
-    def reachable(self, value: Any, /, *, upstream: bool = False) -> set[Any]:
+    def reachable(
+        self, value: Any, /, *, upstream: bool = False, before_update: bool = False
+    ) -> set[Any]:
         edges = self.backward if upstream else self.forward
         found = {value}
         pending = [value]
         while pending:
-            for target in edges.get(pending.pop(), ()):
+            source = pending.pop()
+            for target in edges.get(source, ()):
+                if before_update and (source, target) in self.updates:
+                    continue
                 if target not in found:
                     found.add(target)
                     pending.append(target)
@@ -596,20 +604,26 @@ class _BufferFlow:
     def consumers(self, value: Any, /) -> int:
         return sum(
             1
-            for alias in self.reachable(value)
+            for alias in self.reachable(value, before_update=True)
             for use in alias.uses
             if (use.owner.operation, use.operand_number) not in self.transparent
         )
 
 
 def _buffer_flow(operations: Sequence[Any], /) -> _BufferFlow:
-    flow = _BufferFlow({}, {}, set())
+    flow = _BufferFlow({}, {}, set(), set())
 
-    def flows(source: Any, target: Any) -> None:
+    def flows(source: Any, target: Any, /, *, update: bool = False) -> None:
         flow.forward.setdefault(source, []).append(target)
         flow.backward.setdefault(target, []).append(source)
+        if update:
+            flow.updates.add((source, target))
 
     for operation in operations:
+        destinations = _in_place_destinations(operation)
+        if destinations:
+            for destination, result in zip(destinations, operation.results, strict=True):
+                flows(destination, result, update=True)
         if operation.name in _BUFFER_VIEWS or (
             operation.name == "stablehlo.convert"
             and operation.operands[0].type == operation.results[0].type
@@ -641,8 +655,7 @@ def _buffer_flow(operations: Sequence[Any], /) -> _BufferFlow:
 
 
 def _is_splat(value: Any, /) -> bool:
-    """Whether ``value`` is one scalar broadcast everywhere (IREE splats it per use)."""
-
+    """Whether IREE can rematerialize a scalar broadcast per dispatch use."""
     owner = value.owner
     if isinstance(owner, ir.Block):
         return False
@@ -658,6 +671,20 @@ def _is_splat(value: Any, /) -> bool:
     if operation.name in ("stablehlo.reshape", "stablehlo.convert"):
         return _is_splat(operation.operands[0])
     return False
+
+
+def _shared_allocation(source: Any, flow: _BufferFlow, /) -> bool:
+    if flow.consumers(source) <= 1:
+        return False
+    if not _is_splat(source):
+        return True
+    # Direct splats are rematerialized per dispatch use. Once carried into a
+    # loop, the materialized buffer must not feed two tapes or another live use.
+    return any(
+        isinstance(alias.owner, ir.Block)
+        and alias.owner.owner.operation.name == "stablehlo.while"
+        for alias in flow.reachable(source, before_update=True)
+    )
 
 
 def _in_place_hazard_findings(
@@ -677,15 +704,20 @@ def _in_place_hazard_findings(
     }
     hazards: list[str] = []
     for destination, operation in destinations.items():
+        # Only allocation origins can be shared immutable producer buffers.
+        # Loop arguments and update results carry that buffer, but are not new
+        # allocations; uses after a write consume the updated contents.
         if any(
-            source not in runtime and not _is_splat(source) and flow.consumers(source) > 1
+            not flow.backward.get(source)
+            and source not in runtime
+            and _shared_allocation(source, flow)
             for source in flow.reachable(destination, upstream=True)
         ):
             hazards.append(
                 f"{operation.name} at {operation.location}: shared input-independent destination"
             )
     for argument in arguments:
-        aliases = flow.reachable(argument)
+        aliases = flow.reachable(argument, before_update=True)
         if aliases & returned and any(value in destinations for value in aliases):
             hazards.append(
                 f"entry argument {argument.arg_number}: returned while updated in place"
@@ -708,11 +740,11 @@ def _iree_in_place_hazards(module: str, /) -> tuple[str, ...]:
 
     IREE lowers scatter, dynamic-update-slice and sort in place on their
     destination buffers. Its stream copy elision (iree-base-compiler 3.11) is
-    unsound in three observed shapes, each reproduced against XLA:
+    unsound in observed aliasing shapes. Admission refuses:
 
-    * an input-independent, non-splat destination with another use: the
-      producer is a dispatch without operands that is rematerialized and then
-      merged again by CSE, so two consumers share one buffer;
+    * an input-independent allocation with another pre-update use: independent
+      producers can be merged by CSE, sharing one buffer; this also covers one
+      splat allocation shared by two loop tapes;
     * a function argument that is also returned: the import is mutated in
       place and the returned view sees the update;
     * an ``optimization_barrier`` whose operand reaches an in-place
@@ -721,7 +753,9 @@ def _iree_in_place_hazards(module: str, /) -> tuple[str, ...]:
 
     The audit runs on IREE's own inlined, CSE'd view of the module (the
     provider's ``iree-opt`` tool, out of process like ``iree-compile``) and
-    follows buffer views, barriers and loop carries. It is conservative: it may
+    follows views, barriers, loop carries and in-place results back to allocation
+    origins. A read of a completed tape consumes its updated contents, not its
+    initial allocation. The audit is conservative: it may
     refuse a module IREE would compile correctly, never the reverse for these
     shapes.
     """

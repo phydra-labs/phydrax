@@ -16,6 +16,14 @@
 - Target-matrix mesh shape energies retain small positive distortion near ideal
   two- and three-dimensional cells, preventing cancellation-induced Armijo
   failures after untangling while preserving convergence and validity guards.
+- Finance trade/position refusal coverage matches the checked-signature
+  diagnostics while preserving the unresolved-definition/resolved-position
+  type distinction.
+- IREE alias admission follows in-place result provenance and counts consumers
+  of allocation origins before mutation, admitting a singly owned scan tape
+  read after completion. Shared loop-carried splats, returned input aliases, and
+  barrier hazards still refuse; lattice-Boltzmann forward/VJP exports now
+  execute with numerical reference coverage.
 - Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
   in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
   batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
