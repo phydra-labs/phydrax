@@ -50,6 +50,7 @@ from ...equations import (
 )
 from ...linalg import hermitian_exp
 from ...nonlinear import LocalRootPlan, VectorLocalRootPlan
+from ...nonlinear._domain_cond import domain_cond
 from ...typing import checked
 from ._principal_hencky import (
     evaluate_principal_point,
@@ -221,7 +222,7 @@ def _mcc_principal(
         )
 
     active = admitted & trial_stable & (f_trial > tolerance * reference**2)
-    a, b, gamma, pc, root_ok, iterations, root_norm, root_condition = jax.lax.cond(
+    a, b, gamma, pc, root_ok, iterations, root_norm, root_condition = domain_cond(
         active, plastic, elastic, None
     )
     p, q, mu, energy, stable, wave = _elastic_invariants(

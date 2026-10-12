@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Fixed
+- Modified Cam-Clay preserves its elastic/plastic branch boundary under mapped
+  differentiation, preventing discarded singular plastic-root adjoints from
+  contaminating elastic reverse-mode tangents; root refusal evidence is unchanged.
+- Dynamic MAC production incompatibility coverage supplies valid wall statistics
+  to reach the scientific refusal after checked nominal argument validation.
 - Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
   in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
   batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
