@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Sparse Gram metric rebinding and derivative-plan numeric refresh preserve
+  host-prepared route topology, canonical nonzero counts, gather layouts, and
+  cost metadata under JIT, fixing cochain metric scans and compiled sparse
+  Newton refresh without changing numerical admission or derivative guards.
 - Adaptive MAC rollout refusal coverage follows the checked method contract:
   SBDF2 is rejected as a non-`AbstractFixedStepMethod` with otherwise valid
   controller/policy inputs; the superseded unreachable special-case is removed.
