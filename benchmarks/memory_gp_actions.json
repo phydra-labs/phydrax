@@ -1,0 +1,348 @@
+{
+  "compiler_workspace_exponent": 0.776559521199342,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 263432,
+    "candidate_bytes": 9320,
+    "capacity": 128,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "93df133df0b97b4c68a4462e0f20431c3576320ce602dad99691fa4374efc053",
+    "evidence_schema": {
+      "fields": [
+        "compiler",
+        "retained_bytes"
+      ],
+      "signature": "d1b238dab2f2e157e160069d66cd37e59b28b9968bc2c5c32a243b4b38143a5d"
+    },
+    "fingerprint": "f61053072ab8f8d315fde044169516781fcc5e5dec9f9a29950a3495ed9577aa",
+    "source_build_fingerprint": "845fa8c21ec14cec9fb0101d31ce0fd29fb3484a603bb795763e7d88dfbf5d78"
+  },
+  "peak_rss_bytes": 1501511680,
+  "records": [
+    {
+      "action_parity_error": 1.5277945575320473e-11,
+      "compilation": {
+        "compilation_seconds": 0.292273208,
+        "lowering_seconds": 0.441993375
+      },
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 19362,
+        "flops": 4785,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax",
+        "temporary_bytes": 3176,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 0.000414791,
+        "mean_seconds": 0.0003957495,
+        "median_seconds": 0.0003957495,
+        "min_seconds": 0.000376708,
+        "samples_seconds": [
+          0.000414791,
+          0.000376708
+        ],
+        "std_seconds": 1.9041500000000004e-05
+      },
+      "logical_workspace_bytes": 288,
+      "n": 32,
+      "retained_bytes": 1024,
+      "variational": {
+        "bounded": {
+          "compilation": {
+            "compilation_seconds": 0.214134542,
+            "lowering_seconds": 0.023704125
+          },
+          "compiler": {
+            "argument_bytes": 1280,
+            "bytes_accessed": 4419,
+            "flops": 584,
+            "generated_code_bytes": 0,
+            "output_bytes": 1024,
+            "source": "jax",
+            "temporary_bytes": 936,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 7.675e-05,
+            "mean_seconds": 6.9479e-05,
+            "median_seconds": 6.9479e-05,
+            "min_seconds": 6.2208e-05,
+            "samples_seconds": [
+              7.675e-05,
+              6.2208e-05
+            ],
+            "std_seconds": 7.270999999999999e-06
+          },
+          "retained_bytes": 1024
+        },
+        "dense": {
+          "compilation": {
+            "compilation_seconds": 0.104724667,
+            "lowering_seconds": 0.01278825
+          },
+          "compiler": {
+            "argument_bytes": 1280,
+            "bytes_accessed": 21292,
+            "flops": 12576,
+            "generated_code_bytes": 0,
+            "output_bytes": 1024,
+            "source": "jax",
+            "temporary_bytes": 8584,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 8.0834e-05,
+            "mean_seconds": 6.620850000000001e-05,
+            "median_seconds": 6.620850000000001e-05,
+            "min_seconds": 5.1583e-05,
+            "samples_seconds": [
+              8.0834e-05,
+              5.1583e-05
+            ],
+            "std_seconds": 1.4625500000000004e-05
+          },
+          "retained_bytes": 1024
+        }
+      }
+    },
+    {
+      "action_parity_error": 1.7150114661745874e-11,
+      "compilation": {
+        "compilation_seconds": 0.522075625,
+        "lowering_seconds": 0.320049167
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 51251,
+        "flops": 8753,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax",
+        "temporary_bytes": 5224,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 0.000135709,
+        "mean_seconds": 0.000129771,
+        "median_seconds": 0.000129771,
+        "min_seconds": 0.000123833,
+        "samples_seconds": [
+          0.000135709,
+          0.000123833
+        ],
+        "std_seconds": 5.937999999999996e-06
+      },
+      "logical_workspace_bytes": 544,
+      "n": 64,
+      "retained_bytes": 2048,
+      "variational": {
+        "bounded": {
+          "compilation": {
+            "compilation_seconds": 0.111244625,
+            "lowering_seconds": 0.103128333
+          },
+          "compiler": {
+            "argument_bytes": 2560,
+            "bytes_accessed": 8781,
+            "flops": 1160,
+            "generated_code_bytes": 0,
+            "output_bytes": 2048,
+            "source": "jax",
+            "temporary_bytes": 1448,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 0.000105125,
+            "mean_seconds": 9.777049999999999e-05,
+            "median_seconds": 9.777049999999999e-05,
+            "min_seconds": 9.0416e-05,
+            "samples_seconds": [
+              0.000105125,
+              9.0416e-05
+            ],
+            "std_seconds": 7.354499999999999e-06
+          },
+          "retained_bytes": 2048
+        },
+        "dense": {
+          "compilation": {
+            "compilation_seconds": 0.070233,
+            "lowering_seconds": 0.007322291
+          },
+          "compiler": {
+            "argument_bytes": 2560,
+            "bytes_accessed": 75707,
+            "flops": 49728,
+            "generated_code_bytes": 0,
+            "output_bytes": 2048,
+            "source": "jax",
+            "temporary_bytes": 33416,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 8.0042e-05,
+            "mean_seconds": 6.9146e-05,
+            "median_seconds": 6.9146e-05,
+            "min_seconds": 5.825e-05,
+            "samples_seconds": [
+              8.0042e-05,
+              5.825e-05
+            ],
+            "std_seconds": 1.0896000000000002e-05
+          },
+          "retained_bytes": 2048
+        }
+      }
+    },
+    {
+      "action_parity_error": 6.142891750826607e-12,
+      "compilation": {
+        "compilation_seconds": 0.554958834,
+        "lowering_seconds": 0.2853695
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 101199,
+        "flops": 17457,
+        "generated_code_bytes": 0,
+        "output_bytes": 4096,
+        "source": "jax",
+        "temporary_bytes": 9320,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 0.002278583,
+        "mean_seconds": 0.001388854,
+        "median_seconds": 0.001388854,
+        "min_seconds": 0.000499125,
+        "samples_seconds": [
+          0.000499125,
+          0.002278583
+        ],
+        "std_seconds": 0.0008897289999999999
+      },
+      "logical_workspace_bytes": 1056,
+      "n": 128,
+      "retained_bytes": 4096,
+      "variational": {
+        "bounded": {
+          "compilation": {
+            "compilation_seconds": 0.151752791,
+            "lowering_seconds": 0.02766975
+          },
+          "compiler": {
+            "argument_bytes": 5120,
+            "bytes_accessed": 17237,
+            "flops": 2312,
+            "generated_code_bytes": 0,
+            "output_bytes": 4096,
+            "source": "jax",
+            "temporary_bytes": 2472,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 0.000193084,
+            "mean_seconds": 0.0001883335,
+            "median_seconds": 0.0001883335,
+            "min_seconds": 0.000183583,
+            "samples_seconds": [
+              0.000193084,
+              0.000183583
+            ],
+            "std_seconds": 4.750500000000001e-06
+          },
+          "retained_bytes": 4096
+        },
+        "dense": {
+          "compilation": {
+            "compilation_seconds": 0.134064875,
+            "lowering_seconds": 0.045232166
+          },
+          "compiler": {
+            "argument_bytes": 5120,
+            "bytes_accessed": 282439,
+            "flops": 197760,
+            "generated_code_bytes": 0,
+            "output_bytes": 4096,
+            "source": "jax",
+            "temporary_bytes": 132232,
+            "unavailable_reason": null
+          },
+          "execution": {
+            "count": 2,
+            "max_seconds": 0.001732625,
+            "mean_seconds": 0.0009683125,
+            "median_seconds": 0.0009683125,
+            "min_seconds": 0.000204,
+            "samples_seconds": [
+              0.000204,
+              0.001732625
+            ],
+            "std_seconds": 0.0007643125
+          },
+          "retained_bytes": 4096
+        }
+      }
+    }
+  ],
+  "retained_exponent": 0.9999999999999996,
+  "variational_compiler_workspace_exponent": 0.7005491541604854,
+  "variational_gate": {
+    "baseline_bytes": 132232,
+    "candidate_bytes": 2472,
+    "capacity": 128,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "workspace_exponent": 0.9372345589580705
+}

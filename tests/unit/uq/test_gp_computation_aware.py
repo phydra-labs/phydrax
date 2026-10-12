@@ -9,6 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -280,3 +281,59 @@ def test_kernel_noise_mean_and_action_gradients_are_finite() -> None:
     assert jnp.isfinite(value)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.linalg.vector_norm(gradient) > 0.0
+
+
+@pytest.mark.parametrize("kind", ["lanczos", "conjugate-gradient", "gauss-seidel"])
+def test_iterative_factor_never_requests_dense_kernel_and_respects_budget(
+    kind: str,
+) -> None:
+    points, observations, mean = _problem(13)
+    state = phx.uq.GaussianProcessLikelihoodState(
+        kernel=BlockLimitedSquaredExponentialKernel(1),
+        noise_scale=0.1,
+    )
+    if kind == "lanczos":
+        actions = phx.uq.LanczosGaussianProcessActionPolicy(jnp.ones(13), max_actions=3)
+    elif kind == "conjugate-gradient":
+        actions = phx.uq.ConjugateGradientGaussianProcessActionPolicy(3)
+    else:
+        actions = phx.uq.GaussSeidelGaussianProcessActionPolicy(3)
+    budget = (13 + 3) * 8
+    factor = phx.uq.ComputationAwareGaussianProcessFactor(
+        points,
+        state=state,
+        actions=actions,
+        residual=observations - mean,
+        computation=phx.uq.GaussianProcessComputationPolicy(max_workspace_bytes=budget),
+    )
+    predicted_mean, predicted_variance = factor.latent_moments(
+        observations - mean, points
+    )
+    assert jnp.all(jnp.isfinite(predicted_mean))
+    assert jnp.all(predicted_variance >= 0.0)
+    assert factor.diagnostics.kernel_workspace_bytes <= budget
+    matrix = np.asarray(
+        phx.linalg.materialize(
+            factor.actions,
+            phx.linalg.MaterializationPolicy(max_entries=39, max_bytes=312),
+        )
+    )
+    coordinates = np.asarray(points)
+    kernel = np.exp(-0.5 * (coordinates[:, None] - coordinates[None, :]) ** 2)
+    kernel_action = kernel @ matrix
+    projected = (
+        matrix.T
+        @ (kernel + np.eye(13) * np.asarray(state.noise_scale**2 + state.jitter))
+        @ matrix
+    )
+    projected += np.diag(~np.asarray(factor.diagnostics.action_active_mask))
+    solved = np.linalg.solve(projected, kernel_action.T)
+    expected_mean = kernel_action @ np.linalg.solve(
+        projected,
+        matrix.T @ np.asarray(observations - mean),
+    )
+    expected_variance = np.ones(13) - np.sum(kernel_action * solved.T, axis=1)
+    np.testing.assert_allclose(predicted_mean, expected_mean, atol=2e-9, rtol=2e-9)
+    np.testing.assert_allclose(
+        predicted_variance, expected_variance, atol=2e-9, rtol=2e-9
+    )

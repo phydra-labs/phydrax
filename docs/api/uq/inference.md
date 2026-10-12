@@ -743,6 +743,20 @@ on a tractable reference before interpreting these draws quantitatively.
 
 ## Laplace approximation
 
+Structured `diagonal` curvature retains only the Hessian diagonal and posterior
+diagonal precision, using O(d) storage. `lanczos` and `lobpcg` retain curvature
+eigenpairs and a scalar baseline precision, using O(d r + r) storage; covariance
+and scale actions include the prior contribution in the orthogonal complement.
+Only `full` retains dense curvature and precision matrices. Gaussian whitening
+applies covariance as `S Pz⁻¹ S*` and sampling scale as `S Pz⁻¹/²`.
+
+Structured result archives use the current route-specific array leaves: absent
+matrices, diagonals, and spectral arrays are `None`, not dense aliases or empty
+placeholder arrays. Posterior state adds `diagonal_precision` and
+`baseline_precision` and removes `eigenvectors`; the curvature state owns the
+spectral basis. Archive leaf layouts and fingerprints intentionally change;
+historical templates are not compatible with this representation.
+
 ::: phydrax.uq.fit_laplace
 
 ---
@@ -996,6 +1010,15 @@ observation-noise scale, and numerical factorization jitter. Pass a state explic
 to likelihood, factorization, and conditioning calls. Fixed states can be factored
 once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
 parameters differentiable posterior leaves.
+
+Computation-aware GP actions use exact matrix-free covariance products for
+Lanczos, conjugate gradient, and Gauss–Seidel. Kernel rows are batched under
+`GaussianProcessComputationPolicy.max_workspace_bytes`; a budget that cannot
+hold one row and its action output refuses before evaluation. Gauss–Seidel uses
+the kernel diagonal plus observation variance for each pivot. Actions and
+projected features retain O(n m) storage for n observations and m actions; no
+n-by-n observation covariance is formed. The action-whitened variational ELBO
+accepts the same `computation` policy and builds its features with bounded rows.
 
 If the kernel exposes the `AbstractFiniteFeatureKernel` capability and its rank is
 strictly smaller than the observation count, `ExactGaussianProcessDiscrepancy.factor`
