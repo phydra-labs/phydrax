@@ -65,7 +65,7 @@ class LatticeBoltzmannGeometrySnapshot(StrictModule, NonTrainableState):
         *,
         source_id: str | None = None,
     ) -> None:
-        mask = np.asarray(fluid_mask, dtype=np.bool_)
+        mask = np.array(fluid_mask, dtype=np.bool_, copy=True)
         if mask.shape != discretization.grid.shape:
             raise ValueError(
                 f"fluid_mask must have shape {discretization.grid.shape}; got {mask.shape}."

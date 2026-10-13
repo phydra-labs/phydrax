@@ -5,15 +5,19 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-def _context(count: Any = 8) -> Any:
+def _context(count: Any = 8, *, active_mask: Any = None) -> Any:
     spacing = 1.0 / count
     particles = phx.discretization.ParticleSetPlan(
-        jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
+        jnp.arange(count),
+        jnp.full((count,), spacing),
+        ambient_dimension=1,
+        active_mask=active_mask,
     ).prepare()
     # ty: ignore[invalid-argument-type]
     box = phx.discretization.ParticleBox([0.0], [1.0])
@@ -143,3 +147,34 @@ def test_sph_stabilization_adaptive_scenario_1() -> None:
     assert jnp.all(adaptive.smoothing_length > 0.0)
     assert jnp.all(jnp.isfinite(adaptive.omega))
     assert jnp.allclose(jnp.sum(-gradient, axis=0), 0.0, atol=1e-13)
+
+
+def test_density_diffusion_variance_is_traceable_and_excludes_inactive_particles() -> (
+    None
+):
+    active = jnp.arange(8) < 7
+    particles, kernel, _, neighborhood, geometry, physical, spacing = _context(
+        active_mask=active
+    )
+    density = jnp.where(active, jnp.linspace(0.9, 1.1, 8), 100.0)
+    diffusion = eqx.filter_jit(
+        lambda supplied: phx.discretization.sph_density_diffusion_rate(
+            phx.discretization.MolteniColagrossiDensityDiffusionPlan(0.1),
+            supplied,
+            density,
+            jnp.ones_like(density),
+            neighborhood.pair_relation,
+            geometry,
+            physical,
+            kernel,
+            1.25 * spacing,
+            phx.discretization.ParticleExecutionPolicy(),
+        )
+    )(particles)
+    mean_density = jnp.sum(jnp.where(active, density, 0.0)) / 7.0
+    expected = 2.0 * jnp.sum(
+        jnp.where(active, density - mean_density, 0.0) * diffusion.rate
+    )
+    assert jnp.all(jnp.isfinite(diffusion.rate))
+    assert diffusion.rate[-1] == 0.0
+    assert jnp.allclose(diffusion.variance_rate, expected, atol=1e-13)

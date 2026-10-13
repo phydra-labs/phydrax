@@ -440,7 +440,8 @@ def _svd(
             resources=SVDResourcePolicy(
                 preparation_bytes=policy.maximum_svd_bytes,
                 workspace_bytes=policy.maximum_svd_bytes,
-                operator_matvecs=max(rows * columns, 1),
+                # Materialize every column, then certify both actions per mode.
+                operator_matvecs=columns + 2 * count,
             ),
         ),
     )
