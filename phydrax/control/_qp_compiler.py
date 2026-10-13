@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from math import isfinite
+from math import isfinite, prod
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -59,10 +59,24 @@ class LinearControlCompilationPolicy(StrictModule):
     """Explicit dense or structural sparse control-QP representation."""
 
     representation: ControlQPRepresentation = eqx.field(static=True)
+    max_dense_bytes: int = eqx.field(static=True)
 
-    def __init__(self, representation: ControlQPRepresentation = "dense", /) -> None:
+    def __init__(
+        self,
+        representation: ControlQPRepresentation = "dense",
+        /,
+        *,
+        max_dense_bytes: int = 256 * 1024 * 1024,
+    ) -> None:
         representation = parse(representation, ControlQPRepresentation, "representation")
+        if (
+            isinstance(max_dense_bytes, bool)
+            or not isinstance(max_dense_bytes, int)
+            or max_dense_bytes < 1
+        ):
+            raise ValueError("max_dense_bytes must be a positive integer.")
         self.representation = representation
+        self.max_dense_bytes = max_dense_bytes
 
 
 def _exact_array_shape(
@@ -1277,6 +1291,7 @@ class LinearControlQPCompilation(StrictModule):
     objective_constant: Array
     compiler_id: str = eqx.field(static=True)
     representation: ControlQPRepresentation = eqx.field(static=True)
+    max_dense_bytes: int = eqx.field(static=True, default=256 * 1024 * 1024)
 
     def decode(self, primal: ArrayLike, /) -> tuple[Array, Array]:
         return self.decision_layout.decode(primal)
@@ -1337,6 +1352,8 @@ def _dense_control_program_arrays(
     control_costs: Array,
     terminal_state_cost: Array,
     /,
+    *,
+    max_dense_bytes: int = 256 * 1024 * 1024,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
     """Assemble dense multiple-shooting QP data, affine in every coefficient.
 
@@ -1345,6 +1362,20 @@ def _dense_control_program_arrays(
     """
     dtype = specification.dynamics_matrices.dtype
     batch = specification.case_shape
+    n = layout.num_variables
+    equality_rows = constraints.num_equalities
+    inequality_rows = constraints.num_inequalities
+    # Bound canonicalization contributes up to two dense rows per decision.
+    canonical_rows = equality_rows + inequality_rows + 2 * n
+    entries = n * n + (equality_rows + inequality_rows + canonical_rows) * n
+    entries += 3 * n + equality_rows + inequality_rows + canonical_rows
+    required_bytes = entries * prod(batch) * np.dtype(dtype).itemsize
+    if required_bytes > max_dense_bytes:
+        raise ValueError(
+            f"dense control QP requires {required_bytes} bytes, exceeding "
+            f"max_dense_bytes={max_dense_bytes}; select "
+            "LinearControlCompilationPolicy('sparse')."
+        )
     quadratic = jnp.zeros(
         batch + (layout.num_variables, layout.num_variables), dtype=dtype
     )
@@ -1568,6 +1599,7 @@ def compile_linear_quadratic_control(
         state_control_cross,
         control_costs,
         terminal_state_cost,
+        max_dense_bytes=selected_compilation.max_dense_bytes,
     )
     qp = QuadraticProgram(
         quadratic,
@@ -1592,6 +1624,7 @@ def compile_linear_quadratic_control(
         objective_constant=objective_constant,
         representation="dense",
         compiler_id="control:qp-compiler:linear-multiple-shooting",
+        max_dense_bytes=selected_compilation.max_dense_bytes,
     )
 
 
@@ -1629,6 +1662,7 @@ def _rebind_dense_control_program(
         state_control_cross,
         control_costs,
         terminal_state_cost,
+        max_dense_bytes=compilation.max_dense_bytes,
     )
     return _rebind_quadratic_program(
         program,
@@ -1678,7 +1712,10 @@ def refresh_linear_quadratic_control(
     if not isinstance(prepared, PreparedLinearControlQP):
         raise TypeError("prepared must be a PreparedLinearControlQP.")
     selected_compilation = (
-        LinearControlCompilationPolicy(prepared.compilation.representation)
+        LinearControlCompilationPolicy(
+            prepared.compilation.representation,
+            max_dense_bytes=prepared.compilation.max_dense_bytes,
+        )
         if compilation_policy is None
         else compilation_policy
     )

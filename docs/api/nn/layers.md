@@ -181,6 +181,13 @@ memory than `lax.scan`, especially for short sequences or wide states.
 `CausalRecurrentConfig` makes nonconvergence either an error or an explicit
 recorded serial fallback. A converged result uses the exact implicit recurrence
 adjoint even when its forward direction used a quasi-Newton approximation.
+Select derivative execution with
+`CausalRecurrentConfig(adjoint=phx.nonlinear.CausalAdjointPolicy("action-scan"))`
+or `"checkpointed-action-scan"`. The default remains byte-admitted
+`"dense-associative"` and refuses above its transition-stack budget rather than
+switching routes. `result.diagnostics.adjoint` records the exact selected route,
+budget, checkpoint block size, and policy identity.
+
 
 `CfCCell` implements the full-gated closed-form continuous-time (CfC) event
 recurrence of [Hasani et al. (2022)](https://doi.org/10.1038/s42256-022-00556-7):

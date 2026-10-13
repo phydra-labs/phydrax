@@ -36,6 +36,11 @@ Repeat `--adapter` or `--case` to select an exact subset. `--size`, `--seed`,
 written with `allow_nan=False`; incomplete measurements use `null` plus explicit
 evidence rather than fabricated numeric sentinels.
 
+The `control` campaign explicitly selects dense QP compilation for both cold and
+shifted-warm `DensePrimalDualQP` MPC routes. Its separately measured sparse QP
+route uses Clarabel. MPC's sparse default does not implicitly densify a problem
+for a dense-only method or enable unsupported warm starts.
+
 `compare --relative-performance-tolerance R` and
 `--absolute-performance-tolerance-ms A` enable a solve-time regression decision.
 `--performance-confidence`, `--performance-bootstrap-resamples`, and

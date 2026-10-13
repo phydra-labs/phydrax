@@ -244,11 +244,18 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
         line_search_contraction: float = 0.5,
         filter_margin: float = 1e-4,
         maximum_line_search_steps: int = 24,
+        derivative_batch_size: int = 1,
         maximum_restoration_steps: int = 20,
         max_dense_dimension: int = 512,
         require_feasible_start: bool = True,
     ) -> None:
         mode = parse(mode, InteriorPointMode, "mode")
+        if isinstance(derivative_batch_size, bool) or not isinstance(
+            derivative_batch_size, int
+        ):
+            raise TypeError("derivative_batch_size must be an integer.")
+        if derivative_batch_size < 1:
+            raise ValueError("derivative_batch_size must be positive.")
         match mode:
             case "dense-filter":
                 implementation: AbstractMinimizationMethod = _DenseFilterInteriorPoint(
@@ -256,6 +263,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
                     minimum_barrier=minimum_barrier,
                     filter_margin=filter_margin,
                     maximum_line_search_steps=maximum_line_search_steps,
+                    derivative_batch_size=derivative_batch_size,
                     maximum_restoration_steps=maximum_restoration_steps,
                     max_dense_dimension=max_dense_dimension,
                     linear=linear_policy,

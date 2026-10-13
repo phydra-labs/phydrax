@@ -586,6 +586,22 @@ the exact reverse block-bidiagonal recurrence at the converged state and does no
 differentiate through iteration counts, damping choices, or quasi-Newton probes.
 Differentiating a failed solve raises instead of returning an approximate gradient.
 
+Choose derivative execution explicitly with
+`adjoint=CausalAdjointPolicy("action-scan")`. The default `"dense-associative"`
+retains parallel temporal composition and admits its `T * d * d * itemsize`
+transition stack against `maximum_dense_bytes` (64 MiB by default); it refuses
+above the cap and names the two low-memory routes rather than silently switching.
+`"action-scan"` uses exact sequential transition JVP/VJP actions without a dense
+transition stack. `"checkpointed-action-scan"` uses the native block-checkpointed
+scan, with `checkpoint_block_size` controlling recomputation. The public trajectory
+and its tangent/cotangent remain horizon-sized outputs on every route.
+`result.adjoint_route` and `result.adjoint_policy_id` record route and policy identity.
+The benchmark `benchmarks.memory_causal_adjoint` records all routes' warmed latency
+in one run and the observed crossover.
+
+::: phydrax.nonlinear.CausalAdjointPolicy
+
+
 ::: phydrax.nonlinear.CausalRecurrenceProblem
 
 ---

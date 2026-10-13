@@ -152,3 +152,39 @@ def test_component_admission_design_refuses_a_binding_other_than_the_admitted_on
     # admit this design; the admission must not transfer to it.
     with pytest.raises(ValueError, match="accelerator authority"):
         admission.design(accelerator)
+
+
+def test_nonlinear_state_design_actions_follow_each_prepared_point() -> None:
+    problem = opt.StateDesignProblem(
+        lambda state, design, _: state**2 - design,
+        lambda state, design, _: jnp.sum(state),
+        acceptance_policy=_policy(),
+        problem_id="nonlinear-point-action-reuse",
+    )
+    state = jnp.asarray([2.0, 3.0], dtype=jnp.float64)
+    point = opt.prepare_state_design_linearization(problem, state**2, state)
+    shifted_state = jnp.asarray([4.0, 5.0], dtype=jnp.float64)
+    shifted = opt.prepare_state_design_linearization(
+        problem, shifted_state**2, shifted_state
+    )
+    tangent = jnp.asarray([0.3, -0.2], dtype=jnp.float64)
+    cotangent = jnp.asarray([-0.7, 0.4], dtype=jnp.float64)
+    # Analytic derivatives of the independent scalar equations. Using the
+    # previous point's tape gives [1.2,-1.2], not [2.4,-2.0].
+    np.testing.assert_allclose(
+        shifted.state_jacobian.mv(tangent), 2.0 * shifted_state * tangent
+    )
+    np.testing.assert_allclose(
+        shifted.state_jacobian.transpose_mv(cotangent),
+        2.0 * shifted_state * cotangent,
+    )
+    np.testing.assert_allclose(shifted.design_pullback(cotangent)[0], -cotangent)
+    np.testing.assert_allclose(
+        jnp.vdot(cotangent, shifted.state_jacobian.mv(tangent)),
+        jnp.vdot(shifted.state_jacobian.transpose_mv(cotangent), tangent),
+    )
+    response = opt.state_design_response_vjp(shifted)
+    assert bool(response.accepted)
+    np.testing.assert_allclose(response.design_cotangent, 1.0 / (2.0 * shifted_state))
+    # Preparing another point never invalidates the original immutable action.
+    np.testing.assert_allclose(point.state_jacobian.mv(tangent), 2.0 * state * tangent)

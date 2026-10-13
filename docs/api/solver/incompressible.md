@@ -666,6 +666,34 @@ current combined restriction, and transactional Lagrangian history. See
 
 ::: phydrax.solver.MACSegmentedShadowingPlan
 
+`MACSegmentedShadowingPlan` defaults to `solve_route="auto"`. It preflights the
+global dense SVD workspace against `dense_workspace_bytes` (512 MiB by default),
+then uses the unchanged dense computation when it fits, or exact block-banded
+local QR elimination otherwise. The existing budget is retained because it
+admits the measured 8–32-segment small systems while excluding the realistic
+large dense workload; it is a workspace policy, not a segment-count threshold.
+Explicit `"dense-svd"` remains byte-admitted and explicit `"block-banded"` never
+switches routes.
+
+For `S` segments, `M` sample rows per segment, and tangent dimension `K`, let
+`C = S*K`, `R = S*M + (S-1)*K`, and `R_solve = R + C` if regularization is
+positive, else `R`. Dense admission requires
+`(8*R_solve*C + 4*C*C) * dtype.itemsize <= dense_workspace_bytes`, before
+constructing the global design. The zero-regularization dense route reuses its
+solve SVD for singular diagnostics. Above budget, block-banded workspace is
+linear in segment count at fixed state size, segment length, and tangent dimension.
+
+Plan identity records the requested policy and budget; result evidence and
+identity record the resolved route. Block-banded singular brackets and
+numerical-full-rank certification remain native banded diagnostics. A certified
+minimum singular lower enclosure above the rank cutoff reuses that proof;
+unresolved brackets still execute the interval threshold certificate. An
+uncertified rank refuses and names `dense-svd`, rather than silently changing
+rank truncation or solving normal equations. Regularization changes the solve,
+not the unregularized condition/rank certificate. Continuity, flow-neutral
+projection, observable responses, and replay evidence are unchanged.
+
+
 ## Resolved, distributed, and moving-geometry execution
 
 ### Fixed immersed MAC LES

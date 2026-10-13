@@ -63,7 +63,7 @@ _METHOD_ID = "control:game:nonlinear-open-loop-private-kkt:single-shooting"
 _STAGE_COST_SEMANTICS = "unweighted-discrete-stage-sum"
 
 _KKTState: TypeAlias = tuple[Array, Array, Array]
-_KKTAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_KKTAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 _CaseValues: TypeAlias = tuple[Array, tuple[Array, Array, Array]]
 
 
@@ -644,38 +644,58 @@ def _single_case_values(
 
 
 def _differentiate_candidate(
-    problem: NonlinearOpenLoopGameProblem,
+    arguments: _KKTArguments,
     flat_controls: Array,
-    constraint_args: Any,
+    combined: Array,
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:
+    problem, plan = arguments.problem, arguments.plan
     count = prod(problem.case_shape) if problem.case_shape else 1
     initial = problem.initial_state.reshape((count, problem.state_size))
     controls = flat_controls.reshape((count, -1))
+    multipliers = combined.reshape((count, plan.multiplier_layout.num_multipliers))
 
-    def evaluate_case(case_initial: Array, case_controls: Array) -> _CaseValues:
-        return _single_case_values(
-            problem,
-            constraint_args,
-            case_initial,
-            case_controls,
+    def evaluate_case(
+        case_initial: Array, case_controls: Array, case_multipliers: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        def values(current: Array) -> _CaseValues:
+            return _single_case_values(
+                problem, arguments.constraint_args, case_initial, current
+            )
+
+        primal, pullback, (_, states, block_finite) = jax.vjp(
+            values, case_controls, has_aux=True
         )
+        stationarity = jnp.zeros_like(case_controls)
+        for player, indices in enumerate(plan.owned_control_indices):
+            seed = jnp.zeros_like(primal).at[player].set(1.0)
+            for multiplier, (physical_row, owner_indices) in enumerate(
+                zip(
+                    plan.multiplier_physical_rows,
+                    plan.multiplier_owner_indices,
+                    strict=True,
+                )
+            ):
+                if owner_indices == indices:
+                    seed = seed.at[problem.num_players + physical_row].add(
+                        case_multipliers[multiplier]
+                    )
+            owners = jnp.asarray(indices, dtype=jnp.int32)
+            gradient = pullback(seed)[0]
+            stationarity = stationarity.at[owners].set(jnp.take(gradient, owners))
+        return primal, stationarity, states, block_finite
 
-    differentiate = jax.jacrev(evaluate_case, argnums=1, has_aux=True)
-    jacobian, (values, states, block_finite) = jax.vmap(differentiate)(initial, controls)
+    values, stationarity, states, block_finite = jax.vmap(evaluate_case)(
+        initial, controls, multipliers
+    )
     values = values.reshape(problem.case_shape + (values.shape[-1],))
-    jacobian = jacobian.reshape(
-        problem.case_shape + (values.shape[-1], controls.shape[-1])
+    return (
+        values[..., : problem.num_players],
+        values[..., problem.num_players :],
+        stationarity.reshape(flat_controls.shape),
+        states.reshape(problem.case_shape + (problem.horizon + 1, problem.state_size)),
+        block_finite.reshape(problem.case_shape + (len(problem.constraints.blocks),)),
     )
-    states = states.reshape(
-        problem.case_shape + (problem.horizon + 1, problem.state_size)
-    )
-    block_finite = block_finite.reshape(
-        problem.case_shape + (len(problem.constraints.blocks),)
-    )
-    costs = values[..., : problem.num_players]
-    raw = values[..., problem.num_players :]
-    return costs, raw, jacobian, states, block_finite
 
 
 def _kkt_quantities(
@@ -685,19 +705,6 @@ def _kkt_quantities(
 ) -> tuple[_KKTState, _KKTAuxiliary]:
     controls, equality_variables, inequality_variables = state
     plan = arguments.plan
-    costs, raw, jacobian, states, block_finite = _differentiate_candidate(
-        arguments.problem,
-        controls,
-        arguments.constraint_args,
-    )
-    cost_jacobian = jacobian[..., : arguments.problem.num_players, :]
-    constraint_jacobian = jacobian[..., arguments.problem.num_players :, :]
-    stationarity = jnp.zeros_like(controls)
-    for player, indices in enumerate(plan.owned_control_indices):
-        index_array = jnp.asarray(indices, dtype=jnp.int32)
-        stationarity = stationarity.at[..., index_array].set(
-            jnp.take(cost_jacobian[..., player, :], index_array, axis=-1)
-        )
 
     equality_multipliers = equality_variables[..., : plan.num_equalities]
     inequality_multipliers = inequality_variables[..., : plan.num_inequalities]
@@ -711,19 +718,9 @@ def _kkt_quantities(
     combined = combined.at[
         ..., jnp.asarray(plan.inequality_positions, dtype=jnp.int32)
     ].set(inequality_multipliers)
-    for multiplier, (physical_row, owner_indices) in enumerate(
-        zip(
-            plan.multiplier_physical_rows,
-            plan.multiplier_owner_indices,
-            strict=True,
-        )
-    ):
-        if owner_indices:
-            owners = jnp.asarray(owner_indices, dtype=jnp.int32)
-            contribution = combined[..., multiplier, None] * jnp.take(
-                constraint_jacobian[..., physical_row, :], owners, axis=-1
-            )
-            stationarity = stationarity.at[..., owners].add(contribution)
+    costs, raw, stationarity, states, block_finite = _differentiate_candidate(
+        arguments, controls, combined
+    )
 
     equality = jnp.take(
         raw,
@@ -748,7 +745,6 @@ def _kkt_quantities(
     ), (
         costs,
         raw,
-        constraint_jacobian,
         states,
         block_finite,
         combined,
@@ -1088,14 +1084,19 @@ def _rank(matrix: Array, tolerance: float, /) -> Array:
 
 
 def _constraint_qualification(
-    plan: OpenLoopGameKKTPlan,
+    arguments: _KKTArguments,
+    controls: Array,
     raw: Array,
-    constraint_jacobian: Array,
     /,
-) -> tuple[Array, Array, Array]:
+) -> tuple[Array, Array, Array, Array]:
+    plan, problem = arguments.plan, arguments.problem
     ranks = []
     counts = []
     qualifications = []
+    finite = jnp.ones(plan.case_shape, dtype=jnp.bool_)
+    case_count = prod(plan.case_shape) if plan.case_shape else 1
+    initial = problem.initial_state.reshape((case_count, problem.state_size))
+    flat_controls = controls.reshape((case_count, -1))
     blocks = plan.constraint_layout.constraints.blocks
     active_tolerance = max(
         plan.feasibility_tolerance,
@@ -1110,14 +1111,30 @@ def _constraint_qualification(
             equality_flags.extend([blocks[block_index].equality] * (stop - start))
         rows = jnp.asarray(tuple(physical_rows), dtype=jnp.int32)
         owners = jnp.asarray(owner_indices, dtype=jnp.int32)
-        matrix = jnp.take(
-            jnp.take(constraint_jacobian, rows, axis=-2),
-            owners,
-            axis=-1,
-        )
         equality = jnp.asarray(tuple(equality_flags), dtype=jnp.bool_)
         values = jnp.take(raw, rows, axis=-1)
         active = equality | (jnp.abs(values) <= active_tolerance)
+
+        def evaluate_case(
+            case_initial: Array, current: Array, active_rows: Array
+        ) -> Array:
+            def selected(owner_controls: Array) -> Array:
+                candidate = current.at[owners].set(owner_controls)
+                values, _ = _single_case_values(
+                    problem, arguments.constraint_args, case_initial, candidate
+                )
+                selected_values = jnp.take(values[problem.num_players :], rows)
+                return jnp.where(active_rows, selected_values, 0.0)
+
+            return jax.jacrev(selected)(jnp.take(current, owners))
+
+        matrix = jax.vmap(evaluate_case)(
+            initial, flat_controls, active.reshape((case_count, len(physical_rows)))
+        )
+        matrix = matrix.reshape(
+            plan.case_shape + (len(physical_rows), len(owner_indices))
+        )
+        finite = finite & jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
         masked = matrix * active[..., :, None]
         rank = _rank(masked, plan.constraint_qualification_tolerance)
         count = jnp.sum(active, axis=-1, dtype=jnp.int32)
@@ -1128,6 +1145,7 @@ def _constraint_qualification(
         jnp.stack(ranks, axis=-1),
         jnp.stack(counts, axis=-1),
         jnp.stack(qualifications, axis=-1),
+        finite,
     )
 
 
@@ -1160,7 +1178,6 @@ def solve_prepared_open_loop_game_kkt(
     (
         costs,
         raw,
-        constraint_jacobian,
         states,
         block_finite,
         multipliers,
@@ -1204,10 +1221,10 @@ def solve_prepared_open_loop_game_kkt(
         ),
     )
     feasibility = _feasibility_evidence(plan, raw, block_finite)
-    active_rank, active_count, cq = _constraint_qualification(
-        plan,
+    active_rank, active_count, cq, qualification_finite = _constraint_qualification(
+        arguments,
+        flat_controls,
         raw,
-        constraint_jacobian,
     )
     cq_satisfied = jnp.all(cq, axis=-1)
 
@@ -1215,7 +1232,7 @@ def solve_prepared_open_loop_game_kkt(
     dynamics_valid = _case_all_finite(controls, case_rank) & _case_all_finite(
         states, case_rank
     )
-    output_finite = jnp.ones(plan.case_shape, dtype=jnp.bool_)
+    output_finite = qualification_finite
     for value in (
         controls,
         states,
@@ -1224,7 +1241,6 @@ def solve_prepared_open_loop_game_kkt(
         inequality_multipliers,
         stationarity,
         raw,
-        constraint_jacobian,
         ncp,
         original_kkt,
     ):
