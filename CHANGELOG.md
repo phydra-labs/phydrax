@@ -49,6 +49,9 @@
   direct diagonals, and bounded identity-defect certification with failure evidence.
 - Reuse one native Cholesky factor for covariance precision and log-determinant;
   robust distances use solve actions, and invalid factors cannot report valid geometry.
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
 - Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
   without changing stationarity, complex tangents, rank admission, or failure evidence.
 - Reuse prepared sparse factors across supported multi-RHS solves and evaluate
@@ -2616,7 +2619,10 @@
   eigenspace derivatives use confluent divided differences.
 - `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
   in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
-  dense-local bordered identities. Existing policy-derived identities change.
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
+  Randomized SVD construction/audit sketches and default eigen start/repair draws
+  are addressed by plan identity, so their samples change with this payload.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.

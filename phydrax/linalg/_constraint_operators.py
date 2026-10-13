@@ -31,6 +31,7 @@ from ._factorizations import (
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import _materialize_by_basis, AbstractLinearOperator, DenseLinearOperator
 from ._policies import RankPolicy, SolveResourcePolicy
+from ._results import LinearSolveStatus
 from ._spaces import _coordinate_dtype, AbstractVectorSpace, ArraySpace, RHSLayout
 from ._subspaces import LinearSubspace
 
@@ -636,6 +637,8 @@ def _bind_prepared_constraint(
         )
     block_size = min(32, max(1, rows // 2), workspace_limit // block_bytes)
     right_matrix = jnp.zeros((columns, rows), dtype=_coordinate_dtype(operator.source))
+    incompatible_rhs = False
+    normal_residual_squared = jnp.asarray(0.0, dtype=matrix.real.dtype)
     for start in range(0, rows, block_size):
         width = min(block_size, rows - start)
         identity_columns = (
@@ -643,13 +646,23 @@ def _bind_prepared_constraint(
         ).astype(_coordinate_dtype(operator.target))
         target_block = _unflatten_coordinate_block(operator.target, identity_columns)
         solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((width,)))
-        if not bool(jnp.all(solve_result.successful)):
+        incompatible = solve_result.status == int(LinearSolveStatus.INCOMPATIBLE_RHS)
+        # Identity columns need not lie in a rank-deficient constraint's range.
+        # Their least-squares lifts still define its generalized right inverse;
+        # admit them only after aggregate stationarity and algebraic certification.
+        admitted = solve_result.successful | (incompatible & (not full_row_rank))
+        if not bool(jnp.all(admitted)):
             raise RuntimeError(
                 "Constraint right-inverse block solve failed: "
                 f"status={np.asarray(solve_result.status)!r}, "
                 f"residual_norm={np.asarray(solve_result.diagnostics.residual_norm)!r}, "
                 "normal_residual_norm="
                 f"{np.asarray(solve_result.diagnostics.normal_residual_norm)!r}."
+            )
+        if not full_row_rank:
+            incompatible_rhs = incompatible_rhs or bool(jnp.any(incompatible))
+            normal_residual_squared += jnp.sum(
+                jnp.square(solve_result.diagnostics.normal_residual_norm)
             )
         right_block = _flatten_vector_block(operator.source, solve_result.value, width)
         if right_block.shape != (columns, width):
@@ -744,6 +757,12 @@ def _bind_prepared_constraint(
     )
     nullspace_norm = jnp.linalg.norm(nullspace_residual)
     minimum_norm = jnp.linalg.norm(minimum_norm_residual)
+    if incompatible_rhs and not bool(
+        jnp.sqrt(normal_residual_squared) <= residual_tolerance
+    ):
+        raise RuntimeError(
+            "Generalized constraint right inverse failed its aggregate normal residual check."
+        )
     if not bool(generalized_norm <= residual_tolerance):
         raise RuntimeError(
             "Generalized constraint right inverse failed its residual check."
