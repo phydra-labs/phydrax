@@ -3,12 +3,16 @@
 #
 
 
+import math
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import phydrax as phx
 
@@ -390,3 +394,240 @@ def test_reactive_particle_foundation_scenario_2() -> None:
     assert jnp.linalg.norm(observables.force_residual) < 1.0e-12
     assert wear_step.successful
     assert jnp.all(wear_step.evaluation.wear_rate >= 0.0)
+
+
+def _multicontact_reference(
+    plan: phx.discretization.ElasticHalfSpaceMulticontactPlan,
+    left: NDArray[np.int32],
+    right: NDArray[np.int32],
+    points: NDArray[np.floating],
+    normals: NDArray[np.floating],
+    force: NDArray[np.floating],
+    material_ids: NDArray[np.int32],
+    materials: phx.equations.DEMMaterialTable,
+    valid: NDArray[np.bool_],
+) -> tuple[NDArray[np.float64], float]:
+    """Independent endpoint loops, with left endpoints preceding right endpoints."""
+    count = len(left)
+    owners = [*left.tolist(), *right.tolist()]
+    young = np.asarray(materials.young_modulus)
+    poisson = np.asarray(materials.poisson_ratio)
+    deformation = np.zeros((2 * count,), dtype=np.float64)
+    separation = math.inf
+    for target, owner in enumerate(owners):
+        edge = target % count
+        target_normal = normals[edge] * (-1.0 if target < count else 1.0)
+        for source, source_owner in enumerate(owners):
+            source_edge = source % count
+            if (
+                owner != source_owner
+                or edge == source_edge
+                or not valid[edge]
+                or not valid[source_edge]
+            ):
+                continue
+            source_normal = normals[source_edge] * (-1.0 if source < count else 1.0)
+            distance = math.sqrt(
+                math.fsum(
+                    (float(a) - float(b)) ** 2
+                    for a, b in zip(points[edge], points[source_edge], strict=True)
+                )
+            )
+            alignment = 0.5 * (1.0 + abs(float(np.dot(target_normal, source_normal))))
+            material = material_ids[owner]
+            deformation[target] += (
+                plan.geometric_prefactor
+                * (1.0 - float(poisson[material]) ** 2)
+                / (
+                    math.pi
+                    * float(young[material])
+                    * max(distance, plan.distance_regularization)
+                )
+                * alignment
+                * float(force[source_edge])
+            )
+            separation = min(separation, distance)
+    return deformation, separation
+
+
+@pytest.mark.parametrize(
+    "count", [1, 7, 129], ids=["isolated", "parallel", "ragged-tiles"]
+)
+@pytest.mark.parametrize("dimension", [2, 3])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64], ids=["float32", "float64"])
+def test_multicontact_endpoint_order_and_brute_force_reference(
+    count: int, dimension: int, dtype: type[np.floating]
+) -> None:
+    indices = np.arange(count, dtype=np.int32)
+    left = indices % 5
+    right = (indices + 1) % 5
+    points = np.random.default_rng(81).normal(size=(count, dimension)).astype(dtype)
+    # Coincident distinct contacts exercise regularization, not self exclusion.
+    points[: min(3, count)] = points[0]
+    normals = np.random.default_rng(82).normal(size=(count, dimension)).astype(dtype)
+    normals /= np.linalg.norm(normals, axis=1)[:, None]
+    force = (1.0 + indices % 11).astype(dtype)
+    valid = indices % 7 != 6
+    material_ids = np.asarray([0, 1, 0, 1, 0], dtype=np.int32)
+    materials = phx.equations.DEMMaterialTable(
+        np.asarray([2.0e5, 3.0e5], dtype=dtype),
+        np.asarray([0.2, 0.3], dtype=dtype),
+        np.full((2, 2), 0.8, dtype=dtype),
+        np.full((2, 2), 0.4, dtype=dtype),
+    )
+    plan = phx.discretization.ElasticHalfSpaceMulticontactPlan(
+        geometric_prefactor=1.3, distance_regularization=0.01
+    )
+    expected, separation = _multicontact_reference(
+        plan, left, right, points, normals, force, material_ids, materials, valid
+    )
+    result = eqx.filter_jit(plan.evaluate)(
+        left, right, points, normals, force, material_ids, materials, valid
+    )
+    tolerance = 3.0e-6 if dtype == np.float32 else 3.0e-13
+    np.testing.assert_allclose(result.endpoint_deformation, expected, rtol=tolerance)
+    np.testing.assert_allclose(
+        result.gap_correction, expected[:count] + expected[count:], rtol=tolerance
+    )
+    np.testing.assert_allclose(result.regularity_margin, separation, rtol=tolerance)
+    assert result.successful
+    assert float(result.residual) == 0.0
+    assert result.plan_id == plan.plan_id
+
+
+def test_multicontact_masks_nonfinite_force_and_failure_status() -> None:
+    plan = phx.discretization.ElasticHalfSpaceMulticontactPlan()
+    materials = phx.equations.DEMMaterialTable(
+        jnp.asarray([2.0e5]),
+        jnp.asarray([0.25]),
+        jnp.asarray([[0.8]]),
+        jnp.asarray([[0.4]]),
+    )
+    left = jnp.asarray([0, 0, 0], dtype=jnp.int32)
+    right = jnp.asarray([1, 2, 3], dtype=jnp.int32)
+    points = jnp.asarray([[0.0, 0.0], [0.1, 0.0], [0.2, 0.0]])
+    normals = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
+    forces = jnp.asarray([1.0, 2.0, jnp.nan])
+    material_ids = jnp.zeros((4,), dtype=jnp.int32)
+    masked = plan.evaluate(
+        left,
+        right,
+        points,
+        normals,
+        forces,
+        material_ids,
+        materials,
+        jnp.asarray([True, True, False]),
+    )
+    unmasked = plan.evaluate(
+        left,
+        right,
+        points,
+        normals,
+        forces,
+        material_ids,
+        materials,
+        jnp.asarray([True, True, True]),
+    )
+    assert masked.successful
+    np.testing.assert_array_equal(np.asarray(masked.endpoint_deformation)[[2, 5]], 0.0)
+    assert not unmasked.successful
+    assert np.isnan(np.asarray(unmasked.gap_correction)[:2]).all()
+
+
+def test_multicontact_tiled_force_directional_derivative() -> None:
+    count = 129
+    indices = jnp.arange(count, dtype=jnp.int32)
+    left = indices % 5
+    right = (indices + 1) % 5
+    coordinate = indices.astype(jnp.float64)
+    points = jnp.stack((coordinate * 0.1, jnp.sin(coordinate)), axis=1)
+    normals = jnp.tile(jnp.asarray([[1.0, 0.0]], dtype=jnp.float64), (count, 1))
+    force = jnp.ones((count,), dtype=jnp.float64)
+    direction = 0.1 + indices.astype(jnp.float64) / count
+    material_ids = jnp.zeros((5,), dtype=jnp.int32)
+    materials = phx.equations.DEMMaterialTable(
+        jnp.asarray([2.0e5], dtype=jnp.float64),
+        jnp.asarray([0.25], dtype=jnp.float64),
+        jnp.asarray([[0.8]], dtype=jnp.float64),
+        jnp.asarray([[0.4]], dtype=jnp.float64),
+    )
+    valid = jnp.ones((count,), dtype=jnp.bool_)
+    plan = phx.discretization.ElasticHalfSpaceMulticontactPlan()
+
+    def deformation(load: jax.Array) -> jax.Array:
+        return plan.evaluate(
+            left, right, points, normals, load, material_ids, materials, valid
+        ).endpoint_deformation
+
+    _, tangent = jax.jit(lambda load, delta: jax.jvp(deformation, (load,), (delta,)))(
+        force, direction
+    )
+    expected, _ = _multicontact_reference(
+        plan,
+        np.asarray(left),
+        np.asarray(right),
+        np.asarray(points),
+        np.asarray(normals),
+        np.asarray(direction),
+        np.asarray(material_ids),
+        materials,
+        np.asarray(valid),
+    )
+    np.testing.assert_allclose(tangent, expected, rtol=3.0e-13)
+
+
+@pytest.mark.parametrize("argument", [0, 1, 2, 3, 4, 5])
+def test_multicontact_pair_shape_error_contract(argument: int) -> None:
+    plan = phx.discretization.ElasticHalfSpaceMulticontactPlan()
+    materials = phx.equations.DEMMaterialTable(
+        jnp.asarray([2.0e5]),
+        jnp.asarray([0.25]),
+        jnp.asarray([[0.8]]),
+        jnp.asarray([[0.4]]),
+    )
+    pair = jnp.asarray([0, 1], dtype=jnp.int32)
+    points = jnp.zeros((2, 2), dtype=jnp.float64)
+    force = jnp.ones((2,), dtype=jnp.float64)
+    valid = jnp.ones((2,), dtype=jnp.bool_)
+    arguments = [pair, pair, points, points, force, valid]
+    arguments[argument] = jnp.zeros((3,), dtype=jnp.float64)
+    with pytest.raises(
+        ValueError, match="Multicontact pair data has inconsistent shapes"
+    ):
+        plan.evaluate(
+            arguments[0],
+            arguments[1],
+            arguments[2],
+            arguments[3],
+            arguments[4],
+            pair,
+            materials,
+            arguments[5],
+        )
+
+
+def test_multicontact_empty_pair_reduction_error_contract() -> None:
+    plan = phx.discretization.ElasticHalfSpaceMulticontactPlan()
+    materials = phx.equations.DEMMaterialTable(
+        jnp.asarray([2.0e5]),
+        jnp.asarray([0.25]),
+        jnp.asarray([[0.8]]),
+        jnp.asarray([[0.4]]),
+    )
+    indices = jnp.zeros((0,), dtype=jnp.int32)
+    points = jnp.zeros((0, 2), dtype=jnp.float64)
+    with pytest.raises(
+        ValueError,
+        match="zero-size array to reduction operation min which has no identity",
+    ):
+        plan.evaluate(
+            indices,
+            indices,
+            points,
+            points,
+            jnp.zeros((0,), dtype=jnp.float64),
+            jnp.zeros((1,), dtype=jnp.int32),
+            materials,
+            jnp.zeros((0,), dtype=jnp.bool_),
+        )

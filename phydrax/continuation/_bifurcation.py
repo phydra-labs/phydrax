@@ -18,7 +18,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_norm
-from ..linalg import AbstractVectorSpace
+from ..linalg import AbstractVectorSpace, prepare_linearization
 from ..nonlinear import (
     AbstractNonlinearMethod,
     NonlinearResult,
@@ -1136,10 +1136,14 @@ def evaluate_nullspace(
             args,
         )
 
-    right_action = jax.jvp(residual_function, (state_,), (right,))[1]
-    _, pullback = jax.vjp(residual_function, state_)
+    linearization = prepare_linearization(
+        residual_function,
+        state_,
+        linearization_id=f"{problem.problem_id}/nullspace-residual",
+    )
+    right_action = linearization.jvp(right)
     left_covector = geometry.execution_residual_space.riesz(left)
-    adjoint_covector = pullback(left_covector)[0]
+    adjoint_covector = linearization.vjp(left_covector)
     left_action = geometry.execution_state_space.inverse_riesz(adjoint_covector)
     right_norm = geometry.state_norm(right)
     left_squared = jnp.real(geometry.execution_residual_space.inner(left, left))

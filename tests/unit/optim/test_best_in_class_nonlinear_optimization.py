@@ -90,7 +90,7 @@ def test_best_in_class_nonlinear_optimization_scenario_1() -> None:
     )
     schur = opt.prepare_schur_plan(graph)
     step = opt.solve_schur_system(
-        jnp.asarray([[2.0, 1.0], [1.0, 3.0]]),
+        phx.linalg.DenseLinearOperator(jnp.asarray([[2.0, 1.0], [1.0, 3.0]])),
         jnp.asarray([-1.0, -2.0]),
         schur,
     )
@@ -163,7 +163,10 @@ def test_best_in_class_nonlinear_optimization_scenario_1() -> None:
     assert int(result.method_evidence.linear_solves) > 0
     assert int(robust_model.robust_blocks) == 1
     assert int(robust_model.clipped_curvature_blocks) == 1
-    assert float(jnp.min(jnp.linalg.eigvalsh(robust_model.curvature))) >= -1e-12
+    dense_curvature = phx.linalg.materialize(
+        robust_model.curvature, phx.linalg.MaterializationPolicy(max_entries=1)
+    )
+    assert float(jnp.min(jnp.linalg.eigvalsh(dense_curvature))) >= -1e-12
 
 
 def test_best_in_class_nonlinear_optimization_scenario_2() -> None:

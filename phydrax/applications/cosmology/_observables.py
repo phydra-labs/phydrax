@@ -22,6 +22,19 @@ from ._distances import FLRWDistancePlan
 from ._products import LagrangianGrowthHistory, MatterField, MatterPowerTable
 
 
+def _lensing_efficiency(radial: Array, weighted_density: Array, /) -> Array:
+    """Exclusive source tails for flat-geometry lensing, in linear workspace."""
+    safe_radial = jnp.where(radial > 0.0, radial, 1.0)
+    tail_density = jnp.concatenate(
+        (jnp.cumsum(weighted_density[:0:-1])[::-1], jnp.zeros_like(radial[:1]))
+    )
+    inverse_radius_density = weighted_density / safe_radial
+    tail_inverse_radius = jnp.concatenate(
+        (jnp.cumsum(inverse_radius_density[:0:-1])[::-1], jnp.zeros_like(radial[:1]))
+    )
+    return tail_density - radial * tail_inverse_radius
+
+
 class RadialGrid(StrictModule, NonTrainableState):
     """Fixed positive-redshift integration nodes and trapezoidal weights."""
 
@@ -230,13 +243,8 @@ class LimberAngularPowerPlan(StrictModule, NonTrainableState):
                 kernel = tracer.distribution.values * tracer.bias * hubble / speed
                 labels.append(f"density:{tracer.distribution.bin_id}")
             else:
-                separation = jnp.maximum(radial[None, :] - radial[:, None], 0.0)
-                safe_radial = jnp.where(radial > 0.0, radial, 1.0)
-                efficiency = contract(
-                    "j,ij,j->i",
-                    grid.weights,
-                    separation / safe_radial[None, :],
-                    tracer.distribution.values,
+                efficiency = _lensing_efficiency(
+                    radial, grid.weights * tracer.distribution.values
                 )
                 coefficient = (
                     1.5

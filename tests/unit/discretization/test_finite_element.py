@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -36,6 +37,45 @@ def _square_discretization(*, degree: Any = 1) -> Any:
         phx.discretization.lagrange_element("triangle", degree),
     )
     return phx.discretization.FiniteElementPlan(mesh, field).prepare()
+
+
+@pytest.mark.parametrize("kind", ["mass", "stiffness"])
+def test_requested_operator_matches_independent_triangle_integrals(kind: str) -> None:
+    space = _square_discretization()
+    paired = space.assemble_field_operators("u", space.default_runtime)
+    operator = space.mass if kind == "mass" else space.stiffness
+    reference = np.zeros((5, 5), dtype=np.float64)
+    coordinates = np.asarray(space.vertices)
+    cells = np.asarray([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])
+    for cell in cells:
+        points = coordinates[cell]
+        jacobian = (points[1:] - points[0]).T
+        area = abs(np.linalg.det(jacobian)) / 2
+        if kind == "mass":
+            local = area * (np.ones((3, 3), dtype=np.float64) + np.eye(3)) / 12
+        else:
+            gradients = np.asarray(
+                [[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]]
+            ) @ np.linalg.inv(jacobian)
+            local = area * gradients @ gradients.T
+        reference[np.ix_(cell, cell)] += local
+    value = jnp.linspace(-0.7, 1.1, 5, dtype=jnp.float64)
+    np.testing.assert_allclose(
+        operator.mv(value), reference @ np.asarray(value), atol=2e-12
+    )
+    partner = paired[0 if kind == "mass" else 1]
+    np.testing.assert_allclose(operator.mv(value), partner.mv(value), atol=2e-12)
+    assert operator.operator_id == partner.operator_id
+
+
+def test_moved_geometry_assembly_is_not_cached() -> None:
+    space = _square_discretization()
+    mass, stiffness = space.assemble_field_operators("u", space.default_runtime)
+    moved = space.prepare_runtime(2.0 * space.vertices, numeric_version="scaled")
+    moved_mass, moved_stiffness = space.assemble_field_operators("u", moved)
+    value = jnp.linspace(-0.2, 0.8, 5, dtype=jnp.float64)
+    np.testing.assert_allclose(moved_mass.mv(value), 4.0 * mass.mv(value), atol=2e-12)
+    np.testing.assert_allclose(moved_stiffness.mv(value), stiffness.mv(value), atol=2e-12)
 
 
 def test_finite_element_scenario_1() -> None:

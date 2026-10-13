@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -13,20 +14,290 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-import phydrax.ein as ein
 import phydrax.linalg as la
-from phydrax.ein import contract
+import phydrax.linalg.eigen as le
+from phydrax.sparse import EdgeRelation, route_reduce
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._physical import ElectromagneticScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_integer
 from ...geometry.simplicial._ddg import DDGOperators, discrete_operators
 from ...geometry.simplicial._mesh import TriangleMesh
-from ...typing import checked
+from ...typing import checked, parse
 
 
 _VACUUM_PERMEABILITY = float(ElectromagneticScaleContract.si().vacuum_permeability)
+
+
+type LondonSolveRoute = Literal["auto", "dense", "minres", "gmres"]
+
+
+class LondonSolvePolicy(StrictModule, NonTrainableState):
+    """Fail-closed dense admission and bounded matrix-free solve/eigen resources."""
+
+    route: LondonSolveRoute = eqx.field(static=True)
+    dense_maximum_bytes: int = eqx.field(static=True)
+    dense_maximum_dofs: int = eqx.field(static=True)
+    face_tile_size: int = eqx.field(static=True)
+    krylov_restart: int = eqx.field(static=True)
+    maximum_steps: int = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
+    eigen_subspace_dimension: int = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        route: LondonSolveRoute = "auto",
+        dense_maximum_bytes: int = 16 * 1024 * 1024,
+        dense_maximum_dofs: int = 512,
+        face_tile_size: int = 8,
+        krylov_restart: int = 32,
+        maximum_steps: int = 2000,
+        workspace_bytes: int = 64 * 1024 * 1024,
+        eigen_subspace_dimension: int = 32,
+    ) -> None:
+        route = parse(route, LondonSolveRoute, "route")
+        values = tuple(
+            positive_integer(value, name)
+            for value, name in (
+                (dense_maximum_bytes, "dense_maximum_bytes"),
+                (dense_maximum_dofs, "dense_maximum_dofs"),
+                (face_tile_size, "face_tile_size"),
+                (krylov_restart, "krylov_restart"),
+                (maximum_steps, "maximum_steps"),
+                (workspace_bytes, "workspace_bytes"),
+                (eigen_subspace_dimension, "eigen_subspace_dimension"),
+            )
+        )
+        if values[-1] < 2:
+            raise ValueError("eigen_subspace_dimension must be at least two.")
+        self.route = route
+        (
+            self.dense_maximum_bytes,
+            self.dense_maximum_dofs,
+            self.face_tile_size,
+            self.krylov_restart,
+            self.maximum_steps,
+            self.workspace_bytes,
+            self.eigen_subspace_dimension,
+        ) = values
+        self.policy_id = canonical_fingerprint(
+            {"kind": "london-solve-policy", "route": route, "capacities": values}
+        )
+
+
+class _LondonAction(StrictModule):
+    faces: Array
+    local_current: Array
+    local_kinetic: Array
+    centers: Array
+    area: Array
+    relation: EdgeRelation
+    softening: float = eqx.field(static=True)
+    tile: int = eqx.field(static=True)
+
+    def current(self, stream: Array) -> Array:
+        return jnp.sum(self.local_current * stream[self.faces, None], axis=1)
+
+    def transpose_current(self, current: Array) -> Array:
+        local = jnp.sum(self.local_current * current[:, None, :], axis=-1)
+        return route_reduce(self.relation, local.reshape((-1,)))
+
+    def magnetic_current(self, current: Array) -> Array:
+        def row(center: Array) -> Array:
+            radius = jnp.sqrt(
+                jnp.sum((center - self.centers) ** 2, axis=-1) + self.softening**2
+            )
+            weights = _VACUUM_PERMEABILITY / (4.0 * jnp.pi) * self.area / radius
+            return jnp.sum(weights[:, None] * current, axis=0)
+
+        return self.area[:, None] * jax.lax.map(row, self.centers, batch_size=self.tile)
+
+    def magnetic(self, stream: Array) -> Array:
+        return self.transpose_current(self.magnetic_current(self.current(stream)))
+
+    def kinetic(self, stream: Array) -> Array:
+        kinetic = jnp.sum(self.local_kinetic * stream[self.faces][:, None, :], axis=-1)
+        return route_reduce(self.relation, kinetic.reshape((-1,)))
+
+    def __call__(self, stream: Array) -> Array:
+        return self.magnetic(stream) + self.kinetic(stream)
+
+    def normal_field(self, current: Array, normal: Array) -> Array:
+        def row(center: Array) -> Array:
+            separation = center - self.centers
+            radius = (jnp.sum(separation**2, axis=-1) + self.softening**2) ** 1.5
+            numerator = jnp.sum(jnp.cross(current, separation) * normal, axis=-1)
+            return (
+                _VACUUM_PERMEABILITY
+                / (4.0 * jnp.pi)
+                * jnp.sum(self.area * numerator / radius)
+            )
+
+        return jax.lax.map(row, self.centers, batch_size=self.tile)
+
+
+class _LondonKKTAction(StrictModule):
+    energy: _LondonAction
+    constraints: Array
+
+    def __call__(self, vector: Array) -> Array:
+        count = self.constraints.shape[1]
+        stream, reaction = vector[:count], vector[count:]
+        return jnp.concatenate(
+            (
+                self.energy(stream) / _VACUUM_PERMEABILITY
+                + self.constraints.T @ reaction,
+                self.constraints @ stream,
+            )
+        )
+
+
+class _LondonCurvatureAction(StrictModule):
+    energy: _LondonAction
+    constraints: Array
+
+    def __call__(self, vector: Array) -> Array:
+        return self.energy(vector) + self.constraints.T @ (self.constraints @ vector)
+
+
+def _prepare_london_solve(
+    action: _LondonAction, constraints: Array, policy: LondonSolvePolicy, tolerance: float
+) -> tuple[LondonSolveRoute, la.PreparedLinearSolve]:
+    vertex_count = constraints.shape[1]
+    dofs = vertex_count + constraints.shape[0]
+    # Admit the KKT, its factors, and dense curvature work before allocation.
+    dense_bytes = 8 * (3 * dofs**2 + 3 * vertex_count**2)
+    admitted = (
+        dofs <= policy.dense_maximum_dofs and dense_bytes <= policy.dense_maximum_bytes
+    )
+    match policy.route:
+        case "auto":
+            route: LondonSolveRoute = "dense" if admitted else "minres"
+        case "dense":
+            if not admitted:
+                raise ValueError(
+                    "London dense KKT exceeds its declared byte/dof bound; select minres or gmres."
+                )
+            route = "dense"
+        case "minres" | "gmres":
+            route = policy.route
+        case _:
+            raise ValueError("Unsupported London solve route.")
+    tile_bytes = 8 * action.tile * action.area.size * 8
+    basis_bytes = 8 * vertex_count * min(vertex_count, policy.eigen_subspace_dimension)
+    if tile_bytes + basis_bytes > policy.workspace_bytes:
+        raise ValueError(
+            "London face-kernel/eigen workspace exceeds its declared byte bound."
+        )
+    kkt_action = _LondonKKTAction(action, constraints)
+    space = la.ArraySpace((dofs,), dtype=np.float64)
+    properties = la.OperatorProperties(
+        self_adjoint=True, evidence={"self_adjoint": "construction"}
+    )
+    operator: la.AbstractLinearOperator = la.FunctionLinearOperator(
+        kkt_action,
+        source=space,
+        target=space,
+        transpose_action=kkt_action,
+        properties=properties,
+        closure_convert=False,
+    )
+    materialization = la.MaterializationPolicy(
+        max_entries=dofs**2, max_bytes=policy.dense_maximum_bytes
+    )
+    match route:
+        case "dense":
+            matrix = jax.lax.map(
+                lambda index: kkt_action(jax.nn.one_hot(index, dofs, dtype=jnp.float64)),
+                jnp.arange(dofs),
+                batch_size=1,
+            ).T
+            operator = la.DenseLinearOperator(matrix, properties=properties)
+            method: la.AbstractLinearMethod = la.DenseLU()
+        case "minres":
+            method = la.MINRES()
+        case "gmres":
+            method = la.GMRES(restart=min(policy.krylov_restart, dofs))
+        case _:
+            raise ValueError("Unsupported prepared London solve route.")
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            method,
+            tolerance=la.TolerancePolicy(
+                relative=min(tolerance, 1.0e-11),
+                absolute=min(tolerance, 1.0e-12),
+                max_steps=policy.maximum_steps,
+            ),
+            resources=la.SolveResourcePolicy(workspace_bytes=policy.workspace_bytes),
+            materialization=materialization,
+            failure=la.FailurePolicy("status"),
+        ),
+    )
+    return route, prepared
+
+
+def _prepare_london_curvature(
+    action: _LondonAction,
+    constraints: Array,
+    policy: LondonSolvePolicy,
+    route: LondonSolveRoute,
+    tolerance: float,
+) -> le.EigenSolveResult:
+    vertex_count = constraints.shape[1]
+    curvature_action = _LondonCurvatureAction(action, constraints)
+    space = la.ArraySpace((vertex_count,), dtype=np.float64)
+    operator: la.AbstractLinearOperator = la.FunctionLinearOperator(
+        curvature_action,
+        source=space,
+        target=space,
+        transpose_action=curvature_action,
+        properties=la.OperatorProperties(
+            self_adjoint=True, evidence={"self_adjoint": "construction"}
+        ),
+        closure_convert=False,
+    )
+    if route == "dense":
+        # Native dense eigen preparation receives only the admitted vertex matrix,
+        # never a vmapped face-by-vertex current workspace.
+        matrix = jax.lax.map(
+            lambda index: curvature_action(
+                jax.nn.one_hot(index, vertex_count, dtype=jnp.float64)
+            ),
+            jnp.arange(vertex_count),
+            batch_size=1,
+        ).T
+        operator = la.DenseLinearOperator(matrix, properties=operator.properties)
+        method: le.DenseEigh | le.RestartedLanczos = le.DenseEigh()
+    else:
+        method = le.RestartedLanczos(
+            subspace_dimension=min(vertex_count, policy.eigen_subspace_dimension)
+        )
+    return le.eigensolve(
+        le.Eigenproblem(operator),
+        policy=le.EigenSolvePolicy(
+            method,
+            count=1,
+            max_steps=policy.maximum_steps,
+            key=jax.random.key(0),
+            tolerance=le.EigenTolerancePolicy(
+                relative=1.0e-10, absolute=min(tolerance, 1.0e-12)
+            ),
+            resources=le.EigenResourcePolicy(
+                workspace_bytes=policy.workspace_bytes,
+                krylov_basis_bytes=policy.workspace_bytes,
+            ),
+            materialization=la.MaterializationPolicy(
+                max_entries=vertex_count**2,
+                max_bytes=policy.dense_maximum_bytes,
+            ),
+            failure=la.FailurePolicy("status"),
+        ),
+    )
 
 
 class ThinFilmLondonEvidence(StrictModule):
@@ -38,6 +309,9 @@ class ThinFilmLondonEvidence(StrictModule):
     finite: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
+    solve_route: LondonSolveRoute = eqx.field(static=True)
+    linear_status: Array
+    curvature_successful: Array
 
 
 class ThinFilmLondonResult(StrictModule):
@@ -60,9 +334,13 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
     plane_normal: Array
     constraint_matrix: Array
     constraint_labels: tuple[str, ...] = eqx.field(static=True)
-    hessian: Array
+    energy_action: _LondonAction
+    minimum_energy_curvature: Array
+    curvature_successful: Array
+    solve_policy: LondonSolvePolicy
+    solve_route: LondonSolveRoute = eqx.field(static=True)
     moment_load: Array
-    factorization: la.PreparedFactorization
+    prepared_solve: la.PreparedLinearSolve
     softening_length: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -78,6 +356,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         constraint_labels: tuple[str, ...] = (),
         softening_length: float | None = None,
         tolerance: float = 1.0e-9,
+        solve_policy: LondonSolvePolicy | None = None,
     ) -> None:
         pearl = float(pearl_length)
         tolerance_ = float(tolerance)
@@ -132,35 +411,33 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         ddg = discrete_operators(mesh)
         basis_gradients = np.asarray(ddg.basis_gradients)
         face_count = faces.shape[0]
-        current_basis = np.zeros((face_count, 3, vertex_count), dtype=np.float64)
-        for face in range(face_count):
-            for local in range(3):
-                vertex = faces[face, local]
-                current_basis[face, :, vertex] += np.cross(
-                    normals[face], basis_gradients[face, local]
-                )
+        local_current = np.cross(normals[:, None, :], basis_gradients)
         face_area = np.asarray(ddg.face_area)
         centers = np.mean(triangles, axis=1)
-        separation = centers[:, None, :] - centers[None, :, :]
-        radius = np.sqrt(np.sum(separation**2, axis=-1) + softening**2)
-        kernel = (
-            _VACUUM_PERMEABILITY
-            / (4.0 * np.pi)
-            * face_area[:, None]
-            * face_area[None, :]
-            / radius
+        policy = LondonSolvePolicy() if solve_policy is None else solve_policy
+        if not isinstance(policy, LondonSolvePolicy):
+            raise TypeError("solve_policy must be LondonSolvePolicy or None.")
+        relation = EdgeRelation(
+            np.repeat(np.arange(face_count, dtype=np.int32), 3),
+            faces.reshape((-1,)),
+            source_size=face_count,
+            target_size=vertex_count,
         )
-        basis_matrix = np.moveaxis(current_basis, 2, 0).reshape((vertex_count, -1)).T
-        magnetic_metric = np.kron(kernel, np.eye(3))
-        magnetic_hessian = basis_matrix.T @ magnetic_metric @ basis_matrix
-        kinetic_metric = np.diag(np.repeat(face_area, 3))
-        kinetic_hessian = (
+        local_kinetic = (
             _VACUUM_PERMEABILITY
             * pearl
-            * (basis_matrix.T @ kinetic_metric @ basis_matrix)
+            * face_area[:, None, None]
+            * (local_current @ local_current.swapaxes(1, 2))
         )
-        hessian = 0.5 * (
-            magnetic_hessian + kinetic_hessian + (magnetic_hessian + kinetic_hessian).T
+        action = _LondonAction(
+            jnp.asarray(faces),
+            jnp.asarray(local_current),
+            jnp.asarray(local_kinetic),
+            jnp.asarray(centers),
+            jnp.asarray(face_area),
+            relation,
+            softening,
+            min(policy.face_tile_size, face_count),
         )
         gauge = np.asarray(ddg.vertex_mass)
         gauge = gauge / np.sum(gauge)
@@ -168,35 +445,35 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         rank = np.linalg.matrix_rank(constraints, tol=tolerance_)
         if rank != constraints.shape[0]:
             raise ValueError("London constraints are linearly dependent.")
-        kkt = np.block(
-            [
-                [hessian, constraints.T],
-                [constraints, np.zeros((constraints.shape[0], constraints.shape[0]))],
-            ]
+        constraint_array = jnp.asarray(constraints)
+        route, prepared = _prepare_london_solve(
+            action, constraint_array, policy, tolerance_
         )
-        factorization = la.factorize(
-            la.DenseLinearOperator(jnp.asarray(kkt)), la.FactorizationPolicy("lu")
+        curvature_result = _prepare_london_curvature(
+            action, constraint_array, policy, route, tolerance_
         )
         centered_faces = centers - np.mean(vertices, axis=0)
-        moment_load = np.zeros((vertex_count,), dtype=np.float64)
-        for vertex in range(vertex_count):
-            moment_load[vertex] = 0.5 * np.sum(
-                face_area
-                * ein.contract(
-                    "i,fi->f",
-                    normal,
-                    np.cross(centered_faces, current_basis[:, :, vertex]),
-                )
+        local_moment = (
+            0.5
+            * face_area[:, None]
+            * np.sum(
+                normal * np.cross(centered_faces[:, None, :], local_current), axis=-1
             )
+        )
+        moment_load = route_reduce(relation, jnp.asarray(local_moment.reshape((-1,))))
         self.mesh = mesh
         self.operators = ddg
         self.pearl_length = pearl
         self.plane_normal = jnp.asarray(normal)
         self.constraint_matrix = jnp.asarray(constraints)
         self.constraint_labels = ("gauge-zero-mean", *labels)
-        self.hessian = jnp.asarray(hessian)
-        self.moment_load = jnp.asarray(moment_load)
-        self.factorization = factorization
+        self.energy_action = action
+        self.minimum_energy_curvature = curvature_result.eigenvalues[0]
+        self.curvature_successful = curvature_result.successful
+        self.solve_policy = policy
+        self.solve_route = route
+        self.moment_load = moment_load
+        self.prepared_solve = prepared
         self.softening_length = softening
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
@@ -210,6 +487,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
                 "labels": self.constraint_labels,
                 "softening_length": softening,
                 "tolerance": tolerance_,
+                "solve_policy": policy.policy_id,
             }
         )
 
@@ -223,60 +501,34 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         constraint_values: ArrayLike | None = None,
         /,
     ) -> ThinFilmLondonResult:
-        applied = jnp.asarray(applied_normal_field, dtype=self.hessian.dtype)
+        applied = jnp.asarray(applied_normal_field, dtype=self.moment_load.dtype)
         if applied.shape != ():
             raise ValueError(
                 "Applied London field must be scalar and normal to the film."
             )
         values = (
-            jnp.zeros((self.physical_constraint_count,), dtype=self.hessian.dtype)
+            jnp.zeros((self.physical_constraint_count,), dtype=self.moment_load.dtype)
             if constraint_values is None
-            else jnp.asarray(constraint_values, dtype=self.hessian.dtype)
+            else jnp.asarray(constraint_values, dtype=self.moment_load.dtype)
         )
         if values.shape != (self.physical_constraint_count,):
             raise ValueError("London constraint values do not match the plan.")
         right = jnp.concatenate(
             (
-                applied * self.moment_load,
+                applied * self.moment_load / _VACUUM_PERMEABILITY,
                 jnp.concatenate((jnp.zeros((1,), dtype=values.dtype), values)),
             )
         )
-        linear = self.factorization.solve(right)
+        linear = la.solve(self.prepared_solve, right)
         vertex_count = self.mesh.vertices.shape[0]
         stream = linear.value[:vertex_count]
-        reaction = linear.value[vertex_count:]
-        gradient = self.operators.gradient(stream)
-        current = jnp.cross(self.plane_normal, gradient)
-        centers = jnp.mean(self.mesh.vertices[self.mesh.faces], axis=1)
-        separation = centers[:, None, :] - centers[None, :, :]
-        radius = (jnp.sum(separation**2, axis=-1) + self.softening_length**2) ** 1.5
-        induced = (
-            _VACUUM_PERMEABILITY
-            / (4.0 * jnp.pi)
-            * jnp.sum(
-                self.operators.face_area[None, :]
-                * contract(
-                    "i,fhi->fh",
-                    self.plane_normal,
-                    jnp.cross(current[None, :, :], separation),
-                    backend="jax",
-                )
-                / radius,
-                axis=1,
-            )
+        reaction = _VACUUM_PERMEABILITY * linear.value[vertex_count:]
+        current = self.energy_action.current(stream)
+        field = applied + self.energy_action.normal_field(current, self.plane_normal)
+        magnetic_action = self.energy_action.transpose_current(
+            self.energy_action.magnetic_current(current)
         )
-        field = applied + induced
-        magnetic_energy = (
-            0.5
-            * stream
-            @ (
-                self.hessian
-                - _VACUUM_PERMEABILITY
-                * self.pearl_length
-                * _kinetic_matrix(self.operators)
-            )
-            @ stream
-        )
+        magnetic_energy = 0.5 * stream @ magnetic_action
         kinetic_energy = (
             0.5
             * _VACUUM_PERMEABILITY
@@ -286,7 +538,8 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         applied_work = applied * (self.moment_load @ stream)
         total_energy = magnetic_energy + kinetic_energy - applied_work
         residual = (
-            self.hessian @ stream
+            magnetic_action
+            + self.energy_action.kinetic(stream)
             + self.constraint_matrix.T @ reaction
             - applied * self.moment_load
         )
@@ -295,10 +548,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         )
         divergence = self.operators.divergence(current)
         interior_divergence = jnp.where(self.operators.boundary_vertices, 0.0, divergence)
-        eigenvalues = jnp.linalg.eigvalsh(
-            self.hessian + self.constraint_matrix.T @ self.constraint_matrix
-        )
-        curvature = jnp.min(eigenvalues)
+        curvature = self.minimum_energy_curvature
         finite = (
             linear.successful
             & jnp.all(jnp.isfinite(stream))
@@ -308,6 +558,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         scale = jnp.maximum(jnp.linalg.norm(applied * self.moment_load), 1.0)
         successful = (
             finite
+            & self.curvature_successful
             & (jnp.linalg.norm(residual) <= self.tolerance * scale)
             & (jnp.linalg.norm(constraint_residual) <= self.tolerance)
             & (
@@ -325,6 +576,9 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
             finite,
             successful,
             self.plan_id,
+            self.solve_route,
+            linear.status,
+            self.curvature_successful,
         )
         return ThinFilmLondonResult(
             stream,
@@ -340,43 +594,47 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
         )
 
     def inductance_matrix(self, /) -> tuple[Array, Array]:
+        """Return inductance and reciprocity, refusing failed native solves on host."""
         count = self.physical_constraint_count
         if count == 0:
-            empty = jnp.zeros((0, 0), dtype=self.hessian.dtype)
-            return empty, jnp.asarray(0.0, dtype=self.hessian.dtype)
+            empty = jnp.zeros((0, 0), dtype=self.moment_load.dtype)
+            return empty, jnp.asarray(0.0, dtype=self.moment_load.dtype)
         vertex_count = self.mesh.vertices.shape[0]
         right = jnp.concatenate(
             (
-                jnp.zeros((vertex_count, count), dtype=self.hessian.dtype),
+                jnp.zeros((vertex_count, count), dtype=self.moment_load.dtype),
                 jnp.concatenate(
                     (
-                        jnp.zeros((1, count), dtype=self.hessian.dtype),
-                        jnp.eye(count, dtype=self.hessian.dtype),
+                        jnp.zeros((1, count), dtype=self.moment_load.dtype),
+                        jnp.eye(count, dtype=self.moment_load.dtype),
                     ),
                     axis=0,
                 ),
             ),
             axis=0,
         )
-        linear = self.factorization.solve(right)
-        reactions = linear.value[vertex_count + 1 :, :]
+        linear = la.solve(self.prepared_solve, right)
+        if not bool(jnp.all(linear.successful)):
+            statuses = np.asarray(linear.status)
+            messages = tuple(
+                la.linear_status_message(int(status))
+                for status in statuses.reshape((-1,))
+            )
+            raise RuntimeError(
+                f"London inductance multi-RHS solve failed on route {self.solve_route!r}: "
+                f"status={statuses!r}, messages={messages!r}, "
+                f"residual_norm={np.asarray(linear.diagnostics.residual_norm)!r}."
+            )
+        reactions = _VACUUM_PERMEABILITY * linear.value[vertex_count + 1 :, :]
         matrix = -reactions
         reciprocity = jnp.max(jnp.abs(matrix - matrix.T), initial=0.0)
         return 0.5 * (matrix + matrix.T), reciprocity
 
 
-def _kinetic_matrix(operators: DDGOperators) -> Array:
-    vertex_count = operators.vertices.shape[0]
-    basis = jnp.eye(vertex_count, dtype=operators.vertices.dtype)
-    gradients = jax.vmap(operators.gradient)(basis).swapaxes(0, 1)
-    currents = jnp.cross(operators.face_normal[:, None, :], gradients)
-    return contract(
-        "f,fia,fja->ij",
-        operators.face_area,
-        currents,
-        currents,
-        backend="jax",
-    )
-
-
-__all__ = ["ThinFilmLondonEvidence", "ThinFilmLondonPlan", "ThinFilmLondonResult"]
+__all__ = [
+    "LondonSolvePolicy",
+    "LondonSolveRoute",
+    "ThinFilmLondonEvidence",
+    "ThinFilmLondonPlan",
+    "ThinFilmLondonResult",
+]

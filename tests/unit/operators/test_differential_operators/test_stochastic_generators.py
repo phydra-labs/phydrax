@@ -306,3 +306,43 @@ def test_probability_contracts() -> None:
 
     assert current.func((x_axis, y_axis)).shape == (3, 4, 2)
     assert forward.func((x_axis, y_axis)).shape == (3, 4)
+
+
+@pytest.mark.parametrize("shape", [(), (3,), (2, 2)], ids=["scalar", "vector", "tensor"])
+def test_factor_generator_dense_ad_reference_and_parameter_derivative(
+    shape: tuple[int, ...],
+) -> None:
+    point = jnp.asarray([0.31, -0.47])
+    coefficients = jnp.arange(
+        1, 1 + (1 if not shape else 3 if shape == (3,) else 4), dtype=jnp.float64
+    )
+    drift = _square_function(lambda x: jnp.asarray([x[1] + 0.8, 2.0 * x[0] - 0.3]))
+    diffusion = _square_function(lambda x: jnp.asarray([[0.4, x[1]], [x[0], -0.7]]))
+
+    def values(x: jax.Array, scale: jax.Array) -> jax.Array:
+        mixed = jnp.sin(x[0] + 2.0 * x[1]) + x[0] * x[1] ** 2
+        return (scale * coefficients * mixed + coefficients**2 * x[0] ** 3).reshape(shape)
+
+    def actual(scale: jax.Array) -> jax.Array:
+        observable = drift.domain.Function("x")(lambda x: values(x, scale))
+        generator = phx.operators.kolmogorov_generator(
+            observable, drift, diffusion=diffusion
+        )
+        return generator.func(point)
+
+    def reference(scale: jax.Array) -> jax.Array:
+        jacobian = jax.jacrev(values)(point, scale)
+        hessian = jax.jacrev(jax.jacrev(values))(point, scale)
+        factor = diffusion.func(point)
+        covariance = factor @ factor.T
+        return jnp.sum(jacobian * drift.func(point), axis=-1) + 0.5 * jnp.sum(
+            hessian * covariance, axis=(-2, -1)
+        )
+
+    scale = jnp.asarray(0.63)
+    expected = reference(scale)
+    assert expected.shape == shape
+    assert jnp.allclose(jax.jit(actual)(scale), expected, rtol=2e-12, atol=2e-12)
+    assert jnp.allclose(
+        jax.jacfwd(actual)(scale), jax.jacfwd(reference)(scale), rtol=2e-12, atol=2e-12
+    )

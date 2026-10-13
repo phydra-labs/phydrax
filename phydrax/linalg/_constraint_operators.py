@@ -285,6 +285,7 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
                 "materialization": {
                     "max_entries": materialization_.max_entries,
                     "max_bytes": materialization_.max_bytes,
+                    "max_workspace_bytes": materialization_.max_workspace_bytes,
                 },
             }
         )
@@ -626,34 +627,53 @@ def _bind_prepared_constraint(
         raise ValueError(
             f"Constraint operator has numerical rank {rank}, but full row rank {rows} is required."
         )
-    identity = jnp.eye(rows, dtype=_coordinate_dtype(operator.target))
-    target_block = _unflatten_coordinate_block(operator.target, identity)
-    solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((rows,)))
-    accepted = solve_result.successful
-    if not full_row_rank:
-        # Without full row rank, coordinate targets outside the range are certified
-        # incompatible; the generalized right inverse maps them to their
-        # minimum-norm least-squares lifts, and A G A = A is verified below.
-        accepted = accepted | (
-            solve_result.status == int(LinearSolveStatus.INCOMPATIBLE_RHS)
+    block_bytes = (3 * rows + 2 * columns) * matrix.dtype.itemsize
+    workspace_limit = min(
+        plan.materialization.max_workspace_bytes, plan.resources.workspace_bytes
+    )
+    if block_bytes > workspace_limit:
+        raise ValueError(
+            "Constraint certification cannot fit one column in its workspace budget."
         )
-    if not bool(jnp.all(accepted)):
-        raise RuntimeError(
-            "Constraint right-inverse block solve failed: "
-            f"status={np.asarray(solve_result.status)!r}, "
-            f"residual_norm={np.asarray(solve_result.diagnostics.residual_norm)!r}, "
-            "normal_residual_norm="
-            f"{np.asarray(solve_result.diagnostics.normal_residual_norm)!r}."
-        )
-    right_matrix = _flatten_vector_block(operator.source, solve_result.value, rows)
-    if right_matrix.shape != (columns, rows):
-        raise RuntimeError(
-            "Constraint right-inverse block solve returned an invalid shape."
-        )
-    if not bool(jnp.all(jnp.isfinite(right_matrix))):
-        raise RuntimeError(
-            "Constraint right-inverse block solve returned nonfinite data."
-        )
+    block_size = min(32, max(1, rows // 2), workspace_limit // block_bytes)
+    right_matrix = jnp.zeros((columns, rows), dtype=_coordinate_dtype(operator.source))
+    incompatible_rhs = False
+    normal_residual_squared = jnp.asarray(0.0, dtype=matrix.real.dtype)
+    for start in range(0, rows, block_size):
+        width = min(block_size, rows - start)
+        identity_columns = (
+            jnp.arange(rows)[:, None] == jnp.arange(start, start + width)[None, :]
+        ).astype(_coordinate_dtype(operator.target))
+        target_block = _unflatten_coordinate_block(operator.target, identity_columns)
+        solve_result = factorization.solve(target_block, rhs_layout=RHSLayout((width,)))
+        incompatible = solve_result.status == int(LinearSolveStatus.INCOMPATIBLE_RHS)
+        # Identity columns need not lie in a rank-deficient constraint's range.
+        # Their least-squares lifts still define its generalized right inverse;
+        # admit them only after aggregate stationarity and algebraic certification.
+        admitted = solve_result.successful | (incompatible & (not full_row_rank))
+        if not bool(jnp.all(admitted)):
+            raise RuntimeError(
+                "Constraint right-inverse block solve failed: "
+                f"status={np.asarray(solve_result.status)!r}, "
+                f"residual_norm={np.asarray(solve_result.diagnostics.residual_norm)!r}, "
+                "normal_residual_norm="
+                f"{np.asarray(solve_result.diagnostics.normal_residual_norm)!r}."
+            )
+        if not full_row_rank:
+            incompatible_rhs = incompatible_rhs or bool(jnp.any(incompatible))
+            normal_residual_squared += jnp.sum(
+                jnp.square(solve_result.diagnostics.normal_residual_norm)
+            )
+        right_block = _flatten_vector_block(operator.source, solve_result.value, width)
+        if right_block.shape != (columns, width):
+            raise RuntimeError(
+                "Constraint right-inverse block solve returned an invalid shape."
+            )
+        if not bool(jnp.all(jnp.isfinite(right_block))):
+            raise RuntimeError(
+                "Constraint right-inverse block solve returned nonfinite data."
+            )
+        right_matrix = right_matrix.at[:, start : start + width].set(right_block)
     right_operator = DenseLinearOperator(
         right_matrix,
         source=operator.target,
@@ -715,9 +735,9 @@ def _bind_prepared_constraint(
             }
         ),
     )
-    target_projector = ein.contract("ij,jk->ik", matrix, right_matrix)
-    generalized_residual = ein.contract("ij,jk->ik", target_projector, matrix) - matrix
-    strict_residual = target_projector - jnp.eye(rows, dtype=matrix.dtype)
+    generalized_norm, strict_norm, projector_norm = _constraint_projector_norms(
+        matrix, right_matrix, full_row_rank, block_size
+    )
     nullspace_residual = ein.contract("ij,jk->ik", matrix, nullspace_basis)
     minimum_norm_residual = _minimum_norm_residual(
         operator.source, nullspace_basis, right_matrix
@@ -733,15 +753,16 @@ def _bind_prepared_constraint(
         * jnp.maximum(matrix_norm * jnp.maximum(right_norm, 1.0), 1.0)
     )
     compatibility_tolerance = (
-        1024.0
-        * epsilon
-        * dimension_scale
-        * jnp.maximum(jnp.linalg.norm(target_projector), 1.0)
+        1024.0 * epsilon * dimension_scale * jnp.maximum(projector_norm, 1.0)
     )
-    generalized_norm = jnp.linalg.norm(generalized_residual)
-    strict_norm = jnp.linalg.norm(strict_residual)
     nullspace_norm = jnp.linalg.norm(nullspace_residual)
     minimum_norm = jnp.linalg.norm(minimum_norm_residual)
+    if incompatible_rhs and not bool(
+        jnp.sqrt(normal_residual_squared) <= residual_tolerance
+    ):
+        raise RuntimeError(
+            "Generalized constraint right inverse failed its aggregate normal residual check."
+        )
     if not bool(generalized_norm <= residual_tolerance):
         raise RuntimeError(
             "Generalized constraint right inverse failed its residual check."
@@ -788,6 +809,7 @@ def _bind_prepared_constraint(
             matrix.nbytes,
             right_matrix.nbytes,
             nullspace.basis.nbytes,
+            block_size * block_bytes,
         ),
         setup_matvec_count=setup_matvec_count,
         factorization_id=factorization.factorization_id,
@@ -801,6 +823,77 @@ def _bind_prepared_constraint(
         nullspace,
         nullspace_operator,
         evidence,
+    )
+
+
+def _constraint_projector_norms(
+    matrix: Array, right: Array, full_row_rank: bool, block_size: int, /
+) -> tuple[Array, Array, Array]:
+    """Frobenius certificates without retaining the target-space projector."""
+    rows, columns = matrix.shape
+    zero = jnp.zeros((), dtype=matrix.real.dtype)
+
+    def projector_step(
+        start: Array | int, width: int, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        projector_squared, strict_squared, projector_trace = state
+        right_block = jax.lax.dynamic_slice_in_dim(right, start, width, axis=1)
+        projector_block = matrix @ right_block
+        projector_squared = projector_squared + jnp.sum(jnp.abs(projector_block) ** 2)
+        diagonal = projector_block[start + jnp.arange(width), jnp.arange(width)]
+        projector_trace = projector_trace + jnp.sum(diagonal.real)
+        if full_row_rank:
+            identity_block = (
+                jnp.arange(rows)[:, None] == (start + jnp.arange(width))[None, :]
+            ).astype(matrix.dtype)
+            strict_squared = strict_squared + jnp.sum(
+                jnp.abs(projector_block - identity_block) ** 2
+            )
+        return projector_squared, strict_squared, projector_trace
+
+    def projector_iteration(
+        index: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        return projector_step(index * block_size, block_size, state)
+
+    projector_state = jax.lax.fori_loop(
+        0, rows // block_size, projector_iteration, (zero, zero, zero)
+    )
+    if rows % block_size:
+        projector_state = projector_step(
+            rows - rows % block_size, rows % block_size, projector_state
+        )
+    projector_squared, strict_squared, projector_trace = projector_state
+    # Rank-deficient evidence still reports ||MR-I||. Its scalar trace identity
+    # avoids both an identity block and cancellation near a full-rank projector.
+    if not full_row_rank:
+        strict_squared = jnp.maximum(projector_squared + rows - 2 * projector_trace, zero)
+
+    generalized_block_size = min(block_size, columns)
+
+    def generalized_step(start: Array | int, width: int, total: Array) -> Array:
+        matrix_block = jax.lax.dynamic_slice_in_dim(matrix, start, width, axis=1)
+        residual_block = matrix @ (right @ matrix_block) - matrix_block
+        return total + jnp.sum(jnp.abs(residual_block) ** 2)
+
+    def generalized_iteration(index: Array, total: Array) -> Array:
+        return generalized_step(
+            index * generalized_block_size, generalized_block_size, total
+        )
+
+    generalized_squared = jax.lax.fori_loop(
+        0, columns // generalized_block_size, generalized_iteration, zero
+    )
+    if columns % generalized_block_size:
+        generalized_squared = generalized_step(
+            columns - columns % generalized_block_size,
+            columns % generalized_block_size,
+            generalized_squared,
+        )
+    return (
+        jnp.sqrt(generalized_squared),
+        jnp.sqrt(strict_squared),
+        jnp.sqrt(projector_squared),
     )
 
 

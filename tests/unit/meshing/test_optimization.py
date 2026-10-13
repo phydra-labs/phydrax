@@ -1,8 +1,12 @@
+from decimal import Decimal, localcontext
 from itertools import product
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from jax import Array
 
 import phydrax as phx
 
@@ -36,6 +40,73 @@ def test_shape_optimization_resolves_near_conformal_displacement() -> None:
     assert result.result is not None
     np.testing.assert_array_equal(np.asarray(result.coordinates)[:4], _TARGET[:4])
     np.testing.assert_allclose(np.asarray(result.coordinates)[4], (0.5, 0.5), atol=1e-11)
+
+
+@pytest.mark.parametrize("dimension", (2, 3), ids=("triangle", "tetrahedron"))
+@pytest.mark.parametrize(
+    "objective",
+    (meshing.MeshQualityObjective.SHAPE, meshing.MeshQualityObjective.SHAPE_SIZE),
+    ids=("shape", "shape-size"),
+)
+@pytest.mark.parametrize("stretch", (1.0 + 1.0e-8, 1.3), ids=("near-target", "distorted"))
+def test_shape_energy_and_gradient_match_high_precision_reference(
+    dimension: int, objective: meshing.MeshQualityObjective, stretch: float
+) -> None:
+    vertices = np.concatenate((np.zeros((1, dimension)), np.eye(dimension)), axis=0)
+    cells = np.arange(dimension + 1, dtype=np.int32)[None, :]
+    mesh = (
+        phx.discretization.CellMesh.from_triangles(vertices, cells)
+        if dimension == 2
+        else phx.discretization.CellMesh.from_tetrahedra(vertices, cells)
+    )
+    plan = meshing.TargetMatrixOptimizationPlan(mesh, objective=objective)
+
+    def energy(value: Array) -> Array:
+        coordinates = jnp.asarray(vertices).at[:, 0].multiply(value)
+        return plan.evaluate(coordinates)
+
+    # Independent high-precision mean-ratio formula, including its analytic derivative.
+    with localcontext() as context:
+        context.prec = 64
+        value = Decimal.from_float(stretch)
+        mean = (value**2 + Decimal(dimension - 1)) / Decimal(dimension)
+        power = Decimal(dimension) / Decimal(2)
+        expected = mean**power / value - Decimal(1)
+        derivative = mean ** (power - Decimal(1)) - mean**power / value**2
+        if objective is meshing.MeshQualityObjective.SHAPE_SIZE:
+            size_defect = value - Decimal(1) / value
+            expected += size_defect**2 / Decimal(2)
+            derivative += size_defect * (Decimal(1) + Decimal(1) / value**2)
+    argument = jnp.asarray(stretch, dtype=jnp.float64)
+    actual = energy(argument)
+    assert actual > 0.0
+    np.testing.assert_allclose(actual, float(expected), rtol=5.0e-7, atol=1.0e-30)
+    np.testing.assert_allclose(
+        jax.grad(energy)(argument), float(derivative), rtol=5.0e-7, atol=1.0e-23
+    )
+
+
+@pytest.mark.parametrize("dimension", (2, 3), ids=("triangle", "tetrahedron"))
+@pytest.mark.parametrize("scale", (1.0e-60, 1.0e60), ids=("small", "large"))
+def test_shape_energy_is_invariant_under_uniform_scale(
+    dimension: int, scale: float
+) -> None:
+    vertices = np.concatenate((np.zeros((1, dimension)), np.eye(dimension)), axis=0)
+    cells = np.arange(dimension + 1, dtype=np.int32)[None, :]
+    mesh = (
+        phx.discretization.CellMesh.from_triangles(vertices, cells)
+        if dimension == 2
+        else phx.discretization.CellMesh.from_tetrahedra(vertices, cells)
+    )
+    plan = meshing.TargetMatrixOptimizationPlan(
+        mesh, objective=meshing.MeshQualityObjective.SHAPE
+    )
+    stretch = 1.3
+    coordinates = vertices * scale
+    coordinates[:, 0] *= stretch
+    expected = ((stretch**2 + dimension - 1) / dimension) ** (0.5 * dimension)
+    expected = expected / stretch - 1.0
+    np.testing.assert_allclose(plan.evaluate(coordinates), expected, rtol=1.0e-12)
 
 
 def test_optimization_scenario_1() -> None:

@@ -433,3 +433,19 @@ def test_portable_discontinuous_sources_preserve_exact_field_integrals(
 
     expected = Fraction(11, 24) if degree == 0 else Fraction(7, 24)
     assert integrate(expression[0], "simplex", 3) == expected
+
+
+@pytest.mark.parametrize("ambient", (2, 3))
+def test_polygon_duplicate_vertices_match_dense_reference(ambient: int) -> None:
+    angles = np.arange(9, dtype=np.float64) * (2.0 * np.pi / 9.0)
+    points = np.column_stack((np.cos(angles), np.sin(angles)))
+    if ambient == 3:
+        points = np.column_stack((points, np.zeros(9, dtype=np.float64)))
+    for duplicate in (None, 3, 5, 7):
+        candidate = points.copy()
+        if duplicate is not None:
+            candidate[duplicate] = candidate[0]
+        coincident = np.all(candidate[:, None] == candidate[None, :], axis=-1)
+        repeated = np.any(coincident & ~np.eye(9, dtype=np.bool_))
+        expected = Status.INVALID if repeated else Status.CERTIFIED_VALID
+        assert _polygon_status(candidate) == expected

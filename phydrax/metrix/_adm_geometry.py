@@ -173,18 +173,22 @@ def _extrinsic_curvature_at(
         return decompose_adm_metric(metric, point).spatial_metric
 
     shift_covector_value = shift_covector(coordinates)
-    shift_derivative = jax.jacfwd(shift_covector)(coordinates)
-    spatial_derivative = jax.jacfwd(spatial_matrix)(coordinates)
-    partial_shift = jnp.swapaxes(shift_derivative[:, 1:], -2, -1)
+    shift_derivative = jax.jacfwd(
+        lambda spatial: shift_covector(coordinates.at[1:].set(spatial))
+    )(spatial_coordinates)
+    _, spatial_time_derivative = jax.jvp(
+        spatial_matrix,
+        (coordinates,),
+        (jax.nn.one_hot(0, coordinates.size, dtype=coordinates.dtype),),
+    )
+    partial_shift = jnp.swapaxes(shift_derivative, -2, -1)
     covariant_shift = partial_shift - ein.contract(
         "kij,k->ij",
         connection,
         shift_covector_value,
     )
     return (
-        covariant_shift
-        + jnp.swapaxes(covariant_shift, -2, -1)
-        - spatial_derivative[..., 0]
+        covariant_shift + jnp.swapaxes(covariant_shift, -2, -1) - spatial_time_derivative
     ) / (2.0 * decomposition.lapse)
 
 

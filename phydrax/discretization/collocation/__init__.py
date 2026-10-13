@@ -4,7 +4,15 @@
 
 """Global polynomial collocation discretizations."""
 
-from ._chebyshev import chebyshev_lobatto_matrices, ChebyshevCollocation
+from ._chebyshev import (
+    chebyshev_lobatto_matrices,
+    ChebyshevCollocation,
+    ChebyshevDifferentiationAction,
+)
 
 
-__all__ = ["ChebyshevCollocation", "chebyshev_lobatto_matrices"]
+__all__ = [
+    "ChebyshevCollocation",
+    "ChebyshevDifferentiationAction",
+    "chebyshev_lobatto_matrices",
+]

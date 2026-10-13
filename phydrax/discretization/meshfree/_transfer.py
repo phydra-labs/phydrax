@@ -726,7 +726,14 @@ class PointTransferPlan(StrictModule):
             # against independent rank and retained-spectrum evidence of the
             # reduced rows; the bounded dense certificate runs on this
             # unresolved path alone and is refused beyond its SVD budget.
-            certificate = certify_rectangular_rank(operator, _REDUCED_ROWS_RANK)
+            certificate = certify_rectangular_rank(
+                operator,
+                SVDSolvePolicy(
+                    DenseSVD(algorithm="qr"),
+                    rank=_LOCAL_ROWS_PSEUDOINVERSE.rank,
+                    materialization=policy.materialization,
+                ),
+            )
             result = solve(
                 MinimumNormProblem(operator, rank_certificate=certificate),
                 rhs,
@@ -898,13 +905,6 @@ _LOCAL_ROWS_PSEUDOINVERSE = FactorizationPolicy(
     rank=RankPolicy(relative_cutoff=1e-12),
     failure=FailurePolicy("status"),
 )
-
-# Rank evidence of the equilibrated reduced conservation rows, on the same
-# relative cutoff as the local-row pseudoinverse.
-_REDUCED_ROWS_RANK = SVDSolvePolicy(
-    DenseSVD(algorithm="qr"), rank=RankPolicy(relative_cutoff=1e-12)
-)
-
 
 class _Elimination(NamedTuple):
     """Conservation rows on the null space of every target's local rows."""

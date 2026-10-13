@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any, TypeAlias
@@ -12,7 +11,7 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import numpy as np
 
-from .._fingerprint import canonical_fingerprint, canonical_json
+from .._fingerprint import array_bytes_digest, canonical_fingerprint, canonical_json
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._platform_archive import TensorNetworkArchiveKind
@@ -53,7 +52,7 @@ def _canonical_array(value: Any, /) -> np.ndarray:
 
 
 def _payload_digest(value: np.ndarray, /) -> str:
-    return hashlib.sha256(value.tobytes(order="C")).hexdigest()
+    return array_bytes_digest(value)
 
 
 def _attribute(value: object, /) -> InterchangeAttribute:

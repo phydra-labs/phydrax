@@ -1,0 +1,192 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "b1cb9f49f62bdf54e6219e0296880ebf143195fb40ec11f2bd9938d7ddabe310",
+    "evidence_schema": {
+      "fields": [
+        "environment",
+        "logical_scaling_exponent",
+        "preparations",
+        "rows",
+        "rss_bytes"
+      ],
+      "signature": "30089432a42e71537b0c706681edd521029b28b8b74925353f599944ad850d5e"
+    },
+    "fingerprint": "688112924257ef261cc2a8dd079f6353abfb35f37a89cc3ce249578c83f8061c",
+    "source_build_fingerprint": "62e1f843365b6aa41d198e7057bb84ff0891b6c60cf7f415ae5a2583bb6b9739"
+  },
+  "logical_scaling_exponent": 0.9999999999999996,
+  "preparations": [
+    {
+      "basis_id": "57f276040ee4a3a31798b2061996dec5cba2b42d680ac5fd7d47e3c995270236",
+      "count": 15,
+      "degree": 4,
+      "dimension": 2,
+      "holomorphic_host_peak_bytes": 6305,
+      "index_set_id": "f47d188a4c7fd1101819f0d647c0ae222a9b9add8249aeb7ccc0c55c2d9e002a",
+      "scaled_host_peak_bytes": 34010
+    },
+    {
+      "basis_id": "419dbd461b2eb8047ec32f444e8d0b8fb244e4e901f0c06d4ad4a8dd96a7f495",
+      "count": 35,
+      "degree": 4,
+      "dimension": 3,
+      "holomorphic_host_peak_bytes": 14419,
+      "index_set_id": "67302ee81b16f6f507628498d7466d34d300679cf0b4109fff20ca8011d82ad3",
+      "scaled_host_peak_bytes": 34462
+    },
+    {
+      "basis_id": "c379ad1fe13f903200e1bf25eeecfb6caf30073f1ed62050cd544e8f7bc0a017",
+      "count": 70,
+      "degree": 4,
+      "dimension": 4,
+      "holomorphic_host_peak_bytes": 26319,
+      "index_set_id": "c9f3f70e99515d62a3769870dd4e13bf72e8a465fdd0e85daad4b9520b2884e9",
+      "scaled_host_peak_bytes": 35322
+    }
+  ],
+  "rows": [
+    {
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 577952,
+        "flops": 26080,
+        "generated_code_bytes": 0,
+        "output_bytes": 63360,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 105600,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 400546,
+      "lanes": 32,
+      "live_bytes": 63360,
+      "node_count": 495,
+      "output_bytes": 63360,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.18340975,
+        "lowering_seconds": 0.019280459
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000438958,
+        "mean_seconds": 0.000339958,
+        "median_seconds": 0.000339958,
+        "min_seconds": 0.000240958,
+        "samples_seconds": [
+          0.000438958,
+          0.000240958
+        ],
+        "std_seconds": 9.9e-05
+      }
+    },
+    {
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 2294048,
+        "flops": 104320,
+        "generated_code_bytes": 0,
+        "output_bytes": 253440,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 422400,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 281559,
+      "lanes": 128,
+      "live_bytes": 253440,
+      "node_count": 495,
+      "output_bytes": 253440,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.159213125,
+        "lowering_seconds": 0.018032209
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000444667,
+        "mean_seconds": 0.00041975,
+        "median_seconds": 0.00041975,
+        "min_seconds": 0.000394833,
+        "samples_seconds": [
+          0.000444667,
+          0.000394833
+        ],
+        "std_seconds": 2.4917000000000006e-05
+      }
+    },
+    {
+      "compiler": {
+        "argument_bytes": 8192,
+        "bytes_accessed": 9158432,
+        "flops": 417280,
+        "generated_code_bytes": 0,
+        "output_bytes": 1013760,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 1689600,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 239927,
+      "lanes": 512,
+      "live_bytes": 1013760,
+      "node_count": 495,
+      "output_bytes": 1013760,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.142128584,
+        "lowering_seconds": 0.012916
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001577375,
+        "mean_seconds": 0.0014164375000000002,
+        "median_seconds": 0.0014164375000000002,
+        "min_seconds": 0.0012555,
+        "samples_seconds": [
+          0.0012555,
+          0.001577375
+        ],
+        "std_seconds": 0.00016093749999999995
+      }
+    }
+  ],
+  "rss_bytes": 1447477248
+}

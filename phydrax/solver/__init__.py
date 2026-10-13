@@ -1885,6 +1885,7 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "MACSBDF2State": ("._mac_viscous", "MACSBDF2State"),
     "MACSBDF2StepResult": ("._mac_viscous", "MACSBDF2StepResult"),
     "MACSegmentedShadowingPlan": ("._mac_sensitivity", "MACSegmentedShadowingPlan"),
+    "MACShadowingSolveRoute": ("._mac_sensitivity", "MACShadowingSolveRoute"),
     "MACShadowingSensitivityResult": (
         "._mac_sensitivity",
         "MACShadowingSensitivityResult",
@@ -5810,6 +5811,7 @@ if TYPE_CHECKING:
         MACReplayCertification,
         MACSegmentedShadowingPlan,
         MACShadowingSensitivityResult,
+        MACShadowingSolveRoute,
         MACShadowingStatus,
         MACTerminalJVPResult,
         MACTerminalVJPResult,
@@ -8052,6 +8054,7 @@ __all__ = [
     "MACPenaltyIBWindowStatus",
     "MACSegmentedShadowingPlan",
     "MACShadowingSensitivityResult",
+    "MACShadowingSolveRoute",
     "MACShadowingStatus",
     "MACTerminalJVPResult",
     "MACTerminalVJPResult",

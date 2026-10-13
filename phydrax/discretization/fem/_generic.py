@@ -3632,19 +3632,19 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     def mass(self) -> SparseLinearMap:
         if len(self.field_spaces) != 1:
             raise ValueError("mass is only unambiguous for one field.")
-        return self.assemble_field_operators(
-            self.field_spaces[0].name,
-            self.default_runtime,
-        )[0]
+        dof_map, geometries = self._field_operator_geometry(
+            self.field_spaces[0].name, self.default_runtime
+        )
+        return self._assemble_geometry_operator(dof_map, geometries, mass=True)
 
     @property
     def stiffness(self) -> SparseLinearMap:
         if len(self.field_spaces) != 1:
             raise ValueError("stiffness is only unambiguous for one field.")
-        return self.assemble_field_operators(
-            self.field_spaces[0].name,
-            self.default_runtime,
-        )[1]
+        dof_map, geometries = self._field_operator_geometry(
+            self.field_spaces[0].name, self.default_runtime
+        )
+        return self._assemble_geometry_operator(dof_map, geometries, mass=False)
 
     @property
     def vertices(self) -> Array:
@@ -4005,13 +4005,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             coordinate_measure=self.coordinate_measure,
         )
 
-    @checked
-    def assemble_field_operators(
-        self,
-        field_name: str,
-        runtime: FiniteElementRuntimeData,
-        /,
-    ) -> tuple[SparseLinearMap, SparseLinearMap]:
+    def _field_operator_geometry(
+        self, field_name: str, runtime: FiniteElementRuntimeData, /
+    ) -> tuple[FiniteElementDofMap, tuple[FiniteElementBlockGeometry, ...]]:
         if (
             runtime.topology_id != self.mesh.topology_id
             or runtime.geometry_layout_id != self.default_runtime.geometry_layout_id
@@ -4030,28 +4026,37 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             if runtime.runtime_id == self.default_runtime.runtime_id
             else self.evaluate_geometry(field_name, runtime.coordinates)
         )
-        dof_map = self.dof_maps[field_index]
-        mass_local = tuple(_local_mass_tensor(geometry) for geometry in geometries)
-        stiffness_local = tuple(
-            _local_stiffness_tensor(geometry) for geometry in geometries
+        return self.dof_maps[field_index], geometries
+
+    def _assemble_geometry_operator(
+        self,
+        dof_map: FiniteElementDofMap,
+        geometries: tuple[FiniteElementBlockGeometry, ...],
+        /,
+        *,
+        mass: bool,
+    ) -> SparseLinearMap:
+        tensors = tuple(
+            _local_mass_tensor(geometry) if mass else _local_stiffness_tensor(geometry)
+            for geometry in geometries
         )
+        return _assemble_local_operator(
+            dof_map,
+            tensors,
+            "finite-element-mass" if mass else "finite-element-stiffness",
+            positive_definite=mass,
+            component_shape=dof_map.component_shape,
+            coefficient_dtype=self.coefficient_dtype,
+        )
+
+    @checked
+    def assemble_field_operators(
+        self, field_name: str, runtime: FiniteElementRuntimeData, /
+    ) -> tuple[SparseLinearMap, SparseLinearMap]:
+        dof_map, geometries = self._field_operator_geometry(field_name, runtime)
         return (
-            _assemble_local_operator(
-                dof_map,
-                mass_local,
-                "finite-element-mass",
-                positive_definite=True,
-                component_shape=dof_map.component_shape,
-                coefficient_dtype=self.coefficient_dtype,
-            ),
-            _assemble_local_operator(
-                dof_map,
-                stiffness_local,
-                "finite-element-stiffness",
-                positive_definite=False,
-                component_shape=dof_map.component_shape,
-                coefficient_dtype=self.coefficient_dtype,
-            ),
+            self._assemble_geometry_operator(dof_map, geometries, mass=True),
+            self._assemble_geometry_operator(dof_map, geometries, mass=False),
         )
 
     def assemble_cell_operator(

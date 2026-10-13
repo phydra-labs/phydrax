@@ -370,6 +370,7 @@ mpc = phx.control.solve_receding_horizon_mpc(
     prediction_horizon=3,
     terminal_policy="global",
     policy=qp_policy,
+    compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     warm_start_policy=phx.control.MPCWarmStartPolicy(
         terminal_control="hold",
         interior_margin=1e-7,
@@ -450,6 +451,7 @@ controller = phx.control.RecedingHorizonMPC(
     prediction_horizon=3,
     terminal_policy="global",
     policy=qp_policy,
+    compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
 )
 sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
 if sensitivity.refusal is not None:

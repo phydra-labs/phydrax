@@ -7,6 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.velocimetry.synthetic import (
     generate_ptv_case,
@@ -115,3 +116,163 @@ def test_synthetic_ptv_scenario_2() -> None:
         assert case.evidence.finite
         assert bool(jnp.all(jnp.isfinite(case.world_positions_xyz)))
         assert bool(jnp.all(jnp.isfinite(case.images)))
+
+
+@pytest.mark.parametrize("count", (6, 64))
+@pytest.mark.parametrize("radius", (0.0, 1.5))
+def test_occlusion_matches_dense_depth_oracle(count: int, radius: float) -> None:
+    from phydrax.velocimetry.synthetic._ptv import _occlusion_visibility
+
+    plan = PTVScenarioPlan(
+        PTVScenarioKind.OCCLUSION,
+        particle_capacity=count,
+        occlusion_radius=radius,
+        occlusion_maximum_pairs=count * count,
+        occlusion_maximum_candidates=count,
+    )
+    rng = np.random.default_rng(12)
+    pixels = rng.uniform(20.0, 30.0, (2, count, 2))
+    pixels[:, :3] = pixels[:, :1]
+    depth = rng.uniform(3.0, 5.0, (2, count))
+    depth[:, :3] = (3.0, 4.0, 3.0)
+    valid = rng.uniform(size=(2, count)) > 0.1
+    valid[:, :3] = True
+    active = np.ones(count, dtype=np.bool_)
+    active[-1] = False
+    visible = valid & active[None, :]
+    delta = pixels[:, :, None, :] - pixels[:, None, :, :]
+    oracle = visible & ~np.any(
+        visible[:, None, :]
+        & (depth[:, None, :] < depth[:, :, None])
+        & (np.sum(delta**2, axis=-1) <= radius**2),
+        axis=-1,
+    )
+    actual = _occlusion_visibility(
+        plan,
+        jnp.asarray(pixels),
+        jnp.asarray(depth),
+        jnp.asarray(valid),
+        jnp.asarray(active),
+    )
+    np.testing.assert_array_equal(actual, oracle)
+    assert bool(actual[0, 0])
+    assert not bool(actual[0, 1])
+
+
+@pytest.mark.parametrize("candidate_cap,pair_cap", ((2, 100), (6, 1)))
+def test_occlusion_refuses_incomplete_crowded_relation(
+    candidate_cap: int, pair_cap: int
+) -> None:
+    from phydrax.velocimetry.synthetic._ptv import _occlusion_visibility
+
+    plan = _small_plan(
+        PTVScenarioKind.OCCLUSION,
+        occlusion_maximum_candidates=candidate_cap,
+        occlusion_maximum_pairs=pair_cap,
+    )
+    pixels = jnp.full((2, 6, 2), 12.0)
+    depth = jnp.broadcast_to(jnp.arange(6, dtype=jnp.float64), (2, 6))
+    with pytest.raises(ValueError, match="incomplete"):
+        _occlusion_visibility(
+            plan,
+            pixels,
+            depth,
+            jnp.ones((2, 6), dtype=jnp.bool_),
+            jnp.ones(6, dtype=jnp.bool_),
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "occlusion_maximum_pairs",
+        "occlusion_maximum_candidates",
+        "occlusion_target_chunk_size",
+    ),
+)
+@pytest.mark.parametrize("value", (True, False, 1.5, "4"))
+def test_ptv_occlusion_resources_reject_nonintegral_kinds(name: str, value: Any) -> None:
+    with pytest.raises(TypeError, match=name):
+        _small_plan(PTVScenarioKind.OCCLUSION, **{name: value})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    (
+        ("occlusion_maximum_pairs", -1),
+        ("occlusion_maximum_candidates", 0),
+        ("occlusion_maximum_candidates", -1),
+        ("occlusion_target_chunk_size", 0),
+        ("occlusion_target_chunk_size", -1),
+    ),
+)
+def test_ptv_occlusion_resources_reject_invalid_values(name: str, value: int) -> None:
+    with pytest.raises(ValueError, match=name):
+        _small_plan(PTVScenarioKind.OCCLUSION, **{name: value})
+
+
+def test_ptv_occlusion_chunk_requires_a_declared_integer() -> None:
+    with pytest.raises(TypeError, match="occlusion_target_chunk_size"):
+        _small_plan(PTVScenarioKind.OCCLUSION, occlusion_target_chunk_size=None)
+
+
+@pytest.mark.parametrize(
+    "candidate_cap,pair_cap",
+    ((2, 100), (6, 1), (6, 0)),
+    ids=("candidate-overflow", "pair-overflow", "zero-pair-capacity"),
+)
+def test_generated_ptv_case_refuses_insufficient_occlusion_resources(
+    candidate_cap: int, pair_cap: int
+) -> None:
+    plan = _small_plan(
+        PTVScenarioKind.OCCLUSION,
+        occlusion_radius=100.0,
+        occlusion_maximum_candidates=candidate_cap,
+        occlusion_maximum_pairs=pair_cap,
+    )
+    with pytest.raises(ValueError, match="incomplete") as failure:
+        generate_ptv_case(plan)
+    message = str(failure.value)
+    assert f"candidate capacity={candidate_cap}" in message
+    assert f"pair capacity={pair_cap}" in message
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    (
+        ("occlusion_maximum_pairs", 64),
+        ("occlusion_maximum_candidates", 4),
+        ("occlusion_target_chunk_size", 1),
+    ),
+    ids=("pair-capacity", "candidate-capacity", "target-chunk"),
+)
+def test_seeded_ptv_trajectory_identity_is_independent_of_execution_resources(
+    name: str, value: int
+) -> None:
+    reference_plan = _small_plan(
+        PTVScenarioKind.OCCLUSION, occlusion_radius=100.0, read_noise_std=0.02
+    )
+    candidate_plan = _small_plan(
+        PTVScenarioKind.OCCLUSION,
+        occlusion_radius=100.0,
+        read_noise_std=0.02,
+        **{name: value},
+    )
+    reference = generate_ptv_case(reference_plan)
+    candidate = generate_ptv_case(candidate_plan)
+    assert reference.plan_id != candidate.plan_id
+    assert reference.scenario_id != candidate.scenario_id
+    assert reference_plan.physical_plan_id == candidate_plan.physical_plan_id
+    np.testing.assert_array_equal(reference.trajectory_ids, candidate.trajectory_ids)
+    np.testing.assert_array_equal(
+        reference.world_positions_xyz, candidate.world_positions_xyz
+    )
+    np.testing.assert_array_equal(reference.images, candidate.images)
+    np.testing.assert_array_equal(reference.visible, candidate.visible)
+
+
+def test_seeded_ptv_trajectory_identity_distinguishes_physical_scenarios() -> None:
+    reference = generate_ptv_case(_small_plan(PTVScenarioKind.BASELINE))
+    changed = generate_ptv_case(_small_plan(PTVScenarioKind.BASELINE, seed=30))
+    assert not np.array_equal(reference.trajectory_ids, changed.trajectory_ids)
+    assert not np.array_equal(reference.world_positions_xyz, changed.world_positions_xyz)

@@ -1,0 +1,145 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "97fd7ea8dce4c77196306cbbbd755818ff9e1afcbeee97d1686d2b40833dcfe4",
+    "evidence_schema": {
+      "fields": [
+        "compiler",
+        "retained_bytes"
+      ],
+      "signature": "d1b238dab2f2e157e160069d66cd37e59b28b9968bc2c5c32a243b4b38143a5d"
+    },
+    "fingerprint": "0476e49ac40c7c8b0e15865803a3cba57c5ec0dd413dc1901910783c8640271a",
+    "source_build_fingerprint": "3080f1ca277766f17528a77f36d6135c13aacfd8e2867341b19c49517384c7be"
+  },
+  "peak_rss_bytes": 1464254464,
+  "records": [
+    {
+      "compilation": {
+        "compilation_seconds": 0.475440125,
+        "lowering_seconds": 0.326350708
+      },
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 54496,
+        "flops": 19195,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax",
+        "temporary_bytes": 16840,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 5.9375e-05,
+        "mean_seconds": 5.21875e-05,
+        "median_seconds": 5.21875e-05,
+        "min_seconds": 4.5e-05,
+        "samples_seconds": [
+          5.9375e-05,
+          4.5e-05
+        ],
+        "std_seconds": 7.1874999999999985e-06
+      },
+      "n": 32,
+      "retained_bytes": 1024
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.517644042,
+        "lowering_seconds": 0.749038292
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 209664,
+        "flops": 70875,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax",
+        "temporary_bytes": 66312,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 7.8583e-05,
+        "mean_seconds": 7.4125e-05,
+        "median_seconds": 7.4125e-05,
+        "min_seconds": 6.9667e-05,
+        "samples_seconds": [
+          7.8583e-05,
+          6.9667e-05
+        ],
+        "std_seconds": 4.458000000000004e-06
+      },
+      "n": 64,
+      "retained_bytes": 2048
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.378637292,
+        "lowering_seconds": 0.497933583
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 762820,
+        "flops": 272795,
+        "generated_code_bytes": 0,
+        "output_bytes": 4096,
+        "source": "jax",
+        "temporary_bytes": 263432,
+        "unavailable_reason": null
+      },
+      "execution": {
+        "count": 2,
+        "max_seconds": 0.00012725,
+        "mean_seconds": 0.000118875,
+        "median_seconds": 0.000118875,
+        "min_seconds": 0.0001105,
+        "samples_seconds": [
+          0.00012725,
+          0.0001105
+        ],
+        "std_seconds": 8.375e-06
+      },
+      "n": 128,
+      "retained_bytes": 4096
+    }
+  ],
+  "retained_exponent": 0.9999999999999996
+}

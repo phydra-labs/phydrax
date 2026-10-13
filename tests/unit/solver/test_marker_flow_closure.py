@@ -3,6 +3,8 @@
 #
 
 
+import hashlib
+import json
 from math import prod
 from typing import Any
 
@@ -918,3 +920,26 @@ def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path: Any)
     with h5py.File(tmp_path / "marker-flow-output.h5", "r") as handle:
         assert "steps/0000000002/markers/force" in handle
         assert "steps/0000000002/rigid/position" in handle
+
+
+def test_marker_artifact_reference_pins_file_digest(tmp_path: Any) -> None:
+    payload = b"marker-flow\x00\xff"
+    path = tmp_path / "checkpoint.bin"
+    path.write_bytes(payload)
+    record = phx.solver.marker_flow_artifact_reference(path, "checkpoint", "fixed")
+    digest = hashlib.sha256(payload).hexdigest()
+    expected = {
+        "kind": "marker-flow-artifact-reference",
+        "artifact_kind": "checkpoint",
+        "identity": "fixed",
+        "sha256": digest,
+        "byte_count": len(payload),
+    }
+    assert record.sha256 == digest
+    assert record.byte_count == len(payload)
+    assert (
+        record.reference_id
+        == hashlib.sha256(
+            json.dumps(expected, sort_keys=True, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+    )

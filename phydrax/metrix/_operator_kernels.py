@@ -50,15 +50,17 @@ class _DensityDivergenceEvaluator(StrictModule):
         self.density = density
 
     def __call__(self, coordinates: Array, /) -> Array:
+        from ..operators.differential import exact_state_divergence
+
         vector = jnp.asarray(self.field(coordinates))
         dimension = self.density.chart.dimension
         if vector.shape != (dimension,):
             raise ValueError(
                 f"Pointwise vector field must have shape {(dimension,)}; got {vector.shape}."
             )
-        derivative = jax.jacfwd(self.field)(coordinates)
+        divergence = exact_state_divergence(self.field, coordinates)
         log_density_derivative = jax.grad(self.density.log_value)(coordinates)
-        return jnp.trace(derivative) + jnp.dot(vector, log_density_derivative)
+        return divergence + jnp.dot(vector, log_density_derivative)
 
 
 def density_divergence(

@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -191,3 +192,34 @@ def test_adaptive_contracts() -> None:
         )
     with pytest.raises(ValueError, match="strictly between"):
         la.AdaptiveStochasticPolicy(confidence_level=1.0)
+
+
+def test_addressed_adaptive_probes_are_batch_invariant() -> None:
+    matrix = jnp.asarray([[2.0, 0.4], [0.4, 3.0]], dtype=jnp.float64)
+    operator = la.DenseLinearOperator(matrix, properties=_positive_properties())
+    key = jax.random.key(18)
+    expected = np.asarray(
+        [
+            np.asarray(probe) @ np.asarray(matrix) @ np.asarray(probe)
+            for index in range(24)
+            for probe in [
+                jax.random.rademacher(
+                    jax.random.fold_in(key, index), (2,), dtype=jnp.float64
+                )
+            ]
+        ]
+    )
+    for batch_size in (1, 3, 8):
+        result = la.adaptive_stochastic_trace(
+            operator,
+            key=key,
+            policy=la.AdaptiveStochasticPolicy(
+                min_probes=24,
+                max_probes=24,
+                batch_size=batch_size,
+                max_dimension=2,
+                absolute_tolerance=1e-12,
+            ),
+        )
+        np.testing.assert_allclose(result.samples, expected, rtol=1e-12, atol=1e-12)
+        assert jnp.all(result.probe_converged)

@@ -949,7 +949,7 @@ class _Arrivals(StrictModule):
     dropped: Array
 
 
-type _Carry = tuple[_Lanes, _Tallies, Array, _Flags, _Arrivals]
+type _Carry = tuple[_Lanes, _Tallies, Array, _Flags, _Arrivals, Array]
 
 
 def _lane_keys(
@@ -1147,6 +1147,7 @@ def _transport_one(
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
         ),
+        zero,
     )
 
     def keys_for(address: SampleAddress, interaction: Array, branches: Array) -> Array:
@@ -1154,9 +1155,9 @@ def _transport_one(
             root_key, address, interaction, photon.id_hi, photon.id_lo, branches
         )
 
-    def step(carry: _Carry, interaction: Array) -> tuple[_Carry, Array]:
+    def step(carry: _Carry, interaction: Array) -> tuple[_Carry, None]:
         """Advance every live branch through one atomic optical interaction."""
-        lanes_, tallies_, interaction_count, flags, arrivals = carry
+        lanes_, tallies_, interaction_count, flags, arrivals, truncated = carry
         draw_index = interaction + 1
         hit = intersect_triangle_rays(
             prepared.triangle_query, lanes_.positions, lanes_.directions
@@ -1523,15 +1524,12 @@ def _transport_one(
             interaction_count,
             flags,
             arrivals,
-        ), failure_weight
+            truncated + failure_weight,
+        ), None
 
-    (
-        (lanes, tallies, interaction_count, flags, arrivals),
-        truncated_increments,
-    ) = jax.lax.scan(
+    (lanes, tallies, interaction_count, flags, arrivals, truncated), _ = jax.lax.scan(
         step, initial, jnp.arange(plan.maximum_interactions, dtype=jnp.int32)
     )
-    truncated = jnp.sum(truncated_increments)
     live_weight = jnp.sum(jnp.where(lanes.live, lanes.weights, 0.0))
     ledger_residual = initial_weight - (
         jnp.sum(tallies.absorption)

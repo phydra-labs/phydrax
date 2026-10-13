@@ -1,3 +1,5 @@
+import dataclasses
+import hashlib
 import io
 import json
 import zipfile
@@ -8,6 +10,7 @@ import pytest
 
 from phydrax._array_archive import ArrayArchiveCorruptionError
 from phydrax.export._array_archive import (
+    _payload_id,
     BEMArchiveDescriptor,
     BEMArchiveLimits,
     BEMPlanArchiveRecord,
@@ -183,3 +186,42 @@ def test_records_reject_object_nonfinite_and_continuum_claims() -> None:
             non_goals=("cad",),
             continuum_certified=True,
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        np.arange(48, dtype=np.float64).reshape(6, 8)[::-2, ::3],
+        np.empty((0, 3), dtype=np.float64),
+        np.asarray([1 + 2j, -3j], dtype=np.complex128),
+        np.asarray([True, False, True], dtype=np.bool_),
+        np.arange(9, dtype=">i4"),
+    ],
+)
+def test_payload_identity_matches_independent_byte_reference(value: np.ndarray) -> None:
+    descriptor = _descriptor()
+    header = {
+        "record_kind": "result",
+        "record_id": "result-reference",
+        "plan_id": "plan-reference",
+        "descriptor": dataclasses.asdict(descriptor),
+        "metadata": {"rhs_count": 3},
+    }
+    reference = hashlib.sha256(
+        json.dumps(header, allow_nan=False, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+    )
+    reference.update(b"values")
+    reference.update(value.dtype.str.encode("ascii"))
+    reference.update(json.dumps(list(value.shape), separators=(",", ":")).encode("ascii"))
+    reference.update(value.tobytes(order="C"))
+    actual = _payload_id(
+        "result",
+        "result-reference",
+        "plan-reference",
+        descriptor,
+        {"rhs_count": 3},
+        {"values": value},
+    )
+    assert actual == reference.hexdigest()

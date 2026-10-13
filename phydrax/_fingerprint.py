@@ -8,7 +8,7 @@ import hashlib
 import io
 import json
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -36,6 +36,98 @@ def canonical_fingerprint(value: Any, /) -> str:
     ).hexdigest()
 
 
+def iter_array_bytes(value: np.ndarray, /) -> Iterator[memoryview]:
+    """Yield bounded C-order byte views; consume each before advancing."""
+    if value.dtype.hasobject:
+        raise TypeError("Object arrays cannot be hashed as canonical bytes.")
+    if value.nbytes == 0:
+        return
+    if value.flags.c_contiguous:
+        payload = memoryview(value.reshape(-1).view(np.uint8))
+        for start in range(0, len(payload), 65536):
+            yield payload[start : start + 65536]
+        return
+    with np.nditer(
+        value,
+        flags=["external_loop", "buffered", "zerosize_ok"],
+        op_flags=["readonly"],
+        order="C",
+        buffersize=max(1, 65536 // max(1, value.dtype.itemsize)),
+    ) as chunks:
+        for chunk in chunks:
+            yield memoryview(np.ascontiguousarray(chunk).view(np.uint8))
+
+
+def array_bytes_digest(value: np.ndarray, /) -> str:
+    """Return SHA-256 of the C-order bytes without whole-array staging."""
+    digest = hashlib.sha256()
+    for chunk in iter_array_bytes(value):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def canonical_array_hex_fingerprint(value: np.ndarray, /) -> str:
+    """Fingerprint the canonical JSON string of C-order hexadecimal bytes."""
+    digest = hashlib.sha256(b'"')
+    for chunk in iter_array_bytes(value):
+        digest.update(chunk.hex().encode("ascii"))
+    digest.update(b'"')
+    return digest.hexdigest()
+
+
+def _iter_array_list_json(value: np.ndarray, /) -> Iterator[str]:
+    if value.ndim == 0:
+        yield canonical_json(_canonical_payload(value.tolist()))
+        return
+    yield "["
+    if value.ndim == 1:
+        # Keep Python scalar lists and their JSON text bounded, including for
+        # strided inputs. tolist owns NumPy's legacy scalar conversion semantics.
+        for start in range(0, value.size, 1024):
+            if start:
+                yield ","
+            yield canonical_json(
+                _canonical_payload(value[start : start + 1024].tolist())
+            )[1:-1]
+    else:
+        for index in range(value.shape[0]):
+            if index:
+                yield ","
+            yield from _iter_array_list_json(value[index])
+    yield "]"
+
+
+def _iter_array_list_payload_json(value: Any, /) -> Iterator[str]:
+    if isinstance(value, np.ndarray):
+        yield from _iter_array_list_json(value)
+    elif isinstance(value, Mapping):
+        yield "{"
+        for index, key in enumerate(sorted(value)):
+            if index:
+                yield ","
+            yield canonical_json(key)
+            yield ":"
+            yield from _iter_array_list_payload_json(value[key])
+        yield "}"
+    elif isinstance(value, (tuple, list)):
+        yield "["
+        for index, item in enumerate(value):
+            if index:
+                yield ","
+            yield from _iter_array_list_payload_json(item)
+        yield "]"
+    else:
+        yield canonical_json(_canonical_payload(value))
+
+
+def canonical_array_list_fingerprint(value: Any, /) -> str:
+    """Fingerprint canonical JSON with arrays represented by legacy nested lists."""
+    digest = hashlib.sha256()
+    for chunk in _iter_array_list_payload_json(value):
+        digest.update(chunk.encode("utf-8"))
+    return digest.hexdigest()
+
+
 def array_tree_signature(tree: PyTree[Any], /) -> list[dict[str, Any]]:
     """Return stable array-path, shape, and dtype records for a PyTree."""
     return [
@@ -53,17 +145,19 @@ def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
     records = _array_records(tree)
     digest = hashlib.sha256()
     for path, value in records:
-        contiguous = np.ascontiguousarray(value)
+        # Legacy ascontiguousarray promoted scalar leaves to a length-one axis.
+        shape = value.shape if value.ndim else (1,)
         metadata = canonical_json(
             {
                 "path": path,
-                "dtype": contiguous.dtype.str,
-                "shape": list(contiguous.shape),
+                "dtype": value.dtype.str,
+                "shape": list(shape),
             }
         ).encode("ascii")
-        payload = contiguous.tobytes(order="C")
-        for chunk in (metadata, payload):
-            digest.update(len(chunk).to_bytes(8, "big"))
+        digest.update(len(metadata).to_bytes(8, "big"))
+        digest.update(metadata)
+        digest.update(value.nbytes.to_bytes(8, "big"))
+        for chunk in iter_array_bytes(value):
             digest.update(chunk)
     return {
         "signature": [
@@ -340,12 +434,16 @@ def logical_array_value_collection_digest(
 
 __all__ = [
     "array_tree_fingerprint",
+    "array_bytes_digest",
     "array_tree_signature",
     "canonical_fingerprint",
     "canonical_json",
+    "canonical_array_hex_fingerprint",
+    "canonical_array_list_fingerprint",
     "canonical_mapping",
     "LogicalArrayChunk",
     "LogicalArrayContent",
     "logical_array_collection_digest",
     "logical_array_value_collection_digest",
+    "iter_array_bytes",
 ]

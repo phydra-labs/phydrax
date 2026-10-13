@@ -14,6 +14,7 @@ import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, PointBatch, SampleLayout
 from phydrax.enforcement._cardinal import (
+    _validate_distinct_anchors,
     CompactCardinalCorrectionProvider,
     IDWCardinalCorrectionProvider,
 )
@@ -139,3 +140,30 @@ def test_cardinal_observation_providers_scenario_1() -> None:
     assert provider.evidence.uses_envelopes
     assert provider.evidence.extension_scope == "global_idw"
     assert not provider.evidence.local_support
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        ((0.0, 2.0), (1.0, 2.0), (-0.0, 2.0)),
+        ((0.0, 2.0), (0.0, 3.0), (1.0, 2.0)),
+        ((np.nan, 0.0), (np.nan, 0.0), (1.0, 0.0)),
+        ((np.inf, 2.0), (1.0, 2.0), (np.inf, 2.0)),
+        ((0.0, 0.0),),
+    ],
+)
+def test_anchor_distinctness_matches_dense_reference(
+    coordinates: tuple[tuple[float, float], ...],
+) -> None:
+    values = np.asarray(coordinates, dtype=np.float64)
+    count = values.shape[0]
+    repeated = np.any(
+        np.all(values[:, None] == values[None, :], axis=-1)
+        & ~np.eye(count, dtype=np.bool_)
+    )
+    anchors = (jnp.asarray(values[:, 0]), jnp.asarray(values[:, 1:]))
+    if repeated:
+        with pytest.raises(ValueError, match="pairwise distinct"):
+            _validate_distinct_anchors(anchors, count)
+    else:
+        _validate_distinct_anchors(anchors, count)

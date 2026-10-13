@@ -23,13 +23,13 @@ import jax.random as jr
 import numpy as np
 
 from .._array_archive import (
-    _read_npy_metadata,
     _reject_json_constant,
     _unique_json_object,
-    _validate_json_nesting,
     ArrayArchiveCorruptionError,
     ArrayArchiveLimits,
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    read_npy_metadata,
+    validate_json_nesting,
 )
 from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
@@ -105,7 +105,7 @@ def _preflight_serialized_leaf(
 ) -> int:
     start = file.tell()
     try:
-        payload_dtype, payload_shape, elements = _read_npy_metadata(
+        payload_dtype, payload_shape, elements = read_npy_metadata(
             file,
             None,
             DEFAULT_ARRAY_ARCHIVE_LIMITS,
@@ -1037,7 +1037,7 @@ def _admit_wire_table(
     if len(text.encode("utf-8")) > limits.max_manifest_bytes:
         raise ValueError("Model recipe wire encoding exceeds its manifest byte limit.")
     try:
-        _validate_json_nesting(text, limits.max_manifest_nesting)
+        validate_json_nesting(text, limits.max_manifest_nesting)
         table = json.loads(
             text,
             object_pairs_hook=_unique_json_object,

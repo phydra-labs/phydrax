@@ -11,8 +11,10 @@ import functools
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from enum import StrEnum
+from threading import RLock
 from types import CodeType, FunctionType, MethodType, ModuleType
 from typing import Any, Literal, NamedTuple, TypeAlias
+from weakref import WeakKeyDictionary
 
 import equinox as eqx
 import jax
@@ -193,15 +195,24 @@ def _is_terminal(node: Any, /) -> bool:
     return isinstance(node, _terminal_types())
 
 
-@functools.cache
+_FIELD_ROLES: WeakKeyDictionary[type, Mapping[str, ArrayRole]] = WeakKeyDictionary()
+_FIELD_ROLES_LOCK = RLock()
+
+
 def _field_roles(cls: type, /) -> Mapping[str, ArrayRole]:
-    if not dataclasses.is_dataclass(cls):
-        return {}
-    return {
-        field.name: ArrayRole(field.metadata[_ROLE_METADATA_KEY])
-        for field in dataclasses.fields(cls)
-        if _ROLE_METADATA_KEY in field.metadata
-    }
+    # Values contain only names and enum roles, never the weakly held class.
+    with _FIELD_ROLES_LOCK:
+        if cls not in _FIELD_ROLES:
+            _FIELD_ROLES[cls] = (
+                {
+                    field.name: ArrayRole(field.metadata[_ROLE_METADATA_KEY])
+                    for field in dataclasses.fields(cls)
+                    if _ROLE_METADATA_KEY in field.metadata
+                }
+                if dataclasses.is_dataclass(cls)
+                else {}
+            )
+        return _FIELD_ROLES[cls]
 
 
 def _children(node: Any, /) -> list[tuple[tuple[Any, ...], Any]]:

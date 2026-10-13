@@ -164,6 +164,8 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
         /,
     ) -> Array:
         """Return the Gibbs-density-normalized stationary Fokker--Planck residual."""
+        from ..operators.differential import exact_state_divergence
+
         state_array = jnp.asarray(state)
 
         def normalized_current(value: Array) -> Array:
@@ -180,8 +182,8 @@ class IsothermalPortHamiltonianDynamics(StrictModule):
 
         current = normalized_current(state_array)
         score = -self.field.energy_gradient(state_array) / self.temperature
-        current_jacobian = jax.jacfwd(normalized_current)(state_array)
-        return -(jnp.trace(current_jacobian) + jnp.vdot(current, score).real)
+        current_divergence = exact_state_divergence(normalized_current, state_array)
+        return -(current_divergence + jnp.vdot(current, score).real)
 
     def _dissipation_divergence(self, state: Array, /) -> Array:
         if self.field.dissipation_model is None:

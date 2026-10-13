@@ -37,6 +37,7 @@ from phydrax.discretization.meshfree import (
     support_quality,
 )
 from phydrax.lifecycle import Composition, CompositionEntry
+from phydrax.linalg import DenseSVD, FailurePolicy, LinearSolvePolicy
 
 
 SOURCE = TopologyEpoch(0, "square-cloud-0", "bulk", "serial")
@@ -437,9 +438,15 @@ def test_accepted_epoch_conserves_content_and_rejection_publishes_nothing(
         MeshfreeAdaptationPolicy(total_measure=1.0),
         boundary_projection=_project,
     )
-    # Two fill quadratures differ in their first moments, so conservation with
-    # linear reproduction is impossible: the owner certifies the obstruction.
-    linear = prepare_adaptation_transfer(cloud, proposal, moment_degree=1)
+    # Two fill quadratures differ in their first moments. A certified rank
+    # factorization distinguishes this obstruction from an unresolved small
+    # retained direction; approximate-null Krylov evidence alone cannot do so.
+    linear = prepare_adaptation_transfer(
+        cloud,
+        proposal,
+        moment_degree=1,
+        linear_policy=LinearSolvePolicy(DenseSVD(), failure=FailurePolicy("status")),
+    )
     assert linear.evidence.status is PointTransferStatus.INFEASIBLE
     assert linear.evidence.witness_kind == "left-null" and linear.transfer is None
 

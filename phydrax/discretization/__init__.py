@@ -320,6 +320,7 @@ _SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
     "ChargedParticlePlan": (".particle", "ChargedParticlePlan"),
     "ChebyshevBasisPlan": (".spectral", "ChebyshevBasisPlan"),
     "ChebyshevCollocation": (".collocation", "ChebyshevCollocation"),
+    "ChebyshevDifferentiationAction": (".collocation", "ChebyshevDifferentiationAction"),
     "CheckpointedFDAdjointPlan": (".finite_difference", "CheckpointedFDAdjointPlan"),
     "CircleAverageKernel": ("._embedded_transfer", "CircleAverageKernel"),
     "ClosedSurfaceCertificate": (".contact", "ClosedSurfaceCertificate"),
@@ -4092,6 +4093,7 @@ if TYPE_CHECKING:
     from .collocation import (
         chebyshev_lobatto_matrices,
         ChebyshevCollocation,
+        ChebyshevDifferentiationAction,
     )
     from .contact import (
         AbstractContactParticipant,
@@ -6696,6 +6698,7 @@ __all__ = [
     "CornerPolicy",
     "CompatibleSBPSecondDerivative",
     "ChebyshevCollocation",
+    "ChebyshevDifferentiationAction",
     "CompositeFaceVelocity",
     "CompositeMACMarkerRelation",
     "CompositeMACMarkerTransferDiagnostics",

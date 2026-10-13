@@ -1,0 +1,282 @@
+{
+  "cases": [
+    {
+      "capacity": 96,
+      "certificate": {
+        "compilation_seconds": 0.048736125,
+        "compiler": {
+          "argument_bytes": 6144,
+          "bytes_accessed": 491648,
+          "flops": 361725,
+          "generated_code_bytes": 0,
+          "output_bytes": 24,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 153608,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.006745334,
+        "output_bytes": 24,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000216875,
+          "mean_seconds": 0.0001925625,
+          "median_seconds": 0.0001925625,
+          "min_seconds": 0.00016825,
+          "samples_seconds": [
+            0.000216875,
+            0.00016825
+          ],
+          "std_seconds": 2.43125e-05
+        }
+      },
+      "certificate_logical_workspace_bytes": 227328,
+      "selected": {
+        "compilation_seconds": 0.069605167,
+        "compiler": {
+          "argument_bytes": 768,
+          "bytes_accessed": 151657,
+          "flops": 385,
+          "generated_code_bytes": 0,
+          "output_bytes": 128,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 75424,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.029659125,
+        "output_bytes": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 9.4959e-05,
+          "mean_seconds": 9.1125e-05,
+          "median_seconds": 9.1125e-05,
+          "min_seconds": 8.7291e-05,
+          "samples_seconds": [
+            9.4959e-05,
+            8.7291e-05
+          ],
+          "std_seconds": 3.8339999999999975e-06
+        }
+      },
+      "selected_logical_workspace_bytes": 73728
+    },
+    {
+      "capacity": 192,
+      "certificate": {
+        "compilation_seconds": 0.064908708,
+        "compiler": {
+          "argument_bytes": 12288,
+          "bytes_accessed": 1867952,
+          "flops": 1442301,
+          "generated_code_bytes": 0,
+          "output_bytes": 24,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 602120,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.007874459,
+        "output_bytes": 24,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000597166,
+          "mean_seconds": 0.000522187,
+          "median_seconds": 0.000522187,
+          "min_seconds": 0.000447208,
+          "samples_seconds": [
+            0.000597166,
+            0.000447208
+          ],
+          "std_seconds": 7.4979e-05
+        }
+      },
+      "certificate_logical_workspace_bytes": 897024,
+      "selected": {
+        "compilation_seconds": 0.05894125,
+        "compiler": {
+          "argument_bytes": 1536,
+          "bytes_accessed": 597913,
+          "flops": 769,
+          "generated_code_bytes": 0,
+          "output_bytes": 128,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 298144,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.017890791,
+        "output_bytes": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.001143458,
+          "mean_seconds": 0.0006086665,
+          "median_seconds": 0.0006086665,
+          "min_seconds": 7.3875e-05,
+          "samples_seconds": [
+            7.3875e-05,
+            0.001143458
+          ],
+          "std_seconds": 0.0005347915
+        }
+      },
+      "selected_logical_workspace_bytes": 294912
+    },
+    {
+      "capacity": 384,
+      "certificate": {
+        "compilation_seconds": 0.056603,
+        "compiler": {
+          "argument_bytes": 24576,
+          "bytes_accessed": 7274768,
+          "flops": 5759997,
+          "generated_code_bytes": 0,
+          "output_bytes": 24,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 2383880,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.009238708,
+        "output_bytes": 24,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.0035795,
+          "mean_seconds": 0.002355896,
+          "median_seconds": 0.002355896,
+          "min_seconds": 0.001132292,
+          "samples_seconds": [
+            0.0035795,
+            0.001132292
+          ],
+          "std_seconds": 0.001223604
+        }
+      },
+      "certificate_logical_workspace_bytes": 3563520,
+      "selected": {
+        "compilation_seconds": 0.123751833,
+        "compiler": {
+          "argument_bytes": 3072,
+          "bytes_accessed": 2375161,
+          "flops": 1537,
+          "generated_code_bytes": 0,
+          "output_bytes": 128,
+          "source": "jax-compiled-operator-workspace",
+          "temporary_bytes": 1185952,
+          "unavailable_reason": null
+        },
+        "finite": true,
+        "host_peak_bytes": 6836,
+        "lowering_seconds": 0.034439709,
+        "output_bytes": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.0008465,
+          "mean_seconds": 0.0006939165,
+          "median_seconds": 0.0006939165,
+          "min_seconds": 0.000541333,
+          "samples_seconds": [
+            0.0008465,
+            0.000541333
+          ],
+          "std_seconds": 0.00015258350000000003
+        }
+      },
+      "selected_logical_workspace_bytes": 1179648
+    }
+  ],
+  "disposition": "unconditional: hidden full materialization and explicit square identity/projector removal",
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "43ac865fa5098ddf14bb32921f99a7077194709d89f7ca244327af791eb8992a",
+    "evidence_fields": [
+      "cases",
+      "disposition",
+      "environment",
+      "phase",
+      "process_peak_rss_bytes",
+      "scaling"
+    ],
+    "evidence_schema_signature": "72d88694b462d1815ec992fca6844a679b81d1740b111a900b2baf41afd734b5",
+    "fingerprint": "07f24d520490572a57321ec5fa33eabb87e0cf15c0f471d8df7bee7b468e8cd6",
+    "source_build_fingerprint": "51ed369f7e4fa9f6000910356395c1cfb1e6c690b3d3b73c9519518294692614"
+  },
+  "phase": "baseline",
+  "process_peak_rss_bytes": 1410596864,
+  "scaling": {
+    "certificate_logical_workspace_bytes": 1.9852278621929924,
+    "selected_logical_workspace_bytes": 2.0
+  }
+}

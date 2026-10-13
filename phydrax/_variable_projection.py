@@ -23,7 +23,7 @@ from ._observation_covariance import (
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
-from .linalg import LinearSystem, solve, TriangularLinearOperator
+from .linalg import LinearSystem, solve, solve_adjoint, TriangularLinearOperator
 
 
 if TYPE_CHECKING:
@@ -41,7 +41,11 @@ class _CovarianceProtocol(Protocol):
 
 
 def _triangular_solve(
-    operator: TriangularLinearOperator, right_hand_side: ArrayLike, /
+    operator: TriangularLinearOperator,
+    right_hand_side: ArrayLike,
+    /,
+    *,
+    adjoint: bool = False,
 ) -> Array:
     values = jnp.asarray(right_hand_side)
     if values.ndim == 0 or values.shape[0] != operator.target.size:
@@ -55,7 +59,8 @@ def _triangular_solve(
     flat = values.reshape((operator.target.size, -1))
 
     def solve_column(column: Array) -> Array:
-        result = solve(LinearSystem(operator), column)
+        solve_function = solve_adjoint if adjoint else solve
+        result = solve_function(LinearSystem(operator), column)
         return eqx.error_if(
             result.value,
             ~result.successful,
@@ -137,7 +142,6 @@ class LinearNuisancePlan(StrictModule, NonTrainableState):
     prior_precision: Array
     prior_mean: Array
     normal_lower: TriangularLinearOperator
-    normal_upper: TriangularLinearOperator
     covariance: _CovarianceProtocol
     layout: CoordinateLayout
     nuisance_names: tuple[str, ...] = eqx.field(static=True)
@@ -214,19 +218,11 @@ class LinearNuisancePlan(StrictModule, NonTrainableState):
         self.prior_precision = ridge
         self.prior_mean = mean
         lower = jnp.asarray(cholesky)
-        upper = jnp.asarray(cholesky.conj().T)
         self.normal_lower = TriangularLinearOperator(
             lower,
             lower=True,
             operator_id=canonical_fingerprint(
                 {"kind": "nuisance-normal-lower", "factor": cholesky}
-            ),
-        )
-        self.normal_upper = TriangularLinearOperator(
-            upper,
-            lower=False,
-            operator_id=canonical_fingerprint(
-                {"kind": "nuisance-normal-upper", "factor": cholesky.conj().T}
             ),
         )
         self.covariance = covariance
@@ -257,7 +253,7 @@ class LinearNuisancePlan(StrictModule, NonTrainableState):
             + self.prior_precision @ self.prior_mean
         )
         lower = _triangular_solve(self.normal_lower, rhs)
-        parameters = _triangular_solve(self.normal_upper, lower)
+        parameters = _triangular_solve(self.normal_lower, lower, adjoint=True)
         nuisance = self.design @ parameters
         residual = right - nuisance
         normal_residual = (

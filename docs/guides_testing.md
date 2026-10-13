@@ -28,6 +28,24 @@ uv run --extra tests pytest -n auto --ff
 Rerunning a failed statistical test is not an acceptance policy. Statistical tests use
 deterministic key addressing and a tolerance justified by their standard error.
 
+## Memory benchmark smoke runs
+
+Run memory drivers serially with `python -m benchmarks.memory_<area> --smoke`.
+Use `--output /tmp/memory_<area>.json` to avoid replacing qualification records.
+The paired `memory_cut_cochain_transfer` and `memory_integration_lowering` drivers
+instead accept `--output-dir /tmp/memory-smoke`; they measure independent reference
+routes in the same run and write both records there. `memory_linalg_operators`
+also requires `--phase candidate`, and `memory_linalg_spectral` requires an
+explicit `--output` path.
+
+`memory_operator_workspace` defaults to the candidate campaign at the committed
+baseline capacities. Its `--smoke` campaign uses the first two matching capacities
+of each route; `--full` explicitly selects the default full campaign. Gate
+comparisons match both target capacity and source width, not record position.
+Missing or duplicate historical problem sizes are errors; baseline measurements
+are neither synthesized nor extrapolated. Capture a new baseline only deliberately
+with `--phase baseline`, before changing the implementation being qualified.
+
 ## Test structure
 
 Shared test infrastructure lives under `tests/_support`. Area-specific construction
@@ -147,6 +165,49 @@ Reference generators live in `tools/`, provide `generate` and `check` modes, and
 update an oracle from Phydrax output. Manifests record source, method, generator,
 provider release, precision, input regime, tolerance rationale, digest, and license.
 They do not carry internal schema-version fields.
+
+### Bounded identity hashing
+
+Array fingerprints preserve the historical metadata framing and C-order byte stream,
+including scalar promotion, byte order, and NaN payloads. Contiguous host arrays are
+hashed through a byte view; strided arrays use bounded 64-KiB staging chunks.
+Atomistic surface evaluation transfers identity leaves together and reuses the host
+snapshot for its source and evaluation IDs. Runtime distribution integrity hashes
+files incrementally and retains before/after mutation checks.
+
+Prepared worksets count active lanes while forming buckets and stream the historical
+sorted canonical JSON into their identity digest. Bucket order, padding, semantic RNG
+addresses, and `prepared_id` do not change. Tests compare array hashing to an
+independent legacy byte-stream oracle and workset identity to ordinary Python rows.
+Run `python -m benchmarks.memory_fingerprint_workset --smoke` for phase-separated
+host-allocation evidence, including legacy-reference versus streamed identity scratch.
+
+### Host preparation retention
+
+Dynamic host-table caches use deterministic LRU eviction under both entry and
+logical-payload byte ceilings. Site budgets are the larger of one MiB and the
+next power of two covering eight times the measured representative hot set;
+oversized results are returned without retention. The quota excludes in-flight
+calculations, allocator overhead, and caller-held references. Weak class keys
+keep trainable-role metadata from retaining transient classes. Virasoro plans
+admit descendant counts before enumerating partitions.
+
+Run `python -m benchmarks.memory_host_caches --smoke` to exercise all migrated
+sites, oversized-result behavior, and the retained-byte plateau.
+
+### Memory-pattern audit and scaling ratchet
+
+Run `python tools/audit_memory_patterns.py` for deterministic AST candidates.
+Its exact symbol/rule allowlist rejects new findings, stale entries, and duplicate
+entries. See [the audit policy](plans/memory-pattern-audit.md) before adding a
+disposition; public dense outputs and bounded local physical tensors are not
+interchangeable with avoidable dense scratch.
+
+Run `python -m benchmarks.memory_scaling --check` to recompute the committed
+aggregate memory summary. The ratchet uses the shared memory gate and ratios
+within a matching environment fingerprint; timing and RSS remain observations.
+The focused tests are `tests/integration/test_audit_memory_patterns.py` and
+`tests/unit/test_benchmark_memory.py`.
 
 ## Performance evidence
 

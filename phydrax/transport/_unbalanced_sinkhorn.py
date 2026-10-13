@@ -15,7 +15,15 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..typing import checked
-from ._geometry import column_logsumexp, row_logsumexp
+from ._geometry import (
+    column_logsumexp,
+    DEFAULT_SINKHORN_WORKSPACE_BYTES,
+    resolve_sinkhorn_block_size,
+    row_logsumexp,
+    SinkhornBlockSize,
+    validate_sinkhorn_block_size,
+    validate_sinkhorn_workspace_bytes,
+)
 from ._results import TransportProvenance
 from ._status import TransportStatus
 from ._unbalanced_blocks import coupling_statistics, generalized_kl
@@ -40,7 +48,8 @@ class UnbalancedSinkhorn(StrictModule):
     max_iterations: int = eqx.field(static=True)
     min_iterations: int = eqx.field(static=True)
     check_every: int = eqx.field(static=True)
-    block_size: int | None = eqx.field(static=True)
+    block_size: SinkhornBlockSize = eqx.field(static=True)
+    sinkhorn_workspace_bytes: int = eqx.field(static=True)
     early_stop: bool = eqx.field(static=True)
     store_history: bool = eqx.field(static=True)
 
@@ -53,7 +62,8 @@ class UnbalancedSinkhorn(StrictModule):
         min_iterations: int = 1,
         tolerance: ArrayLike = 1e-7,
         check_every: int = 5,
-        block_size: int | None = None,
+        block_size: SinkhornBlockSize = "auto",
+        sinkhorn_workspace_bytes: int = DEFAULT_SINKHORN_WORKSPACE_BYTES,
         early_stop: bool = False,
         store_history: bool = False,
         mass_collapse_tolerance: ArrayLike = 0.0,
@@ -67,8 +77,8 @@ class UnbalancedSinkhorn(StrictModule):
             raise ValueError("min_iterations must lie in [0, max_iterations].")
         if interval < 1:
             raise ValueError("check_every must be positive.")
-        if block_size is not None and int(block_size) < 1:
-            raise ValueError("block_size must be positive or None.")
+        block_size = validate_sinkhorn_block_size(block_size)
+        validate_sinkhorn_workspace_bytes(sinkhorn_workspace_bytes)
         epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
         tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
         collapse_ = jnp.asarray(mass_collapse_tolerance, dtype=jnp.float64).reshape(())
@@ -90,7 +100,8 @@ class UnbalancedSinkhorn(StrictModule):
         self.max_iterations = maximum
         self.min_iterations = minimum
         self.check_every = interval
-        self.block_size = None if block_size is None else int(block_size)
+        self.block_size = block_size
+        self.sinkhorn_workspace_bytes = sinkhorn_workspace_bytes
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
@@ -109,6 +120,13 @@ class UnbalancedSinkhorn(StrictModule):
             self.epsilon,
             problem.source_marginal_penalty,
             problem.target_marginal_penalty,
+        )
+        block_size = resolve_sinkhorn_block_size(
+            self.block_size,
+            self.sinkhorn_workspace_bytes,
+            source_count,
+            target_count,
+            jnp.dtype(dtype).itemsize,
         )
         if initial_potentials is None:
             source_initial = jnp.zeros((source_count,), dtype=dtype)
@@ -159,7 +177,7 @@ class UnbalancedSinkhorn(StrictModule):
                     problem.target.points,
                     log_target + target_potential / epsilon,
                     epsilon,
-                    block_size=self.block_size,
+                    block_size=block_size,
                 )
             )
             next_target = (
@@ -171,7 +189,7 @@ class UnbalancedSinkhorn(StrictModule):
                     problem.target.points,
                     log_source + next_source / epsilon,
                     epsilon,
-                    block_size=self.block_size,
+                    block_size=block_size,
                 )
             )
             log_source_relaxed_mass = logsumexp(log_source - next_source / source_penalty)
@@ -285,7 +303,7 @@ class UnbalancedSinkhorn(StrictModule):
             source_potential,
             target_potential,
             epsilon,
-            block_size=self.block_size,
+            block_size=block_size,
         )
         source_marginal_kl = generalized_kl(
             source_marginal,
@@ -393,10 +411,12 @@ class UnbalancedSinkhorn(StrictModule):
         provenance = TransportProvenance(
             "unbalanced_sinkhorn",
             problem.provenance.cost,
-            "dense" if self.block_size is None else "blockwise",
+            "dense" if block_size is None else "blockwise",
             "unrolled",
             problem.provenance.source,
             problem.provenance.target,
+            block_size=block_size,
+            sinkhorn_workspace_bytes=self.sinkhorn_workspace_bytes,
         )
         return UnbalancedSinkhornResult(
             problem=problem,
@@ -415,7 +435,7 @@ class UnbalancedSinkhorn(StrictModule):
             dual_cost=dual_cost,
             diagnostics=diagnostics,
             provenance=provenance,
-            block_size=self.block_size,
+            block_size=block_size,
         )
 
 

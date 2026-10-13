@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import get_args, Literal, TypeAlias
@@ -594,21 +595,30 @@ def marker_flow_artifact_reference(
     identifier = str(identity)
     if not identifier or not target.is_file():
         raise ValueError("Marker-flow artifact identity/path is invalid.")
-    payload = target.read_bytes()
-    digest = hashlib.sha256(payload).hexdigest()
+    with target.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        after = os.fstat(stream.fileno())
+        if (
+            before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or before.st_ctime_ns != after.st_ctime_ns
+        ):
+            raise ValueError("Marker-flow artifact changed while hashing.")
+    byte_count = after.st_size
     return MarkerFlowArtifactReference(
         str(target),
         kind,
         identifier,
         digest,
-        len(payload),
+        byte_count,
         canonical_fingerprint(
             {
                 "kind": "marker-flow-artifact-reference",
                 "artifact_kind": kind,
                 "identity": identifier,
                 "sha256": digest,
-                "byte_count": len(payload),
+                "byte_count": byte_count,
             }
         ),
     )

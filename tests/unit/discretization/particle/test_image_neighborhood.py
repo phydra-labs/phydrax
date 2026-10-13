@@ -23,6 +23,7 @@ from phydrax.discretization.particle import (
     ParticleSetPlan,
     PreparedImageVerletParticleNeighborhood,
 )
+from phydrax.discretization.particle._image_neighborhood import _host_reach
 from phydrax.sparse import EdgeRelation
 
 
@@ -707,3 +708,60 @@ def test_image_verlet_refuses_unrepresentable_counts_and_rebuilds_on_overflow() 
     assert bool(reused.neighborhood.successful)
     routes = _routes(reused.neighborhood, np.asarray(rewrapped), CUBE)
     assert sorted(np.round(row[0], 6) for row in routes.values()) == [-0.1, 0.1]
+
+
+@pytest.mark.parametrize("rank", (1, 2, 4, 5))
+@pytest.mark.parametrize("condition", (1.0, 1e4))
+def test_host_lattice_coordinates_and_reach_match_dense_reference(
+    rank: int, condition: float
+) -> None:
+    rng = np.random.default_rng(210 + rank)
+    rotation, _ = np.linalg.qr(rng.normal(size=(rank + 1, rank + 1)))
+    vectors = np.geomspace(1.0, condition, rank)[:, None] * rotation[:rank]
+    cell = PeriodicCell(vectors, periodic_axes=(False,) * rank)
+    reference = vectors.T @ np.linalg.inv(vectors @ vectors.T)
+    reach = np.sqrt(np.sum(reference**2, axis=0))
+    np.testing.assert_allclose(cell.inverse_vectors, reference, rtol=1e-9, atol=1e-12)
+    np.testing.assert_allclose(
+        cell.reciprocal_vectors, 2 * np.pi * reference.T, rtol=1e-9
+    )
+    stencil = cell.image_stencil(1.3, maximum_image_count=1)
+    np.testing.assert_allclose(stencil.axis_reach, reach, rtol=1e-9)
+    np.testing.assert_allclose(_host_reach(vectors[None]), reach[None], rtol=1e-9)
+    singular = vectors.copy()
+    singular[-1] = 0.0
+    with pytest.raises(ValueError, match="full row rank"):
+        PeriodicCell(singular, periodic_axes=(False,) * rank)
+    with pytest.raises(ValueError, match="rank deficient"):
+        cell.image_stencil(1.3, maximum_image_count=1, cell_vectors=singular)
+    with pytest.raises(ValueError, match="rank deficient"):
+        _host_reach(singular[None])
+
+
+@pytest.mark.parametrize(
+    "vectors",
+    (np.asarray([[2.0, 0.0, 0.0]]), TRICLINIC[:2], TRICLINIC),
+)
+def test_image_stencil_integer_reaches_match_inverse_at_cutoff_boundaries(
+    vectors: np.ndarray,
+) -> None:
+    cell = PeriodicCell(vectors)
+    inverse = vectors.T @ np.linalg.inv(vectors @ vectors.T)
+    reach = np.sqrt(np.sum(inverse * inverse, axis=0))
+    for axis_reach in reach:
+        boundary = 1.0 / axis_reach
+        for radius in (
+            np.nextafter(boundary, 0.0),
+            boundary,
+            np.nextafter(boundary, np.inf),
+        ):
+            stencil = cell.image_stencil(float(radius), maximum_image_count=100_000)
+            expected_extents = tuple(int(item) for item in np.floor(1.0 + radius * reach))
+            expected_images = np.asarray(
+                tuple(
+                    product(*(range(-extent, extent + 1) for extent in expected_extents))
+                ),
+                dtype=np.int32,
+            )
+            assert stencil.extents == expected_extents
+            np.testing.assert_array_equal(stencil.shifts, expected_images)

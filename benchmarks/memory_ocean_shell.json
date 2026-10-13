@@ -1,0 +1,126 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": {
+    "ocean": {
+      "baseline_bytes": 8208,
+      "candidate_bytes": 61768,
+      "capacity": 2048,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    },
+    "shell": {
+      "baseline_bytes": 0,
+      "candidate_bytes": 0,
+      "capacity": 64,
+      "decision": "retain-baseline",
+      "maximum_candidate_fraction": 0.5
+    }
+  },
+  "logical_workspace_exponent": 1.0000000000000002,
+  "records": {
+    "ocean": [
+      {
+        "argument_bytes": 392,
+        "capacity": 32,
+        "compilation_seconds": 0.210317042,
+        "lowering_seconds": 0.148494791,
+        "output_bytes": 64,
+        "temporary_bytes": 1288
+      },
+      {
+        "argument_bytes": 1544,
+        "capacity": 128,
+        "compilation_seconds": 0.186534916,
+        "lowering_seconds": 0.086322125,
+        "output_bytes": 256,
+        "temporary_bytes": 4168
+      },
+      {
+        "argument_bytes": 6152,
+        "capacity": 512,
+        "compilation_seconds": 0.153705125,
+        "lowering_seconds": 0.093751292,
+        "output_bytes": 1024,
+        "temporary_bytes": 15688
+      },
+      {
+        "argument_bytes": 24584,
+        "capacity": 2048,
+        "compilation_seconds": 0.199608292,
+        "lowering_seconds": 0.113436958,
+        "output_bytes": 4096,
+        "temporary_bytes": 61768
+      }
+    ],
+    "shell": [
+      {
+        "argument_bytes": 0,
+        "capacity": 8,
+        "compilation_seconds": 0.025637125,
+        "lowering_seconds": 0.003763917,
+        "output_bytes": 512,
+        "temporary_bytes": 0
+      },
+      {
+        "argument_bytes": 0,
+        "capacity": 16,
+        "compilation_seconds": 0.046192834,
+        "lowering_seconds": 0.002855708,
+        "output_bytes": 4096,
+        "temporary_bytes": 0
+      },
+      {
+        "argument_bytes": 0,
+        "capacity": 32,
+        "compilation_seconds": 0.067252625,
+        "lowering_seconds": 0.013691125,
+        "output_bytes": 32768,
+        "temporary_bytes": 0
+      },
+      {
+        "argument_bytes": 0,
+        "capacity": 64,
+        "compilation_seconds": 0.030178916,
+        "lowering_seconds": 0.023065417,
+        "output_bytes": 262144,
+        "temporary_bytes": 0
+      }
+    ]
+  }
+}

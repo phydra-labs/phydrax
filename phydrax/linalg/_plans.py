@@ -296,6 +296,7 @@ class LinearSolvePlan(StrictModule):
                 "materialization": {
                     "max_entries": policy.materialization.max_entries,
                     "max_bytes": policy.materialization.max_bytes,
+                    "max_workspace_bytes": policy.materialization.max_workspace_bytes,
                 },
                 "resources": {
                     "factorization_bytes": policy.resources.factorization_bytes,
@@ -417,13 +418,16 @@ def _validate_derivative_route(
         case "krylov":
             return
         case "primal-factors":
-            bordered_factors = (
-                isinstance(method, StructuredDirect)
-                and _bordered_base(problem.operator) is not None
+            structured_factors = isinstance(method, StructuredDirect) and (
+                _bordered_base(problem.operator) is not None
+                or isinstance(problem.operator, BandedLinearOperator)
             )
-            if not isinstance(method, (DenseLU, DenseCholesky)) and not bordered_factors:
+            if (
+                not isinstance(method, (DenseLU, DenseCholesky))
+                and not structured_factors
+            ):
                 raise ValueError(
-                    "route='primal-factors' requires square direct dense or bordered "
+                    "route='primal-factors' requires square direct dense, banded, or bordered "
                     f"factors; the selected method is {method.name}."
                 )
             if not isinstance(problem, LinearSystem):
@@ -2362,6 +2366,7 @@ def _method_configuration(
                     else {
                         "max_entries": assembly.materialization.max_entries,
                         "max_bytes": assembly.materialization.max_bytes,
+                        "max_workspace_bytes": assembly.materialization.max_workspace_bytes,
                     }
                 ),
             }

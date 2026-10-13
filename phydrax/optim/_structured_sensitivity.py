@@ -15,11 +15,12 @@ from jax import Array
 
 from .._strict import StrictModule
 from ..continuation import ParameterContinuationProblem
-from ..linalg import LinearSolvePolicy
+from ..linalg import LinearSolvePolicy, MaterializationPolicy
 from ._constrained_sensitivity import (
     constrained_solution_jvp,
     constrained_solution_vjp,
     ConstrainedSensitivityResult,
+    ConstrainedSensitivityRoute,
 )
 from ._iterative import Bounds, MinimizationProblem, NonlinearConstraint
 from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
@@ -36,10 +37,31 @@ def _generic_problem(
     prepared: PreparedStructuredNonlinearProgram, /
 ) -> MinimizationProblem:
     program = prepared.program
-    constraints = (
+
+    @jax.custom_jvp
+    def constraints(coordinates: Array, args: Any) -> Array:
+        return jnp.asarray(program.constraints(coordinates, args))
+
+    @constraints.defjvp
+    def constraints_jvp(
+        primals: tuple[Array, Any], tangents: tuple[Array, Any]
+    ) -> tuple[Array, Array]:
+        coordinates, args = primals
+        tangent_coordinates, tangent_args = tangents
+        value, argument_action = jax.jvp(
+            lambda current_args: jnp.asarray(
+                program.constraints(coordinates, current_args)
+            ),
+            (args,),
+            (tangent_args,),
+        )
+        operator = program.jacobian_plan.operator(coordinates, args)
+        return value, operator.mv(tangent_coordinates) + argument_action
+
+    constraint_blocks = (
         (
             NonlinearConstraint(
-                lambda coordinates, args: program.constraints(coordinates, args),
+                constraints,
                 lower=prepared.constraint_lower,
                 upper=prepared.constraint_upper,
                 constraint_id=f"{program.program_id}:structured-sensitivity",
@@ -51,7 +73,7 @@ def _generic_problem(
     return MinimizationProblem(
         lambda coordinates, args: program.objective(coordinates, args),
         bounds=Bounds(prepared.variable_lower, prepared.variable_upper),
-        constraints=constraints,
+        constraints=constraint_blocks,
         problem_id=program.program_id,
     )
 
@@ -66,6 +88,8 @@ def structured_solution_jvp(
     active_tolerance: float = 1e-7,
     barrier: float = 1e-8,
     linear: LinearSolvePolicy | None = None,
+    route: ConstrainedSensitivityRoute = "matrix-free",
+    materialization: MaterializationPolicy | None = None,
 ) -> ConstrainedSensitivityResult:
     """Differentiate a certified structured solution with respect to numeric args."""
     if not isinstance(prepared, PreparedStructuredNonlinearProgram):
@@ -88,6 +112,8 @@ def structured_solution_jvp(
         active_tolerance=active_tolerance,
         barrier=barrier,
         linear=linear,
+        route=route,
+        materialization=materialization,
     )
 
 
@@ -101,6 +127,8 @@ def structured_solution_vjp(
     active_tolerance: float = 1e-7,
     barrier: float = 1e-8,
     linear: LinearSolvePolicy | None = None,
+    route: ConstrainedSensitivityRoute = "matrix-free",
+    materialization: MaterializationPolicy | None = None,
 ) -> ConstrainedSensitivityResult:
     """Pull one coordinate cotangent back to structured numeric args."""
     if not isinstance(prepared, PreparedStructuredNonlinearProgram):
@@ -124,6 +152,8 @@ def structured_solution_vjp(
         active_tolerance=active_tolerance,
         barrier=barrier,
         linear=linear,
+        route=route,
+        materialization=materialization,
     )
 
 
@@ -206,28 +236,29 @@ def structured_parameter_continuation(
             x,
             current_args,
         )
-        equality_jacobian = jax.jacfwd(
-            lambda value: _canonical_constraints(
-                generic,
-                layout,
-                value,
-                current_args,
-            )[0]
-        )(x)
-        inequality_jacobian = jax.jacfwd(
-            lambda value: _canonical_constraints(
-                generic,
-                layout,
-                value,
-                current_args,
-            )[1]
-        )(x)
         active_multipliers = jnp.where(active, inequality_multipliers, 0.0)
-        stationarity = (
-            gradient
-            + jnp.conj(equality_jacobian.T) @ equality_multipliers
-            + jnp.conj(inequality_jacobian.T) @ active_multipliers
+        lower_count = lower_constraints.size
+        lower_bound_count = lower_x_indices.size
+        upper_count = upper_constraints.size
+        lower_dual = active_multipliers[:lower_count]
+        lower_bound_dual = active_multipliers[
+            lower_count : lower_count + lower_bound_count
+        ]
+        upper_start = lower_count + lower_bound_count
+        upper_dual = active_multipliers[upper_start : upper_start + upper_count]
+        upper_bound_dual = active_multipliers[upper_start + upper_count :]
+        raw_dual = jnp.zeros((prepared.program.num_constraints,), dtype=x.dtype)
+        raw_dual = raw_dual.at[prepared.program.equality_indices].add(
+            equality_multipliers
         )
+        raw_dual = raw_dual.at[prepared.program.lower_indices].add(-lower_dual)
+        raw_dual = raw_dual.at[prepared.program.upper_indices].add(upper_dual)
+        operator = prepared.program.jacobian_plan.operator(x, current_args)
+        stationarity = gradient + operator.adjoint_mv(raw_dual)
+        stationarity = stationarity.at[jnp.asarray(lower_x_indices)].add(
+            -lower_bound_dual
+        )
+        stationarity = stationarity.at[jnp.asarray(upper_x_indices)].add(upper_bound_dual)
         complement = jnp.where(active, inequality_residual, inequality_multipliers)
         return jnp.concatenate((stationarity, equality_residual, complement))
 

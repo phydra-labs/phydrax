@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import operator
+import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, TYPE_CHECKING
@@ -20,10 +21,10 @@ import numpy as np
 from jax.sharding import NamedSharding, PartitionSpec, Sharding, SingleDeviceSharding
 
 from .._array_archive import (
-    _read_npy_metadata,
     ArrayArchiveCorruptionError,
     ArrayArchiveLimits,
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    read_npy_metadata,
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._strict import Strict
@@ -532,18 +533,18 @@ def _write_packed_stream(
     return records
 
 
-def _read_artifact_range(
+def _iter_artifact_range(
     repository: ArtifactRepository,
     artifact: ArtifactManifest,
     logical_name: str,
     offset: int,
     byte_count: int,
     /,
-) -> bytes:
-    """Read one exact plaintext range of a logical artifact stream."""
+) -> Iterator[memoryview]:
+    """Stream one exact plaintext range of a logical artifact in bounded chunks."""
 
     stop = offset + byte_count
-    parts = []
+    observed = 0
     for chunk in artifact.chunks:
         if (
             chunk.logical_name != logical_name
@@ -556,15 +557,28 @@ def _read_artifact_range(
         )
         if len(data) != chunk.plaintext_size:
             raise RepositoryCorruptionError("Checkpoint artifact chunk size mismatch.")
-        parts.append(
-            memoryview(data)[max(offset - chunk.offset, 0) : stop - chunk.offset]
-        )
-    payload = b"".join(parts)
-    if len(payload) != byte_count:
+        payload = memoryview(data)[max(offset - chunk.offset, 0) : stop - chunk.offset]
+        observed += len(payload)
+        yield payload
+    if observed != byte_count:
         raise RepositoryCorruptionError(
             "Checkpoint artifact range is not covered by its chunks."
         )
-    return payload
+
+
+def _read_artifact_range(
+    repository: ArtifactRepository,
+    artifact: ArtifactManifest,
+    logical_name: str,
+    offset: int,
+    byte_count: int,
+    /,
+) -> bytes:
+    """Read one admitted metadata range of a logical artifact stream."""
+
+    return b"".join(
+        _iter_artifact_range(repository, artifact, logical_name, offset, byte_count)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1311,40 +1325,55 @@ def _read_shard_payload(
         raise RepositoryCorruptionError(
             "Checkpoint shard payload binding is inconsistent."
         )
-    payload = _read_artifact_range(
-        repository,
-        artifact,
-        _SHARD_PAYLOADS,
-        _metadata_integer(metadata, "payload_offset"),
-        shard.byte_count,
-    )
-    if hashlib.sha256(payload).hexdigest() != shard.payload_digest:
-        raise RepositoryCorruptionError("Checkpoint shard payload digest mismatch.")
-    stream = io.BytesIO(payload)
-    try:
-        dtype, shape, _ = _read_npy_metadata(stream, len(payload), limits)
-    except ArrayArchiveCorruptionError as error:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard NumPy payload metadata is invalid."
-        ) from error
-    if shape != expected_shape or dtype != expected_dtype:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard payload shape or dtype is inconsistent."
-        )
-    stream.seek(0)
-    try:
-        value = np.load(
-            stream,
-            allow_pickle=False,
-            max_header_size=limits.max_npy_header_bytes,
-        )
-    except (EOFError, OSError, ValueError) as error:
-        raise RepositoryCorruptionError(
-            "Checkpoint shard NumPy payload is invalid."
-        ) from error
+    digest = hashlib.sha256()
+    observed = 0
+    with tempfile.SpooledTemporaryFile(max_size=1_048_576, mode="w+b") as stream:
+        for payload in _iter_artifact_range(
+            repository,
+            artifact,
+            _SHARD_PAYLOADS,
+            _metadata_integer(metadata, "payload_offset"),
+            shard.byte_count,
+        ):
+            observed += len(payload)
+            if observed > shard.byte_count:
+                raise RepositoryCorruptionError(
+                    "Checkpoint shard payload byte count mismatch."
+                )
+            digest.update(payload)
+            stream.write(payload)
+        if observed != shard.byte_count:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard payload byte count mismatch."
+            )
+        if digest.hexdigest() != shard.payload_digest:
+            raise RepositoryCorruptionError("Checkpoint shard payload digest mismatch.")
+        stream.seek(0)
+        try:
+            dtype, shape, _ = read_npy_metadata(stream, observed, limits)
+        except ArrayArchiveCorruptionError as error:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard NumPy payload metadata is invalid."
+            ) from error
+        if shape != expected_shape or dtype != expected_dtype:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard payload shape or dtype is inconsistent."
+            )
+        stream.seek(0)
+        try:
+            value = np.load(
+                stream,
+                allow_pickle=False,
+                max_header_size=limits.max_npy_header_bytes,
+            )
+        except (EOFError, OSError, ValueError) as error:
+            raise RepositoryCorruptionError(
+                "Checkpoint shard NumPy payload is invalid."
+            ) from error
     if value.shape != expected_shape or value.dtype != expected_dtype:
         raise RepositoryCorruptionError("Checkpoint shard payload changed while loading.")
-    return np.array(value, copy=True, order="C")
+    value.setflags(write=False)
+    return value
 
 
 def _intersection(

@@ -210,7 +210,11 @@ class BorderedBlockLinearOperator(AbstractLinearOperator):
                 else coordinate_map.selection_id,
                 "dense_local_limits": None
                 if dense_local_policy is None
-                else (dense_local_policy.max_entries, dense_local_policy.max_bytes),
+                else (
+                    dense_local_policy.max_entries,
+                    dense_local_policy.max_bytes,
+                    dense_local_policy.max_workspace_bytes,
+                ),
             },
         )
 
@@ -377,6 +381,7 @@ def _bordered_structure(operator: AbstractLinearOperator, /) -> str | None:
             else (
                 bordered.dense_local_policy.max_entries,
                 bordered.dense_local_policy.max_bytes,
+                bordered.dense_local_policy.max_workspace_bytes,
             ),
         }
     )

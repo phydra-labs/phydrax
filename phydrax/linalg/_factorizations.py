@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
@@ -255,16 +256,16 @@ class PreparedFactorization(StrictModule):
         if not self.capabilities.determinant:
             raise ValueError("This factorization does not define a determinant.")
         state = self.prepared_solve.state
-        if isinstance(state, DenseLUState):
-            return _prepared_lu_slogdet(self)[0]
+        if isinstance(state, (DenseLUState, DenseCholeskyState)):
+            return _prepared_slogdet(self)[0]
         return jnp.linalg.slogdet(_state_matrix(state))[0]
 
     def log_abs_determinant(self, /) -> Array:
         if not self.capabilities.determinant:
             raise ValueError("This factorization does not define a determinant.")
         state = self.prepared_solve.state
-        if isinstance(state, DenseLUState):
-            return _prepared_lu_slogdet(self)[1]
+        if isinstance(state, (DenseLUState, DenseCholeskyState)):
+            return _prepared_slogdet(self)[1]
         return jnp.linalg.slogdet(_state_matrix(state))[1]
 
     def log_pseudodeterminant(self, /) -> Array:
@@ -583,16 +584,25 @@ def _materialize_prepared_pseudoinverse(
     )
 
 
-def _prepared_lu_slogdet(
+def _prepared_slogdet(
     factorization: PreparedFactorization,
     /,
 ) -> tuple[Array, Array]:
     state = factorization.prepared_solve.state
-    if not isinstance(state, DenseLUState):
-        raise TypeError("Prepared LU determinant evaluation requires a dense LU state.")
-    sign, log_abs = dense_lu_slogdet(state)
+    if isinstance(state, DenseLUState):
+        sign, log_abs = dense_lu_slogdet(state)
+    elif isinstance(state, DenseCholeskyState):
+        diagonal = jnp.abs(jnp.diagonal(state.factor, axis1=-2, axis2=-1))
+        log_abs = jnp.where(
+            state.invalid, jnp.nan, 2 * jnp.sum(jnp.log(diagonal), axis=-1)
+        )
+        sign = jnp.where(state.invalid, jnp.nan, jnp.ones_like(log_abs)).astype(
+            state.matrix.dtype
+        )
+    else:
+        raise TypeError("Prepared determinant evaluation requires LU or Cholesky.")
     if factorization.policy.differentiation.mode == "mathematical":
-        return _mathematical_lu_slogdet(
+        return _mathematical_factor_slogdet(
             state,
             factorization.prepared_solve.plan,
             sign,
@@ -602,8 +612,8 @@ def _prepared_lu_slogdet(
 
 
 @eqx.filter_custom_jvp
-def _mathematical_lu_slogdet(
-    state: DenseLUState,
+def _mathematical_factor_slogdet(
+    state: DenseLUState | DenseCholeskyState,
     plan: Any,
     sign: Array,
     log_abs: Array,
@@ -613,10 +623,10 @@ def _mathematical_lu_slogdet(
     return sign, log_abs
 
 
-@_mathematical_lu_slogdet.def_jvp
-def _mathematical_lu_slogdet_jvp(
-    primals: tuple[DenseLUState, Any, Array, Array],
-    tangents: tuple[DenseLUState, object, object, object],
+@_mathematical_factor_slogdet.def_jvp
+def _mathematical_factor_slogdet_jvp(
+    primals: tuple[DenseLUState | DenseCholeskyState, Any, Array, Array],
+    tangents: tuple[DenseLUState | DenseCholeskyState, object, object, object],
 ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
     state, plan, sign, log_abs = primals
     state_tangent, _, _, _ = tangents
@@ -911,11 +921,11 @@ def _metric_orthonormalize(
         gram = 0.5 * (gram + jnp.conj(jnp.swapaxes(gram, -1, -2)))
         gram = gram + jnp.diag((~active_columns).astype(gram.dtype))
         factor = jnp.linalg.cholesky(gram)
-        transform = jnp.linalg.solve(
-            jnp.conj(jnp.swapaxes(factor, -1, -2)),
-            jnp.eye(capacity, dtype=gram.dtype),
-        )
-        return columns @ transform
+        return jsp.linalg.solve_triangular(
+            jnp.conj(factor),
+            columns.T,
+            lower=True,
+        ).T
 
     return jax.vmap(orthonormalize_one)(flattened, dimensions).reshape(basis.shape)
 

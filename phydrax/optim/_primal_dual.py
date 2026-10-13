@@ -39,6 +39,7 @@ from ..linalg import (
     MINRES,
     OperatorProperties,
     prepare_linearization,
+    PreparedLinearization,
     PreparedSparseFactorization,
     solve as solve_linear,
     sparse_preconditioner_factorization,
@@ -388,6 +389,7 @@ def _point_data(
     flat_parameters: Array,
     args: Any,
     multipliers: tuple[Array, Array],
+    constraint_linearization: PreparedLinearization | None = None,
 ) -> tuple[Array, Array, Array, Array, Array, _ConstraintFunction]:
     equality_multipliers, inequality_multipliers = multipliers
 
@@ -398,9 +400,13 @@ def _point_data(
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
     value, gradient = jax.value_and_grad(objective)(flat_parameters)
-    equality, inequality = constraints(flat_parameters)
-    _, pullback = jax.vjp(constraints, flat_parameters)
-    multiplier_part = pullback((equality_multipliers, inequality_multipliers))[0]
+    prepared = (
+        prepare_linearization(constraints, flat_parameters)
+        if constraint_linearization is None
+        else constraint_linearization
+    )
+    equality, inequality = prepared.primal
+    multiplier_part = prepared.vjp((equality_multipliers, inequality_multipliers))
     stationarity = gradient + multiplier_part
     return value, gradient, equality, inequality, stationarity, constraints
 
@@ -669,6 +675,7 @@ def _build_kkt_system(
     inequality_multipliers: Array,
     slacks: Array,
     constraints: _ConstraintFunction,
+    constraint_linearization: PreparedLinearization,
     /,
 ) -> tuple[LinearSystem, AbstractLinearOperator, PrimalDualKKTSetupResult | None]:
     inverse_slack = 1.0 / jnp.maximum(slacks, method.minimum_slack)
@@ -695,14 +702,7 @@ def _build_kkt_system(
             inequality_multipliers,
         )
     if prepared_derivatives is None:
-        constraint_derivative = JacobianLinearOperator(
-            prepare_linearization(
-                constraints,
-                flat_parameters,
-                source=primal_space,
-                linearization_id=f"{problem.problem_id}/primal-dual-constraints",
-            )
-        )
+        constraint_derivative = JacobianLinearOperator(constraint_linearization)
         hessian = JacobianLinearOperator(
             prepare_linearization(
                 jax.grad(lagrangian),
@@ -889,6 +889,7 @@ def _solve_primal_dual_newton_krylov(
         inequality_multipliers,
         slacks,
         initial_constraints,
+        prepare_linearization(initial_constraints, flat_parameters),
     )
     initial_prepared_kkt, linear_refresh_state = prepare_refresh_state(
         initial_kkt,
@@ -984,6 +985,14 @@ def _solve_primal_dual_newton_krylov(
         )
 
     def outer_body(current: _PrimalDualState) -> _PrimalDualState:
+        def current_constraints(candidate: Array) -> tuple[Array, Array]:
+            return _canonical_constraints(problem, layout, unravel(candidate), args)
+
+        constraint_linearization = prepare_linearization(
+            current_constraints,
+            current.parameters,
+            linearization_id="primal-dual-constraints",
+        )
         (
             value,
             _,
@@ -1001,12 +1010,13 @@ def _solve_primal_dual_newton_krylov(
                 current.equality_multipliers,
                 current.inequality_multipliers,
             ),
+            constraint_linearization,
         )
         evaluated_counters = current.counters._replace(
             objective_evaluations=current.counters.objective_evaluations + 1,
             gradient_evaluations=current.counters.gradient_evaluations + 1,
             constraint_evaluations=(
-                current.counters.constraint_evaluations + 2 * constraint_sources_
+                current.counters.constraint_evaluations + constraint_sources_
             ),
             vjp_evaluations=current.counters.vjp_evaluations + 1,
         )
@@ -1075,6 +1085,7 @@ def _solve_primal_dual_newton_krylov(
                 current.inequality_multipliers,
                 current.slacks,
                 constraints,
+                constraint_linearization,
             )
             current_refresh_state = eqx.combine(
                 current.linear_refresh_arrays,
@@ -1433,6 +1444,7 @@ def _solve_primal_dual_newton_krylov(
                         current.slacks,
                         current.final_step_norm,
                         current.accepted_rate,
+
                     )
 
                 (
@@ -1460,7 +1472,7 @@ def _solve_primal_dual_newton_krylov(
                     ),
                     constraint_evaluations=(
                         solve_counters.constraint_evaluations
-                        + 2 * constraint_sources_ * line_evaluations
+                        + constraint_sources_ * line_evaluations
                     ),
                     globalization_evaluations=(
                         solve_counters.globalization_evaluations + line_evaluations
@@ -1711,7 +1723,7 @@ def _solve_primal_dual_newton_krylov(
         objective_evaluations=state.counters.objective_evaluations + 2,
         gradient_evaluations=state.counters.gradient_evaluations + 1,
         constraint_evaluations=(
-            state.counters.constraint_evaluations + 2 * constraint_sources_
+            state.counters.constraint_evaluations + constraint_sources_
         ),
         vjp_evaluations=state.counters.vjp_evaluations + 1,
     )

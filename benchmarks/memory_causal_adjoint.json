@@ -1,0 +1,390 @@
+{
+  "comparison_baseline": "The dense-associative row in this same run is the preserved exact dev adjoint code path; the untouched baseline artifact additionally records the full original solve.",
+  "crossover": [
+    {
+      "fastest_route": "dense-associative",
+      "horizon": 8
+    },
+    {
+      "fastest_route": "checkpointed-action-scan",
+      "horizon": 16
+    },
+    {
+      "fastest_route": "checkpointed-action-scan",
+      "horizon": 32
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "e5d0600dbb57b0d7585654cc3477ee6f355079b97362d97cb2e1dc919363f33f",
+    "evidence_schema": {
+      "fields": [
+        "rows",
+        "scaling"
+      ],
+      "signature": "3e4e58c3aacb75aff7bc41d55a9591db7be7070f3d7d4bab062a3a453d389903"
+    },
+    "fingerprint": "3c28c9a8e8d61e5ee40717b47e0854d73a82e46b87d34e7bb52d577039e27b30",
+    "source_build_fingerprint": "e45b9c0deefa9ba22737b4a0c00a8702eaec8f4c06a46e3e28fb173b1b6b764a"
+  },
+  "measurement": "derivative attachment only; primal independently generated and certified outside the measured executable",
+  "process_peak_rss_bytes": 2045460480,
+  "rows": [
+    {
+      "compilation_seconds": 0.078058042,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 187904,
+        "flops": 75312,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 40960,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 24.530702428870768,
+      "horizon": 8,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 1024,
+      "logical_transition_bytes": 16384,
+      "lowering_seconds": 0.039452292,
+      "route": "dense-associative",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 0.000117292,
+        "mean_seconds": 8.0417e-05,
+        "median_seconds": 6.4042e-05,
+        "min_seconds": 5.9917e-05,
+        "samples_seconds": [
+          0.000117292,
+          6.4042e-05,
+          5.9917e-05
+        ],
+        "std_seconds": 2.6128887270605306e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.063461083,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 18057,
+        "flops": 10098,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 1984,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 24.530702428870768,
+      "horizon": 8,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 1024,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.02738275,
+      "route": "action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 7.3584e-05,
+        "mean_seconds": 6.651400000000001e-05,
+        "median_seconds": 6.975e-05,
+        "min_seconds": 5.6208e-05,
+        "samples_seconds": [
+          6.975e-05,
+          5.6208e-05,
+          7.3584e-05
+        ],
+        "std_seconds": 7.453639647849902e-06
+      }
+    },
+    {
+      "compilation_seconds": 0.0513125,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 20153,
+        "flops": 10082,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 3208,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 24.530702428870768,
+      "horizon": 8,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 1024,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.030625625,
+      "route": "checkpointed-action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 0.000105334,
+        "mean_seconds": 7.970833333333334e-05,
+        "median_seconds": 8.7833e-05,
+        "min_seconds": 4.5958e-05,
+        "samples_seconds": [
+          8.7833e-05,
+          4.5958e-05,
+          0.000105334
+        ],
+        "std_seconds": 2.4911643868324352e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.114675166,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 415744,
+        "flops": 160928,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 81920,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 59.02023428233727,
+      "horizon": 16,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 2048,
+      "logical_transition_bytes": 32768,
+      "lowering_seconds": 0.047107083,
+      "route": "dense-associative",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 0.000255917,
+        "mean_seconds": 0.00023294466666666665,
+        "median_seconds": 0.000222917,
+        "min_seconds": 0.00022,
+        "samples_seconds": [
+          0.00022,
+          0.000255917,
+          0.000222917
+        ],
+        "std_seconds": 1.6287485918813723e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.054876,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 26249,
+        "flops": 19058,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 4032,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 59.02023428233727,
+      "horizon": 16,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 2048,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.025789166,
+      "route": "action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 8.9667e-05,
+        "mean_seconds": 6.370833333333333e-05,
+        "median_seconds": 6.225e-05,
+        "min_seconds": 3.9208e-05,
+        "samples_seconds": [
+          8.9667e-05,
+          6.225e-05,
+          3.9208e-05
+        ],
+        "std_seconds": 2.0625594493789073e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.075506,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 34490,
+        "flops": 20180,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 4616,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 59.02023428233727,
+      "horizon": 16,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 2048,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.038416458,
+      "route": "checkpointed-action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 7.1792e-05,
+        "mean_seconds": 5.618033333333334e-05,
+        "median_seconds": 5.2166e-05,
+        "min_seconds": 4.4583e-05,
+        "samples_seconds": [
+          7.1792e-05,
+          4.4583e-05,
+          5.2166e-05
+        ],
+        "std_seconds": 1.1464977811675967e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.129388792,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 882176,
+        "flops": 333200,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 167936,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 128.05518885877342,
+      "horizon": 32,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 4096,
+      "logical_transition_bytes": 65536,
+      "lowering_seconds": 0.053925791,
+      "route": "dense-associative",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 0.000244083,
+        "mean_seconds": 0.00018501399999999997,
+        "median_seconds": 0.000186,
+        "min_seconds": 0.000124959,
+        "samples_seconds": [
+          0.000186,
+          0.000124959,
+          0.000244083
+        ],
+        "std_seconds": 4.8637166796597024e-05
+      }
+    },
+    {
+      "compilation_seconds": 0.086991458,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 42633,
+        "flops": 36978,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 8584,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 128.05518885877342,
+      "horizon": 32,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 4096,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.025668833,
+      "route": "action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 0.000326625,
+        "mean_seconds": 0.00021845800000000001,
+        "median_seconds": 0.000243833,
+        "min_seconds": 8.4916e-05,
+        "samples_seconds": [
+          0.000326625,
+          0.000243833,
+          8.4916e-05
+        ],
+        "std_seconds": 0.0001002953243808836
+      }
+    },
+    {
+      "compilation_seconds": 0.112538875,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 56131,
+        "flops": 38102,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax-compiled",
+        "temporary_bytes": 11976,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "gradient_norm": 128.05518885877342,
+      "horizon": 32,
+      "logical_action_carry_bytes": 128,
+      "logical_output_bytes": 2048,
+      "logical_trajectory_bytes": 4096,
+      "logical_transition_bytes": 0,
+      "lowering_seconds": 0.101472959,
+      "route": "checkpointed-action-scan",
+      "warm_latency": {
+        "count": 3,
+        "max_seconds": 8.05e-05,
+        "mean_seconds": 6.059733333333334e-05,
+        "median_seconds": 5.1208e-05,
+        "min_seconds": 5.0084e-05,
+        "samples_seconds": [
+          8.05e-05,
+          5.0084e-05,
+          5.1208e-05
+        ],
+        "std_seconds": 1.4080789498067534e-05
+      }
+    }
+  ],
+  "scaling": {
+    "action-scan": 1.0566190251848238,
+    "checkpointed-action-scan": 0.9502000398017483,
+    "dense-associative": 1.0178119548653606
+  }
+}

@@ -3,8 +3,10 @@
 #
 
 
+import hashlib
 import json
 from dataclasses import asdict, replace
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -807,3 +809,34 @@ def test_channel_withdrawal_rollback_cas_and_signed_empty_refusal(
         3,
         4,
     )
+
+
+@pytest.mark.parametrize("mutate", [False, True])
+def test_runtime_file_digest_streaming_and_mutation_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutate: bool
+) -> None:
+    from phydrax.qualification import _runtime_distribution as runtime
+
+    root = tmp_path / "phydrax"
+    (root / "qualification").mkdir(parents=True)
+    payload = bytes(range(256)) * 4097
+    retained = root / "retained.bin"
+    retained.write_bytes(payload)
+    monkeypatch.setattr(runtime, "__file__", str(root / "qualification" / "runtime.py"))
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(modules={}))
+    original = hashlib.file_digest
+
+    def digest_then_mutate(stream: Any, algorithm: str) -> Any:
+        result = original(stream, algorithm)
+        if mutate:
+            retained.write_bytes(payload + b"changed")
+        return result
+
+    monkeypatch.setattr(hashlib, "file_digest", digest_then_mutate)
+    if mutate:
+        with pytest.raises(ValueError, match="changed during integrity verification"):
+            runtime._runtime_package_files()
+    else:
+        assert runtime._runtime_package_files() == (
+            ("retained.bin", hashlib.sha256(payload).hexdigest(), len(payload)),
+        )

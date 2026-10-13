@@ -133,6 +133,37 @@ def flatten_contact_routes(epoch: ContactKinematicsEpoch, /) -> tuple[Array, Arr
     )
 
 
+def _route_matches(
+    keys: Array, valid: Array, old_keys: Array, old_valid: Array
+) -> tuple[Array, Array, Array, Array]:
+    """Sorted ranges preserve the first valid old slot, including maximum keys."""
+    sentinel = jnp.iinfo(keys.dtype).max
+    old_order = jnp.lexsort((old_keys, ~old_valid))
+    sorted_old = jnp.where(old_valid[old_order], old_keys[old_order], sentinel)
+    old_count = jnp.sum(old_valid, dtype=jnp.int32)
+    lower = jnp.minimum(jnp.searchsorted(sorted_old, keys, side="left"), old_count)
+    upper = jnp.minimum(jnp.searchsorted(sorted_old, keys, side="right"), old_count)
+    found = valid & (upper > lower)
+    source = old_order[jnp.minimum(lower, old_keys.size - 1)]
+    new_order = jnp.lexsort((keys, ~valid))
+    sorted_new = jnp.where(valid[new_order], keys[new_order], sentinel)
+    sorted_valid = valid[new_order]
+    adjacent = (sorted_new[1:] == sorted_new[:-1]) & sorted_valid[1:] & sorted_valid[:-1]
+    duplicate_sorted = jnp.concatenate(
+        (adjacent, jnp.zeros((1,), dtype=jnp.bool_))
+    ) | jnp.concatenate((jnp.zeros((1,), dtype=jnp.bool_), adjacent))
+    duplicate_new = jnp.zeros_like(valid).at[new_order].set(duplicate_sorted[: keys.size])
+    new_count = jnp.sum(valid, dtype=jnp.int32)
+    new_lower = jnp.minimum(
+        jnp.searchsorted(sorted_new, old_keys, side="left"), new_count
+    )
+    new_upper = jnp.minimum(
+        jnp.searchsorted(sorted_new, old_keys, side="right"), new_count
+    )
+    old_continued = old_valid & (new_upper > new_lower)
+    return found, source, duplicate_new | (valid & (upper - lower > 1)), old_continued
+
+
 def remap_contact_route_state(
     previous: ContactRouteState,
     epoch: ContactKinematicsEpoch,
@@ -181,23 +212,9 @@ def remap_contact_route_state(
                 }
             ),
         )
-    equality = (
-        (keys[:, None] == previous.route_keys[None, :])
-        & valid[:, None]
-        & previous.valid[None, :]
+    found, safe_source, duplicate, old_continued = _route_matches(
+        keys, valid, previous.route_keys, previous.valid
     )
-    found = jnp.any(equality, axis=1)
-    source = jnp.argmax(equality, axis=1)
-    safe_source = jnp.clip(source, 0, max(previous.capacity - 1, 0))
-    duplicate_new = jnp.any(
-        (keys[:, None] == keys[None, :])
-        & valid[:, None]
-        & valid[None, :]
-        & ~jnp.eye(capacity, dtype=jnp.bool_),
-        axis=1,
-    )
-    duplicate_old_match = jnp.sum(equality, axis=1) > 1
-    duplicate = duplicate_new | duplicate_old_match
 
     def inherited(old: Array, default: ArrayLike) -> Array:
         selected = old[safe_source]
@@ -225,7 +242,6 @@ def remap_contact_route_state(
         previous.tangent_dimension,
         previous.closure_id,
     )
-    old_continued = jnp.any(equality, axis=0)
     continued = jnp.sum(found & valid, dtype=jnp.int32)
     created = jnp.sum((~found) & valid, dtype=jnp.int32)
     disappeared = jnp.sum(previous.valid & ~old_continued, dtype=jnp.int32)

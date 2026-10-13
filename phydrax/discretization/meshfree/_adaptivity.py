@@ -1332,12 +1332,14 @@ def prepare_adaptation_transfer(
     ``MEASURE_OBSTRUCTION``. Moments of degree ``q`` together with
     conservation additionally require ``m_new^T x^a = m_old^T x^a`` for every
     monomial of degree ``<= q`` (apply ``T x^a = x^a`` and conserve): two fill
-    quadratures generally differ already in their first moments, and the owner
-    then certifies ``INFEASIBLE`` with a left-null witness. Request moments only
-    for measures that integrate those monomials identically. Refusals are
-    returned, never repaired. ``linear_policy`` / ``conic_policy`` select the
-    owner's native correction solves (status-mode failure only); a step limit
-    too small for the correction reports ``PROVIDER_UNRESOLVED``. ``geometry``
+    quadratures generally differ already in their first moments. The owner
+    certifies ``INFEASIBLE`` only with an audited left-null witness and exact-null
+    action or independent rank/spectrum evidence; the default Krylov solve may
+    instead return ``PROVIDER_UNRESOLVED``. Request moments only for measures
+    that integrate those monomials identically. Refusals are returned, never
+    repaired. ``linear_policy`` / ``conic_policy`` select the owner's native
+    correction solves (status-mode failure only); insufficient iteration or
+    certification evidence reports ``PROVIDER_UNRESOLVED``. ``geometry``
     declares the source/target topology epochs the transfer is prepared between;
     it is required for the transfer to form an epoch transition.
     """

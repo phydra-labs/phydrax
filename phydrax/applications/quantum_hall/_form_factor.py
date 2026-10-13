@@ -101,17 +101,21 @@ def evaluate_subband_coulomb_form_factor(
     weights[-1] = 0.5 * intervals[-1]
     weights[1:-1] = 0.5 * (intervals[:-1] + intervals[1:])
     probability_weights = weights * density
-    separation = np.abs(positions[:, None] - positions[None, :])
-    factors = np.asarray(
-        tuple(
-            np.sum(
-                probability_weights[:, None]
-                * probability_weights[None, :]
-                * np.exp(-wave_number * separation)
-            )
-            for wave_number in wave_numbers
-        )
-    )
+    factors = np.empty((wave_numbers.size,), dtype=np.float64)
+    left = np.empty_like(probability_weights)
+    for momentum_index, wave_number in enumerate(wave_numbers):
+        decay = np.exp(-wave_number * intervals)
+        left[0] = probability_weights[0]
+        for index in range(1, positions.size):
+            left[index] = probability_weights[index] + decay[index - 1] * left[index - 1]
+        # The reverse carry excludes the diagonal, which belongs to the forward side.
+        right = np.float64(0.0)
+        total = np.float64(0.0)
+        for index in range(positions.size - 1, -1, -1):
+            total += probability_weights[index] * (left[index] + right)
+            if index > 0:
+                right = decay[index - 1] * (probability_weights[index] + right)
+        factors[momentum_index] = total
     zero_residual = (
         abs(float(factors[np.argmin(wave_numbers)]) - 1.0)
         if float(np.min(wave_numbers)) == 0.0

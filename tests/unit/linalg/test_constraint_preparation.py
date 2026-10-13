@@ -80,3 +80,99 @@ def test_constraint_preparation_refuses_finite_failed_native_solve() -> None:
         RuntimeError, match="block solve failed: status=.*normal_residual_norm"
     ):
         ConstraintOperatorPlan(operator).prepare()
+
+
+@pytest.mark.parametrize("shape", [(7, 3), (3, 7)])
+@pytest.mark.parametrize("complex_values", [False, True])
+def test_blocked_constraint_certification_matches_dense_reference(
+    shape: tuple[int, int], complex_values: bool
+) -> None:
+    rng = np.random.default_rng(13)
+    matrix = rng.normal(size=shape)
+    if complex_values:
+        matrix = matrix + 1j * rng.normal(size=shape)
+    rows, columns = shape
+    workspace = 2 * (3 * rows + 2 * columns) * matrix.dtype.itemsize
+    prepared = la.prepare_constraint_operator(
+        la.DenseLinearOperator(jnp.asarray(matrix)),
+        require_full_row_rank=rows <= columns,
+        materialization=la.MaterializationPolicy(max_workspace_bytes=workspace),
+    )
+    right = np.linalg.pinv(matrix)
+    projector = matrix @ right
+    evidence = prepared.evidence
+    np.testing.assert_allclose(prepared.right_inverse, right, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        evidence.generalized_right_inverse_residual_norm,
+        np.linalg.norm(projector @ matrix - matrix),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        evidence.strict_right_inverse_residual_norm,
+        np.linalg.norm(projector - np.eye(rows)),
+        atol=1e-12,
+    )
+    expected_compatibility_tolerance = (
+        1024
+        * np.finfo(matrix.real.dtype).eps
+        * max(shape)
+        * max(np.linalg.norm(projector), 1)
+    )
+    np.testing.assert_allclose(
+        evidence.compatibility_tolerance, expected_compatibility_tolerance, rtol=1e-12
+    )
+    basis = np.asarray(prepared.nullspace_basis)
+    np.testing.assert_allclose(
+        matrix @ basis, np.zeros((rows, prepared.nullity)), atol=1e-12
+    )
+    np.testing.assert_allclose(
+        basis.conj().T @ right, np.zeros((prepared.nullity, rows)), atol=1e-12
+    )
+    compatible = matrix @ np.arange(columns, dtype=np.float64)
+    np.testing.assert_allclose(
+        prepared.minimum_norm_lift(jnp.asarray(compatible)),
+        right @ compatible,
+        atol=1e-12,
+    )
+    if rows > columns:
+        with pytest.raises(ValueError, match="full-row-rank"):
+            prepared.strict_right_inverse(jnp.asarray(compatible))
+        with pytest.raises(ValueError, match="target dimension"):
+            la.prepare_constraint_operator(la.DenseLinearOperator(jnp.asarray(matrix)))
+
+
+def test_constraint_certification_refuses_single_column_workspace() -> None:
+    matrix = jnp.asarray(np.random.default_rng(23).normal(size=(7, 3)))
+    with pytest.raises(ValueError, match="cannot fit one column"):
+        la.prepare_constraint_operator(
+            la.DenseLinearOperator(matrix),
+            require_full_row_rank=False,
+            materialization=la.MaterializationPolicy(max_workspace_bytes=215),
+        )
+
+
+def test_duplicate_generalized_constraints_match_dense_minimum_norm_reference() -> None:
+    matrix = np.asarray([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
+    operator = la.DenseLinearOperator(jnp.asarray(matrix))
+    prepared = la.prepare_constraint_operator(operator, require_full_row_rank=False)
+    reference = np.linalg.pinv(matrix)
+    np.testing.assert_allclose(prepared.right_inverse, reference, atol=1e-12)
+    assert prepared.rank == 1
+    assert prepared.nullity == 3
+    assert not prepared.evidence.full_row_rank
+    assert (
+        prepared.evidence.generalized_right_inverse_residual_norm
+        <= prepared.evidence.residual_tolerance
+    )
+    residual = matrix @ np.asarray(prepared.right_inverse) - np.eye(2, dtype=np.float64)
+    np.testing.assert_allclose(matrix.T @ residual, 0.0, atol=1e-12)
+    compatible = jnp.asarray([2.0, 2.0], dtype=jnp.float64)
+    np.testing.assert_allclose(
+        prepared.minimum_norm_lift(compatible), reference @ compatible, atol=1e-12
+    )
+    assert bool(prepared.is_compatible(compatible))
+    assert not bool(prepared.is_compatible(jnp.asarray([1.0, -1.0], dtype=jnp.float64)))
+    with pytest.raises(ValueError, match="full-row-rank"):
+        prepared.strict_right_inverse(compatible)
+    with pytest.raises(ValueError, match="full row rank"):
+        la.prepare_constraint_operator(operator)

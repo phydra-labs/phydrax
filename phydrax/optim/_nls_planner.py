@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,17 +15,20 @@ from .._fingerprint import canonical_fingerprint
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from ..linalg import (
-    DenseLinearOperator,
-    DenseLU,
+    AbstractLinearOperator,
+    ArraySpace,
     DenseQR,
     DenseSVD,
+    FunctionLinearOperator,
     GeneralizedLSMR,
+    GMRES,
+    LeastSquaresProblem,
     LinearSolvePolicy,
     LinearSystem,
+    MaterializationPolicy,
     prepare as prepare_linear,
     RankPolicy,
     solve as solve_linear,
-    solve_many as solve_linear_many,
     TolerancePolicy,
 )
 from ._residual_graph import PreparedResidualGraph
@@ -47,6 +50,8 @@ class LeastSquaresRoutePolicy(StrictModule):
     iterative_tolerance: float = eqx.field(static=True)
     iterative_steps: int = eqx.field(static=True)
 
+    dense_max_bytes: int = eqx.field(static=True)
+
     def __init__(
         self,
         *,
@@ -55,6 +60,7 @@ class LeastSquaresRoutePolicy(StrictModule):
         rank_cutoff: float = 1e-10,
         iterative_tolerance: float = 1e-8,
         iterative_steps: int = 1000,
+        dense_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         dimension = int(dense_dimension)
         steps = int(iterative_steps)
@@ -63,6 +69,8 @@ class LeastSquaresRoutePolicy(StrictModule):
         )
         if dimension < 1 or steps < 1:
             raise ValueError("Route dimension and iterative steps must be positive.")
+        if dense_max_bytes < 1:
+            raise ValueError("dense_max_bytes must be positive.")
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Route tolerances must be finite and positive.")
         if values[0] > 1.0:
@@ -72,6 +80,7 @@ class LeastSquaresRoutePolicy(StrictModule):
         self.rank_cutoff = values[1]
         self.iterative_tolerance = values[2]
         self.iterative_steps = steps
+        self.dense_max_bytes = dense_max_bytes
 
 
 class LeastSquaresRoutePlan(StrictModule):
@@ -130,6 +139,10 @@ def plan_least_squares_route(
     if route == "dense-qr":
         linear_policy = LinearSolvePolicy(
             DenseQR(),
+            materialization=MaterializationPolicy(
+                max_entries=policy_.dense_dimension**2,
+                max_bytes=policy_.dense_max_bytes,
+            ),
             rank=RankPolicy(
                 relative_cutoff=policy_.rank_cutoff,
                 require_full_rank=True,
@@ -138,6 +151,10 @@ def plan_least_squares_route(
     elif route == "dense-svd":
         linear_policy = LinearSolvePolicy(
             DenseSVD(),
+            materialization=MaterializationPolicy(
+                max_entries=policy_.dense_dimension**2,
+                max_bytes=policy_.dense_max_bytes,
+            ),
             rank=RankPolicy(
                 relative_cutoff=policy_.rank_cutoff,
             ),
@@ -235,8 +252,8 @@ def prepare_schur_plan(graph: PreparedResidualGraph, /) -> SchurComplementPlan:
 
 
 def solve_schur_system(
-    normal_matrix: Any,
-    gradient: Any,
+    normal_matrix: AbstractLinearOperator,
+    gradient: Array,
     plan: SchurComplementPlan,
     /,
     *,
@@ -246,45 +263,118 @@ def solve_schur_system(
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, NonlinearPrecisionPolicy):
         raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
-    linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
+    linear_ = (
+        LinearSolvePolicy(
+            GeneralizedLSMR(),
+            tolerance=TolerancePolicy(relative=1e-10, absolute=1e-12, max_steps=1000),
+        )
+        if linear is None
+        else linear
+    )
     if not isinstance(linear_, LinearSolvePolicy):
         raise TypeError("linear must be LinearSolvePolicy or None.")
-    matrix = precision_.accumulation(normal_matrix)
-    vector = precision_.accumulation(gradient)
-    if matrix.shape != (plan.dimension, plan.dimension):
+    if not isinstance(normal_matrix, AbstractLinearOperator):
+        raise TypeError("normal_matrix must be an AbstractLinearOperator.")
+    if (
+        normal_matrix.source.size != plan.dimension
+        or normal_matrix.target.size != plan.dimension
+    ):
         raise ValueError("normal_matrix shape does not match Schur plan.")
+    vector = precision_.accumulation(gradient)
     if vector.shape != (plan.dimension,):
         raise ValueError("gradient shape does not match Schur plan.")
-    eliminated = plan.eliminated
-    retained = plan.retained
-    a = matrix[jnp.ix_(eliminated, eliminated)]
-    b = matrix[jnp.ix_(eliminated, retained)]
-    c = matrix[jnp.ix_(retained, retained)]
-    ge = vector[eliminated]
-    gr = vector[retained]
-    prepared_a = prepare_linear(
-        LinearSystem(DenseLinearOperator(a)),
-        precision_.bind_linear(linear_),
+    eliminated, retained = plan.eliminated, plan.retained
+    dtype = vector.dtype
+
+    def restriction(rows: Array, columns: Array) -> FunctionLinearOperator:
+        def action(value: Array) -> Array:
+            full = (
+                jnp.zeros((plan.dimension,), dtype=dtype)
+                .at[columns]
+                .set(value, unique_indices=True)
+            )
+            output = normal_matrix.mv(normal_matrix.source.unflatten(full))
+            return normal_matrix.target.flatten(output)[rows].astype(dtype)
+
+        def transpose(value: Array) -> Array:
+            full = (
+                jnp.zeros((plan.dimension,), dtype=dtype)
+                .at[rows]
+                .set(value, unique_indices=True)
+            )
+            output = normal_matrix.transpose_mv(normal_matrix.target.unflatten(full))
+            return normal_matrix.source.flatten(output)[columns].astype(dtype)
+
+        return FunctionLinearOperator(
+            action,
+            source=ArraySpace((columns.size,), dtype=dtype),
+            target=ArraySpace((rows.size,), dtype=dtype),
+            transpose_action=transpose,
+        )
+
+    a = restriction(eliminated, eliminated)
+    b = restriction(eliminated, retained)
+    lower = restriction(retained, eliminated)
+    c = restriction(retained, retained)
+    pivot_problem = (
+        LeastSquaresProblem(a)
+        if isinstance(linear_.method, GeneralizedLSMR)
+        else LinearSystem(a)
     )
-    a_inverse_b = solve_linear_many(prepared_a, b).value
-    a_inverse_g = solve_linear(prepared_a, ge).value
-    schur = c - jnp.conj(b.T) @ a_inverse_b
-    reduced_gradient = gr - jnp.conj(b.T) @ a_inverse_g
-    prepared_schur = prepare_linear(
-        LinearSystem(DenseLinearOperator(schur)),
-        precision_.bind_linear(linear_),
+    prepared_a = prepare_linear(pivot_problem, precision_.bind_linear(linear_))
+    a_inverse_g = solve_linear(prepared_a, vector[eliminated])
+
+    def reduced_action(value: Array) -> Array:
+        return c.mv(value) - lower.mv(solve_linear(prepared_a, b.mv(value)).value)
+
+    # Curvature is Hermitian; its exact Schur complement has the same symmetry.
+    def reduced_transpose(value: Array) -> Array:
+        return jnp.conj(reduced_action(jnp.conj(value)))
+
+    reduced = FunctionLinearOperator(
+        reduced_action,
+        source=c.source,
+        target=c.target,
+        transpose_action=reduced_transpose,
     )
-    retained_step = solve_linear(
-        prepared_schur,
+    reduced_gradient = vector[retained] - lower.mv(a_inverse_g.value)
+    reduced_policy = LinearSolvePolicy(
+        GMRES(restart=min(20, retained.size)),
+        tolerance=linear_.tolerance,
+    )
+    retained_solve = solve_linear(
+        LinearSystem(reduced),
         -reduced_gradient,
-    ).value
-    eliminated_step = solve_linear(
+        policy=precision_.bind_linear(reduced_policy),
+    )
+    eliminated_solve = solve_linear(
         prepared_a,
-        -(ge + b @ retained_step),
-    ).value
-    result = jnp.zeros((plan.dimension,), dtype=retained_step.dtype)
-    result = result.at[eliminated].set(eliminated_step)
-    return precision_.direction(result.at[retained].set(retained_step))
+        -(vector[eliminated] + b.mv(retained_solve.value)),
+    )
+    valid = (
+        a_inverse_g.successful
+        & a_inverse_g.diagnostics.converged
+        & retained_solve.successful
+        & retained_solve.diagnostics.converged
+        & eliminated_solve.successful
+        & eliminated_solve.diagnostics.converged
+    )
+    result = jnp.zeros((plan.dimension,), dtype=dtype)
+    result = result.at[eliminated].set(eliminated_solve.value)
+    result = result.at[retained].set(retained_solve.value)
+    full_residual = (
+        precision_.accumulation(
+            normal_matrix.target.flatten(
+                normal_matrix.mv(normal_matrix.source.unflatten(result))
+            )
+        )
+        + vector
+    )
+    threshold = linear_.tolerance.absolute + linear_.tolerance.relative * jnp.linalg.norm(
+        vector
+    )
+    valid = valid & (jnp.linalg.norm(full_residual) <= threshold)
+    return precision_.direction(jnp.where(valid, result, jnp.full_like(result, jnp.nan)))
 
 
 __all__ = [

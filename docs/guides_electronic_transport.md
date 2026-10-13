@@ -57,6 +57,51 @@ Hermitian conductivity and retains the f-sum residual. It never broadens the Dru
 distribution into a finite ballistic DC value and never infers a relaxation time
 from the linewidth.
 
+Frequency execution is explicit: `frequency_policy="chunked"` (the default) uses
+`frequency_workspace_bytes=72 * 1024 * 1024` and
+`frequency_chunk_size=None`. With `bytes_per_frequency =
+16 * K * bands**2 * dimension**2`, its batch size is
+`min(F, max(1, frequency_workspace_bytes // bytes_per_frequency))`.
+An explicit positive `frequency_chunk_size` overrides the budget.
+`"parallel"` evaluates all frequencies together regardless of the budget or
+chunk override. Whenever the resolved batch covers all frequencies, the chunked
+policy also calls the original parallel computation directly, without a map or
+scan wrapper. Both routes contract transition axes directly, retain resonant and
+antiresonant poles, and return the required `(frequency, Cartesian, Cartesian)`
+conductivity plus unchanged raw transition data. They do not form six-dimensional
+frequency-by-transition-by-Cartesian products. Changing batching does not change
+the physical approximation or per-frequency transition reduction schedule.
+
+`KuboResponseEvidence` records the requested `frequency_policy`, actual
+`frequency_execution`, `frequency_workspace_bytes`,
+`requested_frequency_chunk_size`, effective `frequency_chunk_size`, and
+`logical_frequency_workspace_bytes`. The latter is the conservative complex128
+logical bound `bytes_per_frequency * effective_chunk`, not compiler temporary
+bytes or process RSS; raw transition storage and required outputs are excluded.
+The minimum one-frequency batch can exceed a smaller positive budget, and explicit
+chunks and the parallel policy may also exceed it. Boolean/noninteger or
+nonpositive budgets and explicit chunks are refused even for the parallel route.
+`execution_policy_id` includes the requested budget and optional chunk separately
+from the scientific `plan_id`, which remains a fingerprint of physical inputs.
+
+The default is grounded in the quiet crossover table
+`/tmp/quiet-wave/periodic_kubo-paired.json`: at 32 frequencies the old eight-wide
+map took 0.558 ms versus 0.351 ms parallel, and at 128 it took 1.781 ms versus
+0.761 ms parallel; at 512 it took 6.464 ms versus 2.340 ms parallel.
+At the benchmark's 16 k points, 8 bands, and 3 axes, 72 MiB fits exactly 512
+frequencies, preserving parallel execution across the measured moderate range.
+Larger frequency workloads still tile under the fixed byte budget. Historical records
+`benchmarks/memory_periodic_kubo_baseline.json` and the original candidate recorded
+16,859,288 versus 803,448 compiler temporary bytes at 512 with an eight-wide chunk;
+those numbers are historical evidence, not a measurement of the new default.
+The updated candidate benchmark compares the default against explicit parallel
+execution in the same run at above-budget capacities, including larger
+compile-only cases. The memory gate is evaluated only where tiling engages.
+Below-budget equal memory is expected, not a gate failure. Its above-budget
+frequency-transition workspace is constant; full-response scratch also includes
+frequency-sized passivity checks. New compiler and quiet-timing results must be
+captured by running the benchmark.
+
 `conserved_collinear_spin_evidence` checks the supplied band-basis generator by the
 actual commutator `[diag(E), Sz]` and by Hermiticity. A consumer must call
 `require_conserved_collinear_spin` before interpreting a response as conserved

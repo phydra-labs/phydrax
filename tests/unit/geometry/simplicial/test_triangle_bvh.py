@@ -122,19 +122,62 @@ def test_triangle_bvh_scenario_1() -> None:
     )
 
 
-def test_nearest_faces_match_single_leaf_exhaustive_reference() -> None:
+def _triangle_squared_distance(point: np.ndarray, triangle: np.ndarray) -> float:
+    """Independent scalar projection via a NumPy Gram solve and edge clipping."""
+    directions = np.stack((triangle[1] - triangle[0], triangle[2] - triangle[0]))
+    coordinates = np.linalg.solve(
+        directions @ directions.T, directions @ (point - triangle[0])
+    )
+    candidates = []
+    if np.all(coordinates >= 0.0) and np.sum(coordinates) <= 1.0:
+        candidates.append(triangle[0] + coordinates @ directions)
+    for first, second in ((0, 1), (1, 2), (2, 0)):
+        edge = triangle[second] - triangle[first]
+        fraction = np.clip(
+            np.dot(point - triangle[first], edge) / np.dot(edge, edge), 0.0, 1.0
+        )
+        candidates.append(triangle[first] + fraction * edge)
+    return min(float(np.dot(point - closest, point - closest)) for closest in candidates)
+
+
+def test_nearest_faces_match_independent_triangle_reference() -> None:
     vertices, faces = _sphere()
     points = _queries(5, 30)
-
     nearest = TriangleBVH(
         TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=4)
     ).nearest_faces(points, k=2)
-    # One leaf holding every face evaluates all of them: the exhaustive route.
-    reference = TriangleBVH(
-        TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=faces.shape[0])
-    ).nearest_faces(points, k=2)
-
-    assert np.array_equal(np.asarray(nearest.items), np.asarray(reference.items))
-    np.testing.assert_allclose(
-        np.asarray(nearest.distance_squared), np.asarray(reference.distance_squared)
+    reference = np.asarray(
+        [
+            [_triangle_squared_distance(point, vertices[face]) for face in faces]
+            for point in points
+        ],
+        dtype=np.float64,
     )
+    ranked = np.sort(reference, axis=-1)[:, :2]
+    selected = np.take_along_axis(reference, np.asarray(nearest.items), axis=-1)
+    # Shared-edge projections are geometric ties; vector width can perturb their
+    # last bit. Compare independent distances, not a second BVH's near-tie order.
+    np.testing.assert_allclose(selected, ranked, atol=1.0e-12, rtol=1.0e-12)
+    np.testing.assert_allclose(
+        nearest.distance_squared, ranked, atol=1.0e-12, rtol=1.0e-12
+    )
+
+
+def test_nearest_faces_orders_exact_geometric_ties_by_original_index() -> None:
+    vertices = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ),
+        dtype=np.float64,
+    )
+    faces = np.asarray(((0, 1, 2), (3, 4, 5)), dtype=np.int32)
+    nearest = TriangleBVH(
+        TriangleMesh(vertices, faces), policy=BVHBuildPolicy(leaf_size=1)
+    ).nearest_faces(np.asarray(((0.25, 0.25, 2.0),), dtype=np.float64), k=2)
+    np.testing.assert_array_equal(nearest.items, ((0, 1),))
+    np.testing.assert_array_equal(nearest.distance_squared, ((4.0, 4.0),))

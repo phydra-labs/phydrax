@@ -171,7 +171,7 @@ def _decode_coefficient_identity_bank(
 ) -> MeshingCoefficientIdentityBank:
     import json
 
-    from .._array_archive import _validate_json_nesting, DEFAULT_ARRAY_ARCHIVE_LIMITS
+    from .._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS, validate_json_nesting
 
     if set(payload) != {"field_space_id", "rows_json"} or any(
         type(payload[name]) is not str for name in payload
@@ -184,7 +184,7 @@ def _decode_coefficient_identity_bank(
         raise ValueError(
             "Coefficient identity wire data exceeds the original manifest byte limit."
         )
-    _validate_json_nesting(text, DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_nesting)
+    validate_json_nesting(text, DEFAULT_ARRAY_ARCHIVE_LIMITS.max_manifest_nesting)
     values = json.loads(text)
     if type(values) is not list or any(
         type(row) is not list or len(row) != 3 or type(row[1]) is not list

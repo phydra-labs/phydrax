@@ -1114,8 +1114,9 @@ def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /) ->
     mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     finite = np.all(np.isfinite(points), axis=(1, 2))
     safe = np.where(finite[:, None, None], points, 0.0)
-    coincident = np.all(safe[:, :, None] == safe[:, None, :], axis=-1)
-    repeated = np.any(coincident & ~np.eye(corner_count, dtype=np.bool_), axis=(1, 2))
+    order = np.lexsort(np.moveaxis(safe, 2, 0), axis=-1)
+    ordered = np.take_along_axis(safe, order[..., None], axis=1)
+    repeated = np.any(np.all(ordered[:, 1:] == ordered[:, :-1], axis=-1), axis=1)
     centered = safe - np.mean(safe, axis=1, keepdims=True)
     following = np.roll(centered, -1, axis=1)
     edge_vectors = following - centered

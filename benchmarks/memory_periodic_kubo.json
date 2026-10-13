@@ -1,0 +1,521 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.084609875,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 1530392,
+        "flops": 478444,
+        "generated_code_bytes": 0,
+        "output_bytes": 103109,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 499992,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.2376948208014096,
+      "execution_policy_id": "88fa994661c1296347b68a421492157b687d57e926fcc4085c978111d4aaecda",
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 8,
+      "frequency_execution": "parallel",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 197514,
+      "logical_frequency_transition_workspace_bytes": 1179648,
+      "lowering_seconds": 0.038706875,
+      "maximum_relative_reference_defect": 8.662042236374904e-16,
+      "memory_comparison": "below-budget-single-tile-equality",
+      "parallel": {
+        "compilation_seconds": 0.080194292,
+        "compile_only": false,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 1530392,
+          "flops": 478444,
+          "generated_code_bytes": 0,
+          "output_bytes": 103109,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 499992,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 8,
+        "logical_frequency_transition_workspace_bytes": 1179648,
+        "lowering_seconds": 0.018386791,
+        "maximum_relative_reference_defect": 8.662042236374904e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.000269166,
+          "mean_seconds": 0.0002496523333333333,
+          "median_seconds": 0.000266958,
+          "min_seconds": 0.000212833,
+          "samples_seconds": [
+            0.000266958,
+            0.000269166,
+            0.000212833
+          ],
+          "std_seconds": 2.605080032466479e-05
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.047095167,
+      "process_peak_rss_bytes": 1403371520,
+      "requested_frequency_chunk_size": null,
+      "retained_output_bytes": 102917,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.000351375,
+        "mean_seconds": 0.000323111,
+        "median_seconds": 0.00034425,
+        "min_seconds": 0.000273708,
+        "samples_seconds": [
+          0.000351375,
+          0.000273708,
+          0.00034425
+        ],
+        "std_seconds": 3.505408880572993e-05
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.072499917,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 3151352,
+        "flops": 1620100,
+        "generated_code_bytes": 0,
+        "output_bytes": 106757,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 1286424,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.18006040714475202,
+      "execution_policy_id": "88fa994661c1296347b68a421492157b687d57e926fcc4085c978111d4aaecda",
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 32,
+      "frequency_execution": "parallel",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 188642,
+      "logical_frequency_transition_workspace_bytes": 4718592,
+      "lowering_seconds": 0.037411375,
+      "maximum_relative_reference_defect": 7.43979921229833e-16,
+      "memory_comparison": "below-budget-single-tile-equality",
+      "parallel": {
+        "compilation_seconds": 0.079658875,
+        "compile_only": false,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 3151352,
+          "flops": 1620100,
+          "generated_code_bytes": 0,
+          "output_bytes": 106757,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 1286424,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 32,
+        "logical_frequency_transition_workspace_bytes": 4718592,
+        "lowering_seconds": 0.018164833,
+        "maximum_relative_reference_defect": 7.43979921229833e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.00033875,
+          "mean_seconds": 0.000331722,
+          "median_seconds": 0.000335875,
+          "min_seconds": 0.000320541,
+          "samples_seconds": [
+            0.000335875,
+            0.00033875,
+            0.000320541
+          ],
+          "std_seconds": 7.992808309140598e-06
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.042835084,
+      "process_peak_rss_bytes": 1417527296,
+      "requested_frequency_chunk_size": null,
+      "retained_output_bytes": 106565,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.000392542,
+        "mean_seconds": 0.00035051399999999996,
+        "median_seconds": 0.000381667,
+        "min_seconds": 0.000277333,
+        "samples_seconds": [
+          0.000381667,
+          0.000392542,
+          0.000277333
+        ],
+        "std_seconds": 5.1936887835140834e-05
+      }
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.085668417,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 9642212,
+        "flops": 6186724,
+        "generated_code_bytes": 0,
+        "output_bytes": 121349,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 4442392,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.1817844008175065,
+      "execution_policy_id": "88fa994661c1296347b68a421492157b687d57e926fcc4085c978111d4aaecda",
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 128,
+      "frequency_execution": "parallel",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 188541,
+      "logical_frequency_transition_workspace_bytes": 18874368,
+      "lowering_seconds": 0.037467666,
+      "maximum_relative_reference_defect": 8.436257901681264e-16,
+      "memory_comparison": "below-budget-single-tile-equality",
+      "parallel": {
+        "compilation_seconds": 0.084363,
+        "compile_only": false,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 9642212,
+          "flops": 6186724,
+          "generated_code_bytes": 0,
+          "output_bytes": 121349,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 4442392,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 128,
+        "logical_frequency_transition_workspace_bytes": 18874368,
+        "lowering_seconds": 0.017989292,
+        "maximum_relative_reference_defect": 8.436257901681264e-16,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.000765375,
+          "mean_seconds": 0.0007503193333333333,
+          "median_seconds": 0.00075425,
+          "min_seconds": 0.000731333,
+          "samples_seconds": [
+            0.000765375,
+            0.000731333,
+            0.00075425
+          ],
+          "std_seconds": 1.417279192286716e-05
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.047038541,
+      "process_peak_rss_bytes": 1423376384,
+      "requested_frequency_chunk_size": null,
+      "retained_output_bytes": 121157,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.00097775,
+        "mean_seconds": 0.0008004723333333335,
+        "median_seconds": 0.000727167,
+        "min_seconds": 0.0006965,
+        "samples_seconds": [
+          0.00097775,
+          0.0006965,
+          0.000727167
+        ],
+        "std_seconds": 0.00012597789368597797
+      }
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.080956709,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 35827952,
+        "flops": 24499300,
+        "generated_code_bytes": 0,
+        "output_bytes": 179717,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 17006872,
+        "unavailable_reason": null
+      },
+      "dropped_antiresonant_fault_detected": true,
+      "dropped_antiresonant_relative_defect": 0.17741191610545612,
+      "execution_policy_id": "88fa994661c1296347b68a421492157b687d57e926fcc4085c978111d4aaecda",
+      "f_sum_relative_residual": 1.0017296767638365e-15,
+      "frequency_chunk_size": 512,
+      "frequency_execution": "parallel",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 188486,
+      "logical_frequency_transition_workspace_bytes": 75497472,
+      "lowering_seconds": 0.039632709,
+      "maximum_relative_reference_defect": 1.2745847491070294e-15,
+      "memory_comparison": "below-budget-single-tile-equality",
+      "parallel": {
+        "compilation_seconds": 0.091985167,
+        "compile_only": false,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 35827952,
+          "flops": 24499300,
+          "generated_code_bytes": 0,
+          "output_bytes": 179717,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 17006872,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 512,
+        "logical_frequency_transition_workspace_bytes": 75497472,
+        "lowering_seconds": 0.01753925,
+        "maximum_relative_reference_defect": 1.2745847491070294e-15,
+        "successful": true,
+        "warm": {
+          "count": 3,
+          "max_seconds": 0.003003041,
+          "mean_seconds": 0.0026576526666666667,
+          "median_seconds": 0.002625584,
+          "min_seconds": 0.002344333,
+          "samples_seconds": [
+            0.002344333,
+            0.003003041,
+            0.002625584
+          ],
+          "std_seconds": 0.0002698707800069425
+        }
+      },
+      "passive": true,
+      "preparation_seconds": 0.044735292,
+      "process_peak_rss_bytes": 1443479552,
+      "requested_frequency_chunk_size": null,
+      "retained_output_bytes": 179525,
+      "retained_plan_bytes": 26824,
+      "successful": true,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave",
+      "warm": {
+        "count": 3,
+        "max_seconds": 0.003070666,
+        "mean_seconds": 0.002765777666666667,
+        "median_seconds": 0.00277925,
+        "min_seconds": 0.002447417,
+        "samples_seconds": [
+          0.003070666,
+          0.002447417,
+          0.00277925
+        ],
+        "std_seconds": 0.0002546186126010605
+      }
+    },
+    {
+      "capacity": 2048,
+      "compilation_seconds": 0.087307459,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 39306708,
+        "flops": 25202276,
+        "generated_code_bytes": 0,
+        "output_bytes": 413189,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 17465976,
+        "unavailable_reason": null
+      },
+      "frequency_chunk_size": 512,
+      "frequency_execution": "chunked",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 188549,
+      "logical_frequency_transition_workspace_bytes": 75497472,
+      "lowering_seconds": 0.045011167,
+      "memory_comparison": "above-budget",
+      "parallel": {
+        "compilation_seconds": 0.079768417,
+        "compile_only": true,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 140447008,
+          "flops": 97695336,
+          "generated_code_bytes": 0,
+          "output_bytes": 413189,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 67485976,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 2048,
+        "logical_frequency_transition_workspace_bytes": 301989888,
+        "lowering_seconds": 0.020966584
+      },
+      "preparation_seconds": 0.044003417,
+      "process_peak_rss_bytes": 1501151232,
+      "requested_frequency_chunk_size": null,
+      "retained_plan_bytes": 26824,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave"
+    },
+    {
+      "capacity": 4096,
+      "compilation_seconds": 0.090428583,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 26824,
+        "bytes_accessed": 43038560,
+        "flops": 26183268,
+        "generated_code_bytes": 0,
+        "output_bytes": 724485,
+        "source": "jax-compiled-full-periodic-kubo-response",
+        "temporary_bytes": 17760888,
+        "unavailable_reason": null
+      },
+      "frequency_chunk_size": 512,
+      "frequency_execution": "chunked",
+      "frequency_workspace_bytes": 75497472,
+      "host_allocation_peak_bytes": 189486,
+      "logical_frequency_transition_workspace_bytes": 75497472,
+      "lowering_seconds": 0.043243958,
+      "memory_comparison": "above-budget",
+      "parallel": {
+        "compilation_seconds": 0.086646875,
+        "compile_only": true,
+        "compiler": {
+          "argument_bytes": 26824,
+          "bytes_accessed": 279903808,
+          "flops": 195292784,
+          "generated_code_bytes": 0,
+          "output_bytes": 724485,
+          "source": "jax-compiled-parallel-periodic-kubo-response",
+          "temporary_bytes": 134889752,
+          "unavailable_reason": null
+        },
+        "frequency_chunk_size": 4096,
+        "logical_frequency_transition_workspace_bytes": 603979776,
+        "lowering_seconds": 0.019627916
+      },
+      "preparation_seconds": 0.045528417,
+      "process_peak_rss_bytes": 1504559104,
+      "requested_frequency_chunk_size": null,
+      "retained_plan_bytes": 26824,
+      "timing_acceptance": "deferred-to-quiet-serialized-wave"
+    }
+  ],
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/phydrax/.venv/bin/python",
+    "-m",
+    "benchmarks.memory_periodic_kubo",
+    "--phase",
+    "candidate"
+  ],
+  "configuration": {
+    "bands": 8,
+    "compile_only_sizes": [
+      2048,
+      4096
+    ],
+    "dimension": 3,
+    "frequency_chunk_size": null,
+    "frequency_workspace_bytes": 75497472,
+    "k_count": 16,
+    "phase": "candidate",
+    "repeats": 3,
+    "sizes": [
+      8,
+      32,
+      128,
+      512
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 134889752,
+    "basis": "same-run-current-default-versus-explicit-parallel-above-budget",
+    "below_budget_capacities": [
+      8,
+      32,
+      128,
+      512
+    ],
+    "candidate_bytes": 17760888,
+    "capacity": 4096,
+    "compiler_scaling_matches": true,
+    "decision": "adopt",
+    "logical_scaling_matches": true,
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "faf7354ef598d3286d92941ca1cbf1c098e00fa88889ff9201df61b9268b04e6",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "gate",
+        "scaling"
+      ],
+      "signature": "755531dc997e77015401aa6231bc03cd11574b589018d849a5a56f70ec8fd92e"
+    },
+    "fingerprint": "acb27aa2f168e39a89a267bdb8693fbc28c676dabe40795cae6baeda5a1b6e73",
+    "source_build_fingerprint": "293ea3894ea66ecf4fca3e7a70c45af51b522308d04b31a4dbca2674eedb9954"
+  },
+  "scaling": {
+    "capacities": [
+      2048,
+      4096
+    ],
+    "compiler_fitted_exponent": 0.024156451748375104,
+    "compiler_formula": "constant transition workspace plus O(F * dimension**2) passivity/output scratch",
+    "controlling_capacity": "frequency_count",
+    "declared_compiler_exponent_upper_bound": 1.1,
+    "declared_logical_exponent": 0.0,
+    "declared_workspace_formula": "16 * min(F, max(1, budget // (16*K*bands**2*dimension**2))) * K * bands**2 * dimension**2; explicit chunk overrides budget",
+    "logical_fitted_exponent": 0.0,
+    "scope": "above-budget-capacities-only"
+  }
+}

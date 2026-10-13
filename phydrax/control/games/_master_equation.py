@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from enum import IntEnum
-from functools import lru_cache
 from itertools import product
 from math import exp, isfinite, lgamma, log
 from numbers import Integral
@@ -34,6 +33,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._strict import StrictModule
 
 
@@ -76,7 +76,7 @@ def _symbols(values: Sequence[Any], owner: str, /) -> tuple[Any, ...]:
     return symbols
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _weak_compositions(total: int, parts: int, /) -> tuple[tuple[int, ...], ...]:
     if parts == 1:
         return ((total,),)

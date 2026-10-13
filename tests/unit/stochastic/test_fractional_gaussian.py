@@ -1,10 +1,9 @@
-import hashlib
 from typing import get_args
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -141,7 +140,6 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         "davies-harte",
         "auto",
     }
-    values_digest = hashlib.sha256(bytes(jax.device_get(default.values))).hexdigest()
 
     assert default.sampling_method == explicit.sampling_method == "dense"
     assert automatic.sampling_method == "dense"
@@ -160,11 +158,29 @@ def test_dense_method_preserves_seeded_values_and_identifiers() -> None:
         == automatic.coupling_id
         == "0c2e26058e824fcf5243448ae5fa48830f165bb204a2a625ba9c46fd6c5ab92b"
     )
-    # Bytes of the pinned JAX 0.11 normal sampler: JAX 0.9 produced the same key
-    # stream and covariance factor, with six draws differing by at most 1.5e-15.
-    assert values_digest == (
-        "cb03fffda7dfa62383aa3b6f4a058d6ddc0221b96c6633800b617022530e3868"
+    # LAPACK eigenvector signs and rounding are not a cross-platform byte
+    # contract. Check the seeded replay above and the law against the analytic
+    # fractional Brownian covariance, independent of the process implementation.
+    ensemble = phx.stochastic.FractionalGaussianRealization(
+        process,
+        jr.key(61),
+        grid,
+        sample_shape=(4096,),
+        method="dense",
     )
+    samples = np.asarray(ensemble.values).reshape((4096, -1))
+    empirical = np.cov(samples, rowvar=False)
+    times = np.asarray(grid)
+    time_covariance = 0.5 * (
+        times[:, None] ** 0.7
+        + times[None, :] ** 0.7
+        - np.abs(times[:, None] - times[None, :]) ** 0.7
+    )
+    component_covariance = np.diag(np.square(np.asarray([0.5, 1.2])))
+    expected = (
+        time_covariance[:, None, :, None] * component_covariance[None, :, None, :]
+    ).reshape((18, 18))
+    assert np.linalg.norm(empirical - expected) / np.linalg.norm(expected) < 0.06
 
 
 def test_davies_harte_matches_covariance_autocovariance_and_hurst() -> None:

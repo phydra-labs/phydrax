@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from itertools import combinations, permutations, product
 from math import factorial
 from typing import assert_never, Literal, TypeAlias
@@ -11,6 +10,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._host_table_cache import host_table_cache, logical_table_bytes
 from ..typing import parse
 
 
@@ -335,7 +335,13 @@ REFERENCE_TOPOLOGIES = {
 }
 
 
-@lru_cache(maxsize=64)
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    weight=lambda value: logical_table_bytes(
+        (value.name, value.dimension, value.vertices, value.entities)
+    ),
+)
 def reference_cell_topology(
     name: str, /, *, maximum_entities: int = 1 << 20
 ) -> ReferenceCellTopology:

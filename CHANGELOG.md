@@ -3,6 +3,224 @@
 ## Unreleased
 
 ### Fixed
+- Memory-pattern auditing now uses deterministic AST findings and exact justified
+  symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
+  memory-scaling ratchet recomputes recorded ratio gates in matching environments.
+  Integrated records now include native MPC retention, grouped interior-point
+  actions, and sparse reactor preparation; missing historical baseline provenance
+  stays explicitly non-compared.
+  Budget-derived defaults now gate only same-run above-budget comparisons and
+  retain separate verified fitting-route evidence.
+  GP fitting-route coverage reports the observed compiler-byte relationship rather
+  than pinning incidental historical allocation differences.
+- Replace dense derivative intermediates in SSM invariance, ADM geometry,
+  geometric/stochastic divergence, horizontal brackets, monopole diagonals,
+  probabilistic ODE sensitivities, and SING support checks with exact bounded actions.
+  Native exact-state divergence no longer unrolls a state-sized Python loop.
+- Replace quadratic ensemble voting, cardinal-anchor equality, and polygon
+  repeated-vertex workspaces with exact sort-based counting and comparisons.
+  Preserve vote tie-breaking and duplicate-validation behavior.
+- Bound DEM multicontact and wall-feature pair workspace with byte-admitted row
+  tiles, preserving source reduction order, classifications, and plan identities.
+- Prepare reactor diffusion and fission operators directly from sparse stencils
+  and cell-local group blocks, preserving canonical coordinates and identities.
+- Apply reusable native factorization solves to conditional-independence kernels,
+  periodic lattice coordinates/image reach, and metric-orthonormal bases without
+  inverse-by-identity intermediates.
+- Admit Krawczyk dense certification workspace before Jacobian evaluation with a
+  64 MiB default ceiling and returned byte-estimate/limit evidence; scientific
+  certificate identity is unchanged.
+- Accumulate optical transport failure weight in scan carry without retaining
+  per-interaction history, preserving identity-addressed random sampling.
+- Stream array payload hashes and canonical list/hex identities, provider RECORD
+  verification, MACE fixture publication, and marker-flow artifact hashing without
+  whole-buffer copies; preserve existing digests and source stability checks.
+- Canonical array archives stream with bounded scratch and second-pass source
+  verification, preserving archive bytes, collection identities, and checkpoint
+  digests. Lifecycle NPZ exports and authorized support snapshots stage on disk.
+- NumPy resource decoding admits the complete NPZ inventory before loading members
+  individually and returns immutable resource-backed NPY views. Distributed
+  checkpoint restoration uses bounded disk-spilling spools
+  and read-only host shards.
+- Array fingerprints and prepared execution-workset identities retain canonical
+  bytes while avoiding whole-array serialization and repeated bucket scans.
+  Atomistic evaluations reuse grouped host identity leaves; runtime file hashing
+  streams content while retaining mutation refusal.
+- Dynamic host preparation caches enforce measured logical-byte ceilings and
+  deterministic LRU eviction, including FEM tables; oversized values are not
+  retained. Trainable-role metadata uses weak class keys, and Virasoro descendant
+  admission precedes partition enumeration. Scientific identities are unchanged.
+- Direct and near-Keplerian gravity, quadratic ringdown, and finite-frequency
+  Kubo response derive default tiles from validated workspace budgets. Fitting
+  problems execute the parallel action directly; larger problems retain exact
+  bounded execution, with explicit chunk overrides and recorded route identity.
+- London/PTV capacities reject booleans and fractional truncation; failed London
+  inductance solves expose native status through explicit refusals, including at
+  cable bridges. Seeded PTV trajectory identity excludes execution capacities.
+- Match operator-workspace benchmark gates by full problem capacity, keep default
+  and smoke campaigns aligned with committed baselines, and support isolated
+  smoke outputs for every memory driver on the discretization branch.
+- Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
+  and combined work evidence; bind changed runtime argument contexts before the
+  temporal scan and avoid eager adaptive numerical refresh.
+- Reject nonfinite Clarabel inputs before provider execution while preserving
+  `NONFINITE_INPUT` and independent valid batch cases.
+- Bound iterative GP covariance actions and action-whitened variational kernel
+  products by the computation workspace policy. Budget-admitted full blocks use
+  direct dense products; iterative actions retain the kernel once per resolve
+  and Gauss–Seidel gathers retained columns directly, while above-budget problems
+  keep exact tiled actions.
+- Make matrix-free RKHS correction use exact blocked functional Gram actions,
+  direct diagonals, and bounded identity-defect certification with failure evidence.
+- Reuse one native Cholesky factor for covariance precision and log-determinant;
+  robust distances use solve actions, and invalid factors cannot report valid geometry.
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
+- Prepare compatible spline incidence, traces, and local-support quadrature Gram
+  actions without global dense matrices; preserve realization and operator IDs.
+- Assemble only requested finite-element mass or stiffness tensors; paired assembly
+  continues sharing geometry evaluation.
+- Prepare sparse structured multigrid transfers and fixed-width SBP rows without
+  quadratic host temporaries; certify conservation and complete SBP identities.
+- Stream Fourier split-form pairs with linear retained storage and bounded chunks,
+  preserving interaction ordering and conservation/entropy evidence.
+- Reuse certified native banded factors for B-spline field reconstruction and
+  transpose/adjoint derivatives; bound banded LU compilation with counted loops.
+- Evaluate diffusion-factor Kolmogorov drift terms with one exact JVP rather than
+  materializing observable Jacobians.
+- Enumerate polynomial multiindices only after combinatorial admission and execute
+  product graphs with adjacent-level working storage.
+- Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
+  without changing stationarity, complex tangents, rank admission, or failure evidence.
+- Reuse prepared sparse factors across supported multi-RHS solves and evaluate
+  Cholesky determinants directly from factors, including invalid-factor evidence.
+- Bound selected-block gathering and constraint right-inverse certificates without
+  parent densification or target-space-square identity/projector buffers.
+- Path-potential refusal coverage follows the checked-signature `TypeError`
+  contract for surrogate actions; only normalized stochastic actions remain
+  eligible for free-energy calculations.
+- Float32 Airy central-series accumulation uses widened working precision to
+  prevent cancellation loss near the negative central/asymptotic boundary,
+  while preserving float32 outputs and the existing derivative contracts.
+- Sparse Gram metric rebinding and derivative-plan numeric refresh preserve
+  host-prepared route topology, canonical nonzero counts, gather layouts, and
+  cost metadata under JIT, fixing cochain metric scans and compiled sparse
+  Newton refresh without changing numerical admission or derivative guards.
+- Adaptive MAC rollout refusal coverage follows the checked method contract:
+  SBDF2 is rejected as a non-`AbstractFixedStepMethod` with otherwise valid
+  controller/policy inputs; the superseded unreachable special-case is removed.
+- Signed point transfers certify the reduced conservation operator's rank and
+  retained spectrum within native materialization bounds, restoring audited
+  quadratic-quadrature incompatibility witnesses while uncertified residuals
+  remain unresolved.
+- PIC Gauss-bound and Coulomb-energy regressions use the canonical diagonal
+  Hodge accessor after the native exterior-calculus cutover, preserving their
+  physical bounds and field-reference tolerances.
+- Cubical spline-Whitney chains integrate every strictly positive endpoint
+  interval, including roundoff-sized knot slivers; exhausted segment capacity
+  reports incomplete paths instead of discarding their nonzero contributions.
+  Prescribed-charge Cherenkov runs no longer falsely report failed deposition.
+- Reacting-flow regressions distinguish exact source-process invariants from
+  roundoff in SSPRK transport and conservative-content reconstruction introduced
+  by the coupled finite-volume runtime (`c46ef0dd5`) and balance-law source
+  adapter (`06c97db0b`). Composed endpoint checks use eight dtype epsilons with
+  zero absolute tolerance; source energy/species invariants and rollback to
+  the initialized authoritative state remain bit-exact.
+- Modified Cam-Clay preserves its elastic/plastic branch boundary under mapped
+  differentiation, preventing discarded singular plastic-root adjoints from
+  contaminating elastic reverse-mode tangents; root refusal evidence is unchanged.
+- Dynamic MAC production incompatibility coverage supplies valid wall statistics
+  to reach the scientific refusal after checked nominal argument validation.
+- Signed-Hermitian spectral roundtrip regressions use dtype-relative machine
+  precision, correctly admitting a one-ulp float32 scaling roundtrip.
+- Polynomial-image analysis budgets dense SVD column materialization and both
+  singular-mode certification actions, avoiding false resource refusal on small
+  Jacobians without changing declared memory or design-entry limits.
+- Target-matrix mesh shape energies retain small positive distortion near ideal
+  two- and three-dimensional cells, preventing cancellation-induced Armijo
+  failures after untangling while preserving convergence and validity guards.
+- Finance trade/position refusal coverage matches the checked-signature
+  diagnostics while preserving the unresolved-definition/resolved-position
+  type distinction.
+- IREE alias admission follows in-place result provenance and counts consumers
+  of allocation origins before mutation, admitting a singly owned scan tape
+  read after completion. Shared loop-carried splats, returned input aliases, and
+  barrier hazards still refuse; lattice-Boltzmann forward/VJP exports now
+  execute with numerical reference coverage.
+- Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
+  in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
+  batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
+  rematerialization remain intact; learned coupled-interface accelerator
+  gradients no longer replay zero finite-element geometry.
+- Bubble-cloud FMM coupling uses native matrix-free PCG with true-residual
+  confirmation instead of accepting Lineax CG recurrence termination; declared
+  tolerances and iteration budgets are unchanged. Prepared linear-solver identity
+  intentionally records the native PCG route.
+- SPH density-diffusion variance evidence reduces the dynamic active mask on
+  device and excludes inactive density slots, remaining valid in compiled
+  fixed-step rollouts without host tracer conversion.
+- Structural sparse differentiation handles JAX's input-independent `empty`
+  allocation primitive without claiming backend-dependent contents are
+  constants or introducing false dependencies; absent direct-collocation
+  constraint blocks and zero-sized battery collocation blocks now compile.
+- Structural control-flow tracing consumes current JAX scan input-tree metadata
+  and unified nested-program constants instead of removed parameter names and
+  closed-program wrappers. While-loop condition and body captures bind to their
+  own lanes, preserving Jacobian sparsity in battery direct collocation.
+- Meshfree moment-obstruction regression coverage requests native SVD rank
+  certification explicitly; adaptation documentation distinguishes certified
+  infeasibility from unresolved approximate-null Krylov evidence.
+- Mean-field planner refusal coverage follows the checked nominal signature's
+  diagnostic while retaining the explicit externality requirement.
+- Thermal/isothermal battery transport regression comparisons scale the
+  separator's cancellation-roundoff floor by summed electrolyte transport
+  magnitudes instead of applying a relative-only tolerance near zero.
+- Chemical-species refusal coverage expects `TypeError` for noninteger charge
+  dtypes, matching the catalog's intentional wrong-kind contract correction;
+  fractional charges remain rejected without conversion or truncation.
+- Residual-penalty source refusal coverage now matches the checked-signature
+  diagnostic introduced by nominal-boundary migration; invalid integration
+  plans still raise `TypeError` rather than bypassing typed sources.
+- Function linear operators detach duplicate numerical constants from converted
+  JAX programs while retaining them as dynamic Equinox leaves; frozen spectral
+  closures and progressive MAC controls pass the unchanged hidden-state audit,
+  and callable updates preserve forward/transpose actions and operator IDs.
+- Learned meshfree metric projections prepare bounded rank and retained-spectrum
+  certificates for native implicit cotangents, restoring weighted-projector
+  gradients and training without weakening fail-closed pseudoinverse audits.
+- Lattice-Boltzmann geometry snapshots own a detached host mask before device
+  conversion, so caller mutations cannot invalidate frozen classification.
+- Rigid-MPM detailed steps validate trial geometry before P2G and pass splat
+  routes through conditional operands, preserving recoverable failed-step
+  rollback without tracing an inactive scatter's geometry refusal.
+- The tetrahedral VOF rejection regression supplies a valid gradient object,
+  retaining geometry-first scientific validation under checked nominal signatures.
+- Identity conservative-remap regressions measure conservation against the
+  source-content roundoff scale instead of requiring exact floating-point zero.
+- Cubical spline-Whitney chains use the grid's nodal coordinates and exact
+  declared upper faces rather than cumulative-width reconstructions, preserving
+  closed-face current deposition and continuity without relaxing boundary checks.
+- Randomized moment objectives recognize independent, unbiased Monte Carlo and
+  scrambled-QMC product replicate means; deterministic or unscrambled product
+  factors still refuse unbiased losses rather than claiming an iid sampling law.
+- Gravothermal SIDM conservation regression tolerances scale extensive energy
+  balance defects by thermal energy instead of imposing an absolute unit-sized
+  roundoff threshold; physical energy diagnostics and acceptance are unchanged.
+- Taylor chains lower admitted scalar divergence in one dimension as the
+  coordinate derivative without vector-component indexing; multidimensional
+  scalar divergence remains refused. Quadrilateral field-view tests and
+  reconstruction documentation now exercise the native default point locator.
+- Dense fractional Gaussian regression coverage checks exact seeded replay and
+  independent analytic covariance instead of a platform-specific byte hash of
+  LAPACK-based samples; realization and coupling identifier pins remain intact.
+- Native LSMR and minimum-norm witness audits explicitly cast real
+  normalization and recurrence scalars to their vector dtype, preserving
+  complex Bloch seam projections under strict JAX dtype promotion.
+- Finite-element sparse assembly keeps traced DOF routes on device, allowing
+  prepared mass actions inside mixed-method coupling scans without NumPy
+  tracer conversion. Namespace and grouped-derivative refusal tests now reflect
+  the public periodic certificate and explicit-coordinate-axis contract.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
@@ -703,6 +921,22 @@
   separately configured isolated build is binary `48b55b54…`. Both binaries bind
   that recorded source/ABI identity; they are not interchangeable artifact
   identities and their differing bytes imply no performance ordering.
+- Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
+  `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
+- Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
+  explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
+- Explicit bounded target chunking for direct layer potentials, retaining parallel
+  defaults and reporting target policy and logical workspace evidence.
+- Exact byte-admitted dense, action-scan, and checkpointed causal adjoints, with
+  recurrent-NN and causal HMC policy forwarding and route evidence.
+- Explicit bounded periodic DAE regularity probe batches with ordered certificates.
+- Byte-admitted batched and low-memory reverse/checkpointed iLQR linearization
+  policies with route provenance.
+- Streaming inverse-residual certificates with bounded multi-RHS workspace,
+  all-direction rank admission, and conservative condition bounds.
+- Native certified banded and block-banded spectral/singular-value enclosures,
+  condition bounds, and rank-threshold certificates without densification, with
+  traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -3680,6 +3914,96 @@
   (`cavity.hpp`); point-set `delaunay_3d`/`regular_3d` results are unchanged.
 
 ### Changed
+- Bound exact gravity target rows and quadratic-ringdown time batches with explicit
+  chunk controls; replace dense FEL wake products with exact FFT convolution.
+- Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer
+  contour-lag accumulation, stable contact key ranges, and streamed scenario
+  assignment; evaluate only requested AAD curvature diagonals. Coulomb result
+  fingerprints may change at roundoff; physical-input identities remain unchanged.
+- Prepare London/Pearl sparse local actions and reusable curvature evidence;
+  admit dense KKT storage by bytes and dimension or use native matrix-free solves.
+  London and PTV execution policies intentionally participate in plan identity,
+  separately from physical PTV trajectory identity.
+- Bound mapped-defect differentiation and Newton workspace with Chebyshev actions
+  and Newton–Krylov, use sparse radial Jacobians, and refuse full spectra above
+  declared budgets while preserving solver and stability evidence.
+- Tile exact periodic Ewald pair/translation sums and differentiated forces/stress;
+  default Kubo to budget-derived frequency tiles with direct parallel evaluation
+  when they fit, preserving both optical poles and sum-rule evidence. Ewald
+  policies enter plan identity; Kubo execution evidence has a separate policy identity.
+- Geometry queries stream polygon validity and ray parity, reuse prepared segment
+  hierarchies and refitted triangle BVHs, and consume selected closest geometry
+  rather than full pair tables. BRep winding retains its measured dense route.
+- Interface distance metrics derive both default tiles from validated
+  `interface_workspace_bytes` (2 MiB); full-fit pairs use the dense computation
+  without tile loops, while explicit positive source/target caps remain selectable.
+- Exact graph radius/kNN candidates and line-graph endpoint joins avoid dense
+  rejection tables while preserving radius boundaries, ties, and edge order.
+  Graph queries derive source/target tiles from `query_workspace_bytes` (4 MiB),
+  using a whole-axis parallel sort when the pair workspace fits. Graph-transfer,
+  regional-processor, and geometry-architecture defaults inherit this policy;
+  budgets and optional tile fields intentionally change static model identities.
+- Balanced and unbalanced Sinkhorn default to `block_size="auto"` under a
+  validated 128 MiB `sinkhorn_workspace_bytes` policy. Full-fit cost/kernel work
+  uses the dense route; explicit integer tiles and `None` (dense) remain available.
+  Provenance records the executed tile (`None` for dense) and workspace policy.
+- Automatic non-float32 measure-aware attention admits dense scores under an
+  8 MiB `attention_workspace_bytes` budget and derives bounded source tiles above
+  it. Float32 fused and explicit dense/tile selections remain available;
+  attention wrappers and architectures inherit automatic optional tile defaults.
+- Process-memory compression uses axis slicing and local Kraus contractions
+  rather than expanded Kronecker selectors, preserving failure and leakage evidence.
+- Exact ML neighbors, KDE, and density clustering derive tiles from positive
+  `workspace_bytes` budgets (4 MiB by default); small admitted cases use one tile.
+- Spectral clustering defaults to certified matrix-free `RestartedLanczos`;
+  explicit `DenseEigh` is budget-admitted. Spectral recipe identities and
+  `ClusterDiagnostics` archive templates change to retain eigenvalue, residual,
+  and method evidence; unresolved eigenspaces report invalid/nonconverged results.
+- Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
+  prepared query hierarchies; source model and revision identities are unchanged.
+- Cut-cochain transfers use budgeted component SVD actions with one global relative
+  singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
+  outputs. Connected components retain quadratic factor storage up to the budget.
+- Prepared spline, structured transfer, Fourier split-form, and field-reconstruction
+  persistence templates use sparse/local-support representations and must be
+  recreated. Input/configuration and documented operator IDs remain unchanged;
+  Fourier certificate-derived IDs may change at roundoff.
+- Direct layer-potential plan and report identities include explicit target policy
+  and workspace metadata; recreate persistence templates with their new fields.
+- Residual-graph curvature is a deterministic factor-local operator, with
+  operator damping and matrix-free Schur/LSMR solves; dense materialization is
+  explicit and byte-admitted. Curvature persistence leaves intentionally change.
+- Structured optimization and KKT sensitivity use sparse derivative actions and
+  prepared matrix-free linearizations, with explicit bounded dense-SVD selection
+  and retained rank, condition, convergence, and refusal evidence.
+- Filter interior-point trial derivatives use selectable bounded batches, while
+  rejected trials retain value-only evaluation and accepted derivative reuse.
+- MPC compiles sparse by default; differentiable and dense-method MPC requires
+  explicit bounded dense compilation. MPC and iLQR policy identities record the
+  selected representation, route, and admission budgets.
+- MAC segmented shadowing defaults to workspace-admitted `auto`: dense SVD within
+  the existing 512 MiB ceiling, exact block-banded QR least squares above it.
+  Explicit routes retain their behavior; plan identity records policy/budget and
+  result identity/evidence records the resolved route. Banded rank admission
+  reuses certified singular lower bounds without weakening threshold certificates.
+- Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
+  qualification derivatives use owner controls and active rows while preserving
+  case parallelism and KKT certificates.
+- Structured Laplace stores diagonal or low-rank precision state and applies
+  covariance and sampling scales without dense reconstruction. Full curvature
+  remains dense; structured result archive leaves and their fingerprints change.
+- Fixed and adaptive stochastic spectral actions use bounded probe batches and
+  absolute-index keyed addressing. Historical keyed samples intentionally change;
+  samples are invariant to execution batch size and requested probe capacity.
+- Batched matrix-function `auto` uses actions; explicit `dense` execution requires
+  workspace admission. Resolvents solve RHS blocks directly, and repeated-spectrum
+  eigenspace derivatives use confluent divided differences.
+- `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
+  in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
+  Randomized SVD construction/audit sketches and default eigen start/repair draws
+  are addressed by plan identity, so their samples change with this payload.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -4642,6 +4966,13 @@
   runtime and accepted content only from a published receipt.
 
 ### Removed
+- Dense CSR `line_table` and lattice `origin_differences` retained leaves, and
+  London `hessian`, `factorization`, and `current_basis` state; preparations and
+  persisted PyTree structures use bounded actions instead, without aliases.
+- Polygon's retained `intersection_pairs` leaf and implicit unbounded `None`
+  graph-query tile selections; graph and NN operator callers use positive integers.
+- Duplicate CSR leaves in host sparse prepared state and the duplicate upper
+  Cholesky factor in nuisance plans; their persistence leaf structures change.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,

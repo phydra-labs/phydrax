@@ -1,0 +1,77 @@
+{
+  "baseline_kind": "independent-dense-pinv-oracle; not pre-edit full-plan capture",
+  "cases": [
+    {
+      "capacity": 8,
+      "host_peak_bytes": 30040,
+      "retained_bytes": 3072
+    },
+    {
+      "capacity": 16,
+      "host_peak_bytes": 96216,
+      "retained_bytes": 12288
+    },
+    {
+      "capacity": 32,
+      "host_peak_bytes": 370904,
+      "retained_bytes": 49152
+    },
+    {
+      "capacity": 64,
+      "host_peak_bytes": 1460952,
+      "retained_bytes": 196608
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "d0cc7b9ff78fa659f337e27a273299574665a9526c2db23e503480ebf0a5c6b4",
+    "evidence_schema": {
+      "fields": [
+        "capacity",
+        "host_peak_bytes",
+        "retained_bytes"
+      ],
+      "signature": "5c0036fc00015be9a96213ca4cb83109be5e90b5d209a002b9797eba357508f2"
+    },
+    "fingerprint": "9a2c56b2039cf814fc957e189b918e5889490a9d452555ec8dc1a1d6f68f096b",
+    "source_build_fingerprint": "3665b83b07425ac8e41c3a4303300bbe591c425ea448f2614358a2b7bde03719"
+  },
+  "process_peak_rss_bytes": 1429684224,
+  "retained_exponent": 2.0000000000000004
+}

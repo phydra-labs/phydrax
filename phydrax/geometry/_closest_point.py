@@ -170,26 +170,27 @@ def box_closest_point(
 
 def segment_query_evidence(
     points: Array,
-    closest_by_segment: Array,
-    segment_coordinates: Array,
-    selected_segment: Array,
-    segment_lengths: Array,
+    closest_points: Array,
+    selected_coordinate: Array,
+    selected_length: Array,
+    second_distance_squared: Array,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Certify one regular closest segment without inferring loop topology."""
+    """Certify one regular closest segment without inferring loop topology.
+
+    ``points`` and selected ``closest_points`` have shape ``(..., 2)``.
+    ``selected_coordinate`` is the clipped segment fraction in ``[0, 1]``;
+    ``selected_length`` and ``second_distance_squared`` share the leading axes.
+    The second distance is to the nearest other segment, or ``inf`` if absent.
+    Returns ``(unique, regular, margin)`` on those axes. Both flags require a
+    positive second-neighbor distance gap and an interior feature margin above
+    the point-scaled roundoff tolerance; endpoints and unresolved ties have
+    false flags and zero margin. Inputs contain only selected geometry, never a
+    complete point-by-segment projection table.
+    """
     points_ = jnp.asarray(points)
-    distance_sq = jnp.sum((points_[..., None, :] - closest_by_segment) ** 2, axis=-1)
-    sorted_distance = jnp.sort(distance_sq, axis=-1)
-    second = (
-        sorted_distance[..., 1]
-        if distance_sq.shape[-1] > 1
-        else jnp.full(distance_sq.shape[:-1], jnp.inf, dtype=distance_sq.dtype)
-    )
-    first = sorted_distance[..., 0]
-    selected_coordinate = jnp.take_along_axis(
-        segment_coordinates, selected_segment[..., None], axis=-1
-    )[..., 0]
-    selected_length = jnp.take(segment_lengths, selected_segment)
+    first = jnp.sum((points_ - closest_points) ** 2, axis=-1)
+    second = second_distance_squared
     feature_margin = (
         jnp.minimum(selected_coordinate, 1.0 - selected_coordinate) * selected_length
     )

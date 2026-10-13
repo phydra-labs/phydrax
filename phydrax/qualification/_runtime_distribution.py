@@ -120,7 +120,8 @@ def _runtime_package_files() -> tuple[tuple[str, str, int], ...]:
         if not path.is_file():
             continue
         before = path.stat()
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         after = path.stat()
         if (before.st_ino, before.st_size, before.st_mtime_ns) != (
             after.st_ino,

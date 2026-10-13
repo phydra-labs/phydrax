@@ -1,0 +1,559 @@
+{
+  "cases": [
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.0644085,
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 913474,
+        "flops": 352639,
+        "generated_code_bytes": 0,
+        "output_bytes": 30265,
+        "source": "jax-compiled-graph-query",
+        "temporary_bytes": 262224,
+        "unavailable_reason": null
+      },
+      "full_fit_comparison": {
+        "equal_temporary_bytes": true,
+        "expectation": "identical dense route; excluded from adoption gate"
+      },
+      "host_graph_output_bytes": 2048,
+      "host_graph_peak_bytes": 22342,
+      "host_join_output_bytes": 1524,
+      "host_join_peak_bytes": 20396,
+      "host_radius_query_output_bytes": 2040,
+      "host_radius_query_peak_bytes": 12442,
+      "logical_block_pair_bytes": 499712,
+      "logical_dense_pair_bytes": 278528,
+      "lowering_seconds": 0.034271166,
+      "neighbor_count": 8,
+      "output_bytes": 30209,
+      "query_workspace_bytes": 4194304,
+      "route": "dense",
+      "source_chunk_size": 128,
+      "target_chunk_size": 128,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000299291,
+        "mean_seconds": 0.0002928745,
+        "median_seconds": 0.0002928745,
+        "min_seconds": 0.000286458,
+        "samples_seconds": [
+          0.000299291,
+          0.000286458
+        ],
+        "std_seconds": 6.416499999999982e-06
+      },
+      "whole_axis": {
+        "compilation_seconds": 0.060688959,
+        "compiler": {
+          "argument_bytes": 2048,
+          "bytes_accessed": 913474,
+          "flops": 352639,
+          "generated_code_bytes": 0,
+          "output_bytes": 30265,
+          "source": "jax-compiled-whole-axis-graph-query",
+          "temporary_bytes": 262224,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.01165975,
+        "source_chunk_size": 128,
+        "target_chunk_size": 128,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.000299417,
+          "mean_seconds": 0.000290938,
+          "median_seconds": 0.000290938,
+          "min_seconds": 0.000282459,
+          "samples_seconds": [
+            0.000299417,
+            0.000282459
+          ],
+          "std_seconds": 8.479000000000011e-06
+        }
+      }
+    },
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.062508542,
+      "compiler": {
+        "argument_bytes": 4096,
+        "bytes_accessed": 3399770,
+        "flops": 1458943,
+        "generated_code_bytes": 0,
+        "output_bytes": 60473,
+        "source": "jax-compiled-graph-query",
+        "temporary_bytes": 1048656,
+        "unavailable_reason": null
+      },
+      "full_fit_comparison": {
+        "equal_temporary_bytes": true,
+        "expectation": "identical dense route; excluded from adoption gate"
+      },
+      "host_graph_output_bytes": 4096,
+      "host_graph_peak_bytes": 37872,
+      "host_join_output_bytes": 3060,
+      "host_join_peak_bytes": 37380,
+      "host_radius_query_output_bytes": 4088,
+      "host_radius_query_peak_bytes": 23194,
+      "logical_block_pair_bytes": 1949696,
+      "logical_dense_pair_bytes": 1114112,
+      "lowering_seconds": 0.028054125,
+      "neighbor_count": 8,
+      "output_bytes": 60417,
+      "query_workspace_bytes": 4194304,
+      "route": "dense",
+      "source_chunk_size": 256,
+      "target_chunk_size": 256,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000804667,
+        "mean_seconds": 0.0007640629999999999,
+        "median_seconds": 0.0007640629999999999,
+        "min_seconds": 0.000723459,
+        "samples_seconds": [
+          0.000804667,
+          0.000723459
+        ],
+        "std_seconds": 4.060400000000002e-05
+      },
+      "whole_axis": {
+        "compilation_seconds": 0.060530333,
+        "compiler": {
+          "argument_bytes": 4096,
+          "bytes_accessed": 3399770,
+          "flops": 1458943,
+          "generated_code_bytes": 0,
+          "output_bytes": 60473,
+          "source": "jax-compiled-whole-axis-graph-query",
+          "temporary_bytes": 1048656,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.010731,
+        "source_chunk_size": 256,
+        "target_chunk_size": 256,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.00072925,
+          "mean_seconds": 0.0006901665,
+          "median_seconds": 0.0006901665,
+          "min_seconds": 0.000651083,
+          "samples_seconds": [
+            0.00072925,
+            0.000651083
+          ],
+          "std_seconds": 3.9083499999999986e-05
+        }
+      }
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.069427208,
+      "compiler": {
+        "argument_bytes": 8192,
+        "bytes_accessed": 5810566,
+        "flops": 3527995,
+        "generated_code_bytes": 0,
+        "output_bytes": 120889,
+        "source": "jax-compiled-graph-query",
+        "temporary_bytes": 1813736,
+        "unavailable_reason": null
+      },
+      "full_fit_comparison": null,
+      "host_graph_output_bytes": 8192,
+      "host_graph_peak_bytes": 104636,
+      "host_join_output_bytes": 6132,
+      "host_join_peak_bytes": 108836,
+      "host_radius_query_output_bytes": 8184,
+      "host_radius_query_peak_bytes": 59794,
+      "logical_block_pair_bytes": 4181120,
+      "logical_dense_pair_bytes": 4456448,
+      "lowering_seconds": 0.047652541,
+      "neighbor_count": 8,
+      "output_bytes": 120833,
+      "query_workspace_bytes": 4194304,
+      "route": "blocked",
+      "source_chunk_size": 512,
+      "target_chunk_size": 278,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001825916,
+        "mean_seconds": 0.001790583,
+        "median_seconds": 0.001790583,
+        "min_seconds": 0.00175525,
+        "samples_seconds": [
+          0.001825916,
+          0.00175525
+        ],
+        "std_seconds": 3.5332999999999914e-05
+      },
+      "whole_axis": {
+        "compilation_seconds": 0.060192416,
+        "compiler": {
+          "argument_bytes": 8192,
+          "bytes_accessed": 13090954,
+          "flops": 6194687,
+          "generated_code_bytes": 0,
+          "output_bytes": 120889,
+          "source": "jax-compiled-whole-axis-graph-query",
+          "temporary_bytes": 4194384,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.016140875,
+        "source_chunk_size": 512,
+        "target_chunk_size": 512,
+        "warm": {
+          "count": 2,
+          "max_seconds": 0.001554917,
+          "mean_seconds": 0.001375375,
+          "median_seconds": 0.001375375,
+          "min_seconds": 0.001195833,
+          "samples_seconds": [
+            0.001554917,
+            0.001195833
+          ],
+          "std_seconds": 0.00017954199999999998
+        }
+      }
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "gate": {
+    "baseline_bytes": 67108944,
+    "candidate_bytes": 2001256,
+    "capacity": 2048,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "gate_basis": "Compile-only current default versus explicit full tile above the workspace budget; committed baseline is unchanged.",
+  "gate_cases": [
+    {
+      "capacity": 1024,
+      "default": {
+        "compilation_seconds": 0.067762375,
+        "compiler": {
+          "argument_bytes": 16384,
+          "bytes_accessed": 6132348,
+          "flops": 3552175,
+          "generated_code_bytes": 0,
+          "output_bytes": 241721,
+          "source": "jax-compiled-graph-query-current-route",
+          "temporary_bytes": 1883944,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.044092791
+      },
+      "explicit_full_tile": {
+        "compilation_seconds": 0.058176625,
+        "compiler": {
+          "argument_bytes": 16384,
+          "bytes_accessed": 51347684,
+          "flops": 26545152,
+          "generated_code_bytes": 0,
+          "output_bytes": 241721,
+          "source": "jax-compiled-graph-query-current-route",
+          "temporary_bytes": 16777296,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.024071458
+      }
+    },
+    {
+      "capacity": 2048,
+      "default": {
+        "compilation_seconds": 0.074213083,
+        "compiler": {
+          "argument_bytes": 32768,
+          "bytes_accessed": 6836373,
+          "flops": 3607003,
+          "generated_code_bytes": 0,
+          "output_bytes": 483385,
+          "source": "jax-compiled-graph-query-current-route",
+          "temporary_bytes": 2001256,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.044104708
+      },
+      "explicit_full_tile": {
+        "compilation_seconds": 0.061576542,
+        "compiler": {
+          "argument_bytes": 32768,
+          "bytes_accessed": 203358624,
+          "flops": 113907712,
+          "generated_code_bytes": 0,
+          "output_bytes": 483385,
+          "source": "jax-compiled-graph-query-current-route",
+          "temporary_bytes": 67108944,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.016603958
+      }
+    }
+  ],
+  "gate_temporary_scaling_exponent": 0.08714964645859113,
+  "host_scaling_exponent": 1.1137745264162997,
+  "identity": {
+    "benchmark_driver_fingerprint": "002d2f20566d2dff2205c56e4334523e5c612f164fda546b5493b5dfecdcedb6",
+    "evidence_fields": [
+      "cases",
+      "environment",
+      "gate"
+    ],
+    "evidence_schema_signature": "11addd81e323a7ee1edf52fd7af9ca3e8e3aad67e9143d381606bcfe6e5fce27",
+    "fingerprint": "b447ad671928a7ea5a948bbae13fa6f1db07d8d8c560cec4b177d5e3bbe630ab",
+    "source_build_fingerprint": "e502baf84bd95ef3f923d78bc5ba7968eb61f4267a7295996775137064486ff8"
+  },
+  "process_peak_rss_bytes": 1529610240,
+  "source_scan_cases": [
+    {
+      "compilation_seconds": 0.051203708,
+      "compiler": {
+        "argument_bytes": 1536,
+        "bytes_accessed": 458938,
+        "flops": 168255,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 131152,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.031061042,
+      "output_bytes": 15105,
+      "source_capacity": 128,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000172041,
+        "mean_seconds": 0.0001652495,
+        "median_seconds": 0.0001652495,
+        "min_seconds": 0.000158458,
+        "samples_seconds": [
+          0.000172041,
+          0.000158458
+        ],
+        "std_seconds": 6.791500000000004e-06
+      }
+    },
+    {
+      "compilation_seconds": 0.046822084,
+      "compiler": {
+        "argument_bytes": 2560,
+        "bytes_accessed": 856514,
+        "flops": 332351,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 262224,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.026387625,
+      "output_bytes": 15105,
+      "source_capacity": 256,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000259,
+        "mean_seconds": 0.00025264549999999997,
+        "median_seconds": 0.00025264549999999997,
+        "min_seconds": 0.000246291,
+        "samples_seconds": [
+          0.000259,
+          0.000246291
+        ],
+        "std_seconds": 6.354500000000008e-06
+      }
+    },
+    {
+      "compilation_seconds": 0.0528405,
+      "compiler": {
+        "argument_bytes": 4608,
+        "bytes_accessed": 1651666,
+        "flops": 676927,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 524368,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.026897625,
+      "output_bytes": 15105,
+      "source_capacity": 512,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000531833,
+        "mean_seconds": 0.000526125,
+        "median_seconds": 0.000526125,
+        "min_seconds": 0.000520417,
+        "samples_seconds": [
+          0.000531833,
+          0.000520417
+        ],
+        "std_seconds": 5.7079999999999935e-06
+      }
+    }
+  ],
+  "source_scan_temporary_scaling_exponent": 0.999669919220407,
+  "steady_source_scan_cases": [
+    {
+      "compilation_seconds": 0.109676459,
+      "compiler": {
+        "argument_bytes": 524800,
+        "bytes_accessed": 8362408,
+        "flops": 3609187,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 2495336,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.047572917,
+      "output_bytes": 15105,
+      "source_capacity": 65536,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.062358125,
+        "mean_seconds": 0.062192542,
+        "median_seconds": 0.062192542,
+        "min_seconds": 0.062026959,
+        "samples_seconds": [
+          0.062358125,
+          0.062026959
+        ],
+        "std_seconds": 0.0001655830000000004
+      }
+    },
+    {
+      "compilation_seconds": 0.098959875,
+      "compiler": {
+        "argument_bytes": 1049088,
+        "bytes_accessed": 10921082,
+        "flops": 4067657,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 3412584,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.043223458,
+      "output_bytes": 15105,
+      "source_capacity": 131072,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.279808791,
+        "mean_seconds": 0.277414312,
+        "median_seconds": 0.277414312,
+        "min_seconds": 0.275019833,
+        "samples_seconds": [
+          0.279808791,
+          0.275019833
+        ],
+        "std_seconds": 0.002394479000000005
+      }
+    },
+    {
+      "compilation_seconds": 0.095493125,
+      "compiler": {
+        "argument_bytes": 2097664,
+        "bytes_accessed": 15544269,
+        "flops": 5301303,
+        "generated_code_bytes": 0,
+        "output_bytes": 15161,
+        "source": "jax-compiled-fixed-target-graph-query",
+        "temporary_bytes": 2897280,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.03533525,
+      "output_bytes": 15105,
+      "source_capacity": 262144,
+      "target_capacity": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.575534458,
+        "mean_seconds": 0.574936479,
+        "median_seconds": 0.574936479,
+        "min_seconds": 0.5743385,
+        "samples_seconds": [
+          0.575534458,
+          0.5743385
+        ],
+        "std_seconds": 0.0005979790000000262
+      }
+    }
+  ],
+  "steady_source_scan_temporary_growth_factors": [
+    1.3675849665135276,
+    0.848998881785767
+  ],
+  "steady_source_scan_temporary_scaling_exponent": 0.10773251377124245,
+  "temporary_scaling_exponent": 1.395046419629252
+}

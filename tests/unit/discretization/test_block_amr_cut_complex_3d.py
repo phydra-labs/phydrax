@@ -780,3 +780,85 @@ def test_localized_moving_step_resolves_multiple_enter_exit_events() -> None:
         rtol=5.0e-6,
         atol=5.0e-7,
     )
+
+
+def test_changed_cut_cochain_transfer_matches_dense_pinv_oracle() -> None:
+    source_cut = _plane_complex(0.37, 1)
+    target_cut = _plane_complex(0.37, 3)
+    transition = phx.discretization.MultivaluedCutCellTransition(
+        source_cut, target_cut, tolerance=2.0e-8
+    )
+    source_plan = phx.discretization.CutCellCochainPlan(source_cut)
+    target_plan = phx.discretization.CutCellCochainPlan(target_cut)
+    source = source_plan.prepare()
+    target = target_plan.prepare()
+    transfer = phx.discretization.CutCellCochainTransferPlan(
+        source_plan,
+        target_plan,
+        source,
+        target,
+        cell_transition=transition,
+        tolerance=2.0e-8,
+    )
+    source_indices = [
+        np.asarray(source.active_indices(k, boundary="absolute")) for k in range(4)
+    ]
+    target_indices = [
+        np.asarray(target.active_indices(k, boundary="absolute")) for k in range(4)
+    ]
+    source_d = [
+        inc.scipy_boundary().T.toarray()[np.ix_(source_indices[k + 1], source_indices[k])]
+        for k, inc in enumerate(source.topology.incidences)
+    ]
+    target_d = [
+        inc.scipy_boundary().T.toarray()[np.ix_(target_indices[k + 1], target_indices[k])]
+        for k, inc in enumerate(target.topology.incidences)
+    ]
+    remap = transition.remap
+    cell = np.zeros(
+        (target.topology.entities(3).count, source.topology.entities(3).count),
+        dtype=np.float64,
+    )
+    routes = np.asarray(remap.target_routes, dtype=np.int32)
+    columns = np.asarray(remap.source_indices, dtype=np.int32)
+    np.add.at(
+        cell,
+        (routes, columns),
+        np.asarray(remap.intersection_measures)
+        / np.asarray(remap.source_volumes)[columns],
+    )
+    expected = [np.empty((0, 0), dtype=np.float64) for _ in range(4)]
+    expected[3] = cell[np.ix_(target_indices[3], source_indices[3])]
+    for degree in reversed(range(3)):
+        inverse = np.linalg.pinv(target_d[degree], rcond=2.0e-8)
+        source_ids = np.asarray(source.topology.entities(degree).entity_ids)[
+            source_indices[degree]
+        ]
+        target_ids = np.asarray(target.topology.entities(degree).entity_ids)[
+            target_indices[degree]
+        ]
+        geometric = (target_ids[:, None] == source_ids[None, :]).astype(np.float64)
+        expected[degree] = (
+            inverse @ expected[degree + 1] @ source_d[degree]
+            + (np.eye(target_ids.size) - inverse @ target_d[degree]) @ geometric
+        )
+    assert transfer.topology_changed
+    for degree in range(4):
+        value = np.linspace(-0.3, 0.9, source.topology.entities(degree).count)
+        oracle = np.zeros(target.topology.entities(degree).count, dtype=np.float64)
+        oracle[target_indices[degree]] = expected[degree] @ value[source_indices[degree]]
+        np.testing.assert_allclose(transfer.apply(degree, value), oracle, atol=2.0e-8)
+        dual = jnp.linspace(0.2, 0.8, target.topology.entities(degree).count)
+        np.testing.assert_allclose(
+            jnp.vdot(transfer.apply(degree, value), dual),
+            jnp.vdot(jnp.asarray(value), transfer.transpose(degree, dual)),
+            atol=2.0e-8,
+        )
+        np.testing.assert_allclose(
+            jnp.vdot(transfer.apply(degree, value), target.hodge_diagonal(degree) * dual),
+            jnp.vdot(
+                jnp.asarray(value),
+                source.hodge_diagonal(degree) * transfer.adjoint(degree, dual),
+            ),
+            atol=2.0e-8,
+        )

@@ -442,7 +442,13 @@ neighbors = phx.graph.query_neighbors(
 )
 ```
 
-The dense query remains the default. Supplying a plan is explicit because the
+The exact query defaults to budget-derived source/target tiles:
+`target_chunk_size=None`, `source_chunk_size=None`, and
+`query_workspace_bytes=4 * 1024 * 1024`. Whole-fit pair work uses one parallel
+sort without tile loops; above budget it uses exact two-axis top-k merging.
+Explicit positive integer chunks override the respective automatic extent.
+Evidence records the executed tile sizes and budget alongside the backend.
+Supplying a Morton plan is explicit because the
 crossover depends on point count, clustering, query/source ratio, device, and
 candidate capacity. `neighbors.evidence` identifies the realization and
 reports exactness, finite input, completeness, and success. Discrete selected

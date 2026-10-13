@@ -31,6 +31,8 @@ from ._batched import (
     SmallRootKernel,
 )
 from ._causal import (
+    CausalAdjointPolicy,
+    CausalAdjointRoute,
     CausalLevenbergMarquardt,
     CausalLinearizationMode,
     CausalLinearizationPolicy,
@@ -252,6 +254,8 @@ __all__ = [
     "AitkenRelaxation",
     "AndersonAcceleration",
     "AbstractRightNonlinearPreconditioner",
+    "CausalAdjointPolicy",
+    "CausalAdjointRoute",
     "Bounds",
     "CausalLevenbergMarquardt",
     "CausalLinearizationMode",

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
+import json
 from typing import Any
 
 import equinox as eqx
@@ -12,6 +14,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.solver._balance_law_checkpoint import _payload_id
 from phydrax.solver._balance_law_composition import BalanceLawCompositionPlan
 
 
@@ -990,3 +993,26 @@ def test_mhd_balance_contracts() -> None:
             transport.source_view(result.runtime_state.transport_state).cell_average
         )
     )
+
+
+def test_balance_checkpoint_payload_id_pins_legacy_canonical_bytes() -> None:
+    arrays = {"state": np.asarray([[1, 2], [3, 4]], dtype=">i4").T}
+    manifest = {"kind": "fixed"}
+    value = arrays["state"]
+    byte_id = hashlib.sha256(
+        json.dumps(value.tobytes().hex(), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    payload = {
+        "manifest": manifest,
+        "arrays": {
+            "state": {
+                "shape": list(value.shape),
+                "dtype": value.dtype.str,
+                "bytes": byte_id,
+            }
+        },
+    }
+    expected = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    assert _payload_id(manifest, arrays) == expected

@@ -959,6 +959,16 @@ only over the parameter blocks it references. Its robust normal model retains
 the radial second-order block curvature and clips only a negative radial
 eigenvalue, with the number of clipped blocks retained as evidence.
 
+`ResidualGraphLinearization.curvature` is a linear operator retaining only
+factor-local blocks, not a dense array. Use `curvature.mv(direction)` for an
+action or `phydrax.linalg.materialize(curvature, MaterializationPolicy(...))`
+for explicitly admitted dense output. Damping adds an identity operator.
+Dense QR/SVD is selected only below `LeastSquaresRoutePolicy.dense_dimension`
+and is admitted by `dense_max_bytes` (64 MiB by default); oversize dense
+requests refuse before materialization. LSMR and Schur consume operator
+actions throughout. `solve_schur_system` takes a linear operator, including
+`DenseLinearOperator` for an explicitly supplied tiny matrix.
+
 `prepare_residual_graph` fixes block shapes, factor adjacency, and elimination
 ordering. `plan_least_squares_route` selects dense QR/SVD, portable LSMR, or
 Schur execution from active dimension, rank, density, and elimination evidence;
@@ -1013,6 +1023,21 @@ address the Maratos effect. Elastic restoration has a distinct failure status.
 `mode` selects dense filter, matrix-free centered, matrix-free predictor-corrector,
 or exact sparse augmented KKT execution. The dense and matrix-free modes preserve
 their original accepted-point, restoration, and transformed-execution contracts.
+The dense filter mode batches objective/constraint values for all trial
+alphas, then checks derivatives only for value-eligible trials, in the original
+alpha order. `derivative_batch_size=1` is the low-memory default; larger
+positive integer caps explicitly trade derivative scratch for parallelism.
+The first derivative-finite admissible trial wins for every cap, including
+when an earlier trial has finite values but nonfinite derivatives. Derivative
+scratch is bounded by `O(B m n)` for cap `B`, constraint count `m`, and primal
+dimension `n`, instead of all line-search trials' Jacobians. Gradient and
+Jacobian diagnostics count the evaluated derivative lanes, including the
+accepted batch's later lanes; the initial scaling evaluation is reused.
+The matrix-free modes prepare one constraint linearization and one
+Lagrangian-gradient linearization at each outer iterate. Their JVP/VJP and
+Hessian actions are reused across Krylov products and both predictor/corrector
+right-hand sides; a changed primal point or multiplier state gets fresh
+preparation rather than a stale numerical tape.
 The sparse mode consumes a prepared `StructuredNonlinearProgram`, retains one
 bound-form slack per non-equality constraint component, and reuses one KKT
 factorization across affine predictor and centering-corrector right-hand sides.
@@ -1168,6 +1193,25 @@ topology and bound roles remain static across transformed calls.
 evidence. The fixed-active route uses only the certified active inequalities;
 the barrier route differentiates positive slack-multiplier complementarity.
 
+Their default `route="matrix-free"` prepares the KKT residual once and solves
+its Jacobian actions. Constraint multiplier recovery also uses transpose
+actions; structured derivatives use the program's sparse Jacobian plan and
+identity rows for variable bounds. `route="dense-svd"` is an explicit
+alternative, bounded by `materialization=MaterializationPolicy(...)`.
+The selected route, native `linear_diagnostics`, and matrix-free
+`regularity_evidence` are retained on the sensitivity result.
+
+Matrix-free regularity is not inferred from one finite solve. A streaming
+all-direction inverse-residual certificate proves invertibility when
+`norm(I - A B, infinity) < 1`; it retains only linear-capacity row sums.
+`condition_estimate` is then a conservative upper bound on the 2-norm
+condition, rather than the dense SVD estimate. This certificate requires
+one additional solve per KKT coordinate and may refuse uncertain or
+ill-conditioned points. Dense SVD additionally requires full numerical
+rank. Both routes return `regular=False` and NaN sensitivities for failed,
+nonconverged, singular, or uncertified solves; neither weakens the existing
+`1e12` condition threshold.
+
 !!! example
     ```python
     import jax
@@ -1215,6 +1259,9 @@ methods claims a global optimum.
 `prepare_state_design_linearization(problem, design, initial_state, *,
 args=None, linear_policy=None, component=None)` solves and independently accepts
 one physical state, then stores an immutable matrix-free residual linearization.
+One joint `PreparedLinearization` of `(state, design)` supplies the residual,
+state tangent/transpose actions, and design pullback. Repeated responses at
+that immutable point share its prepared derivative work.
 Changing the design, arguments, or realization requires a new preparation; this
 function does not run a design optimizer.
 

@@ -14,6 +14,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._strict import StrictModule
+from phydrax._validation import positive_integer
 
 from ...._model import register_artifact_value
 from ....graph import (
@@ -183,6 +184,11 @@ class RegionalGraphProcessor(StrictModule):
     deterministic, case-local K-nearest-neighbor graph. Regional quadrature
     enters every aggregation, and normalized weighted reductions keep the
     processor insensitive to a uniform rescaling of the measure.
+
+    ``target_chunk_size=None`` derives static exact-query tiles from
+    ``query_workspace_bytes=4 * 1024 * 1024``. An explicit positive,
+    non-boolean integer overrides automatic target tiling. Both controls are
+    static model metadata and participate in structure and persistence.
     """
 
     processor: GraphProcessor | RepeatedGraphProcessor
@@ -193,6 +199,7 @@ class RegionalGraphProcessor(StrictModule):
     radius: float | None = eqx.field(static=True)
     include_self: bool = eqx.field(static=True)
     target_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -207,6 +214,7 @@ class RegionalGraphProcessor(StrictModule):
         radius: float | None = None,
         include_self: bool = False,
         target_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         shared: bool = True,
         edge_dropout: float = 0.0,
         residual_scale: float = 1.0,
@@ -223,8 +231,11 @@ class RegionalGraphProcessor(StrictModule):
             raise ValueError("width and mlp_depth must be positive.")
         if radius is not None and float(radius) <= 0.0:
             raise ValueError("radius must be positive when supplied.")
-        if target_chunk_size is not None and int(target_chunk_size) <= 0:
-            raise ValueError("target_chunk_size must be positive when supplied.")
+        if target_chunk_size is not None:
+            target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
 
         if shared:
             block = _regional_block(
@@ -263,9 +274,8 @@ class RegionalGraphProcessor(StrictModule):
         self.neighbors = int(neighbors)
         self.radius = None if radius is None else float(radius)
         self.include_self = bool(include_self)
-        self.target_chunk_size = (
-            None if target_chunk_size is None else int(target_chunk_size)
-        )
+        self.target_chunk_size = target_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call__(
         self,
@@ -305,6 +315,7 @@ class RegionalGraphProcessor(StrictModule):
             radius=self.radius,
             include_self=self.include_self,
             target_chunk_size=self.target_chunk_size,
+            query_workspace_bytes=self.query_workspace_bytes,
             validate=False,
         )
         edge_mask = jnp.asarray(graph.edge_mask, dtype=jnp.bool_)

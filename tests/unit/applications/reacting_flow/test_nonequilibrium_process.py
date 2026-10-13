@@ -127,17 +127,25 @@ def _advance(*, chemistry: Any = False) -> Any:
 def test_nonequilibrium_process_scenario_1() -> None:
     system, before, result, after = _advance()
     assert bool(result.accepted)
+    # Source updates are exact; composing them with conservative-content
+    # conversion and SSPRK transport introduces dtype-sized roundoff.
+    for diagnostic in result.process_diagnostics:
+        np.testing.assert_array_equal(diagnostic.species_after, diagnostic.species_before)
+        np.testing.assert_array_equal(
+            diagnostic.total_energy_change,
+            jnp.zeros_like(diagnostic.total_energy_change),
+        )
     np.testing.assert_allclose(
         after[..., : system.species_count],
         before[..., : system.species_count],
-        rtol=_FLUX_FREE_RTOL,
+        rtol=min(_FLUX_FREE_RTOL, 8 * np.finfo(before.dtype).eps),
         atol=0.0,
     )
     assert jnp.all(after[..., system.mode_slice] > before[..., system.mode_slice])
     np.testing.assert_allclose(
         after[..., system.energy_index],
         before[..., system.energy_index],
-        rtol=_FLUX_FREE_RTOL,
+        rtol=min(_FLUX_FREE_RTOL, 8 * np.finfo(before.dtype).eps),
         atol=0.0,
     )
     assert jnp.all(system.mode_temperatures(after) > system.mode_temperatures(before))
@@ -152,10 +160,15 @@ def test_nonequilibrium_process_scenario_1() -> None:
         rtol=2.0e-6,
         atol=2.0e-6,
     )
+    for diagnostic in result.process_diagnostics:
+        np.testing.assert_array_equal(
+            diagnostic.total_energy_change,
+            jnp.zeros_like(diagnostic.total_energy_change),
+        )
     np.testing.assert_allclose(
         after[..., system.energy_index],
         before[..., system.energy_index],
-        rtol=_FLUX_FREE_RTOL,
+        rtol=min(_FLUX_FREE_RTOL, 8 * np.finfo(before.dtype).eps),
         atol=0.0,
     )
 

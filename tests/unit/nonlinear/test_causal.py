@@ -232,7 +232,12 @@ def test_causal_solver_supports_pytree_states_and_fixed_block_linearization() ->
     assert result.states["memory"].shape == (problem.num_steps,)
 
 
-def test_nonconverged_causal_result_is_observable_and_not_differentiable() -> None:
+@pytest.mark.parametrize(
+    "route", ["dense-associative", "action-scan", "checkpointed-action-scan"]
+)
+def test_nonconverged_causal_result_is_observable_and_not_differentiable(
+    route: nl.CausalAdjointRoute,
+) -> None:
     drivers = jnp.linspace(-0.2, 0.3, 8)
 
     def objective(parameter: Any) -> Any:
@@ -244,6 +249,7 @@ def test_nonconverged_causal_result_is_observable_and_not_differentiable() -> No
                 parameters=parameter,
             ),
             method=nl.CausalNewton(),
+            adjoint=nl.CausalAdjointPolicy(route),
             termination=nl.NonlinearTermination(
                 absolute_residual=0.0,
                 relative_residual=0.0,
@@ -260,6 +266,7 @@ def test_nonconverged_causal_result_is_observable_and_not_differentiable() -> No
             parameters=jnp.asarray(0.7),
         ),
         method=nl.CausalNewton(),
+        adjoint=nl.CausalAdjointPolicy(route),
         termination=nl.NonlinearTermination(
             absolute_residual=0.0,
             relative_residual=0.0,

@@ -788,6 +788,9 @@ def prepare_finite_element_field_reconstruction(
     manifold charts; first physical derivatives use the chart's tangent map.
     Dimension-qualified simplices use the same source-proven affine support
     path as native interval, triangle and tetrahedron cells.
+    Quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
+    Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial pieces of the element
+    degree on affine cells and smooth pieces otherwise.
     """
     from ...geometry import CompiledGeometry
 

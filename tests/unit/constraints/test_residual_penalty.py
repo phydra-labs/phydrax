@@ -265,8 +265,7 @@ def test_residual_penalty_source_validation() -> None:
     target = phx.integration.mean_over(condition.on)
     plan = phx.integration.MonteCarloPlan(8)
     with pytest.raises(
-        TypeError,
-        match="argument 'source': expected PerStepIntegration; got MonteCarloPlan",
+        TypeError, match="argument 'source': expected .*got MonteCarloPlan"
     ):
         # ty: ignore[invalid-argument-type]
         ResidualPenalty(condition, plan)

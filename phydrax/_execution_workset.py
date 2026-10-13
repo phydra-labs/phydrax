@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -27,7 +28,7 @@ from ._execution_runtime import (
     partition_execution_group_specs,
 )
 from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
-from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._fingerprint import array_tree_fingerprint, canonical_fingerprint, canonical_json
 from ._identity import NumericRevision
 from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
@@ -168,6 +169,36 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         return PreparedExecutionWorksets(self)
 
 
+def _prepared_identity(
+    plan_id: str,
+    signatures: Sequence[PoolExecutionSignature],
+    indices: np.ndarray,
+    valid: np.ndarray,
+    /,
+) -> str:
+    """Stream the historical sorted canonical JSON without expanding all rows."""
+    digest = hashlib.sha256()
+    digest.update(b'{"bucket_signatures":[')
+    for index, signature in enumerate(signatures):
+        if index:
+            digest.update(b",")
+        digest.update(canonical_json(signature.signature_id).encode("ascii"))
+    digest.update(b'],"item_indices":[')
+    for index, row in enumerate(indices):
+        if index:
+            digest.update(b",")
+        digest.update(canonical_json([int(value) for value in row]).encode("ascii"))
+    digest.update(b'],"kind":"prepared-fixed-shape-execution-worksets","plan":')
+    digest.update(canonical_json(plan_id).encode("ascii"))
+    digest.update(b',"valid_mask":[')
+    for index, row in enumerate(valid):
+        if index:
+            digest.update(b",")
+        digest.update(canonical_json([bool(value) for value in row]).encode("ascii"))
+    digest.update(b"]}")
+    return digest.hexdigest()
+
+
 class PreparedExecutionWorksets(StrictModule, NonTrainableState):
     """Fixed-shape homogeneous buckets and their reversible item permutation."""
 
@@ -188,6 +219,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
             grouped.setdefault(signature.signature_id, []).append(item)
             representatives.setdefault(signature.signature_id, signature)
         bucket_rows: list[list[int]] = []
+        active_counts: list[int] = []
         bucket_signatures: list[PoolExecutionSignature] = []
         for signature_id in sorted(grouped):
             items = grouped[signature_id]
@@ -197,20 +229,12 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
                     active + [active[0]] * (plan.bucket_capacity - len(active))
                 )
                 bucket_signatures.append(representatives[signature_id])
+                active_counts.append(len(active))
         indices = np.asarray(bucket_rows, dtype=np.int32)
         valid = np.zeros_like(indices, dtype=np.bool_)
         item_bucket = np.empty((plan.item_count,), dtype=np.int32)
         item_slot = np.empty((plan.item_count,), dtype=np.int32)
-        for bucket, signature in enumerate(bucket_signatures):
-            active_count = min(
-                plan.bucket_capacity,
-                len(grouped[signature.signature_id])
-                - sum(
-                    plan.bucket_capacity
-                    for earlier in bucket_signatures[:bucket]
-                    if earlier.signature_id == signature.signature_id
-                ),
-            )
+        for bucket, active_count in enumerate(active_counts):
             valid[bucket, :active_count] = True
             for slot in range(active_count):
                 item = int(indices[bucket, slot])
@@ -224,14 +248,8 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         self.bucket_rng_indices = jnp.asarray(rng_indices, dtype=jnp.uint32)
         self.item_bucket = jnp.asarray(item_bucket)
         self.item_slot = jnp.asarray(item_slot)
-        self.prepared_id = canonical_fingerprint(
-            {
-                "kind": "prepared-fixed-shape-execution-worksets",
-                "plan": plan.plan_id,
-                "bucket_signatures": [value.signature_id for value in bucket_signatures],
-                "item_indices": indices.tolist(),
-                "valid_mask": valid.tolist(),
-            }
+        self.prepared_id = _prepared_identity(
+            plan.plan_id, bucket_signatures, indices, valid
         )
 
     @property

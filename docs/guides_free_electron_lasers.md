@@ -125,8 +125,13 @@ shot-noise loading.
 causal wake potential of the slice charges `q_s = I_s Δζ/c` (half self term)
 per declared structure length becomes a constant energy-loss rate along the
 lattice, and the removed power appears as `wake_loss` in the ledger. Slices
-must be uniformly spaced. Space charge is evaluated from the current particles
-every step by the time-dependent plan through `FELSpaceCharge` (below); the
+must be uniformly spaced.
+The potential uses an exact FFT convolution of the charges with the `2S−1`
+sampled signed-lag kernel, retaining the `S−1:2S−1` causal slice and subtracting
+half of `W(0)q_s`. Kernel and transform workspace scale linearly with the slice
+count, rather than storing an `S×S` wake matrix.
+Space charge is evaluated from the current particles every step by the
+time-dependent plan through `FELSpaceCharge` (below); the
 time-independent `FELPlan` does not apply it (a uniform, infinitely long beam
 is the periodic time-dependent window, which models the intra-slice part).
 

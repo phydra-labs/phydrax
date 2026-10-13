@@ -16,6 +16,12 @@ from phydrax.discretization.meshfree._transfer import (
     PointTransferStatus,
     PreparedPointTransfer,
 )
+from phydrax.linalg import (
+    FailurePolicy,
+    LinearSolvePolicy,
+    LSMR,
+    MaterializationPolicy,
+)
 from phydrax.sparse import EdgeRelation, RowRelation
 
 
@@ -64,6 +70,7 @@ def _joint_line(
     request: PointTransferRequest,
     scale: float = 1.0,
     quadrature: Callable[[int], tuple[np.ndarray, np.ndarray]] = _cells,
+    linear_policy: LinearSolvePolicy | None = None,
 ) -> PreparedPointTransfer:
     x, old = quadrature(sources)
     y, new = quadrature(targets)
@@ -76,6 +83,7 @@ def _joint_line(
         target_id="line-new",
         request=request,
         offsets=(x[None, :] - y[:, None]).reshape(-1, 1),
+        linear_policy=linear_policy,
     ).prepare()
 
 
@@ -295,8 +303,27 @@ def test_quadratic_exactness_needs_quadratures_that_agree_on_quadratics() -> Non
     assert evidence.status is PointTransferStatus.INFEASIBLE
     assert evidence.witness_kind == "left-null"
     assert abs(evidence.obstruction_defect) < 1e-14
+    assert evidence.witness_residual < 1e-10
+    assert abs(evidence.witness_margin) > 1e-5
+    assert route.transfer is None
     linear = _joint_line(6, 5, request=PointTransferRequest("joint", moment_degree=1))
     assert linear.admitted and linear.evidence.moments_exact
+
+
+def test_uncertified_quadratic_incompatibility_remains_unresolved() -> None:
+    route = _joint_line(
+        6,
+        5,
+        request=PointTransferRequest("joint", moment_degree=2),
+        linear_policy=LinearSolvePolicy(
+            LSMR(),
+            materialization=MaterializationPolicy(max_entries=1),
+            failure=FailurePolicy("status"),
+        ),
+    )
+    assert route.evidence.status is PointTransferStatus.PROVIDER_UNRESOLVED
+    assert route.evidence.witness_kind == "none"
+    assert route.transfer is None
 
 
 def _signed_quadratic(

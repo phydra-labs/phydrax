@@ -3,6 +3,8 @@
 #
 
 
+import base64
+import hashlib
 from typing import Any
 
 import jax
@@ -21,6 +23,7 @@ from phydrax.lifecycle._repository import (
     POSIXRepositoryPolicy,
 )
 from phydrax.solver._dark_sector_epoch_runtime import (
+    _array_record,
     admit_dark_sector_work,
     DarkSectorEpochPlan,
     DarkSectorRunCoordinator,
@@ -266,3 +269,15 @@ def test_expired_owner_can_recover_staged_slot_before_tip(tmp_path: Any) -> None
     )
     assert recovered.tip.epoch_sequence == 0
     assert recovered.manifest.commit_owner_id == "worker-a"
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128, np.bool_, ">f8"])
+def test_checkpoint_array_record_digest_matches_canonical_bytes(dtype: np.dtype) -> None:
+    value = np.arange(12).reshape(3, 4).astype(dtype)[::-1, ::2]
+    record = _array_record(value)
+    canonical = np.ascontiguousarray(value.astype(value.dtype.newbyteorder("<")))
+    payload = canonical.tobytes(order="C")
+    assert record["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert record["base64"] == base64.b64encode(payload).decode("ascii")
+    assert record["shape"] == list(canonical.shape)
+    assert record["dtype"] == canonical.dtype.str

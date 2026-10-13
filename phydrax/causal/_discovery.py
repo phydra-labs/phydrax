@@ -18,6 +18,14 @@ from jax import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare,
+    solve,
+)
 from ..typing import PRNGKey
 from ._core import CausalDataset, CausalSchema, VariableObservability, VariableScale
 from ._graph import (
@@ -389,12 +397,19 @@ class KernelConditionalIndependenceTest(AbstractConditionalIndependenceTest):
         centering = np.eye(count) - np.ones((count, count)) / count
         if conditioned:
             z_kernel = _rbf_kernel(centered[:, 2:], self.bandwidth)
-            residual = np.eye(count) - z_kernel @ np.linalg.solve(
-                z_kernel + self.ridge * np.eye(count),
-                np.eye(count),
+            regularized = z_kernel.copy()
+            regularized.flat[:: count + 1] += self.ridge
+            prepared = prepare(
+                LinearSystem(DenseLinearOperator(regularized)),
+                LinearSolvePolicy(DenseLU()),
             )
-            x_kernel = residual @ x_kernel @ residual.T
-            y_kernel = residual @ y_kernel @ residual.T
+
+            def residualize(kernel: np.ndarray) -> np.ndarray:
+                left = kernel - z_kernel @ np.asarray(solve(prepared, kernel).value)
+                return left - np.asarray(solve(prepared, left.T).value).T @ z_kernel.T
+
+            x_kernel = residualize(x_kernel)
+            y_kernel = residualize(y_kernel)
         x_kernel = centering @ x_kernel @ centering
         y_kernel = centering @ y_kernel @ centering
         statistic = float(np.sum(x_kernel * y_kernel) / (count * count))

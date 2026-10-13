@@ -16,6 +16,9 @@ from phydrax.applications.incompressible_flow._production import (
     PreparedMACDynamicExplicitMethod,
     StructuredMACProductionPlan,
 )
+from phydrax.applications.incompressible_flow._statistics import (
+    MACPlaneWallStatisticsPlan,
+)
 from phydrax.equations._dynamic_les import (
     AdditiveDenominatorRegularization,
     AllowSignedBackscatter,
@@ -413,23 +416,23 @@ def test_mac_dynamic_explicit_method_commits_only_successful_outer_step() -> Non
         state.continuation_state.averaged_numerator,
     )
     _, wall_operators, _ = _grid(
-        counts=(4, 4, 4),
-        axis_specs=(
-            phx.discretization.UniformCellAxisSpec(4, periodic=True),
-            phx.discretization.UniformCellAxisSpec(4),
-            phx.discretization.UniformCellAxisSpec(4, periodic=True),
-        ),
+        axis_specs=tuple(
+            phx.discretization.UniformCellAxisSpec(4, periodic=axis != 2)
+            for axis in range(3)
+        )
     )
-    wall_statistics = phx.applications.incompressible_flow.MACPlaneWallStatisticsPlan(
+    statistics = MACPlaneWallStatisticsPlan(
         wall_operators,
         density=1.0,
         kinematic_viscosity=0.01,
+        wall_normal_axis=2,
+        streamwise_axis=0,
     )
     with pytest.raises(ValueError, match="scientifically incompatible"):
         StructuredMACProductionPlan(
             method,
             dynamics,
-            wall_statistics,
+            statistics,
             start_time=0.0,
             end_time=1.0e-6,
             step_size=1.0e-6,

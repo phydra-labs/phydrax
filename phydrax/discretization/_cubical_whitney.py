@@ -357,7 +357,8 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
                 jnp.min(jnp.stack(tuple(crossings), axis=-1), axis=-1), 1.0
             )
             result = result.at[:, slot, 0].set(time).at[:, slot, 1].set(stop)
-            mask = mask.at[:, slot].set(stop > time + epsilon)
+            # A positive endpoint sliver still carries a nonzero chain contribution.
+            mask = mask.at[:, slot].set(stop > time)
             return stop, result, mask
 
         time, intervals, valid = jax.lax.fori_loop(
@@ -366,7 +367,7 @@ class CubicalSplineWhitneyKernel(AbstractChainIntegrationKernel):
             step,
             (jnp.zeros((start.shape[0],), dtype=start.dtype), intervals, valid),
         )
-        return intervals, valid, time < 1.0 - epsilon
+        return intervals, valid, time < 1.0
 
     def _routes(
         self, start: Array, end: Array, degree: int, /

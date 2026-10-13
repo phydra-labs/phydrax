@@ -1756,7 +1756,7 @@ def _fgmres_raw(
                 sines,
                 reduced_rhs,
                 starting_iterations,
-                jnp.asarray(True),
+                cycle_executing if fixed_trip else jnp.asarray(True),
                 jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
                 previous_best,
                 previous_stagnant,
@@ -2035,95 +2035,105 @@ def _fgmres_raw(
                 )
             else:
                 final_inner = jax.lax.while_loop(inner_condition, inner_body, inner_state)
-            (
-                basis,
-                preconditioned_basis,
-                hessenberg,
-                _,
-                _,
-                reduced_rhs,
-                final_iterations,
-                _,
-                inner_breakdown,
-                inner_best,
-                inner_stagnant,
-                inner_iteration_state,
-            ) = final_inner
-            update_basis = basis[:-1] if identity_preconditioner else preconditioned_basis
-            cycle_steps = final_iterations - starting_iterations
-            coefficients = reduced_solve(
-                hessenberg,
-                reduced_rhs,
-                cycle_steps,
-            )
-            candidate = cycle_base + jnp.sum(
-                coefficients[:, None] * update_basis,
-                axis=0,
-            )
-            candidate_residual = rhs - action(
-                _gated_input(cycle_executing, candidate, initial)
-            )
-            candidate_norm = _norm(candidate_residual, inner)
-            finite_candidate = (
-                jnp.isfinite(candidate_norm)
-                & jnp.all(jnp.isfinite(candidate))
-                & jnp.all(jnp.isfinite(coefficients))
-            )
-            converged = candidate_norm <= threshold
-            next_best = jnp.minimum(inner_best, candidate_norm)
-            next_stagnant = inner_stagnant
-            stagnated = next_stagnant >= stagnation_iterations
-            # A near-invariant Krylov subspace that still reduced the true
-            # residual is restarted from the new residual. Only an invariant
-            # direction without true-residual progress is a genuine breakdown.
-            progressing_restart = (
-                inner_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN)
-            ) & (
-                candidate_norm
-                < cycle_norm * (1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps))
-            )
-            final_breakdown = jnp.where(
-                finite_candidate,
-                jnp.where(
-                    converged,
-                    int(KrylovBreakdownStatus.HAPPY),
+
+            def finish_cycle(finished_inner: _ArnoldiCarry) -> _FGMRESCycleCarry:
+                (
+                    basis,
+                    preconditioned_basis,
+                    hessenberg,
+                    _,
+                    _,
+                    reduced_rhs,
+                    final_iterations,
+                    _,
+                    inner_breakdown,
+                    inner_best,
+                    inner_stagnant,
+                    inner_iteration_state,
+                ) = finished_inner
+                update_basis = (
+                    basis[:-1] if identity_preconditioner else preconditioned_basis
+                )
+                cycle_steps = final_iterations - starting_iterations
+                coefficients = reduced_solve(
+                    hessenberg,
+                    reduced_rhs,
+                    cycle_steps,
+                )
+                candidate = cycle_base + jnp.sum(
+                    coefficients[:, None] * update_basis,
+                    axis=0,
+                )
+                candidate_residual = rhs - action(
+                    _gated_input(cycle_executing, candidate, initial)
+                )
+                candidate_norm = _norm(candidate_residual, inner)
+                finite_candidate = (
+                    jnp.isfinite(candidate_norm)
+                    & jnp.all(jnp.isfinite(candidate))
+                    & jnp.all(jnp.isfinite(coefficients))
+                )
+                converged = candidate_norm <= threshold
+                next_best = jnp.minimum(inner_best, candidate_norm)
+                next_stagnant = inner_stagnant
+                stagnated = next_stagnant >= stagnation_iterations
+                # A near-invariant Krylov subspace that still reduced the true
+                # residual is restarted from the new residual. Only an invariant
+                # direction without true-residual progress is a genuine breakdown.
+                progressing_restart = (
+                    inner_breakdown == int(KrylovBreakdownStatus.NEAR_BREAKDOWN)
+                ) & (
+                    candidate_norm
+                    < cycle_norm * (1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps))
+                )
+                final_breakdown = jnp.where(
+                    finite_candidate,
                     jnp.where(
-                        (inner_breakdown != int(KrylovBreakdownStatus.NONE))
-                        & (inner_breakdown != int(KrylovBreakdownStatus.HAPPY))
-                        & ~progressing_restart,
-                        inner_breakdown,
+                        converged,
+                        int(KrylovBreakdownStatus.HAPPY),
                         jnp.where(
-                            stagnated,
-                            int(KrylovBreakdownStatus.STAGNATION),
-                            int(KrylovBreakdownStatus.NONE),
+                            (inner_breakdown != int(KrylovBreakdownStatus.NONE))
+                            & (inner_breakdown != int(KrylovBreakdownStatus.HAPPY))
+                            & ~progressing_restart,
+                            inner_breakdown,
+                            jnp.where(
+                                stagnated,
+                                int(KrylovBreakdownStatus.STAGNATION),
+                                int(KrylovBreakdownStatus.NONE),
+                            ),
                         ),
                     ),
-                ),
-                int(KrylovBreakdownStatus.NONFINITE_ACTION),
-            ).astype(jnp.int32)
-            blocking_breakdown = (final_breakdown != int(KrylovBreakdownStatus.NONE)) & (
-                final_breakdown != int(KrylovBreakdownStatus.HAPPY)
-            )
-            next_active = (
-                finite_candidate
-                & ~converged
-                & ~blocking_breakdown
-                & (final_iterations < step_limit)
-                & (final_iterations < max_steps)
-                & ~_iteration_stop(inner_iteration_state)
-            )
-            return (
-                candidate,
-                candidate_residual,
-                candidate_norm,
-                final_iterations,
-                final_breakdown,
-                next_best,
-                next_stagnant,
-                next_active,
-                previous_cycles + 1,
-                inner_iteration_state,
-            )
+                    int(KrylovBreakdownStatus.NONFINITE_ACTION),
+                ).astype(jnp.int32)
+                blocking_breakdown = (
+                    final_breakdown != int(KrylovBreakdownStatus.NONE)
+                ) & (final_breakdown != int(KrylovBreakdownStatus.HAPPY))
+                next_active = (
+                    finite_candidate
+                    & ~converged
+                    & ~blocking_breakdown
+                    & (final_iterations < step_limit)
+                    & (final_iterations < max_steps)
+                    & ~_iteration_stop(inner_iteration_state)
+                )
+                return (
+                    candidate,
+                    candidate_residual,
+                    candidate_norm,
+                    final_iterations,
+                    final_breakdown,
+                    next_best,
+                    next_stagnant,
+                    next_active,
+                    previous_cycles + 1,
+                    inner_iteration_state,
+                )
+
+            if fixed_trip:
+                return jax.lax.cond(
+                    cycle_executing, finish_cycle, lambda _: operand, final_inner
+                )
+            return finish_cycle(final_inner)
 
         def execute_lanes(operand: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
             executed = execute_cycle(operand)
@@ -2133,13 +2143,17 @@ def _fgmres_raw(
                 operand,
             )
 
-        # The cond nests the checkpointed Arnoldi scan, so its predicate must
-        # stay unbatched. A batched predicate turns the cond into a select whose
-        # reverse mode rematerializes the scan on zero-filled residuals for
-        # gated-off lanes, including the operator's closure constants. The
-        # cycle instead runs while any lane executes, as a select-converted cond
-        # would, and gated-off lanes keep their carry. Unbatched, the cond is
-        # unchanged and skips every cycle after the solve stops.
+        if fixed_trip:
+            # Keep the checkpointed scan under a scalar branch when vmapped.
+            # A per-lane outer cond pads inactive transpose residuals with zeros,
+            # corrupting fixed operator operands during inner-step replay.
+            # Per-lane activity still gates Arnoldi work and the final update.
+            return jax.lax.cond(
+                eqxi.unvmap_any(cycle_executing),
+                execute_cycle,
+                lambda operand: operand,
+                state,
+            )
         return jax.lax.cond(
             eqxi.unvmap_any(cycle_executing),
             execute_lanes,

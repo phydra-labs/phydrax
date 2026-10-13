@@ -308,8 +308,32 @@ class HardVotingModel(AbstractFittedModel):
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         predictions = _call_members(self.ensemble.members, x, key)
-        counts = jnp.sum(predictions[:, None] == predictions[None, :], axis=1)
-        winners = jnp.argmax(counts, axis=0)
+        order = jnp.argsort(predictions, axis=0, stable=True)
+        ordered = jnp.take_along_axis(predictions, order, axis=0)
+        positions = jnp.broadcast_to(
+            jnp.arange(predictions.shape[0], dtype=jnp.int32).reshape(
+                (-1,) + (1,) * (predictions.ndim - 1)
+            ),
+            predictions.shape,
+        )
+        equal = ordered[1:] == ordered[:-1]
+        starts = jnp.concatenate((jnp.ones_like(ordered[:1], dtype=jnp.bool_), ~equal))
+        ends = jnp.concatenate((~equal, jnp.ones_like(ordered[:1], dtype=jnp.bool_)))
+        first = jax.lax.associative_scan(
+            jnp.maximum, jnp.where(starts, positions, 0), axis=0
+        )
+        last = jax.lax.associative_scan(
+            jnp.minimum,
+            jnp.where(ends, positions, predictions.shape[0] - 1),
+            axis=0,
+            reverse=True,
+        )
+        # NaNs have zero votes, including their own, in the equality contract.
+        counts = jnp.where(ordered == ordered, last - first + 1, 0)
+        winners = jnp.min(
+            jnp.where(counts == jnp.max(counts, axis=0), order, predictions.shape[0]),
+            axis=0,
+        )
         voted = jnp.take_along_axis(predictions, winners[None, ...], axis=0)[0]
         return jax.lax.stop_gradient(voted)
 

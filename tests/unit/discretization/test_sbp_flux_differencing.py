@@ -176,3 +176,29 @@ def test_sbp_contracts() -> None:
     assert jnp.all(jnp.isfinite(pushforward(tangent)))
     assert jnp.all(jnp.isfinite(pullback(tangent)[0]))
     assert jnp.all(jnp.isfinite(residual))
+
+
+@pytest.mark.parametrize("order", [2, 4, 6, 8])
+@pytest.mark.parametrize("count", [17, 34])
+def test_periodic_sbp_dense_moment_oracle(order: Any, count: int) -> None:
+    prepared = phx.discretization.SBPDerivativePlan(
+        _grid(count), "x", interior_order=order
+    ).prepare()
+    offsets = np.arange(-order // 2, order // 2 + 1, dtype=np.float64)
+    target = np.zeros(order + 1, dtype=np.float64)
+    target[1] = 1.0
+    coefficients = np.linalg.solve(
+        offsets[None, :] ** np.arange(order + 1)[:, None], target
+    )
+    expected = np.zeros((count, count), dtype=np.float64)
+    for row in range(count):
+        expected[row, (row + offsets.astype(np.int32)) % count] = count * coefficients
+    np.testing.assert_allclose(prepared.operator._materialize(), expected, atol=2e-12)
+    np.testing.assert_allclose(prepared.axis_norm_weights, 1.0 / count, atol=1e-15)
+    assert prepared.stability_report.passed
+    stencil = prepared.operator.stencil_set.stencil
+    assert stencil.indices.shape == (count, order + 1)
+    assert (
+        stencil.weights.nbytes + stencil.indices.nbytes + stencil.valid.nbytes
+        == count * (order + 1) * 13
+    )

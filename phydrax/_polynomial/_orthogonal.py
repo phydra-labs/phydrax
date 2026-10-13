@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
@@ -18,6 +17,7 @@ from scipy.special import eval_legendre, roots_jacobi
 from phydrax import ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._host_table_cache import host_table_cache
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import parse
@@ -194,7 +194,7 @@ def standard_vandermonde(
     return _vandermonde_recurrence(family, nodes_, degree_)
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(max_entries=256, max_bytes=16777216)
 def _derivative_operator(
     family: OrthogonalFamily,
     count: int,

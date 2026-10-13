@@ -144,22 +144,6 @@ def _augmented(centroids: _StarCentroids | None, coordinates: Array, /) -> Array
     return coordinates if centroids is None else centroids(coordinates)
 
 
-def _shape_distortion(transform: Array, determinant: Array, /) -> Array:
-    dimension = transform.shape[-1]
-    if dimension == 2:
-        # ||T||_F² - 2 det(T) is a sum of squares. Subtracting one from
-        # ||T||_F² / (2 det(T)) loses the objective near a conformal optimum
-        # while its derivative stays nonzero, breaking the line search.
-        diagonal = transform[..., 0, 0] - transform[..., 1, 1]
-        off_diagonal = transform[..., 0, 1] + transform[..., 1, 0]
-        return (diagonal**2 + off_diagonal**2) / (2.0 * determinant)
-    frobenius = jnp.sum(transform**2, axis=(-2, -1))
-    return (
-        frobenius ** (0.5 * dimension) / (dimension ** (0.5 * dimension) * determinant)
-        - 1.0
-    )
-
-
 class _TargetMatrixEnergy(StrictModule):
     """Target-matrix energy with an inversion guard or Escobar regularization."""
 
@@ -196,6 +180,34 @@ class _TargetMatrixEnergy(StrictModule):
     def corner_determinants(self, coordinates: Array, /) -> Array:
         return determinant_small_linear(self.solve_plan, self._transform(coordinates))
 
+    def _shape_quality(
+        self, transform: Array, determinant: Array, frobenius: Array, /
+    ) -> Array:
+        dimension = transform.shape[-1]
+        if dimension == 2:
+            # ||T||² - 2 det(T) is a sum of squares, not a difference near rotations.
+            diagonal_gap = transform[..., 0, 0] - transform[..., 1, 1]
+            off_diagonal_sum = transform[..., 0, 1] + transform[..., 1, 0]
+            return (diagonal_gap**2 + off_diagonal_sum**2) / (2.0 * determinant)
+        if dimension == 3:
+            gram = jnp.swapaxes(transform, -1, -2) @ transform
+            mean = frobenius / 3.0
+            safe_mean = jnp.where(mean > 0.0, mean, 1.0)
+            deviation = gram / safe_mean[..., None, None] - jnp.eye(
+                3, dtype=transform.dtype
+            )
+            # For traceless D = TᵀT/m - I: 1 - det(T)²/m³ = tr(D²)/2 - det(D).
+            # Normalizing first keeps the invariant gap dimensionless at every scale.
+            gap = 0.5 * jnp.sum(deviation**2, axis=(-2, -1))
+            gap = gap - determinant_small_linear(self.solve_plan, deviation)
+            volume_ratio = determinant / safe_mean**1.5
+            return gap / (volume_ratio * (1.0 + volume_ratio))
+        return (
+            frobenius ** (0.5 * dimension)
+            / (dimension ** (0.5 * dimension) * determinant)
+            - 1.0
+        )
+
     def _corner_quality(self, transform: Array, determinant: Array, /) -> Array:
         dimension = transform.shape[-1]
         frobenius = jnp.sum(transform**2, axis=(-2, -1))
@@ -209,9 +221,9 @@ class _TargetMatrixEnergy(StrictModule):
         safe = jnp.where(determinant > 0.0, determinant, 1.0)
         match self.objective:
             case MeshQualityObjective.SHAPE:
-                return _shape_distortion(transform, safe)
+                return self._shape_quality(transform, safe, frobenius)
             case MeshQualityObjective.SHAPE_SIZE | MeshQualityObjective.METRIC_ALIGNMENT:
-                shape = _shape_distortion(transform, safe)
+                shape = self._shape_quality(transform, safe, frobenius)
                 return shape + 0.5 * (safe - 1.0 / safe) ** 2
             case MeshQualityObjective.GRAM_DETERMINANT:
                 gram = jnp.swapaxes(transform, -1, -2) @ transform

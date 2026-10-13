@@ -1,12 +1,16 @@
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
 from phydrax.uq._sing_gp import SINGSparseGPDrift
 from phydrax.uq._sing_transition import (
+    _projected_sing_problem,
+    _ProjectedEulerTransition,
     evaluate_sing_transition,
     sing_constrained_smoother,
     sing_objective,
@@ -190,4 +194,92 @@ def _affine_singular_problem() -> Any:
         sequence,
         initial_time=0.0,
         problem_id="affine-singular-problem",
+    )
+
+
+def test_support_drift_actions_match_dense_random_affine_reference() -> None:
+    rng = np.random.default_rng(719)
+    orthogonal, _ = np.linalg.qr(rng.normal(size=(5, 5)))
+    basis, normal = orthogonal[:, :2], orthogonal[:, 2:].T
+    offset = rng.normal(size=3)
+    origin = normal.T @ offset
+    matrix = rng.normal(size=(2, 2))
+    forcing = rng.normal(size=2)
+    noise = basis @ rng.normal(size=(2, 2))
+    support = SINGSupportPlan(
+        normal,
+        basis,
+        offset=offset,
+        rank=2,
+        support_id="random-affine-directional-support",
+    )
+
+    def drift(time: jax.Array, state: jax.Array, args: None) -> jax.Array:
+        del time, args
+        return jnp.asarray(basis) @ (
+            jnp.asarray(matrix) @ (jnp.asarray(basis.T) @ (state - jnp.asarray(origin)))
+            + jnp.asarray(forcing)
+        )
+
+    system = phx.dynamics.ContinuousSystem(
+        drift,
+        state_layout=phx.dynamics.StateLayout((5,)),
+        system_id="random-support-system",
+    )
+    term = phx.solver.WienerTerm(
+        "random-support-noise",
+        lambda t, x, args: jnp.asarray(noise),
+        (2,),
+        structure="additive",
+        basis_id="random-support-noise-basis",
+    )
+    transition = phx.stochastic.EulerMaruyamaTransitionKernel(
+        system,
+        (term,),
+        state_shape=(5,),
+        noise_shape=(2,),
+        process_id="random-support-euler",
+    )
+    observation = phx.stochastic.LinearGaussianObservationModel(
+        jnp.eye(5),
+        0.1 * jnp.eye(5),
+        state_shape=(5,),
+        observation_shape=(5,),
+        observation_id="random-support-observation",
+    )
+    model = phx.stochastic.StateSpaceModel(
+        phx.stochastic.GaussianStatePrior(
+            origin, np.eye(5), state_shape=(5,), prior_id="random-support-prior"
+        ),
+        transition,
+        observation,
+        model_id="random-support-model",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        model,
+        phx.stochastic.ObservationSequence(
+            jnp.asarray([0.1]),
+            jnp.asarray(origin[None]),
+            sequence_id="random-support-data",
+        ),
+        initial_time=0.0,
+        problem_id="random-support-problem",
+    )
+    # The previous ambient Jacobian certifies the same affine support probes.
+    ambient_jacobian = basis @ matrix @ basis.T
+    np.testing.assert_allclose(ambient_jacobian @ basis, basis @ matrix, atol=2e-12)
+    reduced, _ = _projected_sing_problem(problem, support)
+    reduced_transition = reduced.model.transition
+    assert isinstance(reduced_transition, _ProjectedEulerTransition)
+    point = jnp.asarray(rng.normal(size=2))
+    context = reduced.step_context(0, 0)
+
+    def reduced_drift(q: jax.Array) -> jax.Array:
+        return reduced_transition.drift(jnp.asarray(0.0), q, context)
+
+    np.testing.assert_allclose(
+        reduced_drift(point), matrix @ np.asarray(point) + forcing, atol=2e-12, rtol=2e-12
+    )
+    np.testing.assert_allclose(
+        jax.jacfwd(reduced_drift)(point), matrix, atol=2e-12, rtol=2e-12
     )

@@ -1199,6 +1199,7 @@ def _sparse_assembly_policy_payload(
             else {
                 "max_entries": materialization.max_entries,
                 "max_bytes": materialization.max_bytes,
+                "max_workspace_bytes": materialization.max_workspace_bytes,
             }
         ),
     }

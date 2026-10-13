@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.624465083,
+      "compiler": {
+        "argument_bytes": 520,
+        "bytes_accessed": 1757250,
+        "flops": 190049,
+        "generated_code_bytes": 0,
+        "output_bytes": 560,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 61360,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 655410,
+      "lowering_seconds": 0.700211958,
+      "players": 4,
+      "retained_bytes": 520,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000653458,
+        "mean_seconds": 0.0006401874999999999,
+        "median_seconds": 0.0006401874999999999,
+        "min_seconds": 0.000626917,
+        "samples_seconds": [
+          0.000626917,
+          0.000653458
+        ],
+        "std_seconds": 1.3270500000000021e-05
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.88172975,
+      "compiler": {
+        "argument_bytes": 1032,
+        "bytes_accessed": 12187682,
+        "flops": 1267993,
+        "generated_code_bytes": 0,
+        "output_bytes": 1072,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 228848,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 435205,
+      "lowering_seconds": 0.694957166,
+      "players": 4,
+      "retained_bytes": 1032,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001010292,
+        "mean_seconds": 0.0009795630000000001,
+        "median_seconds": 0.0009795630000000001,
+        "min_seconds": 0.000948834,
+        "samples_seconds": [
+          0.001010292,
+          0.000948834
+        ],
+        "std_seconds": 3.0729000000000064e-05
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 1.511983416,
+      "compiler": {
+        "argument_bytes": 2056,
+        "bytes_accessed": 90538232,
+        "flops": 9234761,
+        "generated_code_bytes": 0,
+        "output_bytes": 2096,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 884336,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 427328,
+      "lowering_seconds": 2.2797025,
+      "players": 4,
+      "retained_bytes": 2056,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.002995333,
+        "mean_seconds": 0.0025283745,
+        "median_seconds": 0.0025283745,
+        "min_seconds": 0.002061416,
+        "samples_seconds": [
+          0.002995333,
+          0.002061416
+        ],
+        "std_seconds": 0.0004669585000000001
+      }
+    }
+  ],
+  "compiler_scaling_exponent": 1.9246121160767977,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "a8e15f55c512085209bd22ae5f8dbdfbddaed41c7da75c0f07281bfbe3e1a6ee",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment"
+      ],
+      "signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c"
+    },
+    "fingerprint": "a7e419afc86a86d8626ee3e87f6f53344d5ce8e39d3a5477f867f3c5396d2497",
+    "source_build_fingerprint": "e90b02901e7e7de42c437eb0d54182c3d1d1d71ee9b4ed2cb02d82d28a4e8b66"
+  },
+  "observed_peak_rss_bytes": 1561657344
+}

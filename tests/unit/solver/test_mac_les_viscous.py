@@ -354,9 +354,7 @@ def test_failed_sbdf2_attempt_retains_complete_restart_history_atomically() -> N
 
 
 def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout() -> None:
-    discretization, _, dynamics = _compiled(coefficient=0.0)
-    state = dynamics.pack_velocity(_taylor_green(discretization))
-    del state
+    _, _, dynamics = _compiled(coefficient=0.0)
     method = phx.solver.MACSBDF2Method(dynamics, 1.0e-3, solve_method="transform")
 
     with pytest.raises(
@@ -367,10 +365,8 @@ def test_sbdf2_is_explicitly_rejected_by_adaptive_rollout() -> None:
             dynamics,
             # ty: ignore[invalid-argument-type]
             method,
-            # ty: ignore[invalid-argument-type]
-            None,
-            # ty: ignore[invalid-argument-type]
-            None,
+            phx.solver.MACCompositeStepController(dynamics),
+            phx.solver.MACAdaptivePolicy(16, maximum_step_size=1.0e-3),
             final_time=0.01,
             initial_step_size=1.0e-3,
         )

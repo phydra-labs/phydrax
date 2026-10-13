@@ -8,6 +8,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from phydrax import (
@@ -258,3 +259,50 @@ def test_ensemble_scenario_2() -> None:
         HomogeneousEnsembleModel((_ConstantModel(1.0, 1), _ConstantModel(2.0, 2)))
     with pytest.raises(ValueError, match="identical input and output sizes"):
         HeterogeneousEnsembleModel((_ConstantModel(1.0, 1), _ConstantModel(2.0, 2)))
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        (9.0, 2.0, 9.0, 2.0),
+        (np.nan, 4.0, 4.0, np.nan),
+        (np.nan, np.nan, np.nan),
+        (-0.0, 0.0, 3.0),
+        (np.inf, -np.inf, np.inf, -np.inf),
+        (7.0,),
+    ],
+)
+def test_hard_vote_matches_equality_reference(values: tuple[float, ...]) -> None:
+    predictions = np.asarray(values, dtype=np.float64)
+    counts = np.sum(predictions[:, None] == predictions[None, :], axis=1)
+    expected = predictions[np.argmax(counts)]
+    model = HardVotingModel(tuple(_ConstantModel(value, 1) for value in values))
+    actual = jax.jit(model)(jnp.zeros((2, 3, 1), dtype=jnp.float64))
+    np.testing.assert_array_equal(actual, np.full((2, 3, 1), expected))
+    np.testing.assert_array_equal(np.signbit(actual), np.signbit(expected))
+
+
+class _VotePrediction(AbstractArrayModel):
+    value: jax.Array
+    in_size: int = eqx.field(static=True, default=1)
+    out_size: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(self, value: jax.Array) -> None:
+        self.value = value
+        self.out_size = value.shape
+
+    def __call__(self, x: Any, /, *, key: Any = None) -> jax.Array:
+        del x, key
+        return self.value
+
+
+@pytest.mark.parametrize("dtype", (jnp.int32, jnp.float64, jnp.complex128))
+def test_hard_vote_elementwise_reference(dtype: Any) -> None:
+    values = np.random.default_rng(8).integers(-3, 4, size=(17, 2, 3))
+    counts = np.sum(values[:, None] == values[None, :], axis=1)
+    expected = np.take_along_axis(values, np.argmax(counts, axis=0)[None], axis=0)[0]
+    model = HardVotingModel(
+        tuple(_VotePrediction(jnp.asarray(value, dtype=dtype)) for value in values)
+    )
+    actual = jax.jit(model)(jnp.zeros((1,), dtype=jnp.float64))
+    np.testing.assert_array_equal(actual, expected)

@@ -1,0 +1,204 @@
+{
+  "compiler_scaling_exponent": 0.9987528415900006,
+  "declared_scaling_exponent": 1.0,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 1689600,
+    "candidate_bytes": 835777,
+    "capacity": 512,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "74e3e85be4e0c98f013347c9bbd155545b2a8aa15251b88495a84e573aa1bd77",
+    "evidence_schema": {
+      "fields": [
+        "compiler_scaling_exponent",
+        "declared_scaling_exponent",
+        "environment",
+        "gate",
+        "logical_scaling_exponent",
+        "preparations",
+        "rows",
+        "rss_bytes"
+      ],
+      "signature": "8bf0bc5e9f1fab4b2f4a30f1d6024817604ec2ce936facc6e0568d621b0b79c6"
+    },
+    "fingerprint": "ccdaae3404e2ae017b40e6cb83dbc356d5d2c0772f23467bee3acf1ab76ab54d",
+    "source_build_fingerprint": "5131b04f9d74f23aac1e1ad42a60690fb46f1e6dceca0874283371ce8813e5da"
+  },
+  "logical_scaling_exponent": 0.9999999999999996,
+  "preparations": [
+    {
+      "basis_id": "57f276040ee4a3a31798b2061996dec5cba2b42d680ac5fd7d47e3c995270236",
+      "count": 15,
+      "degree": 4,
+      "dimension": 2,
+      "holomorphic_host_peak_bytes": 6305,
+      "index_set_id": "f47d188a4c7fd1101819f0d647c0ae222a9b9add8249aeb7ccc0c55c2d9e002a",
+      "scaled_host_peak_bytes": 34010
+    },
+    {
+      "basis_id": "419dbd461b2eb8047ec32f444e8d0b8fb244e4e901f0c06d4ad4a8dd96a7f495",
+      "count": 35,
+      "degree": 4,
+      "dimension": 3,
+      "holomorphic_host_peak_bytes": 14419,
+      "index_set_id": "67302ee81b16f6f507628498d7466d34d300679cf0b4109fff20ca8011d82ad3",
+      "scaled_host_peak_bytes": 34462
+    },
+    {
+      "basis_id": "c379ad1fe13f903200e1bf25eeecfb6caf30073f1ed62050cd544e8f7bc0a017",
+      "count": 70,
+      "degree": 4,
+      "dimension": 4,
+      "holomorphic_host_peak_bytes": 26319,
+      "index_set_id": "c9f3f70e99515d62a3769870dd4e13bf72e8a465fdd0e85daad4b9520b2884e9",
+      "scaled_host_peak_bytes": 35322
+    }
+  ],
+  "rows": [
+    {
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 513832,
+        "flops": 41940,
+        "generated_code_bytes": 0,
+        "output_bytes": 63360,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 52417,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 400601,
+      "lanes": 32,
+      "live_bytes": 99840,
+      "node_count": 495,
+      "output_bytes": 63360,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.34763825,
+        "lowering_seconds": 0.10164075
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.00048775,
+        "mean_seconds": 0.0004158335,
+        "median_seconds": 0.0004158335,
+        "min_seconds": 0.000343917,
+        "samples_seconds": [
+          0.00048775,
+          0.000343917
+        ],
+        "std_seconds": 7.19165e-05
+      }
+    },
+    {
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 2037544,
+        "flops": 167604,
+        "generated_code_bytes": 0,
+        "output_bytes": 253440,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 209089,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 280407,
+      "lanes": 128,
+      "live_bytes": 399360,
+      "node_count": 495,
+      "output_bytes": 253440,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.266450875,
+        "lowering_seconds": 0.0253305
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.012792292,
+        "mean_seconds": 0.0070715835,
+        "median_seconds": 0.0070715835,
+        "min_seconds": 0.001350875,
+        "samples_seconds": [
+          0.012792292,
+          0.001350875
+        ],
+        "std_seconds": 0.0057207085
+      }
+    },
+    {
+      "compiler": {
+        "argument_bytes": 8192,
+        "bytes_accessed": 8132392,
+        "flops": 670260,
+        "generated_code_bytes": 0,
+        "output_bytes": 1013760,
+        "source": "jax.Compiled.memory_analysis",
+        "temporary_bytes": 835777,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 239927,
+      "lanes": 512,
+      "live_bytes": 1597440,
+      "node_count": 495,
+      "output_bytes": 1013760,
+      "retained_bytes": 5932,
+      "term_count": 495,
+      "timing": {
+        "compilation_seconds": 0.22914525,
+        "lowering_seconds": 0.058656584
+      },
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.0074085,
+        "mean_seconds": 0.0045169170000000005,
+        "median_seconds": 0.0045169170000000005,
+        "min_seconds": 0.001625334,
+        "samples_seconds": [
+          0.0074085,
+          0.001625334
+        ],
+        "std_seconds": 0.002891583
+      }
+    }
+  ],
+  "rss_bytes": 1452523520
+}

@@ -1,0 +1,135 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "365802c16c74c80feb6a91780131bcabe40d57a9605e3c7bded7710ac21d5336",
+    "evidence_schema": {
+      "fields": [
+        "input_bytes",
+        "scratch_peak_bytes",
+        "seconds"
+      ],
+      "signature": "d456e5f18270d7f71caadfdea109c0f83c07a150b30c97c36cd11f66160a40cb"
+    },
+    "fingerprint": "b2249414d12ed873371b4d8c41a8e96a6e1fc56a548298b0fb5647351131ac19",
+    "source_build_fingerprint": "71c35db7a0fee614b4a64c69a7349854277e87aa862db156f4d119cd2585090b"
+  },
+  "process_peak_rss_bytes": 1520517120,
+  "records": [
+    {
+      "capacity": 1,
+      "case": "contiguous",
+      "input_bytes": 1048576,
+      "scratch_peak_bytes": 1049229,
+      "seconds": 0.0006149578839540482,
+      "sha256": "e5c6d4b6fd69ffa93ac9da68965839f4c82e3dc3211c97d8f255c461943d5607"
+    },
+    {
+      "capacity": 1,
+      "case": "strided",
+      "input_bytes": 1048576,
+      "scratch_peak_bytes": 2097902,
+      "seconds": 0.0006983329076319933,
+      "sha256": "eab98370040ecf6142dc2fa00914365c6851c202b7be3ca74fadfb5c0cd97760"
+    },
+    {
+      "capacity": 4,
+      "case": "contiguous",
+      "input_bytes": 4194304,
+      "scratch_peak_bytes": 4194957,
+      "seconds": 0.002319208811968565,
+      "sha256": "20989cc3ea0acbfb677ab03d8485a3986be30c7fe360e40a2a06280566f7754a"
+    },
+    {
+      "capacity": 4,
+      "case": "strided",
+      "input_bytes": 4194304,
+      "scratch_peak_bytes": 8389359,
+      "seconds": 0.0030331669840961695,
+      "sha256": "bbf3f3b66afae97769b4e7094ae3fff482d87b5d732c228286dde8f2684db3d3"
+    },
+    {
+      "capacity": 16,
+      "case": "contiguous",
+      "input_bytes": 16777216,
+      "scratch_peak_bytes": 16777870,
+      "seconds": 0.008942333981394768,
+      "sha256": "17cba1e937ce09480cdda55d34962a30769f9a270c68f3b834c22a083870a9ca"
+    },
+    {
+      "capacity": 16,
+      "case": "strided",
+      "input_bytes": 16777216,
+      "scratch_peak_bytes": 33555184,
+      "seconds": 0.00992791703902185,
+      "sha256": "3fc49bbf09ac1039caf59116ca186d3bf4d5f2c3b20327505ead9f3aca81c7fe"
+    },
+    {
+      "capacity": 16,
+      "case": "workset",
+      "input_bytes": 512,
+      "output_bytes": 2176,
+      "prepared_id": "7632c1b411d05d315345fa9d02685e23d9a28b1e5181682ef8e50cde1cdea531",
+      "scratch_peak_bytes": 82593,
+      "seconds": 0.02433770801872015
+    },
+    {
+      "capacity": 64,
+      "case": "workset",
+      "input_bytes": 2048,
+      "output_bytes": 8704,
+      "prepared_id": "ec64951422d61aa3d4ffeb454233501d51dd74716a2a16ac596edd2f169d4b95",
+      "scratch_peak_bytes": 144041,
+      "seconds": 0.03466808400116861
+    },
+    {
+      "capacity": 256,
+      "case": "workset",
+      "input_bytes": 8192,
+      "output_bytes": 34816,
+      "prepared_id": "4bef609899fa253ffd32f159453dd4b01edb036f79ad7bd6c2653cef1df3aba9",
+      "scratch_peak_bytes": 433778,
+      "seconds": 0.09625670802779496
+    }
+  ],
+  "scaling_exponents": {
+    "contiguous": 0.9997895198742932,
+    "strided": 0.9998791191650405,
+    "workset": 0.5982163665365935
+  }
+}

@@ -228,20 +228,20 @@ def test_finite_element_field_view_scenario_3() -> None:
     quadrilateral = _discretization(1, cell_kind="quadrilateral", cells=((0, 1, 2, 3),))
 
     # Own-point evaluation from native tabulation remains available.
+    reconstruction = prepare_finite_element_field_reconstruction(quadrilateral, "u")
     native = prepare_finite_element_point_interpolation(
         quadrilateral, "u", "cells", jnp.asarray((0,)), jnp.asarray(((0.25, 0.5),))
     )
     coefficients = _nodal(quadrilateral, lambda x, y: x + 2.0 * y)
     np.testing.assert_allclose(native.interpolate(coefficients), (1.25,), atol=1e-12)
-    mapped = prepare_finite_element_field_reconstruction(quadrilateral, "u")
-    np.testing.assert_allclose(
-        mapped.evaluate(coefficients, native.reference_positions).values,
-        (1.25,),
-        atol=1e-12,
-    )
+    located = reconstruction.evaluate(coefficients, native.reference_positions)
+    assert bool(jnp.all(located.valid))
+    np.testing.assert_allclose(located.values, (1.25,), atol=1e-12)
     dual = jnp.asarray((2.5,))
     assert bool(
-        mapped.duality_evidence(coefficients, native.reference_positions, dual).valid
+        reconstruction.duality_evidence(
+            coefficients, native.reference_positions, dual
+        ).valid
     )
     discretization = _discretization(
         0, element=phx.discretization.discontinuous_element("triangle", 0)

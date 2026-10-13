@@ -25,7 +25,13 @@ from ._ginzburg_landau import (
     GinzburgLandauState,
     TDGLStepResult,
 )
-from ._london import ThinFilmLondonEvidence, ThinFilmLondonPlan, ThinFilmLondonResult
+from ._london import (
+    LondonSolvePolicy,
+    LondonSolveRoute,
+    ThinFilmLondonEvidence,
+    ThinFilmLondonPlan,
+    ThinFilmLondonResult,
+)
 from ._qualification import (
     superconductivity_candidate_campaigns,
     superconductivity_candidate_profiles,
@@ -55,6 +61,8 @@ __all__ = [
     "GinzburgLandauState",
     "GLLondonBridgePlan",
     "LondonCableBridgePlan",
+    "LondonSolvePolicy",
+    "LondonSolveRoute",
     "MatsubaraQuadraturePlan",
     "QuasiclassicalEquilibriumEvidence",
     "QuasiclassicalEquilibriumResult",

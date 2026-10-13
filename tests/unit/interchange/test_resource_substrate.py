@@ -468,3 +468,97 @@ def test_format_catalog_is_deterministic_and_non_dispatching() -> None:
     assert {"vtu", "segy-rev1-ieee", "nifti", "onnx"}.issubset(
         {item.profile.format for item in first}
     )
+
+
+@pytest.mark.parametrize("fortran", [False, True], ids=["C", "F"])
+def test_npy_decoding_owns_a_readonly_immutable_resource_view(fortran: bool) -> None:
+    original = np.arange(12, dtype=np.float64).reshape(3, 4)
+    value = np.asfortranarray(original) if fortran else original
+    buffer = io.BytesIO()
+    np.save(buffer, value, allow_pickle=False)
+    resource = bounded_resource_from_bytes(buffer.getvalue(), limits=_resource_limits())
+    decoded = decode_npy_resource(resource)
+    np.testing.assert_array_equal(decoded.value, original)
+    assert not decoded.value.flags.writeable
+    assert not decoded.value.flags.owndata
+    with pytest.raises(ValueError):
+        decoded.value.setflags(write=True)
+
+
+def test_npz_decoding_returns_exact_readonly_inventory() -> None:
+    arrays = {f"member{i:02d}": np.arange(128, dtype=np.float64) + i for i in range(16)}
+    buffer = io.BytesIO()
+    np.savez(buffer, allow_pickle=False, **arrays)
+    resource = bounded_resource_from_bytes(buffer.getvalue(), limits=_resource_limits())
+    decoded = decode_npz_resource(resource, expected_names=tuple(arrays))
+    assert set(decoded.arrays) == set(arrays)
+    for name, value in decoded.arrays.items():
+        np.testing.assert_array_equal(value, arrays[name])
+        assert not value.flags.writeable
+    with pytest.raises(ResourceReadError, match="inventory"):
+        decode_npz_resource(resource, expected_names=("wrong",))
+
+
+def test_npz_headers_are_all_admitted_before_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax._numpy_resource as numpy_resource
+
+    buffer = io.BytesIO()
+    np.savez(
+        buffer,
+        first=np.arange(8, dtype=np.float64),
+        second=np.arange(8, dtype=np.float64),
+    )
+    resource = bounded_resource_from_bytes(buffer.getvalue(), limits=_resource_limits())
+
+    def refuse_decode(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Array decoding reached before aggregate admission")
+
+    monkeypatch.setattr(numpy_resource.np, "load", refuse_decode)
+    with pytest.raises(ResourceReadError, match="aggregate element"):
+        decode_npz_resource(resource, limits=NumpyFormatLimits(max_total_elements=12))
+
+
+def test_npz_corrupt_member_is_refused_before_any_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import phydrax._numpy_resource as numpy_resource
+
+    buffer = io.BytesIO()
+    np.savez(
+        buffer,
+        first=np.arange(8, dtype=np.float64),
+        second=np.arange(8, dtype=np.float64),
+    )
+    payload = bytearray(buffer.getvalue())
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        member = archive.getinfo("second.npy")
+        name_size, extra_size = struct.unpack_from(
+            "<HH", payload, member.header_offset + 26
+        )
+        payload[member.header_offset + 30 + name_size + extra_size + 128] ^= 1
+
+    def refuse_decode(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Array decoding reached before archive checksum admission")
+
+    monkeypatch.setattr(numpy_resource.np, "load", refuse_decode)
+    resource = bounded_resource_from_bytes(bytes(payload), limits=_resource_limits())
+    with pytest.raises(ResourceReadError):
+        decode_npz_resource(resource)
+
+
+def test_npy_view_preserves_admitted_zero_itemsize_structured_dtype() -> None:
+    value = np.empty((3,), dtype=[("empty", "V0")])
+    buffer = io.BytesIO()
+    np.save(buffer, value, allow_pickle=False)
+    resource = bounded_resource_from_bytes(buffer.getvalue(), limits=_resource_limits())
+    decoded = decode_npy_resource(
+        resource,
+        limits=NumpyFormatLimits(
+            allow_structured_dtypes=True, allowed_dtype_kinds=frozenset({"V"})
+        ),
+    )
+    assert decoded.value.shape == value.shape
+    assert decoded.value.dtype == value.dtype
+    assert not decoded.value.flags.writeable

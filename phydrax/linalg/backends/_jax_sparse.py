@@ -26,7 +26,8 @@ class DeviceSparseState(StrictModule):
 
 
 class HostSparseState(StrictModule):
-    storage: SparseStorage
+    shape: tuple[int, int] = eqx.field(static=True)
+    batch_shape: tuple[int, ...] = eqx.field(static=True)
     provider: str = eqx.field(static=True)
     factor: Any = eqx.field(static=True)
 
@@ -71,6 +72,14 @@ class _ColumnPermutedLU:
     columns: np.ndarray
 
 
+@dataclass(frozen=True, eq=False)
+class _UmfpackFactor:
+    """Provider-required CSC matrix and one reusable numeric factorization."""
+
+    matrix: Any
+    context: Any
+
+
 def _host_factor(provider: str, matrix: Any, columns: np.ndarray | None, /) -> Any:
     if provider == "scipy-superlu":
         import scipy.sparse.linalg as spla
@@ -82,9 +91,15 @@ def _host_factor(provider: str, matrix: Any, columns: np.ndarray | None, /) -> A
             spla.splu(matrix.tocsc()[:, columns], permc_spec="NATURAL"), columns
         )
     if provider == "umfpack":
-        import scikits.umfpack  # noqa: F401
+        import scikits.umfpack as umfpack
 
-        return matrix.tocsc()
+        csc = matrix.tocsc()
+        family = ("z" if np.issubdtype(csc.dtype, np.complexfloating) else "d") + (
+            "l" if csc.indices.dtype.itemsize == 8 else "i"
+        )
+        context = umfpack.UmfpackContext(family)
+        context.numeric(csc)
+        return _UmfpackFactor(csc, context)
     if provider == "cholmod":
         from sksparse.cholmod import cholesky
 
@@ -94,12 +109,6 @@ def _host_factor(provider: str, matrix: Any, columns: np.ndarray | None, /) -> A
 
         return matrix.tocsc()
     raise ValueError(f"Unsupported host sparse provider {provider!r}.")
-
-
-def _columnwise(function: Any, rhs: np.ndarray, /) -> np.ndarray:
-    return np.column_stack(
-        tuple(function(rhs[:, index]) for index in range(rhs.shape[1]))
-    )
 
 
 def _host_solve(
@@ -121,13 +130,20 @@ def _host_solve(
         solution[factor.columns] = permuted
         return solution
     if provider == "umfpack":
-        import scipy.sparse.linalg as spla
+        import scikits.umfpack as umfpack
 
-        matrix = factor.getH() if adjoint else (factor.T if transpose else factor)
-        return _columnwise(
-            lambda column: spla.spsolve(matrix, column, use_umfpack=True),
-            rhs,
+        mode = (
+            umfpack.UMFPACK_At
+            if adjoint
+            else (umfpack.UMFPACK_Aat if transpose else umfpack.UMFPACK_A)
         )
+        # UMFPACK exposes vector solves, all sharing this prepared numeric factor.
+        solution = np.empty(rhs.shape, dtype=factor.matrix.dtype)
+        for column in range(rhs.shape[1]):
+            solution[:, column] = factor.context.solve(
+                mode, factor.matrix, rhs[:, column]
+            )
+        return solution
     if provider == "cholmod":
         solved_rhs = np.conjugate(rhs) if transpose and not adjoint else rhs
         solution = np.asarray(factor.solve_A(solved_rhs))
@@ -136,7 +152,12 @@ def _host_solve(
         import sparseqr
 
         matrix = factor.getH() if adjoint else (factor.T if transpose else factor)
-        return _columnwise(lambda column: sparseqr.solve(matrix, column), rhs)
+        # The public provider has a matrix-RHS solve but no reusable solve handle.
+        # One backslash call factors once for the entire block, not per column.
+        solution = sparseqr.solve(matrix, rhs)
+        if solution is None:
+            return np.full(rhs.shape, np.nan, dtype=rhs.dtype)
+        return np.asarray(solution)
     raise ValueError(f"Unsupported host sparse provider {provider!r}.")
 
 
@@ -192,7 +213,7 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
             )
             for batch_values in values
         )
-        return HostSparseState(storage, provider, factors)
+        return HostSparseState(storage.shape, storage.batch_shape, provider, factors)
     raise ValueError(f"Unsupported sparse backend {plan.backend!r}.")
 
 
@@ -297,14 +318,20 @@ def solve_sparse(
     plan: LinearSolvePlan,
     /,
 ) -> SparseBackendOutput:
-    batch_shape = state.storage.batch_shape
+    batch_shape = (
+        state.storage.batch_shape
+        if isinstance(state, DeviceSparseState)
+        else state.batch_shape
+    )
     expected_rank = len(batch_shape) + 2
     if rhs.ndim != expected_rank or rhs.shape[: len(batch_shape)] != batch_shape:
         raise ValueError(
             "Sparse canonical right-hand sides must have shape batch_shape + (n, k)."
         )
     batch_count = int(np.prod(batch_shape)) if batch_shape else 1
-    size = state.storage.shape[0]
+    size = (
+        state.storage.shape[0] if isinstance(state, DeviceSparseState) else state.shape[0]
+    )
     count = rhs.shape[-1]
     flattened_rhs = rhs.reshape((batch_count, size, count))
     if isinstance(state, DeviceSparseState):
@@ -372,9 +399,9 @@ def solve_host_sparse_transformed(
     *,
     adjoint: bool,
 ) -> SparseBackendOutput:
-    batch_shape = state.storage.batch_shape
+    batch_shape = state.batch_shape
     batch_count = int(np.prod(batch_shape)) if batch_shape else 1
-    size = state.storage.shape[0]
+    size = state.shape[0]
     count = rhs.shape[-1]
     flattened_rhs = np.asarray(rhs).reshape((batch_count, size, count))
     value = jnp.asarray(

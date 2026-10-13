@@ -9,7 +9,7 @@ and applies the appropriate handler for each equation.
 """
 
 import numpy as np
-from jax._src.core import ClosedJaxpr, Jaxpr, JaxprEqn
+from jax._src.core import Jaxpr, JaxprEqn
 
 from ._argmax import _prop_argmax
 from ._broadcast import _prop_broadcast_in_dim
@@ -112,32 +112,29 @@ def _prop_jaxpr(
     return [_index_sets(state_indices, outvar) for outvar in jaxpr.outvars]
 
 
-def _prop_closed_jaxpr(
+def _prop_nested_jaxpr(
     eqn: JaxprEqn,
     state_indices: StateIndices,
     state_consts: StateConsts,
     state_bounds: StateBounds,
     param_key: str,
 ) -> None:
-    """Recursively trace a closed jaxpr stored in ``eqn.params[param_key]``.
-
-    Shared implementation for ``prop_nested_jaxpr`` (param ``"jaxpr"``)
-    and ``prop_custom_call`` (param ``"call_jaxpr"``).
-    """
-    closed = eqn.params.get(param_key)
-    if closed is None:
+    """Trace a nested program and its attached constants in an isolated scope."""
+    jaxpr = eqn.params.get(param_key)
+    if jaxpr is None:
         msg = (
             f"Primitive '{eqn.primitive.name}' has no '{param_key}' parameter. "
             "Report this unsupported JAX primitive to Phydrax."
         )
         raise ValueError(msg)
 
-    if isinstance(closed, ClosedJaxpr):
-        jaxpr, constvars, captured = closed.jaxpr, closed.jaxpr.constvars, closed.consts
-    else:
-        jaxpr, constvars, captured = closed, (), ()
     inner_consts, inner_bounds = _nested_scope(
-        constvars, captured, eqn.invars, jaxpr.invars, state_consts, state_bounds
+        jaxpr.constvars,
+        jaxpr.consts,
+        eqn.invars,
+        jaxpr.invars,
+        state_consts,
+        state_bounds,
     )
     input_indices = [_index_sets(state_indices, invar) for invar in eqn.invars]
     output_indices = _prop_jaxpr(jaxpr, input_indices, inner_consts, inner_bounds)
@@ -159,6 +156,9 @@ def _prop_dispatch(
     match eqn.primitive.name:
         case "argmax" | "argmin":
             _prop_argmax(eqn, state_indices, state_bounds)
+        case "empty":
+            # Allocation has no input dependencies, including nonempty shapes.
+            _prop_zero_derivative(eqn, state_indices)
         # Zero derivative (piecewise constant, ∂f/∂x = 0 a.e.)
         case (
             "floor"  # ∂⌊x⌋/∂x = 0
@@ -191,7 +191,7 @@ def _prop_dispatch(
         case "and" | "or" | "xor":
             _prop_zero_derivative_const(eqn, state_indices, state_consts)
         case "jit" | "pjit" | "xla_call" | "named_call" | "remat2":
-            _prop_closed_jaxpr(eqn, state_indices, state_consts, state_bounds, "jaxpr")
+            _prop_nested_jaxpr(eqn, state_indices, state_consts, state_bounds, "jaxpr")
         case "slice":
             _prop_slice(eqn, state_indices, state_consts)
         case "pad":
@@ -287,7 +287,7 @@ def _prop_dispatch(
         case "conv_general_dilated":
             _prop_conv_general_dilated(eqn, state_indices)
         case "custom_jvp_call" | "custom_vjp_call":
-            _prop_closed_jaxpr(
+            _prop_nested_jaxpr(
                 eqn, state_indices, state_consts, state_bounds, "call_jaxpr"
             )
         case "gather":
