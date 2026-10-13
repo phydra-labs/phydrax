@@ -692,6 +692,7 @@ class NonlinearRingdownResult(StrictModule):
     status: Array
     plan_id: str = eqx.field(static=True)
     time_chunk_size: int = eqx.field(static=True)
+    response_workspace_bytes: int = eqx.field(static=True)
     logical_response_workspace_bytes: int = eqx.field(static=True)
 
 
@@ -708,7 +709,8 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
     coupling: Array
     pair_detuning: Array
     resonant_pairs: Array
-    time_chunk_size: int = eqx.field(static=True)
+    time_chunk_size: int | None = eqx.field(static=True)
+    response_workspace_bytes: int = eqx.field(static=True)
     resonance_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -720,7 +722,8 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
         /,
         *,
         resonance_tolerance: float = 1.0e-8,
-        time_chunk_size: int = 8,
+        response_workspace_bytes: int = 8 * 1024 * 1024,
+        time_chunk_size: int | None = None,
     ) -> None:
         poles = np.asarray(pole_frequency, dtype=np.complex128)
         amplitudes = np.asarray(linear_amplitude, dtype=np.complex128)
@@ -739,10 +742,17 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
             )
         if resonance_tolerance <= 0.0:
             raise ValueError("resonance_tolerance must be positive.")
-        if isinstance(time_chunk_size, bool) or not isinstance(time_chunk_size, int):
-            raise TypeError("time_chunk_size must be an integer.")
-        if time_chunk_size <= 0:
-            raise ValueError("time_chunk_size must be positive.")
+        if isinstance(response_workspace_bytes, bool) or not isinstance(
+            response_workspace_bytes, int
+        ):
+            raise TypeError("response_workspace_bytes must be an integer.")
+        if response_workspace_bytes <= 0:
+            raise ValueError("response_workspace_bytes must be positive.")
+        if time_chunk_size is not None:
+            if isinstance(time_chunk_size, bool) or not isinstance(time_chunk_size, int):
+                raise TypeError("time_chunk_size must be an integer or None.")
+            if time_chunk_size <= 0:
+                raise ValueError("time_chunk_size must be positive.")
         self.pole_frequency = jnp.asarray(poles)
         self.linear_amplitude = jnp.asarray(amplitudes)
         self.coupling = jnp.asarray(coefficients)
@@ -753,6 +763,7 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
         )
         self.resonant_pairs = jnp.abs(self.pair_detuning) <= resonance_tolerance
         self.time_chunk_size = time_chunk_size
+        self.response_workspace_bytes = response_workspace_bytes
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "quadratic-ringdown-duhamel",
@@ -764,6 +775,8 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
                     }
                 ),
                 "resonance_tolerance": float(resonance_tolerance),
+                "response_workspace_bytes": response_workspace_bytes,
+                "time_chunk_size": time_chunk_size,
             }
         )
 
@@ -802,9 +815,19 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
                 self.linear_amplitude,
             )
 
-        quadratic_modes = jax.lax.map(
-            response_at_time, time, batch_size=self.time_chunk_size
+        bytes_per_time = self.pair_detuning.dtype.itemsize * self.pole_frequency.size**3
+        time_chunk_size = min(
+            time.size,
+            self.time_chunk_size
+            if self.time_chunk_size is not None
+            else max(1, self.response_workspace_bytes // bytes_per_time),
         )
+        if time_chunk_size == time.size:
+            quadratic_modes = jax.vmap(response_at_time)(time)
+        else:
+            quadratic_modes = jax.lax.map(
+                response_at_time, time, batch_size=time_chunk_size
+            )
         total_signal = linear_signal + jnp.sum(quadratic_modes, axis=1)
         resonant = self.resonant_pairs
         finite = jnp.all(
@@ -840,8 +863,9 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
             derivative_valid,
             status,
             self.plan_id,
-            self.time_chunk_size,
-            16 * min(time.size, self.time_chunk_size) * self.pole_frequency.size**3,
+            time_chunk_size,
+            self.response_workspace_bytes,
+            bytes_per_time * time_chunk_size,
         )
 
 

@@ -100,20 +100,18 @@ def _reference(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--times", nargs="+", type=int, default=[8, 16, 32, 64, 128])
+    parser.add_argument("--compile-only-times", nargs="+", type=int, default=[256, 512])
     parser.add_argument("--modes", type=int, default=32)
-    parser.add_argument("--chunk", type=int, default=8)
+    parser.add_argument("--chunk", type=int)
+    parser.add_argument("--response-workspace-bytes", type=int, default=8 * 1024 * 1024)
     parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--candidate", action="store_true")
     parser.add_argument("--smoke", action="store_true")
-    parser.add_argument(
-        "--baseline",
-        type=Path,
-        default=Path(__file__).with_name("memory_ringdown_baseline.json"),
-    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     jax.config.update("jax_enable_x64", True)
-    sizes = [8, 16] if args.smoke else args.times
+    runtime_sizes = [8, 16] if args.smoke else args.times
+    compile_only_sizes = [] if args.smoke else args.compile_only_times
+    sizes = runtime_sizes + compile_only_sizes
     modes = 4 if args.smoke else args.modes
     if len(sizes) < 2 or any(t <= 0 for t in sizes) or sizes != sorted(set(sizes)):
         raise ValueError("Time capacities must be positive, increasing, and distinct.")
@@ -122,54 +120,96 @@ def main() -> None:
     coupling = np.full((modes, modes, modes), 0.001 + 0.002j, dtype=np.complex128)
 
     def prepare() -> QuadraticRingdownPlan:
-        if args.candidate:
-            return QuadraticRingdownPlan(
-                poles, amplitudes, coupling, time_chunk_size=args.chunk
-            )
-        return QuadraticRingdownPlan(poles, amplitudes, coupling)
+        return QuadraticRingdownPlan(
+            poles,
+            amplitudes,
+            coupling,
+            response_workspace_bytes=args.response_workspace_bytes,
+            time_chunk_size=args.chunk,
+        )
 
     preparation_start = time.perf_counter()
     plan, preparation_peak = host_allocation_peak(prepare)
     preparation_seconds = time.perf_counter() - preparation_start
+    full_plan = QuadraticRingdownPlan(
+        poles,
+        amplitudes,
+        coupling,
+        response_workspace_bytes=args.response_workspace_bytes,
+        time_chunk_size=max(sizes),
+    )
+    bytes_per_time = plan.pair_detuning.dtype.itemsize * modes**3
     cases: list[dict[str, Any]] = []
     for size in sizes:
         times = jnp.linspace(0.0, 5.0, size)
-        executable, timing = measure_lower_and_compile(
-            lambda: _FORWARD.lower(plan, times), lambda lowered: lowered.compile()
+        compile_only = size in compile_only_sizes
+        chunk = min(
+            size,
+            args.chunk
+            if args.chunk is not None
+            else max(1, plan.response_workspace_bytes // bytes_per_time),
         )
-        result, warm = measure_repeated(
-            lambda: executable(plan, times), warmup=1, repeats=args.repeats
-        )
-        compiler = compiler_evidence(
-            executable.compiled.cost_analysis(),
-            executable.compiled.memory_analysis(),
-            source="jax-compiled-quadratic-ringdown",
-            unavailable_reason="Compiler memory analysis unavailable.",
-        )
-        reference = _reference(
-            poles, amplitudes, coupling, np.asarray(times, dtype=np.float64)
-        )
+        route_records: dict[str, Any] = {}
+        for route, route_plan in (("budget", plan), ("full", full_plan)):
+            executable, timing = measure_lower_and_compile(
+                lambda: _FORWARD.lower(route_plan, times),
+                lambda lowered: lowered.compile(),
+            )
+            compiler = compiler_evidence(
+                executable.compiled.cost_analysis(),
+                executable.compiled.memory_analysis(),
+                source="jax-compiled-quadratic-ringdown",
+                unavailable_reason="Compiler memory analysis unavailable.",
+            )
+            route_record: dict[str, Any] = {
+                "plan_id": route_plan.plan_id,
+                "lowering_seconds": timing.lowering_seconds,
+                "compilation_seconds": timing.compilation_seconds,
+                "compiler": asdict(compiler),
+                "retained_plan_bytes": logical_array_bytes(route_plan),
+                "logical_response_bytes": bytes_per_time
+                * (chunk if route == "budget" else size),
+                "time_chunk_size": chunk if route == "budget" else size,
+                "response_workspace_bytes": route_plan.response_workspace_bytes,
+                "execution": "vmap" if route == "full" or chunk == size else "lax.map",
+                "warm": None,
+                "retained_output_bytes": None,
+                "status": None,
+                "reference_max_absolute_defect": None,
+            }
+            if not compile_only:
+                result, warm = measure_repeated(
+                    lambda: executable(route_plan, times),
+                    warmup=1,
+                    repeats=args.repeats,
+                )
+                reference = _reference(
+                    poles, amplitudes, coupling, np.asarray(times, dtype=np.float64)
+                )
+                route_record.update(
+                    {
+                        "warm": warm.to_seconds_dict(),
+                        "retained_output_bytes": logical_array_bytes(result),
+                        "status": int(result[3]),
+                        "reference_max_absolute_defect": float(
+                            np.max(np.abs(np.asarray(result[0]) - reference))
+                        ),
+                    }
+                )
+            route_records[route] = route_record
         cases.append(
             {
                 "time_count": size,
                 "mode_count": modes,
-                "lowering_seconds": timing.lowering_seconds,
-                "compilation_seconds": timing.compilation_seconds,
-                "warm": warm.to_seconds_dict(),
-                "compiler": asdict(compiler),
-                "retained_plan_bytes": logical_array_bytes(plan),
-                "retained_output_bytes": logical_array_bytes(result),
-                "logical_response_bytes": 16
-                * modes**3
-                * (min(size, args.chunk) if args.candidate else size),
-                "status": int(result[3]),
-                "reference_max_absolute_defect": float(
-                    np.max(np.abs(np.asarray(result[0]) - reference))
-                ),
+                "compile_only": compile_only,
+                "memory_comparison": "tiled" if chunk < size else "single-tile",
+                **route_records["budget"],
+                "full_response": route_records["full"],
             }
         )
     temporary = [case["compiler"]["temporary_bytes"] for case in cases]
     workspace = [case["logical_response_bytes"] for case in cases]
+    tiled = [case for case in cases if case["memory_comparison"] == "tiled"]
     record: dict[str, Any] = {
         "identity": asdict(
             capture_benchmark_identity(
@@ -181,10 +221,14 @@ def main() -> None:
         "environment": asdict(capture_environment()),
         "command": sys.argv,
         "configuration": {
-            "candidate": args.candidate,
-            "time_chunk_size": args.chunk,
+            "response_workspace_bytes": plan.response_workspace_bytes,
+            "time_chunk_size": plan.time_chunk_size,
             "mode_count": modes,
+            "runtime_times": runtime_sizes,
+            "compile_only_times": compile_only_sizes,
         },
+        "gate_basis": "same-run current-code budget route versus explicit full-tile vmap",
+        "single_tile_comparison": "Equal memory below the budget is expected, not a gate failure.",
         "preparation_host_peak_bytes": preparation_peak,
         "preparation_seconds": preparation_seconds,
         "process_peak_rss_bytes": process_peak_rss_bytes(),
@@ -196,38 +240,36 @@ def main() -> None:
         "doubled_time_workspace_ratios": [
             b / a for a, b in zip(workspace, workspace[1:])
         ],
+        "gate": None,
     }
-    if args.candidate and not args.smoke:
-        baseline = json.loads(args.baseline.read_text())
-        if [case["time_count"] for case in baseline["cases"]] != sizes or baseline[
-            "configuration"
-        ]["mode_count"] != modes:
-            raise ValueError("Baseline capacities must match candidate capacities.")
+    if tiled:
         record["gate"] = evaluate_memory_gate(
-            sizes,
-            [case["compiler"]["temporary_bytes"] for case in baseline["cases"]],
-            temporary,
+            [case["time_count"] for case in tiled],
+            [case["full_response"]["compiler"]["temporary_bytes"] for case in tiled],
+            [case["compiler"]["temporary_bytes"] for case in tiled],
             MemoryGatePolicy(),
         ).to_dict()
-        record["scaling_acceptance"] = all(
-            ratio <= 2.25 for ratio in record["doubled_time_workspace_ratios"]
-        )
-        record["doubled_time_compiler_temporary_ratios"] = [
-            b / a for a, b in zip(temporary, temporary[1:])
-        ]
-        record["compiler_scaling_acceptance"] = all(
-            ratio <= 2.25 for ratio in record["doubled_time_compiler_temporary_ratios"]
-        )
-    output = args.output or Path(__file__).with_name(
-        "memory_ringdown.json" if args.candidate else "memory_ringdown_baseline.json"
+    else:
+        record["gate_unavailable_reason"] = "No capacity exceeds the selected time tile."
+    record["scaling_acceptance"] = all(
+        ratio <= 2.25 for ratio in record["doubled_time_workspace_ratios"]
     )
+    record["doubled_time_compiler_temporary_ratios"] = (
+        [b / a for a, b in zip(temporary, temporary[1:])] if all(temporary) else []
+    )
+    record["compiler_scaling_acceptance"] = (
+        all(ratio <= 2.25 for ratio in record["doubled_time_compiler_temporary_ratios"])
+        if all(temporary)
+        else None
+    )
+    output = args.output or Path(__file__).with_name("memory_ringdown.json")
     write_json_atomic(output, record)
     print(
         json.dumps(
             {
                 "output": str(output),
                 "temporary_bytes": temporary,
-                "gate": record.get("gate"),
+                "gate": record["gate"],
                 "rss": record["process_peak_rss_bytes"],
             }
         )

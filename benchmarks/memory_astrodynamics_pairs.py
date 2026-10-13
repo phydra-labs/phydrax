@@ -41,13 +41,14 @@ def context() -> Any:
     )
 
 
-def run(route: str, count: int, candidate: bool, steps: int = 0) -> dict[str, Any]:
+def run(
+    route: str, count: int, candidate: bool, steps: int = 0, *, compile_only: bool = False
+) -> dict[str, Any]:
     astro = phx.applications.astrodynamics
     positions = jnp.asarray(
         np.random.default_rng(count).normal(size=(count, 3)), dtype=jnp.float64
     )
     masses = jnp.linspace(1.0e-4, 2.0e-4, count)
-    kwargs = {"target_chunk_size": 4} if candidate else {}
     start = time.perf_counter()
     if route == "direct":
         particles = phx.discretization.particle.ParticleSetPlan(
@@ -55,7 +56,10 @@ def run(route: str, count: int, candidate: bool, steps: int = 0) -> dict[str, An
         ).prepare()
         plan, peak = host_allocation_peak(
             lambda: astro.DirectNBodyGravityPlan(
-                particles, context(), softening=0.01, **kwargs
+                particles,
+                context(),
+                softening=0.01,
+                target_chunk_size=None if candidate else count,
             )
         )
         operation = plan.evaluate
@@ -66,7 +70,7 @@ def run(route: str, count: int, candidate: bool, steps: int = 0) -> dict[str, An
                 masses,
                 jnp.linspace(0.0, 0.01, max(steps, 1) + 1),
                 context(),
-                **kwargs,
+                target_chunk_size=None if candidate else count,
             )
         )
         operation = (
@@ -81,14 +85,17 @@ def run(route: str, count: int, candidate: bool, steps: int = 0) -> dict[str, An
         lambda: jax.jit(lambda p: operation(p)).lower(positions),
         lambda lowered: lowered.compile(),
     )
-    result, warm = measure_repeated(lambda: compiled(positions), warmup=1, repeats=3)
+    if compile_only:
+        result, warm = None, None
+    else:
+        result, warm = measure_repeated(lambda: compiled(positions), warmup=1, repeats=3)
     evidence = compiler_evidence(
         compiled.cost_analysis(),
         compiled.memory_analysis(),
         source="Compiled.memory_analysis",
     )
     defect = None
-    if not steps:
+    if not steps and result is not None:
         p = np.asarray(positions)
         m = np.asarray(masses)
         delta = p[None, :, :] - p[:, None, :]
@@ -112,19 +119,23 @@ def run(route: str, count: int, candidate: bool, steps: int = 0) -> dict[str, An
         "host_peak_bytes": peak,
         "lowering_seconds": timing.lowering_seconds,
         "compilation_seconds": timing.compilation_seconds,
-        "warm": warm.to_dict(),
+        "warm": None if warm is None else warm.to_dict(),
         "compiler": asdict(evidence),
         "retained_bytes": logical_array_bytes(plan),
         "logical_pair_workspace_bytes": 8
         * 6
         * count
-        * (min(4, count) if candidate else count),
+        * (max(1, min(count, (4 * 1024 * 1024) // (48 * count))) if candidate else count),
         "reference_defect": defect,
-        "valid": bool(result.valid)
+        "valid": None
+        if result is None
+        else bool(result.valid)
         if route == "direct"
         else bool(result[2])
         if not steps
         else bool(result.successful),
+        "compile_only": compile_only,
+        "pair_workspace_bytes": 4 * 1024 * 1024,
         "plan_id": plan.plan_id,
     }
 
@@ -148,9 +159,40 @@ def main() -> None:
         run("near", near_sizes[0], args.candidate, steps)
         for steps in ([4] if args.smoke else [64, 256])
     ]
+    # Above-budget comparisons use the current parallel route; historical
+    # baseline records remain untouched and below-budget rows are expected equal.
+    gate_rows = [
+        run(route, n, args.candidate, compile_only=True)
+        for route in ("direct", "near")
+        for n in (1024, 2048, 4096)
+    ]
+    comparison_rows = [
+        run(route, n, False, compile_only=True)
+        for route in ("direct", "near")
+        for n in (1024, 2048, 4096)
+    ]
+    fitting_comparisons = [
+        run(row["route"], row["capacity"], False, compile_only=True)
+        for row in rows
+        if not row["steps"]
+    ]
     record = {
         "candidate": args.candidate,
         "rows": rows,
+        "above_budget_rows": gate_rows,
+        "parallel_comparison_rows": comparison_rows,
+        "fitting_parallel_comparison_rows": fitting_comparisons,
+        "fitting_memory_equal": [
+            row["compiler"]["temporary_bytes"]
+            == comparison["compiler"]["temporary_bytes"]
+            for row, comparison in zip(
+                (row for row in rows if not row["steps"]),
+                fitting_comparisons,
+                strict=True,
+            )
+        ],
+        "historical_baseline": None if args.baseline is None else str(args.baseline),
+        "gate_basis": "same-run current default versus explicit full-tile parallel, compile-only above budget",
         "environment": capture_environment().to_dict(),
         "identity": capture_benchmark_identity(
             Path.cwd(), Path(__file__), rows[0].keys()
@@ -159,14 +201,10 @@ def main() -> None:
         "gates": {},
     }
     if args.baseline:
-        baseline = json.loads(args.baseline.read_text())
+        # The committed historical baseline is provenance, not the gate basis.
         for route in ("direct", "near"):
-            selected = [row for row in rows if row["route"] == route and not row["steps"]]
-            old = [
-                row
-                for row in baseline["rows"]
-                if row["route"] == route and not row["steps"]
-            ]
+            selected = [row for row in gate_rows if row["route"] == route]
+            old = [row for row in comparison_rows if row["route"] == route]
             gate = evaluate_memory_gate(
                 [r["capacity"] for r in selected],
                 [r["compiler"]["temporary_bytes"] for r in old],
