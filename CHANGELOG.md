@@ -2588,9 +2588,9 @@
   and Newton–Krylov, use sparse radial Jacobians, and refuse full spectra above
   declared budgets while preserving solver and stability evidence.
 - Tile exact periodic Ewald pair/translation sums and differentiated forces/stress;
-  default Kubo to frequency chunks with explicit parallel selection, preserving
-  both optical poles and sum-rule evidence. Ewald policies enter plan identity;
-  Kubo execution evidence has a separate policy identity.
+  default Kubo to budget-derived frequency tiles with direct parallel evaluation
+  when they fit, preserving both optical poles and sum-rule evidence. Ewald
+  policies enter plan identity; Kubo execution evidence has a separate policy identity.
 - Geometry queries stream polygon validity and ray parity, reuse prepared segment
   hierarchies and refitted triangle BVHs, and consume selected closest geometry
   rather than full pair tables. BRep winding retains its measured dense route.
@@ -2636,9 +2636,6 @@
   including Anderson fixed-point method IDs that embed their linear policy.
   Randomized SVD construction/audit sketches and default eigen start/repair draws
   are addressed by plan identity, so their samples change with this payload.
-  default Kubo to budget-derived frequency tiles with direct parallel evaluation
-  when they fit, preserving both optical poles and sum-rule evidence. Ewald
-  policies enter plan identity; Kubo execution evidence has a separate policy identity.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
