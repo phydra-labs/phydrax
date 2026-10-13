@@ -72,6 +72,7 @@ class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
     kernel: AbstractPositiveDefiniteKernel
     points: Array
     variance: Array
+    retained_covariance: Array | None
     max_workspace_bytes: int = eqx.field(static=True)
     checkpoint: bool = eqx.field(static=True)
 
@@ -91,6 +92,16 @@ class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
         self.kernel = kernel
         self.points = points
         self.variance = variance
+        count = points.shape[0]
+        if count * (count + 1) * points.dtype.itemsize <= max_workspace_bytes:
+            matrix = kernel.matrix(points, points) + jnp.diag(variance)
+            self.retained_covariance = eqx.error_if(
+                matrix,
+                jnp.any(~jnp.isfinite(matrix)),
+                "Iterative GP actions require finite covariance entries.",
+            )
+        else:
+            self.retained_covariance = None
         self.max_workspace_bytes = max_workspace_bytes
         self.checkpoint = checkpoint
         self.source = ArraySpace((points.shape[0],), dtype=points.dtype)
@@ -109,6 +120,8 @@ class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
 
     def mv(self, vector: Array, /) -> Array:
         vector = self.source.validate(vector)
+        if self.retained_covariance is not None:
+            return self.retained_covariance @ vector
         action, _, _, _ = _kernel_matrix_action(
             self.kernel,
             self.points,
@@ -127,7 +140,17 @@ class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
         return self.mv(vector)
 
     def diagonal(self) -> Array:
+        if self.retained_covariance is not None:
+            return jnp.diag(self.retained_covariance)
         return self.kernel.diagonal(self.points) + self.variance
+
+    def column(self, index: Array, /) -> Array:
+        if self.retained_covariance is not None:
+            return self.retained_covariance[:, index]
+        unit = (
+            jnp.zeros((self.points.shape[0],), dtype=self.points.dtype).at[index].set(1.0)
+        )
+        return self.mv(unit)
 
     def _materialize(self) -> Array:
         raise ValueError(
@@ -224,6 +247,20 @@ def _kernel_matrix_action(
         raise ValueError(
             "Kernel-action workspace cannot hold one kernel row and action output."
         )
+
+    if batch_size == left_count:
+        matrix = kernel.matrix(left_points, right_points)
+        if require_finite:
+            matrix = eqx.error_if(
+                matrix,
+                jnp.any(~jnp.isfinite(matrix)),
+                "Iterative GP actions require finite covariance entries.",
+            )
+        if isinstance(actions, DenseLinearOperator):
+            result = matrix @ actions.matrix
+        else:
+            result = jax.vmap(actions.transpose_mv)(matrix)
+        return result, batch_size, batch_size * bytes_per_row, left_count * right_count
 
     def one(point: Array) -> Array:
         kernel_row = kernel.matrix(point[None, ...], right_points)[0]
