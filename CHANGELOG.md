@@ -62,6 +62,9 @@
   temporal scan and avoid eager adaptive numerical refresh.
 - Reject nonfinite Clarabel inputs before provider execution while preserving
   `NONFINITE_INPUT` and independent valid batch cases.
+- Match operator-workspace benchmark gates by full problem capacity, keep default
+  and smoke campaigns aligned with committed baselines, and support isolated
+  smoke outputs for every memory driver on the discretization branch.
 - Bound iterative GP covariance actions and action-whitened variational kernel
   products by the computation workspace policy. Budget-admitted full blocks use
   direct dense products; iterative actions retain the kernel once per resolve
