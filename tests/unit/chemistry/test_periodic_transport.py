@@ -68,6 +68,10 @@ def test_periodic_transport_scenario_1() -> None:
     assert jnp.real(response.regular_conductivity_siemens_per_m[1, 0, 0]) > 0.0
     assert bool(response.evidence.passive)
     assert bool(response.evidence.sum_rule_satisfied)
+    assert response.evidence.frequency_workspace_bytes == 72 * 1024 * 1024
+    assert response.evidence.requested_frequency_chunk_size is None
+    assert response.evidence.frequency_chunk_size == 3
+    assert response.evidence.frequency_execution == "parallel"
     assert not response.evidence.includes_drude
     assert not response.evidence.infers_relaxation_time
     with pytest.raises(ValueError, match="strictly increasing positive"):
@@ -186,7 +190,7 @@ def _kubo_loop_reference(
 @pytest.mark.parametrize(
     ("policy", "chunk_size"),
     [("chunked", 1), ("chunked", 2), ("chunked", 8), ("parallel", 8)],
-    ids=["single-frequency", "tail-chunk", "default-chunk", "parallel"],
+    ids=["single-frequency", "tail-chunk", "full-chunk", "parallel"],
 )
 def test_kubo_frequency_transition_loop_parity(
     k_count: int, dimension: int, policy: KuboFrequencyPolicy, chunk_size: int
@@ -246,6 +250,10 @@ def test_kubo_frequency_transition_loop_parity(
     effective_chunk = min(chunk_size, 3) if policy == "chunked" else 3
     assert response.evidence.frequency_policy == policy
     assert response.evidence.frequency_chunk_size == effective_chunk
+    assert response.evidence.frequency_execution == (
+        "parallel" if effective_chunk == 3 else "chunked"
+    )
+    assert response.evidence.requested_frequency_chunk_size == chunk_size
     assert response.evidence.logical_frequency_workspace_bytes == (
         16 * effective_chunk * k_count * 4 * dimension**2
     )
@@ -280,6 +288,124 @@ def test_kubo_refuses_nonpositive_frequency_chunks(chunk_size: int) -> None:
             np.asarray([1.0e15]),
             KuboLinewidth(0.04 * _E, mechanism_id="chunk-refusal"),
             frequency_chunk_size=chunk_size,
+        )
+
+
+@pytest.mark.parametrize(
+    ("budget", "expected_chunk"),
+    [
+        (1, 1),
+        (63, 1),
+        (64, 1),
+        (127, 1),
+        (np.int64(128), 2),
+        (319, 4),
+        (320, 5),
+        (321, 5),
+    ],
+)
+def test_kubo_workspace_boundary_equivalence(budget: int, expected_chunk: int) -> None:
+    plan = _two_level_kubo()
+    frequencies = np.linspace(0.2, 1.7, 5) * _E / 1.0545718176461565e-34
+    linewidth = KuboLinewidth(0.04 * _E, mechanism_id="budget-boundary")
+    response = finite_frequency_kubo_response(
+        plan, frequencies, linewidth, frequency_workspace_bytes=budget
+    )
+    reference, spectral_weight, occupations = _kubo_loop_reference(
+        np.asarray(plan.energies_joule),
+        np.asarray(plan.velocity_matrices_m_per_s),
+        np.asarray(plan.k_weights),
+        frequencies,
+        linewidth.energy_width_joule,
+    )
+    np.testing.assert_allclose(
+        response.regular_conductivity_siemens_per_m, reference, rtol=2.0e-11, atol=2.0e-13
+    )
+    np.testing.assert_allclose(response.raw.occupations, occupations, rtol=2.0e-11)
+    np.testing.assert_allclose(
+        response.raw.regular_spectral_weight, spectral_weight, rtol=2.0e-11
+    )
+    assert bool(response.successful)
+    assert response.evidence.frequency_policy == "chunked"
+    assert response.evidence.frequency_execution == (
+        "parallel" if expected_chunk == frequencies.size else "chunked"
+    )
+    assert response.evidence.frequency_workspace_bytes == budget
+    assert response.evidence.requested_frequency_chunk_size is None
+    assert response.evidence.frequency_chunk_size == expected_chunk
+    assert response.evidence.logical_frequency_workspace_bytes == 64 * expected_chunk
+
+
+@pytest.mark.parametrize("policy", ["chunked", "parallel"])
+def test_kubo_explicit_frequency_chunk_overrides_budget(
+    policy: KuboFrequencyPolicy,
+) -> None:
+    plan = _two_level_kubo()
+    frequencies = np.linspace(0.2, 1.7, 5) * _E / 1.0545718176461565e-34
+    linewidth = KuboLinewidth(0.04 * _E, mechanism_id="budget-override")
+    response = finite_frequency_kubo_response(
+        plan,
+        frequencies,
+        linewidth,
+        frequency_policy=policy,
+        frequency_workspace_bytes=1,
+        frequency_chunk_size=2,
+    )
+    parallel = finite_frequency_kubo_response(
+        plan, frequencies, linewidth, frequency_policy="parallel"
+    )
+    np.testing.assert_allclose(
+        response.regular_conductivity_siemens_per_m,
+        parallel.regular_conductivity_siemens_per_m,
+        rtol=2.0e-11,
+    )
+    assert response.evidence.frequency_chunk_size == (2 if policy == "chunked" else 5)
+    assert response.evidence.requested_frequency_chunk_size == 2
+
+
+def test_kubo_workspace_budget_changes_execution_identity_only() -> None:
+    plan = _two_level_kubo()
+    frequencies = np.asarray([1.0e15])
+    linewidth = KuboLinewidth(0.04 * _E, mechanism_id="budget-identity")
+    first = finite_frequency_kubo_response(
+        plan, frequencies, linewidth, frequency_workspace_bytes=64
+    )
+    second = finite_frequency_kubo_response(
+        plan, frequencies, linewidth, frequency_workspace_bytes=65
+    )
+    assert first.plan_id == second.plan_id == plan.plan_id
+    assert first.evidence.frequency_chunk_size == second.evidence.frequency_chunk_size
+    assert first.evidence.execution_policy_id != second.evidence.execution_policy_id
+
+
+@pytest.mark.parametrize("policy", ["chunked", "parallel"])
+@pytest.mark.parametrize("budget", [0, -1])
+def test_kubo_refuses_nonpositive_workspace_budget(
+    policy: KuboFrequencyPolicy, budget: int
+) -> None:
+    with pytest.raises(
+        ValueError, match="frequency_workspace_bytes must be a positive integer"
+    ):
+        finite_frequency_kubo_response(
+            _two_level_kubo(),
+            np.asarray([1.0e15]),
+            KuboLinewidth(0.04 * _E, mechanism_id="budget-refusal"),
+            frequency_policy=policy,
+            frequency_workspace_bytes=budget,
+            frequency_chunk_size=1,
+        )
+
+
+@pytest.mark.parametrize("budget", [True, 1.5, "64", None])
+def test_kubo_refuses_noninteger_workspace_budget(budget: Any) -> None:
+    with pytest.raises(
+        TypeError, match="frequency_workspace_bytes must be a positive integer"
+    ):
+        finite_frequency_kubo_response(
+            _two_level_kubo(),
+            np.asarray([1.0e15]),
+            KuboLinewidth(0.04 * _E, mechanism_id="budget-refusal"),
+            frequency_workspace_bytes=budget,
         )
 
 

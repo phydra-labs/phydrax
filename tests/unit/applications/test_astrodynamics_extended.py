@@ -457,7 +457,7 @@ def test_direct_gravity_collision_rolls_back(softening: float, threshold: float)
     np.testing.assert_array_equal(rollout.positions, 0.0)
 
 
-def test_gravity_chunk_policy_preserves_scientific_identity() -> None:
+def test_gravity_chunk_policy_records_execution_identity() -> None:
     astro = phx.applications.astrodynamics
     particles = phx.discretization.particle.ParticleSetPlan(
         jnp.asarray([0, 1]), jnp.asarray([1.0, 1.0]), ambient_dimension=3
@@ -465,7 +465,7 @@ def test_gravity_chunk_policy_preserves_scientific_identity() -> None:
     context = _context()
     assert (
         astro.DirectNBodyGravityPlan(particles, context, target_chunk_size=1).plan_id
-        == astro.DirectNBodyGravityPlan(particles, context, target_chunk_size=7).plan_id
+        != astro.DirectNBodyGravityPlan(particles, context, target_chunk_size=7).plan_id
     )
     assert (
         astro.NearlyKeplerianPlan(
@@ -475,7 +475,7 @@ def test_gravity_chunk_policy_preserves_scientific_identity() -> None:
             context,
             target_chunk_size=1,
         ).plan_id
-        == astro.NearlyKeplerianPlan(
+        != astro.NearlyKeplerianPlan(
             1.0,
             jnp.asarray([0.001]),
             jnp.asarray([0.0, 0.01]),
@@ -522,3 +522,70 @@ def test_near_kepler_collision_reports_failed_rollout() -> None:
     )
     assert not bool(result.successful)
     assert not bool(jnp.any(result.valid))
+
+
+@pytest.mark.parametrize("budget", [1, 6 * 5 * 8 * 4, 6 * 5 * 8 * 5])
+def test_gravity_workspace_boundary_matches_full_tile(budget: int) -> None:
+    astro = phx.applications.astrodynamics
+    positions = jnp.asarray(np.random.default_rng(7).normal(size=(5, 3)))
+    masses = jnp.linspace(0.001, 0.005, 5)
+    particles = phx.discretization.particle.ParticleSetPlan(
+        jnp.arange(5), masses, ambient_dimension=3
+    ).prepare()
+    bounded = astro.DirectNBodyGravityPlan(
+        particles, _context(), softening=0.1, pair_workspace_bytes=budget
+    ).evaluate(positions)
+    full = astro.DirectNBodyGravityPlan(
+        particles,
+        _context(),
+        softening=0.1,
+        target_chunk_size=5,
+        pair_workspace_bytes=1,
+    ).evaluate(positions)
+    np.testing.assert_allclose(bounded.acceleration, full.acceleration, rtol=1e-13)
+    np.testing.assert_allclose(
+        bounded.potential_energy, full.potential_energy, rtol=1e-13
+    )
+    np.testing.assert_array_equal(
+        bounded.minimum_pair_distance, full.minimum_pair_distance
+    )
+    bounded_near = astro.NearlyKeplerianPlan(
+        1.0,
+        masses,
+        jnp.asarray([0.0, 0.01]),
+        _context(),
+        pair_workspace_bytes=budget,
+    )._perturbation(positions)
+    full_near = astro.NearlyKeplerianPlan(
+        1.0,
+        masses,
+        jnp.asarray([0.0, 0.01]),
+        _context(),
+        target_chunk_size=5,
+        pair_workspace_bytes=1,
+    )._perturbation(positions)
+    for actual, expected in zip(bounded_near, full_near, strict=True):
+        np.testing.assert_allclose(actual, expected, rtol=1e-13)
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 1.5])
+def test_gravity_refuses_invalid_workspace_budget(budget: int) -> None:
+    astro = phx.applications.astrodynamics
+    particles = phx.discretization.particle.ParticleSetPlan(
+        jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=3
+    ).prepare()
+    error = (
+        TypeError
+        if isinstance(budget, bool) or not isinstance(budget, int)
+        else ValueError
+    )
+    with pytest.raises(error, match="pair_workspace_bytes"):
+        astro.DirectNBodyGravityPlan(particles, _context(), pair_workspace_bytes=budget)
+    with pytest.raises(error, match="pair_workspace_bytes"):
+        astro.NearlyKeplerianPlan(
+            1.0,
+            jnp.asarray([0.001]),
+            jnp.asarray([0.0, 0.01]),
+            _context(),
+            pair_workspace_bytes=budget,
+        )

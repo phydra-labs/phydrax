@@ -31,12 +31,25 @@ def _norm(value: Array, /, *, axis: int = -1) -> Array:
     return jnp.sqrt(jnp.sum(value * value, axis=axis))
 
 
+def _gravity_workspace_policy(chunk: int | None, budget: int) -> None:
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise TypeError("pair_workspace_bytes must be an integer.")
+    if budget < 1:
+        raise ValueError("pair_workspace_bytes must be positive.")
+    if chunk is not None:
+        if isinstance(chunk, bool) or not isinstance(chunk, int):
+            raise TypeError("target_chunk_size must be an integer or None.")
+        if chunk < 1:
+            raise ValueError("target_chunk_size must be positive.")
+
+
 def _direct_gravity_rows(
     positions: Array,
     masses: Array,
     active: Array,
     softening: Array,
-    target_chunk_size: int,
+    target_chunk_size: int | None,
+    pair_workspace_bytes: int = 4 * 1024 * 1024,
 ) -> tuple[Array, Array, Array, Array]:
     """Exact source reductions with at most a bounded batch of target rows."""
     indices = jnp.arange(positions.shape[0])
@@ -59,9 +72,21 @@ def _direct_gravity_rows(
         singular = jnp.any(pair & (squared == 0.0))
         return acceleration, potential, minimum, singular
 
-    acceleration, potential, minimum, singular = jax.lax.map(
-        row, indices, batch_size=min(target_chunk_size, positions.shape[0])
+    # Six floating source-sized intermediates per target row, as in the
+    # qualification workspace model; an explicit chunk overrides admission.
+    extent = positions.shape[0]
+    chunk = min(
+        extent,
+        max(1, pair_workspace_bytes // (6 * extent * positions.dtype.itemsize))
+        if target_chunk_size is None
+        else target_chunk_size,
     )
+    if chunk == extent:
+        acceleration, potential, minimum, singular = jax.vmap(row)(indices)
+    else:
+        acceleration, potential, minimum, singular = jax.lax.map(
+            row, indices, batch_size=chunk
+        )
     return acceleration, jnp.sum(potential), jnp.min(minimum), jnp.any(singular)
 
 
@@ -111,7 +136,8 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
     gravitational_constant: Array
     softening: Array
     collision_distance: Array
-    target_chunk_size: int = eqx.field(static=True)
+    target_chunk_size: int | None = eqx.field(static=True)
+    pair_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -124,16 +150,14 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         softening: ArrayLike = 0.0,
         collision_distance: ArrayLike = 0.0,
-        target_chunk_size: int = 4,
+        target_chunk_size: int | None = None,
+        pair_workspace_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         if particles.ambient_dimension != 3:
             raise ValueError(
                 "Direct N-body gravity requires three-dimensional particles."
             )
-        if isinstance(target_chunk_size, bool) or not isinstance(target_chunk_size, int):
-            raise TypeError("target_chunk_size must be an integer.")
-        if target_chunk_size < 1:
-            raise ValueError("target_chunk_size must be positive.")
+        _gravity_workspace_policy(target_chunk_size, pair_workspace_bytes)
         coupling = jnp.asarray(gravitational_constant).reshape(())
         smoothing = jnp.asarray(softening, dtype=coupling.dtype).reshape(())
         collision = jnp.asarray(collision_distance, dtype=coupling.dtype).reshape(())
@@ -143,6 +167,7 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         self.softening = smoothing
         self.collision_distance = collision
         self.target_chunk_size = target_chunk_size
+        self.pair_workspace_bytes = pair_workspace_bytes
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "direct-nbody-gravity",
@@ -151,6 +176,8 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
                 "gravitational_constant": coupling,
                 "softening": smoothing,
                 "collision_distance": collision,
+                "target_chunk_size": target_chunk_size,
+                "pair_workspace_bytes": pair_workspace_bytes,
             }
         )
 
@@ -162,7 +189,12 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         active = self.particles.active_mask
         masses = self.particles.masses.astype(positions.dtype)
         raw_acceleration, pair_potential, minimum, coincident = _direct_gravity_rows(
-            positions, masses, active, self.softening, self.target_chunk_size
+            positions,
+            masses,
+            active,
+            self.softening,
+            self.target_chunk_size,
+            self.pair_workspace_bytes,
         )
         collision = minimum <= self.collision_distance
         singular = (self.softening == 0.0) & coincident
