@@ -108,12 +108,18 @@ frame remain astrodynamics-owned.
 
 `DirectNBodyGravityPlan` and `NearlyKeplerianPlan` evaluate every direct pair
 exactly with a shared bounded target-row action. Their positive integer
-`target_chunk_size` (default `4`) controls parallel target rows; each row retains
-the full source-axis reduction, so pair workspace scales as
-`min(target_chunk_size, N) * N`, not `N * N`. A larger chunk trades more workspace
-for target parallelism; it does not select Barnes–Hut, truncate interactions, or
-change scientific plan identity. The static chunk field does change the plan
-PyTree representation. Active masks, self exclusion, softened pair-once potential,
+`pair_workspace_bytes` defaults to 4 MiB, admitting the quiet qualification's
+direct problems through 256 bodies and near-Keplerian problems through 32 bodies
+as a single parallel tile. With `target_chunk_size=None` (the default), the tile
+is `clamp(pair_workspace_bytes // (6 * N * dtype.itemsize), 1, N)`.
+The full tile executes directly through the parallel action, without a map
+wrapper; above budget the exact source-axis reductions run in bounded tiles.
+An explicit positive integer `target_chunk_size` overrides the budget.
+The six-floating-array model bounds logical pair workspace, not total compiler
+storage, and one row is the minimum even when it exceeds the budget.
+The budget and override are recorded in plan identity and static PyTree metadata;
+neither selects Barnes–Hut nor truncates interactions.
+Active masks, self exclusion, softened pair-once potential,
 minimum separation, net force, collision status, and rollout rollback remain
 explicit. Near-Keplerian integration retains its indirect heliocentric term and
 universal-Kepler drift.
