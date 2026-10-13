@@ -55,6 +55,7 @@ import json
 import math
 import os
 import pickletools
+import stat
 import struct
 import sys
 import zipfile
@@ -264,7 +265,32 @@ def _verify_record_files(distribution: metadata.Distribution, /) -> int:
         if recorded.mode != "sha256":
             raise _refuse("Provider RECORD uses an unsupported digest.")
         location = Path(str(distribution.locate_file(package_path)))
-        digest = hashlib.sha256(location.read_bytes()).digest()
+        with location.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise _refuse(f"Provider file {package_path} is not a regular file.")
+            if package_path.size is not None and before.st_size != package_path.size:
+                raise _refuse(f"Provider file {package_path} differs from its RECORD.")
+            digest = hashlib.file_digest(stream, "sha256").digest()
+            for after in (os.fstat(stream.fileno()), location.stat()):
+                if (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_mode,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                ) != (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_mode,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                ):
+                    raise _refuse(
+                        f"Provider file {package_path} changed while being hashed."
+                    )
         encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         if encoded != recorded.value:
             raise _refuse(f"Provider file {package_path} differs from its RECORD.")
@@ -2649,16 +2675,21 @@ def _run_fixture(
             raise _refuse(f"Unsupported fixture source dtype {other!r}.")
     torch.manual_seed(seed)
     model = _build(declaration, dtype, limits)
-    buffer = io.BytesIO()
     match kind:
         case "torch-state-dict":
-            torch.save(model.state_dict(), buffer)
+            payload = model.state_dict()
         case "torch-full-model":
-            torch.save(model, buffer)
+            payload = model
         case other:
             raise _refuse(f"Unsupported fixture source kind {other!r}.")
-    payload = buffer.getvalue()
-    (output.parent / "fixture.pt").write_bytes(payload)
+    fixture = output.parent / "fixture.pt"
+    with fixture.open("wb") as stream:
+        torch.save(payload, stream)
+    with fixture.open("rb") as stream:
+        size = os.fstat(stream.fileno()).st_size
+        if size > limits.max_source_bytes:
+            raise _refuse("The provider fixture exceeds the source byte limit.")
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
     return {
         "seed": seed,
         "source_kind": kind,
@@ -2666,8 +2697,8 @@ def _run_fixture(
         # Exactly what extraction declares for these bytes (reference
         # energies and scales at the source precision).
         "declaration": _declaration(model, _admit_module_tree(model)),
-        "fixture_sha256": hashlib.sha256(payload).hexdigest(),
-        "fixture_byte_size": len(payload),
+        "fixture_sha256": digest,
+        "fixture_byte_size": size,
     }
 
 

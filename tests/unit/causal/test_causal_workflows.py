@@ -354,3 +354,52 @@ def test_pc_stable_returns_equivalence_class() -> None:
         ).status
         is causal.GraphFalsificationStatus.REJECTED
     )
+
+
+@pytest.mark.parametrize("ridge", (1e-3, 1e-8))
+@pytest.mark.parametrize("constant_condition", (False, True))
+def test_kernel_ci_matches_dense_residual_reference(
+    ridge: float, constant_condition: bool
+) -> None:
+    rng = np.random.default_rng(412)
+    values = rng.normal(size=(17, 3))
+    if constant_condition:
+        values[:, 2] = 1.0
+    schema = causal.CausalSchema(
+        tuple(
+            causal.CausalVariable(name=name, scale=causal.VariableScale.CONTINUOUS)
+            for name in ("x", "y", "z")
+        )
+    )
+    dataset = causal.CausalDataset(
+        schema=schema, values=tuple(jnp.asarray(values[:, index]) for index in range(3))
+    )
+    test = causal.KernelConditionalIndependenceTest(
+        bandwidth=0.9, ridge=ridge, permutations=19
+    )
+    key = jax.random.key(39)
+    observed = test.test(dataset, "x", "y", ("z",), key=key)
+    centered = values - values.mean(axis=0, keepdims=True)
+    kernels = [
+        np.exp(-((column[:, None] - column[None, :]) ** 2) / (2 * 0.9**2))
+        for column in centered.T
+    ]
+    identity = np.eye(values.shape[0])
+    residual = identity - kernels[2] @ np.linalg.solve(
+        kernels[2] + ridge * identity, identity
+    )
+    centering = identity - np.ones_like(identity) / values.shape[0]
+    left = centering @ residual @ kernels[0] @ residual.T @ centering
+    right = centering @ residual @ kernels[1] @ residual.T @ centering
+    statistic = np.sum(left * right) / values.shape[0] ** 2
+    permuted = []
+    for permutation_key in jax.random.split(key, test.permutations):
+        permutation = np.asarray(jax.random.permutation(permutation_key, values.shape[0]))
+        permuted.append(
+            np.sum(left * right[np.ix_(permutation, permutation)]) / values.shape[0] ** 2
+        )
+    p_value = (1 + np.sum(np.asarray(permuted) >= statistic)) / (test.permutations + 1)
+    assert observed.status is causal.CIStatus.SUCCESS
+    np.testing.assert_allclose(observed.statistic, statistic, rtol=2e-6, atol=1e-11)
+    assert observed.p_value == p_value
+    assert observed.independent == (p_value > test.alpha)

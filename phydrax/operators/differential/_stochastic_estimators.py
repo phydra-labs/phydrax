@@ -382,14 +382,25 @@ def exact_state_divergence(
         raise ValueError("vector_field must preserve the complete state shape.")
     linearization = la.prepare_linearization(vector_field, state_array)
     size = state_array.size
-    total = jnp.asarray(0.0, dtype=field_value.dtype)
-    for index in range(size):
+    if size == 0:
+        return jnp.asarray(0.0, dtype=field_value.dtype)
+    # Admit parallel coordinate actions only while their direction/tangent workspace
+    # fits one MiB; larger states stream bounded batches without an identity matrix.
+    batch_size = min(size, max(1, (1 << 20) // (state_array.nbytes + field_value.nbytes)))
+
+    def diagonal_entry(index: Array) -> Array:
         direction = jax.nn.one_hot(index, size, dtype=state_array.dtype).reshape(
             state_array.shape
         )
         derivative = jnp.asarray(linearization.jvp(direction))
-        total = total + derivative.reshape((-1,))[index]
-    return total
+        return derivative.reshape((-1,))[index]
+
+    diagonal = jax.lax.map(
+        jax.checkpoint(diagonal_entry),
+        jnp.arange(size, dtype=jnp.int32),
+        batch_size=batch_size,
+    )
+    return jnp.sum(diagonal)
 
 
 def stochastic_divergence_samples(

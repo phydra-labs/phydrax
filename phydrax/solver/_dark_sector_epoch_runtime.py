@@ -21,7 +21,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from .._fingerprint import canonical_fingerprint, canonical_json
+from .._fingerprint import array_bytes_digest, canonical_fingerprint, canonical_json
 from .._identity import ExecutableSignature
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -1179,11 +1179,11 @@ def _array_record(value: ArrayLike, /) -> dict[str, object]:
         raise TypeError("Checkpoint arrays cannot use object dtype.")
     canonical_dtype = array.dtype.newbyteorder("<")
     canonical = np.ascontiguousarray(array.astype(canonical_dtype, copy=False))
-    payload = canonical.tobytes(order="C")
+    payload = memoryview(canonical.reshape(-1).view(np.uint8))
     return {
         "shape": list(canonical.shape),
         "dtype": canonical.dtype.str,
-        "sha256": hashlib.sha256(payload).hexdigest(),
+        "sha256": array_bytes_digest(canonical),
         "base64": base64.b64encode(payload).decode("ascii"),
     }
 

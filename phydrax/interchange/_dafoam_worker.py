@@ -14,7 +14,11 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def _fingerprint(value: object) -> str:
@@ -32,6 +36,13 @@ def _fingerprint(value: object) -> str:
 def _file_hash(path: str | os.PathLike[str]) -> str:
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _array_hash(array: np.ndarray) -> str:
+    import numpy as np
+
+    value = np.ascontiguousarray(array, dtype=np.float64)
+    return hashlib.sha256(memoryview(value.reshape(-1)).cast("B")).hexdigest()
 
 
 def _verify_runtime(runtime: dict[str, Any]) -> str:
@@ -65,10 +76,6 @@ def main() -> None:
             "The serialized aerodynamic profile is serial, not MPI-distributed."
         )
 
-    def array_hash(array: np.ndarray) -> str:
-        value = np.ascontiguousarray(array, dtype=np.float64)
-        return hashlib.sha256(value.tobytes()).hexdigest()
-
     solver = PYDAFOAM(options=request["options"], comm=MPI.COMM_WORLD)
     if solver.version != runtime["version"]:
         raise ValueError("The imported DAFoam engine has a different version.")
@@ -87,7 +94,7 @@ def main() -> None:
         solver.solver.getOFMeshPoints(coords)
         if not np.isfinite(coords).all():
             raise ValueError("DAFoam realized mesh has nonfinite coordinates.")
-        return array_hash(coords)
+        return _array_hash(coords)
 
     mesh_sha = mesh_hash()
     design_sha = _fingerprint(request["design"])
@@ -162,7 +169,7 @@ def main() -> None:
             result["state_accepted"] = bool(
                 solver.primalFail == 0 and np.isfinite(states).all()
             )
-            result["state_sha256"] = array_hash(states)
+            result["state_sha256"] = _array_hash(states)
             result["mesh_sha256"] = mesh_hash()
             if not result["state_accepted"]:
                 result["failure_reason"] = (
@@ -193,7 +200,7 @@ def main() -> None:
                             except om.AnalysisError as error:
                                 failure = str(error)
                             unchanged = (
-                                array_hash(solver.getStates()) == result["state_sha256"]
+                                _array_hash(solver.getStates()) == result["state_sha256"]
                                 and mesh_hash() == result["mesh_sha256"]
                                 and all(
                                     np.array_equal(problem.get_val(key), values)
@@ -240,7 +247,7 @@ def main() -> None:
                                     "state_sha256": result["state_sha256"],
                                     "mesh_sha256": result["mesh_sha256"],
                                     "design_sha256": design_sha,
-                                    "adjoint_sha256": array_hash(adjoint),
+                                    "adjoint_sha256": _array_hash(adjoint),
                                     "linear_iterations": iterations,
                                     "linear_residual_norm": residual
                                     if residual is not None and np.isfinite(residual)

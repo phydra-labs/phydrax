@@ -3,6 +3,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -266,3 +267,54 @@ def test_fluctuation_dissipation_scenario_2() -> None:
     )
     assert solution.states.shape == (2, 1)
     assert bool(solution.successful)
+
+
+def test_stationary_current_trace_matches_dense_and_gradient() -> None:
+    field = phx.nn.models.PortHamiltonianVectorField(
+        state_size=2,
+        energy=_QuadraticEnergy2D(),
+        interconnection_model=_StateSkew(),
+        dissipation_model=_RankOneMobility(),
+        dissipation_structure="positive_semidefinite",
+        key=jr.key(1),
+    )
+    dynamics = phx.stochastic.IsothermalPortHamiltonianDynamics(
+        field,
+        temperature=0.4,
+        process_id="dense-current-reference",
+    )
+    state = jnp.asarray(np.random.default_rng(716).normal(size=2))
+
+    def current(value: jax.Array) -> jax.Array:
+        score = -field.energy_gradient(value) / dynamics.temperature
+        divergence = jnp.einsum("ijj->i", jax.jacfwd(field.dissipation_matrix)(value))
+        structure = lambda x: (
+            field.dissipation_matrix(x) - field.interconnection_matrix(x)
+        )
+        drift = field(value) + dynamics.temperature * jnp.einsum(
+            "ijj->i", jax.jacfwd(structure)(value)
+        )
+        return (
+            drift
+            - dynamics.temperature * divergence
+            - dynamics.temperature * (field.dissipation_matrix(value) @ score)
+        )
+
+    def dense(value: jax.Array) -> jax.Array:
+        score = -field.energy_gradient(value) / dynamics.temperature
+        return -(
+            jnp.trace(jax.jacfwd(current)(value)) + jnp.vdot(current(value), score).real
+        )
+
+    np.testing.assert_allclose(
+        dynamics.stationary_fokker_planck_residual(state),
+        dense(state),
+        atol=1e-12,
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        jax.grad(dynamics.stationary_fokker_planck_residual)(state),
+        jax.grad(dense)(state),
+        atol=1e-12,
+        rtol=1e-12,
+    )

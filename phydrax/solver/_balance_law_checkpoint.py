@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._array_archive import read_array_archive, write_array_archive
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import canonical_array_hex_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..typing import checked
@@ -108,7 +108,7 @@ def _payload_id(manifest: dict[str, Any], arrays: dict[str, np.ndarray], /) -> s
                 name: {
                     "shape": list(value.shape),
                     "dtype": value.dtype.str,
-                    "bytes": canonical_fingerprint(value.tobytes().hex()),
+                    "bytes": canonical_array_hex_fingerprint(value),
                 }
                 for name, value in sorted(arrays.items())
             },

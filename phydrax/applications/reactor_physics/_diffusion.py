@@ -198,14 +198,16 @@ class MultigroupDiffusionPlan:
         area = np.asarray(geometry.face_measures)
         volume = np.asarray(geometry.cell_measures)
         diffusion = self.material.diffusion_coefficient_m
-        matrix = np.zeros((size, size), dtype=np.float64)
-
-        def index(cell: int, group: int) -> int:
-            return cell * groups + group
+        # Emit rows in the same order as dense np.nonzero, without dense scratch.
+        capacity = cells * groups * groups + 2 * (cells - 1) * groups
+        rows = np.empty(capacity, dtype=np.int32)
+        columns = np.empty(capacity, dtype=np.int32)
+        values = np.empty(capacity, dtype=np.float64)
+        count = 0
 
         for cell in range(cells):
             for group in range(groups):
-                row = index(cell, group)
+                row = cell * groups + group
                 left_distance = (
                     centers[cell] - faces[cell]
                     if cell == 0
@@ -234,55 +236,75 @@ class MultigroupDiffusionPlan:
                 )
                 left_conductance = area[cell] * left_diffusion / left_distance
                 right_conductance = area[cell + 1] * right_diffusion / right_distance
-                matrix[row, row] += (
+                diagonal = (
                     left_conductance
                     + right_conductance
                     + self.material.removal_cross_section_m1[cell, group] * volume[cell]
                 )
-                if cell > 0:
-                    matrix[row, index(cell - 1, group)] -= left_conductance
-                if cell < cells - 1:
-                    matrix[row, index(cell + 1, group)] -= right_conductance
+                if cell > 0 and left_conductance != 0.0:
+                    rows[count] = row
+                    columns[count] = (cell - 1) * groups + group
+                    values[count] = -left_conductance
+                    count += 1
                 for source_group in range(groups):
-                    if source_group != group:
-                        matrix[row, index(cell, source_group)] -= (
-                            self.material.scattering_cross_section_m1[
-                                cell, source_group, group
-                            ]
-                            * volume[cell]
-                        )
-        fission = np.zeros_like(matrix)
-        for cell in range(cells):
-            for target_group in range(groups):
-                for source_group in range(groups):
-                    fission[index(cell, target_group), index(cell, source_group)] = (
-                        self.material.fission_spectrum[cell, target_group]
-                        * self.material.nu_fission_cross_section_m1[cell, source_group]
+                    value = (
+                        diagonal
+                        if source_group == group
+                        else -self.material.scattering_cross_section_m1[
+                            cell, source_group, group
+                        ]
                         * volume[cell]
                     )
-        rows, columns = np.nonzero(matrix)
+                    if value != 0.0:
+                        rows[count] = row
+                        columns[count] = cell * groups + source_group
+                        values[count] = value
+                        count += 1
+                if cell < cells - 1 and right_conductance != 0.0:
+                    rows[count] = row
+                    columns[count] = (cell + 1) * groups + group
+                    values[count] = -right_conductance
+                    count += 1
         relation = EdgeRelation(
-            jnp.asarray(columns, dtype=jnp.int32),
-            jnp.asarray(rows, dtype=jnp.int32),
+            jnp.asarray(columns[:count], dtype=jnp.int32),
+            jnp.asarray(rows[:count], dtype=jnp.int32),
             source_size=size,
             target_size=size,
         )
         space = ArraySpace((size,), dtype=np.float64)
         operator = SparseCoordinateOperator(
             relation,
-            jnp.asarray(matrix[rows, columns]),
+            jnp.asarray(values[:count]),
             source=space,
             target=space,
             operator_id=self.plan_id,
         )
+        fission_capacity = cells * groups * groups
+        fission_rows = np.empty(fission_capacity, dtype=np.int32)
+        fission_columns = np.empty(fission_capacity, dtype=np.int32)
+        fission_values = np.empty(fission_capacity, dtype=np.float64)
+        fission_count = 0
+        for cell in range(cells):
+            for target_group in range(groups):
+                for source_group in range(groups):
+                    value = (
+                        self.material.fission_spectrum[cell, target_group]
+                        * self.material.nu_fission_cross_section_m1[cell, source_group]
+                        * volume[cell]
+                    )
+                    if value != 0.0:
+                        fission_rows[fission_count] = cell * groups + target_group
+                        fission_columns[fission_count] = cell * groups + source_group
+                        fission_values[fission_count] = value
+                        fission_count += 1
         fission_operator = SparseCoordinateOperator(
             EdgeRelation(
-                jnp.asarray(np.nonzero(fission)[1], dtype=jnp.int32),
-                jnp.asarray(np.nonzero(fission)[0], dtype=jnp.int32),
+                jnp.asarray(fission_columns[:fission_count], dtype=jnp.int32),
+                jnp.asarray(fission_rows[:fission_count], dtype=jnp.int32),
                 source_size=size,
                 target_size=size,
             ),
-            jnp.asarray(fission[np.nonzero(fission)]),
+            jnp.asarray(fission_values[:fission_count]),
             source=space,
             target=space,
             operator_id=canonical_fingerprint(

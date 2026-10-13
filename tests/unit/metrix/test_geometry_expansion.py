@@ -4,9 +4,12 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.metrix._operator_kernels import density_divergence
+from phydrax.metrix._stochastic import _divergence_vector_point
 
 
 def test_geometry_expansion_scenario_1() -> None:
@@ -249,3 +252,43 @@ def test_chern_character_matrix_product_preserves_complement_signs(
     # Tr(A B + B A) = -22; ch_2 = -Tr(F wedge F)/(8 pi^2).
     expected = jnp.asarray([sign * 11.0 / (4.0 * jnp.pi**2)])
     assert jnp.allclose(character.coefficients, expected, atol=1e-12)
+
+
+@pytest.mark.parametrize("owner", ["density", "connection", "stochastic"])
+def test_trace_only_divergence_matches_dense_and_gradient(owner: str) -> None:
+    rng = np.random.default_rng(713)
+    matrix = jnp.asarray(rng.normal(size=(5, 5)))
+    point = jnp.asarray(rng.normal(size=5))
+    chart = phx.metrix.CoordinateChart("trace-chart", ("a", "b", "c", "d", "e"))
+    metric = phx.metrix.diagonal_metric(lambda q: jnp.exp(0.2 * q), chart=chart)
+    connection = phx.metrix.LeviCivitaConnection(metric)
+    density = phx.metrix.VolumeDensity(
+        lambda q: jnp.exp(jnp.sum(q**2) / 10.0),
+        chart=chart,
+        log_coefficient=lambda q: jnp.sum(q**2) / 10.0,
+    )
+
+    def field(q: jax.Array) -> jax.Array:
+        return jnp.sin(matrix @ q) + q**3
+
+    def actual(q: jax.Array) -> jax.Array:
+        match owner:
+            case "density":
+                return density_divergence(field, density, q)
+            case "connection":
+                return phx.metrix.connection_divergence(field, connection, q)
+            case "stochastic":
+                return _divergence_vector_point(field, metric, q)
+            case _:
+                raise ValueError(owner)
+
+    def dense(q: jax.Array) -> jax.Array:
+        trace = jnp.trace(jax.jacfwd(field)(q))
+        if owner == "density":
+            return trace + jnp.dot(field(q), jax.grad(density.log_value)(q))
+        return trace + jnp.einsum("iik,k->", connection.coefficients(q), field(q))
+
+    np.testing.assert_allclose(actual(point), dense(point), atol=2e-12, rtol=2e-12)
+    np.testing.assert_allclose(
+        jax.grad(actual)(point), jax.grad(dense)(point), atol=2e-11, rtol=2e-12
+    )

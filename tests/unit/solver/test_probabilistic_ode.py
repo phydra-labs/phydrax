@@ -7,10 +7,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+from phydrax.solver._probabilistic_ode import _block_filter
 
 
 def _scaled_state(time: Any, state: Any, parameter: Any) -> Any:
@@ -603,3 +605,133 @@ def test_quasi_likelihood_includes_innovation_normalization(
 
     assert jnp.allclose(solution.log_quasi_likelihood, expected)
     assert solution.stats["normalized_chi_square"] == 0.0
+
+
+@pytest.mark.parametrize("parameter_size", [0, 2])
+def test_block_filter_directional_drift_matches_numpy(parameter_size: int) -> None:
+    rng = np.random.default_rng(718)
+    n, h = 5, 0.07
+    matrix = rng.normal(scale=0.2, size=(n, n))
+    forcing = rng.normal(size=(n, parameter_size))
+    parameters = rng.normal(size=parameter_size)
+    mean = rng.normal(size=(2, n))
+    sensitivity = rng.normal(size=(2, n, parameter_size))
+    roots = rng.normal(scale=0.1, size=(5, n, 2, 2))
+    sources = roots @ np.swapaxes(roots, -1, -2)
+    observation = np.linspace(0.02, 0.04, n)
+    process = np.linspace(0.01, 0.03, n)
+    method = phx.solver.ProbabilisticODEMethod(
+        order=1,
+        update="ek1",
+        factorization="block_diagonal",
+        smoothing=False,
+        diffusion_calibration="none",
+    )
+
+    def drift(time: jax.Array, state: jax.Array, args: jax.Array) -> jax.Array:
+        del time
+        return jnp.asarray(matrix) @ jnp.sin(state) + jnp.asarray(forcing) @ args
+
+    problem = phx.solver.DifferentialProblem(
+        drift, jnp.asarray(mean[0]), t0=0.0, t1=h, args=jnp.asarray(parameters)
+    )
+    transition = np.asarray([[1.0, h], [0.0, 1.0]])
+    iwp = np.asarray([[h**3 / 3.0, h**2 / 2.0], [h**2 / 2.0, h]])
+    predicted = transition @ mean
+    predicted_sensitivity = np.einsum("ij,jdp->idp", transition, sensitivity)
+    predicted_sources = np.einsum("ij,sdjk,lk->sdil", transition, sources, transition)
+    predicted_sources[0] += method.base_diffusion * iwp
+    predicted_sources[1] += process[:, None, None] * iwp
+    jacobian = matrix * np.cos(predicted[0])[None, :]
+    residual = predicted[1] - matrix @ np.sin(predicted[0]) - forcing @ parameters
+    rows = np.column_stack((-np.diag(jacobian), np.ones(n)))
+    covariance = predicted_sources.sum(axis=0)
+    variance = (
+        np.einsum("di,dij,dj->d", rows, covariance, rows)
+        + observation
+        + method.covariance_regularization
+    )
+    gain = np.einsum("dij,dj->di", covariance, rows) / variance[:, None]
+    expected_mean = predicted - (gain * residual[:, None]).T
+    residual_sensitivity = (
+        predicted_sensitivity[1] - jacobian @ predicted_sensitivity[0] - forcing
+    )
+    expected_sensitivity = predicted_sensitivity - np.einsum(
+        "dq,dp->qdp", gain, residual_sensitivity
+    )
+    joseph = np.eye(2)[None] - np.einsum("di,dj->dij", gain, rows)
+    expected_sources = np.einsum("dij,sdjk,dlk->sdil", joseph, predicted_sources, joseph)
+    outer = np.einsum("di,dj->dij", gain, gain)
+    expected_sources[2] += observation[:, None, None] * outer
+    expected_sources[0] += method.covariance_regularization * outer
+    expected_sources = 0.5 * (expected_sources + np.swapaxes(expected_sources, -1, -2))
+
+    def run(initial: jax.Array) -> jax.Array:
+        result, _ = _block_filter(
+            problem,
+            method,
+            initial,
+            jnp.asarray(sources),
+            jnp.asarray(sensitivity),
+            jnp.asarray([h]),
+            jnp.asarray(0.0),
+            jnp.diag(jnp.asarray(observation)),
+            jnp.diag(jnp.asarray(process)),
+            jnp.asarray(parameters),
+            lambda x: x,
+            jnp.asarray(0.0),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+        )
+        return result[0]
+
+    result, _ = _block_filter(
+        problem,
+        method,
+        jnp.asarray(mean),
+        jnp.asarray(sources),
+        jnp.asarray(sensitivity),
+        jnp.asarray([h]),
+        jnp.asarray(0.0),
+        jnp.diag(jnp.asarray(observation)),
+        jnp.diag(jnp.asarray(process)),
+        jnp.asarray(parameters),
+        lambda x: x,
+        jnp.asarray(0.0),
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+    )
+    np.testing.assert_allclose(result[0], expected_mean, atol=2e-12, rtol=2e-12)
+    np.testing.assert_allclose(result[1], expected_sources, atol=2e-12, rtol=2e-12)
+    np.testing.assert_allclose(result[2], expected_sensitivity, atol=2e-12, rtol=2e-12)
+
+    def dense_mean(initial: jax.Array) -> jax.Array:
+        prediction = jnp.asarray(transition) @ initial
+        drift_at_state = lambda x: drift(jnp.asarray(h), x, jnp.asarray(parameters))
+        jac = jax.jacfwd(drift_at_state)(prediction[0])
+        observation_rows = jnp.stack((-jnp.diag(jac), jnp.ones(n)), axis=1)
+        innovation = (
+            jnp.einsum(
+                "di,dij,dj->d",
+                observation_rows,
+                jnp.asarray(covariance),
+                observation_rows,
+            )
+            + jnp.asarray(observation)
+            + method.covariance_regularization
+        )
+        kalman_gain = (
+            jnp.einsum("dij,dj->di", jnp.asarray(covariance), observation_rows)
+            / innovation[:, None]
+        )
+        return (
+            prediction
+            - (kalman_gain * (prediction[1] - drift_at_state(prediction[0]))[:, None]).T
+        )
+
+    np.testing.assert_allclose(
+        jax.jacfwd(run)(jnp.asarray(mean)),
+        jax.jacfwd(dense_mean)(jnp.asarray(mean)),
+        atol=2e-11,
+        rtol=2e-12,
+    )

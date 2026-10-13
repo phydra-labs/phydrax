@@ -290,11 +290,13 @@ def _divergence_vector_point(
     coordinates: Array,
     /,
 ) -> Array:
+    from ..operators.differential import exact_state_divergence
+
     dimension = metric.chart.dimension
     values = _vector_value(field, coordinates, dimension, "vector field")
-    derivative = jax.jacfwd(field)(coordinates)
+    derivative_trace = exact_state_divergence(field, coordinates)
     coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    return jnp.trace(derivative) + ein.contract("iik,k->", coefficients, values)
+    return derivative_trace + ein.contract("iik,k->", coefficients, values)
 
 
 def _covariant_fokker_planck_operator_point(

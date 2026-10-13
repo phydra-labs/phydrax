@@ -437,3 +437,49 @@ def test_medium_and_detector_protocols_receive_wavelength_and_close_the_ledger()
         detected.per_photon_tallies.ledger_residual, 0.0, atol=1e-12
     )
     assert bool(detected.all_successful)
+
+
+@pytest.mark.parametrize("interactions", (1, 6, 17))
+def test_truncated_branch_weight_matches_geometric_reflection_reference(
+    interactions: int,
+) -> None:
+    lower = _plane(-0.5, 1, 0, (1.4, 1.0))
+    upper = _plane(0.5, 0, 1, (1.4, 1.0))
+    surfaces = NonSequentialSurfaceTable(
+        jnp.concatenate((lower.vertices, upper.vertices)),
+        jnp.concatenate((lower.triangles, upper.triangles + 4)),
+        jnp.asarray([1, 1, 0, 0]),
+        jnp.asarray([0, 0, 1, 1]),
+        jnp.asarray([1.4, 1.0]),
+        surface_ids=jnp.asarray([0, 0, 1, 1]),
+    )
+    medium = TissueOpticalMedium(
+        jnp.zeros(2), jnp.zeros(2), jnp.zeros(2), jnp.asarray([1.4, 1.0])
+    )
+    origins, directions = _pencil(3, 0.0)
+    state = launch_optical_photons(origins, directions, 0, wavelengths=_WAVELENGTH)
+    result = simulate_optical_photons(
+        _prepared(
+            surfaces,
+            medium,
+            interactions,
+            branch_capacity=1,
+            weight_tolerance=1e-30,
+            variance_reduction=OpticalVarianceReduction(
+                interface_branching="expected-split"
+            ),
+        ),
+        ExplicitPhotonSource(state),
+        jr.key(219),
+    )
+    reflectance = ((1.4 - 1.0) / (1.4 + 1.0)) ** 2
+    expected_truncated = np.sum(
+        (1 - reflectance) * reflectance ** np.arange(interactions)
+    )
+    np.testing.assert_allclose(
+        result.per_photon_tallies.truncated, expected_truncated, rtol=1e-14
+    )
+    np.testing.assert_allclose(
+        result.terminal_state.weights[:, 0], reflectance**interactions, rtol=1e-14
+    )
+    np.testing.assert_allclose(result.per_photon_tallies.ledger_residual, 0.0, atol=1e-14)

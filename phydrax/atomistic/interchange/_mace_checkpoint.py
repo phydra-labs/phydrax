@@ -35,7 +35,9 @@ import dataclasses
 import hashlib
 import json
 import math
+import os
 import re
+import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -1623,13 +1625,20 @@ def create_mace_provider_fixture(
     )
     try:
         record = manifest["fixture"]
-        payload = location.with_name("fixture.pt").read_bytes()
+        fixture = location.with_name("fixture.pt")
+        with fixture.open("rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size > limits.max_source_bytes:
+                raise ValueError(
+                    "Provider fixture exceeds the declared source byte limit."
+                )
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if (
             record["seed"] != seed
             or record["source_kind"] != source_kind
             or record["source_dtype"] != source_dtype
-            or record["fixture_byte_size"] != len(payload)
-            or record["fixture_sha256"] != hashlib.sha256(payload).hexdigest()
+            or record["fixture_byte_size"] != size
+            or record["fixture_sha256"] != digest
         ):
             raise ValueError("Provider fixture record differs from its bytes.")
         declared = _validated_declaration(record["declaration"])
@@ -1638,8 +1647,8 @@ def create_mace_provider_fixture(
                 "Provider fixture does not realize the requested declaration."
             )
         published = target / f"mace-fixture-{record['fixture_sha256'][:16]}.pt"
-        with published.open("xb") as stream:
-            stream.write(payload)
+        with fixture.open("rb") as source, published.open("xb") as stream:
+            shutil.copyfileobj(source, stream)
     finally:
         directory.cleanup()
     return MACEProviderFixture(
@@ -1647,7 +1656,7 @@ def create_mace_provider_fixture(
         kind=source_kind,
         dtype=source_dtype,
         sha256=record["fixture_sha256"],
-        byte_size=len(payload),
+        byte_size=size,
         seed=seed,
         declaration=MappingProxyType(declared),
         provider=MappingProxyType(manifest["provider"]),

@@ -154,10 +154,8 @@ class SpectralSubmanifoldModel(StrictModule, NonTrainableState):
         self, reduced: ArrayLike, full_vector_field: Callable[[Array], ArrayLike], /
     ) -> Array:
         value = jnp.asarray(reduced)
-        tangent = jax.jacfwd(self.decode)(value)
-        return tangent @ self.flow(value) - jnp.asarray(
-            full_vector_field(self.decode(value))
-        )
+        decoded, tangent = jax.jvp(self.decode, (value,), (self.flow(value),))
+        return tangent - jnp.asarray(full_vector_field(decoded))
 
 
 def fit_spectral_submanifold(

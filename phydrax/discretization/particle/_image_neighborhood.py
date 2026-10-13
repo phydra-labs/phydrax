@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ...sparse import EdgeRelation, KeyGroupPlan
 from ...typing import checked
 from .._core import (
@@ -544,7 +545,12 @@ def _host_reach(vectors: np.ndarray, /) -> np.ndarray:
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         if singular_values[-1] <= np.finfo(np.float64).eps * max(singular_values[0], 1.0):
             raise ValueError("Reference lattice is rank deficient.")
-        inverse = matrix.T @ np.linalg.inv(matrix @ matrix.T)
+        coordinate_solve = solve(
+            LinearSystem(DenseLinearOperator(matrix @ matrix.T)),
+            matrix,
+            policy=LinearSolvePolicy(DenseLU()),
+        )
+        inverse = np.asarray(coordinate_solve.value).T
         reach.append(np.sqrt(np.sum(inverse * inverse, axis=0)))
     return np.stack(reach)
 
