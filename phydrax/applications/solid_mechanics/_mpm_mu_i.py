@@ -219,7 +219,6 @@ class MuIMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan, NonTrainableSt
     capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(self, shear_modulus: ArrayLike, bulk_modulus: ArrayLike, /) -> None:
         shear, bulk = jnp.asarray(shear_modulus), jnp.asarray(bulk_modulus)
         if shear.shape != () or bulk.shape != ():

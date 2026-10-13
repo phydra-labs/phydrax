@@ -652,12 +652,13 @@ def prepare_finite_element_field_reconstruction(
     """Prepare an evidenced coordinate reconstruction of one FE field.
 
     Arbitrary points are located on triangle/tetrahedron blocks by a
-    `PreparedSimplicialCellLocator` (built from `location_policy`); other cell
-    kinds require an explicit `locator` implementing `AbstractCellLocator`.
-    `support_geometry` defaults to the region derived from affine simplicial
-    meshes; an explicit geometry must be covered by the mesh (vertices inside,
-    equal measure). Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial
-    pieces of the element degree on affine cells and smooth pieces otherwise.
+    `PreparedSimplicialCellLocator` (built from `location_policy`);
+    quadrilateral/hexahedral/tensor cells use their native inverse-map locator.
+    Other cell kinds require an explicit `locator` implementing
+    `AbstractCellLocator`. Default `support_geometry` is admitted from the mesh;
+    an explicit geometry must be covered by it (vertices inside, equal measure).
+    Regularity is `C^0` (H1) or `C^-1` (L2) with polynomial pieces of the element
+    degree on affine cells and smooth pieces otherwise.
     """
     from ...geometry import CompiledGeometry
 

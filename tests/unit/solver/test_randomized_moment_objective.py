@@ -350,3 +350,62 @@ def test_randomized_qmc_admits_fixed_controls_but_refuses_self_fitting(
             term.loss({"u": function}, key=jr.key(7))
     else:
         assert jnp.allclose(term.loss({"u": function}, key=jr.key(7)), 1.0 / 9.0)
+
+
+@pytest.mark.parametrize("factor_kind", ("monte_carlo", "scrambled_qmc"))
+def test_product_randomized_moments_certify_independent_replicate_means(
+    factor_kind: str,
+) -> None:
+    domain = phx.domain.Interval1d(0.0, 1.0) @ phx.domain.TimeInterval(0.0, 1.0)
+    component = domain.component()
+    condition = phx.conditions.Moment("u", component, lambda field: field, target=1.0)
+    factor_plan = (
+        phx.integration.MonteCarloPlan(4)
+        if factor_kind == "monte_carlo"
+        else phx.integration.QuasiMonteCarloPlan(4, num_replicates=2)
+    )
+    source = phx.integration.per_step(
+        phx.integration.over(component),
+        phx.integration.ProductIntegrationPlan({"x": factor_plan, "t": factor_plan}),
+    )
+    function = domain.Function("x", "t")(lambda x, t: 1.0)
+    term = phx.terms.RandomizedMomentPenalty(condition, source)
+    diagnostics = eqx.filter_jit(lambda key: term.diagnostics({"u": function}, key=key))(
+        jr.key(4)
+    )
+    assert diagnostics.sampling_design == "iid"
+    assert diagnostics.uncertainty_available
+    assert diagnostics.passed
+    assert jnp.allclose(diagnostics.objective, 0.0, atol=1e-12)
+
+
+@pytest.mark.parametrize("factor_kind", ("fixed", "unscrambled_qmc"))
+def test_biased_product_factors_remain_unknown_for_randomized_moments(
+    factor_kind: str,
+) -> None:
+    domain = phx.domain.ProductDomain(
+        phx.domain.ScalarInterval(0.0, 1.0, label="x"),
+        phx.domain.ScalarInterval(0.0, 1.0, label="t"),
+    )
+    component = domain.component()
+    condition = phx.conditions.Moment("u", component, lambda field: field, target=0.0)
+    factor_plan = (
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(2))
+        if factor_kind == "fixed"
+        else phx.integration.QuasiMonteCarloPlan(4, scrambled=False, num_replicates=1)
+    )
+    source = phx.integration.per_step(
+        phx.integration.over(component),
+        phx.integration.ProductIntegrationPlan(
+            {"x": factor_plan, "t": phx.integration.MonteCarloPlan(4)}
+        ),
+    )
+    function = domain.Function("x", "t")(lambda x, t: x**4 + t)
+    term = phx.terms.RandomizedMomentPenalty(condition, source)
+    with pytest.raises(ValueError, match="iid realizations"):
+        term.loss({"u": function}, key=jr.key(4))
+    plug_in = phx.terms.RandomizedMomentPenalty(condition, source, loss_mode="plug_in")
+    diagnostics = plug_in.diagnostics({"u": function}, key=jr.key(4))
+    assert diagnostics.sampling_design == "unknown"
+    assert not diagnostics.uncertainty_available
+    assert diagnostics.passed

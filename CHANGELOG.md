@@ -21,6 +21,130 @@
   Cholesky determinants directly from factors, including invalid-factor evidence.
 - Bound selected-block gathering and constraint right-inverse certificates without
   parent densification or target-space-square identity/projector buffers.
+- Path-potential refusal coverage follows the checked-signature `TypeError`
+  contract for surrogate actions; only normalized stochastic actions remain
+  eligible for free-energy calculations.
+- Float32 Airy central-series accumulation uses widened working precision to
+  prevent cancellation loss near the negative central/asymptotic boundary,
+  while preserving float32 outputs and the existing derivative contracts.
+- Sparse Gram metric rebinding and derivative-plan numeric refresh preserve
+  host-prepared route topology, canonical nonzero counts, gather layouts, and
+  cost metadata under JIT, fixing cochain metric scans and compiled sparse
+  Newton refresh without changing numerical admission or derivative guards.
+- Adaptive MAC rollout refusal coverage follows the checked method contract:
+  SBDF2 is rejected as a non-`AbstractFixedStepMethod` with otherwise valid
+  controller/policy inputs; the superseded unreachable special-case is removed.
+- Signed point transfers certify the reduced conservation operator's rank and
+  retained spectrum within native materialization bounds, restoring audited
+  quadratic-quadrature incompatibility witnesses while uncertified residuals
+  remain unresolved.
+- PIC Gauss-bound and Coulomb-energy regressions use the canonical diagonal
+  Hodge accessor after the native exterior-calculus cutover, preserving their
+  physical bounds and field-reference tolerances.
+- Cubical spline-Whitney chains integrate every strictly positive endpoint
+  interval, including roundoff-sized knot slivers; exhausted segment capacity
+  reports incomplete paths instead of discarding their nonzero contributions.
+  Prescribed-charge Cherenkov runs no longer falsely report failed deposition.
+- Reacting-flow regressions distinguish exact source-process invariants from
+  roundoff in SSPRK transport and conservative-content reconstruction introduced
+  by the coupled finite-volume runtime (`c46ef0dd5`) and balance-law source
+  adapter (`06c97db0b`). Composed endpoint checks use eight dtype epsilons with
+  zero absolute tolerance; source energy/species invariants and rollback to
+  the initialized authoritative state remain bit-exact.
+- Modified Cam-Clay preserves its elastic/plastic branch boundary under mapped
+  differentiation, preventing discarded singular plastic-root adjoints from
+  contaminating elastic reverse-mode tangents; root refusal evidence is unchanged.
+- Dynamic MAC production incompatibility coverage supplies valid wall statistics
+  to reach the scientific refusal after checked nominal argument validation.
+- Signed-Hermitian spectral roundtrip regressions use dtype-relative machine
+  precision, correctly admitting a one-ulp float32 scaling roundtrip.
+- Polynomial-image analysis budgets dense SVD column materialization and both
+  singular-mode certification actions, avoiding false resource refusal on small
+  Jacobians without changing declared memory or design-entry limits.
+- Target-matrix mesh shape energies retain small positive distortion near ideal
+  two- and three-dimensional cells, preventing cancellation-induced Armijo
+  failures after untangling while preserving convergence and validity guards.
+- Finance trade/position refusal coverage matches the checked-signature
+  diagnostics while preserving the unresolved-definition/resolved-position
+  type distinction.
+- IREE alias admission follows in-place result provenance and counts consumers
+  of allocation origins before mutation, admitting a singly owned scan tape
+  read after completion. Shared loop-carried splats, returned input aliases, and
+  barrier hazards still refuse; lattice-Boltzmann forward/VJP exports now
+  execute with numerical reference coverage.
+- Vmapped checkpointed FGMRES backward replay preserves fixed operator operands
+  in inactive restart-cycle lanes by keeping the outer cycle gate scalar under
+  batching. Per-lane work, whole-batch inactive skipping, and bounded step/cycle
+  rematerialization remain intact; learned coupled-interface accelerator
+  gradients no longer replay zero finite-element geometry.
+- Bubble-cloud FMM coupling uses native matrix-free PCG with true-residual
+  confirmation instead of accepting Lineax CG recurrence termination; declared
+  tolerances and iteration budgets are unchanged. Prepared linear-solver identity
+  intentionally records the native PCG route.
+- SPH density-diffusion variance evidence reduces the dynamic active mask on
+  device and excludes inactive density slots, remaining valid in compiled
+  fixed-step rollouts without host tracer conversion.
+- Structural sparse differentiation handles JAX's input-independent `empty`
+  allocation primitive without claiming backend-dependent contents are
+  constants or introducing false dependencies; absent direct-collocation
+  constraint blocks and zero-sized battery collocation blocks now compile.
+- Structural control-flow tracing consumes current JAX scan input-tree metadata
+  and unified nested-program constants instead of removed parameter names and
+  closed-program wrappers. While-loop condition and body captures bind to their
+  own lanes, preserving Jacobian sparsity in battery direct collocation.
+- Meshfree moment-obstruction regression coverage requests native SVD rank
+  certification explicitly; adaptation documentation distinguishes certified
+  infeasibility from unresolved approximate-null Krylov evidence.
+- Mean-field planner refusal coverage follows the checked nominal signature's
+  diagnostic while retaining the explicit externality requirement.
+- Thermal/isothermal battery transport regression comparisons scale the
+  separator's cancellation-roundoff floor by summed electrolyte transport
+  magnitudes instead of applying a relative-only tolerance near zero.
+- Chemical-species refusal coverage expects `TypeError` for noninteger charge
+  dtypes, matching the catalog's intentional wrong-kind contract correction;
+  fractional charges remain rejected without conversion or truncation.
+- Residual-penalty source refusal coverage now matches the checked-signature
+  diagnostic introduced by nominal-boundary migration; invalid integration
+  plans still raise `TypeError` rather than bypassing typed sources.
+- Function linear operators detach duplicate numerical constants from converted
+  JAX programs while retaining them as dynamic Equinox leaves; frozen spectral
+  closures and progressive MAC controls pass the unchanged hidden-state audit,
+  and callable updates preserve forward/transpose actions and operator IDs.
+- Learned meshfree metric projections prepare bounded rank and retained-spectrum
+  certificates for native implicit cotangents, restoring weighted-projector
+  gradients and training without weakening fail-closed pseudoinverse audits.
+- Lattice-Boltzmann geometry snapshots own a detached host mask before device
+  conversion, so caller mutations cannot invalidate frozen classification.
+- Rigid-MPM detailed steps validate trial geometry before P2G and pass splat
+  routes through conditional operands, preserving recoverable failed-step
+  rollback without tracing an inactive scatter's geometry refusal.
+- The tetrahedral VOF rejection regression supplies a valid gradient object,
+  retaining geometry-first scientific validation under checked nominal signatures.
+- Identity conservative-remap regressions measure conservation against the
+  source-content roundoff scale instead of requiring exact floating-point zero.
+- Cubical spline-Whitney chains use the grid's nodal coordinates and exact
+  declared upper faces rather than cumulative-width reconstructions, preserving
+  closed-face current deposition and continuity without relaxing boundary checks.
+- Randomized moment objectives recognize independent, unbiased Monte Carlo and
+  scrambled-QMC product replicate means; deterministic or unscrambled product
+  factors still refuse unbiased losses rather than claiming an iid sampling law.
+- Gravothermal SIDM conservation regression tolerances scale extensive energy
+  balance defects by thermal energy instead of imposing an absolute unit-sized
+  roundoff threshold; physical energy diagnostics and acceptance are unchanged.
+- Taylor chains lower admitted scalar divergence in one dimension as the
+  coordinate derivative without vector-component indexing; multidimensional
+  scalar divergence remains refused. Quadrilateral field-view tests and
+  reconstruction documentation now exercise the native default point locator.
+- Dense fractional Gaussian regression coverage checks exact seeded replay and
+  independent analytic covariance instead of a platform-specific byte hash of
+  LAPACK-based samples; realization and coupling identifier pins remain intact.
+- Native LSMR and minimum-norm witness audits explicitly cast real
+  normalization and recurrence scalars to their vector dtype, preserving
+  complex Bloch seam projections under strict JAX dtype promotion.
+- Finite-element sparse assembly keeps traced DOF routes on device, allowing
+  prepared mass actions inside mixed-method coupling scans without NumPy
+  tracer conversion. Namespace and grouped-derivative refusal tests now reflect
+  the public periodic certificate and explicit-coordinate-axis contract.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
