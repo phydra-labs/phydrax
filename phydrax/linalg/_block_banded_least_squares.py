@@ -138,22 +138,30 @@ def _spectrum(
         * max(rows, count * width)
         * jnp.maximum(brackets.maximum_upper, 1.0)
     )
-    certificate = banded_singular_value_certificate(
-        bands,
-        rows=count * width,
-        lower_bandwidth=0,
-        upper_bandwidth=bandwidth,
-        threshold=cutoff,
+    # A certified lower enclosure already proves the same strict rank threshold.
+    # Only unresolved brackets need another interval Gram/Cholesky certificate.
+    certified = jax.lax.cond(
+        brackets.minimum_lower > cutoff,
+        lambda: jnp.asarray(True),
+        lambda: (
+            banded_singular_value_certificate(
+                bands,
+                rows=count * width,
+                lower_bandwidth=0,
+                upper_bandwidth=bandwidth,
+                threshold=cutoff,
+            ).certified
+        ),
     )
     finite = jnp.all(jnp.isfinite(bands)) & jnp.isfinite(minimum) & jnp.isfinite(maximum)
     rank = SVDRankEvidence(
-        jnp.where(certificate.certified, count * width, 0),
+        jnp.where(certified, count * width, 0),
         jnp.asarray(count * width, dtype=jnp.int32),
         cutoff,
         cutoff,
         finite,
         True,
-        certificate.certified,
+        certified,
         "exact-spectrum",
         jnp.zeros((), dtype=bands.dtype),
     )

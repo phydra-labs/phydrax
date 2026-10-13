@@ -1,49 +1,10 @@
 {
+  "above_budget_auto_scaling_exponent": 0.9961424776218121,
   "cases": [
     {
       "capacity": 8,
-      "compilation_seconds": 0.7141355,
-      "compile_only": false,
-      "compiler": {
-        "argument_bytes": 33536,
-        "bytes_accessed": 271963,
-        "flops": 22276,
-        "generated_code_bytes": 0,
-        "output_bytes": 233,
-        "source": "mac-shadowing-least-squares",
-        "temporary_bytes": 38824,
-        "unavailable_reason": null
-      },
-      "condition_number": 196.60755055382373,
-      "host_peak_bytes": 503304,
-      "logical_design_bytes": 25584,
-      "lowering_seconds": 0.199341042,
-      "rank": 3,
-      "retained_bytes": 209,
-      "route": "block-banded",
-      "samples": 128,
-      "singular_extrema": [
-        196.60573980011793,
-        0.9999907900093323
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.028532208,
-        "mean_seconds": 0.019200604,
-        "median_seconds": 0.019200604,
-        "min_seconds": 0.009869,
-        "samples_seconds": [
-          0.028532208,
-          0.009869
-        ],
-        "std_seconds": 0.009331604
-      }
-    },
-    {
-      "capacity": 8,
-      "compilation_seconds": 0.071221834,
-      "compile_only": false,
+      "compilation_seconds": 0.042082792,
+      "compile_only": true,
       "compiler": {
         "argument_bytes": 33536,
         "bytes_accessed": 842608,
@@ -54,76 +15,86 @@
         "temporary_bytes": 405992,
         "unavailable_reason": null
       },
-      "condition_number": 196.60755045051943,
-      "host_peak_bytes": 503304,
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 1623552,
+      "gate_case": false,
+      "host_peak_bytes": 503836,
       "logical_design_bytes": 200640,
-      "lowering_seconds": 0.031543875,
+      "lowering_seconds": 0.029361667,
       "rank": 3,
-      "retained_bytes": 209,
-      "route": "dense-svd",
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "auto",
       "samples": 128,
-      "singular_extrema": [
-        196.60573980011876,
-        0.9999907905347657
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.001505333,
-        "mean_seconds": 0.0014156665,
-        "median_seconds": 0.0014156665,
-        "min_seconds": 0.001326,
-        "samples_seconds": [
-          0.001505333,
-          0.001326
-        ],
-        "std_seconds": 8.966650000000003e-05
-      }
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
     },
     {
-      "capacity": 16,
-      "compilation_seconds": 0.551144792,
-      "compile_only": false,
+      "capacity": 8,
+      "compilation_seconds": 0.348004958,
+      "compile_only": true,
       "compiler": {
-        "argument_bytes": 67072,
-        "bytes_accessed": 470499,
-        "flops": 41876,
+        "argument_bytes": 33536,
+        "bytes_accessed": 314147,
+        "flops": 26003,
         "generated_code_bytes": 0,
-        "output_bytes": 425,
+        "output_bytes": 233,
         "source": "mac-shadowing-least-squares",
-        "temporary_bytes": 59944,
+        "temporary_bytes": 36520,
         "unavailable_reason": null
       },
-      "condition_number": 199.48073174066212,
-      "host_peak_bytes": 541230,
-      "logical_design_bytes": 51312,
-      "lowering_seconds": 0.794127416,
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 1623552,
+      "gate_case": false,
+      "host_peak_bytes": 503836,
+      "logical_design_bytes": 25584,
+      "lowering_seconds": 0.173393417,
       "rank": 3,
-      "retained_bytes": 401,
+      "resolved_route": "block-banded",
+      "retained_bytes": null,
       "route": "block-banded",
       "samples": 128,
-      "singular_extrema": [
-        199.47923467878127,
-        0.9999924952055881
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.029182084,
-        "mean_seconds": 0.028145896,
-        "median_seconds": 0.028145896,
-        "min_seconds": 0.027109708,
-        "samples_seconds": [
-          0.027109708,
-          0.029182084
-        ],
-        "std_seconds": 0.0010361880000000004
-      }
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.040543291,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 33536,
+        "bytes_accessed": 842608,
+        "flops": 105732,
+        "generated_code_bytes": 0,
+        "output_bytes": 233,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 405992,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 1623552,
+      "gate_case": false,
+      "host_peak_bytes": 503836,
+      "logical_design_bytes": 200640,
+      "lowering_seconds": 0.024777375,
+      "rank": 3,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "dense-svd",
+      "samples": 128,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
     },
     {
       "capacity": 16,
-      "compilation_seconds": 0.099976167,
-      "compile_only": false,
+      "compilation_seconds": 0.0471565,
+      "compile_only": true,
       "compiler": {
         "argument_bytes": 67072,
         "bytes_accessed": 4946413,
@@ -134,76 +105,86 @@
         "temporary_bytes": 1643112,
         "unavailable_reason": null
       },
-      "condition_number": 199.4807327227715,
-      "host_peak_bytes": 541230,
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 6503424,
+      "gate_case": false,
+      "host_peak_bytes": 540400,
       "logical_design_bytes": 803712,
-      "lowering_seconds": 0.092499042,
+      "lowering_seconds": 0.024825167,
       "rank": 3,
-      "retained_bytes": 401,
-      "route": "dense-svd",
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "auto",
       "samples": 128,
-      "singular_extrema": [
-        199.47923467880068,
-        0.9999924902823928
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.012165542,
-        "mean_seconds": 0.0102385625,
-        "median_seconds": 0.0102385625,
-        "min_seconds": 0.008311583,
-        "samples_seconds": [
-          0.012165542,
-          0.008311583
-        ],
-        "std_seconds": 0.0019269794999999994
-      }
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
     },
     {
-      "capacity": 32,
-      "compilation_seconds": 0.534557542,
-      "compile_only": false,
+      "capacity": 16,
+      "compilation_seconds": 0.371400333,
+      "compile_only": true,
       "compiler": {
-        "argument_bytes": 134144,
-        "bytes_accessed": 791429,
-        "flops": 74676,
+        "argument_bytes": 67072,
+        "bytes_accessed": 556315,
+        "flops": 49540,
         "generated_code_bytes": 0,
-        "output_bytes": 809,
+        "output_bytes": 425,
         "source": "mac-shadowing-least-squares",
-        "temporary_bytes": 102312,
+        "temporary_bytes": 55272,
         "unavailable_reason": null
       },
-      "condition_number": 200.20113897011694,
-      "host_peak_bytes": 541224,
-      "logical_design_bytes": 102768,
-      "lowering_seconds": 0.290263334,
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 6503424,
+      "gate_case": false,
+      "host_peak_bytes": 540400,
+      "logical_design_bytes": 51312,
+      "lowering_seconds": 0.52324475,
       "rank": 3,
-      "retained_bytes": 785,
+      "resolved_route": "block-banded",
+      "retained_bytes": null,
       "route": "block-banded",
       "samples": 128,
-      "singular_extrema": [
-        200.19979187844964,
-        0.9999932713086737
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.041378334,
-        "mean_seconds": 0.037763208500000006,
-        "median_seconds": 0.037763208500000006,
-        "min_seconds": 0.034148083,
-        "samples_seconds": [
-          0.034148083,
-          0.041378334
-        ],
-        "std_seconds": 0.0036151255
-      }
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.049367334,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 67072,
+        "bytes_accessed": 4946413,
+        "flops": 421276,
+        "generated_code_bytes": 0,
+        "output_bytes": 425,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 1643112,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 6503424,
+      "gate_case": false,
+      "host_peak_bytes": 540400,
+      "logical_design_bytes": 803712,
+      "lowering_seconds": 0.026112708,
+      "rank": 3,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "dense-svd",
+      "samples": 128,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
     },
     {
       "capacity": 32,
-      "compilation_seconds": 0.088127833,
-      "compile_only": false,
+      "compilation_seconds": 0.047159792,
+      "compile_only": true,
       "compiler": {
         "argument_bytes": 134144,
         "bytes_accessed": 19588072,
@@ -214,35 +195,206 @@
         "temporary_bytes": 6542440,
         "unavailable_reason": null
       },
-      "condition_number": 200.20114077470419,
-      "host_peak_bytes": 541224,
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 26032128,
+      "gate_case": false,
+      "host_peak_bytes": 540055,
       "logical_design_bytes": 3217152,
-      "lowering_seconds": 0.044923166,
+      "lowering_seconds": 0.024837125,
       "rank": 3,
-      "retained_bytes": 785,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "auto",
+      "samples": 128,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.350858375,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 134144,
+        "bytes_accessed": 962985,
+        "flops": 89428,
+        "generated_code_bytes": 0,
+        "output_bytes": 809,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 92840,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 26032128,
+      "gate_case": false,
+      "host_peak_bytes": 540055,
+      "logical_design_bytes": 102768,
+      "lowering_seconds": 0.155896541,
+      "rank": 3,
+      "resolved_route": "block-banded",
+      "retained_bytes": null,
+      "route": "block-banded",
+      "samples": 128,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.049256542,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 134144,
+        "bytes_accessed": 19588072,
+        "flops": 1681596,
+        "generated_code_bytes": 0,
+        "output_bytes": 809,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 6542440,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 26032128,
+      "gate_case": false,
+      "host_peak_bytes": 540055,
+      "logical_design_bytes": 3217152,
+      "lowering_seconds": 0.024825542,
+      "rank": 3,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
       "route": "dense-svd",
       "samples": 128,
-      "singular_extrema": [
-        200.1997918784627,
-        0.9999932622949286
-      ],
-      "successful": true,
-      "warm": {
-        "count": 2,
-        "max_seconds": 0.042184708,
-        "mean_seconds": 0.0363079995,
-        "median_seconds": 0.0363079995,
-        "min_seconds": 0.030431291,
-        "samples_seconds": [
-          0.030431291,
-          0.042184708
-        ],
-        "std_seconds": 0.005876708500000001
-      }
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.396363208,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 1060864,
+        "bytes_accessed": 4729336,
+        "flops": 512375,
+        "generated_code_bytes": 0,
+        "output_bytes": 3113,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 554536,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 819388416,
+      "gate_case": true,
+      "host_peak_bytes": 539639,
+      "logical_design_bytes": 804720,
+      "lowering_seconds": 0.158416625,
+      "rank": 3,
+      "resolved_route": "block-banded",
+      "retained_bytes": null,
+      "route": "auto",
+      "samples": 256,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 128,
+      "compilation_seconds": 0.047192584,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 1060864,
+        "bytes_accessed": 613814272,
+        "flops": 52048544,
+        "generated_code_bytes": 0,
+        "output_bytes": 3113,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 205115496,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 819388416,
+      "gate_case": true,
+      "host_peak_bytes": 539639,
+      "logical_design_bytes": 101833728,
+      "lowering_seconds": 0.026694833,
+      "rank": 3,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "dense-svd",
+      "samples": 256,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 192,
+      "compilation_seconds": 0.350246333,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 1591296,
+        "bytes_accessed": 7015184,
+        "flops": 766007,
+        "generated_code_bytes": 0,
+        "output_bytes": 4649,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 830504,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 1843679232,
+      "gate_case": true,
+      "host_peak_bytes": 536959,
+      "logical_design_bytes": 1207152,
+      "lowering_seconds": 0.1658005,
+      "rank": 3,
+      "resolved_route": "block-banded",
+      "retained_bytes": null,
+      "route": "auto",
+      "samples": 256,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
+    },
+    {
+      "capacity": 192,
+      "compilation_seconds": 0.044173833,
+      "compile_only": true,
+      "compiler": {
+        "argument_bytes": 1591296,
+        "bytes_accessed": 1379899520,
+        "flops": 117087192,
+        "generated_code_bytes": 0,
+        "output_bytes": 4649,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 461322344,
+        "unavailable_reason": null
+      },
+      "condition_number": null,
+      "dense_workspace_bytes": 536870912,
+      "dense_workspace_required_bytes": 1843679232,
+      "gate_case": true,
+      "host_peak_bytes": 536959,
+      "logical_design_bytes": 229132800,
+      "lowering_seconds": 0.02681025,
+      "rank": 3,
+      "resolved_route": "dense-svd",
+      "retained_bytes": null,
+      "route": "dense-svd",
+      "samples": 256,
+      "singular_extrema": null,
+      "successful": null,
+      "warm": null
     }
   ],
   "compiler_scaling_exponents": {
-    "block-banded": 0.6989773479604476,
+    "auto": 2.0051527918906986,
+    "block-banded": 0.6730298786801306,
     "dense-svd": 2.0051527918906986
   },
   "environment": {
@@ -282,8 +434,9 @@
     "processor": "arm",
     "python_version": "3.12.8"
   },
+  "gate_basis": "Current-code compile-only auto versus explicit dense-svd above the 512 MiB budget; committed baselines unchanged.",
   "identity": {
-    "benchmark_driver_fingerprint": "43e123a3652ca2c75f1017004c9454bd11a981a3fc1ea9eee9247eb01299188c",
+    "benchmark_driver_fingerprint": "97be15fc9372f5006c2cf3152465ade89656ee45b34daabd9cf5c06478600c44",
     "evidence_schema": {
       "fields": [
         "cases",
@@ -291,8 +444,15 @@
       ],
       "signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c"
     },
-    "fingerprint": "61aef6a27de3165a85a89932570db002010355c12e7d4b1689c67e82e0d430ff",
-    "source_build_fingerprint": "af548ea1c1c36d32086d025471c0b414963104b762b1f0ae79f66b49cfa8cbcb"
+    "fingerprint": "f6bc46fbb9b1dc74fc7a0237f74c765765329e8b7cb5448e633a5ca3f67ac556",
+    "source_build_fingerprint": "257c34d01c6d1c2c40d25e66ced9d0d1c7cd58c8b9b6c5e1522de3a7140c4130"
   },
-  "observed_peak_rss_bytes": 1664139264
+  "memory_gate": {
+    "baseline_bytes": 461322344,
+    "candidate_bytes": 830504,
+    "capacity": 192,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "observed_peak_rss_bytes": 1627176960
 }

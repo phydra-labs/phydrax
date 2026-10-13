@@ -211,6 +211,7 @@ def test_mac_shadowing_route_sensitivity_and_flow_neutral_parity(
         segment_length=2,
         tangent_dimension=2,
         neutral_mode="flow",
+        solve_route="block-banded",
         regularization=regularization,
     ).solve(
         state,
@@ -233,3 +234,64 @@ def test_mac_shadowing_route_sensitivity_and_flow_neutral_parity(
     assert banded.status == dense.status
     assert banded.solve_route == "block-banded"
     assert dense.solve_route == "dense-svd"
+    columns = 2 * 2
+    weighted_rows = 2 * (2 * state.size) + 2
+    solve_rows = weighted_rows + (columns if regularization > 0.0 else 0)
+    required_bytes = (8 * solve_rows * columns + 4 * columns**2) * state.dtype.itemsize
+    for budget, reference in ((required_bytes, dense), (required_bytes - 1, banded)):
+        plan = phx.solver.MACSegmentedShadowingPlan(
+            sensitivity,
+            segment_length=2,
+            tangent_dimension=2,
+            neutral_mode="flow",
+            regularization=regularization,
+            dense_workspace_bytes=budget,
+        )
+        assert plan.solve_route == "auto"
+        automatic = plan.solve(
+            state,
+            rollout.grid,
+            jnp.asarray(0.0),
+            jnp.asarray(1.0),
+            observable,
+            observable_id="route-parity-energy",
+        )
+        assert automatic.solve_route == reference.solve_route
+        np.testing.assert_array_equal(
+            automatic.segment_coefficients, reference.segment_coefficients
+        )
+        np.testing.assert_array_equal(
+            automatic.response_samples, reference.response_samples
+        )
+        assert automatic.status == reference.status
+        assert automatic.shadowing_id != reference.shadowing_id
+
+
+@pytest.mark.parametrize("budget", [0, -1])
+def test_mac_shadowing_invalid_workspace_budget(budget: int) -> None:
+    compiled, _ = _compiled()
+    sensitivity = phx.solver.MACFixedGridSensitivityPlan(
+        compiled, phx.solver.SSPRK33FixedStepMethod(compiled), derivative_mode="smooth"
+    )
+    with pytest.raises(ValueError, match="dense_workspace_bytes must be positive"):
+        phx.solver.MACSegmentedShadowingPlan(
+            sensitivity,
+            segment_length=2,
+            tangent_dimension=2,
+            dense_workspace_bytes=budget,
+        )
+
+
+@pytest.mark.parametrize("budget", [True, 1.5])
+def test_mac_shadowing_noninteger_workspace_budget(budget: Any) -> None:
+    compiled, _ = _compiled()
+    sensitivity = phx.solver.MACFixedGridSensitivityPlan(
+        compiled, phx.solver.SSPRK33FixedStepMethod(compiled), derivative_mode="smooth"
+    )
+    with pytest.raises(TypeError, match="dense_workspace_bytes must be an integer"):
+        phx.solver.MACSegmentedShadowingPlan(
+            sensitivity,
+            segment_length=2,
+            tangent_dimension=2,
+            dense_workspace_bytes=budget,
+        )

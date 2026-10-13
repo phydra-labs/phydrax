@@ -34,7 +34,7 @@ from ._mac_adaptive import (
 
 MACDerivativeMode: TypeAlias = Literal["smooth", "branchwise", "unsupported"]
 MACNeutralMode: TypeAlias = Literal["none", "flow"]
-MACShadowingSolveRoute: TypeAlias = Literal["block-banded", "dense-svd"]
+MACShadowingSolveRoute: TypeAlias = Literal["auto", "block-banded", "dense-svd"]
 _SegmentCarry: TypeAlias = tuple[Array, Array, Array, Array]
 _SegmentInputs: TypeAlias = tuple[Array, Array, Array, Array]
 _SegmentOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
@@ -53,6 +53,27 @@ class MACShadowingStatus(IntEnum):
     NEUTRAL_DIRECTION_FAILED = 8
 
 
+def _dense_shadowing_workspace_bytes(
+    count: int, rows: int, width: int, itemsize: int, regularization: float
+) -> int:
+    columns = count * width
+    weighted_rows = count * rows + (count - 1) * width
+    solve_rows = weighted_rows + (columns if regularization > 0.0 else 0)
+    return (8 * solve_rows * columns + 4 * columns**2) * itemsize
+
+
+def _resolve_shadowing_solve_route(
+    route: MACShadowingSolveRoute, required_bytes: int, budget_bytes: int
+) -> MACShadowingSolveRoute:
+    match route:
+        case "auto":
+            return "dense-svd" if required_bytes <= budget_bytes else "block-banded"
+        case "block-banded" | "dense-svd":
+            return route
+        case _:
+            raise ValueError("Invalid MAC shadowing solve route.")
+
+
 def _dense_shadowing_least_squares(
     samples: Array,
     targets: Array,
@@ -66,7 +87,9 @@ def _dense_shadowing_least_squares(
     columns = count * width
     weighted_rows = count * rows + (count - 1) * width
     solve_rows = weighted_rows + (columns if regularization > 0.0 else 0)
-    required_bytes = (8 * solve_rows * columns + 4 * columns**2) * samples.dtype.itemsize
+    required_bytes = _dense_shadowing_workspace_bytes(
+        count, rows, width, samples.dtype.itemsize, regularization
+    )
     if required_bytes > workspace_bytes:
         raise ValueError(
             f"MAC dense-svd workspace requires {required_bytes} bytes, exceeding {workspace_bytes}; select block-banded."
@@ -455,7 +478,7 @@ class MACSegmentedShadowingPlan(StrictModule):
         neutral_mode: MACNeutralMode = "flow",
         continuity_weight: float = 100.0,
         regularization: float = 0.0,
-        solve_route: MACShadowingSolveRoute = "block-banded",
+        solve_route: MACShadowingSolveRoute = "auto",
         dense_workspace_bytes: int = 512 * 1024 * 1024,
         residual_tolerance: float = 1e-6,
         condition_limit: float = 1e10,
@@ -470,6 +493,10 @@ class MACSegmentedShadowingPlan(StrictModule):
             raise ValueError("MAC shadowing segment and tangent dimensions are invalid.")
         neutral_mode = parse(neutral_mode, MACNeutralMode, "neutral_mode")
         solve_route = parse(solve_route, MACShadowingSolveRoute, "solve_route")
+        if isinstance(dense_workspace_bytes, bool) or not isinstance(
+            dense_workspace_bytes, int
+        ):
+            raise TypeError("dense_workspace_bytes must be an integer.")
         if dense_workspace_bytes < 1:
             raise ValueError("dense_workspace_bytes must be positive.")
         if neutral_mode == "flow" and dimension >= state_size:
@@ -556,12 +583,23 @@ class MACSegmentedShadowingPlan(StrictModule):
         segment_count = capacity // self.segment_length
         tangent_dimension = self.tangent_dimension
         dtype = replay.final_state.dtype
+        required_bytes = _dense_shadowing_workspace_bytes(
+            segment_count,
+            self.segment_length * state_size,
+            tangent_dimension,
+            dtype.itemsize,
+            self.regularization,
+        )
+        solve_route = _resolve_shadowing_solve_route(
+            self.solve_route, required_bytes, self.dense_workspace_bytes
+        )
         shadowing_id = canonical_fingerprint(
             {
                 "kind": "mac-shadowing-result",
                 "plan": self.plan_id,
                 "observable": observable_id_,
                 "grid_source": grid.source_plan_id,
+                "solve_route": solve_route,
             }
         )
         if initial_basis is None:
@@ -626,7 +664,7 @@ class MACSegmentedShadowingPlan(StrictModule):
                 replay,
                 certification,
                 self.neutral_mode,
-                self.solve_route,
+                solve_route,
                 observable_id_,
                 shadowing_id,
             )
@@ -835,7 +873,7 @@ class MACSegmentedShadowingPlan(StrictModule):
         sample_blocks = projected_bases.reshape((segment_count, -1, tangent_dimension))
         sample_targets = -projected_inhomogeneous.reshape((segment_count, -1))
         weight = jnp.asarray(self.continuity_weight, dtype=dtype)
-        match self.solve_route:
+        match solve_route:
             case "block-banded":
                 banded = solve_block_banded_least_squares(
                     sample_blocks,
@@ -1038,7 +1076,7 @@ class MACSegmentedShadowingPlan(StrictModule):
             replay,
             certification,
             self.neutral_mode,
-            self.solve_route,
+            solve_route,
             observable_id_,
             shadowing_id,
         )

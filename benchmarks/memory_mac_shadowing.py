@@ -17,7 +17,13 @@ from jax import Array
 from phydrax.ein import contract
 
 from ._io import write_json_atomic
-from ._memory import fitted_scaling_exponent, host_allocation_peak, process_peak_rss_bytes
+from ._memory import (
+    evaluate_memory_gate,
+    fitted_scaling_exponent,
+    host_allocation_peak,
+    MemoryGatePolicy,
+    process_peak_rss_bytes,
+)
 from ._runtime import (
     capture_benchmark_identity,
     capture_environment,
@@ -84,10 +90,16 @@ def candidate(
 def dense_route(
     bases: Array, tangents: Array, factors: Array, offsets: Array
 ) -> tuple[Array, Array, Array]:
-    from phydrax.solver._mac_sensitivity import _dense_shadowing_least_squares
+    from phydrax.solver._mac_sensitivity import (
+        _dense_shadowing_least_squares,
+        _dense_shadowing_workspace_bytes,
+    )
 
+    required = _dense_shadowing_workspace_bytes(
+        bases.shape[0], bases.shape[1], bases.shape[2], bases.dtype.itemsize, 0.0
+    )
     value, full_rank, minimum, condition = _dense_shadowing_least_squares(
-        bases, -tangents, factors, offsets, 100.0, 0.0, 1024 * 1024 * 1024
+        bases, -tangents, factors, offsets, 100.0, 0.0, max(required, 512 * 1024 * 1024)
     )
     return (
         value.reshape((-1,)),
@@ -96,7 +108,28 @@ def dense_route(
     )
 
 
+def automatic(
+    bases: Array, tangents: Array, factors: Array, offsets: Array
+) -> tuple[Array, Array, Array]:
+    from phydrax.solver._mac_sensitivity import (
+        _dense_shadowing_workspace_bytes,
+        _resolve_shadowing_solve_route,
+    )
+
+    required = _dense_shadowing_workspace_bytes(
+        bases.shape[0], bases.shape[1], bases.shape[2], bases.dtype.itemsize, 0.0
+    )
+    if _resolve_shadowing_solve_route("auto", required, 512 * 1024 * 1024) == "dense-svd":
+        return dense_route(bases, tangents, factors, offsets)
+    return candidate(bases, tangents, factors, offsets)
+
+
 def main() -> None:
+    from phydrax.solver._mac_sensitivity import (
+        _dense_shadowing_workspace_bytes,
+        _resolve_shadowing_solve_route,
+    )
+
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--segments", nargs="+", type=int, default=[8, 16, 32])
     parser.add_argument("--samples", type=int, default=64)
@@ -104,23 +137,31 @@ def main() -> None:
     parser.add_argument(
         "--routes",
         nargs="+",
-        choices=["baseline", "block-banded", "dense-svd"],
-        default=["block-banded", "dense-svd"],
+        choices=["baseline", "auto", "block-banded", "dense-svd"],
+        default=["auto", "block-banded", "dense-svd"],
     )
     parser.add_argument("--compile-only", action="store_true")
+    parser.add_argument("--gate-segments", nargs="+", type=int, default=[128, 192])
+    parser.add_argument("--gate-samples", type=int, default=256)
     parser.add_argument(
         "--output", type=Path, default=Path(__file__).with_suffix(".json")
     )
     options = parser.parse_args()
     cases: list[dict[str, Any]] = []
-    for segments in options.segments:
+    scenarios = [
+        (segments, options.samples, options.compile_only, False)
+        for segments in options.segments
+    ] + [
+        (segments, options.gate_samples, True, True) for segments in options.gate_segments
+    ]
+    for segments, sample_count, compile_only, gate_case in scenarios:
 
         def inputs() -> tuple[Array, Array, Array, Array]:
             coordinates = jnp.arange(
-                segments * options.samples * options.rank, dtype=jnp.float64
-            ).reshape((segments, options.samples, options.rank))
+                segments * sample_count * options.rank, dtype=jnp.float64
+            ).reshape((segments, sample_count, options.rank))
             bases = jnp.sin(coordinates * 0.37) + jnp.broadcast_to(
-                jnp.eye(options.samples, options.rank, dtype=jnp.float64),
+                jnp.eye(sample_count, options.rank, dtype=jnp.float64),
                 coordinates.shape,
             )
             return (
@@ -134,10 +175,23 @@ def main() -> None:
             )
 
         values, host_peak = host_allocation_peak(inputs)
-        for route in options.routes:
+        required = _dense_shadowing_workspace_bytes(
+            segments, sample_count, options.rank, values[0].dtype.itemsize, 0.0
+        )
+        if gate_case and required <= 512 * 1024 * 1024:
+            raise ValueError(
+                "Memory gate capacities must exceed the auto workspace budget."
+            )
+        for route in ["auto", "dense-svd"] if gate_case else options.routes:
+            resolved_route = (
+                _resolve_shadowing_solve_route("auto", required, 512 * 1024 * 1024)
+                if route == "auto"
+                else route
+            )
             entry = jax.jit(
                 {
                     "baseline": baseline,
+                    "auto": automatic,
                     "block-banded": candidate,
                     "dense-svd": dense_route,
                 }[route]
@@ -155,7 +209,7 @@ def main() -> None:
             extrema = None
             successful = None
             condition = None
-            if not options.compile_only:
+            if not compile_only:
                 result, timings = measure_repeated(
                     lambda: executable(*values), warmup=1, repeats=2
                 )
@@ -167,10 +221,14 @@ def main() -> None:
             cases.append(
                 {
                     "capacity": segments,
-                    "samples": options.samples,
+                    "samples": sample_count,
                     "rank": options.rank,
                     "route": route,
-                    "compile_only": options.compile_only,
+                    "resolved_route": resolved_route,
+                    "dense_workspace_bytes": 512 * 1024 * 1024,
+                    "dense_workspace_required_bytes": required,
+                    "gate_case": gate_case,
+                    "compile_only": compile_only,
                     "lowering_seconds": timing.lowering_seconds,
                     "compilation_seconds": timing.compilation_seconds,
                     "warm": warm,
@@ -181,13 +239,13 @@ def main() -> None:
                     "successful": successful,
                     "condition_number": condition,
                     "logical_design_bytes": (
-                        segments * options.samples + (segments - 1) * options.rank
+                        segments * sample_count + (segments - 1) * options.rank
                     )
                     * segments
                     * options.rank
                     * 8
-                    if route != "block-banded"
-                    else segments * options.samples * options.rank * 8
+                    if resolved_route != "block-banded"
+                    else segments * sample_count * options.rank * 8
                     + 2 * (segments - 1) * options.rank**2 * 8,
                 }
             )
@@ -200,6 +258,29 @@ def main() -> None:
             ).to_dict(),
             "environment": capture_environment().to_dict(),
             "cases": cases,
+            "gate_basis": "Current-code compile-only auto versus explicit dense-svd above the 512 MiB budget; committed baselines unchanged.",
+            "memory_gate": evaluate_memory_gate(
+                options.gate_segments,
+                [
+                    case["compiler"]["temporary_bytes"]
+                    for case in cases
+                    if case["gate_case"] and case["route"] == "dense-svd"
+                ],
+                [
+                    case["compiler"]["temporary_bytes"]
+                    for case in cases
+                    if case["gate_case"] and case["route"] == "auto"
+                ],
+                MemoryGatePolicy(),
+            ).to_dict(),
+            "above_budget_auto_scaling_exponent": fitted_scaling_exponent(
+                options.gate_segments,
+                [
+                    max(case["compiler"]["temporary_bytes"], 1)
+                    for case in cases
+                    if case["gate_case"] and case["route"] == "auto"
+                ],
+            ),
             "observed_peak_rss_bytes": process_peak_rss_bytes(),
             "compiler_scaling_exponents": {
                 route: fitted_scaling_exponent(
@@ -207,7 +288,7 @@ def main() -> None:
                     [
                         max(case["compiler"]["temporary_bytes"], 1)
                         for case in cases
-                        if case["route"] == route
+                        if case["route"] == route and not case["gate_case"]
                     ],
                 )
                 for route in options.routes
