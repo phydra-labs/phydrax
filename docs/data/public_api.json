@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "bfefe38c6f07dc650c3521a4485391939ed11938f4af2386bb2002804195b7d3",
+  "manifest_id": "cfa5bd4609a19e2a62f7383673dfff9d725e4f443ee32dcba640195a11f3f699",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -28049,6 +28049,7 @@
       "phydrax.operators.DimensionSamplingMode",
       "phydrax.operators.DimensionSamplingPolicy",
       "phydrax.operators.DirectNearFarReferenceBackend2D",
+      "phydrax.operators.DirectTargetExecution",
       "phydrax.operators.DirectVortexResourceEvidence",
       "phydrax.operators.DirectVortexResourceEvidence3D",
       "phydrax.operators.DisplacementDiscontinuityEvidence3D",
@@ -28927,6 +28928,7 @@
       "phydrax.operators.integral.DP0BoundaryTransfer",
       "phydrax.operators.integral.DiffraxCollocationIntegralOperator",
       "phydrax.operators.integral.DirectNearFarReferenceBackend2D",
+      "phydrax.operators.integral.DirectTargetExecution",
       "phydrax.operators.integral.DirectVortexResourceEvidence",
       "phydrax.operators.integral.DirectVortexResourceEvidence3D",
       "phydrax.operators.integral.DisplacementDiscontinuityEvidence3D",
@@ -29265,6 +29267,7 @@
       "phydrax.operators.integral.layer_potential.CurveTraversal2D",
       "phydrax.operators.integral.layer_potential.DP0BoundaryTransfer",
       "phydrax.operators.integral.layer_potential.DirectNearFarReferenceBackend2D",
+      "phydrax.operators.integral.layer_potential.DirectTargetExecution",
       "phydrax.operators.integral.layer_potential.DisplacementDiscontinuityEvidence3D",
       "phydrax.operators.integral.layer_potential.DisplacementDiscontinuitySpace3D",
       "phydrax.operators.integral.layer_potential.ElasticityBoundaryContract3D",
