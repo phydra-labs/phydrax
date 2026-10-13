@@ -140,7 +140,17 @@ class _GaussianProcessCovarianceOperator(AbstractLinearOperator):
         return self.mv(vector)
 
     def diagonal(self) -> Array:
+        if self.retained_covariance is not None:
+            return jnp.diag(self.retained_covariance)
         return self.kernel.diagonal(self.points) + self.variance
+
+    def column(self, index: Array, /) -> Array:
+        if self.retained_covariance is not None:
+            return self.retained_covariance[:, index]
+        unit = (
+            jnp.zeros((self.points.shape[0],), dtype=self.points.dtype).at[index].set(1.0)
+        )
+        return self.mv(unit)
 
     def _materialize(self) -> Array:
         raise ValueError(

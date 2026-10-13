@@ -1023,6 +1023,8 @@ at each Krylov iteration. With float64 observations at n=128, 256, and 512, the
 default therefore uses a full tile (including for the variational K·S product).
 Above the budget, exact bounded kernel-row products remain matrix-free.
 Gauss–Seidel uses the kernel diagonal plus observation variance for each pivot.
+When the covariance is retained, Gauss–Seidel gathers its pivot diagonal and
+column directly instead of recomputing them or multiplying by a unit vector.
 Actions and projected features retain O(n m) storage; any retained n-by-n kernel
 is admitted under the same workspace budget. The action-whitened variational ELBO
 accepts the same `computation` policy. Direct action-policy `resolve()` calls accept
