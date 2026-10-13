@@ -16,6 +16,7 @@ from jax import Array
 from .._strict import StrictModule
 from ..typing import PRNGKey
 from ._ir import PDEExpression, PDEProblemIR
+from ._validate import infer_expression_type
 
 
 if TYPE_CHECKING:
@@ -133,6 +134,11 @@ def _chain_direction(
         case "laplacian":
             return DifferentialDirection(coordinate.name, None, 2, coordinate.size)
         case "divergence":
+            if (
+                coordinate.size == 1
+                and infer_expression_type(node.args[0], problem).is_scalar
+            ):
+                return DifferentialDirection(coordinate.name, 0, 1, coordinate.size)
             if component is not None or any(item.component for item in directions):
                 raise ValueError(
                     "A differential chain cannot select two divergence components."

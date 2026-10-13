@@ -1325,7 +1325,7 @@ def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated() -
             ),
         ),
     )
-    with pytest.raises(ValueError, match="require an explicit axis"):
+    with pytest.raises(ValueError, match="requires an explicit coordinate axis"):
         phx.equations.compile_semidiscrete_pde(problem, spatial)
 
 

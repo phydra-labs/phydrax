@@ -79,7 +79,10 @@ def test_signed_spectral_coordinates_scenario_1() -> None:
         assert coordinates.coordinate_space.dtype == np.dtype(coordinate_dtype)
         assert coordinates.to_real_coordinates(state).dtype == jnp.dtype(coordinate_dtype)
         np.testing.assert_allclose(
-            np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
+            np.asarray(coordinates.to_real_coordinates(state)),
+            np.asarray(real),
+            rtol=2.0 * np.finfo(np.dtype(coordinate_dtype)).eps,
+            atol=0.0,
         )
         np.testing.assert_allclose(
             np.asarray(state[2]), -np.conj(np.asarray(state[1])), atol=1e-6
@@ -128,7 +131,10 @@ def test_signed_spectral_coordinates_scenario_1() -> None:
         assert state.dtype == jnp.dtype(coefficient_dtype)
         assert coordinates.coordinate_space.dtype == np.dtype(coordinate_dtype)
         np.testing.assert_allclose(
-            np.asarray(coordinates.to_real_coordinates(state)), np.asarray(real)
+            np.asarray(coordinates.to_real_coordinates(state)),
+            np.asarray(real),
+            rtol=2.0 * np.finfo(np.dtype(coordinate_dtype)).eps,
+            atol=0.0,
         )
     space = phx.discretization.SphericalSpectralPlan(4).prepare()
     coordinates = space.real_coordinates(component_shape=(2,))

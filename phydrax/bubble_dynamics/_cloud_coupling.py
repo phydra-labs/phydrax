@@ -34,7 +34,6 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     ArraySpace,
-    ConjugateGradient,
     DenseCholesky,
     DenseLinearOperator,
     DensePropertyVerificationPolicy,
@@ -42,6 +41,7 @@ from ..linalg import (
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
+    PCG,
     prepare,
     PreparedLinearSolve,
     refresh,
@@ -241,12 +241,16 @@ class _ScaledFMMCouplingAction(StrictModule, NonTrainableState):
 
 
 class FMMCloudCoupling(AbstractCloudCoupling):
-    """Matrix-free conjugate gradients whose pair action is the Laplace FMM.
+    """Matrix-free native conjugate gradients with the Laplace FMM pair action.
 
     The FMM structure depends only on the (fixed) positions and is prepared
     once; the scaled operator `I + W` is refreshed with the current radii and
     inertia coefficients at every evaluation. `resource` is the FMM capacity
     evidence of the prepared structure.
+
+    Convergence is certified against the true scaled-system residual. The
+    native recurrence replaces a drifted residual and continues within the
+    declared iteration budget rather than returning an uncertified iterate.
     """
 
     fmm: UniformFMMPlan
@@ -283,7 +287,7 @@ class FMMCloudCoupling(AbstractCloudCoupling):
             fmm, structure, jnp.ones((count,), dtype=dtype), operator_id
         )
         policy = LinearSolvePolicy(
-            ConjugateGradient(),
+            PCG(),
             tolerance=TolerancePolicy(
                 relative=float(tolerance),
                 absolute=float(tolerance),

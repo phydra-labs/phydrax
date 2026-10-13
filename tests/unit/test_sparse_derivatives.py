@@ -400,6 +400,44 @@ def test_sparse_derivatives_scenario_1() -> None:
     )
 
 
+def test_numeric_derivative_refresh_preserves_operator_carry_under_jit() -> None:
+    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    point = jnp.asarray([1.5, -0.5], dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        lambda value, scale: scale * value**2,
+        point,
+        source=space,
+        target=space,
+        sample_args=jnp.asarray(2.0),
+        structure=phx.sparse.SparsePattern.from_coo([0, 1], [0, 1], (2, 2)),
+        compiler="native",
+    )
+    initial = plan.operator(point, jnp.asarray(2.0))
+
+    @eqx.filter_jit
+    def accumulated(
+        runtime_plan: phx.sparse.SparseDerivativePlan,
+        operator: phx.sparse.SparseCoordinateOperator,
+        scales: jax.Array,
+    ) -> jax.Array:
+        def step(
+            previous: phx.sparse.SparseCoordinateOperator, scale: jax.Array
+        ) -> tuple[phx.sparse.SparseCoordinateOperator, jax.Array]:
+            del previous
+            refreshed = runtime_plan.operator(point, scale)
+            return refreshed, refreshed.mv(jnp.ones_like(point))
+
+        _, actions = jax.lax.scan(step, operator, scales)
+        return jnp.sum(actions)
+
+    scales = jnp.asarray([0.8, 1.1, 1.7], dtype=jnp.float64)
+    value, gradient = jax.value_and_grad(
+        lambda values: accumulated(plan, initial, values)
+    )(scales)
+    np.testing.assert_allclose(value, 2 * np.sum(point) * np.sum(scales), atol=1e-12)
+    np.testing.assert_allclose(gradient, np.full(3, 2 * np.sum(point)), atol=1e-12)
+
+
 def test_rectangular_pytree_jacobian_preserves_coordinate_semantics() -> None:
     source = phx.linalg.PyTreeSpace(
         {
@@ -687,3 +725,177 @@ def test_structural_trace_resolves_statically_passing_bounds_checks() -> None:
     expected = np.asarray(jax.jacfwd(checked)(jnp.ones((3,)), None)) != 0
     assert np.array_equal(_traced_pattern(plan, (3, 3)), expected)
     assert plan.coloring.num_colors == 1
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_structural_scan_tracks_constants_tuple_carry_and_stacked_outputs(
+    reverse: bool,
+) -> None:
+    source = phx.linalg.ArraySpace((6,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((7,), dtype=jnp.float64)
+
+    def scanned(value: jax.Array, _: None) -> jax.Array:
+        gain = 0.2 + value[0]
+
+        def step(
+            carry: tuple[jax.Array, jax.Array], sample: jax.Array
+        ) -> tuple[tuple[jax.Array, jax.Array], jax.Array]:
+            current, count = carry
+            updated = gain * current + sample
+            return (updated, count + 1), updated[::-1]
+
+        final, history = jax.lax.scan(
+            step,
+            (value[:2], jnp.asarray(0, dtype=jnp.int32)),
+            value[2:].reshape((2, 2)),
+            reverse=reverse,
+        )
+        return jnp.concatenate(
+            (final[0], history.reshape((-1,)), final[1].astype(jnp.float64).reshape((1,)))
+        )
+
+    point = jnp.arange(1, 7, dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        scanned, point, source=source, target=target, compiler="auto"
+    )
+    expected = np.asarray(jax.jacfwd(scanned)(point, None)) != 0
+    assert np.array_equal(_traced_pattern(plan, (7, 6)), expected)
+
+
+def test_structural_scan_without_samples_threads_captured_parameters() -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+
+    def scanned(value: jax.Array, _: None) -> jax.Array:
+        def step(carry: jax.Array, sample: None) -> tuple[jax.Array, jax.Array]:
+            del sample
+            updated = carry * value[0]
+            return updated, updated * value[2]
+
+        final, history = jax.lax.scan(step, value[1], None, length=3)
+        return jnp.concatenate((final.reshape((1,)), history))
+
+    point = jnp.asarray([1.3, 0.7, 2.0], dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        scanned, point, source=source, target=target, compiler="auto"
+    )
+    expected = np.asarray(jax.jacfwd(scanned)(point, None)) != 0
+    assert np.array_equal(_traced_pattern(plan, (4, 3)), expected)
+
+
+def test_structural_while_binds_condition_and_body_constants_in_their_own_lanes() -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((1,), dtype=jnp.float64)
+
+    def looped(value: jax.Array, _: None) -> jax.Array:
+        def condition(carry: tuple[jax.Array, jax.Array]) -> jax.Array:
+            return carry[0] < value[1]
+
+        def body(
+            carry: tuple[jax.Array, jax.Array],
+        ) -> tuple[jax.Array, jax.Array]:
+            return carry[0] + 1, carry[1] + value[0]
+
+        _count, result = jax.lax.while_loop(
+            condition, body, (jnp.asarray(0, dtype=jnp.int32), value[2])
+        )
+        return result.reshape((1,))
+
+    point = jnp.asarray([3.0, 2.2, 4.0], dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        looped, point, source=source, target=target, compiler="auto"
+    )
+    expected = np.asarray(jax.jacfwd(looped)(point, None)) != 0
+    assert np.array_equal(_traced_pattern(plan, (1, 3)), expected)
+
+
+@pytest.mark.parametrize("kind", ("jit", "remat", "custom_jvp", "custom_vjp"))
+def test_nested_structural_programs_preserve_attached_constant_values(kind: str) -> None:
+    space = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    weights = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float64)
+
+    def primal(value: jax.Array) -> jax.Array:
+        return weights * value[::-1]
+
+    if kind == "jit":
+        transformed = jax.jit(primal)
+    elif kind == "remat":
+        transformed = jax.checkpoint(primal)
+    elif kind == "custom_jvp":
+        transformed = jax.custom_jvp(primal)
+
+        def tangent_rule(
+            primals: tuple[jax.Array], tangents: tuple[jax.Array]
+        ) -> tuple[jax.Array, jax.Array]:
+            return primal(primals[0]), primal(tangents[0])
+
+        transformed.defjvp(tangent_rule)
+    else:
+        transformed = jax.custom_vjp(primal)
+
+        def forward(value: jax.Array) -> tuple[jax.Array, None]:
+            return primal(value), None
+
+        def backward(residual: None, cotangent: jax.Array) -> tuple[jax.Array]:
+            del residual
+            return ((weights * cotangent)[::-1],)
+
+        transformed.defvjp(forward, backward)
+
+    def function(value: jax.Array, _: None) -> jax.Array:
+        return transformed(value)
+
+    point = jnp.asarray([0.5, 1.2, 2.3], dtype=jnp.float64)
+    plan = phx.sparse.compile_sparse_jacobian(
+        function,
+        point,
+        source=space,
+        target=space,
+        compiler="auto",
+        mode="rev" if kind == "custom_vjp" else "fwd",
+    )
+    # The custom-VJP primal deliberately has no forward-mode entry point;
+    # its independent linear reference has the same scientific Jacobian.
+    expected = np.asarray(jax.jacfwd(primal)(point)) != 0
+    assert np.array_equal(_traced_pattern(plan, (3, 3)), expected)
+
+
+def test_structural_condition_unions_dynamic_branch_jacobians() -> None:
+    source = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    weights = jnp.asarray([2.0, 3.0], dtype=jnp.float64)
+
+    def branched(value: jax.Array, _: None) -> jax.Array:
+        return jax.lax.cond(
+            value[0] > 0.0,
+            lambda operand: weights * operand[1:3],
+            lambda operand: weights[::-1] * operand[2:4],
+            value,
+        )
+
+    positive = jnp.asarray([1.0, 2.0, 3.0, 4.0], dtype=jnp.float64)
+    negative = positive.at[0].set(-1.0)
+    plan = phx.sparse.compile_sparse_jacobian(
+        branched, positive, source=source, target=target, compiler="auto"
+    )
+    expected = (np.asarray(jax.jacfwd(branched)(positive, None)) != 0) | (
+        np.asarray(jax.jacfwd(branched)(negative, None)) != 0
+    )
+    assert np.array_equal(_traced_pattern(plan, (2, 4)), expected)
+
+
+@pytest.mark.parametrize("size", (0, 2), ids=("empty-constraints", "allocated-values"))
+def test_structural_trace_handles_input_independent_allocation(size: int) -> None:
+    source = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((3 + size,), dtype=jnp.float64)
+    point = jnp.asarray([0.7, -1.2, 0.4])
+
+    def allocated(value: Any, _: Any) -> Any:
+        return jnp.concatenate((value**2, jnp.empty((size,), dtype=value.dtype)))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        allocated, point, source=source, target=target, compiler="auto"
+    )
+    expected = jax.jacfwd(allocated)(point, None)
+    assert np.array_equal(_traced_pattern(plan, (3 + size, 3)), expected != 0)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)

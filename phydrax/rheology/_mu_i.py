@@ -50,7 +50,6 @@ class MuIParameters(StrictModule):
     barker_alpha: Array | None
     barker_mu_infinity: Array | None
 
-    @checked
     def __init__(
         self,
         mu_s: ArrayLike,

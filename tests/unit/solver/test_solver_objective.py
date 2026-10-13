@@ -12,6 +12,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax.linalg.backends._native_krylov import _fgmres_raw
 
 
 class _Relaxation(phx.AbstractComponentSlot):
@@ -353,3 +354,99 @@ def test_fixed_work_objective_fails_cases_that_exit_early() -> None:
     assert evaluation.work.tolist() == [3]
     assert not bool(evaluation.accepted[0])
     assert jnp.isnan(evaluation.value)
+
+
+class _GuardedKrylovSolve(phx.StrictModule):
+    diagonal: jax.Array
+
+
+class _BoundGuardedKrylov(phx.StrictModule):
+    solve: _GuardedKrylovSolve
+    relaxation: _Relaxation
+
+
+def _guarded_krylov_work(
+    owner: _BoundGuardedKrylov, rhs: jax.Array
+) -> phx.solver.AlgorithmicWorkResult:
+    diagonal = owner.solve.diagonal
+    omega = jnp.exp(owner.relaxation.log_omega)
+
+    def action(value: jax.Array) -> jax.Array:
+        checked = eqx.error_if(
+            diagonal,
+            jnp.any(~jnp.isfinite(diagonal) | (diagonal <= 0.0)),
+            "Fixed operator diagonal must stay positive and finite.",
+        )
+        return checked * value
+
+    def precondition(value: jax.Array, iteration: jax.Array) -> jax.Array:
+        del iteration
+        return value * (1.0 + omega * jnp.arange(rhs.shape[0], dtype=rhs.dtype))
+
+    value, auxiliary, _ = _fgmres_raw(
+        action,
+        rhs,
+        jnp.zeros_like(rhs),
+        jnp.vdot,
+        precondition,
+        2,
+        2,
+        100,
+        jnp.asarray(0.0, dtype=rhs.dtype),
+        jnp.asarray(0.0, dtype=rhs.dtype),
+        driver="fixed-trip",
+    )
+    return phx.solver.AlgorithmicWorkResult(
+        initial_residual=rhs,
+        final_residual=rhs - action(value),
+        iterations=auxiliary[0],
+        accepted=jnp.all(jnp.isfinite(value)),
+    )
+
+
+def test_vmapped_checkpointed_krylov_preserves_fixed_operator_operands() -> None:
+    solve = _GuardedKrylovSolve(jnp.asarray([1.0, 2.0, 3.0, 4.0], dtype=jnp.float64))
+    cases = jnp.asarray([[1.0, 2.0, 3.0, 4.0], [4.0, 1.0, 3.0, 2.0]], dtype=jnp.float64)
+    initial = _Relaxation(0.3)
+    objective = phx.solver.AlgorithmicWorkObjective(
+        solve,
+        _BoundGuardedKrylov,
+        _guarded_krylov_work,
+        work=2,
+        objective_id="guarded-krylov",
+        cases=cases,
+    )
+
+    @eqx.filter_jit
+    @eqx.filter_value_and_grad
+    def batched_loss(relaxation: _Relaxation) -> jax.Array:
+        return objective.evaluate(relaxation).value
+
+    @eqx.filter_jit
+    @eqx.filter_value_and_grad
+    def independent_loss(relaxation: _Relaxation) -> jax.Array:
+        owner = _BoundGuardedKrylov(solve, relaxation)
+        return jnp.mean(
+            jnp.stack(
+                [
+                    phx.solver.algorithmic_work_loss(_guarded_krylov_work(owner, rhs))
+                    for rhs in cases
+                ]
+            )
+        )
+
+    # Two Arnoldi steps consume the budget in the first cycle. The second
+    # cycle is inactive, but its vmapped backward replay must never replace
+    # the fixed positive diagonal with zero-padded branch residuals.
+    value, gradient = batched_loss(initial)
+    reference_value, reference_gradient = independent_loss(initial)
+    assert bool(jnp.isfinite(gradient.log_omega))
+    assert float(jnp.abs(reference_gradient.log_omega)) > 0.0
+    assert float(value) == pytest.approx(float(reference_value), rel=1e-12, abs=1e-12)
+    assert float(gradient.log_omega) == pytest.approx(
+        float(reference_gradient.log_omega), rel=1e-10, abs=1e-12
+    )
+    evaluation = objective.evaluate(initial)
+    assert bool(jnp.all(evaluation.accepted))
+    assert evaluation.work is not None
+    assert bool(jnp.all(evaluation.work == 2))
