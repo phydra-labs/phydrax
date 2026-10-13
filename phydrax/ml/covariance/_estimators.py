@@ -21,6 +21,14 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...linalg import (
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    OperatorProperties,
+    PreparedFactorization,
+    RHSLayout,
+)
 from ...linalg._dense_inverse import dense_inverse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -197,9 +205,40 @@ def _moments(
     return mean, covariance, mass, square_mass, valid
 
 
-def _regularize(
+def _covariance_factor(matrix: Array) -> PreparedFactorization:
+    return factorize(
+        DenseLinearOperator(
+            matrix,
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                evidence={
+                    "self_adjoint": "asserted",
+                    "positive_definite": "asserted",
+                    "positive_semidefinite": "asserted",
+                },
+            ),
+        ),
+        FactorizationPolicy("cholesky"),
+    )
+
+
+def _precision_and_logdet(matrix: Array) -> tuple[Array, Array]:
+    """Share a native Cholesky factor for the requested inverse and determinant."""
+    factor = _covariance_factor(matrix)
+    inverse = factor.materialize_inverse()
+    precision = _hermitian(inverse.value)
+    logdet = factor.log_abs_determinant()
+    successful = inverse.successful
+    return (
+        jnp.where(successful[..., None, None], precision, jnp.nan),
+        jnp.where(successful, logdet, jnp.nan),
+    )
+
+
+def _regularized_covariance(
     covariance: Array, regularization: Array
-) -> tuple[Array, Array, Array, Array]:
+) -> tuple[Array, Array]:
     feature_count = covariance.shape[-1]
     real_dtype = _real_dtype(covariance.dtype)
     eye = jnp.eye(feature_count, dtype=covariance.dtype)
@@ -212,12 +251,18 @@ def _regularize(
     floor = jnp.maximum(shift, jnp.finfo(real_dtype).eps * scale)
     shifted = hermitian + shift[..., None, None] * eye
     covariance_, eigenvalues = _spectral_floor(shifted, floor)
-    precision = dense_inverse(covariance_, positive_definite=True)
-    log_det = jnp.linalg.slogdet(covariance_)[1]
     clipped = jnp.maximum(eigenvalues, floor[..., None])
     rank = jnp.sum(eigenvalues > floor[..., None], axis=-1).astype(jnp.int32)
     condition = clipped[..., -1] / clipped[..., 0]
-    return covariance_, precision, log_det, jnp.stack((rank, condition), axis=-1)
+    return covariance_, jnp.stack((rank, condition), axis=-1)
+
+
+def _regularize(
+    covariance: Array, regularization: Array
+) -> tuple[Array, Array, Array, Array]:
+    covariance_, rank_condition = _regularized_covariance(covariance, regularization)
+    precision, log_det = _precision_and_logdet(covariance_)
+    return covariance_, precision, log_det, rank_condition
 
 
 def _input_sample_ndim(values: Array, case_shape: tuple[int, ...], in_size: int) -> int:
@@ -353,8 +398,7 @@ def _result(
         )
     else:
         precision = _hermitian(jnp.asarray(precision_override))
-        jnp.eye(precision.shape[-1], dtype=precision.dtype)
-        covariance_ = dense_inverse(precision, positive_definite=True)
+        covariance_, precision_logdet = _precision_and_logdet(precision)
         precision_values = _stable_eigvalsh(precision)
         floor = jnp.finfo(_real_dtype(precision.dtype)).eps * jnp.maximum(
             precision_values[..., -1], 1.0
@@ -365,7 +409,7 @@ def _result(
         condition_override = precision_values[..., -1] / jnp.maximum(
             precision_values[..., 0], floor
         )
-        log_det = -jnp.linalg.slogdet(precision)[1]
+        log_det = -precision_logdet
         rank_condition = jnp.stack((rank_override, condition_override), axis=-1)
     rank = rank_condition[..., 0].astype(jnp.int32)
     condition = rank_condition[..., 1]
@@ -730,14 +774,21 @@ class RobustCovariance(AbstractRecipe):
 
         def step(_: Array, state: _RobustCarry) -> _RobustCarry:
             mean, covariance, delta, iteration = state
-            _, precision, _, _ = _regularize(covariance, self.regularization)
+            covariance_, _ = _regularized_covariance(covariance, self.regularization)
             centered = x - mean[..., None, :]
+            factor = _covariance_factor(covariance_)
+            action = factor.solve(
+                jnp.swapaxes(centered, -1, -2),
+                rhs_layout=RHSLayout((centered.shape[-2],)),
+            )
+            solved = jnp.where(
+                action.successful[..., None, :], jnp.asarray(action.value), jnp.nan
+            )
             squared_distance = jnp.real(
                 ein.contract(
-                    "...ni,...ij,...nj->...n",
+                    "...ni,...in->...n",
                     jnp.conj(centered),
-                    precision,
-                    centered,
+                    solved,
                 )
             )
             outlier = squared_distance > jnp.square(self.huber_delta)
@@ -865,12 +916,11 @@ class GraphicalLasso(AbstractRecipe):
         precision, delta, iterations = jax.lax.fori_loop(
             0, self.max_iterations, step, state
         )
-        covariance = dense_inverse(precision, positive_definite=True)
         converged = delta < self.tolerance
         return _result(
             batch,
             mean=mean,
-            covariance=covariance,
+            covariance=sample_covariance,
             mass=mass,
             squared_mass=squared_mass,
             valid_moments=valid0,

@@ -28,6 +28,7 @@ from ..linalg import (
 )
 from ..linalg._spaces import _coordinate_dtype
 from ..typing import parse, PRNGKey
+from ._gp_computation_backend import _GaussianProcessCovarianceOperator
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -223,6 +224,8 @@ class AbstractGaussianProcessActionPolicy(StrictModule):
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         raise NotImplementedError
 
@@ -259,6 +262,8 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
         _require_state(state)
@@ -317,6 +322,8 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
         _require_state(state)
@@ -380,6 +387,8 @@ class PseudoInputGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
         _require_state(state)
@@ -458,9 +467,16 @@ class LanczosGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
         del residual
-        points, covariance = _iterative_covariance(observation_points, state)
+        points, covariance = _iterative_covariance(
+            observation_points,
+            state,
+            max_workspace_bytes=max_workspace_bytes,
+            checkpoint=checkpoint_kernel_blocks,
+        )
         if self.start_vector.shape != (points.shape[0],):
             raise ValueError("start_vector must align with observations.")
         vector = self.start_vector.astype(points.dtype)
@@ -475,7 +491,7 @@ class LanczosGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         for _ in range(self.max_actions):
             basis.append(jnp.where(active, vector, 0.0))
             masks.append(active)
-            candidate = covariance @ vector - beta * previous
+            candidate = covariance.mv(vector) - beta * previous
             for column in basis:
                 candidate = candidate - jnp.vdot(column, candidate).real * column
             next_norm = jnp.linalg.vector_norm(candidate)
@@ -540,8 +556,15 @@ class ConjugateGradientGaussianProcessActionPolicy(AbstractGaussianProcessAction
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
-        points, covariance = _iterative_covariance(observation_points, state)
+        points, covariance = _iterative_covariance(
+            observation_points,
+            state,
+            max_workspace_bytes=max_workspace_bytes,
+            checkpoint=checkpoint_kernel_blocks,
+        )
         count = _action_count(self.max_actions, observation_count=points.shape[0])
         values = _required_residual(residual, observation_count=points.shape[0])
         remainder = values.astype(points.dtype)
@@ -551,7 +574,7 @@ class ConjugateGradientGaussianProcessActionPolicy(AbstractGaussianProcessAction
         masks = []
         history = [jnp.sqrt(squared)]
         for _ in range(count):
-            product = covariance @ direction
+            product = covariance.mv(direction)
             denominator = jnp.vdot(direction, product).real
             direction_norm = jnp.linalg.vector_norm(direction)
             active = (
@@ -644,8 +667,16 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         *,
         state: GaussianProcessLikelihoodState,
         residual: Array | None = None,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
+        checkpoint_kernel_blocks: bool = True,
     ) -> _ResolvedGaussianProcessActions:
-        points, covariance = _iterative_covariance(observation_points, state)
+        points, covariance = _iterative_covariance(
+            observation_points,
+            state,
+            max_workspace_bytes=max_workspace_bytes,
+            checkpoint=checkpoint_kernel_blocks,
+        )
+        covariance_diagonal = covariance.diagonal()
         observation_count = points.shape[0]
         count = _action_count(self.max_actions, observation_count=observation_count)
         values = _required_residual(residual, observation_count=observation_count)
@@ -677,7 +708,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
             else:
                 scores = jnp.where(used, -jnp.inf, jnp.abs(remainder))
                 index = jax.lax.stop_gradient(jnp.argmax(scores).astype(jnp.int32))
-            diagonal = covariance[index, index]
+            diagonal = covariance_diagonal[index]
             active = (
                 ~used[index]
                 & jnp.isfinite(diagonal)
@@ -690,7 +721,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
             masks.append(active)
             indices.append(index)
             correction = jnp.where(active, remainder[index] / diagonal, 0.0)
-            remainder = remainder - correction * covariance[:, index]
+            remainder = remainder - correction * covariance.column(index)
             used = used.at[index].set(True)
             history.append(jnp.linalg.vector_norm(remainder))
         active_mask = jnp.stack(tuple(masks))
@@ -710,7 +741,10 @@ def _iterative_covariance(
     observation_points: Array,
     state: GaussianProcessLikelihoodState,
     /,
-) -> tuple[Array, Array]:
+    *,
+    max_workspace_bytes: int,
+    checkpoint: bool,
+) -> tuple[Array, _GaussianProcessCovarianceOperator]:
     _require_state(state)
     points = jnp.asarray(observation_points)
     expected_rank = state.kernel.input_ndim + 1
@@ -718,13 +752,18 @@ def _iterative_covariance(
         raise ValueError("Observation design does not match the kernel input rank.")
     observation_count = points.shape[0]
     noise = jnp.broadcast_to(state.noise_scale, (observation_count,))
-    covariance = state.kernel.matrix(points, points) + jnp.diag(
-        noise * noise + state.jitter
-    )
-    covariance = eqx.error_if(
-        covariance,
-        jnp.any(~jnp.isfinite(covariance)),
+    variance = noise * noise + state.jitter
+    variance = eqx.error_if(
+        variance,
+        jnp.any(~jnp.isfinite(variance)),
         "Iterative GP actions require finite covariance entries.",
+    )
+    covariance = _GaussianProcessCovarianceOperator(
+        state.kernel,
+        points,
+        variance,
+        max_workspace_bytes=max_workspace_bytes,
+        checkpoint=checkpoint,
     )
     return points, covariance
 
