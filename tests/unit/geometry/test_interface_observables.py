@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.geometry._interface import _interface_tiles
 
 
 def test_interface_observables_scenario_1() -> None:
@@ -235,3 +236,54 @@ def test_interface_distance_budget_default_preserves_empty_case_axis() -> None:
     assert metrics.symmetric_mean_distance.shape == (0,)
     assert metrics.hausdorff_distance.shape == (0,)
     assert metrics.percentile_hausdorff_distance.shape == (0,)
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 1.5, None])
+def test_interface_distance_refuses_invalid_workspace(budget: object) -> None:
+    points = np.zeros((2, 2), dtype=np.float64)
+    with pytest.raises((TypeError, ValueError), match="interface_workspace_bytes"):
+        phx.geometry.interface_distance_metrics(
+            points,
+            points,
+            interface_workspace_bytes=budget,  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_interface_workspace_boundary_matches_dense_reference() -> None:
+    predicted = np.asarray([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]], dtype=np.float64)
+    reference = np.asarray([[0.5, 0.0], [3.0, 0.0]], dtype=np.float64)
+    full_budget = 3 * 2 * 8
+    assert _interface_tiles(
+        jnp.asarray(predicted), jnp.asarray(reference), None, None, full_budget
+    ) == (3, 2)
+    assert _interface_tiles(
+        jnp.asarray(predicted), jnp.asarray(reference), None, None, full_budget - 1
+    ) == (3, 1)
+    full = phx.geometry.interface_distance_metrics(
+        predicted, reference, interface_workspace_bytes=full_budget
+    )
+    tiled = phx.geometry.interface_distance_metrics(
+        predicted, reference, interface_workspace_bytes=full_budget - 1
+    )
+    explicit = phx.geometry.interface_distance_metrics(
+        predicted,
+        reference,
+        chunk_size=3,
+        target_chunk_size=2,
+        interface_workspace_bytes=1,
+    )
+    assert full.interface_workspace_bytes == full_budget
+    expected = np.sqrt(np.sum((predicted[:, None] - reference[None]) ** 2, axis=-1))
+    np.testing.assert_allclose(
+        full.symmetric_mean_distance,
+        (expected.min(axis=0).mean() + expected.min(axis=1).mean()) / 2,
+        atol=1e-14,
+    )
+    for result in (tiled, explicit):
+        np.testing.assert_array_equal(
+            result.symmetric_mean_distance, full.symmetric_mean_distance
+        )
+        np.testing.assert_array_equal(result.hausdorff_distance, full.hausdorff_distance)
+        np.testing.assert_array_equal(
+            result.percentile_hausdorff_distance, full.percentile_hausdorff_distance
+        )

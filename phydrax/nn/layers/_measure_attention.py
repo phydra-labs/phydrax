@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import assert_never, Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
@@ -96,6 +97,8 @@ def _blockwise_softmax_attention(
 ) -> Array:
     batch, query_count, heads, head_dim = query.shape
     source_count = key.shape[1]
+    if block_size >= source_count:
+        return _dense_softmax_attention(query, key, value, measure)
     q = jnp.transpose(query, (0, 2, 1, 3))
     running_max = jnp.full(
         (batch, heads, query_count),
@@ -236,7 +239,8 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
     out_channels: int
     kernel: AttentionKernel
     execution: AttentionExecution
-    block_size: int
+    block_size: int | None
+    attention_workspace_bytes: int = eqx.field(static=True)
     accumulation_dtype: str
 
     def __init__(
@@ -249,14 +253,25 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         head_dim: int,
         kernel: AttentionKernel = "softmax",
         execution: AttentionExecution = "auto",
-        block_size: int = 256,
+        block_size: int | None = None,
+        attention_workspace_bytes: int = 8 * 1024 * 1024,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        if isinstance(attention_workspace_bytes, bool) or not isinstance(
+            attention_workspace_bytes, int
+        ):
+            raise TypeError("attention_workspace_bytes must be an integer.")
+        if attention_workspace_bytes <= 0:
+            raise ValueError("attention_workspace_bytes must be positive.")
+        resolved_block_size = None if block_size is None else int(block_size)
+        if resolved_block_size is not None and resolved_block_size <= 0:
+            raise ValueError("block_size must be positive.")
         self.num_heads = int(num_heads)
         self.head_dim = int(head_dim)
         self.out_channels = int(out_channels)
-        self.block_size = int(block_size)
+        self.block_size = resolved_block_size
+        self.attention_workspace_bytes = attention_workspace_bytes
         self.accumulation_dtype = str(accumulation_dtype)
         source_channels = int(source_channels)
         query_channels = int(query_channels)
@@ -266,8 +281,6 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         self.execution = parse(execution, AttentionExecution, "execution")
         if self.num_heads <= 0 or self.head_dim <= 0 or self.out_channels <= 0:
             raise ValueError("num_heads, head_dim, and out_channels must be positive.")
-        if self.block_size <= 0:
-            raise ValueError("block_size must be positive.")
         if self.kernel != "softmax" and self.execution not in ("auto", "dense"):
             raise ValueError(
                 "Non-softmax attention kernels accept only 'auto' or 'dense' execution."
@@ -388,14 +401,6 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                 )
             case "softmax":
                 match self.execution:
-                    case "blockwise":
-                        attended = _blockwise_softmax_attention(
-                            q_acc,
-                            k_acc,
-                            v_acc,
-                            measure,
-                            block_size=self.block_size,
-                        )
                     case "cudnn":
                         attended = _fused_softmax_attention(
                             q_acc,
@@ -404,8 +409,8 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                             measure,
                             implementation="cudnn",
                         )
-                    case "xla" | "auto" if (
-                        self.execution == "xla" or q_acc.dtype == jnp.float32
+                    case "xla" | "auto" if self.execution == "xla" or (
+                        q_acc.dtype == jnp.float32 and self.block_size is None
                     ):
                         attended = _fused_softmax_attention(
                             q_acc,
@@ -414,13 +419,24 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                             measure,
                             implementation="xla",
                         )
-                    case "auto":
+                    case "auto" | "blockwise":
+                        # Bound logical scores, with one source column as the floor.
+                        column_bytes = (
+                            q_acc.shape[0]
+                            * q_acc.shape[1]
+                            * self.num_heads
+                            * dtype.itemsize
+                        )
+                        tile = (
+                            self.block_size
+                            if self.block_size is not None
+                            else max(
+                                1,
+                                self.attention_workspace_bytes // max(1, column_bytes),
+                            )
+                        )
                         attended = _blockwise_softmax_attention(
-                            q_acc,
-                            k_acc,
-                            v_acc,
-                            measure,
-                            block_size=self.block_size,
+                            q_acc, k_acc, v_acc, measure, block_size=tile
                         )
                     case "dense":
                         attended = _dense_softmax_attention(q_acc, k_acc, v_acc, measure)

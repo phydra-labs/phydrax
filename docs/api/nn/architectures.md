@@ -2076,25 +2076,33 @@ gates. A radius is a dimensional coordinate quantity; `coordinate_scale` only
 normalizes features presented to learned kernels.
 
 `GraphKernelTransfer`, `GraphAttentionTransfer`, and `RegionalGraphProcessor`
-use explicit positive integer `target_chunk_size=64` defaults for exact blocked
-neighborhood construction. Their source tiles use the graph query default of
-256. The enclosing `GINO`, `GeometryInformedFlower`, `RIGNO`, and `GAOT`
-architectures keep their explicit `query_chunk_size=256` default and pass it
-as the target-tile size to encoder/decoder transfers (and RIGNO's regional
-processor). Both parameters require positive, non-boolean integers, not
-`None`. Tile sizes select the memory/parallelism tradeoff, not an approximate
-neighborhood.
+default to `target_chunk_size=None` and `query_workspace_bytes=4 * 1024 * 1024`
+(4 MiB). Exact neighborhood construction derives static source and target
+tiles from this byte budget, accounting for case count, dtype, and retained
+neighbors. When the full pair table fits, the query uses a direct dense stable
+sort; otherwise it uses exact blocked selection. This is a planning budget for
+query workspace, not a bound on whole-model memory or compiler scratch.
+The enclosing `GINO`, `GeometryInformedFlower`, `RIGNO`, and `GAOT` architectures
+default to `query_chunk_size=None` and the same `query_workspace_bytes`.
+They forward both controls to encoder/decoder transfers, RIGNO's regional
+processor, and GAOT's multiscale geometry-moment queries. Latent occupancy/SDF
+support queries also use the graph query's default automatic budget.
 
-The layer target-tile sizes are immutable static module fields, not numerical
-PyTree leaves. They affect compilation structure, while array-only fingerprints
-exclude them. Identities that include static module metadata distinguish tile
-configurations. Direct-layer defaults change from `None` to 64, intentionally
-changing their default structural identity; enclosing architecture defaults
-remain 256.
-Equinox leaf serialization and operator training checkpoints use caller-supplied
-templates for these static values. Restore with the original tile configuration:
-the training checkpoint's parameter/role binding does not independently verify
-tile metadata.
+An explicit positive, non-boolean integer `target_chunk_size` (or architecture
+`query_chunk_size`) overrides automatic target tiling and preserves the
+explicit tile policy. `query_workspace_bytes` always requires a positive,
+non-boolean integer. Tiling controls the memory/parallelism tradeoff without
+approximating neighborhoods or changing deterministic tie ordering.
+
+Chunk selections and query budgets are immutable static module fields, not
+numerical PyTree leaves. They affect compilation structure, while array-only
+fingerprints exclude them. Identities that include static metadata distinguish
+configurations. Changing layer defaults from 64 and architecture defaults from
+256 to `None`, and adding the static budget field, intentionally changes default
+structural identity. Equinox leaf serialization and operator training
+checkpoints use caller-supplied templates for these static values. Restore with
+the original chunk and budget configuration: the training checkpoint's
+parameter/role binding does not independently verify this metadata.
 
 - `GINO` transfers irregular data to a tensor latent grid, applies an
   N-dimensional `FNO`, and decodes at arbitrary query points. Use
@@ -2289,21 +2297,39 @@ and query masks remove padded outputs. Physical measures are required for
 sampling-density invariance; an omitted point-cloud measure becomes unit
 counting weights and changes the represented operator.
 
-For softmax attention, `execution="auto"` selects fused XLA when the resolved
-accumulation dtype is float32 and source-blockwise execution for other floating
-dtypes. With `accumulation_dtype="input"` (the default), this dtype is the common
-query/key/value dtype; explicit `"float32"` or `"float64"` overrides it.
-`execution="blockwise"` selects the source loop explicitly, and
-`execution="dense"` retains the full query-by-source softmax route. Explicit
-`"xla"` and `"cudnn"` retain their fused-provider contracts. Non-softmax kernels
-accept only `"auto"` or `"dense"`.
+For softmax attention, `execution="auto"` with the default `block_size=None`
+selects fused XLA when the resolved accumulation dtype is float32. For other
+floating dtypes, `attention_workspace_bytes=8 * 1024 * 1024` admits the direct
+dense softmax when its logical score array fits; otherwise attention streams
+source tiles. With `accumulation_dtype="input"` (the default), the accumulation
+dtype is the common query/key/value dtype; explicit `"float32"` or `"float64"`
+overrides it.
 
-Positive `block_size=256` bounds the source tile, not the query count: blockwise
-pair scratch scales with batch × heads × queries × min(block_size, sources).
+The budget counts batch × heads × queries × sources × accumulation-dtype bytes,
+not total compiler temporary memory, projected inputs, or required outputs.
+The automatic source tile is the budget divided by the bytes for one source
+column, rounded down, with a one-column floor. Thus a budget smaller than one
+column still permits that minimum tile. A full-fit tile calls the same dense
+kernel directly, without a loop wrapper. The 8 MiB default admits the measured
+float64 workload with one batch, two heads, 256 queries, and up to 2048 sources;
+larger workloads retain bounded score tiles. This crossover selection does not
+claim a new timing result.
+
+A positive explicit `block_size` overrides automatic budget selection and
+forces source-blockwise `"auto"` execution, including for float32.
+`execution="blockwise"` selects this tiled route regardless of dtype, deriving
+the tile from the budget when `block_size=None`; a full-fit tile is still direct
+dense. `execution="dense"` ignores the budget and tile selection. Explicit
+`"xla"` and `"cudnn"` retain their fused-provider contracts and also ignore tile
+selection. Non-softmax kernels accept only `"auto"` or `"dense"`. Budgets must
+be positive integers, even when the selected route does not consult the budget.
+
 Blockwise execution preserves physical measure normalization and zero outputs
 for fully masked sources, with fixed block order and reverse-mode differentiation
-support. This numerical-route change does not add attention fields or alter
-model persistence structure.
+support. The stored workspace budget and optional tile are module execution
+policy: they intentionally change model identity and persistence structure.
+Operator-attention layers and latent-token architecture attention tile defaults
+also use `None`, so they inherit the budget-derived behavior.
 
 `UPT` compresses one source function to a fixed learned token set and decodes an
 independent query set. `ABUPT` extends that pattern to an `OperatorBranchGraph`

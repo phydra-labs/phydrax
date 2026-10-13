@@ -4,12 +4,63 @@
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.scipy.special import logsumexp
 
+from ..typing import parse
 from ._costs import GroundCost, PrecomputedCost
+
+
+AutomaticSinkhornBlockSize: TypeAlias = Literal["auto"]
+SinkhornBlockSize: TypeAlias = AutomaticSinkhornBlockSize | int | None
+DEFAULT_SINKHORN_WORKSPACE_BYTES = 128 * 1024 * 1024
+
+
+def validate_sinkhorn_workspace_bytes(workspace_bytes: int, /) -> None:
+    """Validate the shared logical cost/kernel working-set budget."""
+    if not isinstance(workspace_bytes, int) or isinstance(workspace_bytes, bool):
+        raise TypeError("sinkhorn_workspace_bytes must be an integer.")
+    if workspace_bytes < 1:
+        raise ValueError("sinkhorn_workspace_bytes must be positive.")
+
+
+def validate_sinkhorn_block_size(block_size: SinkhornBlockSize, /) -> SinkhornBlockSize:
+    """Distinguish automatic admission from explicit dense and tile overrides."""
+    if isinstance(block_size, str):
+        return parse(block_size, AutomaticSinkhornBlockSize, "block_size")
+    if block_size is not None:
+        if not isinstance(block_size, int) or isinstance(block_size, bool):
+            raise TypeError("block_size must be 'auto', a positive integer, or None.")
+        if block_size < 1:
+            raise ValueError("block_size must be positive.")
+    return block_size
+
+
+def resolve_sinkhorn_block_size(
+    block_size: SinkhornBlockSize,
+    workspace_bytes: int,
+    source_count: int,
+    target_count: int,
+    itemsize: int,
+    /,
+) -> int | None:
+    """Admit dense cost/kernel scratch or conservatively bound square tiles.
+
+    Four scalar pair arrays account for costs, log coupling, coupling, and
+    reduction scratch. The linear extent bound also bounds each square tile.
+    Inputs, outputs, custom cost internals, and autodiff storage are separate.
+    """
+    if block_size != "auto":
+        return block_size
+    bytes_per_pair = 4 * itemsize
+    if source_count * target_count * bytes_per_pair <= workspace_bytes:
+        return None
+    extent = max(source_count, target_count)
+    return min(extent, max(1, workspace_bytes // (extent * bytes_per_pair)))
 
 
 def cost_matrix(cost: GroundCost, source_points: Array, target_points: Array, /) -> Array:

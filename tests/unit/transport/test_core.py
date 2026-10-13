@@ -3,7 +3,7 @@
 #
 
 
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -337,22 +337,23 @@ def test_nonconvergence_and_invalid_measures_remain_explicit() -> None:
 
 
 @pytest.mark.parametrize("iterations", [1, 100], ids=["iteration-limit", "converged"])
-def test_default_blocks_preserve_dense_values_gradients_and_status(
+def test_budget_blocks_preserve_dense_values_gradients_and_status(
     iterations: int,
 ) -> None:
     points = jnp.asarray([[-0.9], [-0.2], [0.1], [0.7], [1.3]], dtype=jnp.float64)
-    targets = jnp.linspace(-1.1, 1.6, 263, dtype=jnp.float64)[:, None]
+    targets = jnp.linspace(-1.1, 1.6, 17, dtype=jnp.float64)[:, None]
     dense_solver = phx.transport.Sinkhorn(
         0.5, max_iterations=iterations, tolerance=1e-9, block_size=None
     )
     bounded_solver = phx.transport.Sinkhorn(
-        0.5, max_iterations=iterations, tolerance=1e-9
+        0.5, max_iterations=iterations, tolerance=1e-9, sinkhorn_workspace_bytes=1632
     )
     problem = _problem(points, targets)
     dense = dense_solver(problem)
     bounded = bounded_solver(problem)
     assert bounded.provenance.execution == "blockwise"
-    assert bounded.provenance.block_size == 256
+    assert bounded.provenance.block_size == bounded.block_size == 3
+    assert bounded.provenance.sinkhorn_workspace_bytes == 1632
     assert dense.provenance.execution == "dense"
     assert dense.provenance.block_size is None
     assert bounded.diagnostics.status == dense.diagnostics.status
@@ -368,6 +369,13 @@ def test_default_blocks_preserve_dense_values_gradients_and_status(
         lambda values: bounded_solver(_problem(values, targets)).regularized_cost
     )(points)
     assert jnp.allclose(bounded_gradient, dense_gradient, rtol=1e-9, atol=1e-11)
+    payload = jnp.stack((targets[:, 0], targets[:, 0] ** 2), axis=1)
+    assert jnp.allclose(
+        bounded.apply_target_to_source(payload),
+        dense.apply_target_to_source(payload),
+        rtol=1e-10,
+        atol=1e-12,
+    )
 
 
 @pytest.mark.parametrize(
@@ -389,9 +397,11 @@ def test_transport_provenance_refuses_inconsistent_pair_tiles(
         )
 
 
-@pytest.mark.parametrize("block_size", [None, 256], ids=["dense", "blockwise"])
+@pytest.mark.parametrize(
+    "block_size", [None, 256, "auto"], ids=["dense", "blockwise", "automatic"]
+)
 def test_transport_result_persists_static_provenance_and_plan(
-    block_size: int | None,
+    block_size: Literal["auto"] | int | None,
 ) -> None:
     import io
 
@@ -407,8 +417,95 @@ def test_transport_result_persists_static_provenance_and_plan(
     buffer.seek(0)
     restored = eqx.tree_deserialise_leaves(buffer, result)
     assert restored.provenance == result.provenance
-    assert restored.provenance.block_size == block_size
+    assert restored.provenance.block_size == (
+        None if block_size == "auto" else block_size
+    )
+    assert restored.provenance.sinkhorn_workspace_bytes == 128 * 1024 * 1024
     assert jax.tree.leaves(restored.provenance) == []
     assert restored.diagnostics.status == result.diagnostics.status
     np.testing.assert_array_equal(restored.dense_plan(), result.dense_plan())
     np.testing.assert_array_equal(restored.regularized_cost, result.regularized_cost)
+
+
+@pytest.mark.parametrize("budget", [480, 128 * 1024 * 1024], ids=["exact-fit", "default"])
+def test_automatic_full_fit_is_exactly_dense(budget: int) -> None:
+    problem = _problem([[-0.9], [0.1], [1.3]], [[-1.1], [-0.2], [0.4], [0.8], [1.6]])
+    automatic = phx.transport.Sinkhorn(
+        0.5, max_iterations=10, sinkhorn_workspace_bytes=budget
+    )(problem)
+    dense = phx.transport.Sinkhorn(0.5, max_iterations=10, block_size=None)(problem)
+    assert automatic.block_size is automatic.provenance.block_size is None
+    assert automatic.provenance.execution == "dense"
+    assert automatic.provenance.sinkhorn_workspace_bytes == budget
+    assert jnp.array_equal(automatic.source_potential, dense.source_potential)
+    assert jnp.array_equal(automatic.target_potential, dense.target_potential)
+    assert jnp.array_equal(automatic.regularized_cost, dense.regularized_cost)
+    assert jnp.array_equal(automatic.dense_plan(), dense.dense_plan())
+    assert automatic.diagnostics.status == dense.diagnostics.status
+
+
+@pytest.mark.parametrize(
+    "block_size,budget",
+    [(None, 1), (2, 1), (2, 128 * 1024 * 1024)],
+    ids=["dense-over-budget", "tile-over-budget", "tile-full-fit"],
+)
+def test_explicit_sinkhorn_routes_override_valid_budget(
+    block_size: int | None, budget: int
+) -> None:
+    result = phx.transport.Sinkhorn(
+        0.5, max_iterations=1, block_size=block_size, sinkhorn_workspace_bytes=budget
+    )(_problem([[0.0], [1.0]], [[0.2], [0.8]]))
+    assert result.block_size == result.provenance.block_size == block_size
+    assert result.provenance.execution == ("dense" if block_size is None else "blockwise")
+    assert result.provenance.sinkhorn_workspace_bytes == budget
+
+
+@pytest.mark.parametrize("family", ["balanced", "unbalanced"])
+@pytest.mark.parametrize("budget", [0, -1], ids=["zero", "negative"])
+@pytest.mark.parametrize("block_size", ["auto", None, 2])
+def test_sinkhorn_refuses_nonpositive_budget(
+    family: str, budget: int, block_size: Literal["auto"] | int | None
+) -> None:
+    solver = (
+        phx.transport.Sinkhorn
+        if family == "balanced"
+        else phx.transport.UnbalancedSinkhorn
+    )
+    with pytest.raises(ValueError, match="sinkhorn_workspace_bytes must be positive"):
+        solver(0.5, block_size=block_size, sinkhorn_workspace_bytes=budget)
+
+
+@pytest.mark.parametrize("family", ["balanced", "unbalanced"])
+@pytest.mark.parametrize(
+    "budget", [True, 1.5, "1024", None], ids=["boolean", "float", "string", "none"]
+)
+def test_sinkhorn_refuses_noninteger_budget(family: str, budget: Any) -> None:
+    solver = (
+        phx.transport.Sinkhorn
+        if family == "balanced"
+        else phx.transport.UnbalancedSinkhorn
+    )
+    with pytest.raises(TypeError, match="sinkhorn_workspace_bytes must be an integer"):
+        solver(0.5, sinkhorn_workspace_bytes=budget)
+
+
+@pytest.mark.parametrize("family", ["balanced", "unbalanced"])
+@pytest.mark.parametrize("block_size", [True, 1.5, "dense", 0, -2])
+def test_sinkhorn_refuses_invalid_block_override(family: str, block_size: Any) -> None:
+    solver = (
+        phx.transport.Sinkhorn
+        if family == "balanced"
+        else phx.transport.UnbalancedSinkhorn
+    )
+    with pytest.raises((TypeError, ValueError), match="block_size"):
+        solver(0.5, block_size=block_size)
+
+
+def test_automatic_sinkhorn_clamps_to_one_pair_tile() -> None:
+    problem = _problem([[0.0], [1.0]], [[0.2], [0.8]])
+    bounded = phx.transport.Sinkhorn(0.5, max_iterations=10, sinkhorn_workspace_bytes=1)(
+        problem
+    )
+    dense = phx.transport.Sinkhorn(0.5, max_iterations=10, block_size=None)(problem)
+    assert bounded.block_size == bounded.provenance.block_size == 1
+    assert jnp.allclose(bounded.dense_plan(), dense.dense_plan(), rtol=1e-10, atol=1e-12)

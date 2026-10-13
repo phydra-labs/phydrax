@@ -442,9 +442,12 @@ neighbors = phx.graph.query_neighbors(
 )
 ```
 
-The exact two-axis blocked query is the default, with explicit
-`target_chunk_size=64` and `source_chunk_size=256` bounds. Larger integer tiles
-select more parallel work and more scratch; `None` is not a tile selection.
+The exact query defaults to budget-derived source/target tiles:
+`target_chunk_size=None`, `source_chunk_size=None`, and
+`query_workspace_bytes=4 * 1024 * 1024`. Whole-fit pair work uses one parallel
+sort without tile loops; above budget it uses exact two-axis top-k merging.
+Explicit positive integer chunks override the respective automatic extent.
+Evidence records the executed tile sizes and budget alongside the backend.
 Supplying a Morton plan is explicit because the
 crossover depends on point count, clustering, query/source ratio, device, and
 candidate capacity. `neighbors.evidence` identifies the realization and
