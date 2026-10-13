@@ -139,10 +139,14 @@ def main() -> None:
     parser.add_argument("--sizes", type=int, nargs="+", default=[32, 64, 128])
     parser.add_argument("--degree", type=int, default=3)
     parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path(__file__).with_suffix(".json")
     )
     args = parser.parse_args()
+    if args.smoke:
+        args.sizes = [16, 32]
+        args.repeats = 1
     jax.config.update("jax_enable_x64", True)
     cases = [_case(size, args.degree, args.repeats) for size in args.sizes]
     record = {

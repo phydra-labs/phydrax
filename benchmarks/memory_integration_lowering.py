@@ -1,5 +1,6 @@
 """Measure compiler CSE versus explicit fixed-coordinate reuse."""
 
+import argparse
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,11 @@ def run(shared: bool, terms: int) -> dict[str, Any]:
 
 
 def main() -> None:
-    sizes = [1, 2, 4, 8]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent)
+    args = parser.parse_args()
+    sizes = [1, 2] if args.smoke else [1, 2, 4, 8]
     baseline = [run(False, size) for size in sizes]
     candidate = [run(True, size) for size in sizes]
     for left, right in zip(baseline, candidate, strict=True):
@@ -84,11 +89,11 @@ def main() -> None:
         "gate": gate.to_dict(),
     }
     write_json_atomic(
-        root / "benchmarks/memory_integration_lowering_baseline.json",
+        args.output_dir / "memory_integration_lowering_baseline.json",
         {**common, "cases": baseline},
     )
     write_json_atomic(
-        root / "benchmarks/memory_integration_lowering.json",
+        args.output_dir / "memory_integration_lowering.json",
         {**common, "cases": candidate},
     )
     print(gate.to_dict())

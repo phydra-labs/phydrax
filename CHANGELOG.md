@@ -62,6 +62,9 @@
   temporal scan and avoid eager adaptive numerical refresh.
 - Reject nonfinite Clarabel inputs before provider execution while preserving
   `NONFINITE_INPUT` and independent valid batch cases.
+- Match operator-workspace benchmark gates by full problem capacity, keep default
+  and smoke campaigns aligned with committed baselines, and support isolated
+  smoke outputs for every memory driver on the discretization branch.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.

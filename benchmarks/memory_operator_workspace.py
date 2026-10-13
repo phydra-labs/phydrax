@@ -3,12 +3,14 @@
 #
 """Compile exact derivative and direct-layer routes before adoption.
 
-Default capacities are smoke-sized; --full uses derivative dimensions 8/16/32/64
+Default capacities match the committed baseline: derivative dimensions 8/16/32/64
 and direct layer (targets, sources) capacities (64,1024)/(128,4096)/(256,16384).
-Baseline records are captured before the corresponding package changes. Derivative
-candidates are exact AD prototypes; the layer candidate uses the shipped explicit
-target policy. Both routes retain timing samples, including target chunks 8/32/64;
-timing acceptance belongs to the quiet integration wave.
+--smoke uses the first two capacities of each route; --full explicitly selects
+the default campaign. Candidate gates match both capacity and width, never row
+position. Baseline records are captured before the corresponding package changes.
+Derivative candidates are exact AD prototypes; the layer candidate uses the
+shipped explicit target policy. Both routes retain timing samples, including
+target chunks 8/32/64; timing acceptance belongs to the quiet integration wave.
 """
 
 from __future__ import annotations
@@ -185,16 +187,35 @@ def _measure(
     }
 
 
+def _matching_baseline(
+    series: list[dict[str, Any]], baseline: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Match the complete problem size without inventing historical measurements."""
+    by_size = {(row["capacity"], row["width"]): row for row in baseline}
+    if len(by_size) != len(baseline):
+        raise ValueError("Baseline operator capacities and widths must be unique.")
+    matched = []
+    for row in series:
+        size = (row["capacity"], row["width"])
+        if size not in by_size:
+            raise ValueError(f"Baseline has no operator case at capacity/width {size}.")
+        matched.append(by_size[size])
+    return matched
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("baseline", "candidate"), required=True)
-    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--phase", choices=("baseline", "candidate"), default="candidate")
+    campaign = parser.add_mutually_exclusive_group()
+    campaign.add_argument("--full", action="store_true")
+    campaign.add_argument("--smoke", action="store_true")
+    parser.add_argument("--output", type=Path)
     options = parser.parse_args()
-    dimensions = (8, 16, 32, 64) if options.full else (4, 8, 16)
+    dimensions = (8, 16) if options.smoke else (8, 16, 32, 64)
     layer_sizes = (
-        ((64, 1024), (128, 4096), (256, 16384))
-        if options.full
-        else ((16, 64), (32, 256), (64, 1024))
+        ((64, 1024), (128, 4096))
+        if options.smoke
+        else ((64, 1024), (128, 4096), (256, 16384))
     )
     baseline_path = Path(__file__).with_name("memory_operator_workspace_baseline.json")
     baseline = (
@@ -296,9 +317,8 @@ def main() -> None:
     if baseline is not None:
         for item, series in cases.items():
             capacities = [row["capacity"] for row in series]
-            previous = [
-                row["compiler"]["temporary_bytes"] for row in baseline["cases"][item]
-            ]
+            matched = _matching_baseline(series, baseline["cases"][item])
+            previous = [row["compiler"]["temporary_bytes"] for row in matched]
             current = [row["compiler"]["temporary_bytes"] for row in series]
             gate = evaluate_memory_gate(
                 capacities, previous, current, MemoryGatePolicy()
@@ -332,7 +352,7 @@ def main() -> None:
     record["identity"] = capture_benchmark_identity(
         Path.cwd(), Path(__file__).resolve(), tuple(record)
     ).to_dict()
-    destination = (
+    destination = options.output or (
         baseline_path
         if options.phase == "baseline"
         else Path(__file__).with_suffix(".json")

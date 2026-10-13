@@ -155,10 +155,15 @@ def main() -> None:
     parser.add_argument("--chunks", type=int, nargs="+", default=[128])
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
         "--output", type=Path, default=Path(__file__).with_suffix(".json")
     )
     args = parser.parse_args()
+    if args.smoke:
+        args.sizes = [16, 32]
+        args.chunks = [128]
+        args.repeats = 1
     if len(args.sizes) < 2 or sorted(set(args.sizes)) != args.sizes:
         parser.error("sizes must contain at least two increasing distinct capacities")
     cases = [
