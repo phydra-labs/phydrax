@@ -214,6 +214,14 @@ minimum-RKHS corrections, exact finite-feature routes, selected-section
 realizations, and tolerance-terminated matrix-free approximations. Exact kernel
 preparation never adds hidden jitter.
 
+`MatrixFreeKernelCorrectionPlan` applies exact functional covariance through
+bounded row and point tiles, while retaining a tolerance-terminated prepared
+native solve. Preparation certifies the maximum absolute identity defect using
+bounded identity-column probes and reports the same value as its range defect;
+it does not assemble a Gram matrix, identity matrix, inverse, or eigenspectrum.
+All probe solves must converge. The route remains generalized and approximate;
+the canonical dense correction and its exactness contract are unchanged.
+
 Arbitrary Python callables receive no linearity or exactness certificate. They can
 participate in soft or nonlinear evaluation, but exact affine preparation rejects
 them unless a typed provider supplies the complete action and evidence.

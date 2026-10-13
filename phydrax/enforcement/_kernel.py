@@ -24,6 +24,7 @@ from ..conditions import ArrayCodomain, BoundCondition, FieldCodomain, ProductCo
 from ..domain import Domain, DomainFunction
 from ..integration._linear import PreparedLinearReduction
 from ..kernels._field_metric import (
+    kernel_functional_diagonal,
     kernel_functional_representer,
     KernelFunctional,
     KernelFunctionalTerm,
@@ -935,7 +936,7 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
         space = ArraySpace((self.functional.row_count,), dtype=dtype)
 
         def action(vector: Array) -> Array:
-            return self.metric.functional_gram(self.functional).matrix @ vector
+            return self.metric.functional_gram_action(self.functional, vector)
 
         operator = FunctionLinearOperator(
             action,
@@ -952,16 +953,38 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
             operator_id=f"matrix-free-kernel-gram/{self.provider_id}",
         )
         prepared = prepare_linear_solve(LinearSystem(operator), self.solve_policy)
-        identity = jnp.eye(self.functional.row_count, dtype=dtype)
-        probe = solve_linear_system(prepared, identity)
-        inverse = eqx.error_if(
-            jnp.asarray(probe.value),
-            ~jnp.all(probe.successful),
-            "Matrix-free kernel Gram preparation did not converge.",
+        row_count = self.functional.row_count
+        probe_size = min(32, row_count)
+
+        def certify(index: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
+            maximum, finite = carry
+            columns = index * probe_size + jnp.arange(probe_size, dtype=jnp.int32)
+            identity_columns = (
+                jnp.arange(row_count, dtype=jnp.int32)[:, None] == columns[None, :]
+            ).astype(dtype)
+            probe = solve_linear_system(prepared, identity_columns)
+            solved = eqx.error_if(
+                jnp.asarray(probe.value),
+                ~jnp.all(probe.successful),
+                "Matrix-free kernel Gram preparation did not converge.",
+            )
+            applied = self.metric.functional_gram_action(self.functional, solved)
+            block_defect = jnp.max(jnp.abs(applied - identity_columns), initial=0.0)
+            return (
+                jnp.maximum(maximum, block_defect),
+                finite & jnp.all(jnp.isfinite(solved)),
+            )
+
+        defect, finite = jax.lax.fori_loop(
+            0,
+            (row_count + probe_size - 1) // probe_size,
+            certify,
+            (
+                jnp.asarray(0.0, dtype=jnp.real(jnp.zeros((), dtype=dtype)).dtype),
+                jnp.asarray(True),
+            ),
         )
-        applied = jax.vmap(operator.mv, in_axes=-1, out_axes=-1)(inverse)
-        defect = jnp.max(jnp.abs(applied - identity), initial=0.0)
-        diagonal = self.metric.functional_gram(self.functional).matrix.diagonal()
+        diagonal = kernel_functional_diagonal(self.metric, self.functional)
         return self._prepared(
             assembly=assembly,
             correction_fields=correction_fields,
@@ -972,7 +995,7 @@ class MatrixFreeKernelCorrectionPlan(_BaseKernelCorrectionPlan):
             prepared_solve=prepared,
             rank=self.functional.row_count,
             coefficient_count=self.functional.row_count,
-            finite=jnp.all(jnp.isfinite(diagonal)) & jnp.all(jnp.isfinite(inverse)),
+            finite=jnp.all(jnp.isfinite(diagonal)) & finite,
             hermitian_residual=jnp.asarray(jnp.nan),
             minimum_diagonal=jnp.min(jnp.real(diagonal), initial=jnp.inf),
             exact=False,

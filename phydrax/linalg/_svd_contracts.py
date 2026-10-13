@@ -362,6 +362,7 @@ class SVDSolvePlan(StrictModule):
             "require_leading": policy.approximation.require_leading,
             "materialization_entries": policy.materialization.max_entries,
             "materialization_bytes": policy.materialization.max_bytes,
+            "materialization_workspace_bytes": policy.materialization.max_workspace_bytes,
             "preparation_budget": policy.resources.preparation_bytes,
             "workspace_budget": policy.resources.workspace_bytes,
             "action_budget": policy.resources.operator_matvecs,

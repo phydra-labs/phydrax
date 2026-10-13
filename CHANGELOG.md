@@ -10,6 +10,24 @@
 - London/PTV capacities reject booleans and fractional truncation; failed London
   inductance solves expose native status through explicit refusals, including at
   cable bridges. Seeded PTV trajectory identity excludes execution capacities.
+- Bound iterative GP covariance actions and action-whitened variational kernel
+  products by the computation workspace policy. Budget-admitted full blocks use
+  direct dense products; iterative actions retain the kernel once per resolve
+  and Gauss–Seidel gathers retained columns directly, while above-budget problems
+  keep exact tiled actions.
+- Make matrix-free RKHS correction use exact blocked functional Gram actions,
+  direct diagonals, and bounded identity-defect certification with failure evidence.
+- Reuse one native Cholesky factor for covariance precision and log-determinant;
+  robust distances use solve actions, and invalid factors cannot report valid geometry.
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
+- Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
+  without changing stationarity, complex tangents, rank admission, or failure evidence.
+- Reuse prepared sparse factors across supported multi-RHS solves and evaluate
+  Cholesky determinants directly from factors, including invalid-factor evidence.
+- Bound selected-block gathering and constraint right-inverse certificates without
+  parent densification or target-space-square identity/projector buffers.
 - Path-potential refusal coverage follows the checked-signature `TypeError`
   contract for surrogate actions; only normalized stochastic actions remain
   eligible for free-energy calculations.
@@ -386,6 +404,9 @@
 ### Added
 - Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
+- Native certified banded and block-banded spectral/singular-value enclosures,
+  condition bounds, and rank-threshold certificates without densification, with
+  traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -2655,6 +2676,21 @@
   default Kubo to budget-derived frequency tiles with direct parallel evaluation
   when they fit, preserving both optical poles and sum-rule evidence. Ewald
   policies enter plan identity; Kubo execution evidence has a separate policy identity.
+- Structured Laplace stores diagonal or low-rank precision state and applies
+  covariance and sampling scales without dense reconstruction. Full curvature
+  remains dense; structured result archive leaves and their fingerprints change.
+- Fixed and adaptive stochastic spectral actions use bounded probe batches and
+  absolute-index keyed addressing. Historical keyed samples intentionally change;
+  samples are invariant to execution batch size and requested probe capacity.
+- Batched matrix-function `auto` uses actions; explicit `dense` execution requires
+  workspace admission. Resolvents solve RHS blocks directly, and repeated-spectrum
+  eigenspace derivatives use confluent divided differences.
+- `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
+  in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
+  Randomized SVD construction/audit sketches and default eigen start/repair draws
+  are addressed by plan identity, so their samples change with this payload.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -3549,6 +3585,8 @@
 - Dense CSR `line_table` and lattice `origin_differences` retained leaves, and
   London `hessian`, `factorization`, and `current_basis` state; preparations and
   persisted PyTree structures use bounded actions instead, without aliases.
+- Duplicate CSR leaves in host sparse prepared state and the duplicate upper
+  Cholesky factor in nuisance plans; their persistence leaf structures change.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,

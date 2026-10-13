@@ -404,6 +404,19 @@ and proposal scale and support reproducible prefix-rank convergence studies.
 
 ::: phydrax.kernels.SPDRandomFeatureKernel
 
+## Product-field functional covariance
+
+`ProductFieldKernelMetric.functional_gram(left, right)` explicitly returns the
+canonical dense covariance and its spectral evidence. For covariance actions,
+use `metric.functional_gram_action(left, rhs, right)` instead. It accepts a vector
+or a matrix of right-hand sides and computes the exact covariance action with
+Hermitian complex coefficient conventions, including derivative functionals.
+`kernel_functional_diagonal(metric, functional)` computes only the real diagonal.
+Both operations use positive `row_block_size` and `column_block_size` limits
+(default 32): functional rows and kernel point pairs are processed in bounded
+tiles, without a dense covariance or an eigendecomposition. Blocking changes
+floating-point summation grouping, not the mathematical covariance.
+
 ## Benchmark
 
 Run the graph-spectrum, finite-feature, dense-parity, storage, and conditioning
