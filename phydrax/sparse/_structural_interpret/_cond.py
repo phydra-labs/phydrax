@@ -33,7 +33,7 @@ def _prop_cond(
     Layout:
         invars: [index_scalar, operands...]
         outvars: [results...]
-        params: branches (tuple of ClosedJaxpr)
+        params: branches (tuple of Jaxpr)
 
     Example: cond(pred, true_fn, false_fn, x)
         true_fn:  out = x[:2]  → state_indices [{0}, {1}]
@@ -56,20 +56,20 @@ def _prop_cond(
     branch_outputs: list[list[list[IndexSet]]] = []
     for branch in branches:
         inner_consts, inner_bounds = _nested_scope(
-            branch.jaxpr.constvars,
+            branch.constvars,
             branch.consts,
             operands,
-            branch.jaxpr.invars,
+            branch.invars,
             state_consts,
             state_bounds,
         )
         branch_outputs.append(
-            _prop_jaxpr(branch.jaxpr, operand_indices, inner_consts, inner_bounds)
+            _prop_jaxpr(branch, operand_indices, inner_consts, inner_bounds)
         )
         if index is not None:
             _export_scope(
                 eqn.outvars,
-                branch.jaxpr.outvars,
+                branch.outvars,
                 inner_consts,
                 inner_bounds,
                 state_consts,
