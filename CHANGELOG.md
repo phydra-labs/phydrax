@@ -6,6 +6,15 @@
 - Match operator-workspace benchmark gates by full problem capacity, keep default
   and smoke campaigns aligned with committed baselines, and support isolated
   smoke outputs for every memory driver on the discretization branch.
+- Bound iterative GP covariance actions and action-whitened variational kernel
+  products by the computation workspace policy. Budget-admitted full blocks use
+  direct dense products; iterative actions retain the kernel once per resolve
+  and Gauss–Seidel gathers retained columns directly, while above-budget problems
+  keep exact tiled actions.
+- Make matrix-free RKHS correction use exact blocked functional Gram actions,
+  direct diagonals, and bounded identity-defect certification with failure evidence.
+- Reuse one native Cholesky factor for covariance precision and log-determinant;
+  robust distances use solve actions, and invalid factors cannot report valid geometry.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
@@ -2669,6 +2678,9 @@
   Fourier certificate-derived IDs may change at roundoff.
 - Direct layer-potential plan and report identities include explicit target policy
   and workspace metadata; recreate persistence templates with their new fields.
+- Structured Laplace stores diagonal or low-rank precision state and applies
+  covariance and sampling scales without dense reconstruction. Full curvature
+  remains dense; structured result archive leaves and their fingerprints change.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.
