@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "7bb4f81464d3e25e9933c7fbbe0412bed4cba54363cf7b42b13e0a19f1f53d3d",
+  "manifest_id": "b46330d288e6352e625438f6b1c1c0c5ecc9a43d824da23f85fc92e71c80b35e",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -22120,9 +22120,11 @@
       "phydrax.geometry.Scaling",
       "phydrax.geometry.SeamContinuityEvidence",
       "phydrax.geometry.SeamDiagnosticsProvider",
+      "phydrax.geometry.SegmentBVH",
       "phydrax.geometry.SegmentIntersectionResult",
       "phydrax.geometry.SegmentIntersectionStatus",
       "phydrax.geometry.SegmentMesh",
+      "phydrax.geometry.SegmentQueryExecution",
       "phydrax.geometry.SegmentQueryResult",
       "phydrax.geometry.SegmentTopology",
       "phydrax.geometry.SharpCSG",
@@ -22621,7 +22623,9 @@
       "phydrax.geometry.simplicial.MeshRegion",
       "phydrax.geometry.simplicial.PlanarMeshRegion",
       "phydrax.geometry.simplicial.PreparedSimplicialSurfels",
+      "phydrax.geometry.simplicial.SegmentBVH",
       "phydrax.geometry.simplicial.SegmentMesh",
+      "phydrax.geometry.simplicial.SegmentQueryExecution",
       "phydrax.geometry.simplicial.SegmentQueryResult",
       "phydrax.geometry.simplicial.SegmentTopology",
       "phydrax.geometry.simplicial.SimplicialSurfelPlan",
