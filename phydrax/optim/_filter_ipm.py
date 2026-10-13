@@ -28,7 +28,12 @@ from ._certificates import (
     certify_constrained_physical,
     reconcile_optimization_status,
 )
-from ._constrained_model import ConstrainedModelEvaluation, prepare_constrained_model
+from ._constrained_model import (
+    ConstrainedModelEvaluation,
+    ConstrainedModelValues,
+    prepare_constrained_model_evaluation,
+    PreparedConstrainedModel,
+)
 from ._iterative import (
     AbstractMinimizationMethod,
     ConstrainedOptimalityCertificate,
@@ -125,6 +130,79 @@ def _condensed_kkt_direction(
     )
 
 
+@eqx.filter_jit
+def _select_derivative_trial(
+    model: PreparedConstrainedModel,
+    values: ConstrainedModelValues,
+    eligible: jax.Array,
+    initial: ConstrainedModelEvaluation,
+    args: Any,
+    batch_size: int,
+) -> tuple[jax.Array, ConstrainedModelEvaluation, jax.Array]:
+    """Select the first derivative-finite eligible alpha with bounded scratch."""
+    capacity = eligible.size
+    indices = jnp.nonzero(eligible, size=capacity, fill_value=0)[0].astype(jnp.int32)
+    count = jnp.sum(eligible, dtype=jnp.int32)
+    zero = jnp.asarray(0, dtype=jnp.int32)
+    missing = jnp.asarray(capacity, dtype=jnp.int32)
+
+    def full_condition(
+        carry: tuple[jax.Array, jax.Array, ConstrainedModelEvaluation],
+    ) -> jax.Array:
+        offset, selected, _ = carry
+        return (offset + batch_size <= count) & (selected == missing)
+
+    def full_batch(
+        carry: tuple[jax.Array, jax.Array, ConstrainedModelEvaluation],
+    ) -> tuple[jax.Array, jax.Array, ConstrainedModelEvaluation]:
+        offset, selected, accepted = carry
+        batch_indices = indices[offset + jnp.arange(batch_size, dtype=jnp.int32)]
+        batch_values = jax.tree.map(lambda value: value[batch_indices], values)
+        evaluations = eqx.filter_vmap(
+            lambda value: model.evaluate_derivatives(value, args)
+        )(batch_values)
+        found = jnp.any(evaluations.finite)
+        first = jnp.argmax(evaluations.finite)
+        accepted = jax.lax.cond(
+            found,
+            lambda _: jax.tree.map(lambda value: value[first], evaluations),
+            lambda _: accepted,
+            operand=None,
+        )
+        return (
+            offset + batch_size,
+            jnp.where(found, batch_indices[first], selected),
+            accepted,
+        )
+
+    offset, selected, accepted = jax.lax.while_loop(
+        full_condition, full_batch, (zero, missing, initial)
+    )
+
+    def tail_condition(
+        carry: tuple[jax.Array, jax.Array, ConstrainedModelEvaluation],
+    ) -> jax.Array:
+        offset, selected, _ = carry
+        return (offset < count) & (selected == missing)
+
+    def tail_trial(
+        carry: tuple[jax.Array, jax.Array, ConstrainedModelEvaluation],
+    ) -> tuple[jax.Array, jax.Array, ConstrainedModelEvaluation]:
+        offset, selected, accepted = carry
+        index = indices[offset]
+        trial_values = jax.tree.map(lambda value: value[index], values)
+        evaluation = model.evaluate_derivatives(trial_values, args)
+        accepted = jax.lax.cond(
+            evaluation.finite, lambda _: evaluation, lambda _: accepted, operand=None
+        )
+        return offset + 1, jnp.where(evaluation.finite, index, selected), accepted
+
+    offset, selected, accepted = jax.lax.while_loop(
+        tail_condition, tail_trial, (offset, selected, accepted)
+    )
+    return selected, accepted, offset
+
+
 class FilterInteriorPoint(AbstractMinimizationMethod):
     """Dense primal-dual filter interior-point method with restoration."""
 
@@ -132,6 +210,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
     minimum_barrier: float = eqx.field(static=True)
     filter_margin: float = eqx.field(static=True)
     maximum_line_search_steps: int = eqx.field(static=True)
+    derivative_batch_size: int = eqx.field(static=True)
     maximum_restoration_steps: int = eqx.field(static=True)
     max_dense_dimension: int = eqx.field(static=True)
     linear: LinearSolvePolicy
@@ -144,6 +223,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         minimum_barrier: float = 1e-10,
         filter_margin: float = 1e-4,
         maximum_line_search_steps: int = 24,
+        derivative_batch_size: int = 1,
         maximum_restoration_steps: int = 3,
         max_dense_dimension: int = 512,
         linear: LinearSolvePolicy | None = None,
@@ -156,6 +236,12 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         search = int(maximum_line_search_steps)
         restoration = int(maximum_restoration_steps)
         dimension = int(max_dense_dimension)
+        if isinstance(derivative_batch_size, bool) or not isinstance(
+            derivative_batch_size, int
+        ):
+            raise TypeError("derivative_batch_size must be an integer.")
+        if derivative_batch_size < 1:
+            raise ValueError("derivative_batch_size must be positive.")
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Interior-point controls must be finite and positive.")
         if values[0] >= 1.0 or values[2] >= 1.0:
@@ -170,6 +256,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.fraction_to_boundary, self.minimum_barrier, self.filter_margin = values
         self.maximum_line_search_steps = search
+        self.derivative_batch_size = derivative_batch_size
         self.maximum_restoration_steps = restoration
         self.max_dense_dimension = dimension
         self.linear = linear_
@@ -203,10 +290,11 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         parameters = self.precision.state(
             validate_real_inexact_tree(initial_parameters, name="parameters")
         )
-        model = prepare_constrained_model(problem, parameters, args=args)
+        model, evaluation = prepare_constrained_model_evaluation(
+            problem, parameters, args=args
+        )
         if model.template_coordinates.size > self.max_dense_dimension:
             raise ValueError("FilterInteriorPoint exceeds max_dense_dimension.")
-        evaluation = model.evaluate(parameters, args)
         me = evaluation.equalities.size
         mi = evaluation.inequality_slacks.size
         initial_equality_jacobian = evaluation.constraint_jacobian[model.equality_indices]
@@ -372,7 +460,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 step_size: jax.Array,
             ) -> tuple[
                 PyTree[jax.Array],
-                ConstrainedModelEvaluation,
+                ConstrainedModelValues,
                 jax.Array,
                 jax.Array,
                 jax.Array,
@@ -382,7 +470,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                     evaluation.coordinates + step_size * direction.primal
                 )
                 candidate = model.unflatten(candidate_coordinates)
-                candidate_evaluation = model.evaluate(candidate, args)
+                candidate_evaluation = model.evaluate_values(candidate, args)
                 candidate_slack = slack + step_size * direction.slack
                 candidate_dual = inequality_dual + step_size * direction.inequality_dual
                 candidate_equality_dual = (
@@ -452,12 +540,22 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 & jnp.all(candidate_duals > 0.0, axis=-1)
                 & (~dominated | centering)
             )
-            accepted_trial = bool(jnp.any(acceptable))
-            selected = int(jnp.argmax(acceptable))
-            selected_alpha = jnp.where(
-                jnp.any(acceptable),
-                line_search_alphas[selected],
-                line_search_alphas[-1] * 0.5,
+            selected_index, selected_evaluation, derivative_evaluations = (
+                _select_derivative_trial(
+                    model,
+                    candidate_evaluations,
+                    acceptable,
+                    evaluation,
+                    args,
+                    self.derivative_batch_size,
+                )
+            )
+            selected = int(selected_index)
+            accepted_trial = selected < self.maximum_line_search_steps
+            selected_alpha = (
+                line_search_alphas[selected]
+                if accepted_trial
+                else line_search_alphas[-1] * 0.5
             )
             rejected += selected if accepted_trial else self.maximum_line_search_steps
             if accepted_trial:
@@ -465,10 +563,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                     lambda value: value[selected],
                     candidate_parameters,
                 )
-                evaluation = jax.tree.map(
-                    lambda value: value[selected],
-                    candidate_evaluations,
-                )
+                evaluation = selected_evaluation
                 slack = candidate_slacks[selected]
                 inequality_dual = candidate_duals[selected]
                 equality_dual = candidate_equality_duals[selected]
@@ -476,7 +571,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             alpha = selected_alpha
             trial_evaluations = self.maximum_line_search_steps
             evaluations += trial_evaluations
-            gradients += trial_evaluations
+            gradients += int(derivative_evaluations)
             constraints += trial_evaluations
             globalization_evaluations += trial_evaluations
             iterations += 1
@@ -689,6 +784,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             objective_evaluations=evaluations + certificate.evaluation_work,
             gradient_evaluations=gradients + certificate.evaluation_work,
             constraint_evaluations=constraints + certificate.evaluation_work,
+            jacobian_evaluations=gradients + certificate.evaluation_work,
             linear_solves=linear_solves,
             linear_iterations=linear_solves,
             globalization_evaluations=globalization_evaluations,
@@ -715,7 +811,8 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             implicit_differentiation=True,
             precision_policy_id=self.precision.policy_id,
             notes=(
-                f"restorations={restorations};kkt-plan={kkt_plan.plan_id};internal-status={status}"
+                f"restorations={restorations};kkt-plan={kkt_plan.plan_id};"
+                f"internal-status={status};derivative-batch-size={self.derivative_batch_size}"
             ),
         )
         output_parameters = jax.tree.map(self.precision.output, parameters)

@@ -110,3 +110,48 @@ def test_sparse_prepared_control_refresh_and_solution_match_dense() -> None:
     assert refreshed.prepared.numeric_version == 1
     np.testing.assert_allclose(sparse_result.controls, dense_result.controls, atol=2e-5)
     np.testing.assert_allclose(sparse_result.states, dense_result.states, atol=2e-5)
+
+
+def test_mpc_defaults_sparse_and_dense_is_explicit() -> None:
+    pytest.importorskip("clarabel")
+    sparse = phx.control.RecedingHorizonMPC(
+        _problem(),
+        prediction_horizon=2,
+        terminal_policy="global",
+    )
+    dense = phx.control.RecedingHorizonMPC(
+        _problem(),
+        prediction_horizon=2,
+        terminal_policy="global",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
+    )
+    assert sparse.compilation_policy.representation == "sparse"
+    with pytest.raises(ValueError, match="dense-only.*explicit"):
+        phx.control.prepare_receding_horizon_mpc_sensitivity(sparse)
+    sparse_result, dense_result = sparse.solve(), dense.solve()
+    np.testing.assert_allclose(sparse_result.states, dense_result.states, atol=2e-5)
+    np.testing.assert_allclose(sparse_result.controls, dense_result.controls, atol=2e-5)
+    np.testing.assert_array_equal(sparse_result.status, dense_result.status)
+    for step, solution in enumerate(sparse_result.subproblem_solutions):
+        np.testing.assert_allclose(
+            solution.compilation.specification.initial_state,
+            sparse_result.states[step],
+            atol=1e-12,
+        )
+
+
+def test_dense_control_compilation_byte_admission() -> None:
+    with pytest.raises(ValueError, match="dense.*bytes.*sparse"):
+        phx.control.compile_linear_quadratic_control(
+            _problem(),
+            compilation_policy=phx.control.LinearControlCompilationPolicy(
+                "dense", max_dense_bytes=1
+            ),
+        )
+    sparse = phx.control.compile_linear_quadratic_control(
+        _problem(),
+        compilation_policy=phx.control.LinearControlCompilationPolicy(
+            "sparse", max_dense_bytes=1
+        ),
+    )
+    assert sparse.representation == "sparse"

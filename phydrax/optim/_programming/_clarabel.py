@@ -341,6 +341,7 @@ def _audit_result(
     backend_version: str,
     *,
     backend: str = "clarabel",
+    input_finite: Array | None = None,
 ) -> ConvexProgramResult:
     dtype = program.linear.dtype
     quadratic_primal = _conic_quadratic_mv(program.quadratic, primal)
@@ -496,6 +497,14 @@ def _audit_result(
             ),
         ),
     ).astype(jnp.int32)
+    if input_finite is not None:
+        status = jnp.where(
+            input_finite,
+            status,
+            int(ConvexProgramStatus.NONFINITE_INPUT),
+        ).astype(jnp.int32)
+        primal_ray_valid = primal_ray_valid & input_finite
+        dual_ray_valid = dual_ray_valid & input_finite
     certificate = ConvexProgramCertificate(
         primal_ray=primal_ray,
         equality_dual_ray=jnp.empty(program.batch_shape + (0,), dtype=dtype),
@@ -616,6 +625,13 @@ def solve_clarabel_program(
     upper_values = []
     solved_values = []
     iteration_values = []
+    input_finite_values: list[bool] = []
+    lower_bounds = np.asarray(program.lower_bounds).reshape(
+        (count, program.num_variables)
+    )
+    upper_bounds = np.asarray(program.upper_bounds).reshape(
+        (count, program.num_variables)
+    )
     for index in range(count):
         matrix, rhs = _transformed_constraint_data(program, structure, index)
         matrix = (
@@ -624,6 +640,27 @@ def solve_clarabel_program(
             else np.asarray(matrix, dtype=np.float64)
         )
         rhs = np.asarray(rhs, dtype=np.float64)
+        matrix_values = matrix.data if sp.issparse(matrix) else matrix
+        input_finite = bool(
+            np.all(np.isfinite(quadratic[index].data))
+            and np.all(np.isfinite(linear[index]))
+            and np.all(np.isfinite(matrix_values))
+            and np.all(np.isfinite(rhs))
+            and not np.any(np.isnan(lower_bounds[index]))
+            and not np.any(np.isnan(upper_bounds[index]))
+        )
+        input_finite_values.append(input_finite)
+        if not input_finite:
+            primal_values.append(np.full(program.num_variables, np.nan, dtype=np.float64))
+            slack_values.append(
+                np.full(program.num_constraints, np.nan, dtype=np.float64)
+            )
+            dual_values.append(np.full(program.num_constraints, np.nan, dtype=np.float64))
+            lower_values.append(np.full(program.num_variables, np.nan, dtype=np.float64))
+            upper_values.append(np.full(program.num_variables, np.nan, dtype=np.float64))
+            solved_values.append(False)
+            iteration_values.append(0)
+            continue
         solver = prepared.module.DefaultSolver(
             sp.triu(quadratic[index]).tocsc(),
             linear[index],
@@ -682,6 +719,7 @@ def solve_clarabel_program(
         jnp.asarray(iteration_values, dtype=jnp.int32).reshape(shape),
         policy,
         prepared.backend_version,
+        input_finite=jnp.asarray(input_finite_values, dtype=jnp.bool_).reshape(shape),
     )
 
 
