@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Fixed
+- Memory-pattern auditing now uses deterministic AST findings and exact justified
+  symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
+  memory-scaling ratchet recomputes recorded ratio gates in matching environments.
+  Integrated records now include native MPC retention, grouped interior-point
+  actions, and sparse reactor preparation; missing historical baseline provenance
+  stays explicitly non-compared.
+  Budget-derived defaults now gate only same-run above-budget comparisons and
+  retain separate verified fitting-route evidence.
+  GP fitting-route coverage reports the observed compiler-byte relationship rather
+  than pinning incidental historical allocation differences.
 - Replace dense derivative intermediates in SSM invariance, ADM geometry,
   geometric/stochastic divergence, horizontal brackets, monopole diagonals,
   probabilistic ODE sensitivities, and SING support checks with exact bounded actions.
