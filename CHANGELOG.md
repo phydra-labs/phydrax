@@ -74,14 +74,6 @@
   direct diagonals, and bounded identity-defect certification with failure evidence.
 - Reuse one native Cholesky factor for covariance precision and log-determinant;
   robust distances use solve actions, and invalid factors cannot report valid geometry.
-- Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
-  and combined work evidence; bind changed runtime argument contexts before the
-  temporal scan and avoid eager adaptive numerical refresh.
-- Reject nonfinite Clarabel inputs before provider execution while preserving
-  `NONFINITE_INPUT` and independent valid batch cases.
-- Match operator-workspace benchmark gates by full problem capacity, keep default
-  and smoke campaigns aligned with committed baselines, and support isolated
-  smoke outputs for every memory driver on the discretization branch.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
@@ -2825,9 +2817,6 @@
   Fourier certificate-derived IDs may change at roundoff.
 - Direct layer-potential plan and report identities include explicit target policy
   and workspace metadata; recreate persistence templates with their new fields.
-- Structured Laplace stores diagonal or low-rank precision state and applies
-  covariance and sampling scales without dense reconstruction. Full curvature
-  remains dense; structured result archive leaves and their fingerprints change.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.
