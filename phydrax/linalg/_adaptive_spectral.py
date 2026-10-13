@@ -23,13 +23,13 @@ from ._operators import (
 )
 from ._spaces import _coordinate_dtype
 from ._spectral import (
+    _addressed_rademacher_probe,
     _batched_dense_stochastic,
     _coordinate_action,
     _coordinate_inner,
     _effective_lanczos_quadrature,
     _masked_statistics,
     _orthogonality_is_acceptable,
-    _rademacher_probes,
     _require_square_root_pairing,
     _successful_krylov_status,
     _validate_endomorphism,
@@ -180,6 +180,7 @@ def _adaptive_batched_dense(
         selected.max_probes,
         quantity="trace",
         scalar_function=scalar_function,
+        batch_size=selected.batch_size,
     )
     batch_shape = operator.batch_shape
     maximum = selected.max_probes
@@ -315,14 +316,6 @@ def _adaptive_stochastic_trace(
     _require_square_root_pairing(operator.source)
     dimension = min(selected.max_dimension, operator.source.size)
     coordinate_dtype = _coordinate_dtype(operator.source)
-    probes = jax.vmap(lambda probe: _whiten_coordinates(operator.source, probe))(
-        _rademacher_probes(
-            key,
-            selected.max_probes,
-            operator.source.size,
-            coordinate_dtype,
-        )
-    )
     one = _trace_probe(operator, scalar_function, dimension, selected)
     specification = jax.eval_shape(
         one,
@@ -387,12 +380,15 @@ def _adaptive_stochastic_trace(
             matvecs_,
             adjoint_matvecs_,
         ) = values
-        batch = jax.lax.dynamic_slice_in_dim(
-            probes,
-            count,
-            selected.batch_size,
-            axis=0,
-        )
+        indices = count + jnp.arange(selected.batch_size, dtype=jnp.int32)
+        batch = jax.vmap(
+            lambda index: _whiten_coordinates(
+                operator.source,
+                _addressed_rademacher_probe(
+                    key, index, operator.source.size, coordinate_dtype
+                ),
+            )
+        )(indices)
         outputs = jax.vmap(one)(batch)
         next_count = count + selected.batch_size
         updated = tuple(
@@ -660,12 +656,9 @@ def _adaptive_cost(
     retained = policy.max_probes * retained_per_probe
     krylov_entries = (dimension + 2) * operator.source.size + (dimension + 1) * dimension
     action = estimate_operator_action_cost(operator)
-    probe_bank = policy.max_probes * operator.source.size * coordinate_itemsize
-    workspace = (
-        probe_bank
-        + retained
-        + policy.batch_size
-        * (krylov_entries * coordinate_itemsize + action.apply_workspace_bytes_per_rhs)
+    workspace = retained + policy.batch_size * (
+        (krylov_entries + operator.source.size) * coordinate_itemsize
+        + action.apply_workspace_bytes_per_rhs
     )
     return AdaptiveStochasticCostEstimate(
         method="adaptive-stochastic-lanczos-quadrature",

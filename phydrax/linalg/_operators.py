@@ -23,6 +23,7 @@ from .._strict import StrictModule
 from ..typing import checked
 from ._costs import _array_tree_storage_bytes, OperatorActionCostEstimate
 from ._linearizations import PreparedLinearization
+from ._materialization import MaterializationPolicy
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._properties import (
     LinearCapabilityError,
@@ -354,6 +355,14 @@ class AbstractLinearOperator(StrictModule):
     @abc.abstractmethod
     def _materialize(self, /) -> Array:
         raise NotImplementedError
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        """Admit the full dense route before invoking its implementation."""
+        entries = prod(self.batch_shape) * self.source.size * self.target.size
+        dtype = _coordinate_dtype(self.target)
+        policy.require(entries, dtype)
+        policy.require_workspace(entries * dtype.itemsize)
+        return self._materialize()
 
     @property
     def supports_fused_block_action(self) -> bool:
@@ -948,6 +957,11 @@ class ScaledLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         return self.scalar * self.operator._materialize()
 
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        matrix = self.operator._materialize_admitted(policy)
+        policy.require_workspace(matrix.nbytes)
+        return self.scalar * matrix
+
     def _assemble_diagonal(self, /) -> Array:
         return self.scalar * _assemble_operator_diagonal(self.operator)
 
@@ -1020,6 +1034,11 @@ class SumLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         return self.left._materialize() + self.right._materialize()
 
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        return self.left._materialize_admitted(policy) + self.right._materialize_admitted(
+            policy
+        )
+
     def _assemble_diagonal(self, /) -> Array:
         return _assemble_operator_diagonal(self.left) + _assemble_operator_diagonal(
             self.right
@@ -1077,6 +1096,11 @@ class ComposedLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         return self.left._materialize() @ self.right._materialize()
 
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        return self.left._materialize_admitted(policy) @ self.right._materialize_admitted(
+            policy
+        )
+
 
 class TransposeLinearOperator(AbstractLinearOperator):
     """Coordinate-transpose view with the original primal source and target."""
@@ -1115,6 +1139,9 @@ class TransposeLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return jnp.swapaxes(self.operator._materialize(), -1, -2)
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        return jnp.swapaxes(self.operator._materialize_admitted(policy), -1, -2)
 
     def _assemble_diagonal(self, /) -> Array:
         return _assemble_operator_diagonal(self.operator)
@@ -1162,6 +1189,9 @@ class DualTransposeLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return jnp.swapaxes(self.operator._materialize(), -1, -2)
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        return jnp.swapaxes(self.operator._materialize_admitted(policy), -1, -2)
 
     def _assemble_diagonal(self, /) -> Array:
         return _assemble_operator_diagonal(self.operator)
@@ -1413,6 +1443,18 @@ class BlockLinearOperator(AbstractLinearOperator):
         return tuple(output)
 
     def _materialize(self, /) -> Array:
+        return self._materialize_blocks(None)
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        policy.require(
+            self.source.size * self.target.size, _coordinate_dtype(self.target)
+        )
+        policy.require_workspace(
+            self.source.size * self.target.size * _coordinate_dtype(self.target).itemsize
+        )
+        return self._materialize_blocks(policy)
+
+    def _materialize_blocks(self, policy: MaterializationPolicy | None, /) -> Array:
         rows: list[Array] = []
         dtype = jnp.result_type(
             *[
@@ -1425,7 +1467,11 @@ class BlockLinearOperator(AbstractLinearOperator):
             values = [
                 jnp.zeros((target_space.size, source_space.size), dtype=dtype)
                 if block is None
-                else block._materialize()
+                else (
+                    block._materialize()
+                    if policy is None
+                    else block._materialize_admitted(policy)
+                )
                 for block, source_space in zip(row, self.source.spaces, strict=True)
             ]
             rows.append(jnp.concatenate(values, axis=1))
