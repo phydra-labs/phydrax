@@ -217,7 +217,7 @@ def test_gp_computation_aware_scenario_2() -> None:
             jr.key(4), points.size, 4
         ),
         computation=phx.uq.GaussianProcessComputationPolicy(
-            max_workspace_bytes=2048,
+            max_workspace_bytes=(points.size + 4) * points.dtype.itemsize,
             checkpoint_kernel_blocks=False,
         ),
     )
@@ -227,7 +227,7 @@ def test_gp_computation_aware_scenario_2() -> None:
         points,
     )
     assert factor.diagnostics.kernel_entry_count == points.size**2
-    assert factor.diagnostics.kernel_row_batch_size >= 1
+    assert factor.diagnostics.kernel_row_batch_size == 1
     assert predicted_mean.shape == points.shape
     assert jnp.all(predicted_variance >= 0.0)
     points, observations, mean = _problem(7)
