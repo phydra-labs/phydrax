@@ -2540,9 +2540,11 @@
 - MPC compiles sparse by default; differentiable and dense-method MPC requires
   explicit bounded dense compilation. MPC and iLQR policy identities record the
   selected representation, route, and admission budgets.
-- MAC segmented shadowing defaults to exact block-banded QR least squares, with
-  explicit bounded dense SVD and native rank/condition certification. Plan and
-  result identities record the solve route.
+- MAC segmented shadowing defaults to workspace-admitted `auto`: dense SVD within
+  the existing 512 MiB ceiling, exact block-banded QR least squares above it.
+  Explicit routes retain their behavior; plan identity records policy/budget and
+  result identity/evidence records the resolved route. Banded rank admission
+  reuses certified singular lower bounds without weakening threshold certificates.
 - Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
   qualification derivatives use owner controls and active rows while preserving
   case parallelism and KKT certificates.
