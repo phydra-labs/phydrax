@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import phydrax.linalg as la
+from phydrax._trainable import require_declared_callables
 from tests._support.differentiation import (
     assert_coordinate_transpose_duality,
     assert_hilbert_adjoint_duality,
@@ -263,6 +264,48 @@ def test_function_operator_same_callable_preserves_distinct_space_actions() -> N
         reference.T @ np.asarray(cotangent),
         rtol=1e-13,
     )
+
+
+def test_function_operator_captures_remain_dynamic_and_auditable() -> None:
+    matrix = jnp.asarray([[2.0, -1.0], [0.5, 3.0]], dtype=jnp.float64)
+    space = la.ArraySpace((2,), dtype=matrix.dtype)
+    operator = la.FunctionLinearOperator(
+        lambda vector: matrix @ vector,
+        transpose_action=lambda vector: matrix.T @ vector,
+        source=space,
+        target=space,
+    )
+    require_declared_callables(operator, context="converted linear operator")
+    updated = jax.tree.map(
+        lambda leaf: 2.0 * leaf if eqx.is_inexact_array(leaf) else leaf,
+        operator,
+    )
+    require_declared_callables(updated, context="updated linear operator")
+    vector = jnp.asarray([0.4, -0.6], dtype=jnp.float64)
+    np.testing.assert_allclose(
+        eqx.filter_jit(lambda owner, value: owner.mv(value))(updated, vector),
+        2.0 * matrix @ vector,
+        rtol=1e-13,
+    )
+    np.testing.assert_allclose(
+        eqx.filter_jit(lambda owner, value: owner.transpose_mv(value))(updated, vector),
+        2.0 * matrix.T @ vector,
+        rtol=1e-13,
+    )
+    assert updated.operator_id == operator.operator_id
+
+
+def test_unconverted_function_operator_refuses_hidden_numeric_captures() -> None:
+    matrix = jnp.eye(2, dtype=jnp.float64)
+    space = la.ArraySpace((2,), dtype=matrix.dtype)
+    operator = la.FunctionLinearOperator(
+        lambda vector: matrix @ vector,
+        source=space,
+        target=space,
+        closure_convert=False,
+    )
+    with pytest.raises(ValueError, match="hide inexact arrays"):
+        require_declared_callables(operator, context="unconverted linear operator")
 
 
 @pytest.mark.parametrize("block_size", (1, 3), ids=["single-column", "multiple-columns"])

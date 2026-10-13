@@ -2576,14 +2576,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         arguments: Any,
         /,
     ) -> MPMStepResult:
-        if (
-            self.geometry.kind == "cartesian"
-            and self.nodal_fields.field_count == 1
-            and isinstance(self.nodal_storage, DenseMPMNodalStoragePlan)
-            and isinstance(self.method.schedule, USLMPMSchedule)
-        ):
-            predictor = self.predict_grid(state, step_size, arguments)
-            return self.finalize_grid_velocity(predictor, predictor.grid.velocity)
         dt = jnp.asarray(step_size, dtype=state.particles.position.dtype).reshape(())
         active = (
             self.particles.active_mask
@@ -2615,7 +2607,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             )
         )
 
-        def invalid(_: None) -> MPMStepResult:
+        def invalid(_: ParticleGridSplatState) -> MPMStepResult:
             reason = jnp.where(
                 ~finite,
                 int(MPMRejectionReason.NONFINITE),
@@ -2643,7 +2635,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 status,
             )
 
-        def execute(_: None) -> MPMStepResult:
+        def execute(routes: ParticleGridSplatState) -> MPMStepResult:
             if self.nodal_fields.field_count > 1:
                 return multifield_step_detailed(self, state, dt, arguments, routes)
             trial = self._predict_grid_attempt(
@@ -2687,7 +2679,9 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
 
             return jax.lax.cond(trial.stable, advance, unstable, operand=None)
 
-        return jax.lax.cond(finite & domain_ok & route_ok, execute, invalid, operand=None)
+        return jax.lax.cond(
+            finite & domain_ok & route_ok, execute, invalid, operand=routes
+        )
 
 
 __all__ = ["ExternalMPMAcceleration", "PreparedMPMDynamics"]

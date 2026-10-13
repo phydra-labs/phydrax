@@ -15,6 +15,11 @@ compressed JVP, VJP, or HVP per active color and extracts coefficients directly
 in the pattern's canonical route order. Calling `as_dense()` remains an explicit
 interoperability operation.
 
+Plans prepare an operator template with its canonical nonzero count and row
+gather layouts once. Numerical execution replaces only derivative coefficients,
+so passing a plan into JIT or refreshing an operator carried by `scan` or `cond`
+preserves its sparse PyTree structure and symbolic cost evidence.
+
 ## Declared structural pattern
 
 Use a declared pattern when domain structure already determines the possible

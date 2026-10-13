@@ -645,6 +645,6 @@ def test_vof_plan_rejects_tetrahedral_geometry_before_gradient_use() -> None:
         tetrahedra=np.asarray(((0, 1, 2, 3),)),
     ).prepare()
 
+    gradient = _vof(_grid()).gradient
     with pytest.raises(ValueError, match="2-D polygons"):
-        # ty: ignore[invalid-argument-type]
-        phx.discretization.UnstructuredVOFPlan(tetrahedral, None)
+        phx.discretization.UnstructuredVOFPlan(tetrahedral, gradient)
