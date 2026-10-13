@@ -131,12 +131,12 @@ count as evidence of a memory reduction.
 
 The adapters verify driver-owned tile formulas and scientific controls, preserve
 all explicit/restricted routes, and recompute declared fitting compiler equality
-from the actual paired bytes. GP Lanczos is an important exception: its recorded
-full-row default and dense routes have different compiler temporary bytes.
-`fitting/main` therefore checks single-tile row-batch/output-storage semantics
-and reports both byte series; it does not claim compiler or direct array equality.
-GP variational and the other drivers' declared fitting comparisons do enforce
-their recorded compiler-byte equality.
+from the actual paired bytes. GP Lanczos instead separates single-tile
+row-batch/output-storage semantics from compiler-byte observations.
+`fitting/main` reports both actual byte series, whether equal or unequal; it does
+not assume a historical relationship or claim direct array equality. GP
+variational and the other drivers' declared fitting comparisons enforce their
+recorded compiler-byte equality.
 
 Astrodynamics, interface, graph, GP, MAC, Kubo, ringdown, and transport/attention
 gates use their exact recorded cohorts and same-run references. Kubo fits its

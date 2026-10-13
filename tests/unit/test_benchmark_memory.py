@@ -780,28 +780,39 @@ def test_memory_summary_keeps_gp_single_tile_routes_separate_from_compiler_equal
     entry = _source_memory_summary(tmp_path, "gp_actions", record)
     cases = {case["case"]: case for case in entry["cases"]}
 
-    for name in ("fitting/main", "fitting/variational"):
-        assert cases[name]["capacities"] == [128, 256, 512]
-        assert cases[name]["scaling_acceptance"]["accepted"]
+    for action, name in (
+        ("lanczos", "fitting/main"),
+        ("variational", "fitting/variational"),
+    ):
+        fitting = [
+            row
+            for row in record["records"]
+            if row[action]["default_policy"]["row_batch_size"] == row["n"]
+        ]
+        acceptance = cases[name]["scaling_acceptance"]
+        assert cases[name]["capacities"] == [row["n"] for row in fitting]
+        assert acceptance["accepted"]
         assert "gate" not in cases[name]
+        assert acceptance["default_temporary_bytes"] == [
+            row[action]["default_policy"]["compiler"]["temporary_bytes"]
+            for row in fitting
+        ]
+        assert acceptance["dense_temporary_bytes"] == [
+            row[action]["dense"]["compiler"]["temporary_bytes"] for row in fitting
+        ]
     assert (
         cases["fitting/main"]["scaling_acceptance"]["comparison_policy"]
         == "single-tile-route"
-    )
-    fitting = [row for row in record["records"] if not row["compile_only"]]
-    assert all(
-        row["lanczos"]["default_policy"]["row_batch_size"] == row["n"] for row in fitting
-    )
-    assert any(
-        row["lanczos"]["default_policy"]["compiler"]["temporary_bytes"]
-        != row["lanczos"]["dense"]["compiler"]["temporary_bytes"]
-        for row in fitting
     )
     for action, name, gate_key in (
         ("lanczos", "main", "gate"),
         ("variational", "variational", "variational_gate"),
     ):
-        rows = [row for row in record["records"] if row["compile_only"]]
+        rows = [
+            row
+            for row in record["records"]
+            if row[action]["default_policy"]["row_batch_size"] < row["n"]
+        ]
         expected = compare_gate(
             tuple(row["n"] for row in rows),
             tuple(row[action]["dense"]["compiler"]["temporary_bytes"] for row in rows),
@@ -813,6 +824,40 @@ def test_memory_summary_keeps_gp_single_tile_routes_separate_from_compiler_equal
             record[gate_key]["maximum_candidate_fraction"],
         )
         assert cases[name]["gate"] == expected
+
+
+@pytest.mark.parametrize("equal_bytes", [True, False], ids=["equal", "unequal"])
+def test_gp_single_tile_summary_reports_observed_compiler_relationship(
+    tmp_path: Path, equal_bytes: bool
+) -> None:
+    record = _committed_memory_record("memory_gp_actions.json")
+    fitting = [
+        row
+        for row in record["records"]
+        if row["lanczos"]["default_policy"]["row_batch_size"] == row["n"]
+    ]
+    # Synthetic observations exercise both relationships without pinning a
+    # historical compiler allocation or changing the above-budget gate.
+    for row in fitting:
+        default_bytes = row["lanczos"]["default_policy"]["compiler"]["temporary_bytes"]
+        row["lanczos"]["dense"]["compiler"]["temporary_bytes"] = (
+            default_bytes if equal_bytes else default_bytes + 1
+        )
+    entry = _source_memory_summary(tmp_path, "gp_actions", record)
+    case = next(case for case in entry["cases"] if case["case"] == "fitting/main")
+    acceptance = case["scaling_acceptance"]
+    assert acceptance["accepted"]
+    assert acceptance["comparison_policy"] == "single-tile-route"
+    assert "gate" not in case
+    assert acceptance["default_temporary_bytes"] == [
+        row["lanczos"]["default_policy"]["compiler"]["temporary_bytes"] for row in fitting
+    ]
+    assert acceptance["dense_temporary_bytes"] == [
+        row["lanczos"]["dense"]["compiler"]["temporary_bytes"] for row in fitting
+    ]
+    assert (
+        acceptance["default_temporary_bytes"] == acceptance["dense_temporary_bytes"]
+    ) is equal_bytes
 
 
 @pytest.mark.parametrize("gate_case", [False, True], ids=["below-budget", "above-budget"])

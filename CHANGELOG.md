@@ -11,6 +11,8 @@
   stays explicitly non-compared.
   Budget-derived defaults now gate only same-run above-budget comparisons and
   retain separate verified fitting-route evidence.
+  GP fitting-route coverage reports the observed compiler-byte relationship rather
+  than pinning incidental historical allocation differences.
 - Replace dense derivative intermediates in SSM invariance, ADM geometry,
   geometric/stochastic divergence, horizontal brackets, monopole diagonals,
   probabilistic ODE sensitivities, and SING support checks with exact bounded actions.

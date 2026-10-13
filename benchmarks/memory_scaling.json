@@ -3438,7 +3438,7 @@
       "baseline_comparisons": 0,
       "baseline_driver_fingerprint": "97fd7ea8dce4c77196306cbbbd755818ff9e1afcbeee97d1686d2b40833dcfe4",
       "baseline_environment_fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
-      "benchmark_driver_fingerprint": "7c99cc325e5d3797389a7bbce6273bed503086abe1a2ff6188d51a5709d0aa43",
+      "benchmark_driver_fingerprint": "bce49468533021d2997d2370307571f152b45afecbf4c28a153a6cebf3a76399",
       "cases": [
         {
           "capacities": [
@@ -3490,9 +3490,9 @@
               4198664
             ],
             "dense_temporary_bytes": [
-              134664,
-              530952,
-              2109960
+              263432,
+              1050888,
+              4198664
             ]
           }
         },
@@ -3561,7 +3561,7 @@
           "comparison_scope": "same-record-paired",
           "disposition": "adopt",
           "gate": {
-            "baseline_bytes": 537264648,
+            "baseline_bytes": 1073807624,
             "candidate_bytes": 136250792,
             "capacity": 8192,
             "decision": "adopt",
@@ -3624,20 +3624,20 @@
           "metrics": {
             "compiler.temporary_bytes": {
               "adjacent_ratios": [
-                3.942790946355373,
-                3.973918546309271,
-                63.70493089916396,
-                3.9970630032144663
+                3.9892192292508124,
+                3.9953486955793576,
+                63.94140802883965,
+                3.999752939346833
               ],
               "bytes": [
-                134664,
-                530952,
-                2109960,
-                134414856,
-                537264648
+                263432,
+                1050888,
+                4198664,
+                268468488,
+                1073807624
               ],
               "disposition": "observed-only",
-              "exponent": 1.994738908764305
+              "exponent": 1.9990282018827894
             }
           }
         },
