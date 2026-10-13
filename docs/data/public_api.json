@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "7bb4f81464d3e25e9933c7fbbe0412bed4cba54363cf7b42b13e0a19f1f53d3d",
+  "manifest_id": "1124a1789cb84fb6d3fc482c73580c9895494ae0939635d3876560ee6e78f757",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -8503,6 +8503,8 @@
       "phydrax.applications.superconductivity.GinzburgLandauResult",
       "phydrax.applications.superconductivity.GinzburgLandauState",
       "phydrax.applications.superconductivity.LondonCableBridgePlan",
+      "phydrax.applications.superconductivity.LondonSolvePolicy",
+      "phydrax.applications.superconductivity.LondonSolveRoute",
       "phydrax.applications.superconductivity.MatsubaraQuadraturePlan",
       "phydrax.applications.superconductivity.QuasiclassicalEquilibriumEvidence",
       "phydrax.applications.superconductivity.QuasiclassicalEquilibriumResult",
@@ -10339,6 +10341,7 @@
       "phydrax.chemistry.KohnShamExcitedResponsePlan",
       "phydrax.chemistry.KohnShamMethodPlan",
       "phydrax.chemistry.KuboDiamagneticSumRule",
+      "phydrax.chemistry.KuboFrequencyPolicy",
       "phydrax.chemistry.KuboLinewidth",
       "phydrax.chemistry.KuboRawTransitions",
       "phydrax.chemistry.KuboResponseEvidence",
@@ -10712,6 +10715,7 @@
       "phydrax.chemistry.periodic.IFCConstraintPolicy",
       "phydrax.chemistry.periodic.KUBO_TRANSPORT_CAPABILITY",
       "phydrax.chemistry.periodic.KuboDiamagneticSumRule",
+      "phydrax.chemistry.periodic.KuboFrequencyPolicy",
       "phydrax.chemistry.periodic.KuboLinewidth",
       "phydrax.chemistry.periodic.KuboRawTransitions",
       "phydrax.chemistry.periodic.KuboResponseEvidence",
@@ -12447,6 +12451,7 @@
       "phydrax.discretization.ChartSurfaceGeometry",
       "phydrax.discretization.ChebyshevBasisPlan",
       "phydrax.discretization.ChebyshevCollocation",
+      "phydrax.discretization.ChebyshevDifferentiationAction",
       "phydrax.discretization.CheckerboardEntityLayout",
       "phydrax.discretization.CheckpointedFDAdjointPlan",
       "phydrax.discretization.CircleAverageKernel",
@@ -15594,6 +15599,7 @@
     ],
     "phydrax.discretization.collocation": [
       "phydrax.discretization.collocation.ChebyshevCollocation",
+      "phydrax.discretization.collocation.ChebyshevDifferentiationAction",
       "phydrax.discretization.collocation.chebyshev_lobatto_matrices"
     ],
     "phydrax.discretization.contact": [
