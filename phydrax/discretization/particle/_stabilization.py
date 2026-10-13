@@ -306,7 +306,10 @@ def sph_density_diffusion_rate(
         accumulation=execution.accumulation,
         valid=valid,
     )
-    centered = density_ - compensated_sum(density_) / particles.active_count
+    active = particles.active_mask
+    active_count = jnp.sum(active, dtype=density_.dtype)
+    mean_density = compensated_sum(jnp.where(active, density_, 0.0)) / active_count
+    centered = jnp.where(active, density_ - mean_density, 0.0)
     variance_rate = 2.0 * compensated_sum(centered * rate)
     return SPHDensityDiffusionResult(
         rate,

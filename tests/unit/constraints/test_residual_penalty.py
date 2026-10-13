@@ -264,7 +264,9 @@ def test_residual_penalty_source_validation() -> None:
     condition = Residual("u", component, lambda _u: x_fn)
     target = phx.integration.mean_over(condition.on)
     plan = phx.integration.MonteCarloPlan(8)
-    with pytest.raises(TypeError, match="typed IntegrationSource"):
+    with pytest.raises(
+        TypeError, match="argument 'source': expected .*got MonteCarloPlan"
+    ):
         # ty: ignore[invalid-argument-type]
         ResidualPenalty(condition, plan)
 
