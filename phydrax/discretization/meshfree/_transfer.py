@@ -40,6 +40,7 @@ from ..._strict import StrictModule
 from ...ein import contract
 from ...linalg import (
     ArraySpace,
+    certify_rectangular_rank,
     DifferentiationPolicy,
     FactorizationPolicy,
     FailurePolicy,
@@ -53,6 +54,7 @@ from ...linalg import (
     solve,
     TolerancePolicy,
 )
+from ...linalg.svd import DenseSVD, SVDSolvePolicy
 from ...optim import (
     ConicProgram,
     ConvexProgramStatus,
@@ -696,8 +698,19 @@ class PointTransferPlan(StrictModule):
             if self.linear_policy is None
             else self.linear_policy
         )
+        # Local moment elimination leaves redundant conservation rows. Their
+        # approximate-null residual needs independent retained-spectrum evidence
+        # before the native solve may certify incompatibility.
+        certificate = certify_rectangular_rank(
+            operator,
+            SVDSolvePolicy(
+                DenseSVD(algorithm="qr"),
+                rank=_LOCAL_ROWS_PSEUDOINVERSE.rank,
+                materialization=policy.materialization,
+            ),
+        )
         result = solve(
-            MinimumNormProblem(operator),
+            MinimumNormProblem(operator, rank_certificate=certificate),
             jnp.asarray(row_scale * elimination.rhs),
             policy=policy,
         )

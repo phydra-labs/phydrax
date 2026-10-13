@@ -36,7 +36,6 @@ class ConvergentContactPotentialPlan(StrictModule, NonTrainableState):
     geometry_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    @checked
     def __init__(
         self,
         activation_distance: float,

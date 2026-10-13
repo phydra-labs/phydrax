@@ -64,6 +64,7 @@ def test_operator_training_substrate_has_explicit_namespace_ownership() -> None:
         "neural_tangent",
         "operator",
         "parameters",
+        "PeriodicInputCertificate",
         "population",
         "quantum",
     }
