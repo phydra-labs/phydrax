@@ -1,5 +1,7 @@
 # Superconductivity
 
+::: phydrax.applications.superconductivity.LondonSolvePolicy
+
 ::: phydrax.applications.superconductivity.ThinFilmLondonPlan
 
 ::: phydrax.applications.superconductivity.GaugeCovariantGLPlan

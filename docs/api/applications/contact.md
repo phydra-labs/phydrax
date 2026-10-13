@@ -12,6 +12,8 @@
 
 ::: phydrax.applications.contact.ContactRouteState
 
+Route remapping uses stable key ordering and binary-search ranges with linear workspace. The first valid old slot supplies inherited state when old keys repeat; duplicate old matches and duplicate valid new keys retain explicit refusal flags. Candidate ordering, defaults for invalid/unmatched slots, lifecycle counts, commit, and rollback are unchanged.
+
 ---
 
 ::: phydrax.applications.contact.BarrierNormalContactLaw

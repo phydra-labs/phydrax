@@ -1,0 +1,91 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "3bc9342d8274f1df566f39686e2e670248b1d25247a5f960c15f2bcfd63a016f",
+    "evidence_schema": {
+      "fields": [
+        "retained_bytes",
+        "row_workspace_bytes"
+      ],
+      "signature": "40dfe5cbb95c63e38fc4f892591304b006ed3d0039df5bf3096574fba65655fe"
+    },
+    "fingerprint": "d337f80f8f204004900b38d85fe2e79b8bb451c32b1eb26a848ce270c228d071",
+    "source_build_fingerprint": "a6d7c23255fa5dc4863f65f960cc06b12d201f0ec59ac5667b994c0b59475760"
+  },
+  "process_peak_rss_bytes": 1558675456,
+  "row_workspace_exponent": 1.0000000000000002,
+  "rows": [
+    {
+      "capacity": 16,
+      "estimate": {
+        "history_bytes": 594432,
+        "kernel_bytes": 6026400,
+        "retarded_pairs": 122310
+      },
+      "host_peak_bytes": 5772476,
+      "preparation_seconds": 15.354626167099923,
+      "retained_bytes": 53089,
+      "row_workspace_bytes": 256
+    },
+    {
+      "capacity": 32,
+      "estimate": {
+        "history_bytes": 1188864,
+        "kernel_bytes": 12454560,
+        "retarded_pairs": 252774
+      },
+      "host_peak_bytes": 3072722,
+      "preparation_seconds": 10.462882000021636,
+      "retained_bytes": 110721,
+      "row_workspace_bytes": 512
+    },
+    {
+      "capacity": 64,
+      "estimate": {
+        "history_bytes": 2377728,
+        "kernel_bytes": 25310880,
+        "retarded_pairs": 513702
+      },
+      "host_peak_bytes": 3101153,
+      "preparation_seconds": 9.67520304210484,
+      "retained_bytes": 256705,
+      "row_workspace_bytes": 1024
+    }
+  ]
+}

@@ -136,7 +136,8 @@ class CSRResources(StrictModule, NonTrainableState):
 
     ``maximum_retarded_pairs`` bounds the retarded-time solves of one field
     evaluation, ``maximum_history_bytes`` the stored density history, and
-    ``maximum_kernel_bytes`` the prepared Green-function tables.
+    ``maximum_kernel_bytes`` the prepared Green-function tables and integer
+    observer-row workspace.
     ``observer_chunk`` bounds the observers contracted at once.
     """
 
@@ -196,7 +197,6 @@ class CSRLattice(StrictModule, NonTrainableState):
     segment_curvatures: Array
     segment_headings: Array
     segment_origins: Array
-    origin_differences: Array
     lattice_id: str = eqx.field(static=True)
 
     def __init__(
@@ -263,13 +263,6 @@ class CSRLattice(StrictModule, NonTrainableState):
         segment_curvatures = np.concatenate(([0.0], curvatures_, [0.0]))
         segment_headings = np.concatenate(([0.0], headings[:-1], [headings[-1]]))
         segment_origins = np.concatenate((origins[:1], origins[:-1], origins[-1:]))
-        # Origin differences summed from chords keep relative geometry exact
-        # to rounding of the chords between two segments, not of |X|.
-        cumulative = np.concatenate(([np.zeros(2)], np.cumsum(chords, axis=0)))
-        extended_cumulative = np.concatenate(
-            (cumulative[:1], cumulative[:-1], cumulative[-1:])
-        )
-        differences = extended_cumulative[:, None, :] - extended_cumulative[None, :, :]
         self.lengths = jnp.asarray(lengths_)
         self.curvatures = jnp.asarray(curvatures_)
         self.entrance_edges = jnp.asarray(entrance)
@@ -282,7 +275,6 @@ class CSRLattice(StrictModule, NonTrainableState):
         self.segment_curvatures = jnp.asarray(segment_curvatures)
         self.segment_headings = jnp.asarray(segment_headings)
         self.segment_origins = jnp.asarray(segment_origins)
-        self.origin_differences = jnp.asarray(differences)
         self.lattice_id = canonical_fingerprint(
             {
                 "kind": "csr-lattice",
@@ -351,7 +343,7 @@ class CSRLattice(StrictModule, NonTrainableState):
         ] * jnp.stack((jnp.cos(tail_heading), jnp.sin(tail_heading)), -1)
         across = (
             self._local(later_segment, later)
-            + self.origin_differences[later_segment, following]
+            + (self.segment_origins[later_segment] - self.segment_origins[following])
             + tail
         )
         return jnp.where((later_segment == earlier_segment)[..., None], direct, across)
@@ -1199,7 +1191,6 @@ class _CSRGeometry(NamedTuple):
     line_horizontal: np.ndarray
     line_vertical: np.ndarray
     line_factors: np.ndarray
-    line_table: np.ndarray
     steady_taps: Array | None
     root_tolerance: float
 
@@ -1333,7 +1324,6 @@ def _prepare_csr_geometry(
     horizontal = np.zeros((1,), dtype=np.float64)
     vertical = np.zeros((1,), dtype=np.float64)
     factors = np.ones((1,), dtype=np.float64)
-    table = np.zeros((1, 1), dtype=np.int32)
     if request.model == "1d-transient-shielded" and request.plate_gap is not None:
         order = np.arange(1, request.image_count + 1, dtype=np.float64)
         horizontal = np.zeros((request.image_count + 1,), dtype=np.float64)
@@ -1347,15 +1337,6 @@ def _prepare_csr_geometry(
         horizontal = np.repeat(dx, 2 * ny - 1)
         vertical = np.tile(dy, 2 * nx - 1)
         factors = np.full(horizontal.shape, spacing[0] * spacing[1])
-        a = np.arange(nx)[:, None, None, None]
-        b = np.arange(ny)[None, :, None, None]
-        a_ = np.arange(nx)[None, None, :, None]
-        b_ = np.arange(ny)[None, None, None, :]
-        table = (
-            ((a - a_ + nx - 1) * (2 * ny - 1) + (b - b_ + ny - 1))
-            .reshape(nx * ny, nx * ny)
-            .astype(np.int32)
-        )
     steady = None
     if request.model == "1d-steady":
         index = np.arange(shape[0], dtype=np.float64)
@@ -1379,7 +1360,6 @@ def _prepare_csr_geometry(
         horizontal,
         vertical,
         factors,
-        table,
         steady,
         tolerance,
     )
@@ -1419,6 +1399,9 @@ def _prepare_csr_kernels(
         if request.model == "3d-steady-igf"
         else sample_count * 6 * 8
     )
+    if request.model == "3d-retarded-mesh":
+        columns = geometry.shape[0] * geometry.shape[1]
+        kernel_bytes += 4 * min(columns, request.resources.observer_chunk) * columns
     estimate = CSRResourceEstimate(
         pair_count,
         (request.history_capacity + 2) * grid_size * 2 * 8,
@@ -1536,7 +1519,6 @@ class CSRPlan(StrictModule, NonTrainableState):
     line_horizontal: Array
     line_vertical: Array
     line_factors: Array
-    line_table: Array
     steady_taps: Array | None
     igf: tuple[FreeSpaceConvolutionPlan, ...]
     igf_curvatures: tuple[float, ...] = eqx.field(static=True)
@@ -1621,7 +1603,6 @@ class CSRPlan(StrictModule, NonTrainableState):
         self.line_horizontal = jnp.asarray(geometry.line_horizontal)
         self.line_vertical = jnp.asarray(geometry.line_vertical)
         self.line_factors = jnp.asarray(geometry.line_factors)
-        self.line_table = jnp.asarray(geometry.line_table)
         self.steady_taps = geometry.steady_taps
         self.igf = kernels.igf
         self.igf_curvatures = kernels.curvatures
@@ -1882,9 +1863,16 @@ class CSRPlan(StrictModule, NonTrainableState):
             jnp.arange(columns, dtype=jnp.int32)[:, None, None],
             (columns,) + samples.location.shape[1:],
         )
+        source_indices = jnp.arange(columns, dtype=jnp.int32)
 
         def column(observer: Array) -> tuple[Array, Array]:
-            lines = self.line_table[observer]
+            lines = (
+                (observer // ny - source_indices // ny + nx - 1) * (2 * ny - 1)
+                + observer % ny
+                - source_indices % ny
+                + ny
+                - 1
+            )
             sampled = _sample_timeline(
                 flat,
                 source_columns,

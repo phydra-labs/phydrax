@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- Direct and near-Keplerian gravity, quadratic ringdown, and finite-frequency
+  Kubo response derive default tiles from validated workspace budgets. Fitting
+  problems execute the parallel action directly; larger problems retain exact
+  bounded execution, with explicit chunk overrides and recorded route identity.
+- London/PTV capacities reject booleans and fractional truncation; failed London
+  inductance solves expose native status through explicit refusals, including at
+  cable bridges. Seeded PTV trajectory identity excludes execution capacities.
 - Match operator-workspace benchmark gates by full problem capacity, keep default
   and smoke campaigns aligned with committed baselines, and support isolated
   smoke outputs for every memory driver on the discretization branch.
@@ -417,6 +424,8 @@
   before execution.
 
 ### Added
+- Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
+  `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
   explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
 - Explicit bounded target chunking for direct layer potentials, retaining parallel
@@ -2683,6 +2692,23 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Bound exact gravity target rows and quadratic-ringdown time batches with explicit
+  chunk controls; replace dense FEL wake products with exact FFT convolution.
+- Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer
+  contour-lag accumulation, stable contact key ranges, and streamed scenario
+  assignment; evaluate only requested AAD curvature diagonals. Coulomb result
+  fingerprints may change at roundoff; physical-input identities remain unchanged.
+- Prepare London/Pearl sparse local actions and reusable curvature evidence;
+  admit dense KKT storage by bytes and dimension or use native matrix-free solves.
+  London and PTV execution policies intentionally participate in plan identity,
+  separately from physical PTV trajectory identity.
+- Bound mapped-defect differentiation and Newton workspace with Chebyshev actions
+  and Newton–Krylov, use sparse radial Jacobians, and refuse full spectra above
+  declared budgets while preserving solver and stability evidence.
+- Tile exact periodic Ewald pair/translation sums and differentiated forces/stress;
+  default Kubo to budget-derived frequency tiles with direct parallel evaluation
+  when they fit, preserving both optical poles and sum-rule evidence. Ewald
+  policies enter plan identity; Kubo execution evidence has a separate policy identity.
 - Geometry queries stream polygon validity and ray parity, reuse prepared segment
   hierarchies and refitted triangle BVHs, and consume selected closest geometry
   rather than full pair tables. BRep winding retains its measured dense route.
@@ -3647,6 +3673,9 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Dense CSR `line_table` and lattice `origin_differences` retained leaves, and
+  London `hessian`, `factorization`, and `current_basis` state; preparations and
+  persisted PyTree structures use bounded actions instead, without aliases.
 - Polygon's retained `intersection_pairs` leaf and implicit unbounded `None`
   graph-query tile selections; graph and NN operator callers use positive integers.
 - Duplicate CSR leaves in host sparse prepared state and the duplicate upper

@@ -1,0 +1,359 @@
+{
+  "baseline": true,
+  "cases": [
+    {
+      "area": "contact",
+      "capacity": 64,
+      "compilation_seconds": 0.149582291,
+      "compiler": {
+        "argument_bytes": 576,
+        "bytes_accessed": 84656,
+        "flops": 85440,
+        "generated_code_bytes": 0,
+        "output_bytes": 752,
+        "source": "application-memory",
+        "temporary_bytes": 37136,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.007641167,
+      "retained_output_bytes": 704,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000107625,
+        "mean_seconds": 8.233350000000001e-05,
+        "median_seconds": 8.233350000000001e-05,
+        "min_seconds": 5.7042e-05,
+        "samples_seconds": [
+          0.000107625,
+          5.7042e-05
+        ],
+        "std_seconds": 2.52915e-05
+      }
+    },
+    {
+      "area": "ptv",
+      "capacity": 64,
+      "compilation_seconds": 0.076557291,
+      "compiler": {
+        "argument_bytes": 1600,
+        "bytes_accessed": 77273,
+        "flops": 41024,
+        "generated_code_bytes": 0,
+        "output_bytes": 88,
+        "source": "application-memory",
+        "temporary_bytes": 36864,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.007422958,
+      "retained_output_bytes": 64,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000135,
+        "mean_seconds": 0.0001111875,
+        "median_seconds": 0.0001111875,
+        "min_seconds": 8.7375e-05,
+        "samples_seconds": [
+          0.000135,
+          8.7375e-05
+        ],
+        "std_seconds": 2.3812500000000003e-05
+      }
+    },
+    {
+      "area": "contact",
+      "capacity": 256,
+      "compilation_seconds": 0.141836917,
+      "compiler": {
+        "argument_bytes": 2304,
+        "bytes_accessed": 1303088,
+        "flops": 1373952,
+        "generated_code_bytes": 0,
+        "output_bytes": 2864,
+        "source": "application-memory",
+        "temporary_bytes": 593936,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.015223458,
+      "retained_output_bytes": 2816,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.005632083,
+        "mean_seconds": 0.004461708,
+        "median_seconds": 0.004461708,
+        "min_seconds": 0.003291333,
+        "samples_seconds": [
+          0.005632083,
+          0.003291333
+        ],
+        "std_seconds": 0.0011703750000000002
+      }
+    },
+    {
+      "area": "ptv",
+      "capacity": 256,
+      "compilation_seconds": 0.080195166,
+      "compiler": {
+        "argument_bytes": 6400,
+        "bytes_accessed": 1196825,
+        "flops": 655616,
+        "generated_code_bytes": 0,
+        "output_bytes": 280,
+        "source": "application-memory",
+        "temporary_bytes": 589824,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.046256042,
+      "retained_output_bytes": 256,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.007484625,
+        "mean_seconds": 0.0045737705,
+        "median_seconds": 0.0045737705,
+        "min_seconds": 0.001662916,
+        "samples_seconds": [
+          0.001662916,
+          0.007484625
+        ],
+        "std_seconds": 0.0029108544999999998
+      }
+    },
+    {
+      "area": "contact",
+      "capacity": 1024,
+      "compilation_seconds": 0.097159459,
+      "compiler": {
+        "argument_bytes": 9216,
+        "bytes_accessed": 20645936,
+        "flops": 22010880,
+        "generated_code_bytes": 0,
+        "output_bytes": 11312,
+        "source": "application-memory",
+        "temporary_bytes": 9502736,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.031118958,
+      "retained_output_bytes": 11264,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.0063495,
+        "mean_seconds": 0.0041190415,
+        "median_seconds": 0.0041190415,
+        "min_seconds": 0.001888583,
+        "samples_seconds": [
+          0.001888583,
+          0.0063495
+        ],
+        "std_seconds": 0.0022304585
+      }
+    },
+    {
+      "area": "ptv",
+      "capacity": 1024,
+      "compilation_seconds": 0.064875,
+      "compiler": {
+        "argument_bytes": 25600,
+        "bytes_accessed": 18992152,
+        "flops": 10486784,
+        "generated_code_bytes": 0,
+        "output_bytes": 1048,
+        "source": "application-memory",
+        "temporary_bytes": 9437184,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.004636833,
+      "retained_output_bytes": 1024,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.017224292,
+        "mean_seconds": 0.0114494795,
+        "median_seconds": 0.0114494795,
+        "min_seconds": 0.005674667,
+        "samples_seconds": [
+          0.005674667,
+          0.017224292
+        ],
+        "std_seconds": 0.005774812499999999
+      }
+    },
+    {
+      "area": "london",
+      "capacity": 20,
+      "compilation_seconds": 0.475208708,
+      "compiler": {
+        "argument_bytes": 18854,
+        "bytes_accessed": 207867,
+        "flops": 88236,
+        "generated_code_bytes": 0,
+        "output_bytes": 1186,
+        "source": "application-memory",
+        "temporary_bytes": 35560,
+        "unavailable_reason": null
+      },
+      "host_preparation_peak_bytes": 2313696,
+      "lowering_seconds": 0.674497209,
+      "preparation_phase_host_peak_bytes": 2377968,
+      "preparation_phase_source_commit": "89dde7ba92e6ea1a2c54429bc7c95378841cc745",
+      "preparation_seconds": 1.570500291,
+      "retained_output_bytes": 1050,
+      "retained_plan_bytes": 18522,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000624792,
+        "mean_seconds": 0.000605292,
+        "median_seconds": 0.000605292,
+        "min_seconds": 0.000585792,
+        "samples_seconds": [
+          0.000585792,
+          0.000624792
+        ],
+        "std_seconds": 1.9499999999999986e-05
+      }
+    },
+    {
+      "area": "london",
+      "capacity": 40,
+      "compilation_seconds": 0.631308458,
+      "compiler": {
+        "argument_bytes": 63114,
+        "bytes_accessed": 895800,
+        "flops": 538369,
+        "generated_code_bytes": 0,
+        "output_bytes": 2146,
+        "source": "application-memory",
+        "temporary_bytes": 150056,
+        "unavailable_reason": null
+      },
+      "host_preparation_peak_bytes": 2201382,
+      "lowering_seconds": 0.373969416,
+      "preparation_phase_host_peak_bytes": 2250534,
+      "preparation_phase_source_commit": "89dde7ba92e6ea1a2c54429bc7c95378841cc745",
+      "preparation_seconds": 1.425627458,
+      "retained_output_bytes": 2010,
+      "retained_plan_bytes": 56062,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.03400875,
+        "mean_seconds": 0.030969103999999997,
+        "median_seconds": 0.030969103999999997,
+        "min_seconds": 0.027929458,
+        "samples_seconds": [
+          0.03400875,
+          0.027929458
+        ],
+        "std_seconds": 0.0030396459999999983
+      }
+    },
+    {
+      "area": "london",
+      "capacity": 80,
+      "compilation_seconds": 0.630158292,
+      "compiler": {
+        "argument_bytes": 228434,
+        "bytes_accessed": 3202746,
+        "flops": 3657497,
+        "generated_code_bytes": 0,
+        "output_bytes": 4066,
+        "source": "application-memory",
+        "temporary_bytes": 678568,
+        "unavailable_reason": null
+      },
+      "host_preparation_peak_bytes": 3360726,
+      "lowering_seconds": 1.734164625,
+      "preparation_phase_host_peak_bytes": 3398620,
+      "preparation_phase_source_commit": "89dde7ba92e6ea1a2c54429bc7c95378841cc745",
+      "preparation_seconds": 1.481678834,
+      "retained_output_bytes": 3930,
+      "retained_plan_bytes": 188742,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001207125,
+        "mean_seconds": 0.0010910625,
+        "median_seconds": 0.0010910625,
+        "min_seconds": 0.000975,
+        "samples_seconds": [
+          0.001207125,
+          0.000975
+        ],
+        "std_seconds": 0.00011606250000000006
+      }
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "4c826060d38d6e204e7903842756252b424b9e6d79be55de7dbeeaa668a986ff",
+    "evidence_fields": [
+      "cases"
+    ],
+    "evidence_schema_signature": "b19b234f18c30afe028ffaa342bf0e2fe4b48abe34491cb3a8cc0a9c55f3fa7a",
+    "fingerprint": "d5eee70203936c15972f9ab96f22c9dfba3b469e533113418f93af52f037462c",
+    "source_build_fingerprint": "e8f953b18b7395255ac67d5b9a851a79113f4b91e4fba860f1bd0c751d2b1c36"
+  },
+  "process_peak_rss_bytes": 1654063104
+}

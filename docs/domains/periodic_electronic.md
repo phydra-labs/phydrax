@@ -25,6 +25,24 @@ energy ledger, and neutrality, force-balance, stress-symmetry, and component
 closure evidence. Shell truncation remains explicit in the plan identity and
 must be refined by qualification cases.
 
+Real-space execution has an explicit pair/translation tile policy:
+`pair_tile_size=16` bounds each of the two site axes and
+`translation_tile_size=16` bounds the translation axis. Both must be positive
+integers. Every declared shell term is evaluated; tiling introduces no distance
+cutoff or approximation. Tiles accumulate in deterministic target, source, then
+translation order. Changing tile sizes can change floating-point rounding, so
+both sizes are recorded in `plan_id` and the derived `prepared_id`.
+
+The real-space displacement workspace is at most
+`3 * min(N, pair_tile_size)**2 * min(P, translation_tile_size)` scalars, where
+`P = (2 * real_shell + 1)**3`. Nested checkpointed reductions rematerialize
+real-space tiles during force and strain differentiation rather than retaining
+the full `N * N * P` tensor. Host minimum-image admission likewise streams
+bounded pair tiles while retaining the existing fractional-coordinate rounding
+convention and distinct-site minimum-distance refusal. The reciprocal route,
+origin self exclusion, homogeneous background, and four-component ledger order
+are unchanged.
+
 ### Governed GTH components
 
 `GTHPseudopotentialPlan` requires energy and length units plus a

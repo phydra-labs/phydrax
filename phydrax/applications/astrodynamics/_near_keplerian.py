@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
 from ._context import AstrodynamicsContext
+from ._nbody import _direct_gravity_rows, _gravity_workspace_policy
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
 from ._two_body import propagate_universal_kepler, UniversalKeplerPolicy
@@ -77,6 +78,8 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
     context: AstrodynamicsContext
     kepler_policy: UniversalKeplerPolicy
     close_approach_distance: Array
+    target_chunk_size: int | None = eqx.field(static=True)
+    pair_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -91,6 +94,8 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         close_approach_distance: ArrayLike = 0.0,
         kepler_policy: UniversalKeplerPolicy | None = None,
+        target_chunk_size: int | None = None,
+        pair_workspace_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         central = jnp.asarray(central_mass).reshape(())
         masses = jnp.asarray(planet_masses)
@@ -107,6 +112,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Nearly Keplerian times must be finite, increasing, and uniform."
             )
+        _gravity_workspace_policy(target_chunk_size, pair_workspace_bytes)
         policy = UniversalKeplerPolicy() if kepler_policy is None else kepler_policy
         if not isinstance(policy, UniversalKeplerPolicy):
             raise TypeError("kepler_policy must be UniversalKeplerPolicy or None.")
@@ -117,6 +123,8 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         self.context = context
         self.kepler_policy = policy
         self.close_approach_distance = jnp.asarray(close_approach_distance).reshape(())
+        self.target_chunk_size = target_chunk_size
+        self.pair_workspace_bytes = pair_workspace_bytes
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "nearly-keplerian-plan",
@@ -127,20 +135,19 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
                 "gravitational_constant": self.gravitational_constant,
                 "close_approach_distance": self.close_approach_distance,
                 "kepler_policy": policy.policy_id,
+                "target_chunk_size": target_chunk_size,
+                "pair_workspace_bytes": pair_workspace_bytes,
             }
         )
 
     def _perturbation(self, positions: Array, /) -> tuple[Array, Array, Array]:
-        count = self.planet_masses.size
-        displacement = positions[None, :, :] - positions[:, None, :]
-        distance_squared = jnp.sum(displacement * displacement, axis=-1)
-        pair = ~jnp.eye(count, dtype=jnp.bool_)
-        safe_distance = jnp.where(pair, distance_squared, 1.0)
-        direct = jnp.sum(
-            self.planet_masses[None, :, None]
-            * displacement
-            * jnp.where(pair, safe_distance ** (-1.5), 0.0)[..., None],
-            axis=1,
+        direct, _, minimum, _ = _direct_gravity_rows(
+            positions,
+            self.planet_masses,
+            jnp.ones(self.planet_masses.shape, dtype=jnp.bool_),
+            jnp.asarray(0.0, dtype=positions.dtype),
+            self.target_chunk_size,
+            self.pair_workspace_bytes,
         )
         central_distance = _norm(positions)
         indirect = jnp.sum(
@@ -152,8 +159,6 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
             axis=0,
         )
         perturbation = self.gravitational_constant * (direct - indirect[None, :])
-        pair_distance = jnp.sqrt(jnp.where(pair, distance_squared, jnp.inf))
-        minimum = jnp.min(pair_distance)
         valid = (
             jnp.all(jnp.isfinite(perturbation))
             & jnp.all(central_distance > 0.0)

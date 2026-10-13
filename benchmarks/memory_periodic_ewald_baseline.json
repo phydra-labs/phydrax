@@ -1,0 +1,799 @@
+{
+  "cases": [
+    {
+      "logical_displacement_workspace_bytes": 165888,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 23544,
+      "minimum_pair_distance": 1.6124515496597098,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.629768541,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 4778419,
+            "flops": 2159263,
+            "generated_code_bytes": 0,
+            "output_bytes": 552,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 1064264,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935521557,
+            17.7633343698045,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -94.48465238278342,
+          "force_balance_residual": 3.552713678800501e-15,
+          "lowering_seconds": 0.285698625,
+          "output_bytes": 496,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.011309833,
+            "mean_seconds": 0.009671187500000001,
+            "median_seconds": 0.009671187500000001,
+            "min_seconds": 0.008032542,
+            "samples_seconds": [
+              0.011309833,
+              0.008032542
+            ],
+            "std_seconds": 0.0016386455
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.183873875,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 245991,
+            "flops": 731863,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 61464,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935521557,
+            17.7633343698045,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -94.48465238278342,
+          "lowering_seconds": 0.089106625,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.00126925,
+            "mean_seconds": 0.0010961875,
+            "median_seconds": 0.0010961875,
+            "min_seconds": 0.000923125,
+            "samples_seconds": [
+              0.00126925,
+              0.000923125
+            ],
+            "std_seconds": 0.00017306249999999999
+          }
+        }
+      },
+      "plan_id": "5a0e2461286446fc792e2d98552987028c1d01edb006ce86f5cb48f8dd99ec1b",
+      "preparation_host_peak_bytes": 176233,
+      "preparation_seconds": 0.1763210000935942,
+      "prepared_id": "e8f982567c2365288e9dd12e5c006424d669852e9621bc941c130aaba1484d99",
+      "shell": 1,
+      "size": 16,
+      "translation_tile_size": 27
+    },
+    {
+      "logical_displacement_workspace_bytes": 663552,
+      "logical_host_pair_workspace_bytes": 24576,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 91512,
+      "minimum_pair_distance": 1.209338662244782,
+      "pair_tile_size": 32,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.8549495,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 18865332,
+            "flops": 8556111,
+            "generated_code_bytes": 0,
+            "output_bytes": 936,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 4226056,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916076693111,
+            7.300575301367815e-30,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -206.59643602646344,
+          "force_balance_residual": 7.993605777301127e-15,
+          "lowering_seconds": 0.168778833,
+          "output_bytes": 880,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.003739167,
+            "mean_seconds": 0.003732979,
+            "median_seconds": 0.003732979,
+            "min_seconds": 0.003726791,
+            "samples_seconds": [
+              0.003739167,
+              0.003726791
+            ],
+            "std_seconds": 6.187999999999853e-06
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.137265625,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 954727,
+            "flops": 2902695,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 245784,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916076693111,
+            7.300575301367817e-30,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -206.59643602646344,
+          "lowering_seconds": 0.098464,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.002104667,
+            "mean_seconds": 0.001702167,
+            "median_seconds": 0.001702167,
+            "min_seconds": 0.001299667,
+            "samples_seconds": [
+              0.002104667,
+              0.001299667
+            ],
+            "std_seconds": 0.0004025000000000001
+          }
+        }
+      },
+      "plan_id": "5a0e2461286446fc792e2d98552987028c1d01edb006ce86f5cb48f8dd99ec1b",
+      "preparation_host_peak_bytes": 139222,
+      "preparation_seconds": 0.17839366709813476,
+      "prepared_id": "e8f982567c2365288e9dd12e5c006424d669852e9621bc941c130aaba1484d99",
+      "shell": 1,
+      "size": 32,
+      "translation_tile_size": 27
+    },
+    {
+      "logical_displacement_workspace_bytes": 2654208,
+      "logical_host_pair_workspace_bytes": 98304,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 362616,
+      "minimum_pair_distance": 1.209338662244782,
+      "pair_tile_size": 64,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.631870167,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 75375680,
+            "flops": 34078636,
+            "generated_code_bytes": 0,
+            "output_bytes": 1704,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 16881160,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.471021904216975,
+            2.1506844664041458e-29,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -372.4844333640485,
+          "force_balance_residual": 5.684792066845551e-15,
+          "lowering_seconds": 0.20096925,
+          "output_bytes": 1648,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.007078917,
+            "mean_seconds": 0.006244853999999999,
+            "median_seconds": 0.006244853999999999,
+            "min_seconds": 0.005410791,
+            "samples_seconds": [
+              0.007078917,
+              0.005410791
+            ],
+            "std_seconds": 0.0008340629999999999
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.133464333,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 3632423,
+            "flops": 11565127,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 885328,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.471021904216975,
+            2.1506844664041458e-29,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -372.4844333640485,
+          "lowering_seconds": 0.0807375,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.012994917,
+            "mean_seconds": 0.0112790625,
+            "median_seconds": 0.0112790625,
+            "min_seconds": 0.009563208,
+            "samples_seconds": [
+              0.009563208,
+              0.012994917
+            ],
+            "std_seconds": 0.0017158545
+          }
+        }
+      },
+      "plan_id": "5a0e2461286446fc792e2d98552987028c1d01edb006ce86f5cb48f8dd99ec1b",
+      "preparation_host_peak_bytes": 139044,
+      "preparation_seconds": 0.12525729113258421,
+      "prepared_id": "e8f982567c2365288e9dd12e5c006424d669852e9621bc941c130aaba1484d99",
+      "shell": 1,
+      "size": 64,
+      "translation_tile_size": 27
+    },
+    {
+      "logical_displacement_workspace_bytes": 10616832,
+      "logical_host_pair_workspace_bytes": 393216,
+      "logical_retained_bytes": 5631,
+      "minimum_distance_host_peak_bytes": 1445496,
+      "minimum_pair_distance": 0.8062257748298546,
+      "pair_tile_size": 128,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.648735833,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 300536192,
+            "flops": 136038992,
+            "generated_code_bytes": 0,
+            "output_bytes": 3240,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 67379208,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397356861037,
+            1.2131514323926103,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.4617326727487,
+          "force_balance_residual": 5.684341886080802e-14,
+          "lowering_seconds": 0.245998458,
+          "output_bytes": 3184,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.038477334,
+            "mean_seconds": 0.0311333545,
+            "median_seconds": 0.0311333545,
+            "min_seconds": 0.023789375,
+            "samples_seconds": [
+              0.038477334,
+              0.023789375
+            ],
+            "std_seconds": 0.0073439795
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.147828917,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 14338503,
+            "flops": 46173060,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 3540056,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397356861037,
+            1.2131514323926103,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.4617326727487,
+          "lowering_seconds": 0.142983666,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.016487375,
+            "mean_seconds": 0.011762354,
+            "median_seconds": 0.011762354,
+            "min_seconds": 0.007037333,
+            "samples_seconds": [
+              0.007037333,
+              0.016487375
+            ],
+            "std_seconds": 0.004725020999999999
+          }
+        }
+      },
+      "plan_id": "5a0e2461286446fc792e2d98552987028c1d01edb006ce86f5cb48f8dd99ec1b",
+      "preparation_host_peak_bytes": 138173,
+      "preparation_seconds": 0.1508139579091221,
+      "prepared_id": "e8f982567c2365288e9dd12e5c006424d669852e9621bc941c130aaba1484d99",
+      "shell": 1,
+      "size": 128,
+      "translation_tile_size": 27
+    },
+    {
+      "logical_displacement_workspace_bytes": 768000,
+      "logical_host_pair_workspace_bytes": 6144,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 23544,
+      "minimum_pair_distance": 1.6124515496597098,
+      "pair_tile_size": 16,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.473433042,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 22004568,
+            "flops": 9973007,
+            "generated_code_bytes": 0,
+            "output_bytes": 552,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 4925576,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935519073,
+            20.758535057132615,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -91.48945169545283,
+          "force_balance_residual": 1.7763568394002505e-15,
+          "lowering_seconds": 0.30178575,
+          "output_bytes": 496,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.003111458,
+            "mean_seconds": 0.0026295205,
+            "median_seconds": 0.0026295205,
+            "min_seconds": 0.002147583,
+            "samples_seconds": [
+              0.003111458,
+              0.002147583
+            ],
+            "std_seconds": 0.00048193750000000016
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.244489584,
+          "compiler": {
+            "argument_bytes": 584,
+            "bytes_accessed": 1089377,
+            "flops": 3384825,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 262168,
+            "unavailable_reason": null
+          },
+          "components": [
+            -8.259122935519073,
+            20.758535057132615,
+            -103.98886381706637,
+            0.0
+          ],
+          "energy": -91.48945169545283,
+          "lowering_seconds": 0.063511375,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.00110575,
+            "mean_seconds": 0.0010445415000000001,
+            "median_seconds": 0.0010445415000000001,
+            "min_seconds": 0.000983333,
+            "samples_seconds": [
+              0.00110575,
+              0.000983333
+            ],
+            "std_seconds": 6.120849999999994e-05
+          }
+        }
+      },
+      "plan_id": "9a3d34c165cf759891125a291997e2fa713fd6c3f1f18f30570ca37c548cb87d",
+      "preparation_host_peak_bytes": 143336,
+      "preparation_seconds": 0.20714062498882413,
+      "prepared_id": "00332fad422babf727facf9c320b2ab238339b156d752820a1142071a1425b20",
+      "shell": 2,
+      "size": 16,
+      "translation_tile_size": 125
+    },
+    {
+      "logical_displacement_workspace_bytes": 3072000,
+      "logical_host_pair_workspace_bytes": 24576,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 91512,
+      "minimum_pair_distance": 1.209338662244782,
+      "pair_tile_size": 32,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.61182575,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 86932304,
+            "flops": 39519804,
+            "generated_code_bytes": 0,
+            "output_bytes": 936,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 19565576,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916075369421,
+            27.447936543024017,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -179.14849948357178,
+          "force_balance_residual": 3.019806626980426e-14,
+          "lowering_seconds": 0.19691475,
+          "output_bytes": 880,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.009576792,
+            "mean_seconds": 0.0067562505,
+            "median_seconds": 0.0067562505,
+            "min_seconds": 0.003935709,
+            "samples_seconds": [
+              0.009576792,
+              0.003935709
+            ],
+            "std_seconds": 0.0028205415000000004
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.179217458,
+          "compiler": {
+            "argument_bytes": 1096,
+            "bytes_accessed": 4231649,
+            "flops": 13422313,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 1048600,
+            "unavailable_reason": null
+          },
+          "components": [
+            1.3812916075369421,
+            27.447936543024017,
+            -207.97772763413275,
+            0.0
+          ],
+          "energy": -179.14849948357178,
+          "lowering_seconds": 0.095110167,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.00330325,
+            "mean_seconds": 0.0026370415000000003,
+            "median_seconds": 0.0026370415000000003,
+            "min_seconds": 0.001970833,
+            "samples_seconds": [
+              0.00330325,
+              0.001970833
+            ],
+            "std_seconds": 0.0006662085000000001
+          }
+        }
+      },
+      "plan_id": "9a3d34c165cf759891125a291997e2fa713fd6c3f1f18f30570ca37c548cb87d",
+      "preparation_host_peak_bytes": 143367,
+      "preparation_seconds": 0.143853124929592,
+      "prepared_id": "00332fad422babf727facf9c320b2ab238339b156d752820a1142071a1425b20",
+      "shell": 2,
+      "size": 32,
+      "translation_tile_size": 125
+    },
+    {
+      "logical_displacement_workspace_bytes": 12288000,
+      "logical_host_pair_workspace_bytes": 98304,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 362616,
+      "minimum_pair_distance": 1.209338662244782,
+      "pair_tile_size": 64,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.687004667,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 346693056,
+            "flops": 157403792,
+            "generated_code_bytes": 0,
+            "output_bytes": 1704,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 78154568,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.471021903879794,
+            74.81360037122961,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -297.67083299315607,
+          "force_balance_residual": 4.2427602749525055e-14,
+          "lowering_seconds": 1.688445708,
+          "output_bytes": 1648,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.029065292,
+            "mean_seconds": 0.0223112915,
+            "median_seconds": 0.0223112915,
+            "min_seconds": 0.015557291,
+            "samples_seconds": [
+              0.029065292,
+              0.015557291
+            ],
+            "std_seconds": 0.0067540005
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.256426791,
+          "compiler": {
+            "argument_bytes": 2120,
+            "bytes_accessed": 16800288,
+            "flops": 53472968,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 4096592,
+            "unavailable_reason": null
+          },
+          "components": [
+            43.471021903879794,
+            74.81360037122961,
+            -415.9554552682655,
+            0.0
+          ],
+          "energy": -297.67083299315607,
+          "lowering_seconds": 0.051686292,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.004505709,
+            "mean_seconds": 0.0038663965,
+            "median_seconds": 0.0038663965,
+            "min_seconds": 0.003227084,
+            "samples_seconds": [
+              0.003227084,
+              0.004505709
+            ],
+            "std_seconds": 0.0006393125000000001
+          }
+        }
+      },
+      "plan_id": "9a3d34c165cf759891125a291997e2fa713fd6c3f1f18f30570ca37c548cb87d",
+      "preparation_host_peak_bytes": 142536,
+      "preparation_seconds": 0.19780529104173183,
+      "prepared_id": "00332fad422babf727facf9c320b2ab238339b156d752820a1142071a1425b20",
+      "shell": 2,
+      "size": 64,
+      "translation_tile_size": 125
+    },
+    {
+      "logical_displacement_workspace_bytes": 49152000,
+      "logical_host_pair_workspace_bytes": 393216,
+      "logical_retained_bytes": 10335,
+      "minimum_distance_host_peak_bytes": 1445496,
+      "minimum_pair_distance": 0.8062257748298546,
+      "pair_tile_size": 128,
+      "phases": {
+        "force-and-strain": {
+          "compilation_seconds": 0.743156334,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 1382559744,
+            "flops": 628333440,
+            "generated_code_bytes": 0,
+            "output_bytes": 3240,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 311942536,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397358584336,
+            1.5057468231020177,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.1691372992723,
+          "force_balance_residual": 5.684341886080802e-14,
+          "lowering_seconds": 0.299895708,
+          "output_bytes": 3184,
+          "stress_symmetry_residual": 0.0,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.079268334,
+            "mean_seconds": 0.0782620005,
+            "median_seconds": 0.0782620005,
+            "min_seconds": 0.077255667,
+            "samples_seconds": [
+              0.077255667,
+              0.079268334
+            ],
+            "std_seconds": 0.0010063334999999979
+          }
+        },
+        "forward": {
+          "compilation_seconds": 0.294034292,
+          "compiler": {
+            "argument_bytes": 4168,
+            "bytes_accessed": 66348864,
+            "flops": 213476992,
+            "generated_code_bytes": 0,
+            "output_bytes": 80,
+            "source": "jax-periodic-ewald",
+            "temporary_bytes": 16385112,
+            "unavailable_reason": null
+          },
+          "components": [
+            -179.76397358584336,
+            1.5057468231020177,
+            -831.910910536531,
+            0.0
+          ],
+          "energy": -1010.1691372992723,
+          "lowering_seconds": 0.103674625,
+          "output_bytes": 40,
+          "warm": {
+            "count": 2,
+            "max_seconds": 0.025940875,
+            "mean_seconds": 0.0207679375,
+            "median_seconds": 0.0207679375,
+            "min_seconds": 0.015595,
+            "samples_seconds": [
+              0.025940875,
+              0.015595
+            ],
+            "std_seconds": 0.0051729375
+          }
+        }
+      },
+      "plan_id": "9a3d34c165cf759891125a291997e2fa713fd6c3f1f18f30570ca37c548cb87d",
+      "preparation_host_peak_bytes": 143279,
+      "preparation_seconds": 0.25539283407852054,
+      "prepared_id": "00332fad422babf727facf9c320b2ab238339b156d752820a1142071a1425b20",
+      "shell": 2,
+      "size": 128,
+      "translation_tile_size": 125
+    }
+  ],
+  "command": [
+    "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/application-kernel-bounds/benchmarks/memory_periodic_ewald.py",
+    "--baseline",
+    "--sizes",
+    "16",
+    "32",
+    "64",
+    "128",
+    "--shells",
+    "1",
+    "2",
+    "--repeats",
+    "2"
+  ],
+  "configuration": {
+    "baseline": true,
+    "output": null,
+    "pair_tile_size": 16,
+    "repeats": 2,
+    "shells": [
+      1,
+      2
+    ],
+    "sizes": [
+      16,
+      32,
+      64,
+      128
+    ],
+    "translation_tile_size": 16
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gates": [],
+  "identity": {
+    "benchmark_driver_fingerprint": "6f83c55c544e20b15370017029750434b68681f0933c0ac9837a0e43d6549f83",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "command",
+        "configuration",
+        "environment",
+        "gates",
+        "process_peak_rss_bytes",
+        "scaling"
+      ],
+      "signature": "c7198505bf92be73c7fc33fb7201b8df9219376c49b748e87383070a4ed692fb"
+    },
+    "fingerprint": "bb7ef6b6215829275d15e447d2c731f4ef9ed1f0f09c1e0e53bd6c8857e2daf4",
+    "source_build_fingerprint": "689c33ef5d1ff4b65e495e1a0ef8962f5f33afb1a3b853e291f1e890974af014"
+  },
+  "process_peak_rss_bytes": 2543599616,
+  "scaling": [
+    {
+      "compiler_derivative_exponent": 1.995115674468317,
+      "logical_displacement_exponent": 2.000000000000001,
+      "shell": 1
+    },
+    {
+      "compiler_derivative_exponent": 1.9952544722036274,
+      "logical_displacement_exponent": 1.9999999999999996,
+      "shell": 2
+    }
+  ]
+}

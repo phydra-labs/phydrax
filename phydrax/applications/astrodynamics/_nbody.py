@@ -31,6 +31,65 @@ def _norm(value: Array, /, *, axis: int = -1) -> Array:
     return jnp.sqrt(jnp.sum(value * value, axis=axis))
 
 
+def _gravity_workspace_policy(chunk: int | None, budget: int) -> None:
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        raise TypeError("pair_workspace_bytes must be an integer.")
+    if budget < 1:
+        raise ValueError("pair_workspace_bytes must be positive.")
+    if chunk is not None:
+        if isinstance(chunk, bool) or not isinstance(chunk, int):
+            raise TypeError("target_chunk_size must be an integer or None.")
+        if chunk < 1:
+            raise ValueError("target_chunk_size must be positive.")
+
+
+def _direct_gravity_rows(
+    positions: Array,
+    masses: Array,
+    active: Array,
+    softening: Array,
+    target_chunk_size: int | None,
+    pair_workspace_bytes: int = 4 * 1024 * 1024,
+) -> tuple[Array, Array, Array, Array]:
+    """Exact source reductions with at most a bounded batch of target rows."""
+    indices = jnp.arange(positions.shape[0])
+
+    def row(i: Array) -> tuple[Array, Array, Array, Array]:
+        pair = active[i] & active & (indices != i)
+        displacement = positions - positions[i]
+        squared = jnp.sum(displacement * displacement, axis=-1)
+        safe = jnp.where(pair, squared + softening * softening, 1.0)
+        acceleration = jnp.sum(
+            masses[:, None]
+            * displacement
+            * jnp.where(pair, safe ** (-1.5), 0.0)[:, None],
+            axis=0,
+        )
+        potential = jnp.sum(
+            masses[i] * masses * jnp.where(pair & (indices > i), safe ** (-0.5), 0.0)
+        )
+        minimum = jnp.min(jnp.sqrt(jnp.where(pair, squared, jnp.inf)))
+        singular = jnp.any(pair & (squared == 0.0))
+        return acceleration, potential, minimum, singular
+
+    # Six floating source-sized intermediates per target row, as in the
+    # qualification workspace model; an explicit chunk overrides admission.
+    extent = positions.shape[0]
+    chunk = min(
+        extent,
+        max(1, pair_workspace_bytes // (6 * extent * positions.dtype.itemsize))
+        if target_chunk_size is None
+        else target_chunk_size,
+    )
+    if chunk == extent:
+        acceleration, potential, minimum, singular = jax.vmap(row)(indices)
+    else:
+        acceleration, potential, minimum, singular = jax.lax.map(
+            row, indices, batch_size=chunk
+        )
+    return acceleration, jnp.sum(potential), jnp.min(minimum), jnp.any(singular)
+
+
 class NBodyState(StrictModule):
     position: Array
     velocity: Array
@@ -77,6 +136,8 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
     gravitational_constant: Array
     softening: Array
     collision_distance: Array
+    target_chunk_size: int | None = eqx.field(static=True)
+    pair_workspace_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @checked
@@ -89,11 +150,14 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         gravitational_constant: ArrayLike = 1.0,
         softening: ArrayLike = 0.0,
         collision_distance: ArrayLike = 0.0,
+        target_chunk_size: int | None = None,
+        pair_workspace_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         if particles.ambient_dimension != 3:
             raise ValueError(
                 "Direct N-body gravity requires three-dimensional particles."
             )
+        _gravity_workspace_policy(target_chunk_size, pair_workspace_bytes)
         coupling = jnp.asarray(gravitational_constant).reshape(())
         smoothing = jnp.asarray(softening, dtype=coupling.dtype).reshape(())
         collision = jnp.asarray(collision_distance, dtype=coupling.dtype).reshape(())
@@ -102,6 +166,8 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         self.gravitational_constant = coupling
         self.softening = smoothing
         self.collision_distance = collision
+        self.target_chunk_size = target_chunk_size
+        self.pair_workspace_bytes = pair_workspace_bytes
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "direct-nbody-gravity",
@@ -110,6 +176,8 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
                 "gravitational_constant": coupling,
                 "softening": smoothing,
                 "collision_distance": collision,
+                "target_chunk_size": target_chunk_size,
+                "pair_workspace_bytes": pair_workspace_bytes,
             }
         )
 
@@ -119,17 +187,17 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
         if positions.shape != expected:
             raise ValueError(f"N-body positions must have shape {expected}.")
         active = self.particles.active_mask
-        pair_active = active[:, None] & active[None, :]
-        diagonal = jnp.eye(self.particles.capacity, dtype=jnp.bool_)
-        pair_active = pair_active & ~diagonal
-        displacement = positions[None, :, :] - positions[:, None, :]
-        distance_squared = jnp.sum(displacement * displacement, axis=-1)
-        distance = jnp.sqrt(jnp.where(pair_active, distance_squared, jnp.inf))
-        minimum = jnp.min(distance)
-        collision = minimum <= self.collision_distance
-        singular = (self.softening == 0.0) & jnp.any(
-            pair_active & (distance_squared == 0.0)
+        masses = self.particles.masses.astype(positions.dtype)
+        raw_acceleration, pair_potential, minimum, coincident = _direct_gravity_rows(
+            positions,
+            masses,
+            active,
+            self.softening,
+            self.target_chunk_size,
+            self.pair_workspace_bytes,
         )
+        collision = minimum <= self.collision_distance
+        singular = (self.softening == 0.0) & coincident
         finite = (
             jnp.all(jnp.where(active[:, None], jnp.isfinite(positions), True))
             & jnp.isfinite(self.gravitational_constant)
@@ -144,19 +212,9 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
             & ~singular
             & ~collision
         )
-        softened = distance_squared + self.softening * self.softening
-        safe_softened = jnp.where(pair_active, softened, 1.0)
-        inverse_cube = jnp.where(pair_active, safe_softened ** (-1.5), 0.0)
-        masses = self.particles.masses.astype(positions.dtype)
-        acceleration = self.gravitational_constant * jnp.sum(
-            masses[None, :, None] * displacement * inverse_cube[..., None], axis=1
-        )
+        acceleration = self.gravitational_constant * raw_acceleration
         acceleration = jnp.where(active[:, None] & domain, acceleration, 0.0)
-        upper = jnp.triu(pair_active, k=1)
-        inverse_distance = jnp.where(upper, safe_softened ** (-0.5), 0.0)
-        potential = -self.gravitational_constant * jnp.sum(
-            masses[:, None] * masses[None, :] * inverse_distance
-        )
+        potential = -self.gravitational_constant * pair_potential
         net_force = jnp.sum(masses[:, None] * acceleration, axis=0)
         status = jnp.where(
             ~finite,

@@ -189,6 +189,18 @@ checkpoints are rejected.
 volumes, velocity, tracers, density, hydrostatic pressure, vertical flux, wet support,
 energies, inventories, and ledger evidence without making derived fields authoritative.
 
+Passive trajectories sample the nearest horizontal cell on the prepared increasing
+coordinate axes; exact ties select the lowest original cell index. Periodic
+longitude uses `min(abs(position-center), abs(period-abs(position-center)))`,
+including positions outside the grid interval. This is a one-period distance,
+not unrestricted modulo wrapping. Invalid nonperiodic positions retain the
+existing exit/status behavior.
+
+The compiler-memory gate retains the dense-distance expression: the measured
+searchsorted/adjacent candidate uses more compiler temporary storage on CPU.
+`benchmarks.memory_ocean_shell` records both routes without changing the public
+trajectory plan or its identity.
+
 ## Deliberate limits
 
 - mosaic topology and seam routing are fixed during an execution epoch;
