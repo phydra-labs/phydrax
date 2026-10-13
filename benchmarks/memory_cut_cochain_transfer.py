@@ -1,5 +1,6 @@
 """Component minimum-norm memory and independent pinv oracle scaling."""
 
+import argparse
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,11 @@ from phydrax.discretization.amr._cut_transfer_actions import ComponentMinimumNor
 
 
 def main() -> None:
-    sizes = [8, 16, 32, 64]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent)
+    args = parser.parse_args()
+    sizes = [8, 16] if args.smoke else [8, 16, 32, 64]
     baseline: list[dict[str, Any]] = []
     candidate: list[dict[str, Any]] = []
     for count in sizes:
@@ -87,7 +92,7 @@ def main() -> None:
         "baseline_kind": "independent-dense-pinv-oracle; not pre-edit full-plan capture",
     }
     write_json_atomic(
-        root / "benchmarks/memory_cut_cochain_transfer_baseline.json",
+        args.output_dir / "memory_cut_cochain_transfer_baseline.json",
         {
             **common,
             "cases": baseline,
@@ -97,7 +102,7 @@ def main() -> None:
         },
     )
     write_json_atomic(
-        root / "benchmarks/memory_cut_cochain_transfer.json",
+        args.output_dir / "memory_cut_cochain_transfer.json",
         {
             **common,
             "cases": candidate,
