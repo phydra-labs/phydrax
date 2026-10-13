@@ -1011,18 +1011,25 @@ to likelihood, factorization, and conditioning calls. Fixed states can be factor
 once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
 parameters differentiable posterior leaves.
 
-Computation-aware GP actions use exact matrix-free covariance products for
-Lanczos, conjugate gradient, and Gauss–Seidel. Kernel rows are batched under
-`GaussianProcessComputationPolicy.max_workspace_bytes`; a budget that cannot
-hold one row and its action output refuses before evaluation. Gauss–Seidel uses
-the kernel diagonal plus observation variance for each pivot. Actions and
-projected features retain O(n m) storage for n observations and m actions; no
-n-by-n observation covariance is formed. The action-whitened variational ELBO
-accepts the same `computation` policy and builds its features with bounded rows.
-Direct action-policy `resolve()` calls accept `max_workspace_bytes` (64 MiB by
-default) and `checkpoint_kernel_blocks` (default `True`). Computation-aware factors
-forward both settings from their computation policy; checkpointing recomputes
-kernel blocks during differentiation instead of retaining their intermediates.
+Computation-aware GP actions use exact covariance products for Lanczos, conjugate
+gradient, and Gauss–Seidel. `GaussianProcessComputationPolicy.max_workspace_bytes`
+defaults to 64 MiB. Kernel tiles contain
+`min(n_left, floor(budget / ((n_right + m) * itemsize)))` rows for m action columns;
+a budget that cannot hold one row and its action output refuses before evaluation.
+When the full block fits, the kernel is evaluated once as a block and multiplied
+directly, without a row-loop wrapper. Iterative actions retain that kernel once
+per resolve when `n * (n + 1) * itemsize` fits the budget, instead of rebuilding it
+at each Krylov iteration. With float64 observations at n=128, 256, and 512, the
+default therefore uses a full tile (including for the variational K·S product).
+Above the budget, exact bounded kernel-row products remain matrix-free.
+Gauss–Seidel uses the kernel diagonal plus observation variance for each pivot.
+Actions and projected features retain O(n m) storage; any retained n-by-n kernel
+is admitted under the same workspace budget. The action-whitened variational ELBO
+accepts the same `computation` policy. Direct action-policy `resolve()` calls accept
+`max_workspace_bytes` (64 MiB) and `checkpoint_kernel_blocks` (default `True`).
+Computation-aware factors forward both settings; checkpointing recomputes tiled
+kernel intermediates during differentiation. A budget-admitted retained kernel
+is shared by all iterations rather than checkpointed per iteration.
 
 If the kernel exposes the `AbstractFiniteFeatureKernel` capability and its rank is
 strictly smaller than the observation count, `ExactGaussianProcessDiscrepancy.factor`
