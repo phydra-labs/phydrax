@@ -6,7 +6,9 @@
 import importlib.util
 from typing import Any
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax.export._lattice_boltzmann_iree as lbm_iree
@@ -135,6 +137,10 @@ def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(
         trusted_module_sha256=bundle.forward.manifest.module_sha256,
     )
     forward_output = forward(initial, coefficient)
+    reference_forward, reference_pullback = jax.vjp(
+        lambda populations, rate: rate**2 * populations, initial, coefficient
+    )
+    np.testing.assert_allclose(forward_output, reference_forward, rtol=1e-6, atol=1e-6)
     assert not isinstance(forward_output, tuple)
     assert bundle.forward.manifest.output_names == ("final_populations",)
     assert bundle.vjp is not None
@@ -155,6 +161,9 @@ def test_lbm_iree_forward_and_ordered_vjp_execute_with_named_outputs(
         initial.dtype,
         coefficient.dtype,
     )
+    reference_cotangents = reference_pullback(jnp.ones_like(reference_forward))
+    for actual, expected in zip(cotangents, reference_cotangents, strict=True):
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
 
 
 def test_lbm_iree_export_fails_closed_at_existing_availability_gate(

@@ -244,6 +244,10 @@ def _chebyshev(coordinate: Array, coefficients: tuple[float, ...]) -> Array:
 
 
 def _central(x: Array) -> tuple[Array, Array, Array, Array]:
+    # The alternating central series has large cancelling terms near -5;
+    # float32 accumulation loses accuracy before the final Airy combination.
+    result_dtype = x.dtype
+    x = x.astype(jnp.float64) if x.dtype == jnp.float32 else x
     x3 = x * x * x
 
     def body(
@@ -281,7 +285,12 @@ def _central(x: Array) -> tuple[Array, Array, Array, Array]:
     bi = _SQRT_THREE * (_AI_ZERO * f - _AIP_ZERO * g)
     aip = _AI_ZERO * df + _AIP_ZERO * dg
     bip = _SQRT_THREE * (_AI_ZERO * df - _AIP_ZERO * dg)
-    return ai, aip, bi, bip
+    return (
+        ai.astype(result_dtype),
+        aip.astype(result_dtype),
+        bi.astype(result_dtype),
+        bip.astype(result_dtype),
+    )
 
 
 def _positive_scaled(x: Array) -> tuple[Array, Array, Array, Array]:

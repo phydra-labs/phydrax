@@ -44,6 +44,8 @@ from phydrax.discretization.meshfree import (
     MeshfreeMetricCorrectionPolicy,
     PreparedMeshfreeExteriorCalculus,
 )
+from phydrax.linalg import MaterializationPolicy
+from phydrax.linalg.svd import DenseSVD, SVDSolvePolicy
 from phydrax.optim import ConicSensitivityStatus
 from phydrax.solver import SolverObjective
 from phydrax.sparse import EdgeRelation
@@ -510,6 +512,36 @@ def test_projection_derivative_is_the_weighted_projector_and_failure_has_none(
     assert failing.correct(learned_candidate).status is (
         MeshfreeCorrectionStatus.PROVIDER_UNRESOLVED
     )
+
+
+def test_projection_without_rank_budget_keeps_uncertified_cotangents_undefined(
+    exterior: PreparedMeshfreeExteriorCalculus,
+    positive_point: np.ndarray,
+    learned_candidate: np.ndarray,
+) -> None:
+    plan = MeshfreeMetricCorrectionPlan(
+        exterior,
+        policy=MeshfreeMetricCorrectionPolicy(
+            margin=_MARGIN,
+            tolerance=_TOLERANCE,
+            rank=SVDSolvePolicy(
+                DenseSVD(algorithm="qr"),
+                materialization=MaterializationPolicy(max_entries=1),
+            ),
+        ),
+    )
+    feature = jnp.asarray(learned_candidate - positive_point)
+
+    def loss(parameter: Array) -> tuple[Array, Array]:
+        projection = plan.project(jnp.asarray(positive_point) + parameter * feature)
+        return jnp.sum(projection.weights**2), projection.admissible
+
+    (value, admissible), gradient = jax.value_and_grad(loss, has_aux=True)(
+        jnp.asarray(1.0)
+    )
+    assert bool(admissible) and bool(jnp.isfinite(value))
+    # Forward compatibility does not certify an out-of-range cotangent.
+    assert not bool(jnp.isfinite(gradient))
 
 
 @pytest.fixture(scope="module")

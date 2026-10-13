@@ -42,6 +42,7 @@ from ..integration._plans import (
     ImportanceSamplingPlan,
     MonteCarloPlan,
     MultilevelMonteCarloPlan,
+    ProductIntegrationPlan,
     QuasiMonteCarloPlan,
     SampleMeanEstimator,
     StratifiedMonteCarloPlan,
@@ -121,6 +122,20 @@ def _integration_sampling_design(
     if isinstance(source.target, DensityTarget) and source.target.normalized:
         return "unknown"
     plan = source.plan
+    if isinstance(plan, ProductIntegrationPlan):
+        # Replicate tensor-product means are iid and unbiased when every factor
+        # is unbiased and independently keyed; their Cartesian samples are not iid.
+        for factor_plan in plan.plans.values():
+            if not isinstance(factor_plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
+                return "unknown"
+            if (
+                isinstance(factor_plan, QuasiMonteCarloPlan)
+                and not factor_plan.design.scrambled
+            ):
+                return "unknown"
+            if factor_plan.control_variate is not None:
+                return "unknown"
+        return "iid"
     if isinstance(plan, ImportanceSamplingPlan):
         return "iid" if isinstance(plan.estimator, SampleMeanEstimator) else "unknown"
     if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):

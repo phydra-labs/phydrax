@@ -33,7 +33,8 @@ def _prop_scan(
         outvars: [carry_final..., ys...]
         body jaxpr invars:  [consts..., carry..., x_slice...]
         body jaxpr outvars: [carry_new..., y_slice...]
-        params: jaxpr, num_consts, num_carry, length, reverse, linear, unroll
+        params: jaxpr, ft_in (consts, carry, xs), ft_out (carry, ys),
+                length, reverse, unroll
 
     xs arrays have an extra leading dimension of size ``length``
     compared to their body counterparts x_slice.
@@ -41,10 +42,10 @@ def _prop_scan(
 
     https://docs.jax.dev/en/latest/_autosummary/jax.lax.scan.html
     """
-    body_closed = eqn.params["jaxpr"]
-    body_jaxpr = body_closed.jaxpr
-    num_consts = eqn.params["num_consts"]
-    num_carry = eqn.params["num_carry"]
+    body_jaxpr = eqn.params["jaxpr"]
+    const_tree, carry_tree, _ = eqn.params["ft_in"].unpack()
+    num_consts = len(const_tree)
+    num_carry = len(carry_tree)
     length = eqn.params["length"]
     reverse = eqn.params["reverse"]
 
@@ -61,7 +62,7 @@ def _prop_scan(
     # invariant, so carry and xs are never forwarded as known values.
     body_consts, body_bounds = _nested_scope(
         body_jaxpr.constvars,
-        body_closed.consts,
+        body_jaxpr.consts,
         consts,
         body_jaxpr.invars[:num_consts],
         state_consts,

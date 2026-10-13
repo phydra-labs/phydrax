@@ -346,3 +346,34 @@ def test_iree_export_refuses_in_place_updates_iree_would_alias(tmp_path: Any) ->
         with pytest.raises(ValueError, match=reason):
             phx.export.save_iree(model, tmp_path / model.__name__, inputs=(x,))
         assert not (tmp_path / model.__name__).exists()
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+@pytest.mark.parametrize("other_use", ("second-tape", "returned-base"))
+def test_iree_refuses_shared_splat_loop_allocations(
+    tmp_path: Any, other_use: str
+) -> None:
+    def model(x: jax.Array, *, key: Any = None) -> tuple[jax.Array, jax.Array]:
+        del key
+        base = jnp.zeros((2,), dtype=jnp.bool_)
+
+        def advance(
+            carry: tuple[jax.Array, jax.Array], index: jax.Array
+        ) -> tuple[tuple[jax.Array, jax.Array], None]:
+            left, right = carry
+            left = jax.lax.dynamic_update_slice(left, (x[index] > 0).reshape(1), (index,))
+            if other_use == "second-tape":
+                right = jax.lax.dynamic_update_slice(
+                    right, (x[index] < 0).reshape(1), (index,)
+                )
+            return (left, right), None
+
+        return jax.lax.scan(advance, (base, base), jnp.arange(2, dtype=jnp.int32))[0]
+
+    with pytest.raises(ValueError, match="shared input-independent destination"):
+        phx.export.save_iree(
+            model,
+            tmp_path / "shared-tape.phxiree",
+            inputs=(jnp.asarray([1.0, -1.0], dtype=jnp.float32),),
+        )
+    assert not (tmp_path / "shared-tape.phxiree").exists()

@@ -44,6 +44,7 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ...linalg import (
     ArraySpace,
+    certify_rectangular_rank,
     DifferentiationPolicy,
     FailurePolicy,
     GeneralizedLSMR,
@@ -145,6 +146,8 @@ class MeshfreeMetricCorrectionPolicy(StrictModule):
     bounds every original moment row relative to ``D_i + |b_i|`` and the sign
     margin absolutely. The nonnegative conic route always enforces the margin,
     so it requires ``sign="constrained"``.
+    ``rank`` bounds native certification of the fixed projection design for
+    implicit cotangents and supplies the conic row-presolve rank cutoff.
     """
 
     __strict_contract__ = True
@@ -195,7 +198,9 @@ class MeshfreeMetricCorrectionPolicy(StrictModule):
             case unknown:
                 assert_never(unknown)
         rank_ = (
-            SVDSolvePolicy(DenseSVD(), rank=RankPolicy(relative_cutoff=1e-12))
+            SVDSolvePolicy(
+                DenseSVD(algorithm="qr"), rank=RankPolicy(relative_cutoff=1e-12)
+            )
             if rank is None
             else rank
         )
@@ -590,6 +595,7 @@ def _prepare_projector(
     identifier: str,
     tolerance: float,
     maximum_steps: int,
+    rank: SVDSolvePolicy | None,
     /,
 ) -> _MinimumNormProjector:
     """Equilibrated ``E C S`` and its prepared native minimum-norm solve."""
@@ -618,8 +624,16 @@ def _prepare_projector(
         derivative_solve=LinearDerivativeSolvePolicy(maximum_steps=maximum_steps),
         failure=FailurePolicy("status"),
     )
+    # Cotangents can lie outside range(B*); their pseudoinverse action needs
+    # independent retained-spectrum evidence, not Krylov stationarity alone.
+    certificate = None if rank is None else certify_rectangular_rank(operator, rank)
     prepared = prepare(
-        MinimumNormProblem(operator, problem_id=f"{identifier}:minimum-norm"), policy
+        MinimumNormProblem(
+            operator,
+            problem_id=f"{identifier}:minimum-norm",
+            rank_certificate=certificate,
+        ),
+        policy,
     )
     return _MinimumNormProjector(
         design, jnp.asarray(root), jnp.asarray(equilibration), prepared
@@ -715,6 +729,7 @@ class MeshfreeMetricCorrectionPlan(StrictModule):
             identifier,
             policy.tolerance,
             policy.maximum_steps,
+            policy.rank,
         )
         scaling = np.asarray(system.row_scaling)
         normalized = values / scaling[rows]
@@ -1224,6 +1239,7 @@ class MeshfreeEdgeFluxCorrectionPlan(StrictModule):
             identifier,
             float(tolerance),
             maximum_steps,
+            None,
         )
         self.tolerance = float(tolerance)
 
