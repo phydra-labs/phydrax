@@ -129,7 +129,197 @@ def _gate(record: dict[str, Any], path: str) -> dict[str, Any]:
     return value
 
 
+def _nested_route_rows(rows: list[dict[str, Any]], path: str) -> list[dict[str, Any]]:
+    """Retain shared workload controls, overriding only recorded route evidence."""
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        route = _value(row, path)
+        if not isinstance(route, dict):
+            raise ValueError(f"{path!r} must contain route evidence.")
+        result.append({**row, **route})
+    return result
+
+
+def _fitting_case(
+    name: str,
+    rows: list[dict[str, Any]],
+    paired: list[dict[str, Any]],
+    capacity: str = "capacity",
+    *,
+    require_equal: bool = True,
+) -> Case:
+    """Check same-run fitting evidence separately from above-budget adoption."""
+    capacities, values = _series(rows, capacity, "compiler.temporary_bytes")
+    old_capacities, old = _series(paired, capacity, "compiler.temporary_bytes")
+    if capacities != old_capacities:
+        raise ValueError(f"Fitting capacities do not match {name}.")
+    _match_controls(rows, paired)
+    if require_equal and values != old:
+        raise ValueError(f"Below-budget compiler equality disagrees for {name}.")
+    return Case(
+        f"fitting/{name}",
+        rows,
+        capacity,
+        disposition="evidence-only",
+        acceptance={
+            "accepted": True,
+            "comparison_policy": (
+                "compiler-equality" if require_equal else "single-tile-route"
+            ),
+            "capacities": capacities,
+            "default_temporary_bytes": values,
+            "dense_temporary_bytes": old,
+        },
+    )
+
+
+def _budget_simple(record: dict[str, Any], family: str) -> list[Case]:
+    rows = _rows(record, "cases")
+    if family in ("geometry_interface", "graph_queries"):
+        gate_rows = _rows(record, "gate_cases")
+        case = Case(
+            "main",
+            _nested_route_rows(gate_rows, "default"),
+            gate=_gate(record, "gate"),
+            paired=_nested_route_rows(gate_rows, "explicit_full_tile"),
+            maximum_ratio=1.25 if family == "geometry_interface" else None,
+        )
+        if family == "geometry_interface":
+            sources = _value(record, "configuration.sources")
+            budget = _value(record, "configuration.interface_workspace_bytes")
+            for row in rows:
+                source_tile, target_tile = row["executed_tiles"]
+                if row["logical_pair_tile_bytes"] != 8 * source_tile * target_tile:
+                    raise ValueError(
+                        "Interface logical tile bytes disagree with executed tiles."
+                    )
+                if source_tile != sources or target_tile != min(
+                    row["capacity"], max(1, budget // (8 * sources))
+                ):
+                    raise ValueError(
+                        "Interface executed tiles disagree with the default budget."
+                    )
+            fitting = [
+                row for row in rows if row["executed_tiles"] == [sources, row["capacity"]]
+            ]
+            paired = _nested_route_rows(fitting, "paired_baseline")
+            logical = "logical_pair_tile_bytes"
+        else:
+            for row in rows:
+                source_tile, target_tile = (
+                    row["source_chunk_size"],
+                    row["target_chunk_size"],
+                )
+                logical_bytes = target_tile * (
+                    source_tile * 29 + row["neighbor_count"] * 24
+                )
+                if row["logical_block_pair_bytes"] != logical_bytes:
+                    raise ValueError(
+                        "Graph logical tile bytes disagree with the query formula."
+                    )
+            fitting = [
+                row
+                for row in rows
+                if row["source_chunk_size"] == row["capacity"]
+                and row["target_chunk_size"] == row["capacity"]
+            ]
+            paired = _nested_route_rows(fitting, "whole_axis")
+            logical = "logical_block_pair_bytes"
+        return [
+            case,
+            Case("runtime/main", rows, metric=logical, disposition="evidence-only"),
+            _fitting_case("main", fitting, paired),
+        ]
+
+    capacity = "time_count" if family == "ringdown" else "capacity"
+    nested = "full_response" if family == "ringdown" else "parallel"
+    logical = (
+        "logical_response_bytes"
+        if family == "ringdown"
+        else "logical_frequency_transition_workspace_bytes"
+    )
+    fitting: list[dict[str, Any]] = []
+    above: list[dict[str, Any]] = []
+    for row in rows:
+        count = row[capacity]
+        if family == "ringdown":
+            full_bytes = _value(row, f"{nested}.{logical}")
+            per_item = 16 * row["mode_count"] ** 3
+            if full_bytes != per_item * count:
+                raise ValueError(
+                    "Ringdown full response disagrees with the complex128 mode formula."
+                )
+            budget = _value(record, "configuration.response_workspace_bytes")
+            requested = _value(record, "configuration.time_chunk_size")
+            chunk_field, route_field = "time_chunk_size", "execution"
+            route_names = ("vmap", "lax.map")
+        else:
+            per_item = (
+                16
+                * _value(record, "configuration.k_count")
+                * _value(record, "configuration.bands") ** 2
+                * _value(record, "configuration.dimension") ** 2
+            )
+            budget = _value(record, "configuration.frequency_workspace_bytes")
+            requested = _value(record, "configuration.frequency_chunk_size")
+            chunk_field, route_field = "frequency_chunk_size", "frequency_execution"
+            route_names = ("parallel", "chunked")
+        chunk = min(count, max(1, budget // per_item) if requested is None else requested)
+        if (
+            row[chunk_field] != chunk
+            or row[logical] != chunk * per_item
+            or row[route_field] != route_names[0 if chunk == count else 1]
+        ):
+            raise ValueError(
+                f"Declared budget route or logical workspace disagrees for {family}."
+            )
+        (fitting if chunk == count else above).append(row)
+    runtime = Case(
+        "runtime/main",
+        rows,
+        capacity,
+        logical,
+        maximum_ratio=2.25 if family == "ringdown" else None,
+        metrics={"compiler.temporary_bytes": None},
+        disposition="evidence-only",
+    )
+    cases = [
+        runtime,
+        _fitting_case("main", fitting, _nested_route_rows(fitting, nested), capacity),
+    ]
+    if above:
+        case = Case(
+            "main",
+            above,
+            capacity,
+            gate=_gate(record, "gate"),
+            paired=_nested_route_rows(above, nested),
+            maximum_ratio=2.25 if family == "ringdown" else None,
+            metrics={logical: 0.0},
+        )
+        if family == "periodic_kubo":
+            capacities, temporary = _series(above, capacity, case.metric)
+            _, workspace = _series(above, capacity, logical)
+            compiler_exponent = fitted_scaling_exponent(capacities, temporary)
+            logical_exponent = fitted_scaling_exponent(capacities, workspace)
+            declared = _value(record, "scaling.declared_logical_exponent")
+            bound = _value(record, "scaling.declared_compiler_exponent_upper_bound")
+            case.acceptance = {
+                "accepted": abs(logical_exponent - declared) <= 0.1
+                and compiler_exponent <= bound,
+                "logical_exponent": logical_exponent,
+                "declared_logical_exponent": declared,
+                "compiler_exponent": compiler_exponent,
+                "maximum_compiler_exponent": bound,
+                "maximum_logical_exponent_defect": 0.1,
+            }
+        cases.append(case)
+    return cases
+
+
 def _simple(record: dict[str, Any], family: str) -> list[Case]:
+    if family in ("ringdown", "geometry_interface", "graph_queries", "periodic_kubo"):
+        return _budget_simple(record, family)
     # Capacity, owned workspace, and dimensionless envelopes are driver contracts,
     # not machine-specific portable byte ceilings.
     specifications = {
@@ -139,22 +329,6 @@ def _simple(record: dict[str, Any], family: str) -> list[Case]:
         "phase_field_defects": ("cases", "count", "logical_workspace_bytes", 1.0, None),
         "csr": ("rows", "capacity", "row_workspace_bytes", 1.0, None),
         "csr_capacity": ("rows", "capacity", "row_workspace_bytes", 1.0, None),
-        "ringdown": ("cases", "time_count", "logical_response_bytes", 0.0, "gate"),
-        "geometry_interface": (
-            "cases",
-            "capacity",
-            "logical_pair_tile_bytes",
-            0.0,
-            "gate",
-        ),
-        "graph_queries": ("cases", "capacity", "compiler.temporary_bytes", None, "gate"),
-        "periodic_kubo": (
-            "cases",
-            "capacity",
-            "logical_frequency_transition_workspace_bytes",
-            0.0,
-            "gate",
-        ),
         "linalg_solves": ("cases", "rhs_count", "compiler.temporary_bytes", None, "gate"),
         "linalg_spectral": ("cases", "probes", "compiler.temporary_bytes", None, "gate"),
         "kernel_correction": (
@@ -194,46 +368,10 @@ def _simple(record: dict[str, Any], family: str) -> list[Case]:
         "compiler" in row and row["compiler"] is not None for row in rows
     ):
         case.metrics["compiler.temporary_bytes"] = None
-    if family == "ringdown":
-        case.maximum_ratio = 2.25
-        case.metrics["compiler.temporary_bytes"] = None
-    if family == "geometry_interface":
-        case.maximum_ratio = 1.25
-    if family == "periodic_kubo":
-        case.maximum_exponent = None
-        logical_exponent = fitted_scaling_exponent(
-            [row["capacity"] for row in rows], [row[metric] for row in rows]
-        )
-        compiler_exponent = fitted_scaling_exponent(
-            [row["capacity"] for row in rows],
-            [row["compiler"]["temporary_bytes"] for row in rows],
-        )
-        declared = _value(record, "scaling.declared_logical_exponent")
-        bound = _value(record, "scaling.declared_compiler_exponent_upper_bound")
-        if not math.isfinite(declared) or not math.isfinite(bound):
-            raise ValueError("Kubo scaling declarations must be finite.")
-        case.acceptance = {
-            "accepted": abs(logical_exponent - declared) <= 0.1
-            and compiler_exponent <= bound,
-            "logical_exponent": logical_exponent,
-            "declared_logical_exponent": declared,
-            "compiler_exponent": compiler_exponent,
-            "maximum_compiler_exponent": bound,
-            "maximum_logical_exponent_defect": 0.1,
-        }
     if family in ("csr", "csr_capacity", "phase_field_defects"):
         case.metrics["retained_bytes"] = None
     if family == "structured_transfer":
         case.metrics["host_peak_bytes"] = None
-    if family == "graph_queries":
-        case.metrics.update(
-            {
-                "host_graph_peak_bytes": None,
-                "host_join_peak_bytes": None,
-                "host_radius_query_peak_bytes": None,
-                "logical_block_pair_bytes": None,
-            }
-        )
     if family == "reactor_diffusion":
         case.metrics["host_peak_bytes"] = None
         for row in rows:
@@ -329,22 +467,54 @@ def _named_cases(record: dict[str, Any], family: str) -> list[Case]:
                     ]
             cases.append(case)
     elif family == "astrodynamics_pairs":
-        for (route, steps), rows in _groups(
-            _rows(record, "rows"), ("route", "steps")
-        ).items():
-            if route not in ("near", "direct") or (steps and route != "near"):
-                raise ValueError("Unsupported astrodynamics case.")
-            if steps:
-                continue
+        above = _groups(_rows(record, "above_budget_rows"), ("route",))
+        parallel = _groups(_rows(record, "parallel_comparison_rows"), ("route",))
+        fitting = _groups(
+            [row for row in _rows(record, "rows") if row["steps"] == 0], ("route",)
+        )
+        fitting_parallel = _groups(
+            _rows(record, "fitting_parallel_comparison_rows"), ("route",)
+        )
+        expected = {("direct",), ("near",)}
+        if any(
+            set(groups) != expected
+            for groups in (above, parallel, fitting, fitting_parallel)
+        ):
+            raise ValueError("Unsupported astrodynamics route identity.")
+        for groups, full_tile in (
+            (above, False),
+            (parallel, True),
+            (fitting, False),
+            (fitting_parallel, True),
+        ):
+            for rows in groups.values():
+                for row in rows:
+                    count = row["capacity"]
+                    tile = (
+                        count
+                        if full_tile
+                        else max(
+                            1, min(count, row["pair_workspace_bytes"] // (48 * count))
+                        )
+                    )
+                    if (
+                        row["steps"] != 0
+                        or row["logical_pair_workspace_bytes"] != 48 * count * tile
+                    ):
+                        raise ValueError(
+                            "Astrodynamics logical pair workspace disagrees with its budget."
+                        )
+        for (route,), rows in above.items():
             cases.append(
                 Case(
                     route,
                     rows,
-                    metric="logical_pair_workspace_bytes",
-                    maximum_exponent=1.0,
                     gate=_gate(record, f"gates.{route}"),
+                    paired=parallel[route,],
+                    metrics={"logical_pair_workspace_bytes": None},
                 )
             )
+            cases.append(_fitting_case(route, fitting[route,], fitting_parallel[route,]))
     elif family == "operator_workspace":
         if set(_value(record, "cases")) != {"D10", "D11", "D12", "D13"}:
             raise ValueError("Unsupported operator workspace identity.")
@@ -385,20 +555,222 @@ def _named_cases(record: dict[str, Any], family: str) -> list[Case]:
     return cases
 
 
-def _paired_cases(record: dict[str, Any], family: str) -> list[Case]:
+def _budget_gp(record: dict[str, Any]) -> list[Case]:
+    rows = _rows(record, "records")
     cases: list[Case] = []
-    if family in ("process_compression", "transport_attention"):
+    default_budget = _value(record, "default_workspace_bytes")
+    for family, name, width in (
+        ("lanczos", "main", 1),
+        ("variational", "variational", 4),
+    ):
+        routes = {
+            route: _nested_route_rows(rows, f"{family}.{route}")
+            for route in ("dense", "default_policy", "restricted_budget")
+        }
+        for route, evidence in routes.items():
+            for row in evidence:
+                per_row = (row["n"] + width) * 8
+                budget = row["workspace_budget_bytes"]
+                expected_budget = (
+                    None
+                    if route == "dense"
+                    else default_budget
+                    if route == "default_policy"
+                    else per_row
+                )
+                batch = (
+                    row["n"]
+                    if budget is None
+                    else min(row["n"], max(1, budget // per_row))
+                )
+                if budget != expected_budget or row["row_batch_size"] != batch:
+                    raise ValueError(
+                        f"GP {family}/{route} row_batch_size disagrees with the workspace formula."
+                    )
+            cases.append(
+                Case(
+                    f"routes/{family}/{route}",
+                    evidence,
+                    "n",
+                    disposition="reference-only" if route == "dense" else "evidence-only",
+                )
+            )
+        default, dense = routes["default_policy"], routes["dense"]
+        fitting = [row for row in default if row["row_batch_size"] == row["n"]]
+        fitting_dense = [
+            row for row in dense if row["n"] in {entry["n"] for entry in fitting}
+        ]
+        for current, old in zip(fitting, fitting_dense):
+            if _value(current, "compiler.output_bytes") != _value(
+                old, "compiler.output_bytes"
+            ) or current.get("retained_bytes") != old.get("retained_bytes"):
+                raise ValueError(f"GP {family} single-tile output storage differs.")
+        cases.append(
+            _fitting_case(
+                name, fitting, fitting_dense, "n", require_equal=family == "variational"
+            )
+        )
+        above = [row for row in default if row["row_batch_size"] < row["n"]]
+        if any(not row["compile_only"] for row in above):
+            raise ValueError(
+                "GP adoption evidence must use the declared compile-only cohort."
+            )
+        paired = [row for row in dense if row["n"] in {entry["n"] for entry in above}]
+        cases.append(
+            Case(
+                name,
+                above,
+                "n",
+                gate=_gate(record, "gate" if family == "lanczos" else "variational_gate"),
+                paired=paired,
+            )
+        )
+    return cases
+
+
+def _budget_transport(record: dict[str, Any]) -> list[Case]:
+    groups = _groups(_rows(record, "cases"), ("family", "requested_route"))
+    expected = {
+        (family, route)
+        for family in ("attention", "balanced", "unbalanced")
+        for route in ("dense", "default")
+    }
+    if set(groups) != expected:
+        raise ValueError("Unsupported transport requested-route identity.")
+    cases: list[Case] = []
+    for family in ("attention", "balanced", "unbalanced"):
+        default, dense = groups[family, "default"], groups[family, "dense"]
+        budget_field = (
+            "attention_workspace_bytes"
+            if family == "attention"
+            else "sinkhorn_workspace_bytes"
+        )
+        for route, rows in (("default", default), ("dense", dense)):
+            for row in rows:
+                full_bytes = (
+                    (16 if family == "attention" else 32)
+                    * row["query_count"]
+                    * row["capacity"]
+                )
+                budget = row[budget_field]
+                above = full_bytes > budget
+                if (
+                    row["full_pair_workspace_bytes"] != full_bytes
+                    or row["above_budget"] != above
+                ):
+                    raise ValueError(
+                        f"Transport {family} above-budget classification disagrees."
+                    )
+                tile = (
+                    max(1, budget // (16 * row["query_count"]))
+                    if family == "attention"
+                    else max(1, budget // (32 * max(row["query_count"], row["capacity"])))
+                )
+                blocked = route == "default" and above
+                logical_bytes = (
+                    (
+                        16 * row["query_count"] * tile
+                        if family == "attention"
+                        else 32 * tile**2
+                    )
+                    if blocked
+                    else full_bytes
+                )
+                if (
+                    row["route"] != ("blockwise" if blocked else "dense")
+                    or row["block_size"] != (tile if blocked else None)
+                    or row["logical_pair_workspace_bytes"] != logical_bytes
+                ):
+                    raise ValueError(
+                        f"Transport {family} automatic tile disagrees with its budget."
+                    )
+            cases.append(
+                Case(
+                    f"routes/{family}/{route}",
+                    rows,
+                    metrics={"logical_pair_workspace_bytes": None},
+                    disposition="reference-only" if route == "dense" else "evidence-only",
+                )
+            )
+        fitting = [row for row in default if not row["above_budget"]]
+        fitting_dense = [row for row in dense if not row["above_budget"]]
+        for current, old in zip(fitting, fitting_dense):
+            if current["output_bytes"] != old["output_bytes"] or current.get(
+                "checksum"
+            ) != old.get("checksum"):
+                raise ValueError(f"Transport {family} full-fit output evidence differs.")
+        cases.append(_fitting_case(family, fitting, fitting_dense))
+        above = [row for row in default if row["above_budget"] and row["compile_only"]]
+        paired = [row for row in dense if row["above_budget"] and row["compile_only"]]
+        declared_capacities = _value(record, f"gates.{family}.capacities")
+        if [row["capacity"] for row in above] != declared_capacities:
+            raise ValueError(f"Transport {family} gate capacities disagree.")
+        cases.append(
+            Case(
+                family,
+                above,
+                gate=_gate(record, f"gates.{family}.memory"),
+                paired=paired,
+                metrics={"logical_pair_workspace_bytes": None},
+            )
+        )
+    return cases
+
+
+def _budget_mac(record: dict[str, Any]) -> list[Case]:
+    groups = _groups(_rows(record, "cases"), ("route",))
+    if set(groups) != {("auto",), ("dense-svd",), ("block-banded",)}:
+        raise ValueError("Unsupported MAC requested-route identity.")
+    for (route,), rows in groups.items():
+        for row in rows:
+            above = row["dense_workspace_required_bytes"] > row["dense_workspace_bytes"]
+            resolved = (
+                ("block-banded" if above else "dense-svd") if route == "auto" else route
+            )
+            if row["resolved_route"] != resolved or row["gate_case"] != above:
+                raise ValueError(
+                    "MAC auto resolved_route or gate cohort disagrees with its budget."
+                )
+    auto, dense = groups["auto",], groups["dense-svd",]
+    fitting = [row for row in auto if not row["gate_case"]]
+    fitting_dense = [row for row in dense if not row["gate_case"]]
+    above = [row for row in auto if row["gate_case"]]
+    paired = [row for row in dense if row["gate_case"]]
+    cases = [
+        _fitting_case("auto", fitting, fitting_dense),
+        Case(
+            "auto-above-budget",
+            above,
+            gate=_gate(record, "memory_gate"),
+            paired=paired,
+            metrics={"logical_design_bytes": None},
+        ),
+        Case("reference/dense-svd-above-budget", paired, disposition="reference-only"),
+    ]
+    for (route,), rows in groups.items():
+        small = [row for row in rows if not row["gate_case"]]
+        cases.append(
+            Case(
+                f"routes/{route}",
+                small,
+                metrics={"logical_design_bytes": None},
+                disposition="evidence-only" if route == "auto" else "reference-only",
+            )
+        )
+    return cases
+
+
+def _paired_cases(record: dict[str, Any], family: str) -> list[Case]:
+    if family == "transport_attention":
+        return _budget_transport(record)
+    if family == "gp_actions":
+        return _budget_gp(record)
+    cases: list[Case] = []
+    if family == "process_compression":
         identities = {
-            "process_compression": {
-                "projection": ("selector", "production"),
-                "contract": ("kronecker", "production"),
-            },
-            "transport_attention": {
-                "attention": ("dense", "blockwise"),
-                "balanced": ("dense", "blockwise"),
-                "unbalanced": ("dense", "blockwise"),
-            },
-        }[family]
+            "projection": ("selector", "production"),
+            "contract": ("kronecker", "production"),
+        }
         groups = _groups(_rows(record, "cases"), ("family", "route"))
         expected = {
             (name, route) for name, routes in identities.items() for route in routes
@@ -406,17 +778,12 @@ def _paired_cases(record: dict[str, Any], family: str) -> list[Case]:
         if set(groups) != expected:
             raise ValueError(f"Unsupported {family} route identity.")
         for name, (old, new) in identities.items():
-            path = (
-                f"comparisons.{name}.memory"
-                if family == "process_compression"
-                else f"gates.{name}.memory"
-            )
-            metrics = {"compiler.temporary_bytes": None}
-            metrics.update(
-                {"logical_selector_bytes": 0.0, "logical_expanded_local_bytes": 0.0}
-                if family == "process_compression"
-                else {"logical_pair_workspace_bytes": 0.0, "retained_input_bytes": None}
-            )
+            path = f"comparisons.{name}.memory"
+            metrics = {
+                "compiler.temporary_bytes": None,
+                "logical_selector_bytes": 0.0,
+                "logical_expanded_local_bytes": 0.0,
+            }
             cases.append(
                 Case(
                     name,
@@ -448,28 +815,6 @@ def _paired_cases(record: dict[str, Any], family: str) -> list[Case]:
                 metric="retained_pair_bytes",
                 maximum_exponent=0.0,
                 metrics={"peak_bytes": None},
-            )
-        )
-    elif family == "gp_actions":
-        rows = _rows(record, "records")
-        cases.append(
-            Case(
-                "main",
-                rows,
-                "n",
-                gate=_gate(record, "gate"),
-                metrics={"logical_workspace_bytes": 1.0, "retained_bytes": None},
-            )
-        )
-        cases.append(
-            Case(
-                "variational",
-                rows,
-                "n",
-                "variational.bounded.compiler.temporary_bytes",
-                gate=_gate(record, "variational_gate"),
-                paired=rows,
-                paired_metric="variational.dense.compiler.temporary_bytes",
             )
         )
     elif family == "optim_interior_point":
@@ -804,7 +1149,9 @@ def _extension_cases(record: dict[str, Any], family: str) -> list[Case]:
                     "reference-only" if route == "dense-associative" else "unconditional"
                 )
             cases.append(case)
-    elif family in ("mac_shadowing", "mac_shadowing_large"):
+    elif family == "mac_shadowing":
+        return _budget_mac(record)
+    elif family == "mac_shadowing_large":
         for (route,), rows in _groups(_rows(record, "cases"), ("route",)).items():
             if route not in ("block-banded", "dense-svd", "baseline"):
                 raise ValueError("Unsupported MAC shadowing route.")
@@ -1123,6 +1470,16 @@ def _match_controls(
         "sample_count",
         "groups",
         "products",
+        "query_count",
+        "pair_workspace_bytes",
+        "query_workspace_bytes",
+        "full_pair_workspace_bytes",
+        "sinkhorn_workspace_bytes",
+        "attention_workspace_bytes",
+        "frequency_workspace_bytes",
+        "response_workspace_bytes",
+        "dense_workspace_bytes",
+        "dense_workspace_required_bytes",
     )
     for current, old in zip(candidate, baseline):
         for key in controls:
@@ -1482,6 +1839,13 @@ def build_summary(directory: Path, *, output: Path | None = None) -> dict[str, A
         baseline_path = path.with_name(baseline_name)
         baseline = _load(baseline_path) if baseline_path.exists() else None
         comparable = baseline is not None and _environment(baseline) == environment
+        uses_historical_baseline = baseline is not None and any(
+            case.gate is not None
+            and case.paired is None
+            or case.gate is None
+            and _unconditional_baseline(baseline, family, case) is not None
+            for case in cases
+        )
         summary: dict[str, Any] = {
             "record": path.name,
             "environment_fingerprint": environment,
@@ -1502,14 +1866,18 @@ def build_summary(directory: Path, *, output: Path | None = None) -> dict[str, A
                     ),
                 }
             )
-            if comparable and not baseline_identity:
+            if not uses_historical_baseline:
+                summary["historical_baseline_scope"] = "informational-only"
+            if comparable and uses_historical_baseline and not baseline_identity:
                 comparable = False
                 summary["disposition"] = "baseline-identity-missing"
                 summary["reason"] = (
                     "Baseline has no driver/evidence identity; not compared."
                 )
-            elif comparable and _evidence_identity(identity) != _evidence_identity(
-                baseline_identity
+            elif (
+                comparable
+                and uses_historical_baseline
+                and _evidence_identity(identity) != _evidence_identity(baseline_identity)
             ):
                 extensions = {
                     "fem_assembly": {"compiler_route", "requested_tensor_families"},
@@ -1543,14 +1911,14 @@ def build_summary(directory: Path, *, output: Path | None = None) -> dict[str, A
                         f"Baseline evidence identity mismatch in {path.name}."
                     )
                 summary["evidence_extension_fields"] = sorted(extra)
-            if comparable:
+            if comparable and uses_historical_baseline:
                 _match_configuration(record, baseline, family)
         summary["cases"] = [
             _summarize_case(case, baseline, family, comparable)
             for case in sorted(cases, key=lambda case: case.name)
         ]
         if family == "geometry_interface" and "decision" in record:
-            main_case = summary["cases"][0]
+            main_case = next(case for case in summary["cases"] if case["case"] == "main")
             if (
                 main_case["disposition"] != "not-compared"
                 and record["decision"] != main_case["disposition"]

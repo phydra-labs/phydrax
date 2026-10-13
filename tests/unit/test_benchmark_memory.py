@@ -540,3 +540,328 @@ def test_memory_summary_checks_reactor_stencil_without_false_power_bound(
     (tmp_path / filename).write_text(json.dumps(candidate), encoding="utf-8")
     with pytest.raises(ValueError, match="sparse capacity"):
         build_summary(tmp_path)
+
+
+def _source_memory_summary(
+    tmp_path: Path, family: str, record: dict[str, Any]
+) -> dict[str, Any]:
+    (tmp_path / f"memory_{family}.json").write_text(json.dumps(record), encoding="utf-8")
+    return build_summary(tmp_path)["records"][0]
+
+
+@pytest.mark.parametrize(
+    ("family", "case_name", "capacities", "gate_path"),
+    [
+        ("astrodynamics_pairs", "direct", [1024, 2048, 4096], ("gates", "direct")),
+        ("astrodynamics_pairs", "near", [1024, 2048, 4096], ("gates", "near")),
+        ("geometry_interface", "main", [8192, 16384], ("gate",)),
+        ("graph_queries", "main", [1024, 2048], ("gate",)),
+        ("gp_actions", "main", [4096, 8192], ("gate",)),
+        ("gp_actions", "variational", [4096, 8192], ("variational_gate",)),
+        ("mac_shadowing", "auto-above-budget", [128, 192], ("memory_gate",)),
+        ("periodic_kubo", "main", [2048, 4096], ("gate",)),
+        ("ringdown", "main", [32, 64, 128, 256, 512], ("gate",)),
+        (
+            "transport_attention",
+            "attention",
+            [8192, 16384, 32768, 65536],
+            ("gates", "attention", "memory"),
+        ),
+        (
+            "transport_attention",
+            "balanced",
+            [32768, 65536],
+            ("gates", "balanced", "memory"),
+        ),
+        (
+            "transport_attention",
+            "unbalanced",
+            [32768, 65536],
+            ("gates", "unbalanced", "memory"),
+        ),
+    ],
+)
+def test_memory_summary_uses_tuned_same_run_above_budget_gates(
+    tmp_path: Path,
+    family: str,
+    case_name: str,
+    capacities: list[int],
+    gate_path: tuple[str, ...],
+) -> None:
+    record = _committed_memory_record(f"memory_{family}.json")
+    declared = record
+    for key in gate_path:
+        declared = declared[key]
+
+    entry = _source_memory_summary(tmp_path, family, record)
+    case = next(case for case in entry["cases"] if case["case"] == case_name)
+
+    assert case["capacities"] == capacities
+    assert case["comparison_scope"] == "same-record-paired"
+    assert case["disposition"] == declared["decision"] == "adopt"
+    for key in (
+        "capacity",
+        "baseline_bytes",
+        "candidate_bytes",
+        "maximum_candidate_fraction",
+        "decision",
+    ):
+        assert case["gate"][key] == declared[key]
+    assert case["gate"]["capacity"] == capacities[-1]
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "astrodynamics_pairs",
+        "geometry_interface",
+        "graph_queries",
+        "mac_shadowing",
+        "periodic_kubo",
+        "ringdown",
+        "transport_attention",
+    ],
+)
+def test_memory_summary_accepts_below_budget_equality_as_evidence_not_adoption(
+    tmp_path: Path, family: str
+) -> None:
+    entry = _source_memory_summary(
+        tmp_path, family, _committed_memory_record(f"memory_{family}.json")
+    )
+    fitting = [case for case in entry["cases"] if case["case"].startswith("fitting/")]
+
+    assert fitting
+    assert all(case["scaling_acceptance"]["accepted"] for case in fitting)
+    assert all("gate" not in case for case in fitting)
+    assert all(case["disposition"] != "adopt" for case in fitting)
+
+
+@pytest.mark.parametrize(
+    ("family", "path"),
+    [
+        ("astrodynamics_pairs", ("gates", "direct")),
+        ("geometry_interface", ("gate",)),
+        ("graph_queries", ("gate",)),
+        ("gp_actions", ("gate",)),
+        ("gp_actions", ("variational_gate",)),
+        ("mac_shadowing", ("memory_gate",)),
+        ("periodic_kubo", ("gate",)),
+        ("ringdown", ("gate",)),
+        ("transport_attention", ("gates", "balanced", "memory")),
+    ],
+)
+@pytest.mark.parametrize("field", ["capacity", "baseline_bytes", "candidate_bytes"])
+def test_memory_summary_rejects_tuned_gate_byte_and_capacity_mismatches(
+    tmp_path: Path, family: str, path: tuple[str, ...], field: str
+) -> None:
+    record = _committed_memory_record(f"memory_{family}.json")
+    declared = record
+    for key in path:
+        declared = declared[key]
+    declared[field] += 1
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, family, record)
+
+
+@pytest.mark.parametrize(
+    ("family", "path"),
+    [
+        (
+            "astrodynamics_pairs",
+            ("fitting_parallel_comparison_rows", 0, "compiler", "temporary_bytes"),
+        ),
+        (
+            "geometry_interface",
+            ("cases", 0, "paired_baseline", "compiler", "temporary_bytes"),
+        ),
+        ("graph_queries", ("cases", 0, "whole_axis", "compiler", "temporary_bytes")),
+        ("mac_shadowing", ("cases", 2, "compiler", "temporary_bytes")),
+        ("periodic_kubo", ("cases", 0, "parallel", "compiler", "temporary_bytes")),
+        ("ringdown", ("cases", 0, "full_response", "compiler", "temporary_bytes")),
+        ("transport_attention", ("cases", 3, "compiler", "temporary_bytes")),
+    ],
+)
+def test_memory_summary_recomputes_below_budget_equality_from_source_bytes(
+    tmp_path: Path, family: str, path: tuple[str | int, ...]
+) -> None:
+    record = _committed_memory_record(f"memory_{family}.json")
+    observed: Any = record
+    for key in path[:-1]:
+        observed = observed[key]
+    # Leave any recorded equality flag unchanged: the actual pair must agree.
+    observed[path[-1]] += 1
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, family, record)
+
+
+def test_memory_summary_groups_transport_by_requested_default_and_budget(
+    tmp_path: Path,
+) -> None:
+    record = _committed_memory_record("memory_transport_attention.json")
+    entry = _source_memory_summary(tmp_path, "transport_attention", record)
+    gates = {case["case"]: case for case in entry["cases"] if "gate" in case}
+
+    assert set(gates) == {"attention", "balanced", "unbalanced"}
+    assert gates["attention"]["capacities"] == [8192, 16384, 32768, 65536]
+    for family in ("balanced", "unbalanced"):
+        rows = [
+            row
+            for row in record["cases"]
+            if row["family"] == family
+            and row["requested_route"] == "default"
+            and row["above_budget"]
+        ]
+        # The automatic block changes with capacity; it is not a new workload.
+        assert [row["block_size"] for row in rows] == [128, 64]
+        assert gates[family]["capacities"] == [row["capacity"] for row in rows]
+    assert (
+        record["configuration"]["attention_workspace_bytes"]
+        != (record["configuration"]["sinkhorn_workspace_bytes"])
+    )
+
+
+@pytest.mark.parametrize("action", ["lanczos", "variational"])
+def test_memory_summary_checks_gp_nested_default_policy_resolution(
+    tmp_path: Path, action: str
+) -> None:
+    record = _committed_memory_record("memory_gp_actions.json")
+    for row in record["records"]:
+        n = row["n"]
+        expected = min(
+            n,
+            record["default_workspace_bytes"]
+            // (8 * (n + (1 if action == "lanczos" else 4))),
+        )
+        assert row[action]["default_policy"]["row_batch_size"] == expected
+    # Restricted budgets are distinct evidence, not the public default gate.
+    record["records"][-1][action]["default_policy"]["row_batch_size"] += 1
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, "gp_actions", record)
+
+
+@pytest.mark.parametrize("control", ["samples", "rank"])
+def test_memory_summary_refuses_mac_paired_scientific_control_mismatch(
+    tmp_path: Path, control: str
+) -> None:
+    record = _committed_memory_record("memory_mac_shadowing.json")
+    paired = next(
+        row for row in record["cases"] if row["gate_case"] and row["route"] == "dense-svd"
+    )
+    paired[control] += 1
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, "mac_shadowing", record)
+
+
+def test_memory_summary_refuses_transport_paired_query_count_mismatch(
+    tmp_path: Path,
+) -> None:
+    record = _committed_memory_record("memory_transport_attention.json")
+    paired = next(
+        row
+        for row in record["cases"]
+        if row["above_budget"]
+        and row["family"] == "attention"
+        and row["requested_route"] == "dense"
+    )
+    paired["query_count"] += 1
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, "transport_attention", record)
+
+
+def test_memory_summary_keeps_gp_single_tile_routes_separate_from_compiler_equality(
+    tmp_path: Path,
+) -> None:
+    record = _committed_memory_record("memory_gp_actions.json")
+    entry = _source_memory_summary(tmp_path, "gp_actions", record)
+    cases = {case["case"]: case for case in entry["cases"]}
+
+    for name in ("fitting/main", "fitting/variational"):
+        assert cases[name]["capacities"] == [128, 256, 512]
+        assert cases[name]["scaling_acceptance"]["accepted"]
+        assert "gate" not in cases[name]
+    assert (
+        cases["fitting/main"]["scaling_acceptance"]["comparison_policy"]
+        == "single-tile-route"
+    )
+    fitting = [row for row in record["records"] if not row["compile_only"]]
+    assert all(
+        row["lanczos"]["default_policy"]["row_batch_size"] == row["n"] for row in fitting
+    )
+    assert any(
+        row["lanczos"]["default_policy"]["compiler"]["temporary_bytes"]
+        != row["lanczos"]["dense"]["compiler"]["temporary_bytes"]
+        for row in fitting
+    )
+    for action, name, gate_key in (
+        ("lanczos", "main", "gate"),
+        ("variational", "variational", "variational_gate"),
+    ):
+        rows = [row for row in record["records"] if row["compile_only"]]
+        expected = compare_gate(
+            tuple(row["n"] for row in rows),
+            tuple(row[action]["dense"]["compiler"]["temporary_bytes"] for row in rows),
+            tuple(
+                row[action]["default_policy"]["compiler"]["temporary_bytes"]
+                for row in rows
+            ),
+            record[gate_key]["decision"],
+            record[gate_key]["maximum_candidate_fraction"],
+        )
+        assert cases[name]["gate"] == expected
+
+
+@pytest.mark.parametrize("gate_case", [False, True], ids=["below-budget", "above-budget"])
+def test_memory_summary_checks_mac_auto_resolved_route(
+    tmp_path: Path, gate_case: bool
+) -> None:
+    record = _committed_memory_record("memory_mac_shadowing.json")
+    row = next(
+        row
+        for row in record["cases"]
+        if row["route"] == "auto" and row["gate_case"] == gate_case
+    )
+    assert row["resolved_route"] == ("block-banded" if gate_case else "dense-svd")
+    row["resolved_route"] = "dense-svd" if gate_case else "block-banded"
+
+    with pytest.raises(ValueError):
+        _source_memory_summary(tmp_path, "mac_shadowing", record)
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "astrodynamics_pairs",
+        "geometry_interface",
+        "graph_queries",
+        "gp_actions",
+        "mac_shadowing",
+        "periodic_kubo",
+        "ringdown",
+        "transport_attention",
+    ],
+)
+def test_memory_summary_keeps_historical_baselines_informational_for_tuned_gates(
+    tmp_path: Path, family: str
+) -> None:
+    record = _committed_memory_record(f"memory_{family}.json")
+    without_baseline = _source_memory_summary(tmp_path, family, record)
+    baseline_filename = f"memory_{family}_baseline.json"
+    (tmp_path / baseline_filename).write_text(
+        json.dumps(_committed_memory_record(baseline_filename)), encoding="utf-8"
+    )
+    with_baseline = build_summary(tmp_path)["records"][0]
+    expected = {
+        case["case"]: case["gate"] for case in without_baseline["cases"] if "gate" in case
+    }
+    compared = {case["case"]: case for case in with_baseline["cases"] if "gate" in case}
+
+    assert expected
+    assert {name: case["gate"] for name, case in compared.items()} == expected
+    assert all(
+        case["comparison_scope"] == "same-record-paired" for case in compared.values()
+    )

@@ -9,6 +9,8 @@
   Integrated records now include native MPC retention, grouped interior-point
   actions, and sparse reactor preparation; missing historical baseline provenance
   stays explicitly non-compared.
+  Budget-derived defaults now gate only same-run above-budget comparisons and
+  retain separate verified fitting-route evidence.
 - Replace dense derivative intermediates in SSM invariance, ADM geometry,
   geometric/stochastic divergence, horizontal brackets, monopole diagonals,
   probabilistic ODE sensitivities, and SING support checks with exact bounded actions.

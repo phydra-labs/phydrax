@@ -112,8 +112,35 @@ Exact additive evidence fields are recognized only for the reviewed FEM
 (`compiler_route`, `requested_tensor_families`), polynomial
 (`compiler_scaling_exponent`, `declared_scaling_exponent`, `gate`), and linalg-solve
 (`auxiliary`) records; common case controls and comparison metrics must still
-match. Other evidence-identity changes fail closed. Native MPC preparation uses
+match. Other evidence-identity changes fail closed when a historical comparison
+is requested. Native MPC preparation uses
 host retained bytes rather than nonexistent compiler memory, and interior-point
 action products remain fixed while scaling problem size. Reactor preparation
 checks its exact sparse-stencil capacity formula; its reported host and retained
 fits remain observations, not an invented power-law bound on affine storage.
+
+### Budget-derived default routes
+
+Automatic defaults now have two distinct evidence cohorts. Adoption gates use
+the current-run default versus its explicit dense/full-tile reference only at
+above-budget capacities; the shared gate still decides at the largest capacity,
+not at every row. Historical baseline identities and configurations remain
+informational for these paired gates rather than being repurposed as their
+reference. Below-budget rows have separate `fitting/` dispositions and never
+count as evidence of a memory reduction.
+
+The adapters verify driver-owned tile formulas and scientific controls, preserve
+all explicit/restricted routes, and recompute declared fitting compiler equality
+from the actual paired bytes. GP Lanczos is an important exception: its recorded
+full-row default and dense routes have different compiler temporary bytes.
+`fitting/main` therefore checks single-tile row-batch/output-storage semantics
+and reports both byte series; it does not claim compiler or direct array equality.
+GP variational and the other drivers' declared fitting comparisons do enforce
+their recorded compiler-byte equality.
+
+Astrodynamics, interface, graph, GP, MAC, Kubo, ringdown, and transport/attention
+gates use their exact recorded cohorts and same-run references. Kubo fits its
+declared compiler/logical envelopes only above budget; ringdown retains the
+driver's adjacent-ratio checks across both fitting and tiled rows. Automatic
+transport block sizes and MAC resolved routes may change within one controlling
+capacity series and are not used as accidental grouping keys.
