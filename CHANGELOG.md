@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Fixed
+- Rank-deficient generalized constraints admit certified minimum-norm least-squares
+  lifts even when individual identity right-hand sides lie outside their range;
+  aggregate stationarity and all generalized-inverse certificates remain required.
+- Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
+  without changing stationarity, complex tangents, rank admission, or failure evidence.
+- Reuse prepared sparse factors across supported multi-RHS solves and evaluate
+  Cholesky determinants directly from factors, including invalid-factor evidence.
+- Bound selected-block gathering and constraint right-inverse certificates without
+  parent densification or target-space-square identity/projector buffers.
 - Path-potential refusal coverage follows the checked-signature `TypeError`
   contract for surrogate actions; only normalized stochastic actions remain
   eligible for free-energy calculations.
@@ -377,6 +386,9 @@
   before execution.
 
 ### Added
+- Native certified banded and block-banded spectral/singular-value enclosures,
+  condition bounds, and rank-threshold certificates without densification, with
+  traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
 - Shared principal-Hencky multiplicative constitutive updates, prestress
   initialization (`PrestressedMaterialState`), and `FiniteStrainConstitutiveModel`
   FEM adaptation; Drucker–Prager apex, mean-tension cutoff, and corner returns.
@@ -2629,6 +2641,18 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Fixed and adaptive stochastic spectral actions use bounded probe batches and
+  absolute-index keyed addressing. Historical keyed samples intentionally change;
+  samples are invariant to execution batch size and requested probe capacity.
+- Batched matrix-function `auto` uses actions; explicit `dense` execution requires
+  workspace admission. Resolvents solve RHS blocks directly, and repeated-spectrum
+  eigenspace derivatives use confluent divided differences.
+- `MaterializationPolicy.max_workspace_bytes` defaults to 64 MiB and participates
+  in solve, eigen, SVD, constraint, multigrid, preconditioner, convex, Galerkin, and
+  dense-local bordered identities. Existing policy-derived identities change,
+  including Anderson fixed-point method IDs that embed their linear policy.
+  Randomized SVD construction/audit sketches and default eigen start/repair draws
+  are addressed by plan identity, so their samples change with this payload.
 - PDE parameters record their value representation in the canonical problem IR;
   problem hashes and finite-difference compilation IDs change accordingly, and
   the pinned finite-difference dynamics compilation IDs are updated.
@@ -3520,6 +3544,8 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Duplicate CSR leaves in host sparse prepared state and the duplicate upper
+  Cholesky factor in nuisance plans; their persistence leaf structures change.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
   `PreparedSoftSphereDEMDynamics` are replaced by `CompliantDEMMethodPlan` and
   `PreparedCompliantDEMDynamics`. `SuperquadricDEMPlan`,

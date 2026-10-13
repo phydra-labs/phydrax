@@ -2486,7 +2486,6 @@ def _implicit_root_value(
             failure_mode=prepared.plan.policy.failure.mode,
         )
     initial = jax.lax.stop_gradient(initial)
-    block_action: Callable[[Array], Array] | None = None
     if isinstance(problem, LinearSystem):
         # The tangent solve is evaluated at the primal operator: its arrays are
         # stopped like the derivative preconditioner's, and derivatives with
@@ -2507,6 +2506,21 @@ def _implicit_root_value(
                 problem,
                 value,
                 rhs,
+            )
+
+        stopped_problem = _stop_arrays(problem)
+        stopped_prepared = _stop_arrays(prepared)
+
+        def block_action(value: Array) -> Array:
+            # Differentiate stationarity at the primal arrays, applying its
+            # normal action to one column. The projected DenseSVD root and
+            # declared damping use precisely the same residual as the primal.
+            zero_rhs = jnp.zeros(
+                value.shape[:-2] + (problem.operator.target.size, value.shape[-1]),
+                dtype=value.dtype,
+            )
+            return _least_squares_root_residual(
+                stopped_prepared, stopped_problem, value, zero_rhs
             )
 
     return _implicit_custom_root(
@@ -2876,16 +2890,14 @@ def _implicit_custom_root(
     initial: Array,
     plan: LinearSolvePlan,
     preconditioner: AbstractPreconditioner | None,
-    block_action: Callable[[Array], Array] | None,
+    block_action: Callable[[Array], Array],
     /,
 ) -> Array:
     """Implicit root derivative with independently certified column solves.
 
-    ``block_action`` applies the primal operator to any number of right-hand
-    side columns. When supplied, each derivative column applies it to its own
-    single-column block, so k columns cost k column actions; otherwise every
-    column embeds into the full linearized block, which costs k block actions
-    per column.
+    ``block_action`` applies the primal linearized root to any number of
+    columns. Each independently certified derivative solve applies it to
+    its own single-column block, so k columns require k column actions.
     """
 
     transpose_preconditioner = (
@@ -2901,12 +2913,8 @@ def _implicit_custom_root(
         return _solve_independent_columns(action, rhs, plan, preconditioner, block_action)
 
     def transpose_columns(action: Callable[[Array], Array], rhs: Array) -> Array:
-        transposed = (
-            None
-            if block_action is None
-            else _transposed_block_action(
-                block_action, jnp.zeros(rhs.shape[:-1] + (1,), dtype=rhs.dtype)
-            )
+        transposed = _transposed_block_action(
+            block_action, jnp.zeros(rhs.shape[:-1] + (1,), dtype=rhs.dtype)
         )
         return _solve_independent_columns(
             action, rhs, plan, transpose_preconditioner, transposed
@@ -2950,7 +2958,7 @@ def _solve_independent_columns(
     right_hand_side: Array,
     plan: LinearSolvePlan,
     preconditioner: AbstractPreconditioner | None,
-    block_action: Callable[[Array], Array] | None,
+    block_action: Callable[[Array], Array],
     /,
 ) -> Array:
     if right_hand_side.size == 0:
@@ -2979,18 +2987,6 @@ def _solve_independent_columns(
         column = flattened_rhs[batch_index, :, rhs_index]
 
         def vector_action(vector: Array) -> Array:
-            if block_action is None:
-                embedded = (
-                    jnp.zeros_like(flattened_rhs)
-                    .at[
-                        batch_index,
-                        :,
-                        rhs_index,
-                    ]
-                    .set(vector)
-                )
-                image = action(embedded.reshape(right_hand_side.shape))
-                return image.reshape(flattened_rhs.shape)[batch_index, :, rhs_index]
             # Columns are independent, so only the operator batch is embedded.
             single = (
                 jnp.zeros((batch_count, dimension, 1), dtype=right_hand_side.dtype)
