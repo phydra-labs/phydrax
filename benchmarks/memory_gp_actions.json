@@ -38,7 +38,7 @@
     "python_version": "3.12.8"
   },
   "gate": {
-    "baseline_bytes": 537264648,
+    "baseline_bytes": 1073807624,
     "candidate_bytes": 136250792,
     "capacity": 8192,
     "decision": "adopt",
@@ -46,7 +46,7 @@
   },
   "gate_basis": "Current-code dense versus default_policy at compile-only capacities above the default budget; below-budget records are single-tile equivalence cases.",
   "identity": {
-    "benchmark_driver_fingerprint": "7c99cc325e5d3797389a7bbce6273bed503086abe1a2ff6188d51a5709d0aa43",
+    "benchmark_driver_fingerprint": "bce49468533021d2997d2370307571f152b45afecbf4c28a153a6cebf3a76399",
     "evidence_schema": {
       "fields": [
         "compiler",
@@ -54,18 +54,18 @@
       ],
       "signature": "d1b238dab2f2e157e160069d66cd37e59b28b9968bc2c5c32a243b4b38143a5d"
     },
-    "fingerprint": "e9a92056cd5e7821559687880f924a604803086eae7c74b2ec6362b68135ff81",
-    "source_build_fingerprint": "85c80b3c4b409dbc1f4e27125ac95f22474cf8bb955152c6f00b85d8b2a603b6"
+    "fingerprint": "2ed6682ad30446f34f17060481e033585ed97c1fa8b5a0bb2697012bb87df63f",
+    "source_build_fingerprint": "54de8c3845d842b4b34b09ed0adddc1255c5555ac1d4a261ee43460581bff0de"
   },
-  "peak_rss_bytes": 1518338048,
+  "peak_rss_bytes": 1475379200,
   "records": [
     {
       "compile_only": false,
       "lanczos": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.101250375,
-            "lowering_seconds": 0.101653
+            "compilation_seconds": 0.082477333,
+            "lowering_seconds": 0.100183292
           },
           "compiler": {
             "argument_bytes": 1024,
@@ -79,15 +79,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000222459,
-            "mean_seconds": 0.000205042,
-            "median_seconds": 0.000205042,
-            "min_seconds": 0.000187625,
+            "max_seconds": 0.000113417,
+            "mean_seconds": 0.0001071045,
+            "median_seconds": 0.0001071045,
+            "min_seconds": 0.000100792,
             "samples_seconds": [
-              0.000222459,
-              0.000187625
+              0.000113417,
+              0.000100792
             ],
-            "std_seconds": 1.7417e-05
+            "std_seconds": 6.312499999999998e-06
           },
           "parity_error": 1.537871392731649e-13,
           "retained_bytes": 4096,
@@ -97,30 +97,30 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.088574917,
-            "lowering_seconds": 0.069461208
+            "compilation_seconds": 0.104617834,
+            "lowering_seconds": 0.072909375
           },
           "compiler": {
             "argument_bytes": 1024,
-            "bytes_accessed": 598937,
-            "flops": 223643,
+            "bytes_accessed": 762820,
+            "flops": 272795,
             "generated_code_bytes": 0,
             "output_bytes": 4096,
             "source": "jax",
-            "temporary_bytes": 134664,
+            "temporary_bytes": 263432,
             "unavailable_reason": null
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000119583,
-            "mean_seconds": 0.000113125,
-            "median_seconds": 0.000113125,
-            "min_seconds": 0.000106667,
+            "max_seconds": 0.000124958,
+            "mean_seconds": 0.000113229,
+            "median_seconds": 0.000113229,
+            "min_seconds": 0.0001015,
             "samples_seconds": [
-              0.000119583,
-              0.000106667
+              0.000124958,
+              0.0001015
             ],
-            "std_seconds": 6.457999999999998e-06
+            "std_seconds": 1.1728999999999996e-05
           },
           "parity_error": 1.537871392731649e-13,
           "retained_bytes": 4096,
@@ -130,8 +130,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.135577708,
-            "lowering_seconds": 0.166735792
+            "compilation_seconds": 0.105857542,
+            "lowering_seconds": 0.161269709
           },
           "compiler": {
             "argument_bytes": 1024,
@@ -145,15 +145,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000463958,
-            "mean_seconds": 0.000446333,
-            "median_seconds": 0.000446333,
-            "min_seconds": 0.000428708,
+            "max_seconds": 0.000412416,
+            "mean_seconds": 0.00041074950000000003,
+            "median_seconds": 0.00041074950000000003,
+            "min_seconds": 0.000409083,
             "samples_seconds": [
-              0.000428708,
-              0.000463958
+              0.000412416,
+              0.000409083
             ],
-            "std_seconds": 1.7625000000000008e-05
+            "std_seconds": 1.6664999999999746e-06
           },
           "parity_error": 6.142891750826607e-12,
           "retained_bytes": 4096,
@@ -166,8 +166,8 @@
       "variational": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.03135075,
-            "lowering_seconds": 0.064068458
+            "compilation_seconds": 0.026801833,
+            "lowering_seconds": 0.060198209
           },
           "compiler": {
             "argument_bytes": 5120,
@@ -181,15 +181,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000112334,
-            "mean_seconds": 0.00010056299999999999,
-            "median_seconds": 0.00010056299999999999,
-            "min_seconds": 8.8792e-05,
+            "max_seconds": 0.000101083,
+            "mean_seconds": 9.2937e-05,
+            "median_seconds": 9.2937e-05,
+            "min_seconds": 8.4791e-05,
             "samples_seconds": [
-              0.000112334,
-              8.8792e-05
+              0.000101083,
+              8.4791e-05
             ],
-            "std_seconds": 1.1771e-05
+            "std_seconds": 8.146e-06
           },
           "parity_error": 0.0,
           "retained_bytes": 4096,
@@ -199,8 +199,8 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.028052042,
-            "lowering_seconds": 0.05254275
+            "compilation_seconds": 0.027645958,
+            "lowering_seconds": 0.052843584
           },
           "compiler": {
             "argument_bytes": 5120,
@@ -214,15 +214,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000112042,
-            "mean_seconds": 0.0001018755,
-            "median_seconds": 0.0001018755,
-            "min_seconds": 9.1709e-05,
+            "max_seconds": 0.000135875,
+            "mean_seconds": 0.0001122085,
+            "median_seconds": 0.0001122085,
+            "min_seconds": 8.8542e-05,
             "samples_seconds": [
-              0.000112042,
-              9.1709e-05
+              0.000135875,
+              8.8542e-05
             ],
-            "std_seconds": 1.0166499999999998e-05
+            "std_seconds": 2.3666500000000008e-05
           },
           "parity_error": 0.0,
           "retained_bytes": 4096,
@@ -232,8 +232,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.038772917,
-            "lowering_seconds": 0.076895125
+            "compilation_seconds": 0.036552042,
+            "lowering_seconds": 0.078522292
           },
           "compiler": {
             "argument_bytes": 5120,
@@ -247,15 +247,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000185959,
-            "mean_seconds": 0.0001802505,
-            "median_seconds": 0.0001802505,
-            "min_seconds": 0.000174542,
+            "max_seconds": 0.000278125,
+            "mean_seconds": 0.000269667,
+            "median_seconds": 0.000269667,
+            "min_seconds": 0.000261209,
             "samples_seconds": [
-              0.000185959,
-              0.000174542
+              0.000261209,
+              0.000278125
             ],
-            "std_seconds": 5.708500000000001e-06
+            "std_seconds": 8.458000000000006e-06
           },
           "parity_error": 1.4210854715202004e-14,
           "retained_bytes": 4096,
@@ -270,8 +270,8 @@
       "lanczos": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.086419083,
-            "lowering_seconds": 0.113528416
+            "compilation_seconds": 0.07276625,
+            "lowering_seconds": 0.099877375
           },
           "compiler": {
             "argument_bytes": 2048,
@@ -285,15 +285,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000269792,
-            "mean_seconds": 0.00024437549999999997,
-            "median_seconds": 0.00024437549999999997,
-            "min_seconds": 0.000218959,
+            "max_seconds": 0.0002885,
+            "mean_seconds": 0.0002643125,
+            "median_seconds": 0.0002643125,
+            "min_seconds": 0.000240125,
             "samples_seconds": [
-              0.000269792,
-              0.000218959
+              0.0002885,
+              0.000240125
             ],
-            "std_seconds": 2.5416499999999996e-05
+            "std_seconds": 2.4187500000000012e-05
           },
           "parity_error": 1.4214324162153957e-13,
           "retained_bytes": 8192,
@@ -303,30 +303,30 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.073128167,
-            "lowering_seconds": 0.067356667
+            "compilation_seconds": 0.070800791,
+            "lowering_seconds": 0.070922625
           },
           "compiler": {
             "argument_bytes": 2048,
-            "bytes_accessed": 2245873,
-            "flops": 873243,
+            "bytes_accessed": 2901372,
+            "flops": 1069851,
             "generated_code_bytes": 0,
             "output_bytes": 8192,
             "source": "jax",
-            "temporary_bytes": 530952,
+            "temporary_bytes": 1050888,
             "unavailable_reason": null
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000272667,
-            "mean_seconds": 0.00023918749999999998,
-            "median_seconds": 0.00023918749999999998,
-            "min_seconds": 0.000205708,
+            "max_seconds": 0.000328041,
+            "mean_seconds": 0.0003254785,
+            "median_seconds": 0.0003254785,
+            "min_seconds": 0.000322916,
             "samples_seconds": [
-              0.000205708,
-              0.000272667
+              0.000322916,
+              0.000328041
             ],
-            "std_seconds": 3.347949999999999e-05
+            "std_seconds": 2.5624999999999877e-06
           },
           "parity_error": 1.4214324162153957e-13,
           "retained_bytes": 8192,
@@ -336,8 +336,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.106170375,
-            "lowering_seconds": 0.174298416
+            "compilation_seconds": 0.093818875,
+            "lowering_seconds": 0.158997542
           },
           "compiler": {
             "argument_bytes": 2048,
@@ -351,15 +351,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.001187916,
-            "mean_seconds": 0.0011338955,
-            "median_seconds": 0.0011338955,
-            "min_seconds": 0.001079875,
+            "max_seconds": 0.00102025,
+            "mean_seconds": 0.0010077710000000002,
+            "median_seconds": 0.0010077710000000002,
+            "min_seconds": 0.000995292,
             "samples_seconds": [
-              0.001187916,
-              0.001079875
+              0.00102025,
+              0.000995292
             ],
-            "std_seconds": 5.4020499999999955e-05
+            "std_seconds": 1.2479000000000027e-05
           },
           "parity_error": 1.5752503468302592e-11,
           "retained_bytes": 8192,
@@ -372,8 +372,8 @@
       "variational": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.034616458,
-            "lowering_seconds": 0.065355416
+            "compilation_seconds": 0.027352667,
+            "lowering_seconds": 0.0581075
           },
           "compiler": {
             "argument_bytes": 10240,
@@ -387,15 +387,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000310667,
-            "mean_seconds": 0.0002734585,
-            "median_seconds": 0.0002734585,
-            "min_seconds": 0.00023625,
+            "max_seconds": 0.000267208,
+            "mean_seconds": 0.00024612500000000003,
+            "median_seconds": 0.00024612500000000003,
+            "min_seconds": 0.000225042,
             "samples_seconds": [
-              0.000310667,
-              0.00023625
+              0.000267208,
+              0.000225042
             ],
-            "std_seconds": 3.7208499999999995e-05
+            "std_seconds": 2.1083e-05
           },
           "parity_error": 0.0,
           "retained_bytes": 8192,
@@ -405,8 +405,8 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.030929917,
-            "lowering_seconds": 0.056112791
+            "compilation_seconds": 0.027175833,
+            "lowering_seconds": 0.053699708
           },
           "compiler": {
             "argument_bytes": 10240,
@@ -420,15 +420,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000295125,
-            "mean_seconds": 0.00026125,
-            "median_seconds": 0.00026125,
-            "min_seconds": 0.000227375,
+            "max_seconds": 0.000248667,
+            "mean_seconds": 0.00023,
+            "median_seconds": 0.00023,
+            "min_seconds": 0.000211333,
             "samples_seconds": [
-              0.000295125,
-              0.000227375
+              0.000211333,
+              0.000248667
             ],
-            "std_seconds": 3.387499999999998e-05
+            "std_seconds": 1.8667000000000003e-05
           },
           "parity_error": 0.0,
           "retained_bytes": 8192,
@@ -438,8 +438,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.041024291,
-            "lowering_seconds": 0.080197833
+            "compilation_seconds": 0.037297334,
+            "lowering_seconds": 0.078167459
           },
           "compiler": {
             "argument_bytes": 10240,
@@ -453,15 +453,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000538167,
-            "mean_seconds": 0.0005324374999999999,
-            "median_seconds": 0.0005324374999999999,
-            "min_seconds": 0.000526708,
+            "max_seconds": 0.000491125,
+            "mean_seconds": 0.000489125,
+            "median_seconds": 0.000489125,
+            "min_seconds": 0.000487125,
             "samples_seconds": [
-              0.000538167,
-              0.000526708
+              0.000491125,
+              0.000487125
             ],
-            "std_seconds": 5.729500000000007e-06
+            "std_seconds": 2.0000000000000215e-06
           },
           "parity_error": 2.842170943040401e-14,
           "retained_bytes": 8192,
@@ -476,8 +476,8 @@
       "lanczos": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.080906084,
-            "lowering_seconds": 0.106864458
+            "compilation_seconds": 0.067759542,
+            "lowering_seconds": 0.096857042
           },
           "compiler": {
             "argument_bytes": 4096,
@@ -491,15 +491,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.00071525,
-            "mean_seconds": 0.000663125,
-            "median_seconds": 0.000663125,
-            "min_seconds": 0.000611,
+            "max_seconds": 0.000680042,
+            "mean_seconds": 0.000645063,
+            "median_seconds": 0.000645063,
+            "min_seconds": 0.000610084,
             "samples_seconds": [
-              0.00071525,
-              0.000611
+              0.000680042,
+              0.000610084
             ],
-            "std_seconds": 5.212499999999998e-05
+            "std_seconds": 3.497899999999998e-05
           },
           "parity_error": 1.2397721738111045e-13,
           "retained_bytes": 16384,
@@ -509,30 +509,30 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.080322,
-            "lowering_seconds": 0.083037625
+            "compilation_seconds": 0.066977416,
+            "lowering_seconds": 0.071496208
           },
           "compiler": {
             "argument_bytes": 4096,
-            "bytes_accessed": 8685473,
-            "flops": 3450395,
+            "bytes_accessed": 11307436,
+            "flops": 4236827,
             "generated_code_bytes": 0,
             "output_bytes": 16384,
             "source": "jax",
-            "temporary_bytes": 2109960,
+            "temporary_bytes": 4198664,
             "unavailable_reason": null
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000699667,
-            "mean_seconds": 0.0006245624999999999,
-            "median_seconds": 0.0006245624999999999,
-            "min_seconds": 0.000549458,
+            "max_seconds": 0.000790625,
+            "mean_seconds": 0.0007609375,
+            "median_seconds": 0.0007609375,
+            "min_seconds": 0.00073125,
             "samples_seconds": [
-              0.000699667,
-              0.000549458
+              0.000790625,
+              0.00073125
             ],
-            "std_seconds": 7.51045e-05
+            "std_seconds": 2.9687499999999983e-05
           },
           "parity_error": 1.2397721738111045e-13,
           "retained_bytes": 16384,
@@ -542,8 +542,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.1057235,
-            "lowering_seconds": 0.181046708
+            "compilation_seconds": 0.09444,
+            "lowering_seconds": 0.161909833
           },
           "compiler": {
             "argument_bytes": 4096,
@@ -557,15 +557,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.003621958,
-            "mean_seconds": 0.0033787705000000003,
-            "median_seconds": 0.0033787705000000003,
-            "min_seconds": 0.003135583,
+            "max_seconds": 0.003359208,
+            "mean_seconds": 0.0033066245,
+            "median_seconds": 0.0033066245,
+            "min_seconds": 0.003254041,
             "samples_seconds": [
-              0.003135583,
-              0.003621958
+              0.003254041,
+              0.003359208
             ],
-            "std_seconds": 0.00024318750000000013
+            "std_seconds": 5.258349999999988e-05
           },
           "parity_error": 2.0055138105767867e-12,
           "retained_bytes": 16384,
@@ -578,8 +578,8 @@
       "variational": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.030477667,
-            "lowering_seconds": 0.063879125
+            "compilation_seconds": 0.027369125,
+            "lowering_seconds": 0.057598041
           },
           "compiler": {
             "argument_bytes": 20480,
@@ -593,15 +593,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000847958,
-            "mean_seconds": 0.0006885414999999999,
-            "median_seconds": 0.0006885414999999999,
-            "min_seconds": 0.000529125,
+            "max_seconds": 0.000545917,
+            "mean_seconds": 0.0005307915,
+            "median_seconds": 0.0005307915,
+            "min_seconds": 0.000515666,
             "samples_seconds": [
-              0.000847958,
-              0.000529125
+              0.000515666,
+              0.000545917
             ],
-            "std_seconds": 0.00015941650000000001
+            "std_seconds": 1.512550000000001e-05
           },
           "parity_error": 0.0,
           "retained_bytes": 16384,
@@ -611,8 +611,8 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.026457459,
-            "lowering_seconds": 0.056231208
+            "compilation_seconds": 0.027003834,
+            "lowering_seconds": 0.053002042
           },
           "compiler": {
             "argument_bytes": 20480,
@@ -626,15 +626,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.000569,
-            "mean_seconds": 0.0005225,
-            "median_seconds": 0.0005225,
-            "min_seconds": 0.000476,
+            "max_seconds": 0.000520958,
+            "mean_seconds": 0.0005068335,
+            "median_seconds": 0.0005068335,
+            "min_seconds": 0.000492709,
             "samples_seconds": [
-              0.000569,
-              0.000476
+              0.000520958,
+              0.000492709
             ],
-            "std_seconds": 4.6499999999999965e-05
+            "std_seconds": 1.412449999999997e-05
           },
           "parity_error": 0.0,
           "retained_bytes": 16384,
@@ -644,8 +644,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.03929325,
-            "lowering_seconds": 0.085759
+            "compilation_seconds": 0.034638875,
+            "lowering_seconds": 0.078896083
           },
           "compiler": {
             "argument_bytes": 20480,
@@ -659,15 +659,15 @@
           },
           "execution": {
             "count": 2,
-            "max_seconds": 0.001822,
-            "mean_seconds": 0.0018114585,
-            "median_seconds": 0.0018114585,
-            "min_seconds": 0.001800917,
+            "max_seconds": 0.001906916,
+            "mean_seconds": 0.0018291455,
+            "median_seconds": 0.0018291455,
+            "min_seconds": 0.001751375,
             "samples_seconds": [
-              0.001822,
-              0.001800917
+              0.001751375,
+              0.001906916
             ],
-            "std_seconds": 1.0541500000000041e-05
+            "std_seconds": 7.777050000000007e-05
           },
           "parity_error": 8.526512829121202e-14,
           "retained_bytes": 16384,
@@ -682,8 +682,8 @@
       "lanczos": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.176631041,
-            "lowering_seconds": 0.18024375
+            "compilation_seconds": 0.152124084,
+            "lowering_seconds": 0.177146166
           },
           "compiler": {
             "argument_bytes": 32768,
@@ -701,17 +701,17 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.063173708,
-            "lowering_seconds": 0.06551775
+            "compilation_seconds": 0.065392458,
+            "lowering_seconds": 0.072203667
           },
           "compiler": {
             "argument_bytes": 32768,
-            "bytes_accessed": 538764352,
-            "flops": 218365952,
+            "bytes_accessed": 706569280,
+            "flops": 268697600,
             "generated_code_bytes": 0,
             "output_bytes": 131072,
             "source": "jax",
-            "temporary_bytes": 134414856,
+            "temporary_bytes": 268468488,
             "unavailable_reason": null
           },
           "route": "dense",
@@ -720,8 +720,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.092829583,
-            "lowering_seconds": 0.17578925
+            "compilation_seconds": 0.08532675,
+            "lowering_seconds": 0.156955916
           },
           "compiler": {
             "argument_bytes": 32768,
@@ -742,8 +742,8 @@
       "variational": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.065401875,
-            "lowering_seconds": 0.094954042
+            "compilation_seconds": 0.060175291,
+            "lowering_seconds": 0.091022708
           },
           "compiler": {
             "argument_bytes": 163840,
@@ -761,8 +761,8 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.028911875,
-            "lowering_seconds": 0.056694833
+            "compilation_seconds": 0.026824083,
+            "lowering_seconds": 0.055520333
           },
           "compiler": {
             "argument_bytes": 163840,
@@ -780,8 +780,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.044494875,
-            "lowering_seconds": 0.078128125
+            "compilation_seconds": 0.037970792,
+            "lowering_seconds": 0.078431792
           },
           "compiler": {
             "argument_bytes": 163840,
@@ -804,8 +804,8 @@
       "lanczos": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.187939,
-            "lowering_seconds": 0.181859209
+            "compilation_seconds": 0.1511365,
+            "lowering_seconds": 0.176568542
           },
           "compiler": {
             "argument_bytes": 65536,
@@ -823,17 +823,17 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.062235042,
-            "lowering_seconds": 0.077328958
+            "compilation_seconds": 0.063580167,
+            "lowering_seconds": 0.0705785
           },
           "compiler": {
             "argument_bytes": 65536,
-            "bytes_accessed": 2151269888,
-            "flops": 872939520,
+            "bytes_accessed": 2822490112,
+            "flops": 1074266112,
             "generated_code_bytes": 0,
             "output_bytes": 262144,
             "source": "jax",
-            "temporary_bytes": 537264648,
+            "temporary_bytes": 1073807624,
             "unavailable_reason": null
           },
           "route": "dense",
@@ -842,8 +842,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.100366625,
-            "lowering_seconds": 0.168495833
+            "compilation_seconds": 0.087249167,
+            "lowering_seconds": 0.159126958
           },
           "compiler": {
             "argument_bytes": 65536,
@@ -864,8 +864,8 @@
       "variational": {
         "default_policy": {
           "compilation": {
-            "compilation_seconds": 0.070666042,
-            "lowering_seconds": 0.103577291
+            "compilation_seconds": 0.061655083,
+            "lowering_seconds": 0.096082583
           },
           "compiler": {
             "argument_bytes": 327680,
@@ -883,8 +883,8 @@
         },
         "dense": {
           "compilation": {
-            "compilation_seconds": 0.030915541,
-            "lowering_seconds": 0.059492
+            "compilation_seconds": 0.02773175,
+            "lowering_seconds": 0.057049959
           },
           "compiler": {
             "argument_bytes": 327680,
@@ -902,8 +902,8 @@
         },
         "restricted_budget": {
           "compilation": {
-            "compilation_seconds": 0.049734375,
-            "lowering_seconds": 0.08336575
+            "compilation_seconds": 0.041031333,
+            "lowering_seconds": 0.078150667
           },
           "compiler": {
             "argument_bytes": 327680,

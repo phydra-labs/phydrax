@@ -57,8 +57,9 @@
   cable bridges. Seeded PTV trajectory identity excludes execution capacities.
 - Bound iterative GP covariance actions and action-whitened variational kernel
   products by the computation workspace policy. Budget-admitted full blocks use
-  direct dense products; iterative actions retain the kernel once per resolve,
-  while above-budget problems keep exact tiled actions.
+  direct dense products; iterative actions retain the kernel once per resolve
+  and Gauss–Seidel gathers retained columns directly, while above-budget problems
+  keep exact tiled actions.
 - Make matrix-free RKHS correction use exact blocked functional Gram actions,
   direct diagonals, and bounded identity-defect certification with failure evidence.
 - Reuse one native Cholesky factor for covariance precision and log-determinant;

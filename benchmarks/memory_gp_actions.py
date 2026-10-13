@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
@@ -31,6 +32,11 @@ from phydrax.uq._gp_computation_backend import _kernel_matrix_action
 def _dense_lanczos(points: jax.Array, state: Any) -> jax.Array:
     covariance = state.kernel.matrix(points, points) + jnp.diag(
         jnp.broadcast_to(state.noise_scale**2 + state.jitter, (points.shape[0],))
+    )
+    covariance = eqx.error_if(
+        covariance,
+        jnp.any(~jnp.isfinite(covariance)),
+        "Iterative GP actions require finite covariance entries.",
     )
     vector = jnp.ones(points.shape[0], dtype=points.dtype)
     norm = jnp.linalg.vector_norm(vector)
