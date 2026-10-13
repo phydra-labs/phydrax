@@ -215,6 +215,20 @@ edge-integrated EMF reflux-curl without changing discrete magnetic divergence.
 transposes, and dynamic-Hodge adjoints. A changed topology is admitted only when
 its physical cell common refinement extends to the remaining degrees within the
 declared commutator tolerance.
+Incidence and common-refinement maps remain sparse; lower-degree transfers apply
+the minimum-change lift without retaining dense transfer matrices or nullspace
+projectors. Bipartite connected components are factorized independently, with
+one global singular-value cutoff `tolerance * maximum_singular_value`, matching
+the rank and nullspace convention of `pinv(rcond=tolerance)`. The explicit
+`workspace_bytes` budget (64 MiB by default) admits each component before its
+dense SVD; a connected component exceeding the budget is refused rather than
+silently switching rank semantics.
+
+The transfer `map_id` intentionally hashes source/target complex identities,
+active coordinates, common-refinement inputs, tolerance, and solver/resource
+identity rather than dense output matrices. Persisted references to historical
+cut-transfer fingerprints must be rebuilt; the old fingerprints are not aliases
+for the action representation.
 
 ## Mapped, mortar, and moving geometry
 

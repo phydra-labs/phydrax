@@ -750,3 +750,32 @@ def test_coordinate_face_quadrature_integrates_transverse_moment_without_normal_
     estimate = phx.integration.integrate(field, phx.integration.over(face), plan)
     # Integral_0^2 x dx * Integral_2^5 z dz = 2 * 10.5; no y-width factor.
     assert estimate.value.data == pytest.approx(21.0, abs=1.0e-12)
+
+
+def test_fixed_same_selector_sum_preserves_term_masks_and_weights() -> None:
+    domain = _interval()
+    left = domain.component(where_all=lambda x: x < 0.5)
+    right = domain.component(where_all=lambda x: x >= 0.5)
+    component = phx.domain.ComponentSum((left, right), assume_disjoint=True)
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
+    function = domain.Function("x")(lambda x: x**2 + 2.0 * x)
+    actual = phx.integration.integrate(function, phx.integration.over(component), plan)
+    pieces = [
+        phx.integration.integrate(function, phx.integration.over(term), plan)
+        for term in (left, right)
+    ]
+    expected = sum(jnp.asarray(piece.value.data) for piece in pieces)
+    assert jnp.allclose(actual.value.data, expected, atol=1.0e-12)
+    assert jnp.allclose(actual.value.data, 4.0 / 3.0, atol=1.0e-12)
+
+
+def test_fixed_different_selector_sum_preserves_distinct_measures() -> None:
+    domain = _interval()
+    interior = domain.component()
+    boundary = domain.component({"x": phx.domain.Boundary()})
+    component = phx.domain.ComponentSum((interior, boundary))
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
+    actual = phx.integration.integrate(
+        jnp.asarray(1.0, dtype=jnp.float64), phx.integration.over(component), plan
+    )
+    assert jnp.allclose(actual.value.data, 3.0, atol=1.0e-12)

@@ -145,7 +145,8 @@ def test_shared_prefixes_bound_node_count_and_live_bytes() -> None:
 
     assert plan.node_count == 5
     assert plan.maximum_degree == 3
-    assert plan.live_bytes(10, 8) == 10 * 5 * 8
+    # Two adjacent levels peak at 1 + 2 nodes; three terminal outputs persist.
+    assert plan.live_bytes(10, 8) == 10 * (3 + 3) * 8
     with pytest.raises(ValueError, match="requires 5 nodes"):
         ProductGraphPlan(4, requests, maximum_nodes=4)
 

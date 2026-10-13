@@ -13,6 +13,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax._fingerprint import array_tree_fingerprint
 from phydrax.geometry.operator import (
     RegionalPointLatentGeometry,
     TensorGridLatentGeometry,
@@ -752,3 +753,309 @@ def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(
     assert status.name == "GAOT"
     assert status.tier == "research"
     assert not status.recommendation_eligible
+
+
+def _graph_layer(
+    layer: str,
+    target_chunk_size: Any = None,
+    query_workspace_bytes: Any = 4 * 1024 * 1024,
+) -> GraphKernelTransfer | GraphAttentionTransfer | RegionalGraphProcessor:
+    match layer:
+        case "kernel":
+            return GraphKernelTransfer(
+                in_channels=1,
+                out_channels=1,
+                coord_dim=1,
+                neighbors=1,
+                target_chunk_size=target_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
+                key=jr.key(0),
+            )
+        case "attention":
+            return GraphAttentionTransfer(
+                in_channels=1,
+                out_channels=1,
+                coord_dim=1,
+                neighbors=1,
+                target_chunk_size=target_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
+                key=jr.key(0),
+            )
+        case "regional":
+            return RegionalGraphProcessor(
+                1,
+                1,
+                neighbors=1,
+                target_chunk_size=target_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
+                key=jr.key(0),
+            )
+        case _:
+            raise ValueError(f"Unknown test layer {layer!r}.")
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+@pytest.mark.parametrize(
+    "tile, error",
+    [(0, ValueError), (-1, ValueError), (True, TypeError), (1.5, TypeError)],
+    ids=["zero", "negative", "boolean", "fractional"],
+)
+def test_geometric_graph_layers_refuse_invalid_target_tiles(
+    layer: str, tile: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="target_chunk_size must be"):
+        _graph_layer(layer, tile)
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+def test_graph_tile_static_identity_and_matching_template_roundtrip(
+    layer: str, tmp_path: Any
+) -> None:
+    model = _graph_layer(layer, 3)
+    alternative = _graph_layer(layer, 4)
+
+    assert model.target_chunk_size == 3
+    assert jax.tree_util.tree_structure(model) != jax.tree_util.tree_structure(
+        alternative
+    )
+    assert array_tree_fingerprint(model) == array_tree_fingerprint(alternative)
+
+    path = tmp_path / "graph-layer.eqx"
+    eqx.tree_serialise_leaves(path, model)
+    restored = eqx.tree_deserialise_leaves(path, _graph_layer(layer, 3))
+    assert restored.target_chunk_size == 3
+    assert eqx.tree_equal(restored, model)
+    assert array_tree_fingerprint(restored) == array_tree_fingerprint(model)
+
+
+def _graph_architecture(architecture: str, **query_options: Any) -> Any:
+    match architecture:
+        case "gino":
+            return phx.nn.operator.architectures.GINO(
+                coord_dim=2,
+                latent_shape=(4, 4),
+                latent_channels=4,
+                modes=(2, 2),
+                fno_width=4,
+                fno_depth=1,
+                encoder_neighbors=2,
+                decoder_neighbors=2,
+                transfer_width=4,
+                transfer_depth=1,
+                source_key="u",
+                **query_options,
+            )
+        case "rigno":
+            return phx.nn.operator.architectures.RIGNO(
+                coord_dim=2,
+                regional_count=4,
+                latent_channels=4,
+                processor_neighbors=2,
+                processor_depth=1,
+                processor_width=4,
+                processor_mlp_depth=1,
+                encoder_neighbors=2,
+                decoder_neighbors=2,
+                transfer_width=4,
+                transfer_depth=1,
+                source_key="u",
+                **query_options,
+            )
+        case "gaot":
+            return phx.nn.operator.architectures.GAOT(
+                coord_dim=2,
+                latent_shape=(4, 4),
+                transfer_radius=1.0,
+                transfer_scales=(1.0, 2.0),
+                latent_channels=4,
+                transformer_width=4,
+                transformer_depth=1,
+                transformer_heads=1,
+                transfer_neighbors=2,
+                transfer_width=4,
+                transfer_heads=1,
+                transfer_depth=1,
+                source_key="u",
+                **query_options,
+            )
+        case "flower":
+            return phx.nn.operator.architectures.GeometryInformedFlower(
+                coord_dim=2,
+                latent_shape=(4, 4),
+                latent_channels=4,
+                flower_width=4,
+                flower_levels=1,
+                flower_num_heads=1,
+                flower_groups=1,
+                encoder_neighbors=2,
+                decoder_neighbors=2,
+                transfer_width=4,
+                transfer_depth=1,
+                source_key="u",
+                **query_options,
+            )
+        case _:
+            raise ValueError(f"Unknown test architecture {architecture!r}.")
+
+
+@pytest.mark.parametrize("architecture", ["gino", "rigno", "gaot", "flower"])
+@pytest.mark.parametrize(
+    "tile, error",
+    [(0, ValueError), (-1, ValueError), (True, TypeError), (1.5, TypeError)],
+    ids=["zero", "negative", "boolean", "fractional"],
+)
+def test_graph_architectures_refuse_invalid_query_tiles(
+    architecture: str, tile: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="query_chunk_size must be"):
+        _graph_architecture(architecture, query_chunk_size=tile)
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+@pytest.mark.parametrize(
+    "budget, error",
+    [
+        (0, ValueError),
+        (-1, ValueError),
+        (None, TypeError),
+        (True, TypeError),
+        (1.5, TypeError),
+    ],
+)
+def test_geometric_graph_layers_refuse_invalid_query_budgets(
+    layer: str, budget: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="query_workspace_bytes must be"):
+        _graph_layer(layer, query_workspace_bytes=budget)
+
+
+@pytest.mark.parametrize("architecture", ["gino", "rigno", "gaot", "flower"])
+@pytest.mark.parametrize(
+    "budget, error",
+    [
+        (0, ValueError),
+        (-1, ValueError),
+        (None, TypeError),
+        (True, TypeError),
+        (1.5, TypeError),
+    ],
+)
+def test_graph_architectures_refuse_invalid_query_budgets(
+    architecture: str, budget: Any, error: type[Exception]
+) -> None:
+    with pytest.raises(error, match="query_workspace_bytes must be"):
+        _graph_architecture(architecture, query_workspace_bytes=budget)
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+def test_graph_layers_automatic_query_budget_matches_explicit_tiles(layer: str) -> None:
+    default = _graph_layer(layer)
+    automatic = _graph_layer(layer, None, 1024)
+    explicit = _graph_layer(layer, 3, 1024)
+    assert default.target_chunk_size is None
+    assert default.query_workspace_bytes == 4 * 1024 * 1024
+    assert automatic.target_chunk_size is None
+    assert automatic.query_workspace_bytes == 1024
+    values = jnp.arange(24.0).reshape((2, 12, 1)) / 24.0
+    coordinates = jnp.broadcast_to(jnp.linspace(0.0, 1.0, 12)[None, :, None], (2, 12, 1))
+    measure = jnp.full((2, 12), 1.0 / 12)
+    mask = jnp.ones((2, 12), dtype=jnp.bool_).at[1, -1].set(False)
+    if isinstance(default, RegionalGraphProcessor):
+        assert isinstance(automatic, RegionalGraphProcessor)
+        assert isinstance(explicit, RegionalGraphProcessor)
+        arguments = (values, coordinates, measure, mask)
+        reference = default(*arguments)
+        assert jnp.allclose(automatic(*arguments), reference, atol=1e-6)
+        assert jnp.allclose(eqx.filter_jit(explicit)(*arguments), reference, atol=1e-6)
+    else:
+        assert not isinstance(automatic, RegionalGraphProcessor)
+        assert not isinstance(explicit, RegionalGraphProcessor)
+        targets = coordinates[:, :9]
+        reference = default(
+            values, coordinates, targets, source_measure=measure, source_mask=mask
+        )
+        assert jnp.allclose(
+            automatic(
+                values, coordinates, targets, source_measure=measure, source_mask=mask
+            ),
+            reference,
+            atol=1e-6,
+        )
+        assert jnp.allclose(
+            eqx.filter_jit(explicit)(
+                values, coordinates, targets, source_measure=measure, source_mask=mask
+            ),
+            reference,
+            atol=1e-6,
+        )
+
+
+@pytest.mark.parametrize("architecture", ["gino", "rigno", "gaot", "flower"])
+def test_graph_architecture_automatic_policy_and_forwarded_budget(
+    architecture: str,
+) -> None:
+    default = _graph_architecture(architecture)
+    automatic = _graph_architecture(
+        architecture, query_chunk_size=None, query_workspace_bytes=1024
+    )
+    explicit = _graph_architecture(
+        architecture, query_chunk_size=3, query_workspace_bytes=1024
+    )
+    assert default.query_chunk_size is None
+    assert default.query_workspace_bytes == 4 * 1024 * 1024
+    transfers = (*automatic.core.encoders, automatic.core.decoder)
+    for transfer in transfers:
+        scales = (
+            transfer.transfers
+            if isinstance(transfer, MultiscaleGraphTransfer)
+            else (transfer,)
+        )
+        for scale in scales:
+            assert scale.target_chunk_size is None
+            assert scale.query_workspace_bytes == 1024
+    if isinstance(automatic.core.processor, RegionalGraphProcessor):
+        assert automatic.core.processor.target_chunk_size is None
+        assert automatic.core.processor.query_workspace_bytes == 1024
+    batch = _gaot_batch()
+    reference = default(batch)
+    assert jnp.all(jnp.isfinite(reference))
+    assert jnp.allclose(automatic(batch), reference, atol=1e-6)
+    assert jnp.allclose(eqx.filter_jit(explicit)(batch), reference, atol=1e-6)
+
+
+@pytest.mark.parametrize("layer", ["kernel", "attention", "regional"])
+def test_graph_query_budget_static_identity_and_roundtrip(
+    layer: str, tmp_path: Any
+) -> None:
+    model = _graph_layer(layer, None, 1024)
+    alternative = _graph_layer(layer, None, 2048)
+    assert jax.tree_util.tree_structure(model) != jax.tree_util.tree_structure(
+        alternative
+    )
+    assert array_tree_fingerprint(model) == array_tree_fingerprint(alternative)
+    path = tmp_path / "query-budget.eqx"
+    eqx.tree_serialise_leaves(path, model)
+    restored = eqx.tree_deserialise_leaves(path, _graph_layer(layer, None, 1024))
+    assert restored.target_chunk_size is None
+    assert restored.query_workspace_bytes == 1024
+    assert eqx.tree_equal(restored, model)
+
+
+@pytest.mark.parametrize("architecture", ["gino", "rigno", "gaot", "flower"])
+def test_graph_architecture_query_budget_static_identity_and_roundtrip(
+    architecture: str, tmp_path: Any
+) -> None:
+    model = _graph_architecture(architecture, query_workspace_bytes=1024)
+    alternative = _graph_architecture(architecture, query_workspace_bytes=2048)
+    assert jax.tree_util.tree_structure(model) != jax.tree_util.tree_structure(
+        alternative
+    )
+    assert array_tree_fingerprint(model) == array_tree_fingerprint(alternative)
+    path = tmp_path / "architecture-query-budget.eqx"
+    eqx.tree_serialise_leaves(path, model)
+    restored = eqx.tree_deserialise_leaves(
+        path, _graph_architecture(architecture, query_workspace_bytes=1024)
+    )
+    assert restored.query_chunk_size is None
+    assert restored.query_workspace_bytes == 1024
+    assert eqx.tree_equal(restored, model)

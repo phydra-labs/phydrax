@@ -35,9 +35,15 @@ class ScaledMonomialBasis(StrictModule, NonTrainableState):
         *,
         maximum_features: int = 4096,
     ) -> None:
-        indices = total_degree_multiindices(dimension, degree)
-        if len(indices) > int(maximum_features):
+        dimension_ = int(dimension)
+        degree_ = int(degree)
+        if dimension_ <= 0 or degree_ < 0:
+            raise ValueError(
+                "Polynomial dimension must be positive and degree nonnegative."
+            )
+        if math.comb(dimension_ + degree_, degree_) > int(maximum_features):
             raise ValueError("Scaled monomial feature budget exceeded.")
+        indices = total_degree_multiindices(dimension_, degree_)
         exponents = np.asarray(indices, dtype=np.int32)
         self.exponents = jnp.asarray(exponents)
         self.dimension = int(dimension)

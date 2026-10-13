@@ -34,6 +34,8 @@ from ..linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
     LinearSystem,
+    prepare_linearization,
+    PreparedLinearization,
     PreparedLinearSolve,
     PyTreeSpace,
     solve as solve_linear,
@@ -186,21 +188,21 @@ _Response: TypeAlias = Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]]
 
 
 class _StateAction(StrictModule):
-    action: Any
-    template: PyTree[Array]
-    pullback: bool = eqx.field(static=True)
+    linearization: PreparedLinearization
+    transpose: bool = eqx.field(static=True)
 
     def __call__(self, value: PyTree[Any]) -> PyTree[Array]:
-        result = self.action(value)
-        if self.pullback:
-            result = result[0]
-        return jax.tree.map(
-            lambda leaf, reference: jnp.asarray(leaf, dtype=reference.dtype).reshape(
-                reference.shape
-            ),
-            result,
-            self.template,
-        )
+        if self.transpose:
+            return self.linearization.vjp(value)[0]
+        _, design = self.linearization.point
+        return self.linearization.jvp((value, jax.tree.map(jnp.zeros_like, design)))
+
+
+class _DesignPullback(StrictModule):
+    linearization: PreparedLinearization
+
+    def __call__(self, value: PyTree[Any]) -> tuple[PyTree[Array]]:
+        return (self.linearization.vjp(value)[1],)
 
 
 class StateDesignLinearization(StrictModule):
@@ -261,24 +263,26 @@ def _linearize_state_design(
     operator_id: str | None = None,
     component: StateDesignComponentAdmission | None = None,
 ) -> StateDesignLinearization:
-    def residual_function(current_state: PyTree[Any]) -> PyTree[Array]:
-        return problem.residual(current_state, design, args)
+    def residual_function(point: tuple[PyTree[Any], PyTree[Any]]) -> PyTree[Array]:
+        return problem.residual(point[0], point[1], args)
 
-    residual, state_action = jax.linearize(residual_function, state)
-    _, state_pullback = jax.vjp(residual_function, state)
+    linearization = prepare_linearization(
+        residual_function,
+        (state, design),
+        linearization_id=f"{problem.problem_id}/state-design-residual",
+    )
+    residual = linearization.primal
     state_jacobian = FunctionLinearOperator(
-        _StateAction(state_action, residual, False),
+        _StateAction(linearization, False),
         source=PyTreeSpace(state),
         target=PyTreeSpace(residual),
-        transpose_action=_StateAction(state_pullback, state, True),
+        transpose_action=_StateAction(linearization, True),
         operator_id=(
             f"{problem.problem_id}/state-jacobian" if operator_id is None else operator_id
         ),
         closure_convert=False,
     )
-    _, design_pullback = jax.vjp(
-        lambda current_design: problem.residual(state, current_design, args), design
-    )
+    design_pullback = _DesignPullback(linearization)
     return StateDesignLinearization(
         problem,
         state,

@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 from ..._strict import StrictModule
 from ...linalg._gaussian_chain import associative_freeze
 from ...nonlinear import (
+    CausalAdjointPolicy,
     CausalLevenbergMarquardt,
     CausalNewton,
     CausalRecurrenceDiagnostics,
@@ -49,6 +50,7 @@ class CausalRecurrentConfig(StrictModule):
 
     method: CausalNewton | CausalLevenbergMarquardt
     termination: NonlinearTermination
+    adjoint: CausalAdjointPolicy
     failure_policy: CausalRecurrentFailurePolicy = eqx.field(static=True)
 
     def __init__(
@@ -57,6 +59,7 @@ class CausalRecurrentConfig(StrictModule):
         method: CausalNewton | CausalLevenbergMarquardt | None = None,
         termination: NonlinearTermination | None = None,
         failure_policy: CausalRecurrentFailurePolicy = "raise",
+        adjoint: CausalAdjointPolicy | None = None,
     ) -> None:
         method_ = CausalLevenbergMarquardt() if method is None else method
         termination_ = NonlinearTermination() if termination is None else termination
@@ -64,12 +67,16 @@ class CausalRecurrentConfig(StrictModule):
             raise TypeError("method must be a causal recurrence method or None.")
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        adjoint_ = CausalAdjointPolicy() if adjoint is None else adjoint
+        if not isinstance(adjoint_, CausalAdjointPolicy):
+            raise TypeError("adjoint must be CausalAdjointPolicy or None.")
         failure_policy = parse(
             failure_policy, CausalRecurrentFailurePolicy, "failure_policy"
         )
         self.method = method_
         self.termination = termination_
         self.failure_policy = failure_policy
+        self.adjoint = adjoint_
 
 
 class CausalRecurrentDiagnostics(StrictModule):
@@ -78,6 +85,7 @@ class CausalRecurrentDiagnostics(StrictModule):
     causal: CausalRecurrenceDiagnostics
     status: Array
     fallback_used: Array
+    adjoint: CausalAdjointPolicy
 
 
 class CausalRecurrentResult(StrictModule):
@@ -287,7 +295,10 @@ def run_causal_recurrent(
             method=configuration.method,
             termination=configuration.termination,
             probe_key=case_probe_key,
+            adjoint=configuration.adjoint,
         )
+        if result.adjoint_policy_id != configuration.adjoint.policy_id:
+            raise ValueError("Causal recurrent adjoint evidence must match its policy.")
         return result.states, result.status, result.diagnostics
 
     if flat_initial_trajectory is None:
@@ -427,6 +438,7 @@ def run_causal_recurrent(
         ),
         status=flat_status.reshape(batch.case_shape),
         fallback_used=fallback_used.reshape(batch.case_shape),
+        adjoint=configuration.adjoint,
     )
     approximation = (
         "causal-recurrent"

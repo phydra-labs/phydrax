@@ -71,7 +71,13 @@ gauge basis and intervention design.
 LPDO compression acts on purification factors, retaining positivity by
 construction and reporting trace loss, discarded norm, overlap, and a
 trace-distance upper bound. Process-memory projection additionally reports
-retained initial weight and every Kraus operator's invariant-subspace leakage.
+retained initial weight and the maximum invariant-subspace leakage over all
+Kraus operators. Projection slices the retained memory axes directly; leakage
+uses discarded-output/retained-input blocks, without dense selector matrices.
+Local instruments act only on the system axes through tensor contractions,
+without expanding Kraus operators by a memory identity. Neither operation
+repairs a leaking or non-CPTP compression: completeness and leakage still reach
+the consumer as physicality evidence.
 
 ## Qualification artifacts
 

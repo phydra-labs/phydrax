@@ -378,3 +378,45 @@ def test_structured_optimization_spine_scenario_2() -> None:
             termination=_termination(),
             warm_start=solved.structured.warm_start,
         )
+
+
+def test_structured_sparse_sensitivity_preserves_row_owners_and_bound_identities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jax
+
+    from phydrax.optim._structured_sensitivity import _generic_problem
+
+    point = jnp.asarray([0.0, 0.5, 1.0], dtype=jnp.float64)
+    target = jnp.asarray([-1.0, 0.5, 1.0], dtype=jnp.float64)
+    problem = opt.MinimizationProblem(
+        lambda x, args: 0.5 * jnp.sum((x - args) ** 2),
+        bounds=opt.Bounds(
+            jnp.asarray([0.0, -jnp.inf, -jnp.inf], dtype=jnp.float64),
+            jnp.inf,
+        ),
+        constraints=(
+            opt.NonlinearConstraint(
+                lambda x, _: jnp.asarray([x[0] + 2.0 * x[1] - x[2]]),
+                lower=0.0,
+                upper=0.0,
+                constraint_id="owned-row",
+            ),
+        ),
+        problem_id="structured-owned-row",
+    )
+    compilation = opt.compile_structured_minimization(problem, point, sample_args=target)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Structured sensitivity must use sparse derivative actions.")
+
+    monkeypatch.setattr(jax, "jacfwd", forbidden)
+    result = opt.constrained_solution_jvp(
+        _generic_problem(compilation.prepared),
+        point,
+        target,
+        jnp.asarray([2.0, 3.0, 4.0], dtype=jnp.float64),
+    )
+    assert bool(result.regular)
+    assert int(result.active_constraints) == 1
+    assert jnp.allclose(result.value, jnp.asarray([0.0, 2.2, 4.4]), atol=1e-9)

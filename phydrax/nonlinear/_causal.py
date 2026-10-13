@@ -17,6 +17,7 @@ from jax.flatten_util import ravel_pytree
 from jax.typing import DTypeLike
 from jaxtyping import PyTree
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg._causal_linear import (
     causal_linearized_residual,
@@ -34,6 +35,9 @@ CausalLinearizationMode: TypeAlias = Literal[
     "fixed-block",
 ]
 CausalProbeDistribution: TypeAlias = Literal["rademacher", "normal"]
+CausalAdjointRoute: TypeAlias = Literal[
+    "dense-associative", "action-scan", "checkpointed-action-scan"
+]
 # Norm, step, damping, actual, predicted, and ratio histories plus accepted and
 # finite flags, one entry per outer iteration.
 _CausalHistories: TypeAlias = tuple[
@@ -188,6 +192,58 @@ class CausalRecurrenceProblem(StrictModule):
 
     def unravel_trajectory(self, trajectory: Array, /) -> PyTree[Array]:
         return jax.vmap(self.unravel_state)(trajectory)
+
+
+class CausalAdjointPolicy(StrictModule):
+    """Exact implicit derivative route with explicit dense-byte admission."""
+
+    route: CausalAdjointRoute = eqx.field(static=True)
+    maximum_dense_bytes: int = eqx.field(static=True)
+    checkpoint_block_size: int = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        route: CausalAdjointRoute = "dense-associative",
+        /,
+        *,
+        maximum_dense_bytes: int = 64 * 1024 * 1024,
+        checkpoint_block_size: int = 32,
+    ) -> None:
+        route = parse(route, CausalAdjointRoute, "route")
+        if maximum_dense_bytes < 1:
+            raise ValueError("maximum_dense_bytes must be positive.")
+        if checkpoint_block_size < 1:
+            raise ValueError("checkpoint_block_size must be positive.")
+        self.route = route
+        self.maximum_dense_bytes = maximum_dense_bytes
+        self.checkpoint_block_size = checkpoint_block_size
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "causal-adjoint-policy",
+                "route": route,
+                "maximum_dense_bytes": maximum_dense_bytes,
+                "checkpoint_block_size": checkpoint_block_size,
+            }
+        )
+
+    def transition_storage_bytes(
+        self, horizon: int, dimension: int, itemsize: int
+    ) -> int:
+        return (
+            horizon * dimension * dimension * itemsize
+            if self.route == "dense-associative"
+            else 0
+        )
+
+    def admit(self, horizon: int, dimension: int, itemsize: int) -> None:
+        required = self.transition_storage_bytes(horizon, dimension, itemsize)
+        if required > self.maximum_dense_bytes:
+            raise ValueError(
+                f"dense-associative causal adjoint requires {required} transition bytes "
+                f"above maximum_dense_bytes={self.maximum_dense_bytes}; select "
+                "'action-scan' or 'checkpointed-action-scan'."
+            )
 
 
 class CausalLinearizationPolicy(StrictModule):
@@ -361,6 +417,9 @@ class CausalRecurrenceResult(StrictModule):
     linearization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
 
+    adjoint_route: CausalAdjointRoute = eqx.field(static=True)
+    adjoint_policy_id: str = eqx.field(static=True)
+
     @property
     def successful(self) -> Array:
         return self.status == int(NonlinearStatus.SUCCESS)
@@ -494,6 +553,7 @@ def _solve_causal_forward(
     method: CausalMethod,
     termination: NonlinearTermination,
     probe_key: Array | None,
+    adjoint: CausalAdjointPolicy,
     /,
 ) -> CausalRecurrenceResult:
     if (
@@ -911,6 +971,8 @@ def _solve_causal_forward(
         method_id=method.method_id,
         linearization_id=method.linearization.linearization_id,
         approximation_id=approximation,
+        adjoint_route=adjoint.route,
+        adjoint_policy_id=adjoint.policy_id,
     )
 
 
@@ -922,6 +984,7 @@ def solve_causal_recurrence(
     method: CausalMethod | None = None,
     termination: NonlinearTermination | None = None,
     probe_key: Array | None = None,
+    adjoint: CausalAdjointPolicy | None = None,
 ) -> CausalRecurrenceResult:
     """Solve and certify one causal recurrence from its direct temporal residual."""
 
@@ -933,17 +996,26 @@ def solve_causal_recurrence(
     termination_ = NonlinearTermination() if termination is None else termination
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
+    adjoint_ = CausalAdjointPolicy() if adjoint is None else adjoint
+    if not isinstance(adjoint_, CausalAdjointPolicy):
+        raise TypeError("adjoint must be CausalAdjointPolicy or None.")
+    adjoint_.admit(
+        problem.num_steps, problem.state_size, problem.flat_initial_state.dtype.itemsize
+    )
     result = _solve_causal_forward(
         problem,
         initial_trajectory,
         method_,
         termination_,
         probe_key,
+        adjoint_,
     )
-    return attach_causal_implicit_derivative(problem, result)
+    return attach_causal_implicit_derivative(problem, result, adjoint_)
 
 
 __all__ = [
+    "CausalAdjointPolicy",
+    "CausalAdjointRoute",
     "CausalLevenbergMarquardt",
     "CausalLinearizationMode",
     "CausalLinearizationPolicy",

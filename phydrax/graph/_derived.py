@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, assert_never, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
 from phydrax._strict import StrictModule
+from phydrax.typing import parse
 
 from ._geometry import _face_geometry, _validate_mesh_arrays
 from ._graph import ensure_graph
@@ -52,28 +53,32 @@ def _line_graph_pairs(
     connectivity: LineGraphConnectivity,
     include_self_transitions: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    connectivity = parse(connectivity, LineGraphConnectivity, "connectivity")
+    endpoint_edges: dict[int, list[int]] = {}
+    for edge, (sender, receiver) in enumerate(zip(senders, receivers, strict=True)):
+        endpoint_edges.setdefault(int(sender), []).append(edge)
+        if connectivity == "shared_node" and sender != receiver:
+            endpoint_edges.setdefault(int(receiver), []).append(edge)
     source_edges: list[int] = []
     target_edges: list[int] = []
     shared_nodes: list[int] = []
-    n_edge = senders.shape[0]
-    for i in range(n_edge):
-        for j in range(n_edge):
+    for i, (sender, receiver) in enumerate(zip(senders, receivers, strict=True)):
+        match connectivity:
+            case "directed_path":
+                candidates = {
+                    j: int(receiver) for j in endpoint_edges.get(int(receiver), ())
+                }
+            case "shared_node":
+                candidates: dict[int, int] = {}
+                for endpoint in sorted({int(sender), int(receiver)}, reverse=True):
+                    candidates.update(
+                        (j, endpoint) for j in endpoint_edges.get(endpoint, ())
+                    )
+            case _:
+                assert_never(connectivity)
+        for j, shared in sorted(candidates.items()):
             if i == j and not include_self_transitions:
                 continue
-            shared = -1
-            if connectivity == "directed_path":
-                if int(receivers[i]) != int(senders[j]):
-                    continue
-                shared = int(receivers[i])
-            elif connectivity == "shared_node":
-                endpoints_i = (int(senders[i]), int(receivers[i]))
-                endpoints_j = (int(senders[j]), int(receivers[j]))
-                common = sorted(set(endpoints_i).intersection(endpoints_j))
-                if not common:
-                    continue
-                shared = int(common[0])
-            else:
-                raise ValueError("connectivity must be 'directed_path' or 'shared_node'.")
             source_edges.append(i)
             target_edges.append(j)
             shared_nodes.append(shared)

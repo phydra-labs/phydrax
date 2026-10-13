@@ -267,6 +267,7 @@ def main() -> None:
         prediction_horizon=HORIZON,
         terminal_policy="global",
         policy=QP_POLICY,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     check(bool(jnp.all(result.successful)), "An MPC window was not OPTIMAL.")
     optimal = host_optimal_controls(

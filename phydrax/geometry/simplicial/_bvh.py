@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, assert_never, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -25,8 +25,253 @@ from ..._bvh import (
     refit_packed_bvh_bounds,
 )
 from ..._strict import StrictModule
-from ...typing import checked
+from ...typing import checked, Dim, Float64, Int32, parse
 from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
+
+
+if TYPE_CHECKING:
+    from ._regions import SegmentQueryResult
+
+
+type SegmentQueryExecution = Literal["auto", "bvh", "dense"]
+
+
+class _SegmentVertexDim(Dim):
+    pass
+
+
+class _SegmentDim(Dim):
+    pass
+
+
+def _closest_points_on_segments(points: Array, segments: Array) -> Array:
+    direction = segments[..., 1, :] - segments[..., 0, :]
+    coordinate = jnp.clip(
+        jnp.sum((points - segments[..., 0, :]) * direction, axis=-1)
+        / jnp.sum(direction * direction, axis=-1),
+        0.0,
+        1.0,
+    )
+    return segments[..., 0, :] + coordinate[..., None] * direction
+
+
+def _segment_ray_parity(points: Array, vertices: Array, edges: Array) -> Array:
+    """Horizontal-ray parity in fixed-width point and edge tiles."""
+    leading = points.shape[:-1]
+    flat = points.reshape((-1, 2))
+    count = edges.shape[0]
+    width = 64
+    lanes = jnp.arange(width, dtype=jnp.int32)
+
+    def query(point: Array) -> Array:
+        def tile(block: Array, parity: Array) -> Array:
+            index = block * width + lanes
+            selected = vertices[edges[jnp.minimum(index, count - 1)]]
+            start, end = selected[:, 0], selected[:, 1]
+            crossing = (start[:, 1] > point[1]) != (end[:, 1] > point[1])
+            intersection = (end[:, 0] - start[:, 0]) * (
+                point[1] - start[:, 1]
+            ) / jnp.where(end[:, 1] != start[:, 1], end[:, 1] - start[:, 1], 1.0) + start[
+                :, 0
+            ]
+            hits = (index < count) & crossing & (point[0] < intersection)
+            return parity ^ (jnp.sum(hits) % 2 == 1)
+
+        return jax.lax.fori_loop(
+            0, (count + width - 1) // width, tile, jnp.asarray(False, dtype=jnp.bool_)
+        )
+
+    return jax.lax.map(query, flat, batch_size=64).reshape(leading)
+
+
+class SegmentBVH(StrictModule):
+    """Exact planar segment hierarchy with fixed topology and refittable vertices.
+
+    Host preparation canonicalizes finite ``(V, 2)`` vertices to float64 and
+    nonempty ``(E, 2)`` topology to int32, rejecting zero-length segments.
+    ``policy`` defaults to ``BVHBuildPolicy(leaf_size=8)``. ``execution="auto"``
+    selects dense queries only when ``64 * query_count * E`` logical bytes fit
+    ``dense_workspace_bytes`` (default 512 KiB); ``"bvh"`` always traverses the
+    hierarchy, and ``"dense"`` raises ``ValueError`` above that admission budget.
+    The budget excludes prepared arrays and required outputs and is not a
+    process-RSS limit. Equal distances are ordered by original segment index.
+    Selected distances and projections remain locally differentiable away from
+    branch changes.
+    """
+
+    __strict_contract__ = True
+
+    vertices: Float64[_SegmentVertexDim, Literal[2]]
+    edges: Int32[_SegmentDim, Literal[2]]
+    bvh: PackedBVH
+    execution: SegmentQueryExecution = eqx.field(static=True)
+    dense_workspace_bytes: int = eqx.field(static=True)
+
+    @checked
+    def __init__(
+        self,
+        vertices: ArrayLike,
+        edges: ArrayLike,
+        *,
+        policy: BVHBuildPolicy = BVHBuildPolicy(leaf_size=8),
+        execution: SegmentQueryExecution = "auto",
+        dense_workspace_bytes: int = 512 * 1024,
+    ) -> None:
+        from ._topology import SegmentTopology
+
+        execution_ = parse(execution, SegmentQueryExecution, "execution")
+        if isinstance(dense_workspace_bytes, bool) or not isinstance(
+            dense_workspace_bytes, int
+        ):
+            raise TypeError("dense_workspace_bytes must be an integer.")
+        if dense_workspace_bytes < 1:
+            raise ValueError("dense_workspace_bytes must be positive.")
+
+        values = np.asarray(vertices, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
+            raise ValueError("vertices must have shape (num_vertices > 0, 2).")
+        if not np.all(np.isfinite(values)):
+            raise ValueError("vertices must contain only finite values.")
+        topology = SegmentTopology(
+            jnp.asarray(edges, dtype=jnp.int32), num_vertices=values.shape[0]
+        )
+        segments = values[np.asarray(topology.edges)]
+        if np.any(np.sum((segments[:, 1] - segments[:, 0]) ** 2, axis=-1) == 0.0):
+            raise ValueError("SegmentBVH contains a zero-length edge.")
+        packed = prepare_bvh(
+            np.min(segments, axis=1),
+            np.max(segments, axis=1),
+            policy=policy,
+            dtype=jnp.float64,
+        )
+        self.vertices = jnp.asarray(values, dtype=jnp.float64)
+        self.edges = topology.edges
+        self.bvh = packed
+        self.execution = execution_
+        self.dense_workspace_bytes = dense_workspace_bytes
+
+    @property
+    def segments(self) -> Array:
+        return self.vertices[self.edges]
+
+    def refit(self, vertices: ArrayLike, /) -> SegmentBVH:
+        """Refit same-shaped vertices without changing topology, order, or policy.
+
+        This JAX-safe update validates shape only. Callers own finiteness and
+        nonzero segment lengths of the new embedding.
+        """
+        values = jnp.asarray(vertices, dtype=self.vertices.dtype)
+        if values.shape != self.vertices.shape:
+            raise ValueError(f"vertices must have shape {self.vertices.shape}.")
+        segments = values[self.edges]
+        packed = refit_packed_bvh_bounds(
+            self.bvh, jnp.min(segments, axis=1), jnp.max(segments, axis=1)
+        )
+        return eqx.tree_at(lambda tree: (tree.vertices, tree.bvh), self, (values, packed))
+
+    def _points(self, points: ArrayLike, /) -> tuple[Array, tuple[int, ...]]:
+        values = jnp.asarray(points, dtype=self.vertices.dtype)
+        if values.ndim == 0 or values.shape[-1] != 2:
+            raise ValueError("points must have trailing dimension 2.")
+        return values.reshape((-1, 2)), values.shape[:-1]
+
+    def _dense_items(self, points: Array, k: int) -> Array:
+        closest = _closest_points_on_segments(points[:, None, :], self.segments)
+        squared = jnp.sum((closest - points[:, None, :]) ** 2, axis=-1)
+        first = jnp.argmin(squared, axis=-1).astype(jnp.int32)
+        if k == 1:
+            return first[:, None]
+        if self.edges.shape[0] == 1:
+            return jnp.stack((first, jnp.full_like(first, -1)), axis=-1)
+        other = jnp.where(
+            jnp.arange(self.edges.shape[0], dtype=jnp.int32) == first[:, None],
+            jnp.inf,
+            squared,
+        )
+        second = jnp.argmin(other, axis=-1).astype(jnp.int32)
+        return jnp.stack((first, second), axis=-1)
+
+    def _dense_admitted(self, query_count: int) -> bool:
+        # Conservative logical admission covers coordinates, projections,
+        # distances, and candidate buffers, not just the distance table.
+        required = 64 * query_count * self.edges.shape[0]
+        match self.execution:
+            case "auto":
+                return required <= self.dense_workspace_bytes
+            case "bvh":
+                return False
+            case "dense":
+                if required > self.dense_workspace_bytes:
+                    raise ValueError(
+                        f"Dense segment query needs {required} workspace bytes, "
+                        f"exceeding dense_workspace_bytes={self.dense_workspace_bytes}; "
+                        "select execution='bvh'."
+                    )
+                return True
+            case _:
+                assert_never(self.execution)
+
+    def nearest_segments(self, points: ArrayLike, /, *, k: int = 1) -> BVHNearestResult:
+        """Return exact nearest segment indices and squared distances.
+
+        ``points`` has shape ``(..., 2)``; ``k`` is 1 or 2 and fixes the trailing
+        result axis. ``BVHNearestResult.items`` and ``distance_squared`` have
+        shape ``(..., k)``, with missing ranks padded by ``-1`` and ``inf``.
+        Ties are ordered by original segment index.
+        """
+        if isinstance(k, bool) or not isinstance(k, int):
+            raise TypeError("k must be an integer.")
+        if k not in (1, 2):
+            raise ValueError("k must be 1 or 2.")
+        flat, leading = self._points(points)
+
+        def distance(point: Array, items: Array) -> Array:
+            selected = self.vertices[self.edges[items]]
+            closest = _closest_points_on_segments(point, selected)
+            return jnp.sum((closest - point) ** 2, axis=-1)
+
+        if self._dense_admitted(flat.shape[0]):
+            items = self._dense_items(flat, k)
+        else:
+            items = bvh_nearest_items(
+                self.bvh, flat, k=k, item_distance_squared=distance
+            ).items
+        # Search chooses a discrete branch. Recompute only its selected distances
+        # outside the while-loop so reverse mode follows the same local projection.
+        items = jax.lax.stop_gradient(items)
+        selected = self.vertices[self.edges[jnp.maximum(items, 0)]]
+        closest = _closest_points_on_segments(flat[:, None, :], selected)
+        squared = jnp.where(
+            items >= 0, jnp.sum((closest - flat[:, None, :]) ** 2, axis=-1), jnp.inf
+        )
+        return BVHNearestResult(
+            items=items.reshape((*leading, k)),
+            distance_squared=squared.reshape((*leading, k)),
+        )
+
+    def query(self, points: ArrayLike, /) -> SegmentQueryResult:
+        """Project ``(..., 2)`` points onto their nearest segments.
+
+        The result preserves leading point axes and reports ``closest_point``,
+        Euclidean ``distance``, original ``segment_index``, and unit ``normal``.
+        The right-hand normal of direction ``(dx, dy)`` is ``(dy, -dx)``; no
+        enclosing-region orientation is inferred.
+        """
+        from ._regions import SegmentQueryResult
+
+        flat, leading = self._points(points)
+        segment = self.nearest_segments(flat).items[:, 0]
+        selected = self.vertices[self.edges[segment]]
+        closest = _closest_points_on_segments(flat, selected)
+        direction = selected[:, 1] - selected[:, 0]
+        normal = jnp.stack((direction[:, 1], -direction[:, 0]), axis=-1)
+        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
+        return SegmentQueryResult(
+            closest_point=closest.reshape((*leading, 2)),
+            distance=jnp.linalg.norm(closest - flat, axis=-1).reshape(leading),
+            segment_index=segment.reshape(leading),
+            normal=normal.reshape((*leading, 2)),
+        )
 
 
 # Closing-fan edges are evaluated in fixed-width chunks inside the traversal.
@@ -211,10 +456,10 @@ class TriangleBVH(StrictModule):
     def nearest_faces(self, points: ArrayLike, /, *, k: int = 1) -> BVHNearestResult:
         """Exact `k` nearest faces per point, ties ordered by face index."""
         flat, leading = self._points(points)
-        triangles = self.triangles
 
         def distance(point: Array, items: Array) -> Array:
-            closest = _closest_points_on_triangles(point, triangles[items])
+            selected = self.vertices[self.faces[items]]
+            closest = _closest_points_on_triangles(point, selected)
             return jnp.sum((closest - point) ** 2, axis=-1)
 
         result = bvh_nearest_items(self.bvh, flat, k=k, item_distance_squared=distance)
@@ -226,7 +471,7 @@ class TriangleBVH(StrictModule):
     def query(self, points: ArrayLike, /) -> MeshQueryResult:
         flat, leading = self._points(points)
         face = self.nearest_faces(flat).items[:, 0]
-        triangle = self.triangles[face]
+        triangle = self.vertices[self.faces[face]]
         closest = jax.vmap(
             lambda point, vertices: _closest_points_on_triangles(point, vertices[None])[0]
         )(flat, triangle)
@@ -361,4 +606,10 @@ class TriangleBVH(StrictModule):
         )
 
 
-__all__ = ["TriangleBVH", "WindingNumberResult", "WindingNumberRoute"]
+__all__ = [
+    "SegmentBVH",
+    "SegmentQueryExecution",
+    "TriangleBVH",
+    "WindingNumberResult",
+    "WindingNumberRoute",
+]

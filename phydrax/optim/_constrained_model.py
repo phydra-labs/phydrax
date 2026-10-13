@@ -16,8 +16,13 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..linalg import AbstractLinearOperator, JacobianLinearOperator, prepare_linearization
 from ._iterative import MinimizationProblem
-from ._nonlinear_constraints import _constraint_layout, _flat_constraint_values
+from ._nonlinear_constraints import (
+    _constraint_layout,
+    _ConstraintLayout,
+    _flat_constraint_values,
+)
 
 
 class ConstraintScalingPolicy(StrictModule):
@@ -57,6 +62,30 @@ class ConstrainedModelEvaluation(StrictModule):
     finite: Array
 
 
+class ConstrainedModelValues(StrictModule):
+    """Objective and feasibility values without derivative work."""
+
+    parameters: PyTree[Array]
+    coordinates: Array
+    objective: Array
+    scaled_objective: Array
+    raw_constraints: Array
+    equalities: Array
+    lower_slacks: Array
+    upper_slacks: Array
+    inequality_slacks: Array
+    primal_feasibility: Array
+    finite: Array
+
+
+class ConstrainedModelActions(StrictModule):
+    """Value/gradient model retaining only constraint derivative actions."""
+
+    values: ConstrainedModelValues
+    gradient: Array
+    constraint_operator: AbstractLinearOperator
+
+
 class PreparedConstrainedModel(StrictModule):
     """One canonical objective/constraint ordering and fixed numerical scaling."""
 
@@ -74,64 +103,116 @@ class PreparedConstrainedModel(StrictModule):
     unflatten: Any
     model_id: str = eqx.field(static=True)
 
-    def evaluate(
+    def evaluate_values(
+        self, parameters: PyTree[Any], args: Any = None, /
+    ) -> ConstrainedModelValues:
+        coordinates, _ = ravel_pytree(parameters)
+        objective = self.problem.value(parameters, args)[0]
+        raw = _flat_constraint_values(self.problem, parameters, args)
+        return self._values(parameters, coordinates, objective, raw)
+
+    def _values(
         self,
         parameters: PyTree[Any],
-        args: Any = None,
+        coordinates: Array,
+        objective: Array,
+        raw: Array,
         /,
-    ) -> ConstrainedModelEvaluation:
-        coordinates, _ = ravel_pytree(parameters)
-
-        def objective_coordinates(value: Array) -> Array:
-            return self.problem.value(self.unflatten(value), args)[0]
-
-        objective, gradient = jax.value_and_grad(objective_coordinates)(coordinates)
-
-        def constraint_coordinates(value: Array) -> Array:
-            return _flat_constraint_values(
-                self.problem,
-                self.unflatten(value),
-                args,
-            )
-
-        raw = constraint_coordinates(coordinates)
-        jacobian = jax.jacfwd(constraint_coordinates)(coordinates)
+    ) -> ConstrainedModelValues:
         equalities = raw[self.equality_indices] - self.lower[self.equality_indices]
         lower_slacks = raw[self.lower_indices] - self.lower[self.lower_indices]
         upper_slacks = self.upper[self.upper_indices] - raw[self.upper_indices]
         inequality_slacks = jnp.concatenate([lower_slacks, upper_slacks])
-        lower_violation = jnp.maximum(-lower_slacks, 0.0)
-        upper_violation = jnp.maximum(-upper_slacks, 0.0)
         primal = jnp.maximum(
             jnp.max(jnp.abs(equalities), initial=0.0),
             jnp.maximum(
-                jnp.max(lower_violation, initial=0.0),
-                jnp.max(upper_violation, initial=0.0),
+                jnp.max(jnp.maximum(-lower_slacks, 0.0), initial=0.0),
+                jnp.max(jnp.maximum(-upper_slacks, 0.0), initial=0.0),
             ),
         )
-        scale = self.constraint_scale
-        finite = (
-            jnp.isfinite(objective)
-            & jnp.all(jnp.isfinite(gradient))
-            & jnp.all(jnp.isfinite(raw))
-            & jnp.all(jnp.isfinite(jacobian))
-        )
-        return ConstrainedModelEvaluation(
+        return ConstrainedModelValues(
             parameters,
             coordinates,
             objective,
             objective / self.objective_scale,
-            gradient,
-            gradient / self.objective_scale,
             raw,
             equalities,
             lower_slacks,
             upper_slacks,
             inequality_slacks,
-            jacobian,
-            jacobian / scale[:, None],
             primal,
-            finite,
+            jnp.isfinite(objective) & jnp.all(jnp.isfinite(raw)),
+        )
+
+    def _evaluation(
+        self, values: ConstrainedModelValues, gradient: Array, jacobian: Array, /
+    ) -> ConstrainedModelEvaluation:
+        return ConstrainedModelEvaluation(
+            values.parameters,
+            values.coordinates,
+            values.objective,
+            values.scaled_objective,
+            gradient,
+            gradient / self.objective_scale,
+            values.raw_constraints,
+            values.equalities,
+            values.lower_slacks,
+            values.upper_slacks,
+            values.inequality_slacks,
+            jacobian,
+            jacobian / self.constraint_scale[:, None],
+            values.primal_feasibility,
+            values.finite
+            & jnp.all(jnp.isfinite(gradient))
+            & jnp.all(jnp.isfinite(jacobian)),
+        )
+
+    def evaluate_derivatives(
+        self, values: ConstrainedModelValues, args: Any = None, /
+    ) -> ConstrainedModelEvaluation:
+        gradient = jax.grad(
+            lambda value: self.problem.value(self.unflatten(value), args)[0]
+        )(values.coordinates)
+        jacobian = jax.jacfwd(
+            lambda value: _flat_constraint_values(
+                self.problem, self.unflatten(value), args
+            )
+        )(values.coordinates)
+        return self._evaluation(values, gradient, jacobian)
+
+    def evaluate(
+        self, parameters: PyTree[Any], args: Any = None, /
+    ) -> ConstrainedModelEvaluation:
+        coordinates, _ = ravel_pytree(parameters)
+        objective, gradient = jax.value_and_grad(
+            lambda value: self.problem.value(self.unflatten(value), args)[0]
+        )(coordinates)
+        raw = _flat_constraint_values(self.problem, parameters, args)
+        jacobian = jax.jacfwd(
+            lambda value: _flat_constraint_values(
+                self.problem, self.unflatten(value), args
+            )
+        )(coordinates)
+        return self._evaluation(
+            self._values(parameters, coordinates, objective, raw), gradient, jacobian
+        )
+
+    def evaluate_actions(
+        self, parameters: PyTree[Any], args: Any = None, /
+    ) -> ConstrainedModelActions:
+        coordinates, _ = ravel_pytree(parameters)
+        objective, gradient = jax.value_and_grad(
+            lambda value: self.problem.value(self.unflatten(value), args)[0]
+        )(coordinates)
+        derivative = prepare_linearization(
+            lambda value: _flat_constraint_values(
+                self.problem, self.unflatten(value), args
+            ),
+            coordinates,
+        )
+        values = self._values(parameters, coordinates, objective, derivative.primal)
+        return ConstrainedModelActions(
+            values, gradient, JacobianLinearOperator(derivative)
         )
 
     def lagrangian_hessian(
@@ -169,14 +250,14 @@ class PreparedConstrainedModel(StrictModule):
         return jax.hessian(lagrangian)(coordinates)
 
 
-def prepare_constrained_model(
+def prepare_constrained_model_evaluation(
     problem: MinimizationProblem,
     parameters: PyTree[Any],
     /,
     *,
     args: Any = None,
     scaling: ConstraintScalingPolicy | None = None,
-) -> PreparedConstrainedModel:
+) -> tuple[PreparedConstrainedModel, ConstrainedModelEvaluation]:
     if not isinstance(problem, MinimizationProblem):
         raise TypeError("problem must be MinimizationProblem.")
     if not problem.constraints and problem.bounds is None:
@@ -206,16 +287,41 @@ def prepare_constrained_model(
     else:
         objective_scale = jnp.asarray(1.0, dtype=objective.dtype)
         constraint_scale = jnp.ones_like(values)
+    model = _make_constrained_model(
+        problem,
+        coordinates,
+        unflatten,
+        layout,
+        objective_scale,
+        constraint_scale,
+        automatic=policy.automatic,
+    )
+    initial = model._evaluation(
+        model._values(parameters, coordinates, objective, values), gradient, jacobian
+    )
+    return model, initial
+
+
+def _make_constrained_model(
+    problem: MinimizationProblem,
+    coordinates: Array,
+    unflatten: Any,
+    layout: _ConstraintLayout,
+    objective_scale: Array,
+    constraint_scale: Array,
+    *,
+    automatic: bool,
+) -> PreparedConstrainedModel:
     model_id = canonical_fingerprint(
         {
             "kind": "constrained-model",
             "problem": problem.problem_id,
             "dimension": coordinates.size,
-            "constraints": values.size,
+            "constraints": layout.lower.size,
             "equalities": layout.equality_indices.tolist(),
             "lower": layout.lower_indices.tolist(),
             "upper": layout.upper_indices.tolist(),
-            "automatic_scaling": policy.automatic,
+            "automatic_scaling": automatic,
         }
     )
     return PreparedConstrainedModel(
@@ -235,9 +341,47 @@ def prepare_constrained_model(
     )
 
 
+def prepare_constrained_model_actions(
+    problem: MinimizationProblem, parameters: PyTree[Any], /, *, args: Any = None
+) -> PreparedConstrainedModel:
+    """Prepare unscaled sensitivity actions without any dense derivative."""
+    if not isinstance(problem, MinimizationProblem):
+        raise TypeError("problem must be MinimizationProblem.")
+    if not problem.constraints and problem.bounds is None:
+        raise ValueError("A constrained model requires constraints or bounds.")
+    coordinates, unflatten = ravel_pytree(parameters)
+    layout = _constraint_layout(problem, parameters, args)
+    return _make_constrained_model(
+        problem,
+        coordinates,
+        unflatten,
+        layout,
+        jnp.asarray(1.0, dtype=coordinates.dtype),
+        jnp.ones_like(layout.lower),
+        automatic=False,
+    )
+
+
+def prepare_constrained_model(
+    problem: MinimizationProblem,
+    parameters: PyTree[Any],
+    /,
+    *,
+    args: Any = None,
+    scaling: ConstraintScalingPolicy | None = None,
+) -> PreparedConstrainedModel:
+    return prepare_constrained_model_evaluation(
+        problem, parameters, args=args, scaling=scaling
+    )[0]
+
+
 __all__ = [
     "ConstrainedModelEvaluation",
+    "ConstrainedModelActions",
+    "ConstrainedModelValues",
     "ConstraintScalingPolicy",
     "PreparedConstrainedModel",
     "prepare_constrained_model",
+    "prepare_constrained_model_evaluation",
+    "prepare_constrained_model_actions",
 ]

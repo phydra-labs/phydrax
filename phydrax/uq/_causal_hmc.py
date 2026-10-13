@@ -24,6 +24,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..nonlinear import (
+    CausalAdjointPolicy,
     CausalLevenbergMarquardt,
     CausalLinearizationPolicy,
     CausalNewton,
@@ -61,6 +62,7 @@ class CausalHMCConfig(StrictModule):
     initial_damping: float = eqx.field(static=True)
     failure_policy: CausalHMCFailurePolicy = eqx.field(static=True)
     maximum_dense_dimension: int = eqx.field(static=True)
+    adjoint: CausalAdjointPolicy
 
     def __init__(
         self,
@@ -74,6 +76,7 @@ class CausalHMCConfig(StrictModule):
         initial_damping: float = 1e-3,
         maximum_dense_dimension: int = 512,
         failure_policy: CausalHMCFailurePolicy = "raise",
+        adjoint: CausalAdjointPolicy | None = None,
     ) -> None:
         block_size = int(trajectory_block_size)
         probes = int(probe_count)
@@ -98,6 +101,9 @@ class CausalHMCConfig(StrictModule):
         if not isfinite(damping) or damping <= 0.0:
             raise ValueError("initial_damping must be positive and finite.")
         failure_policy = parse(failure_policy, CausalHMCFailurePolicy, "failure_policy")
+        adjoint_ = CausalAdjointPolicy() if adjoint is None else adjoint
+        if not isinstance(adjoint_, CausalAdjointPolicy):
+            raise TypeError("adjoint must be CausalAdjointPolicy or None.")
         self.trajectory_block_size = block_size
         self.linearization = linearization
         self.probe_count = probes
@@ -107,6 +113,7 @@ class CausalHMCConfig(StrictModule):
         self.initial_damping = damping
         self.maximum_dense_dimension = dense_cap
         self.failure_policy = failure_policy
+        self.adjoint = adjoint_
 
     def as_dict(self) -> dict[str, int | float | str]:
         return {
@@ -119,6 +126,10 @@ class CausalHMCConfig(StrictModule):
             "initial_damping": self.initial_damping,
             "maximum_dense_dimension": self.maximum_dense_dimension,
             "failure_policy": self.failure_policy,
+            "adjoint_route": self.adjoint.route,
+            "adjoint_policy_id": self.adjoint.policy_id,
+            "adjoint_maximum_dense_bytes": self.adjoint.maximum_dense_bytes,
+            "adjoint_checkpoint_block_size": self.adjoint.checkpoint_block_size,
         }
 
 
@@ -194,6 +205,7 @@ class CausalHMCInfo(NamedTuple):
     causal_accepted_steps: Array
     causal_rejected_steps: Array
     causal_transition_evaluations: Array
+    causal_adjoint: CausalAdjointPolicy
 
 
 def _sequential_block(
@@ -338,7 +350,10 @@ def _causal_block(
             maximum_steps=config.maximum_outer_iterations,
         ),
         probe_key=None,
+        adjoint=config.adjoint,
     )
+    if result.adjoint_policy_id != config.adjoint.policy_id:
+        raise ValueError("Causal HMC adjoint evidence must match its policy.")
     causal_phase = result.final_state
     successful = result.status == int(NonlinearStatus.SUCCESS)
     if config.failure_policy == "raise":
@@ -508,6 +523,7 @@ def build_causal_hmc_kernel(
             causal_accepted_steps=jnp.sum(accepted),
             causal_rejected_steps=jnp.sum(rejected),
             causal_transition_evaluations=jnp.sum(evaluations),
+            causal_adjoint=config.adjoint,
         )
         return next_state, info
 

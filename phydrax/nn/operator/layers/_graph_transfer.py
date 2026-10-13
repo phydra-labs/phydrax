@@ -16,6 +16,7 @@ from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
+from phydrax._validation import positive_integer
 
 from ...._doc import DOC_KEY0
 from ....graph._multigraph import query_target_features
@@ -118,7 +119,13 @@ class _EdgeKernel(StrictModule):
 
 
 class GraphKernelTransfer(StrictModule):
-    """Learned measure-aware graph integral between two point sets."""
+    """Learned measure-aware graph integral between two point sets.
+
+    ``target_chunk_size=None`` derives static exact-query tiles from
+    ``query_workspace_bytes=4 * 1024 * 1024``. An explicit positive,
+    non-boolean integer overrides automatic target tiling. Both controls are
+    static model metadata and participate in structure and persistence.
+    """
 
     source_lift: MLP
     target_lift: MLP
@@ -132,6 +139,7 @@ class GraphKernelTransfer(StrictModule):
     reduction: TransferReduction = eqx.field(static=True)
     coordinate_scale: float = eqx.field(static=True)
     target_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -147,6 +155,7 @@ class GraphKernelTransfer(StrictModule):
         depth: int = 2,
         coordinate_scale: float = 1.0,
         target_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         if int(in_channels) <= 0 or int(out_channels) <= 0 or int(coord_dim) <= 0:
@@ -160,8 +169,11 @@ class GraphKernelTransfer(StrictModule):
         reduction = parse(reduction, TransferReduction, "reduction")
         if float(coordinate_scale) <= 0.0:
             raise ValueError("coordinate_scale must be positive.")
-        if target_chunk_size is not None and int(target_chunk_size) <= 0:
-            raise ValueError("target_chunk_size must be positive when supplied.")
+        if target_chunk_size is not None:
+            target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
         source_key, target_key, kernel_key = jr.split(key, 3)
         self.source_lift = MLP(
             in_size=int(in_channels) + int(coord_dim),
@@ -194,9 +206,8 @@ class GraphKernelTransfer(StrictModule):
         self.radius = None if radius is None else float(radius)
         self.reduction = reduction
         self.coordinate_scale = float(coordinate_scale)
-        self.target_chunk_size = (
-            None if target_chunk_size is None else int(target_chunk_size)
-        )
+        self.target_chunk_size = target_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call__(
         self,
@@ -251,6 +262,7 @@ class GraphKernelTransfer(StrictModule):
             source_measure=measure,
             radius=self.radius,
             target_chunk_size=self.target_chunk_size,
+            query_workspace_bytes=self.query_workspace_bytes,
             validate=False,
         )
         operator = GraphNeuralOperator(
@@ -300,7 +312,13 @@ class _AttentionOutput(StrictModule):
 
 
 class GraphAttentionTransfer(StrictModule):
-    """Quadrature-aware multihead attention between point sets."""
+    """Quadrature-aware multihead attention between point sets.
+
+    ``target_chunk_size=None`` derives static exact-query tiles from
+    ``query_workspace_bytes=4 * 1024 * 1024``. An explicit positive,
+    non-boolean integer overrides automatic target tiling. Both controls are
+    static model metadata and participate in structure and persistence.
+    """
 
     source_lift: MLP
     target_lift: MLP
@@ -321,6 +339,7 @@ class GraphAttentionTransfer(StrictModule):
     coordinate_scale: float = eqx.field(static=True)
     require_measure: bool = eqx.field(static=True)
     target_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -338,6 +357,7 @@ class GraphAttentionTransfer(StrictModule):
         coordinate_scale: float = 1.0,
         require_measure: bool = True,
         target_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         if (
@@ -361,6 +381,11 @@ class GraphAttentionTransfer(StrictModule):
         )
         if resolved_head_dim <= 0 or float(coordinate_scale) <= 0.0:
             raise ValueError("head_dim and coordinate_scale must be positive.")
+        if target_chunk_size is not None:
+            target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
         keys = jr.split(key, 8)
         self.source_lift = MLP(
             in_size=int(in_channels) + int(coord_dim),
@@ -415,9 +440,8 @@ class GraphAttentionTransfer(StrictModule):
         self.radius = None if radius is None else float(radius)
         self.coordinate_scale = float(coordinate_scale)
         self.require_measure = bool(require_measure)
-        self.target_chunk_size = (
-            None if target_chunk_size is None else int(target_chunk_size)
-        )
+        self.target_chunk_size = target_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call__(
         self,
@@ -471,6 +495,7 @@ class GraphAttentionTransfer(StrictModule):
             source_measure=measure,
             radius=self.radius,
             target_chunk_size=self.target_chunk_size,
+            query_workspace_bytes=self.query_workspace_bytes,
             validate=False,
         )
         operator = GraphAttentionOperator(
@@ -678,6 +703,7 @@ class MultiscaleGraphTransfer(StrictModule):
                 max_neighbors=transfer.neighbors,
                 radius=transfer.radius,
                 target_chunk_size=transfer.target_chunk_size,
+                query_workspace_bytes=transfer.query_workspace_bytes,
             )
             features.append(embedding(neighborhood, measure))
         return jnp.concatenate(features, axis=-1).reshape(

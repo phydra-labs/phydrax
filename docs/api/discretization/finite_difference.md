@@ -163,6 +163,16 @@ reuses those prepared flux operators where the requested expression is conservat
 
 ## SBP-SAT and mapped geometry
 
+`SBPDerivativePlan` prepares orders 2, 4, 6, and 8 directly as fixed-width
+stencil rows. Bounded axes solve only the order-sized boundary closure; periodic
+axes retain their wrapped central rows. Preparation and the full coefficient
+certificate for `H D + Dᵀ H = B` use linear storage in the axis node count,
+without forming a dense derivative, norm, or boundary matrix. The certificate
+checks every sparse entry against its transpose and the signed boundary diagonal,
+not a finite set of sampled states. Norms, closure accuracy, SAT actions, and
+stability-report tolerances are unchanged. `PreparedSBPOperator.identity_residual()`
+remains an explicitly dense one-dimensional diagnostic, separate from preparation.
+
 ::: phydrax.discretization.SBPFamily
 
 ---
@@ -572,6 +582,22 @@ reconstruction with conditioning and support evidence.
 ---
 
 ::: phydrax.discretization.BSplineGridInterpolation
+
+The B-spline policy uses node-averaged knots and a fixed-bandwidth collocation
+operator. Each axis retains one native banded factorization, reused for all
+value components and algebraic transpose solves. At fixed degree its retained
+collocation storage grows linearly with the node count, rather than quadratically.
+Admission requires native singular-value bounds to certify full numerical rank
+and the requested per-axis `condition_limit`; an ill-conditioned or uncertifiable
+axis is refused, never silently regularized. Query `conditioning` reports the
+product of the certified per-axis condition upper bounds. The prepared kernel
+retains the native conditioning evidence for inspection.
+The native `BRACKET_NOT_CONVERGED` status means that the requested endpoint
+width was not reached, not that the enclosing bounds are invalid. Such a
+bracket is admitted only when its outward bounds still prove both numerical
+full rank and the condition limit; its status, steps, and widths remain visible
+in `kernel.condition_evidence`. Near a limit, conservative bounds can refuse an
+axis that an unbounded dense SVD previously admitted.
 
 ---
 

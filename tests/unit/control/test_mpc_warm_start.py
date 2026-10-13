@@ -44,11 +44,13 @@ def test_mpc_warm_start_scenario_1() -> None:
         problem,
         prediction_horizon=2,
         terminal_policy="none",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     warm = phx.control.solve_receding_horizon_mpc(
         problem,
         prediction_horizon=2,
         terminal_policy="none",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
         warm_start_policy=phx.control.MPCWarmStartPolicy(
             terminal_control="hold",
             interior_margin=1e-7,
@@ -76,6 +78,7 @@ def test_mpc_warm_start_scenario_1() -> None:
         problem,
         prediction_horizon=2,
         terminal_policy="none",
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
         warm_start_policy=phx.control.MPCWarmStartPolicy(),
     )
     foreign_seed = phx.control.solve_linear_quadratic_control(_problem(initial=3.0))

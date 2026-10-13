@@ -14,6 +14,13 @@ from jax.typing import ArrayLike
 
 from ..typing import checked
 from ._blocks import column_logsumexp, coupling_statistics, row_logsumexp
+from ._geometry import (
+    DEFAULT_SINKHORN_WORKSPACE_BYTES,
+    resolve_sinkhorn_block_size,
+    SinkhornBlockSize,
+    validate_sinkhorn_block_size,
+    validate_sinkhorn_workspace_bytes,
+)
 from ._problem import DiscreteTransportProblem
 from ._results import (
     AbstractBalancedTransportSolver,
@@ -37,7 +44,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
     max_iterations: int = eqx.field(static=True)
     min_iterations: int = eqx.field(static=True)
     check_every: int = eqx.field(static=True)
-    block_size: int | None = eqx.field(static=True)
+    block_size: SinkhornBlockSize = eqx.field(static=True)
+    sinkhorn_workspace_bytes: int = eqx.field(static=True)
     early_stop: bool = eqx.field(static=True)
     store_history: bool = eqx.field(static=True)
 
@@ -50,7 +58,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         min_iterations: int = 1,
         tolerance: ArrayLike = 1e-7,
         check_every: int = 5,
-        block_size: int | None = None,
+        block_size: SinkhornBlockSize = "auto",
+        sinkhorn_workspace_bytes: int = DEFAULT_SINKHORN_WORKSPACE_BYTES,
         early_stop: bool = False,
         store_history: bool = False,
     ) -> None:
@@ -63,8 +72,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             raise ValueError("min_iterations must lie in [0, max_iterations].")
         if interval < 1:
             raise ValueError("check_every must be positive.")
-        if block_size is not None and int(block_size) < 1:
-            raise ValueError("block_size must be positive or None.")
+        block_size = validate_sinkhorn_block_size(block_size)
+        validate_sinkhorn_workspace_bytes(sinkhorn_workspace_bytes)
         epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
         tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
         self.epsilon = eqx.error_if(
@@ -80,7 +89,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         self.max_iterations = maximum
         self.min_iterations = minimum
         self.check_every = interval
-        self.block_size = None if block_size is None else int(block_size)
+        self.block_size = block_size
+        self.sinkhorn_workspace_bytes = sinkhorn_workspace_bytes
         self.early_stop = bool(early_stop)
         self.store_history = bool(store_history)
 
@@ -97,6 +107,13 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             problem.source.points,
             problem.target.points,
             self.epsilon,
+        )
+        block_size = resolve_sinkhorn_block_size(
+            self.block_size,
+            self.sinkhorn_workspace_bytes,
+            source_count,
+            target_count,
+            jnp.dtype(dtype).itemsize,
         )
         if initial_potentials is None:
             source_initial = jnp.zeros((source_count,), dtype=dtype)
@@ -149,13 +166,13 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                     problem,
                     log_target + target_potential / epsilon,
                     epsilon,
-                    block_size=self.block_size,
+                    block_size=block_size,
                 )
                 next_target = -epsilon * column_logsumexp(
                     problem,
                     log_source + next_source / epsilon,
                     epsilon,
-                    block_size=self.block_size,
+                    block_size=block_size,
                 )
                 source_mean = jnp.sum(problem.source_probabilities * next_source)
                 target_mean = jnp.sum(problem.target_probabilities * next_target)
@@ -198,7 +215,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                     next_source,
                     next_target,
                     epsilon,
-                    block_size=self.block_size,
+                    block_size=block_size,
                 )
                 residual = jnp.maximum(
                     jnp.sum(jnp.abs(source_marginal - problem.source_probabilities)),
@@ -266,7 +283,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             source_potential,
             target_potential,
             epsilon,
-            block_size=self.block_size,
+            block_size=block_size,
         )
         final_residual = jnp.maximum(
             jnp.sum(jnp.abs(source_marginal - problem.source_probabilities)),
@@ -335,10 +352,12 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         provenance = TransportProvenance(
             "sinkhorn",
             problem.provenance.cost,
-            "dense" if self.block_size is None else "blockwise",
+            "dense" if block_size is None else "blockwise",
             "unrolled",
             problem.provenance.source,
             problem.provenance.target,
+            block_size=block_size,
+            sinkhorn_workspace_bytes=self.sinkhorn_workspace_bytes,
         )
         return SinkhornResult(
             problem=problem,
@@ -351,7 +370,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             dual_cost=dual_cost,
             diagnostics=diagnostics,
             provenance=provenance,
-            block_size=self.block_size,
+            block_size=block_size,
         )
 
 

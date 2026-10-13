@@ -28,6 +28,7 @@ from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator
 from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 from ._galerkin_quadrature3d import (
     _duffy_rule,
     _map_triangle,
@@ -302,11 +303,23 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
             backend="jax",
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=self.panelization.points.dtype)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("Elasticity targets must have shape (target_count, 3).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
@@ -322,6 +335,8 @@ def evaluate_elasticity_layer_3d(
     *,
     target_side: Literal["interior", "exterior", "boundary"],
     accuracy_clearance: float = 0.0,
+    target_execution: DirectTargetExecution = "parallel",
+    target_chunk_size: int = 8,
 ) -> tuple[Array, SurfaceTargetReport3D]:
     """Evaluate one Kelvin layer with continuous target-admissibility evidence."""
     if not isinstance(potential, ElasticityLayerPotential3D):
@@ -338,7 +353,9 @@ def evaluate_elasticity_layer_3d(
     )
     if not bool(report.pde_membership_valid):
         raise ValueError("Elasticity layer evaluation requires off-surface targets.")
-    output = potential._evaluate_direct(values)
+    output = potential._evaluate_direct(
+        values, target_execution=target_execution, target_chunk_size=target_chunk_size
+    )
     return (output[0] if single else output), report
 
 

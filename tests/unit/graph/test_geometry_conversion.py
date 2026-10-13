@@ -1,4 +1,6 @@
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.graph import (
@@ -106,3 +108,38 @@ def test_geometry_conversion_scenario_1() -> None:
     assert graph.edges["relative"].shape == (3, 2)
     assert graph.edges["distance"].shape == (3, 1)
     assert jnp.allclose(jnp.sort(graph.receivers), jnp.array([0, 1, 2], dtype=jnp.int32))
+
+
+@pytest.mark.parametrize(
+    "radius", [0.0, 0.5], ids=["knn-outside-radius", "inclusive-radius"]
+)
+@pytest.mark.parametrize("include_self", [False, True], ids=["no-self", "self"])
+def test_point_cloud_union_preserves_exact_edges_and_lexicographic_order(
+    include_self: bool,
+    radius: float,
+) -> None:
+    points = np.asarray([[0.0], [0.5], [-0.5], [0.0]], dtype=np.float64)
+    distance = np.linalg.norm(points[:, None] - points[None, :], axis=-1)
+    expected: set[tuple[int, int]] = set()
+    for receiver in range(points.shape[0]):
+        candidates = [
+            sender
+            for sender in range(points.shape[0])
+            if include_self or sender != receiver
+        ]
+        expected.update(
+            (sender, receiver)
+            for sender in candidates
+            if distance[receiver, sender] <= radius
+        )
+        chosen = sorted(
+            candidates, key=lambda sender: (distance[receiver, sender], sender)
+        )[:2]
+        expected.update((sender, receiver) for sender in chosen)
+    graph = point_cloud_to_graph(points, radius=radius, k=2, add_self_edges=include_self)
+    assert graph.senders is not None
+    assert graph.receivers is not None
+    np.testing.assert_array_equal(
+        np.column_stack((graph.senders, graph.receivers)),
+        np.asarray(sorted(expected), dtype=np.int32),
+    )

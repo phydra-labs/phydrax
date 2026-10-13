@@ -221,40 +221,66 @@ def _prepare_banded_lu(operator: BandedLinearOperator, /) -> _BandedLUState:
         singular = jnp.any(~jnp.isfinite(bands))
         minimum_margin = jnp.asarray(jnp.inf, dtype=scale.dtype)
         pivots = jnp.arange(size, dtype=jnp.int32)
-        for column in range(size):
-            candidate_count = min(lower + 1, size - column)
-            candidates = jnp.abs(
-                factor[
-                    diagonal : diagonal + candidate_count,
-                    column,
-                ]
-            )
+
+        def column_step(
+            column: int, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
+            factor, pivots, singular, minimum_margin = carry
+            offsets = jnp.arange(lower + 1, dtype=jnp.int32)
+            candidates = jnp.abs(factor[diagonal : diagonal + lower + 1, column])
+            candidates = jnp.where(offsets < size - column, candidates, -jnp.inf)
             pivot_row = column + jnp.argmax(candidates).astype(jnp.int32)
             pivots = pivots.at[column].set(pivot_row)
-            active_stop = min(size, column + upper + lower + 1)
             # Historical multipliers stay in their elimination columns. Compact
             # band LU stores the pivot sequence, not a globally permuted dense L.
-            for target_column in range(column, active_stop):
-                first_index = diagonal + column - target_column
-                second_index = diagonal + pivot_row - target_column
-                first_value = factor[first_index, target_column]
-                second_value = factor[second_index, target_column]
-                factor = factor.at[first_index, target_column].set(second_value)
-                factor = factor.at[second_index, target_column].set(first_value)
+            for target_offset in range(upper + lower + 1):
+                target_column = column + target_offset
+
+                def swap(factor: Array, *, target_column: int = target_column) -> Array:
+                    first_index = diagonal + column - target_column
+                    second_index = diagonal + pivot_row - target_column
+                    first_value = factor[first_index, target_column]
+                    second_value = factor[second_index, target_column]
+                    factor = factor.at[first_index, target_column].set(second_value)
+                    return factor.at[second_index, target_column].set(first_value)
+
+                factor = jax.lax.cond(target_column < size, swap, lambda f: f, factor)
             pivot = factor[diagonal, column]
             minimum_margin = jnp.minimum(minimum_margin, jnp.abs(pivot) / scale)
             singular = singular | (jnp.abs(pivot) <= threshold) | ~jnp.isfinite(pivot)
             safe_pivot = jnp.where(jnp.abs(pivot) <= threshold, 1.0, pivot)
-            for row_offset in range(1, min(lower, size - column - 1) + 1):
-                lower_index = diagonal + row_offset
-                multiplier = factor[lower_index, column] / safe_pivot
-                factor = factor.at[lower_index, column].set(multiplier)
-                for column_offset in range(1, min(upper + lower, size - column - 1) + 1):
-                    band_index = diagonal + row_offset - column_offset
-                    target = column + column_offset
-                    factor = factor.at[band_index, target].add(
-                        -multiplier * factor[diagonal - column_offset, target]
-                    )
+            for row_offset in range(1, lower + 1):
+
+                def eliminate(factor: Array, *, row_offset: int = row_offset) -> Array:
+                    lower_index = diagonal + row_offset
+                    multiplier = factor[lower_index, column] / safe_pivot
+                    factor = factor.at[lower_index, column].set(multiplier)
+                    for column_offset in range(1, upper + lower + 1):
+                        target = column + column_offset
+                        band_index = diagonal + row_offset - column_offset
+
+                        def update(
+                            factor: Array,
+                            *,
+                            target: int = target,
+                            band_index: int = band_index,
+                            column_offset: int = column_offset,
+                        ) -> Array:
+                            return factor.at[band_index, target].add(
+                                -multiplier * factor[diagonal - column_offset, target]
+                            )
+
+                        factor = jax.lax.cond(target < size, update, lambda f: f, factor)
+                    return factor
+
+                factor = jax.lax.cond(
+                    column + row_offset < size, eliminate, lambda f: f, factor
+                )
+            return factor, pivots, singular, minimum_margin
+
+        factor, pivots, singular, minimum_margin = jax.lax.fori_loop(
+            0, size, column_step, (factor, pivots, singular, minimum_margin)
+        )
         singular = singular | jnp.any(~jnp.isfinite(factor))
         return factor, pivots, singular, minimum_margin
 
@@ -286,41 +312,70 @@ def _solve_banded_lu(
 
     def solve_one(factor: Array, pivot_rows: Array, value: Array) -> Array:
         if transpose:
-            for row in range(size):
-                for offset in range(1, min(upper_factor, row) + 1):
-                    value = value.at[row].add(
-                        -factor[diagonal - offset, row] * value[row - offset]
-                    )
-                value = value.at[row].set(value[row] / factor[diagonal, row])
-            for row in range(size - 1, -1, -1):
-                for offset in range(1, min(lower, size - row - 1) + 1):
-                    value = value.at[row].add(
-                        -factor[diagonal + offset, row] * value[row + offset]
-                    )
+
+            def upper_transpose(row: int, value: Array) -> Array:
+                for offset in range(1, upper_factor + 1):
+
+                    def update(value: Array, *, offset: int = offset) -> Array:
+                        return value.at[row].add(
+                            -factor[diagonal - offset, row] * value[row - offset]
+                        )
+
+                    value = jax.lax.cond(offset <= row, update, lambda v: v, value)
+                return value.at[row].set(value[row] / factor[diagonal, row])
+
+            value = jax.lax.fori_loop(0, size, upper_transpose, value)
+
+            def lower_transpose(index: int, value: Array) -> Array:
+                row = size - 1 - index
+                for offset in range(1, lower + 1):
+
+                    def update(value: Array, *, offset: int = offset) -> Array:
+                        return value.at[row].add(
+                            -factor[diagonal + offset, row] * value[row + offset]
+                        )
+
+                    value = jax.lax.cond(offset < size - row, update, lambda v: v, value)
                 pivot_row = pivot_rows[row]
                 first = value[row]
                 second = value[pivot_row]
                 value = value.at[row].set(second)
-                value = value.at[pivot_row].set(first)
-            return value
-        for row in range(size):
+                return value.at[pivot_row].set(first)
+
+            return jax.lax.fori_loop(0, size, lower_transpose, value)
+
+        def lower_forward(row: int, value: Array) -> Array:
             pivot_row = pivot_rows[row]
             first = value[row]
             second = value[pivot_row]
             value = value.at[row].set(second)
             value = value.at[pivot_row].set(first)
-            for offset in range(1, min(lower, size - row - 1) + 1):
-                value = value.at[row + offset].add(
-                    -factor[diagonal + offset, row] * value[row]
-                )
-        for row in range(size - 1, -1, -1):
-            for offset in range(1, min(upper_factor, size - row - 1) + 1):
-                value = value.at[row].add(
-                    -factor[diagonal - offset, row + offset] * value[row + offset]
-                )
+            for offset in range(1, lower + 1):
+
+                def update(value: Array, *, offset: int = offset) -> Array:
+                    return value.at[row + offset].add(
+                        -factor[diagonal + offset, row] * value[row]
+                    )
+
+                value = jax.lax.cond(offset < size - row, update, lambda v: v, value)
+            return value
+
+        value = jax.lax.fori_loop(0, size, lower_forward, value)
+
+        def upper_backward(index: int, value: Array) -> Array:
+            row = size - 1 - index
+            for offset in range(1, upper_factor + 1):
+
+                def update(value: Array, *, offset: int = offset) -> Array:
+                    return value.at[row].add(
+                        -factor[diagonal - offset, row + offset] * value[row + offset]
+                    )
+
+                value = jax.lax.cond(offset < size - row, update, lambda v: v, value)
             pivot = factor[diagonal, row]
-            value = value.at[row].set(value[row] / jnp.where(pivot == 0, 1.0, pivot))
-        return value
+            return value.at[row].set(value[row] / jnp.where(pivot == 0, 1.0, pivot))
+
+        return jax.lax.fori_loop(0, size, upper_backward, value)
 
     value = jax.vmap(solve_one)(factors, pivots, flattened_rhs).reshape(rhs.shape)
     failed = state.singular[..., None] | jnp.any(~jnp.isfinite(value), axis=-2)
@@ -574,6 +629,40 @@ def _bordered_rank(operator: AbstractLinearOperator, state: _BorderedState, /) -
     return jnp.where(failed, -1, operator.source.size).astype(jnp.int32)
 
 
+def _solve_banded_transformed(
+    state: StructuredState, rhs: Array, /, *, adjoint: bool
+) -> StructuredBackendOutput:
+    operator = state.operator
+    factors = state.prepared
+    if not isinstance(operator, BandedLinearOperator) or not isinstance(
+        factors, _BandedLUState
+    ):
+        raise TypeError("Prepared banded transformed solves require banded LU factors.")
+    if operator.batch_shape or rhs.ndim != 2 or rhs.shape[0] != operator.source.size:
+        raise ValueError("Transformed banded right-hand sides must have shape (n, k).")
+    if adjoint:
+        weighted = jax.vmap(operator.source.riesz, in_axes=1, out_axes=1)(rhs)
+        value, failed = _solve_banded_lu(
+            operator, factors, jnp.conj(weighted), transpose=True
+        )
+        value = jax.vmap(operator.target.inverse_riesz, in_axes=1, out_axes=1)(
+            jnp.conj(value)
+        )
+    else:
+        value, failed = _solve_banded_lu(operator, factors, rhs, transpose=True)
+    failed = failed | jnp.any(~jnp.isfinite(value), axis=0)
+    return StructuredBackendOutput(
+        value=value,
+        status=jnp.where(
+            failed, int(LinearSolveStatus.SINGULAR), int(LinearSolveStatus.SUCCESS)
+        ).astype(jnp.int32),
+        iterations=jnp.zeros((rhs.shape[-1],), dtype=jnp.int32),
+        rank=jnp.where(factors.singular, -1, operator.source.size).astype(jnp.int32),
+        condition_estimate=jnp.asarray(jnp.nan, dtype=rhs.real.dtype),
+        singular_values=None,
+    )
+
+
 def solve_structured_transformed(
     state: StructuredState,
     rhs: Array,
@@ -583,6 +672,8 @@ def solve_structured_transformed(
     adjoint: bool,
 ) -> StructuredBackendOutput:
     del plan
+    if isinstance(state.operator, BandedLinearOperator):
+        return _solve_banded_transformed(state, rhs, adjoint=adjoint)
     operator = _bordered_base(state.operator)
     if operator is None or not isinstance(state.prepared, _BorderedState):
         raise ValueError(

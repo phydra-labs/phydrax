@@ -1,0 +1,326 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "exponents": {
+    "dbscan": -1.4796607006002453,
+    "kde": -1.1501040751555898,
+    "knn": -0.9764811286622083
+  },
+  "gates": {
+    "dbscan": {
+      "baseline_bytes": 16785504,
+      "candidate_bytes": 135096,
+      "capacity": 1024,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5
+    },
+    "kde": {
+      "baseline_bytes": 8396800,
+      "candidate_bytes": 106864,
+      "capacity": 1024,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5
+    },
+    "knn": {
+      "baseline_bytes": 12582928,
+      "candidate_bytes": 203128,
+      "capacity": 1024,
+      "decision": "adopt",
+      "maximum_candidate_fraction": 0.5
+    }
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "5313829c5343896d7f003907054fe6f3d02c0342c871fe2b95b34143e64a6d88",
+    "evidence_schema": {
+      "fields": [
+        "output_bytes",
+        "temporary_bytes"
+      ],
+      "signature": "c888c00da11421fe8225b6b8834253956c2c3041b502b059f8c9fc170d28b84f"
+    },
+    "fingerprint": "88f8b430b789a68a2ba7b17da78e40b53a62238755d7f025acfc8cba7963b2c8",
+    "source_build_fingerprint": "49273c2a22ede59b99d56c12d480c9420df76576cb41ac56a834f8d27b35b273"
+  },
+  "records": [
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.055133875,
+      "compiler_host_peak_bytes": 344129,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3194880,
+      "lowering_seconds": 0.1387185,
+      "name": "knn",
+      "output_bytes": 12304,
+      "pair_tile_extent": 256,
+      "reference_warmed_seconds": [
+        0.008866709,
+        0.002395958,
+        0.001855167,
+        0.004310166,
+        0.002074625,
+        0.002587208,
+        0.00168225
+      ],
+      "temporary_bytes": 786448,
+      "warmed_seconds": [
+        0.003577958,
+        0.004683375,
+        0.002009125,
+        0.001380708,
+        0.00246525,
+        0.002121125,
+        0.002346041
+      ],
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.057281333,
+      "compiler_host_peak_bytes": 229264,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3145728,
+      "lowering_seconds": 0.04696825,
+      "name": "kde",
+      "output_bytes": 2048,
+      "pair_tile_extent": 256,
+      "reference_warmed_seconds": [
+        0.00050325,
+        0.000733375,
+        0.002496875,
+        0.000956167,
+        0.002505,
+        0.00023025,
+        0.000686416
+      ],
+      "temporary_bytes": 526336,
+      "warmed_seconds": [
+        0.000870041,
+        0.010652667,
+        0.000662584,
+        0.000906417,
+        0.001511542,
+        0.000642625,
+        0.000224791
+      ],
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.149760791,
+      "compiler_host_peak_bytes": 747968,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 3145728,
+      "lowering_seconds": 0.13443975,
+      "name": "dbscan",
+      "output_bytes": 8672,
+      "pair_tile_extent": 256,
+      "reference_warmed_seconds": [
+        0.011819833,
+        0.019514292,
+        0.013219416,
+        0.01093475,
+        0.00965725,
+        0.015627125,
+        0.016286042
+      ],
+      "temporary_bytes": 1050720,
+      "warmed_seconds": [
+        0.009393292,
+        0.016645291,
+        0.008954792,
+        0.012627792,
+        0.011024875,
+        0.0123965,
+        0.016143667
+      ],
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.130027292,
+      "compiler_host_peak_bytes": 522747,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 1403376,
+      "lowering_seconds": 0.116309875,
+      "name": "knn",
+      "output_bytes": 24592,
+      "pair_tile_extent": 169,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 618488,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.097666416,
+      "compiler_host_peak_bytes": 593911,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 1387200,
+      "lowering_seconds": 0.152049083,
+      "name": "kde",
+      "output_bytes": 4096,
+      "pair_tile_extent": 170,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 267312,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.334972791,
+      "compiler_host_peak_bytes": 1163870,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 1387200,
+      "lowering_seconds": 0.446606292,
+      "name": "dbscan",
+      "output_bytes": 17120,
+      "pair_tile_extent": 170,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 378232,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 1024,
+      "compilation_seconds": 0.191616792,
+      "compiler_host_peak_bytes": 482872,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 363120,
+      "lowering_seconds": 0.2176575,
+      "name": "knn",
+      "output_bytes": 49168,
+      "pair_tile_extent": 85,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 203128,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 1024,
+      "compilation_seconds": 0.135680708,
+      "compiler_host_peak_bytes": 481512,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 346800,
+      "lowering_seconds": 0.180382,
+      "name": "kde",
+      "output_bytes": 8192,
+      "pair_tile_extent": 85,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 106864,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 1024,
+      "compilation_seconds": 0.303724291,
+      "compiler_host_peak_bytes": 1117172,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 346800,
+      "lowering_seconds": 0.441258292,
+      "name": "dbscan",
+      "output_bytes": 34016,
+      "pair_tile_extent": 85,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 135096,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 4194304
+    },
+    {
+      "capacity": 256,
+      "compilation_seconds": 0.824328167,
+      "compiler_host_peak_bytes": 5268039,
+      "generated_code_bytes": 0,
+      "input_bytes": 8192,
+      "logical_workspace_bytes": 126976,
+      "lowering_seconds": 2.8069645,
+      "name": "spectral",
+      "output_bytes": 8281,
+      "pair_tile_extent": 64,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 156984,
+      "warmed_seconds": [
+        0.020314833,
+        0.021728458
+      ],
+      "workspace_budget_bytes": 536870912
+    },
+    {
+      "capacity": 512,
+      "compilation_seconds": 0.948288584,
+      "compiler_host_peak_bytes": 3202824,
+      "generated_code_bytes": 0,
+      "input_bytes": 16384,
+      "logical_workspace_bytes": 155648,
+      "lowering_seconds": 2.153724167,
+      "name": "spectral",
+      "output_bytes": 16473,
+      "pair_tile_extent": 64,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 275320,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 536870912
+    },
+    {
+      "capacity": 1024,
+      "compilation_seconds": 0.993870208,
+      "compiler_host_peak_bytes": 3036222,
+      "generated_code_bytes": 0,
+      "input_bytes": 32768,
+      "logical_workspace_bytes": 212992,
+      "lowering_seconds": 1.520570333,
+      "name": "spectral",
+      "output_bytes": 32857,
+      "pair_tile_extent": 64,
+      "reference_warmed_seconds": null,
+      "temporary_bytes": 545656,
+      "warmed_seconds": null,
+      "workspace_budget_bytes": 536870912
+    }
+  ],
+  "rss_bytes": 1731297280,
+  "timing_acceptance": "deferred to a quiet serialized wave"
+}

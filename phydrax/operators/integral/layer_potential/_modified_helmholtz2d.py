@@ -21,6 +21,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....typing import checked
 from ._core import AbstractLayerKernel, BoundaryPanelization2D, KernelActionSide
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 
 
 class ModifiedHelmholtzLayerKernel2D(AbstractLayerKernel):
@@ -159,11 +160,23 @@ class ModifiedHelmholtzLayerPotential2D(StrictModule, NonTrainableState):
             backend="jax",
         )
 
-    def evaluate(self, targets: ArrayLike, /) -> Array:
+    def evaluate(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets)
         if values.ndim != 2 or values.shape[1] != 2:
             raise ValueError("targets must have shape (target_count, 2).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
 
 def prepare_modified_helmholtz_reconstruction_2d(

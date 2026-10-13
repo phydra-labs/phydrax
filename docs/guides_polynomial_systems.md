@@ -21,6 +21,24 @@ semantics.
 integer powers and never divides a monomial by a coordinate, so zero coordinates do
 not create artificial `0/0` values.
 
+### Bounded monomial preparation and evaluation
+
+Complete total-degree preparation counts `comb(dimension + degree, degree)`,
+including the constant, before enumerating indices. `ScaledMonomialBasis` refuses
+counts above `maximum_features`; `HolomorphicMultiIndexSet.total_degree` refuses
+counts above `maximum_count`. Admission at the exact limit preserves exponent
+ordering and scientific IDs.
+
+`ProductGraphPlan` evaluates one dependency level at a time, preserving parallel
+multiplication within each level and the existing `lane_tile` behavior. Terminal
+values are copied directly into the required output instead of concatenating all
+nodes. `live_bytes(lanes, itemsize)` reports the logical level/output payload:
+`lanes * itemsize * (term_count + max(adjacent_level_size_sums))`, with the single
+constant level used when there are no multiplication levels. It excludes input
+arrays, prepared routes, and compiler-specific gather/scatter scratch. This is
+memory accounting, not a compiler allocation guarantee.
+
+
 ## Scaling
 
 `PolynomialScaling` applies diagonal variable and equation scaling only. Multiplicative

@@ -111,7 +111,7 @@ class OperatorAttention(StrictModule):
         head_dim: int = 16,
         kernel: AttentionKernel = "softmax",
         execution: AttentionExecution = "auto",
-        block_size: int = 256,
+        block_size: int | None = None,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
