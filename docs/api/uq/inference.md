@@ -743,6 +743,20 @@ on a tractable reference before interpreting these draws quantitatively.
 
 ## Laplace approximation
 
+Structured `diagonal` curvature retains only the Hessian diagonal and posterior
+diagonal precision, using O(d) storage. `lanczos` and `lobpcg` retain curvature
+eigenpairs and a scalar baseline precision, using O(d r + r) storage; covariance
+and scale actions include the prior contribution in the orthogonal complement.
+Only `full` retains dense curvature and precision matrices. Gaussian whitening
+applies covariance as `S Pz⁻¹ S*` and sampling scale as `S Pz⁻¹/²`.
+
+Structured result archives use the current route-specific array leaves: absent
+matrices, diagonals, and spectral arrays are `None`, not dense aliases or empty
+placeholder arrays. Posterior state adds `diagonal_precision` and
+`baseline_precision` and removes `eigenvectors`; the curvature state owns the
+spectral basis. Archive leaf layouts and fingerprints intentionally change;
+historical templates are not compatible with this representation.
+
 ::: phydrax.uq.fit_laplace
 
 ---
@@ -996,6 +1010,28 @@ observation-noise scale, and numerical factorization jitter. Pass a state explic
 to likelihood, factorization, and conditioning calls. Fixed states can be factored
 once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
 parameters differentiable posterior leaves.
+
+Computation-aware GP actions use exact covariance products for Lanczos, conjugate
+gradient, and Gauss–Seidel. `GaussianProcessComputationPolicy.max_workspace_bytes`
+defaults to 64 MiB. Kernel tiles contain
+`min(n_left, floor(budget / ((n_right + m) * itemsize)))` rows for m action columns;
+a budget that cannot hold one row and its action output refuses before evaluation.
+When the full block fits, the kernel is evaluated once as a block and multiplied
+directly, without a row-loop wrapper. Iterative actions retain that kernel once
+per resolve when `n * (n + 1) * itemsize` fits the budget, instead of rebuilding it
+at each Krylov iteration. With float64 observations at n=128, 256, and 512, the
+default therefore uses a full tile (including for the variational K·S product).
+Above the budget, exact bounded kernel-row products remain matrix-free.
+Gauss–Seidel uses the kernel diagonal plus observation variance for each pivot.
+When the covariance is retained, Gauss–Seidel gathers its pivot diagonal and
+column directly instead of recomputing them or multiplying by a unit vector.
+Actions and projected features retain O(n m) storage; any retained n-by-n kernel
+is admitted under the same workspace budget. The action-whitened variational ELBO
+accepts the same `computation` policy. Direct action-policy `resolve()` calls accept
+`max_workspace_bytes` (64 MiB) and `checkpoint_kernel_blocks` (default `True`).
+Computation-aware factors forward both settings; checkpointing recomputes tiled
+kernel intermediates during differentiation. A budget-admitted retained kernel
+is shared by all iterations rather than checkpointed per iteration.
 
 If the kernel exposes the `AbstractFiniteFeatureKernel` capability and its rank is
 strictly smaller than the observation count, `ExactGaussianProcessDiscrepancy.factor`

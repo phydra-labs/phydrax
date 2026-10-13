@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Fixed
+- Bound iterative GP covariance actions and action-whitened variational kernel
+  products by the computation workspace policy. Budget-admitted full blocks use
+  direct dense products; iterative actions retain the kernel once per resolve
+  and Gauss–Seidel gathers retained columns directly, while above-budget problems
+  keep exact tiled actions.
+- Make matrix-free RKHS correction use exact blocked functional Gram actions,
+  direct diagonals, and bounded identity-defect certification with failure evidence.
+- Reuse one native Cholesky factor for covariance precision and log-determinant;
+  robust distances use solve actions, and invalid factors cannot report valid geometry.
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
@@ -2641,6 +2650,9 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Structured Laplace stores diagonal or low-rank precision state and applies
+  covariance and sampling scales without dense reconstruction. Full curvature
+  remains dense; structured result archive leaves and their fingerprints change.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.

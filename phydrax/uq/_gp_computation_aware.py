@@ -220,6 +220,8 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
             residual=None
             if residual is None
             else _as_vector(residual, name="GP residual"),
+            max_workspace_bytes=policy.max_workspace_bytes,
+            checkpoint_kernel_blocks=policy.checkpoint_kernel_blocks,
         )
         if resolved.num_observations != points.shape[0]:
             raise ValueError("Resolved GP actions must align with observation points.")
