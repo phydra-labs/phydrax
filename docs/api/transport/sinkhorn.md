@@ -2,11 +2,32 @@
 
 `Sinkhorn` solves balanced entropic transport in stabilized log coordinates. The dense
 and blockwise modes implement the same equations and return the same result contract.
-Both `Sinkhorn` and `UnbalancedSinkhorn` default to `block_size=256`, bounding
-pairwise-cost and coupling working memory. Pass `block_size=None` explicitly for
-dense execution. Blockwise mode does not allocate the complete cost or plan during
-solving, statistics, or plan application. `TransportProvenance.block_size` records
-the positive tile size for blockwise execution and is `None` for untiled routes.
+Both `Sinkhorn` and `UnbalancedSinkhorn` default to `block_size="auto"` with
+`sinkhorn_workspace_bytes=134217728` (128 MiB). This shared budget admits the
+existing dense route when four scalar source-by-target arrays fit: cost, log
+coupling, coupling, and reduction scratch. Full-fit execution uses exactly the
+dense equations, without tile loops. In float64 the default admits square
+problems through 2048 atoms per measure, covering the measured moderate
+capacities (512, 1024, and 2048). This is a workspace choice, not a timing claim.
+
+Above the budget, the square tile is
+`clamp(floor(budget / (4 * itemsize * max(source_count, target_count))), 1, max(source_count, target_count))`.
+The conservative linear extent bound also bounds each tile's four scalar pair
+arrays. At least one pair is always executed even if its minimum scratch exceeds
+the budget. The budget is logical cost/kernel scratch, not a cap on total device
+memory: inputs (including precomputed costs), outputs, custom ground-cost internals,
+payload widths in plan actions, and autodiff storage are separate.
+
+A positive integer `block_size` explicitly overrides automatic admission, even
+for full-fit problems; `block_size=None` explicitly requests dense execution,
+even above budget. The budget must still be a positive integer (booleans and
+nonintegers are refused) for either override. Blockwise mode does not allocate
+the complete cost or plan during solving, statistics, or plan application.
+`TransportProvenance.block_size` and the result's `block_size` record the
+executed tile, or `None` for dense execution, never the `"auto"` request.
+`TransportProvenance.sinkhorn_workspace_bytes` records the configured budget
+as static numerical identity, including when an explicit override was used.
+Archive templates must retain the budget and actual execution route.
 
 `early_stop=False` is the compiled-work default: all configured iterations run, while
 diagnostics preserve the first converged check. `early_stop=True` short-circuits after

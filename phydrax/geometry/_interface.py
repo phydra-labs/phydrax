@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._validation import positive_integer
 
 
 class PhaseGeometryMetrics(StrictModule):
@@ -41,6 +42,7 @@ class InterfaceDistanceMetrics(StrictModule):
     symmetric_mean_distance: Array
     hausdorff_distance: Array
     percentile_hausdorff_distance: Array
+    interface_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -48,7 +50,11 @@ class InterfaceDistanceMetrics(StrictModule):
         symmetric_mean_distance: ArrayLike,
         hausdorff_distance: ArrayLike,
         percentile_hausdorff_distance: ArrayLike,
+        interface_workspace_bytes: int = 2 * 1024 * 1024,
     ) -> None:
+        self.interface_workspace_bytes = positive_integer(
+            interface_workspace_bytes, "interface_workspace_bytes"
+        )
         self.symmetric_mean_distance = jnp.asarray(symmetric_mean_distance)
         self.hausdorff_distance = jnp.asarray(hausdorff_distance)
         self.percentile_hausdorff_distance = jnp.asarray(percentile_hausdorff_distance)
@@ -145,29 +151,60 @@ def _checked_active_points(points: Array, mask: Array, name: str, /) -> Array:
     return jnp.where(mask[..., None], points, 0.0)
 
 
+def _interface_tiles(
+    source: Array,
+    target: Array,
+    chunk_size: int | None,
+    target_chunk_size: int | None,
+    interface_workspace_bytes: int,
+) -> tuple[int, int]:
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
+    source_tile = source_count if chunk_size is None else min(chunk_size, source_count)
+    if target_chunk_size is None or chunk_size is None:
+        pair_capacity = max(
+            1,
+            interface_workspace_bytes
+            // (max(1, math.prod(source.shape[:-2])) * source.dtype.itemsize),
+        )
+        if chunk_size is None:
+            source_tile = min(source_tile, pair_capacity)
+        target_tile = (
+            min(target_count, max(1, pair_capacity // source_tile))
+            if target_chunk_size is None
+            else min(target_chunk_size, target_count)
+        )
+        if chunk_size is None and target_chunk_size is not None:
+            source_tile = min(source_count, max(1, pair_capacity // target_tile))
+    else:
+        target_tile = min(target_chunk_size, target_count)
+    return source_tile, target_tile
+
+
 def _directed_nearest_distances(
     source: Array,
     target: Array,
     target_mask: Array,
     /,
     *,
-    chunk_size: int,
+    chunk_size: int | None,
     target_chunk_size: int | None,
+    interface_workspace_bytes: int = 2 * 1024 * 1024,
 ) -> Array:
     source_count = source.shape[-2]
     target_count = target.shape[-2]
-    source_tile = min(chunk_size, source_count)
-    if target_chunk_size is None:
-        # Shape/dtype arithmetic is static: small sets use one dense-cost tile.
-        pair_capacity = max(
-            1,
-            (512 * 1024)
-            // (max(1, math.prod(source.shape[:-2])) * source.dtype.itemsize),
+    source_tile, target_tile = _interface_tiles(
+        source, target, chunk_size, target_chunk_size, interface_workspace_bytes
+    )
+    if source_tile == source_count and target_tile == target_count:
+        source_square = jnp.sum(source * source, axis=-1, keepdims=True)
+        target_square = jnp.sum(target * target, axis=-1)
+        cross = ein.contract("...id,...jd->...ij", source, target)
+        squared = jnp.maximum(
+            source_square + target_square[..., None, :] - 2.0 * cross, 0.0
         )
-        source_tile = min(source_tile, pair_capacity)
-        target_tile = min(target_count, max(1, pair_capacity // source_tile))
-    else:
-        target_tile = min(target_chunk_size, target_count)
+        squared = jnp.where(target_mask[..., None, :], squared, jnp.inf)
+        return jnp.sqrt(jnp.min(squared, axis=-1))
     source_padding = (-source_count) % source_tile
     target_padding = (-target_count) % target_tile
     point_padding = [(0, 0)] * source.ndim
@@ -317,8 +354,9 @@ def interface_distance_metrics(
     predicted_mask: ArrayLike | None = None,
     reference_mask: ArrayLike | None = None,
     percentile: float = 0.95,
-    chunk_size: int = 1024,
+    chunk_size: int | None = None,
     target_chunk_size: int | None = None,
+    interface_workspace_bytes: int = 2 * 1024 * 1024,
 ) -> InterfaceDistanceMetrics:
     """Return symmetric mean, Hausdorff, and percentile-Hausdorff distances.
 
@@ -327,15 +365,15 @@ def interface_distance_metrics(
     symmetric mean averages the two directed nearest-point means; Hausdorff
     quantities take the maximum of their two directed values. Percentiles use
     linear interpolation over active directed distances.
-    ``chunk_size`` is a positive static source cap (default 1024).
-    ``target_chunk_size=None`` (default) derives tiles from a 512 KiB pair-table
-    planning budget using broadcast case count and dtype item size, clamped to
-    actual point counts and at least one pair per case. Small sets within both
-    caps use a single dense-cost tile. A positive explicit ``target_chunk_size``
-    sets the target cap instead and bypasses byte-budget derivation. These
-    controls must be static under JIT. The budget excludes inputs, outputs,
+    ``None`` source/target chunk sizes derive tiles from
+    ``interface_workspace_bytes`` (default 2 MiB), counting broadcast cases and
+    dtype item size for the pair table. Full-fit sets use the dense parallel
+    computation without tile loops. Explicit positive chunk sizes override the
+    respective automatic tile; supplying both bypasses budget derivation.
+    All controls must be static under JIT. The budget excludes inputs, outputs,
     percentile sorting, and other compiler scratch; it is not a process-RSS
-    limit. All active targets remain candidates under either route.
+    limit. At least one pair is processed even under a smaller budget.
+    All active targets remain candidates under either route.
     """
 
     predicted = _point_cloud(predicted_points, "predicted_points")
@@ -345,12 +383,13 @@ def interface_distance_metrics(
     percentile_ = float(percentile)
     if not math.isfinite(percentile_) or not 0.0 <= percentile_ <= 1.0:
         raise ValueError("percentile must be finite and lie in [0, 1].")
-    chunk = int(chunk_size)
-    if chunk <= 0:
-        raise ValueError("chunk_size must be positive.")
-    target_chunk = None if target_chunk_size is None else int(target_chunk_size)
-    if target_chunk is not None and target_chunk <= 0:
-        raise ValueError("target_chunk_size must be positive.")
+    chunk = None if chunk_size is None else positive_integer(chunk_size, "chunk_size")
+    target_chunk = (
+        None
+        if target_chunk_size is None
+        else positive_integer(target_chunk_size, "target_chunk_size")
+    )
+    workspace = positive_integer(interface_workspace_bytes, "interface_workspace_bytes")
 
     predicted_count = predicted.shape[-2]
     reference_count = reference.shape[-2]
@@ -406,6 +445,7 @@ def interface_distance_metrics(
         reference_active,
         chunk_size=chunk,
         target_chunk_size=target_chunk,
+        interface_workspace_bytes=workspace,
     )
     reference_to_predicted = _directed_nearest_distances(
         reference,
@@ -413,6 +453,7 @@ def interface_distance_metrics(
         predicted_active,
         chunk_size=chunk,
         target_chunk_size=target_chunk,
+        interface_workspace_bytes=workspace,
     )
     mean_distance = 0.5 * (
         _masked_mean(predicted_to_reference, predicted_active)
@@ -430,6 +471,7 @@ def interface_distance_metrics(
         symmetric_mean_distance=mean_distance,
         hausdorff_distance=hausdorff,
         percentile_hausdorff_distance=percentile_hausdorff,
+        interface_workspace_bytes=workspace,
     )
 
 

@@ -101,15 +101,17 @@ sets. It reports the symmetric directed-nearest mean, symmetric Hausdorff
 distance, and a configurable percentile Hausdorff distance. Masks exclude
 fixed-capacity padding. Point extraction, isovalue, spacing, and physical units
 remain caller-owned and must be identical across compared interfaces.
-The positive static `chunk_size` source cap defaults to 1024.
-`target_chunk_size=None` (default) derives both tiles from a 512 KiB pair-table
-planning budget, counting broadcast cases and dtype item size and clamping to
-the actual point counts, with at least one pair per case. Small point sets
-within both caps therefore execute as one dense-cost tile; larger sets retain
-bounded pair tiles. An explicit positive `target_chunk_size` sets the target cap
-instead and bypasses byte-budget derivation. Both controls must be static under
-JIT. Every active target is considered; tiling changes neither mask/broadcast
-semantics nor the metric reductions. The planning budget does not bound
+The default source and target caps are `chunk_size=None` and
+`target_chunk_size=None`: both derive from `interface_workspace_bytes`
+(2 MiB), counting broadcast cases and dtype item size for the pair table.
+This admits a 256-by-1024 float64 pair table, the measured moderate-size
+crossover that exceeded the earlier 512 KiB default. Full-fit sets execute the
+dense parallel computation directly, without tile loops; larger sets retain
+bounded pair tiles. Positive integer chunks override their respective automatic
+extent; supplying both bypasses budget derivation. The budget is validated even
+when overridden and recorded as static metadata in `InterfaceDistanceMetrics`.
+All controls must be static under JIT. Every active target is considered;
+tiling preserves masks, broadcasts, and metric reductions. The planning budget does not bound
 input/output arrays, percentile sorting, other compiler scratch, or process RSS.
 
 ::: phydrax.geometry.phase_geometry_metrics

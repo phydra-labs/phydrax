@@ -16,6 +16,7 @@ from jax import Array
 from phydrax.graph import query_neighbors
 from phydrax.graph._derived import _line_graph_pairs
 from phydrax.graph._geometry import _host_query_pairs, _point_cloud_edges
+from phydrax.graph._query_batch import _query_tiles
 
 from ._io import write_json_atomic
 from ._memory import (
@@ -127,6 +128,9 @@ def _case(size: int, repeats: int) -> dict[str, Any]:
         source="jax-compiled-whole-axis-graph-query",
         unavailable_reason="Compiler estimate unavailable.",
     )
+    source_tile, target_tile = _query_tiles(
+        source[None], target[None], 8, None, None, 4 * 1024 * 1024
+    )
     return {
         "capacity": size,
         "host_graph_peak_bytes": host_peak,
@@ -149,9 +153,20 @@ def _case(size: int, repeats: int) -> dict[str, Any]:
         "compiler": asdict(evidence),
         "output_bytes": logical_array_bytes(result),
         "logical_dense_pair_bytes": size * size * (8 * 2 + 1),
-        "logical_block_pair_bytes": min(size, 64) * (min(size, 256) + 8) * (8 + 4),
-        "target_chunk_size": 64,
-        "source_chunk_size": 256,
+        "logical_block_pair_bytes": target_tile * (source_tile * 29 + 8 * 24),
+        "target_chunk_size": target_tile,
+        "source_chunk_size": source_tile,
+        "query_workspace_bytes": 4 * 1024 * 1024,
+        "route": "dense" if source_tile == size and target_tile == size else "blocked",
+        "full_fit_comparison": (
+            {
+                "expectation": "identical dense route; excluded from adoption gate",
+                "equal_temporary_bytes": evidence.temporary_bytes
+                == whole_evidence.temporary_bytes,
+            }
+            if source_tile == size and target_tile == size
+            else None
+        ),
         "neighbor_count": 8,
     }
 
@@ -182,10 +197,35 @@ def _source_scan(size: int, repeats: int) -> dict[str, Any]:
     }
 
 
+def _compile_gate_case(size: int) -> dict[str, Any]:
+    """Compare current default and explicit full-tile routes without execution."""
+    source = jnp.arange(size, dtype=jnp.float64)[:, None]
+    target = source + 0.25
+    records: dict[str, Any] = {"capacity": size}
+    for name, kernel in (("default", _QUERY), ("explicit_full_tile", _WHOLE_AXIS)):
+        compiled, timing = measure_lower_and_compile(
+            lambda: kernel.lower(source, target), lambda lowered: lowered.compile()
+        )
+        records[name] = {
+            "compiler": asdict(
+                compiler_evidence(
+                    compiled.cost_analysis(),
+                    compiled.memory_analysis(),
+                    source="jax-compiled-graph-query-current-route",
+                    unavailable_reason="Compiler estimate unavailable.",
+                )
+            ),
+            "lowering_seconds": timing.lowering_seconds,
+            "compilation_seconds": timing.compilation_seconds,
+        }
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", type=int, nargs="+", default=[128, 256, 512])
     parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--gate-sizes", type=int, nargs="+", default=[1024, 2048])
     parser.add_argument(
         "--output", type=Path, default=Path(__file__).with_suffix(".json")
     )
@@ -196,7 +236,17 @@ def main() -> None:
     source_scan = [_source_scan(size, args.repeats) for size in args.sizes]
     # Include the one-tile/loop crossover above, then measure steady tiling
     # beyond it with a fixed required output (64 targets by eight neighbors).
-    steady_scan = [_source_scan(size * 4, args.repeats) for size in args.sizes]
+    steady_scan = [_source_scan(size * 512, args.repeats) for size in args.sizes]
+    gate_cases = [_compile_gate_case(size) for size in args.gate_sizes]
+    gate = evaluate_memory_gate(
+        args.gate_sizes,
+        [
+            case["explicit_full_tile"]["compiler"]["temporary_bytes"]
+            for case in gate_cases
+        ],
+        [case["default"]["compiler"]["temporary_bytes"] for case in gate_cases],
+        MemoryGatePolicy(),
+    ).to_dict()
     record = {
         "identity": asdict(
             capture_benchmark_identity(
@@ -213,6 +263,10 @@ def main() -> None:
             [case["compiler"]["temporary_bytes"] for case in source_scan],
         ),
         "steady_source_scan_cases": steady_scan,
+        "gate_temporary_scaling_exponent": fitted_scaling_exponent(
+            args.gate_sizes,
+            [case["default"]["compiler"]["temporary_bytes"] for case in gate_cases],
+        ),
         "steady_source_scan_temporary_scaling_exponent": fitted_scaling_exponent(
             [case["source_capacity"] for case in steady_scan],
             [case["compiler"]["temporary_bytes"] for case in steady_scan],
@@ -226,18 +280,17 @@ def main() -> None:
             args.sizes, [case["host_graph_peak_bytes"] for case in cases]
         ),
         "process_peak_rss_bytes": process_peak_rss_bytes(),
-        "gate": None,
+        "gate": gate,
+        "gate_cases": gate_cases,
+        "gate_basis": "Compile-only current default versus explicit full tile above the workspace budget; committed baseline is unchanged.",
     }
     if args.baseline is not None:
         baseline = json.loads(args.baseline.read_text())
         if [case["capacity"] for case in baseline["cases"]] != args.sizes:
             raise ValueError("Baseline capacities must match the requested sizes.")
-        record["gate"] = evaluate_memory_gate(
-            args.sizes,
-            [case["compiler"]["temporary_bytes"] for case in baseline["cases"]],
-            temporary,
-            MemoryGatePolicy(),
-        ).to_dict()
+        record["captured_baseline_capacities"] = [
+            case["capacity"] for case in baseline["cases"]
+        ]
     write_json_atomic(args.output, record)
     print(
         json.dumps(

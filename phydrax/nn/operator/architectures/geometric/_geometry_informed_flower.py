@@ -50,9 +50,10 @@ class GeometryInformedFlower(AbstractOperatorModel):
     support mask. Mesh connectivity is not consumed: sources and queries are
     interpreted as weighted point sets in ambient coordinates.
 
-    ``query_chunk_size=256`` requires a positive, non-boolean integer, not
-    ``None``. It sets the static target-tile size of the encoder and decoder;
-    their exact neighborhood queries use source tiles of 256.
+    ``query_chunk_size=None`` derives exact-query tiles automatically from
+    ``query_workspace_bytes=4 * 1024 * 1024``. A positive, non-boolean integer
+    overrides the target tile. Both controls are static model metadata and
+    are forwarded to the encoder and decoder.
     """
 
     operator_architecture = "GeometryInformedFlower"
@@ -66,6 +67,8 @@ class GeometryInformedFlower(AbstractOperatorModel):
     conditioning_channels: tuple[tuple[str, int], ...] = eqx.field(static=True)
     latent_support_key: str | None = eqx.field(static=True)
     conserve_mass: bool = eqx.field(static=True)
+    query_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -104,7 +107,8 @@ class GeometryInformedFlower(AbstractOperatorModel):
         source_key: str | None = None,
         conditioning_channels: Mapping[str, int | Literal["scalar"]] | None = None,
         query_channels: int = 0,
-        query_chunk_size: int = 256,
+        query_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         assume_uniform_measure: bool = False,
         latent_support_key: str | None = None,
         latent_support_kind: LatentSupportKind = "occupancy",
@@ -115,7 +119,11 @@ class GeometryInformedFlower(AbstractOperatorModel):
         conservation_source_key: str | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
-        query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
+        if query_chunk_size is not None:
+            query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
         shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):
             raise ValueError("latent_shape rank must match coord_dim.")
@@ -198,6 +206,7 @@ class GeometryInformedFlower(AbstractOperatorModel):
                 depth=int(transfer_depth),
                 coordinate_scale=float(coordinate_scale),
                 target_chunk_size=query_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
                 key=keys[index],
             )
             for index, channels in enumerate(source_channels)
@@ -245,6 +254,7 @@ class GeometryInformedFlower(AbstractOperatorModel):
             depth=int(transfer_depth),
             coordinate_scale=float(coordinate_scale),
             target_chunk_size=query_chunk_size,
+            query_workspace_bytes=query_workspace_bytes,
             key=keys[-2],
         )
         latent_mixer = (
@@ -284,6 +294,8 @@ class GeometryInformedFlower(AbstractOperatorModel):
         self.conditioning_channels = conditions
         self.latent_support_key = support_key
         self.conserve_mass = bool(conserve_mass)
+        self.query_chunk_size = query_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call_operator_batch__(
         self,

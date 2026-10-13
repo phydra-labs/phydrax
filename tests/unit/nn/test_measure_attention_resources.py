@@ -11,7 +11,12 @@ from jax.typing import DTypeLike
 from phydrax.nn.layers import AttentionExecution, Linear, MeasureAwareAttention
 
 
-def _layer(execution: AttentionExecution) -> MeasureAwareAttention:
+def _layer(
+    execution: AttentionExecution,
+    *,
+    block_size: int | None = None,
+    attention_workspace_bytes: int = 8 * 1024 * 1024,
+) -> MeasureAwareAttention:
     layer = MeasureAwareAttention(
         source_channels=4,
         query_channels=4,
@@ -19,7 +24,8 @@ def _layer(execution: AttentionExecution) -> MeasureAwareAttention:
         num_heads=2,
         head_dim=2,
         execution=execution,
-        block_size=3,
+        block_size=block_size,
+        attention_workspace_bytes=attention_workspace_bytes,
     )
     output = Linear(in_size=4, out_size=4, rwf=False, use_bias=False)
     output = eqx.tree_at(
@@ -56,7 +62,7 @@ def test_attention_matches_independent_measure_softmax(
         expected[0, :, head] = (
             exponential / exponential.sum(axis=-1, keepdims=True)
         ) @ np.asarray(value[0, :, head])
-    actual = _layer(execution).attend_projected(
+    actual = _layer(execution, attention_workspace_bytes=256).attend_projected(
         query, key, value, weights, source_mask=mask
     )
     np.testing.assert_allclose(actual, expected.reshape(2, 3, 4), rtol=1e-12, atol=1e-12)
@@ -70,7 +76,11 @@ def test_attention_value_and_gradients_match_explicit_dense(
 ) -> None:
     query, key, value, weights, mask = _inputs()
     dense = _layer("dense")
-    bounded = _layer(execution)
+    bounded = _layer(
+        execution,
+        block_size=3 if execution == "blockwise" else None,
+        attention_workspace_bytes=256,
+    )
 
     def objective(layer: MeasureAwareAttention, q: Array, k: Array, v: Array) -> Array:
         result = layer.attend_projected(q, k, v, weights, source_mask=mask)
@@ -94,7 +104,9 @@ def test_attention_auto_float32_preserves_fused_values() -> None:
     query, key, value, weights = (
         array.astype(jnp.float32) for array in (query, key, value, weights)
     )
-    auto = _layer("auto").attend_projected(query, key, value, weights, source_mask=mask)
+    auto = _layer("auto", attention_workspace_bytes=1).attend_projected(
+        query, key, value, weights, source_mask=mask
+    )
     reference = _layer("dense").attend_projected(
         query, key, value, weights, source_mask=mask
     )
@@ -109,7 +121,9 @@ def test_attention_auto_low_precision_matches_dense(dtype: DTypeLike) -> None:
     query, key, value, weights = (
         array.astype(dtype) for array in (query, key, value, weights)
     )
-    actual = _layer("auto").attend_projected(query, key, value, weights, source_mask=mask)
+    actual = _layer("auto", attention_workspace_bytes=1).attend_projected(
+        query, key, value, weights, source_mask=mask
+    )
     expected = _layer("dense").attend_projected(
         query, key, value, weights, source_mask=mask
     )
@@ -126,3 +140,101 @@ def test_attention_refuses_nonpositive_block_capacity() -> None:
             head_dim=2,
             block_size=0,
         )
+
+
+@pytest.mark.parametrize(
+    "execution,block_size,budget",
+    [
+        ("auto", None, 8 * 1024 * 1024),
+        ("auto", None, 672),
+        ("blockwise", None, 672),
+        ("auto", 7, 1),
+        ("dense", 1, 1),
+    ],
+    ids=[
+        "default-budget",
+        "auto-full-fit",
+        "blockwise-full-fit",
+        "explicit-full-tile",
+        "dense-override",
+    ],
+)
+def test_attention_full_fit_is_exactly_dense(
+    execution: AttentionExecution, block_size: int | None, budget: int
+) -> None:
+    query, key, value, weights, mask = _inputs()
+    expected = _layer("dense").attend_projected(
+        query, key, value, weights, source_mask=mask
+    )
+    actual = _layer(
+        execution, block_size=block_size, attention_workspace_bytes=budget
+    ).attend_projected(query, key, value, weights, source_mask=mask)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "execution,block_size,budget",
+    [
+        ("auto", None, 256),
+        ("blockwise", None, 256),
+        ("auto", 3, 8 * 1024 * 1024),
+        ("blockwise", 3, 1),
+        ("auto", None, 1),
+    ],
+    ids=[
+        "auto-over-budget",
+        "blockwise-derived-tile",
+        "explicit-tile-overrides-full-fit",
+        "explicit-tile-overrides-small-budget",
+        "one-column-floor",
+    ],
+)
+def test_attention_budgeted_tiles_preserve_masks_and_measure(
+    execution: AttentionExecution, block_size: int | None, budget: int
+) -> None:
+    query, key, value, _, mask = _inputs()
+    weights = jnp.asarray([0.2, -1.0, 1.5, jnp.nan, 2.0, jnp.inf, 0.7], dtype=jnp.float64)
+    query_mask = jnp.asarray([[True, False, True], [True, True, True]])
+    expected = _layer("dense").attend_projected(
+        query, key, value, weights, source_mask=mask, query_mask=query_mask
+    )
+    actual = _layer(
+        execution, block_size=block_size, attention_workspace_bytes=budget
+    ).attend_projected(
+        query, key, value, weights, source_mask=mask, query_mask=query_mask
+    )
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("budget", [0, -1], ids=["zero", "negative"])
+def test_attention_refuses_nonpositive_workspace_budget(budget: int) -> None:
+    with pytest.raises(ValueError, match="attention_workspace_bytes must be positive"):
+        _layer("auto", attention_workspace_bytes=budget)
+
+
+@pytest.mark.parametrize("budget", [0.5, float("nan")], ids=["fractional", "nan"])
+def test_attention_refuses_noninteger_workspace_budget(budget: float) -> None:
+    with pytest.raises(TypeError, match="attention_workspace_bytes must be an integer"):
+        _layer(
+            "auto",
+            attention_workspace_bytes=budget,  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_attention_refuses_boolean_workspace_budget() -> None:
+    with pytest.raises(TypeError, match="attention_workspace_bytes must be an integer"):
+        _layer("auto", attention_workspace_bytes=True)
+
+
+def test_attention_explicit_float32_tile_preserves_dense_values() -> None:
+    query, key, value, weights, mask = _inputs()
+    query, key, value, weights = (
+        array.astype(jnp.float32) for array in (query, key, value, weights)
+    )
+    actual = _layer("auto", block_size=3).attend_projected(
+        query, key, value, weights, source_mask=mask
+    )
+    expected = _layer("dense").attend_projected(
+        query, key, value, weights, source_mask=mask
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=2e-7)

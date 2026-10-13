@@ -579,7 +579,6 @@ class _GeometryOperatorCore(StrictModule):
             source_mask=source_mask,
             max_neighbors=neighbors,
             radius=self.latent_support_radius,
-            target_chunk_size=256,
         )
         case_count = prod(case_shape) if case_shape else 1
         tolerance = jnp.sqrt(jnp.finfo(source_values.dtype).eps)

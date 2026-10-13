@@ -36,6 +36,13 @@ transport cost, entropy KL, source marginal KL, and target marginal KL. A coupli
 at or below `mass_collapse_tolerance` receives the explicit
 `TRANSPORT_MASS_COLLAPSED` status and is not reported as converged.
 
+The shared [Sinkhorn workspace policy](sinkhorn.md) defaults to
+`block_size="auto"` and `sinkhorn_workspace_bytes=134217728` (128 MiB).
+Full-fit cost/kernel scratch executes densely without tile loops; larger
+problems derive bounded tiles. Explicit positive tile sizes and `None` (dense)
+override admission, while the positive-integer budget remains validated.
+Results and provenance report the executed tile and preserve the budget identity.
+
 ## Debiased divergence
 
 For the product-reference entropy convention above, the unbalanced Sinkhorn
