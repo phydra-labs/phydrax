@@ -2510,17 +2510,23 @@
 - Geometry queries stream polygon validity and ray parity, reuse prepared segment
   hierarchies and refitted triangle BVHs, and consume selected closest geometry
   rather than full pair tables. BRep winding retains its measured dense route.
-- Interface distance metrics use `target_chunk_size=None` to derive tiles from a
-  512 KiB pair-workspace budget; explicit positive target caps remain selectable.
+- Interface distance metrics derive both default tiles from validated
+  `interface_workspace_bytes` (2 MiB); full-fit pairs use the dense computation
+  without tile loops, while explicit positive source/target caps remain selectable.
 - Exact graph radius/kNN candidates and line-graph endpoint joins avoid dense
   rejection tables while preserving radius boundaries, ties, and edge order.
-  Graph query defaults are explicit integer source/target tiles of 256/64;
-  graph-transfer and regional-processor defaults change static module identities.
-- Balanced and unbalanced Sinkhorn default to `block_size=256`; explicit `None`
-  selects dense execution. `TransportProvenance` records the block size, changing
-  provenance persistence and fingerprints.
-- Automatic non-float32 measure-aware attention uses differentiable bounded block
-  loops; float32 fused and explicit dense selections remain available.
+  Graph queries derive source/target tiles from `query_workspace_bytes` (4 MiB),
+  using a whole-axis parallel sort when the pair workspace fits. Graph-transfer,
+  regional-processor, and geometry-architecture defaults inherit this policy;
+  budgets and optional tile fields intentionally change static model identities.
+- Balanced and unbalanced Sinkhorn default to `block_size="auto"` under a
+  validated 128 MiB `sinkhorn_workspace_bytes` policy. Full-fit cost/kernel work
+  uses the dense route; explicit integer tiles and `None` (dense) remain available.
+  Provenance records the executed tile (`None` for dense) and workspace policy.
+- Automatic non-float32 measure-aware attention admits dense scores under an
+  8 MiB `attention_workspace_bytes` budget and derives bounded source tiles above
+  it. Float32 fused and explicit dense/tile selections remain available;
+  attention wrappers and architectures inherit automatic optional tile defaults.
 - Process-memory compression uses axis slicing and local Kraus contractions
   rather than expanded Kronecker selectors, preserving failure and leakage evidence.
 - Exact ML neighbors, KDE, and density clustering derive tiles from positive

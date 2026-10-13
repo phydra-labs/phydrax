@@ -62,7 +62,7 @@ class _AttentionOptions(TypedDict):
     head_dim: int
     kernel: AttentionKernel
     execution: AttentionExecution
-    block_size: int
+    block_size: int | None
     accumulation_dtype: str
 
 
@@ -177,7 +177,7 @@ class LatentTokenBlock(StrictModule):
         feed_forward_multiplier: float = 4.0,
         kernel: AttentionKernel = "softmax",
         execution: AttentionExecution = "auto",
-        block_size: int = 256,
+        block_size: int | None = None,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
         key: PRNGKey = DOC_KEY0,
@@ -304,7 +304,7 @@ class LatentTokenProcessor(StrictModule):
         feed_forward_multiplier: float = 4.0,
         kernel: AttentionKernel = "softmax",
         execution: AttentionExecution = "auto",
-        block_size: int = 256,
+        block_size: int | None = None,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
         key: PRNGKey = DOC_KEY0,
@@ -410,7 +410,7 @@ class UPT(AbstractEncodedOperatorModel):
         source_key: str | None = None,
         attention_kernel: AttentionKernel = "softmax",
         attention_execution: AttentionExecution = "auto",
-        attention_block_size: int = 256,
+        attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
@@ -697,7 +697,7 @@ class ABUPT(AbstractEncodedOperatorModel):
         feed_forward_multiplier: float = 4.0,
         attention_kernel: AttentionKernel = "softmax",
         attention_execution: AttentionExecution = "auto",
-        attention_block_size: int = 256,
+        attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:

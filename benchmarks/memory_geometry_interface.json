@@ -1,8 +1,20 @@
 {
+  "captured_baseline_configuration": {
+    "chunk_size": 1024,
+    "repeats": 15,
+    "sources": 256,
+    "target_chunk_size": null,
+    "targets": [
+      256,
+      512,
+      1024,
+      2048
+    ]
+  },
   "cases": [
     {
       "capacity": 256,
-      "compilation_seconds": 0.05317425,
+      "compilation_seconds": 0.020855334,
       "compiler": {
         "argument_bytes": 12544,
         "bytes_accessed": 2136328,
@@ -13,10 +25,18 @@
         "temporary_bytes": 526336,
         "unavailable_reason": null
       },
+      "executed_tiles": [
+        256,
+        256
+      ],
+      "full_fit_comparison": {
+        "equal_temporary_bytes": true,
+        "expectation": "identical dense route; excluded from adoption gate"
+      },
       "logical_pair_tile_bytes": 524288,
-      "lowering_seconds": 0.030586459,
+      "lowering_seconds": 0.00524425,
       "paired_baseline": {
-        "compilation_seconds": 0.037039375,
+        "compilation_seconds": 0.020135917,
         "compiler": {
           "argument_bytes": 12544,
           "bytes_accessed": 2136328,
@@ -27,79 +47,61 @@
           "temporary_bytes": 526336,
           "unavailable_reason": null
         },
-        "lowering_seconds": 0.008500666,
+        "lowering_seconds": 0.002820375,
         "warm": {
-          "count": 15,
-          "max_seconds": 0.006450291,
-          "mean_seconds": 0.0009060222,
-          "median_seconds": 0.0004465,
-          "min_seconds": 0.000235458,
+          "count": 2,
+          "max_seconds": 0.00016775,
+          "mean_seconds": 0.0001480625,
+          "median_seconds": 0.0001480625,
+          "min_seconds": 0.000128375,
           "samples_seconds": [
-            0.000235458,
-            0.000545208,
-            0.0004465,
-            0.000252917,
-            0.000598583,
-            0.000276833,
-            0.000432125,
-            0.000519875,
-            0.000262959,
-            0.006450291,
-            0.001576125,
-            0.000435667,
-            0.000310625,
-            0.000724417,
-            0.00052275
+            0.00016775,
+            0.000128375
           ],
-          "std_seconds": 0.001515227834385364
+          "std_seconds": 1.968750000000001e-05
         }
       },
       "reference_max_abs_error": 0.0,
       "required_output_bytes": 2048,
       "source_count": 256,
       "warm": {
-        "count": 15,
-        "max_seconds": 0.003654709,
-        "mean_seconds": 0.0009339834666666667,
-        "median_seconds": 0.000399667,
-        "min_seconds": 0.000223875,
+        "count": 2,
+        "max_seconds": 0.000133875,
+        "mean_seconds": 0.00011377099999999999,
+        "median_seconds": 0.00011377099999999999,
+        "min_seconds": 9.3667e-05,
         "samples_seconds": [
-          0.003032125,
-          0.000401292,
-          0.002581125,
-          0.003654709,
-          0.000914875,
-          0.000223875,
-          0.000300292,
-          0.000399667,
-          0.000263875,
-          0.000411167,
-          0.000478833,
-          0.000391334,
-          0.000289125,
-          0.000316,
-          0.000351458
+          0.000133875,
+          9.3667e-05
         ],
-        "std_seconds": 0.0011061691737055332
+        "std_seconds": 2.0103999999999996e-05
       }
     },
     {
       "capacity": 512,
-      "compilation_seconds": 0.11686,
+      "compilation_seconds": 0.02113525,
       "compiler": {
         "argument_bytes": 18944,
-        "bytes_accessed": 2156961,
-        "flops": 789006,
+        "bytes_accessed": 4250120,
+        "flops": 1576448,
         "generated_code_bytes": 0,
         "output_bytes": 2048,
         "source": "jax-compiled-directed-interface",
-        "temporary_bytes": 534704,
+        "temporary_bytes": 1052672,
         "unavailable_reason": null
       },
-      "logical_pair_tile_bytes": 524288,
-      "lowering_seconds": 0.039970458,
+      "executed_tiles": [
+        256,
+        512
+      ],
+      "full_fit_comparison": {
+        "equal_temporary_bytes": true,
+        "expectation": "identical dense route; excluded from adoption gate"
+      },
+      "logical_pair_tile_bytes": 1048576,
+      "lowering_seconds": 0.005505041,
       "paired_baseline": {
-        "compilation_seconds": 0.031640708,
+        "compilation_seconds": 0.021282167,
         "compiler": {
           "argument_bytes": 18944,
           "bytes_accessed": 4250120,
@@ -110,79 +112,61 @@
           "temporary_bytes": 1052672,
           "unavailable_reason": null
         },
-        "lowering_seconds": 0.006777291,
+        "lowering_seconds": 0.002835625,
         "warm": {
-          "count": 15,
-          "max_seconds": 0.00096025,
-          "mean_seconds": 0.0006403832666666667,
-          "median_seconds": 0.000711333,
-          "min_seconds": 0.000299791,
+          "count": 2,
+          "max_seconds": 0.000118459,
+          "mean_seconds": 0.00011179199999999999,
+          "median_seconds": 0.00011179199999999999,
+          "min_seconds": 0.000105125,
           "samples_seconds": [
-            0.000299791,
-            0.000404708,
-            0.000748625,
-            0.000894708,
-            0.000844125,
-            0.000761791,
-            0.00096025,
-            0.000588209,
-            0.000356292,
-            0.000441084,
-            0.000408791,
-            0.000711333,
-            0.00093775,
-            0.000473708,
-            0.000774584
+            0.000105125,
+            0.000118459
           ],
-          "std_seconds": 0.00021947589429227886
+          "std_seconds": 6.667000000000002e-06
         }
       },
       "reference_max_abs_error": 0.0,
       "required_output_bytes": 2048,
       "source_count": 256,
       "warm": {
-        "count": 15,
-        "max_seconds": 0.00151525,
-        "mean_seconds": 0.0006205998666666667,
-        "median_seconds": 0.000526083,
-        "min_seconds": 0.000184208,
+        "count": 2,
+        "max_seconds": 0.000188375,
+        "mean_seconds": 0.00016062500000000001,
+        "median_seconds": 0.00016062500000000001,
+        "min_seconds": 0.000132875,
         "samples_seconds": [
-          0.000428667,
-          0.000673125,
-          0.000736041,
-          0.000783166,
-          0.00050825,
-          0.000355125,
-          0.000184208,
-          0.00151525,
-          0.000905542,
-          0.000617458,
-          0.000872917,
-          0.000433875,
-          0.000526083,
-          0.000306083,
-          0.000463208
+          0.000188375,
+          0.000132875
         ],
-        "std_seconds": 0.0003125855762425956
+        "std_seconds": 2.775000000000001e-05
       }
     },
     {
       "capacity": 1024,
-      "compilation_seconds": 0.063078084,
+      "compilation_seconds": 0.021346583,
       "compiler": {
         "argument_bytes": 31744,
-        "bytes_accessed": 2156961,
-        "flops": 789006,
+        "bytes_accessed": 8477704,
+        "flops": 3151872,
         "generated_code_bytes": 0,
         "output_bytes": 2048,
         "source": "jax-compiled-directed-interface",
-        "temporary_bytes": 534704,
+        "temporary_bytes": 2105344,
         "unavailable_reason": null
       },
-      "logical_pair_tile_bytes": 524288,
-      "lowering_seconds": 0.027786333,
+      "executed_tiles": [
+        256,
+        1024
+      ],
+      "full_fit_comparison": {
+        "equal_temporary_bytes": true,
+        "expectation": "identical dense route; excluded from adoption gate"
+      },
+      "logical_pair_tile_bytes": 2097152,
+      "lowering_seconds": 0.005419417,
       "paired_baseline": {
-        "compilation_seconds": 0.037794,
+        "compilation_seconds": 0.021877667,
         "compiler": {
           "argument_bytes": 31744,
           "bytes_accessed": 8477704,
@@ -193,79 +177,58 @@
           "temporary_bytes": 2105344,
           "unavailable_reason": null
         },
-        "lowering_seconds": 0.012336041,
+        "lowering_seconds": 0.002858667,
         "warm": {
-          "count": 15,
-          "max_seconds": 0.001995666,
-          "mean_seconds": 0.0010994166666666665,
-          "median_seconds": 0.001012458,
-          "min_seconds": 0.000462542,
+          "count": 2,
+          "max_seconds": 0.000257625,
+          "mean_seconds": 0.000251104,
+          "median_seconds": 0.000251104,
+          "min_seconds": 0.000244583,
           "samples_seconds": [
-            0.001854584,
-            0.001416834,
-            0.001012458,
-            0.001052375,
-            0.000844584,
-            0.001995666,
-            0.000792625,
-            0.000571458,
-            0.000462542,
-            0.000621917,
-            0.001219541,
-            0.000559083,
-            0.00137475,
-            0.001719625,
-            0.000993208
+            0.000257625,
+            0.000244583
           ],
-          "std_seconds": 0.000471424997954594
+          "std_seconds": 6.521000000000001e-06
         }
       },
       "reference_max_abs_error": 0.0,
       "required_output_bytes": 2048,
       "source_count": 256,
       "warm": {
-        "count": 15,
-        "max_seconds": 0.001820583,
-        "mean_seconds": 0.0010110526666666667,
-        "median_seconds": 0.000986917,
-        "min_seconds": 0.000461166,
+        "count": 2,
+        "max_seconds": 0.000308625,
+        "mean_seconds": 0.0002715,
+        "median_seconds": 0.0002715,
+        "min_seconds": 0.000234375,
         "samples_seconds": [
-          0.001491708,
-          0.000963583,
-          0.000986917,
-          0.001089209,
-          0.000705291,
-          0.000740709,
-          0.000461166,
-          0.001124291,
-          0.000893291,
-          0.000731875,
-          0.001288125,
-          0.00107,
-          0.001820583,
-          0.000779333,
-          0.001019709
+          0.000234375,
+          0.000308625
         ],
-        "std_seconds": 0.00032689531097945644
+        "std_seconds": 3.7124999999999994e-05
       }
     },
     {
       "capacity": 2048,
-      "compilation_seconds": 0.061783666,
+      "compilation_seconds": 0.033021875,
       "compiler": {
         "argument_bytes": 57344,
-        "bytes_accessed": 2156961,
-        "flops": 789006,
+        "bytes_accessed": 8535201,
+        "flops": 3152142,
         "generated_code_bytes": 0,
         "output_bytes": 2048,
         "source": "jax-compiled-directed-interface",
-        "temporary_bytes": 534704,
+        "temporary_bytes": 2132144,
         "unavailable_reason": null
       },
-      "logical_pair_tile_bytes": 524288,
-      "lowering_seconds": 0.021886,
+      "executed_tiles": [
+        256,
+        1024
+      ],
+      "full_fit_comparison": null,
+      "logical_pair_tile_bytes": 2097152,
+      "lowering_seconds": 0.01495225,
       "paired_baseline": {
-        "compilation_seconds": 0.033063792,
+        "compilation_seconds": 0.019422167,
         "compiler": {
           "argument_bytes": 57344,
           "bytes_accessed": 16850968,
@@ -276,71 +239,50 @@
           "temporary_bytes": 4194304,
           "unavailable_reason": null
         },
-        "lowering_seconds": 0.006893083,
+        "lowering_seconds": 0.005356,
         "warm": {
-          "count": 15,
-          "max_seconds": 0.002828625,
-          "mean_seconds": 0.0016231721333333333,
-          "median_seconds": 0.001415375,
-          "min_seconds": 0.001119125,
+          "count": 2,
+          "max_seconds": 0.000729625,
+          "mean_seconds": 0.0006865625,
+          "median_seconds": 0.0006865625,
+          "min_seconds": 0.0006435,
           "samples_seconds": [
-            0.001413042,
-            0.001742625,
-            0.001230083,
-            0.001415375,
-            0.002828625,
-            0.002151416,
-            0.001246792,
-            0.002062791,
-            0.001367,
-            0.001290959,
-            0.001518583,
-            0.001825416,
-            0.001393459,
-            0.001742291,
-            0.001119125
+            0.0006435,
+            0.000729625
           ],
-          "std_seconds": 0.00043757357184773195
+          "std_seconds": 4.3062500000000024e-05
         }
       },
       "reference_max_abs_error": 7.827072323607354e-15,
       "required_output_bytes": 2048,
       "source_count": 256,
       "warm": {
-        "count": 15,
-        "max_seconds": 0.002137166,
-        "mean_seconds": 0.0016470138666666667,
-        "median_seconds": 0.00151875,
-        "min_seconds": 0.001327833,
+        "count": 2,
+        "max_seconds": 0.000388083,
+        "mean_seconds": 0.00037429149999999997,
+        "median_seconds": 0.00037429149999999997,
+        "min_seconds": 0.0003605,
         "samples_seconds": [
-          0.001827959,
-          0.00165925,
-          0.001783,
-          0.001441292,
-          0.001952042,
-          0.00148575,
-          0.001327833,
-          0.002137166,
-          0.00178775,
-          0.002074833,
-          0.00143425,
-          0.001449125,
-          0.001430958,
-          0.00151875,
-          0.00139525
+          0.0003605,
+          0.000388083
         ],
-        "std_seconds": 0.0002541206345482047
+        "std_seconds": 1.3791500000000012e-05
       }
     }
   ],
   "command": [
     "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/spatial-working-set-bounds/benchmarks/memory_geometry_interface.py",
     "--phase",
-    "candidate"
+    "candidate",
+    "--repeats",
+    "2",
+    "--output",
+    "benchmarks/memory_geometry_interface.json"
   ],
   "configuration": {
-    "chunk_size": 1024,
-    "repeats": 15,
+    "chunk_size": null,
+    "interface_workspace_bytes": 2097152,
+    "repeats": 2,
     "sources": 256,
     "target_chunk_size": null,
     "targets": [
@@ -390,19 +332,82 @@
   },
   "fixed_tile_scaling_acceptance": true,
   "fixed_tile_temporary_ratios": [
-    1.0158985894941635,
-    1.0,
     1.0
   ],
   "gate": {
-    "baseline_bytes": 4194304,
-    "candidate_bytes": 534704,
-    "capacity": 2048,
+    "baseline_bytes": 33554432,
+    "candidate_bytes": 2132144,
+    "capacity": 16384,
     "decision": "adopt",
     "maximum_candidate_fraction": 0.5
   },
+  "gate_basis": "Compile-only current default versus explicit full tile above the workspace budget; committed baseline is unchanged.",
+  "gate_cases": [
+    {
+      "capacity": 8192,
+      "default": {
+        "compilation_seconds": 0.035098125,
+        "compiler": {
+          "argument_bytes": 210944,
+          "bytes_accessed": 8535201,
+          "flops": 3152142,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "jax-compiled-interface-current-route",
+          "temporary_bytes": 2132144,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.013463791
+      },
+      "explicit_full_tile": {
+        "compilation_seconds": 0.020184292,
+        "compiler": {
+          "argument_bytes": 210944,
+          "bytes_accessed": 67336216,
+          "flops": 25207808,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "jax-compiled-interface-current-route",
+          "temporary_bytes": 16777216,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.006535625
+      }
+    },
+    {
+      "capacity": 16384,
+      "default": {
+        "compilation_seconds": 0.031997875,
+        "compiler": {
+          "argument_bytes": 415744,
+          "bytes_accessed": 8535201,
+          "flops": 3152142,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "jax-compiled-interface-current-route",
+          "temporary_bytes": 2132144,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.009172209
+      },
+      "explicit_full_tile": {
+        "compilation_seconds": 0.019387458,
+        "compiler": {
+          "argument_bytes": 415744,
+          "bytes_accessed": 134649888,
+          "flops": 50414592,
+          "generated_code_bytes": 0,
+          "output_bytes": 2048,
+          "source": "jax-compiled-interface-current-route",
+          "temporary_bytes": 33554432,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.004857083
+      }
+    }
+  ],
   "identity": {
-    "benchmark_driver_fingerprint": "6936b2c299c75223a1b605d6dff04e0116da93aa971bf0b069affc3f2285abe2",
+    "benchmark_driver_fingerprint": "2373f1781f7dfeaf9a60160ec2c9e0f162a12cc3eaa54c44f11a98cc89c51e28",
     "evidence_schema": {
       "fields": [
         "cases",
@@ -413,18 +418,12 @@
       ],
       "signature": "894a0c83fd80fa5f13e76af42bcf216e6a2cb6612fbb7ed8bc4e2ffed64ee13b"
     },
-    "fingerprint": "daffaf23e6813aea089195b1a5770dda79fde978a263306473c0490aca445de1",
-    "source_build_fingerprint": "d5c8786d9ec823c3c04b14290af73d79a68f72edf4ca67867d5f4f9ad392c3c7"
+    "fingerprint": "4ed60f652515ec4e750db4b144ad6e63528da47044c0ad21ba594236c110abf2",
+    "source_build_fingerprint": "e502baf84bd95ef3f923d78bc5ba7968eb61f4267a7295996775137064486ff8"
   },
   "item": "G4",
   "phase": "candidate",
-  "process_peak_rss_bytes": 1419378688,
-  "temporary_scaling_exponent": 0.006826918348792999,
-  "timing_acceptance": {
-    "decision": "pending-quiet-wave",
-    "maximum_ratio": 1.2,
-    "observed_pass": true,
-    "smallest_warm_median_ratio": 0.895110862262038
-  },
+  "process_peak_rss_bytes": 1395408896,
+  "temporary_scaling_exponent": 0.7054746693261401,
   "timing_pending_quiet_wave": true
 }

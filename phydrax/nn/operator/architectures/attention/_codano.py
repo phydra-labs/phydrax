@@ -352,7 +352,7 @@ class CoDANO(AbstractEncodedOperatorModel):
         default_target: str | None = None,
         attention_kernel: AttentionKernel = "softmax",
         attention_execution: AttentionExecution = "auto",
-        attention_block_size: int = 256,
+        attention_block_size: int | None = None,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:

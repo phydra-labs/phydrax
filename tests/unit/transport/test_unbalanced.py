@@ -400,24 +400,25 @@ def test_uq_and_training_term_use_unbalanced_transport_only_for_physical_measure
 
 
 @pytest.mark.parametrize("iterations", [1, 100], ids=["iteration-limit", "converged"])
-def test_unbalanced_default_blocks_preserve_dense_values_gradients_and_status(
+def test_unbalanced_budget_blocks_preserve_dense_values_gradients_and_status(
     iterations: int,
 ) -> None:
     points = jnp.asarray([[-0.9], [-0.2], [0.1], [0.7], [1.3]], dtype=jnp.float64)
-    targets = jnp.linspace(-1.1, 1.6, 263, dtype=jnp.float64)[:, None]
-    target = _measure(targets, jnp.linspace(0.1, 0.9, 263, dtype=jnp.float64))
+    targets = jnp.linspace(-1.1, 1.6, 17, dtype=jnp.float64)[:, None]
+    target = _measure(targets, jnp.linspace(0.1, 0.9, 17, dtype=jnp.float64))
     weights = jnp.asarray([0.2, 0.7, 0.3, 0.4, 0.1], dtype=jnp.float64)
     dense_solver = phx.transport.UnbalancedSinkhorn(
         0.7, max_iterations=iterations, tolerance=1e-9, block_size=None
     )
     bounded_solver = phx.transport.UnbalancedSinkhorn(
-        0.7, max_iterations=iterations, tolerance=1e-9
+        0.7, max_iterations=iterations, tolerance=1e-9, sinkhorn_workspace_bytes=1632
     )
     problem = _problem(_measure(points, weights), target)
     dense = dense_solver(problem)
     bounded = bounded_solver(problem)
     assert bounded.provenance.execution == "blockwise"
-    assert bounded.provenance.block_size == 256
+    assert bounded.provenance.block_size == bounded.block_size == 3
+    assert bounded.provenance.sinkhorn_workspace_bytes == 1632
     assert dense.provenance.execution == "dense"
     assert dense.provenance.block_size is None
     assert bounded.diagnostics.status == dense.diagnostics.status
@@ -437,3 +438,66 @@ def test_unbalanced_default_blocks_preserve_dense_values_gradients_and_status(
         )
     )(points)
     assert jnp.allclose(bounded_gradient, dense_gradient, rtol=1e-9, atol=1e-11)
+    payload = jnp.stack((targets[:, 0], targets[:, 0] ** 2), axis=1)
+    assert jnp.allclose(
+        bounded.apply_target_to_source(payload),
+        dense.apply_target_to_source(payload),
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+@pytest.mark.parametrize("budget", [480, 128 * 1024 * 1024], ids=["exact-fit", "default"])
+def test_unbalanced_automatic_full_fit_is_exactly_dense(budget: int) -> None:
+    problem = _problem(
+        _measure([[-0.9], [0.1], [1.3]], [0.2, 0.5, 0.7]),
+        _measure([[-1.1], [-0.2], [0.4], [0.8], [1.6]], [0.1, 0.2, 0.3, 0.4, 0.5]),
+    )
+    automatic = phx.transport.UnbalancedSinkhorn(
+        0.7, max_iterations=10, sinkhorn_workspace_bytes=budget
+    )(problem)
+    dense = phx.transport.UnbalancedSinkhorn(0.7, max_iterations=10, block_size=None)(
+        problem
+    )
+    assert automatic.block_size is automatic.provenance.block_size is None
+    assert automatic.provenance.execution == "dense"
+    assert automatic.provenance.sinkhorn_workspace_bytes == budget
+    assert jnp.array_equal(automatic.source_potential, dense.source_potential)
+    assert jnp.array_equal(automatic.target_potential, dense.target_potential)
+    assert jnp.array_equal(automatic.regularized_cost, dense.regularized_cost)
+    assert jnp.array_equal(automatic.dense_plan(), dense.dense_plan())
+    assert automatic.diagnostics.status == dense.diagnostics.status
+
+
+@pytest.mark.parametrize(
+    "block_size,budget",
+    [(None, 1), (2, 1), (2, 128 * 1024 * 1024)],
+    ids=["dense-over-budget", "tile-over-budget", "tile-full-fit"],
+)
+def test_unbalanced_explicit_routes_override_valid_budget(
+    block_size: int | None, budget: int
+) -> None:
+    result = phx.transport.UnbalancedSinkhorn(
+        0.7, max_iterations=1, block_size=block_size, sinkhorn_workspace_bytes=budget
+    )(
+        _problem(
+            _measure([[0.0], [1.0]], [1.0, 2.0]), _measure([[0.2], [0.8]], [2.0, 3.0])
+        )
+    )
+    assert result.block_size == result.provenance.block_size == block_size
+    assert result.provenance.execution == ("dense" if block_size is None else "blockwise")
+    assert result.provenance.sinkhorn_workspace_bytes == budget
+
+
+def test_unbalanced_automatic_clamps_to_one_pair_tile() -> None:
+    problem = _problem(
+        _measure([[0.0], [1.0]], [1.0, 2.0]), _measure([[0.2], [0.8]], [2.0, 3.0])
+    )
+    bounded = phx.transport.UnbalancedSinkhorn(
+        0.7, max_iterations=10, sinkhorn_workspace_bytes=1
+    )(problem)
+    dense = phx.transport.UnbalancedSinkhorn(0.7, max_iterations=10, block_size=None)(
+        problem
+    )
+    assert bounded.block_size == bounded.provenance.block_size == 1
+    assert jnp.allclose(bounded.dense_plan(), dense.dense_plan(), rtol=1e-10, atol=1e-12)

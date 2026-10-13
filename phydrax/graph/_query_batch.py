@@ -28,6 +28,9 @@ class QueryNeighborhoodEvidence(StrictModule):
     finite: jnp.ndarray
     successful: jnp.ndarray
     backend: str = eqx.field(static=True)
+    source_chunk_size: int | None = eqx.field(static=True, default=None)
+    target_chunk_size: int | None = eqx.field(static=True, default=None)
+    query_workspace_bytes: int | None = eqx.field(static=True, default=None)
 
 
 class QueryNeighborhood(StrictModule):
@@ -243,6 +246,79 @@ def _minimum_image(
     return jnp.where(periodic, wrapped, relative)
 
 
+def _query_tiles(
+    source: jnp.ndarray,
+    target: jnp.ndarray,
+    neighbors: int,
+    source_chunk_size: int | None,
+    target_chunk_size: int | None,
+    query_workspace_bytes: int,
+) -> tuple[int, int]:
+    """Admit pair vectors, distances, masks, sort keys, and top-k merge state."""
+    cases, source_count, dimension = source.shape
+    pair_bytes = max(1, cases) * (source.dtype.itemsize * (dimension + 2) + 5)
+    merge_bytes = max(1, cases) * neighbors * 24
+    source_tile = (
+        min(source_count, source_chunk_size)
+        if source_chunk_size is not None
+        else min(
+            source_count, max(1, (query_workspace_bytes - merge_bytes) // pair_bytes)
+        )
+    )
+    target_tile = (
+        min(target.shape[1], target_chunk_size)
+        if target_chunk_size is not None
+        else min(
+            target.shape[1],
+            max(1, query_workspace_bytes // (source_tile * pair_bytes + merge_bytes)),
+        )
+    )
+    if source_chunk_size is None and target_chunk_size is not None:
+        source_tile = min(
+            source_count,
+            max(1, (query_workspace_bytes // target_tile - merge_bytes) // pair_bytes),
+        )
+    return source_tile, target_tile
+
+
+def _query_neighbors_dense(
+    source: jnp.ndarray,
+    target: jnp.ndarray,
+    source_mask: jnp.ndarray,
+    target_mask: jnp.ndarray,
+    *,
+    neighbors: int,
+    radius: float | None,
+    periodic_lengths: Sequence[float | None] | None,
+    exclude_self: bool,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Whole-axis parallel selection without tile padding, maps, or merge state."""
+    lengths, periodic = _periodic_data(periodic_lengths, source.shape[-1])
+    relative = _minimum_image(
+        target[:, :, None, :] - source[:, None, :, :], lengths, periodic
+    )
+    squared = jnp.sum(relative * relative, axis=-1)
+    valid = source_mask[:, None, :] & target_mask[:, :, None]
+    if radius is not None:
+        valid &= squared <= float(radius) ** 2
+    if exclude_self:
+        valid &= (
+            jnp.arange(target.shape[1], dtype=jnp.int32)[:, None]
+            != jnp.arange(source.shape[1], dtype=jnp.int32)[None, :]
+        )[None]
+    sortable = jnp.where(valid, squared, jnp.inf)
+    indices = jnp.argsort(sortable, axis=-1, stable=True)[..., :neighbors]
+    selected = jnp.take_along_axis(relative, indices[..., None], axis=2)
+    selected_squared = jnp.take_along_axis(squared, indices, axis=2)
+    selected_valid = jnp.take_along_axis(valid, indices, axis=2)
+    return (
+        indices,
+        jnp.where(selected_valid[..., None], selected, 0),
+        jnp.where(selected_valid, selected_squared, 0),
+        selected_valid,
+    )
+
+
 def _query_neighbors_blocked(
     source: jnp.ndarray,
     target: jnp.ndarray,
@@ -446,18 +522,19 @@ def query_neighbors(
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
     exclude_self: bool = False,
-    target_chunk_size: int = 64,
-    source_chunk_size: int = 256,
+    target_chunk_size: int | None = None,
+    source_chunk_size: int | None = None,
+    query_workspace_bytes: int = 4 * 1024 * 1024,
     plan: MortonNeighborQueryPlan | None = None,
 ) -> QueryNeighborhood:
     """Return deterministic, fixed-capacity neighbors without leaving JAX.
 
-    Without ``plan``, exact top-k selection uses target tiles of at most
-    ``target_chunk_size=64`` and source tiles of at most
-    ``source_chunk_size=256``. Both sizes require positive, non-boolean
-    integers; ``None`` does not select a dense route. Equal distances retain
-    source-index order, and radius boundaries are inclusive. Larger tiles
-    trade scratch memory for parallel work without changing neighborhoods.
+    Without ``plan``, ``None`` chunk sizes derive source and target tiles from
+    ``query_workspace_bytes`` (default 4 MiB). The budget counts case-local pair
+    vectors, distance/mask/sort tables, and top-k merge state, not required output
+    or compiler scratch. Full-fit queries use whole-axis parallel selection without
+    tile loops. Explicit positive integer chunks override the respective automatic
+    tile. Equal distances retain source-index order; radius boundaries are inclusive.
 
     A Morton ``plan`` selects its bounded candidate route instead; these tile
     arguments are still validated but do not override the plan's capacities.
@@ -488,8 +565,13 @@ def query_neighbors(
         raise ValueError("exclude_self requires equal source and target point counts.")
     if radius is not None and float(radius) <= 0.0:
         raise ValueError("radius must be positive when supplied.")
-    target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
-    source_chunk_size = positive_integer(source_chunk_size, "source_chunk_size")
+    if target_chunk_size is not None:
+        target_chunk_size = positive_integer(target_chunk_size, "target_chunk_size")
+    if source_chunk_size is not None:
+        source_chunk_size = positive_integer(source_chunk_size, "source_chunk_size")
+    query_workspace_bytes = positive_integer(
+        query_workspace_bytes, "query_workspace_bytes"
+    )
 
     cases = prod(case_shape) if case_shape else 1
     source = source.reshape((cases, source_count, source.shape[-1]))
@@ -514,18 +596,39 @@ def query_neighbors(
             exclude_self=exclude_self,
         )
 
-    indices, relative, squared, valid = _query_neighbors_blocked(
+    source_tile, target_tile = _query_tiles(
         source,
         target,
-        source_valid,
-        target_valid,
-        neighbors=neighbor_count,
-        radius=radius,
-        periodic_lengths=periodic_lengths,
-        exclude_self=exclude_self,
-        target_chunk_size=target_chunk_size,
-        source_chunk_size=source_chunk_size,
+        neighbor_count,
+        source_chunk_size,
+        target_chunk_size,
+        query_workspace_bytes,
     )
+    dense = source_tile == source_count and target_tile == target_count
+    if dense:
+        indices, relative, squared, valid = _query_neighbors_dense(
+            source,
+            target,
+            source_valid,
+            target_valid,
+            neighbors=neighbor_count,
+            radius=radius,
+            periodic_lengths=periodic_lengths,
+            exclude_self=exclude_self,
+        )
+    else:
+        indices, relative, squared, valid = _query_neighbors_blocked(
+            source,
+            target,
+            source_valid,
+            target_valid,
+            neighbors=neighbor_count,
+            radius=radius,
+            periodic_lengths=periodic_lengths,
+            exclude_self=exclude_self,
+            target_chunk_size=target_tile,
+            source_chunk_size=source_tile,
+        )
     finite = jnp.all(jnp.isfinite(source) | ~source_valid[..., None]) & jnp.all(
         jnp.isfinite(target) | ~target_valid[..., None]
     )
@@ -542,7 +645,10 @@ def query_neighbors(
             complete=jnp.asarray(True),
             finite=finite,
             successful=finite,
-            backend="blocked",
+            backend="dense" if dense else "blocked",
+            source_chunk_size=source_tile,
+            target_chunk_size=target_tile,
+            query_workspace_bytes=query_workspace_bytes,
         ),
     )
 
@@ -589,8 +695,9 @@ def batched_knn_query_graph(
     source_measure_key: str = "quadrature_weight",
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
-    target_chunk_size: int = 64,
-    source_chunk_size: int = 256,
+    target_chunk_size: int | None = None,
+    source_chunk_size: int | None = None,
+    query_workspace_bytes: int = 4 * 1024 * 1024,
     plan: MortonNeighborQueryPlan | None = None,
     weight_kind: MollifierKind | None = None,
     weight_radius: float | None = None,
@@ -601,9 +708,9 @@ def batched_knn_query_graph(
 ) -> QueryGraph:
     """Build a JIT-compatible counts-first batch of bipartite query graphs.
 
-    ``target_chunk_size=64`` and ``source_chunk_size=256`` are positive,
-    non-boolean integer bounds for exact selection, as in ``query_neighbors``.
-    Neither admits ``None``; a supplied Morton ``plan`` owns its route sizes.
+    ``None`` chunk sizes derive exact source/target tiles from
+    ``query_workspace_bytes`` (default 4 MiB), as in ``query_neighbors``.
+    Explicit positive integer chunks override automatic sizes.
     """
     source_raw = jnp.asarray(source_points, dtype=jnp.float64)
     target_raw = jnp.asarray(target_points, dtype=jnp.float64)
@@ -652,6 +759,7 @@ def batched_knn_query_graph(
         periodic_lengths=periodic_lengths,
         target_chunk_size=target_chunk_size,
         source_chunk_size=source_chunk_size,
+        query_workspace_bytes=query_workspace_bytes,
         plan=plan,
     )
     node_count = source_count + target_count
@@ -778,16 +886,17 @@ def batched_knn_graph(
     radius: float | None = None,
     periodic_lengths: Sequence[float | None] | None = None,
     include_self: bool = False,
-    target_chunk_size: int = 64,
-    source_chunk_size: int = 256,
+    target_chunk_size: int | None = None,
+    source_chunk_size: int | None = None,
+    query_workspace_bytes: int = 4 * 1024 * 1024,
     plan: MortonNeighborQueryPlan | None = None,
     validate: bool = True,
 ) -> GraphIR:
     """Build a JIT-compatible counts-first batch of homogeneous KNN graphs.
 
-    ``target_chunk_size=64`` and ``source_chunk_size=256`` are positive,
-    non-boolean integer bounds for exact selection, as in ``query_neighbors``.
-    Neither admits ``None``; a supplied Morton ``plan`` owns its route sizes.
+    ``None`` chunk sizes derive exact source/target tiles from
+    ``query_workspace_bytes`` (default 4 MiB), as in ``query_neighbors``.
+    Explicit positive integer chunks override automatic sizes.
     """
     raw = jnp.asarray(points, dtype=jnp.float64)
     case_shape = tuple(raw.shape[:-2])
@@ -818,6 +927,7 @@ def batched_knn_graph(
         exclude_self=not include_self,
         target_chunk_size=target_chunk_size,
         source_chunk_size=source_chunk_size,
+        query_workspace_bytes=query_workspace_bytes,
         plan=plan,
     )
     offsets = jnp.arange(case_count, dtype=jnp.int32)[:, None, None] * point_count

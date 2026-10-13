@@ -375,7 +375,7 @@ def test_graph_query_refuses_nonpositive_chunk_size(axis: str) -> None:
 
 @pytest.mark.parametrize("axis", ["source", "target"])
 @pytest.mark.parametrize(
-    "tile", [None, True, 1.5, "2"], ids=["none", "boolean", "fractional", "string"]
+    "tile", [True, 1.5, "2"], ids=["boolean", "fractional", "string"]
 )
 def test_graph_query_refuses_noninteger_chunk_sizes(axis: str, tile: Any) -> None:
     with pytest.raises(TypeError, match="chunk_size must be an integer"):
@@ -399,3 +399,73 @@ def test_blocked_neighbors_preserve_nonfinite_failure_routes() -> None:
     np.testing.assert_array_equal(result.count, 5)
     assert not bool(result.evidence.finite)
     assert not bool(result.evidence.successful)
+
+
+def test_query_budget_boundary_preserves_exact_neighborhoods() -> None:
+    source = np.asarray([[0.0], [1.0], [-1.0], [3.0]], dtype=np.float64)
+    target = np.asarray([[0.5], [2.0], [-0.5]], dtype=np.float64)
+    # Four 29-byte pairs plus two 24-byte merge entries per target.
+    full_budget = 3 * (4 * 29 + 2 * 24)
+    full = phx.graph.query_neighbors(
+        source, target, max_neighbors=2, query_workspace_bytes=full_budget
+    )
+    tiled = phx.graph.query_neighbors(
+        source, target, max_neighbors=2, query_workspace_bytes=full_budget - 1
+    )
+    explicit = phx.graph.query_neighbors(
+        source,
+        target,
+        max_neighbors=2,
+        source_chunk_size=4,
+        target_chunk_size=3,
+        query_workspace_bytes=1,
+    )
+    assert full.evidence.backend == explicit.evidence.backend == "dense"
+    assert tiled.evidence.backend == "blocked"
+    assert full.evidence.source_chunk_size == 4
+    assert full.evidence.target_chunk_size == 3
+    assert tiled.evidence.target_chunk_size == 2
+    assert tiled.evidence.query_workspace_bytes == full_budget - 1
+    expected = np.argsort((target[:, None, 0] - source[None, :, 0]) ** 2, kind="stable")[
+        :, :2
+    ]
+    np.testing.assert_array_equal(full.indices[0], expected)
+    for result in (tiled, explicit):
+        np.testing.assert_array_equal(result.indices, full.indices)
+        np.testing.assert_array_equal(result.relative, full.relative)
+        np.testing.assert_array_equal(result.distance_squared, full.distance_squared)
+        np.testing.assert_array_equal(result.mask, full.mask)
+
+
+@pytest.mark.parametrize("budget", [0, -1, True, 1.5, None])
+def test_query_refuses_invalid_workspace_budget(budget: Any) -> None:
+    with pytest.raises((TypeError, ValueError), match="query_workspace_bytes"):
+        phx.graph.query_neighbors([[0.0]], [[0.0]], query_workspace_bytes=budget)
+
+
+def test_batched_graph_budget_routes_preserve_edges() -> None:
+    points = np.asarray([[0.0], [1.0], [3.0], [6.0]], dtype=np.float64)
+    for builder in (
+        lambda budget: phx.graph.batched_knn_graph(
+            points, k=2, query_workspace_bytes=budget
+        ),
+        lambda budget: (
+            phx.graph.batched_knn_query_graph(
+                points, points, k=2, query_workspace_bytes=budget
+            ).graph
+        ),
+    ):
+        full = builder(4096)
+        tiled = builder(64)
+        np.testing.assert_array_equal(full.senders, tiled.senders)
+        np.testing.assert_array_equal(full.receivers, tiled.receivers)
+        np.testing.assert_array_equal(full.edge_mask, tiled.edge_mask)
+
+
+def test_query_budget_preserves_empty_case_refusal() -> None:
+    with pytest.raises(ValueError, match="case dimensions must be positive"):
+        phx.graph.query_neighbors(
+            jnp.zeros((0, 3, 2), dtype=jnp.float64),
+            jnp.zeros((0, 2, 2), dtype=jnp.float64),
+            max_neighbors=1,
+        )

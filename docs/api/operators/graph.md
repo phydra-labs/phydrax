@@ -263,17 +263,21 @@ negative controls.
 
 `query_neighbors` returns fixed-width `RowRelation` routes, minimum-image
 relative vectors, squared distances, distances, counts, and
-`QueryNeighborhoodEvidence`. The default exact implementation tiles both axes:
-up to 64 targets (`target_chunk_size=64`) and 256 sources
-(`source_chunk_size=256`) per tile. A source tile is stably merged into the
-current top-k; equal distances retain source-index order. Scratch scales with
-the tile sizes and k, not the source-by-target product; the requested
-target-by-k output is still retained. Larger explicit tile sizes select more
-parallel work at the cost of memory. Evidence reports `backend="blocked"`.
-Both tile sizes require positive, non-boolean integers; `None` is not a dense
-selection. `batched_knn_query_graph` and `batched_knn_graph` expose the same
-defaults and forward both bounds. If `max_neighbors` is omitted without a
-plan, k equals the source count, so the requested output can still be quadratic.
+`QueryNeighborhoodEvidence`. With default `target_chunk_size=None` and
+`source_chunk_size=None`, `query_workspace_bytes` (4 MiB) derives both tiles
+from the case count, coordinate dimension, float64 pair vectors/distances,
+mask/sort keys, and top-k merge state. Full-fit neighborhoods execute the
+whole-axis parallel sort directly, without tile loops; larger problems use
+the exact two-axis top-k merge. The default admits the quiet qualification's
+256-point small query while bounding larger pair tables.
+Positive, non-boolean integer chunks override the respective automatic tile;
+both explicit chunks bypass budget admission. Evidence reports `backend="dense"`
+or `"blocked"`, the executed source/target tile extents, and the workspace budget.
+The budget excludes required target-by-k output and compiler scratch, and
+clamps to at least one pair. Equal distances retain source-index order.
+`batched_knn_query_graph` and `batched_knn_graph` expose and forward the same
+policy. If `max_neighbors` is omitted without a plan, k equals the source count,
+so required output can still be quadratic.
 Supplying a `MortonNeighborQueryPlan` explicitly selects coarse Morton-cell
 execution with a bounded candidate buffer per target while preserving logical
 indices, source masks, target masks, stable equal-distance ordering, optional

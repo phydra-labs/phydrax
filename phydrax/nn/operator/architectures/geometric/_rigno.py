@@ -40,9 +40,10 @@ class RIGNO(AbstractOperatorModel):
     decoded onto arbitrary query coordinates. Every graph is constructed per
     case inside JAX; no physical samples or messages can cross case boundaries.
 
-    ``query_chunk_size=256`` requires a positive, non-boolean integer, not
-    ``None``. It sets the static target-tile size of transfers and the regional
-    processor; their exact neighborhood queries use source tiles of 256.
+    ``query_chunk_size=None`` derives exact-query tiles automatically from
+    ``query_workspace_bytes=4 * 1024 * 1024``. A positive, non-boolean integer
+    overrides the target tile. Both controls are static model metadata and
+    are forwarded to transfers and the regional processor.
     """
 
     operator_architecture = "RIGNO"
@@ -53,6 +54,8 @@ class RIGNO(AbstractOperatorModel):
     coord_dim: int = eqx.field(static=True)
     regional_count: int = eqx.field(static=True)
     source_keys: tuple[str, ...] = eqx.field(static=True)
+    query_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -85,11 +88,16 @@ class RIGNO(AbstractOperatorModel):
         coordinate_scale: float = 1.0,
         source_key: str | None = None,
         query_channels: int = 0,
-        query_chunk_size: int = 256,
+        query_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         assume_uniform_measure: bool = False,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
-        query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
+        if query_chunk_size is not None:
+            query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
         if int(coord_dim) <= 0 or int(regional_count) <= 0:
             raise ValueError("coord_dim and regional_count must be positive.")
         if int(latent_channels) <= 0:
@@ -142,6 +150,7 @@ class RIGNO(AbstractOperatorModel):
                 depth=int(transfer_depth),
                 coordinate_scale=float(coordinate_scale),
                 target_chunk_size=query_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
                 key=keys[index],
             )
             for index, channels in enumerate(source_channels)
@@ -155,6 +164,7 @@ class RIGNO(AbstractOperatorModel):
             width=int(processor_width),
             mlp_depth=int(processor_mlp_depth),
             target_chunk_size=query_chunk_size,
+            query_workspace_bytes=query_workspace_bytes,
             shared=bool(processor_shared),
             edge_dropout=float(processor_edge_dropout),
             residual_scale=float(processor_residual_scale),
@@ -173,6 +183,7 @@ class RIGNO(AbstractOperatorModel):
             depth=int(transfer_depth),
             coordinate_scale=float(coordinate_scale),
             target_chunk_size=query_chunk_size,
+            query_workspace_bytes=query_workspace_bytes,
             key=keys[-2],
         )
         latent_mixer = (
@@ -201,6 +212,8 @@ class RIGNO(AbstractOperatorModel):
         self.coord_dim = int(coord_dim)
         self.regional_count = int(regional_count)
         self.source_keys = source_keys
+        self.query_chunk_size = query_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call_operator_batch__(
         self,
