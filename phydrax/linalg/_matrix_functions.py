@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, assert_never, Literal, TypeAlias
+from functools import partial
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,8 +17,6 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 from jaxtyping import PyTree
-
-from phydrax.ein import contract
 
 from .._admissibility import guard_derivative_validity
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -43,8 +42,9 @@ from ._operators import (
     DenseLinearOperator,
     FunctionLinearOperator,
 )
+from ._pairings import EuclideanPairing
 from ._policies import DifferentiationPolicy, FailurePolicy
-from ._spaces import PyTreeSpace, RHSLayout
+from ._spaces import ArraySpace, PyTreeSpace, RHSLayout
 from .krylov import (
     arnoldi,
     KrylovBreakdownStatus,
@@ -53,6 +53,10 @@ from .krylov import (
     PreparedKrylovProjection,
 )
 from .krylov._decompositions import _norm_from_squared
+
+
+if TYPE_CHECKING:
+    from ._runtime import _PackedRHSLayout
 
 
 MatrixFunctionKind: TypeAlias = Literal[
@@ -74,6 +78,7 @@ MatrixFunctionMethod: TypeAlias = Literal[
     "chebyshev",
     "lanczos",
     "arnoldi",
+    "dense",
 ]
 
 
@@ -90,6 +95,7 @@ def _operator_numerical_fingerprint(operator: AbstractLinearOperator, /) -> str:
 class MatrixFunctionPolicy(StrictModule):
     method: MatrixFunctionMethod = eqx.field(static=True)
     max_dimension: int = eqx.field(static=True)
+    max_workspace_bytes: int = eqx.field(static=True)
     orthogonalization: Literal["modified", "double", "selective", "full"] = eqx.field(
         static=True
     )
@@ -103,6 +109,7 @@ class MatrixFunctionPolicy(StrictModule):
         /,
         *,
         max_dimension: int = 32,
+        max_workspace_bytes: int = 64 * 1024 * 1024,
         orthogonalization: Literal[
             "modified", "double", "selective", "full"
         ] = "selective",
@@ -115,6 +122,8 @@ class MatrixFunctionPolicy(StrictModule):
         tolerance = float(error_tolerance)
         if dimension < 1 or not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Matrix-function dimension and tolerance must be valid.")
+        if max_workspace_bytes < 1:
+            raise ValueError("max_workspace_bytes must be positive.")
         if orthogonalization not in ("modified", "double", "selective", "full"):
             raise ValueError("Unknown matrix-function orthogonalization policy.")
         differentiation_ = (
@@ -129,6 +138,7 @@ class MatrixFunctionPolicy(StrictModule):
             raise TypeError("failure must be a FailurePolicy or None.")
         self.method = method
         self.max_dimension = dimension
+        self.max_workspace_bytes = max_workspace_bytes
         self.orthogonalization = orthogonalization
         self.error_tolerance = tolerance
         self.differentiation = differentiation_
@@ -456,6 +466,172 @@ def _zero_scale_action(
     raise ValueError(f"The zero-scale {kind} action is singular.")
 
 
+@partial(jax.custom_jvp, nondiff_argnums=(4, 5))
+def _eigenspace_function_action(
+    matrix: Array,
+    scale: Array,
+    rhs: Array,
+    shift: Array,
+    kind: MatrixFunctionKind,
+    power: float | None,
+) -> Array:
+    eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+    multipliers = _scalar_function(scale * eigenvalues, kind, power=power, shift=shift)
+    projection = jnp.conj(eigenvectors.T) @ rhs
+    return eigenvectors @ (multipliers[:, None] * projection)
+
+
+@_eigenspace_function_action.defjvp
+def _eigenspace_function_action_jvp(
+    kind: MatrixFunctionKind,
+    power: float | None,
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
+    matrix, scale, rhs, shift = primals
+    matrix_dot, scale_dot, rhs_dot, shift_dot = tangents
+    eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+    adjoint = jnp.conj(eigenvectors.T)
+
+    def multipliers(values: Array, scalar: Array, offset: Array) -> Array:
+        return _scalar_function(scalar * values, kind, power=power, shift=offset)
+
+    values, parameter_dot = jax.jvp(
+        multipliers,
+        (eigenvalues, scale, shift),
+        (jnp.zeros_like(eigenvalues), scale_dot, shift_dot),
+    )
+    _, derivative = jax.jvp(
+        lambda argument: multipliers(argument, scale, shift),
+        (eigenvalues,),
+        (jnp.ones_like(eigenvalues),),
+    )
+    gap = eigenvalues[:, None] - eigenvalues[None, :]
+    threshold = jnp.sqrt(jnp.finfo(eigenvalues.dtype).eps) * jnp.maximum(
+        1.0, jnp.maximum(jnp.abs(eigenvalues[:, None]), jnp.abs(eigenvalues[None, :]))
+    )
+    confluent = jnp.abs(gap) <= threshold
+    divided = (values[:, None] - values[None, :]) / jnp.where(confluent, 1.0, gap)
+    divided = jnp.where(
+        confluent, (derivative[:, None] + derivative[None, :]) / 2, divided
+    )
+    local_dot = adjoint @ ((matrix_dot + jnp.conj(matrix_dot.T)) / 2) @ eigenvectors
+    projection = adjoint @ rhs
+    value = eigenvectors @ (values[:, None] * projection)
+    tangent = eigenvectors @ (
+        (divided * local_dot) @ projection
+        + parameter_dot[:, None] * projection
+        + values[:, None] * (adjoint @ rhs_dot)
+    )
+    return value, tangent
+
+
+def _unpack_batched_function_value(
+    operator: DenseLinearOperator, value: Array, layout: _PackedRHSLayout, /
+) -> Array:
+    if not isinstance(operator.source, ArraySpace):
+        raise ValueError("Batched dense function actions require an ArraySpace.")
+    return value.reshape(layout.batch_shape + operator.source.shape + layout.rhs_shape)
+
+
+def _batched_krylov_matrix_function_action(
+    operator: DenseLinearOperator,
+    matrices: Array,
+    scales: Array,
+    right_hand_sides: Array,
+    layout: _PackedRHSLayout,
+    /,
+    *,
+    kind: MatrixFunctionKind,
+    power: float | None,
+    shift: complex | float | None,
+    policy: MatrixFunctionPolicy,
+    spectral_bounds: tuple[float, float] | None,
+) -> MatrixFunctionResult:
+
+    def apply_batch(
+        inputs: tuple[Array, Array, Array],
+    ) -> tuple[Array, Array, MatrixFunctionDiagnostics]:
+        matrix, scale, rhs = inputs
+        local = DenseLinearOperator(
+            matrix,
+            source=operator.source,
+            target=operator.target,
+            properties=operator.properties,
+            operator_id=operator.operator_id,
+        )
+
+        def apply_column(column: Array) -> tuple[Array, Array, MatrixFunctionDiagnostics]:
+            result = matrix_function_action(
+                local,
+                operator.source.unflatten(column),
+                scale,
+                kind=kind,
+                power=power,
+                shift=shift,
+                policy=policy,
+                spectral_bounds=spectral_bounds,
+            )
+            if not isinstance(result.value, Array):
+                raise TypeError("Dense array-space action returned a non-array value.")
+            return result.value.reshape((-1,)), result.status, result.diagnostics
+
+        values, statuses, diagnostics = jax.lax.map(apply_column, rhs.T)
+
+        def reduce_evidence(value: Array) -> Array:
+            return (
+                jnp.all(value, axis=0)
+                if value.dtype == jnp.bool_
+                else jnp.max(value, axis=0)
+            )
+
+        reduced = jax.tree.map(reduce_evidence, diagnostics)
+        reduced = eqx.tree_at(
+            lambda item: (item.action_matvec_count, item.transpose_matvec_count),
+            reduced,
+            (
+                jnp.sum(diagnostics.action_matvec_count),
+                jnp.sum(diagnostics.transpose_matvec_count),
+            ),
+        )
+        return values.T, jnp.max(statuses), reduced
+
+    values, statuses, diagnostics = jax.lax.map(
+        apply_batch, (matrices, scales, right_hand_sides)
+    )
+    values = values.reshape(operator.batch_shape + right_hand_sides.shape[1:])
+    statuses = statuses.reshape(operator.batch_shape)
+    diagnostics = jax.tree.map(
+        lambda value: value.reshape(operator.batch_shape), diagnostics
+    )
+    return _finalize_matrix_function_result(
+        _unpack_batched_function_value(operator, values, layout),
+        statuses,
+        diagnostics,
+        MatrixFunctionProvenance(
+            method=(
+                "batched-lanczos-action"
+                if policy.method == "lanczos"
+                or (
+                    policy.method == "auto"
+                    and operator.properties.certifies("self_adjoint")
+                )
+                else "batched-arnoldi-action"
+            ),
+            kind=kind,
+            description="Bounded independent Krylov actions with propagated per-action evidence.",
+            operator_id=operator.operator_id,
+            plan_id=None,
+            prepared_id=None,
+            trace_source="not-applicable",
+            norm_source="not-applicable",
+            numeric_version=jnp.asarray(0, dtype=jnp.int32),
+        ),
+        differentiation=policy.differentiation,
+        failure=policy.failure,
+    )
+
+
 def _batched_dense_matrix_function_action(
     operator: DenseLinearOperator,
     vector: PyTree[Any],
@@ -467,8 +643,9 @@ def _batched_dense_matrix_function_action(
     shift: complex | float | None,
     policy: MatrixFunctionPolicy,
     rhs_layout: RHSLayout | None,
+    spectral_bounds: tuple[float, float] | None,
 ) -> MatrixFunctionResult:
-    from ._runtime import _pack_rhs, _unpack_value
+    from ._runtime import _pack_rhs
 
     canonical, layout = _pack_rhs(
         operator.source,
@@ -489,52 +666,127 @@ def _batched_dense_matrix_function_action(
         scale_ = jax.lax.stop_gradient(scale_)
     batch_count = int(np.prod(operator.batch_shape))
     size = operator.source.size
+    eigenspace = (
+        operator.properties.certifies("self_adjoint")
+        and isinstance(operator.source, ArraySpace)
+        and isinstance(operator.source.pairing, EuclideanPairing)
+    )
     matrices = matrix.reshape((batch_count, size, size))
     scales = scale_.reshape((batch_count,))
     right_hand_sides = canonical.reshape((batch_count, size, canonical.shape[-1]))
 
+    function_dtype = jnp.result_type(
+        matrix.dtype,
+        scale_.dtype,
+        matrix.dtype if shift is None else jnp.asarray(shift).dtype,
+        jnp.complex64 if kind in ("sin", "cos") else matrix.dtype,
+    )
+    augmented_blocks = {"phi1": 2, "phi2": 3, "phi3": 4}.get(kind, 1)
+    dense_workspace = (
+        batch_count * (augmented_blocks * size) ** 2 * function_dtype.itemsize * 32
+    )
+    if policy.method == "dense" and dense_workspace > policy.max_workspace_bytes:
+        raise ValueError(
+            f"Dense matrix-function workspace requires {dense_workspace} bytes; "
+            f"max_workspace_bytes={policy.max_workspace_bytes}. Use an action method."
+        )
+
     def apply_one(matrix_: Array, scale_value: Array, right_hand_side: Array) -> Array:
+        if kind == "resolvent":
+            if shift is None:
+                raise ValueError("A resolvent matrix function requires shift.")
+            dtype = jnp.result_type(matrix_.dtype, jnp.asarray(shift).dtype)
+            shifted = -scale_value * matrix_.astype(dtype)
+            diagonal = jnp.arange(size)
+            shifted = shifted.at[diagonal, diagonal].add(jnp.asarray(shift, dtype=dtype))
+            return jnp.linalg.solve(shifted, right_hand_side.astype(dtype))
+        if policy.method != "dense" and eigenspace:
+            return _eigenspace_function_action(
+                matrix_,
+                scale_value,
+                right_hand_side,
+                jnp.asarray(0.0 if shift is None else shift),
+                kind,
+                power,
+            )
         function_matrix = _small_matrix_function(
             matrix_,
             scale_value,
             kind,
             power=power,
             shift=shift,
-            self_adjoint=operator.properties.certifies("self_adjoint"),
+            self_adjoint=eigenspace,
         )
-        return contract(
-            "ij,jk->ik",
-            function_matrix,
-            right_hand_side,
-            backend="jax",
+        return function_matrix @ right_hand_side
+
+    if policy.method in ("spectral", "chebyshev"):
+        raise ValueError(
+            "Batched actions require auto, dense, Lanczos, or Arnoldi execution."
+        )
+    if (
+        policy.method != "dense"
+        and kind != "resolvent"
+        and (policy.method in ("lanczos", "arnoldi") or not eigenspace)
+    ):
+        return _batched_krylov_matrix_function_action(
+            operator,
+            matrices,
+            scales,
+            right_hand_sides,
+            layout,
+            kind=kind,
+            power=power,
+            shift=shift,
+            policy=policy,
+            spectral_bounds=spectral_bounds,
         )
 
     result = jax.vmap(apply_one)(matrices, scales, right_hand_sides)
     result = result.reshape(operator.batch_shape + (size, canonical.shape[-1]))
     finite = jnp.all(jnp.isfinite(result), axis=(-2, -1))
     zero = jnp.zeros(operator.batch_shape, dtype=result.real.dtype)
+    residual_estimate = zero
+    converged = finite
+    if kind == "resolvent":
+        if shift is None:
+            raise ValueError("A resolvent matrix function requires shift.")
+        residual = (
+            jnp.asarray(shift) * result
+            - scale_[..., None, None] * jnp.matmul(matrix, result)
+            - canonical
+        )
+        residual_estimate = jnp.linalg.norm(residual, axis=(-2, -1))
+        rhs_norm = jnp.linalg.norm(canonical, axis=(-2, -1))
+        finite = finite & jnp.isfinite(residual_estimate)
+        converged = finite & (
+            residual_estimate <= policy.error_tolerance * jnp.maximum(1.0, rhs_norm)
+        )
     dimension = jnp.full(operator.batch_shape, size, dtype=jnp.int32)
-    value = _unpack_value(operator.source, result, layout)
+    value = _unpack_batched_function_value(operator, result, layout)
     status = jnp.where(
         finite,
-        int(MatrixFunctionStatus.SUCCESS),
+        jnp.where(
+            converged,
+            int(MatrixFunctionStatus.SUCCESS),
+            int(MatrixFunctionStatus.TOLERANCE_NOT_MET),
+        ),
         int(MatrixFunctionStatus.NONFINITE),
     ).astype(jnp.int32)
     zeros = jnp.zeros(operator.batch_shape, dtype=jnp.int32)
     diagnostics = MatrixFunctionDiagnostics(
-        error_estimate=zero,
-        residual_estimate=zero,
-        error_bound=zero,
-        error_bound_available=finite,
-        error_bound_certified=finite,
+        error_estimate=residual_estimate,
+        residual_estimate=residual_estimate,
+        error_bound=jnp.full_like(zero, jnp.inf) if kind == "resolvent" else zero,
+        error_bound_available=finite & jnp.asarray(kind != "resolvent"),
+        error_bound_certified=finite & jnp.asarray(kind != "resolvent"),
         finite=finite,
-        converged=finite,
-        derivative_valid=finite & jnp.asarray(policy.differentiation.mode != "none"),
+        converged=converged,
+        derivative_valid=converged & jnp.asarray(policy.differentiation.mode != "none"),
         effective_dimension=dimension,
         selected_degree=jnp.full(operator.batch_shape, -1, dtype=jnp.int32),
         scaling_count=zeros,
         setup_matvec_count=zeros,
-        action_matvec_count=zeros,
+        action_matvec_count=jnp.ones_like(zeros) if kind == "resolvent" else zeros,
         transpose_matvec_count=zeros,
         breakdown_status=jnp.full(
             operator.batch_shape,
@@ -542,18 +794,28 @@ def _batched_dense_matrix_function_action(
             dtype=jnp.int32,
         ),
         retained_storage_bytes=0,
-        workspace_bytes=0,
+        workspace_bytes=(
+            dense_workspace
+            if policy.method == "dense"
+            else batch_count
+            * (size * size + 3 * size * canonical.shape[-1])
+            * result.dtype.itemsize
+        ),
     )
     return _finalize_matrix_function_result(
         value,
         status,
         diagnostics,
         MatrixFunctionProvenance(
-            method="batched-dense-exact",
-            kind=kind,
-            description=(
-                "exact independent dense matrix functions over a static leading batch"
+            method=(
+                "batched-dense-exact"
+                if policy.method == "dense"
+                else "batched-direct-resolvent"
+                if kind == "resolvent"
+                else "batched-eigenspace-action"
             ),
+            kind=kind,
+            description="Independent matrix-function actions over a static leading batch.",
             operator_id=operator.operator_id,
             plan_id=None,
             prepared_id=None,
@@ -620,6 +882,7 @@ def matrix_function_action(
             shift=shift,
             policy=selected,
             rhs_layout=rhs_layout,
+            spectral_bounds=spectral_bounds,
         )
     if selected.differentiation.mode in ("rhs-only", "none"):
         operator = jax.tree.map(jax.lax.stop_gradient, operator)
@@ -654,6 +917,10 @@ def matrix_function_action(
         positive_definite=positive_definite,
     )
     method = selected.method
+    if method == "dense":
+        raise ValueError(
+            "The dense matrix-function selector requires a batched dense operator."
+        )
     if method == "auto":
         if spectral is not None:
             method = "spectral"
@@ -1025,7 +1292,8 @@ def matrix_function_action(
         transpose_matvec_count=integer_zero,
         breakdown_status=decomposition.breakdown_status,
         retained_storage_bytes=0,
-        workspace_bytes=0,
+        workspace_bytes=((capacity + 2) * operator.source.size + 32 * (capacity + 1) ** 2)
+        * result_coordinates.dtype.itemsize,
     )
     return _finalize_matrix_function_result(
         _unflatten_promoted(validated_vector, result_coordinates),
@@ -1186,7 +1454,7 @@ def _scalar_function(
     /,
     *,
     power: float | None,
-    shift: complex | float | None,
+    shift: complex | float | Array | None,
 ) -> Array:
     if kind == "exp":
         return jnp.exp(value)

@@ -1,0 +1,158 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "fdd87867608b95d92cadb6040733776037157704dd1ece85a38c296b9d5f3100",
+    "evidence_schema": {
+      "fields": [
+        "compiler",
+        "retained_bytes"
+      ],
+      "signature": "d1b238dab2f2e157e160069d66cd37e59b28b9968bc2c5c32a243b4b38143a5d"
+    },
+    "fingerprint": "ea030bdec7b91ad8373b90f00bcf3f613eed697a64615be4cd444746e019f588",
+    "source_build_fingerprint": "77255fc2c01f368b57e94d6d43933cff7e267724ee9051e19ab5d890dcb0380a"
+  },
+  "peak_rss_bytes": 1497579520,
+  "records": [
+    {
+      "compilation": {
+        "compilation_seconds": 0.612430708,
+        "lowering_seconds": 1.267999958
+      },
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 19608,
+        "flops": 5769,
+        "generated_code_bytes": 0,
+        "output_bytes": 288,
+        "source": "compiled",
+        "temporary_bytes": 2448,
+        "unavailable_reason": null
+      },
+      "dimension": 4,
+      "execution": {
+        "count": 3,
+        "max_seconds": 0.002116083,
+        "mean_seconds": 0.0013570136666666668,
+        "median_seconds": 0.00117175,
+        "min_seconds": 0.000783208,
+        "samples_seconds": [
+          0.002116083,
+          0.000783208,
+          0.00117175
+        ],
+        "std_seconds": 0.0005596909331921999
+      },
+      "logdet_error": 2.220446049250313e-16,
+      "precision_error": 4.440892098500626e-16,
+      "retained_bytes": 264,
+      "sample_count": 8
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.53612025,
+        "lowering_seconds": 2.40158225
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 69712,
+        "flops": 23785,
+        "generated_code_bytes": 0,
+        "output_bytes": 1056,
+        "source": "compiled",
+        "temporary_bytes": 6032,
+        "unavailable_reason": null
+      },
+      "dimension": 8,
+      "execution": {
+        "count": 3,
+        "max_seconds": 0.000167709,
+        "mean_seconds": 0.00015407,
+        "median_seconds": 0.000153542,
+        "min_seconds": 0.000140959,
+        "samples_seconds": [
+          0.000153542,
+          0.000167709,
+          0.000140959
+        ],
+        "std_seconds": 1.0927021948667746e-05
+      },
+      "logdet_error": 4.440892098500626e-16,
+      "precision_error": 1.3322676295501878e-15,
+      "retained_bytes": 1032,
+      "sample_count": 16
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.560998375,
+        "lowering_seconds": 1.78023575
+      },
+      "compiler": {
+        "argument_bytes": 4096,
+        "bytes_accessed": 263040,
+        "flops": 124425,
+        "generated_code_bytes": 0,
+        "output_bytes": 4128,
+        "source": "compiled",
+        "temporary_bytes": 20880,
+        "unavailable_reason": null
+      },
+      "dimension": 16,
+      "execution": {
+        "count": 3,
+        "max_seconds": 0.006169958,
+        "mean_seconds": 0.0024618053333333332,
+        "median_seconds": 0.00069125,
+        "min_seconds": 0.000524208,
+        "samples_seconds": [
+          0.000524208,
+          0.00069125,
+          0.006169958
+        ],
+        "std_seconds": 0.0026229465500871765
+      },
+      "logdet_error": 0.0,
+      "precision_error": 1.3322676295501878e-15,
+      "retained_bytes": 4104,
+      "sample_count": 32
+    }
+  ],
+  "retained_exponent": 1.9792104481243007,
+  "scope": "robust covariance; baseline captured before inverse-to-action migration, after determinant factor reuse"
+}

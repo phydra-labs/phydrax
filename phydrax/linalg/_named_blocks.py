@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -26,6 +27,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import checked
+from ._materialization import MaterializationPolicy
 from ._operators import (
     _assemble_operator_diagonal,
     _generic_adjoint,
@@ -516,7 +518,7 @@ class _SelectedBlockLinearOperator(AbstractLinearOperator):
         self.capabilities = OperatorCapabilities(
             transpose=operator.capabilities.transpose,
             adjoint=operator.capabilities.transpose,
-            materialize=operator.capabilities.materialize,
+            materialize=True,
         )
         self.batch_shape = ()
         self.operator_id = canonical_fingerprint(
@@ -556,10 +558,36 @@ class _SelectedBlockLinearOperator(AbstractLinearOperator):
         return _generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        matrix = self.operator._materialize()
-        rows = jnp.asarray(_positions(self.row_ranges))
-        columns = jnp.asarray(_positions(self.column_ranges))
-        return matrix[rows[:, None], columns[None, :]]
+        return self._materialize_columns(1)
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        policy.require(
+            self.source.size * self.target.size, _coordinate_dtype(self.target)
+        )
+        inner = self.operator
+        column_bytes = (
+            inner.source.size * _coordinate_dtype(inner.source).itemsize
+            + (inner.target.size + self.target.size)
+            * _coordinate_dtype(inner.target).itemsize
+        )
+        policy.require_workspace(column_bytes)
+        block_size = min(32, max(1, policy.max_workspace_bytes // max(column_bytes, 1)))
+        return self._materialize_columns(block_size)
+
+    def _materialize_columns(self, block_size: int, /) -> Array:
+        inner = self.operator
+        columns = jnp.asarray(_positions(self.column_ranges), dtype=jnp.int32)
+        rows = jnp.asarray(_positions(self.row_ranges), dtype=jnp.int32)
+
+        def column(index: Array) -> Array:
+            coordinates = jax.nn.one_hot(
+                index, inner.source.size, dtype=_coordinate_dtype(inner.source)
+            )
+            image = inner.target.flatten(inner.mv(inner.source.unflatten(coordinates)))
+            return image[rows]
+
+        selected = jax.lax.map(column, columns, batch_size=block_size)
+        return selected.T
 
 
 class _CoordinateRebasedLinearOperator(AbstractLinearOperator):
@@ -790,7 +818,12 @@ class MappedBlockLinearOperator(AbstractLinearOperator):
         return _generic_adjoint(self, vector)
 
     def _materialize(self, /) -> Array:
-        matrix = self.block_operator._materialize()
+        return self._place_matrix(self.block_operator._materialize())
+
+    def _materialize_admitted(self, policy: MaterializationPolicy, /) -> Array:
+        return self._place_matrix(self.block_operator._materialize_admitted(policy))
+
+    def _place_matrix(self, matrix: Array, /) -> Array:
         if self.identity_ordered:
             return matrix
         rows = _positions(
@@ -1118,9 +1151,9 @@ def select_block_operator(
 
     Explicit structure is preserved: block grids are indexed rather than composed,
     identity-ordered mapped operators and canonical coordinate views are traversed,
-    and only opaque leaves are wrapped as exact coordinate selections. Every block
-    retains the capabilities of the operator it came from. A principal compression
-    by one path selection inherits self-adjoint and definiteness claims.
+    and only opaque leaves are wrapped as exact coordinate selections. Selected leaves
+    can materialize through bounded actions even when the parent forbids dense output.
+    A principal compression by one path selection inherits definite/self-adjoint claims.
     """
     if not isinstance(operator, AbstractLinearOperator):
         raise TypeError("operator must be an AbstractLinearOperator.")

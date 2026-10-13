@@ -457,6 +457,16 @@ streaming and batch execution, status-aware diagnostics, and pickle-free compati
 checkpoints. Predictive conversion is available where mathematically defined. Complete
 histories can be exported as portable results.
 
+#### Workspace-bounded computation-aware Gaussian processes
+
+For a general kernel, computation-aware GP inference retains n-by-m actions
+and features instead of an n-by-n observation covariance. Pass a
+`GaussianProcessComputationPolicy(max_workspace_bytes=...)` through `computation`
+to bound exact kernel-row products, including iterative Lanczos/CG/Gauss–Seidel
+action construction and action-whitened variational ELBO geometry. A single row
+must fit; the budget limits workspace, not required action/feature storage.
+Action iteration diagnostics and projected solve statuses remain available.
+
 #### Exact temporal Matérn Gaussian processes
 
 For a scalar time coordinate, Matérn-3/2 and Matérn-5/2 covariances have exact
@@ -1974,6 +1984,14 @@ correlations. Low-rank modes keep only leading curvature directions and use the
 prior in the complement. All Laplace modes are local to one mode; they do not
 represent multimodality, and their intervals are approximate rather than calibrated
 coverage guarantees.
+
+Retained curvature/precision state scales as O(d) for diagonal and O(d r + r)
+for low-rank modes; neither route constructs a dense precision or performs a full
+eigendecomposition. `approximate_memory_bytes` counts these retained numerical
+leaves, not the likelihood callback's own storage or compiler workspace.
+Whitened covariance actions include both prior-scale factors, while sampling
+includes one. Structured archive leaves and fingerprints intentionally change
+with this route-specific state; reload using a current matching result template.
 
 ## Pathfinder and tempered SMC
 

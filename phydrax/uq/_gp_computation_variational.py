@@ -19,9 +19,11 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from ..linalg import MaterializationPolicy, materialize
+from ..linalg import DenseLinearOperator, MaterializationPolicy, materialize
 from ..typing import checked
 from ._gp_actions import AbstractGaussianProcessActionPolicy
+from ._gp_computation_aware import GaussianProcessComputationPolicy
+from ._gp_computation_backend import _kernel_matrix_action
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._minibatch_posterior import AbstractObservationFactor, LikelihoodBatch
 from ._sparse_variational_gp import (
@@ -57,6 +59,7 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         *,
         regularization: ArrayLike = 1e-8,
         likelihood_samples: int = 8,
+        computation: GaussianProcessComputationPolicy | None = None,
     ) -> None:
         points = jnp.asarray(observation_points)
         if points.ndim != state.kernel.input_ndim + 1 or points.shape[0] <= 0:
@@ -75,7 +78,17 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         self.observation_factor = base.observation_factor
         self.regularization = base.regularization
         self.likelihood_samples = base.likelihood_samples
-        resolved = actions.resolve(points, state=state)
+        computation_policy = (
+            GaussianProcessComputationPolicy() if computation is None else computation
+        )
+        if not isinstance(computation_policy, GaussianProcessComputationPolicy):
+            raise TypeError("computation must be a GaussianProcessComputationPolicy.")
+        resolved = actions.resolve(
+            points,
+            state=state,
+            max_workspace_bytes=computation_policy.max_workspace_bytes,
+            checkpoint_kernel_blocks=computation_policy.checkpoint_kernel_blocks,
+        )
         policy = MaterializationPolicy(
             max_entries=resolved.num_observations * resolved.num_actions,
             max_bytes=(
@@ -85,8 +98,14 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
         matrix = materialize(resolved.operator, policy)
         active = resolved.active_mask.astype(points.dtype)
         matrix = matrix * active[None, :]
-        covariance = state.kernel.matrix(points, points)
-        kernel_action = covariance @ matrix
+        kernel_action, _, _, _ = _kernel_matrix_action(
+            state.kernel,
+            points,
+            points,
+            DenseLinearOperator(matrix),
+            max_workspace_bytes=computation_policy.max_workspace_bytes,
+            checkpoint=computation_policy.checkpoint_kernel_blocks,
+        )
         projected = matrix.T @ kernel_action + jnp.diag(1.0 - active)
         projected = 0.5 * (projected + projected.T)
         factor = jnp.linalg.cholesky(
