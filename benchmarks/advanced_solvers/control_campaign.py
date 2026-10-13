@@ -122,7 +122,7 @@ def run_control_horizon_campaign(
         raise ValueError("warmup must be non-negative and repeats must be positive.")
     if len(set(values)) != len(values):
         raise ValueError("horizons must not contain duplicates.")
-    rows = []
+    rows: list[dict[str, Any]] = []
     for horizon in values:
         row_seed = seed + horizon
         phase_timings: dict[str, Any] = {}
@@ -136,8 +136,11 @@ def run_control_horizon_campaign(
                 maximum_steps=100,
             ),
         )
+        dense_compilation_policy = phx.control.LinearControlCompilationPolicy("dense")
         dense_compilation, dense_compile_sample = measure_synchronized(
-            lambda: phx.control.compile_linear_quadratic_control(problem)
+            lambda: phx.control.compile_linear_quadratic_control(
+                problem, compilation_policy=dense_compilation_policy
+            )
         )
         phase_timings["dense_compilation"] = DurationDistribution(
             (dense_compile_sample,)
@@ -168,12 +171,14 @@ def run_control_horizon_campaign(
             prediction_horizon=prediction,
             terminal_policy="none",
             policy=policy,
+            compilation_policy=dense_compilation_policy,
         )
         warm_operation = lambda: phx.control.solve_receding_horizon_mpc(
             problem,
             prediction_horizon=prediction,
             terminal_policy="none",
             policy=policy,
+            compilation_policy=dense_compilation_policy,
             warm_start_policy=phx.control.MPCWarmStartPolicy(),
         )
         cold, cold_timing = _measure(cold_operation, warmup, repeats)
@@ -193,6 +198,10 @@ def run_control_horizon_campaign(
         ).to_milliseconds_dict()
         dense_program = dense_compilation.program
         sparse_program = sparse_compilation.program
+        if not isinstance(dense_program, phx.optim.QuadraticProgram):
+            raise RuntimeError("Dense control compilation did not produce a QP.")
+        if not isinstance(sparse_program, phx.optim.ConicProgram):
+            raise RuntimeError("Sparse control compilation did not produce conic data.")
         sparse_quadratic = sparse_program.quadratic
         sparse_constraints = sparse_program.constraint_matrix
         if not isinstance(
