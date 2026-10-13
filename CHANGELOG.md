@@ -2758,6 +2758,9 @@
   default Kubo to frequency chunks with explicit parallel selection, preserving
   both optical poles and sum-rule evidence. Ewald policies enter plan identity;
   Kubo execution evidence has a separate policy identity.
+  default Kubo to budget-derived frequency tiles with direct parallel evaluation
+  when they fit, preserving both optical poles and sum-rule evidence. Ewald
+  policies enter plan identity; Kubo execution evidence has a separate policy identity.
 - Geometry queries stream polygon validity and ray parity, reuse prepared segment
   hierarchies and refitted triangle BVHs, and consume selected closest geometry
   rather than full pair tables. BRep winding retains its measured dense route.
