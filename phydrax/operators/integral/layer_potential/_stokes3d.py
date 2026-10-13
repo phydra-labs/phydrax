@@ -28,6 +28,7 @@ from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator, LinearCapabilityError
 from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 from ._galerkin_quadrature3d import (
     _duffy_rule,
     _map_triangle,
@@ -330,11 +331,23 @@ class StokesLayerPotential3D(_AbstractTrialSpaceField):
             backend="jax",
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=self.panelization.points.dtype)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("Stokes targets must have shape (target_count, 3).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
@@ -350,6 +363,8 @@ def evaluate_stokes_layer_3d(
     *,
     target_side: Literal["interior", "exterior", "boundary"],
     accuracy_clearance: float = 0.0,
+    target_execution: DirectTargetExecution = "parallel",
+    target_chunk_size: int = 8,
 ) -> tuple[Array, SurfaceTargetReport3D]:
     """Evaluate velocity with continuous target-admissibility evidence."""
     if not isinstance(potential, StokesLayerPotential3D):
@@ -366,7 +381,9 @@ def evaluate_stokes_layer_3d(
     )
     if not bool(report.pde_membership_valid):
         raise ValueError("Stokes layer evaluation requires off-surface targets.")
-    output = potential._evaluate_direct(values)
+    output = potential._evaluate_direct(
+        values, target_execution=target_execution, target_chunk_size=target_chunk_size
+    )
     return (output[0] if single else output), report
 
 
@@ -377,6 +394,8 @@ def evaluate_stokes_pressure_3d(
     *,
     target_side: Literal["interior", "exterior", "boundary"],
     accuracy_clearance: float = 0.0,
+    target_execution: DirectTargetExecution = "parallel",
+    target_chunk_size: int = 8,
 ) -> tuple[Array, SurfaceTargetReport3D]:
     """Evaluate single-layer pressure with target-admissibility evidence."""
     if not isinstance(potential, StokesLayerPotential3D):
@@ -397,7 +416,12 @@ def evaluate_stokes_pressure_3d(
     )
     if not bool(report.pde_membership_valid):
         raise ValueError("Stokes pressure evaluation requires off-surface targets.")
-    output = jax.vmap(potential.pressure)(values)
+    output = _evaluate_direct_targets(
+        potential.pressure,
+        values,
+        target_execution=target_execution,
+        target_chunk_size=target_chunk_size,
+    )
     return (output[0] if single else output), report
 
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import assert_never, Literal, TypeAlias
 
+import equinox as eqx
+import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
@@ -95,6 +97,8 @@ def _blockwise_softmax_attention(
 ) -> Array:
     batch, query_count, heads, head_dim = query.shape
     source_count = key.shape[1]
+    if block_size >= source_count:
+        return _dense_softmax_attention(query, key, value, measure)
     q = jnp.transpose(query, (0, 2, 1, 3))
     running_max = jnp.full(
         (batch, heads, query_count),
@@ -107,12 +111,22 @@ def _blockwise_softmax_attention(
         dtype=query.dtype,
     )
     scale = _attention_scale(query)
-    for start in range(0, source_count, int(block_size)):
-        stop = min(source_count, start + int(block_size))
-        block_key = key[:, start:stop]
-        block_value = value[:, start:stop]
-        block_measure = measure[:, start:stop]
-        valid = block_measure > 0.0
+    tile = min(block_size, source_count)
+    tile_indices = jnp.arange(tile, dtype=jnp.int32)
+
+    def step(
+        index: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
+        running_max, running_sum, accumulator = carry
+        requested_start = index * tile
+        start = jnp.minimum(requested_start, source_count - tile)
+        block_key = jax.lax.dynamic_slice_in_dim(key, start, tile, axis=1)
+        block_value = jax.lax.dynamic_slice_in_dim(value, start, tile, axis=1)
+        block_measure = jax.lax.dynamic_slice_in_dim(measure, start, tile, axis=1)
+        # The final clamped slice overlaps its predecessor; exclude that prefix.
+        valid = (block_measure > 0.0) & (
+            (start + tile_indices >= requested_start)[None, :]
+        )
         logits = ein.contract("bhqd,bshd->bhqs", q, block_key) * scale
         logits = jnp.where(
             valid[:, None, None, :],
@@ -136,7 +150,14 @@ def _blockwise_softmax_attention(
         accumulator = accumulator * previous_scale[..., None] + ein.contract(
             "bhqs,bshd->bhqd", exponential, block_value
         )
-        running_max = updated_max
+        return updated_max, running_sum, accumulator
+
+    running_max, running_sum, accumulator = jax.lax.fori_loop(
+        0,
+        (source_count + tile - 1) // tile,
+        step,
+        (running_max, running_sum, accumulator),
+    )
     normalized = jnp.where(
         running_sum[..., None] > 0.0,
         accumulator
@@ -218,7 +239,8 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
     out_channels: int
     kernel: AttentionKernel
     execution: AttentionExecution
-    block_size: int
+    block_size: int | None
+    attention_workspace_bytes: int = eqx.field(static=True)
     accumulation_dtype: str
 
     def __init__(
@@ -231,14 +253,25 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         head_dim: int,
         kernel: AttentionKernel = "softmax",
         execution: AttentionExecution = "auto",
-        block_size: int = 256,
+        block_size: int | None = None,
+        attention_workspace_bytes: int = 8 * 1024 * 1024,
         accumulation_dtype: str = "input",
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        if isinstance(attention_workspace_bytes, bool) or not isinstance(
+            attention_workspace_bytes, int
+        ):
+            raise TypeError("attention_workspace_bytes must be an integer.")
+        if attention_workspace_bytes <= 0:
+            raise ValueError("attention_workspace_bytes must be positive.")
+        resolved_block_size = None if block_size is None else int(block_size)
+        if resolved_block_size is not None and resolved_block_size <= 0:
+            raise ValueError("block_size must be positive.")
         self.num_heads = int(num_heads)
         self.head_dim = int(head_dim)
         self.out_channels = int(out_channels)
-        self.block_size = int(block_size)
+        self.block_size = resolved_block_size
+        self.attention_workspace_bytes = attention_workspace_bytes
         self.accumulation_dtype = str(accumulation_dtype)
         source_channels = int(source_channels)
         query_channels = int(query_channels)
@@ -248,8 +281,6 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         self.execution = parse(execution, AttentionExecution, "execution")
         if self.num_heads <= 0 or self.head_dim <= 0 or self.out_channels <= 0:
             raise ValueError("num_heads, head_dim, and out_channels must be positive.")
-        if self.block_size <= 0:
-            raise ValueError("block_size must be positive.")
         if self.kernel != "softmax" and self.execution not in ("auto", "dense"):
             raise ValueError(
                 "Non-softmax attention kernels accept only 'auto' or 'dense' execution."
@@ -370,14 +401,6 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                 )
             case "softmax":
                 match self.execution:
-                    case "blockwise":
-                        attended = _blockwise_softmax_attention(
-                            q_acc,
-                            k_acc,
-                            v_acc,
-                            measure,
-                            block_size=self.block_size,
-                        )
                     case "cudnn":
                         attended = _fused_softmax_attention(
                             q_acc,
@@ -386,8 +409,8 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                             measure,
                             implementation="cudnn",
                         )
-                    case "xla" | "auto" if (
-                        self.execution == "xla" or q_acc.dtype == jnp.float32
+                    case "xla" | "auto" if self.execution == "xla" or (
+                        q_acc.dtype == jnp.float32 and self.block_size is None
                     ):
                         attended = _fused_softmax_attention(
                             q_acc,
@@ -396,7 +419,26 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
                             measure,
                             implementation="xla",
                         )
-                    case "auto" | "dense":
+                    case "auto" | "blockwise":
+                        # Bound logical scores, with one source column as the floor.
+                        column_bytes = (
+                            q_acc.shape[0]
+                            * q_acc.shape[1]
+                            * self.num_heads
+                            * dtype.itemsize
+                        )
+                        tile = (
+                            self.block_size
+                            if self.block_size is not None
+                            else max(
+                                1,
+                                self.attention_workspace_bytes // max(1, column_bytes),
+                            )
+                        )
+                        attended = _blockwise_softmax_attention(
+                            q_acc, k_acc, v_acc, measure, block_size=tile
+                        )
+                    case "dense":
                         attended = _dense_softmax_attention(q_acc, k_acc, v_acc, measure)
                     case _:
                         assert_never(self.execution)

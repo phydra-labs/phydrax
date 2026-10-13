@@ -1,0 +1,847 @@
+{
+  "adoption": "unconditional exact host allocation remediation",
+  "cases": [
+    {
+      "compilation": {
+        "compilation_seconds": 0.039745167,
+        "lowering_seconds": 0.004058
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 2560,
+        "flops": 192,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 1737324,
+      "order": 2,
+      "periodic": false,
+      "preparation_seconds": 3.0587658749427646,
+      "residual": 0.0,
+      "retained_bytes": 13189,
+      "stencil_bytes": 5552,
+      "warm": {
+        "samples_seconds": [
+          1.9333e-05,
+          1.0833e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.077162208,
+        "lowering_seconds": 0.008060416
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 5120,
+        "flops": 384,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 2116328,
+      "order": 2,
+      "periodic": false,
+      "preparation_seconds": 3.1901041250675917,
+      "residual": 0.0,
+      "retained_bytes": 26373,
+      "stencil_bytes": 11120,
+      "warm": {
+        "samples_seconds": [
+          1.7958e-05,
+          1.0625e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.054341708,
+        "lowering_seconds": 0.073573792
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 10240,
+        "flops": 768,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4597663,
+      "order": 2,
+      "periodic": false,
+      "preparation_seconds": 3.8244747079443187,
+      "residual": 0.0,
+      "retained_bytes": 52741,
+      "stencil_bytes": 22256,
+      "warm": {
+        "samples_seconds": [
+          1.6375e-05,
+          1e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.045421959,
+        "lowering_seconds": 0.016738542
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 4352,
+        "flops": 704,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 904047,
+      "order": 4,
+      "periodic": false,
+      "preparation_seconds": 1.5129745409358293,
+      "residual": 2.220446049250313e-16,
+      "retained_bytes": 17797,
+      "stencil_bytes": 10160,
+      "warm": {
+        "samples_seconds": [
+          0.000164958,
+          6.4833e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.050169833,
+        "lowering_seconds": 0.01639075
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 8704,
+        "flops": 1408,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1615622,
+      "order": 4,
+      "periodic": false,
+      "preparation_seconds": 1.7688962500542402,
+      "residual": 1.1102230246251565e-16,
+      "retained_bytes": 35717,
+      "stencil_bytes": 20464,
+      "warm": {
+        "samples_seconds": [
+          0.000196625,
+          8.1083e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.069570958,
+        "lowering_seconds": 0.024048666
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 17408,
+        "flops": 2816,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4047734,
+      "order": 4,
+      "periodic": false,
+      "preparation_seconds": 2.3719737080391496,
+      "residual": 1.1102230246251565e-16,
+      "retained_bytes": 71557,
+      "stencil_bytes": 41072,
+      "warm": {
+        "samples_seconds": [
+          3.9792e-05,
+          2.9166e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.037796916,
+        "lowering_seconds": 0.0223635
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 7680,
+        "flops": 1472,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 897853,
+      "order": 6,
+      "periodic": false,
+      "preparation_seconds": 1.5961397499777377,
+      "residual": 2.220446049250313e-16,
+      "retained_bytes": 24293,
+      "stencil_bytes": 16656,
+      "warm": {
+        "samples_seconds": [
+          0.00016875,
+          8.6583e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.062949083,
+        "lowering_seconds": 0.042904166
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 15360,
+        "flops": 2944,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1575144,
+      "order": 6,
+      "periodic": false,
+      "preparation_seconds": 1.7891422091051936,
+      "residual": 1.6653345369377348e-16,
+      "retained_bytes": 48613,
+      "stencil_bytes": 33360,
+      "warm": {
+        "samples_seconds": [
+          4.1166e-05,
+          2.7541e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.03136125,
+        "lowering_seconds": 0.029129958
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 30720,
+        "flops": 5888,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4056378,
+      "order": 6,
+      "periodic": false,
+      "preparation_seconds": 2.9379065840039402,
+      "residual": 1.1102230246251565e-16,
+      "retained_bytes": 97253,
+      "stencil_bytes": 66768,
+      "warm": {
+        "samples_seconds": [
+          2.6458e-05,
+          1.3834e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.067795125,
+        "lowering_seconds": 0.050657291
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 10176,
+        "flops": 2048,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 913438,
+      "order": 8,
+      "periodic": false,
+      "preparation_seconds": 1.8575194161385298,
+      "residual": 2.220446049250313e-16,
+      "retained_bytes": 29925,
+      "stencil_bytes": 22288,
+      "warm": {
+        "samples_seconds": [
+          4.0083e-05,
+          2.9833e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.07612175,
+        "lowering_seconds": 0.029316708
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 20352,
+        "flops": 4096,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1625593,
+      "order": 8,
+      "periodic": false,
+      "preparation_seconds": 1.881648459006101,
+      "residual": 2.220446049250313e-16,
+      "retained_bytes": 59813,
+      "stencil_bytes": 44560,
+      "warm": {
+        "samples_seconds": [
+          0.000157209,
+          0.000296708
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.0710925,
+        "lowering_seconds": 0.024700666
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 40704,
+        "flops": 8192,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4137633,
+      "order": 8,
+      "periodic": false,
+      "preparation_seconds": 3.194238374941051,
+      "residual": 1.1102230246251565e-16,
+      "retained_bytes": 119589,
+      "stencil_bytes": 89104,
+      "warm": {
+        "samples_seconds": [
+          4.0083e-05,
+          2.7792e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.10056225,
+        "lowering_seconds": 0.026986583
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 3328,
+        "flops": 320,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 811438,
+      "order": 2,
+      "periodic": true,
+      "preparation_seconds": 1.682483291020617,
+      "residual": 0.0,
+      "retained_bytes": 10552,
+      "stencil_bytes": 2888,
+      "warm": {
+        "samples_seconds": [
+          3.5292e-05,
+          2.5791e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.0619715,
+        "lowering_seconds": 0.003714417
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 6656,
+        "flops": 640,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1522358,
+      "order": 2,
+      "periodic": true,
+      "preparation_seconds": 2.1236186251044273,
+      "residual": 0.0,
+      "retained_bytes": 20984,
+      "stencil_bytes": 5704,
+      "warm": {
+        "samples_seconds": [
+          3.75e-05,
+          2.6709e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.115663583,
+        "lowering_seconds": 0.063704333
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 13312,
+        "flops": 1280,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 3894072,
+      "order": 2,
+      "periodic": true,
+      "preparation_seconds": 3.173531875014305,
+      "residual": 0.0,
+      "retained_bytes": 41848,
+      "stencil_bytes": 11336,
+      "warm": {
+        "samples_seconds": [
+          0.000185375,
+          8.4917e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.10474825,
+        "lowering_seconds": 0.014514625
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 4864,
+        "flops": 576,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 832978,
+      "order": 4,
+      "periodic": true,
+      "preparation_seconds": 3.4388307919725776,
+      "residual": 0.0,
+      "retained_bytes": 12264,
+      "stencil_bytes": 4600,
+      "warm": {
+        "samples_seconds": [
+          2.0292e-05,
+          1.3e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.074809708,
+        "lowering_seconds": 0.0387135
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 9728,
+        "flops": 1152,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1615756,
+      "order": 4,
+      "periodic": true,
+      "preparation_seconds": 2.2394581250846386,
+      "residual": 0.0,
+      "retained_bytes": 24360,
+      "stencil_bytes": 9080,
+      "warm": {
+        "samples_seconds": [
+          1.9208e-05,
+          1.2209e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.031247458,
+        "lowering_seconds": 0.094134041
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 19456,
+        "flops": 2304,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4079054,
+      "order": 4,
+      "periodic": true,
+      "preparation_seconds": 3.694462292129174,
+      "residual": 0.0,
+      "retained_bytes": 48552,
+      "stencil_bytes": 18040,
+      "warm": {
+        "samples_seconds": [
+          1.9584e-05,
+          1.1875e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.026226459,
+        "lowering_seconds": 0.009957959
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 6400,
+        "flops": 832,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 852367,
+      "order": 6,
+      "periodic": true,
+      "preparation_seconds": 2.2437922081444412,
+      "residual": 0.0,
+      "retained_bytes": 13976,
+      "stencil_bytes": 6312,
+      "warm": {
+        "samples_seconds": [
+          3.7833e-05,
+          2.7625e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.051081416,
+        "lowering_seconds": 0.039582791
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 12800,
+        "flops": 1664,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1596037,
+      "order": 6,
+      "periodic": true,
+      "preparation_seconds": 2.0893991249613464,
+      "residual": 0.0,
+      "retained_bytes": 27736,
+      "stencil_bytes": 12456,
+      "warm": {
+        "samples_seconds": [
+          0.000151916,
+          4.825e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.119301875,
+        "lowering_seconds": 0.03610825
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 25600,
+        "flops": 3328,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 4020962,
+      "order": 6,
+      "periodic": true,
+      "preparation_seconds": 3.280935375019908,
+      "residual": 0.0,
+      "retained_bytes": 55256,
+      "stencil_bytes": 24744,
+      "warm": {
+        "samples_seconds": [
+          7.6875e-05,
+          8.0125e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.030105125,
+        "lowering_seconds": 0.003600583
+      },
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 7936,
+        "flops": 1088,
+        "generated_code_bytes": 0,
+        "output_bytes": 512,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 64,
+      "host_peak_bytes": 828072,
+      "order": 8,
+      "periodic": true,
+      "preparation_seconds": 1.8196267089806497,
+      "residual": 0.0,
+      "retained_bytes": 15688,
+      "stencil_bytes": 8024,
+      "warm": {
+        "samples_seconds": [
+          0.000179875,
+          0.000217
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.16076,
+        "lowering_seconds": 0.0334
+      },
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 15872,
+        "flops": 2176,
+        "generated_code_bytes": 0,
+        "output_bytes": 1024,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 128,
+      "host_peak_bytes": 1545139,
+      "order": 8,
+      "periodic": true,
+      "preparation_seconds": 2.552912167040631,
+      "residual": 0.0,
+      "retained_bytes": 31112,
+      "stencil_bytes": 15832,
+      "warm": {
+        "samples_seconds": [
+          3.8792e-05,
+          1.375e-05
+        ]
+      }
+    },
+    {
+      "compilation": {
+        "compilation_seconds": 0.080678709,
+        "lowering_seconds": 0.063629791
+      },
+      "compiler": {
+        "argument_bytes": 2048,
+        "bytes_accessed": 31744,
+        "flops": 4352,
+        "generated_code_bytes": 0,
+        "output_bytes": 2048,
+        "source": "jax.stages.Compiled",
+        "temporary_bytes": 0,
+        "unavailable_reason": null
+      },
+      "count": 256,
+      "host_peak_bytes": 3972875,
+      "order": 8,
+      "periodic": true,
+      "preparation_seconds": 3.2573835409712046,
+      "residual": 0.0,
+      "retained_bytes": 61960,
+      "stencil_bytes": 31448,
+      "warm": {
+        "samples_seconds": [
+          0.014088375,
+          0.002320458
+        ]
+      }
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "419fda65567f0d81ee4c3990c6a2e51d6ca2205ff70549d849a51877b97555ba",
+    "evidence_fields": [
+      "cases",
+      "environment",
+      "scaling"
+    ],
+    "evidence_schema_signature": "91ddec0b5a0460911bff83cf901ffc7c0c97bed697f51d3f96a99bf02bbc870e",
+    "fingerprint": "fcea402f4c0da14fba2ed334e81d591ec7845aaa7cb638689e39350a2b665735",
+    "source_build_fingerprint": "1f38b1f1ea08e54c5b7007a2745a6dcb597f35e35befc581b65d1fd7b617ecd4"
+  },
+  "rss_bytes": 1618968576,
+  "scaling": [
+    {
+      "host_exponent": 0.7020169452111819,
+      "order": 2,
+      "periodic": false
+    },
+    {
+      "host_exponent": 1.0813224010690408,
+      "order": 4,
+      "periodic": false
+    },
+    {
+      "host_exponent": 1.0878204663394524,
+      "order": 6,
+      "periodic": false
+    },
+    {
+      "host_exponent": 1.0897134864453908,
+      "order": 8,
+      "periodic": false
+    },
+    {
+      "host_exponent": 1.1313633939678662,
+      "order": 2,
+      "periodic": true
+    },
+    {
+      "host_exponent": 1.1459421541840549,
+      "order": 4,
+      "periodic": true
+    },
+    {
+      "host_exponent": 1.1189970288544033,
+      "order": 6,
+      "periodic": true
+    },
+    {
+      "host_exponent": 1.1311776414897534,
+      "order": 8,
+      "periodic": true
+    }
+  ]
+}

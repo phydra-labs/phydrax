@@ -1,8 +1,11 @@
+from itertools import product
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.typing import NDArray
+from scipy.special import erfc
 
 import phydrax as phx
 
@@ -356,3 +359,235 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance() -> 
     assert result.header.artifact_ids == (provenance.manifest_id,)
     # ty: ignore[no-matching-overload]
     np.testing.assert_allclose(result.band_energies, [[-1.0, 0.5], [-0.8, 0.7]])
+
+
+def _dense_ewald_components(
+    positions: NDArray[np.float64],
+    charges: NDArray[np.float64],
+    cell: NDArray[np.float64],
+    shell: int,
+    background: bool,
+) -> NDArray[np.float64]:
+    """Independent finite-shell double sum, not the prepared Ewald route."""
+    alpha = 0.8
+    constant = _units().coulomb_constant
+    indices = np.asarray(
+        list(product(range(-shell, shell + 1), repeat=3)), dtype=np.float64
+    )
+    displacements = (
+        positions[:, None, None, :]
+        - positions[None, :, None, :]
+        + (indices @ cell)[None, None, :, :]
+    )
+    included = ~(
+        (np.arange(charges.size)[:, None] == np.arange(charges.size)[None, :])[:, :, None]
+        & np.all(indices == 0, axis=1)[None, None, :]
+    )
+    distance = np.sqrt(np.where(included, np.sum(displacements**2, axis=-1), 1.0))
+    real = (
+        0.5
+        * constant
+        * np.sum(
+            np.where(
+                included,
+                charges[:, None, None]
+                * charges[None, :, None]
+                * erfc(alpha * distance)
+                / distance,
+                0.0,
+            )
+        )
+    )
+    volume = abs(np.linalg.det(cell))
+    reciprocal_indices = indices[np.any(indices != 0, axis=1)]
+    wavevectors = 2.0 * np.pi * reciprocal_indices @ np.linalg.inv(cell).T
+    squared = np.sum(wavevectors**2, axis=1)
+    structure = np.sum(
+        charges[:, None] * np.exp(1.0j * (positions @ wavevectors.T)), axis=0
+    )
+    reciprocal = (
+        2.0
+        * np.pi
+        * constant
+        / volume
+        * np.sum(np.exp(-squared / (4.0 * alpha**2)) / squared * abs(structure) ** 2)
+    )
+    self_energy = -constant * alpha / np.sqrt(np.pi) * np.sum(charges**2)
+    uniform = (
+        -np.pi * constant * np.sum(charges) ** 2 / (2.0 * alpha**2 * volume)
+        if background
+        else 0.0
+    )
+    return np.asarray((real, reciprocal, self_energy, uniform), dtype=np.float64)
+
+
+@pytest.mark.parametrize("count", [2, 5, 8])
+@pytest.mark.parametrize("shell", [1, 2])
+@pytest.mark.parametrize("background", [False, True])
+def test_ewald_tiles_match_independent_dense_energy_force_and_stress(
+    count: int, shell: int, background: bool
+) -> None:
+    cell = np.asarray(_cell().vectors, dtype=np.float64)
+    index = np.arange(count, dtype=np.float64)
+    fractional = np.stack(
+        (
+            (0.13 + 0.19 * index) % 1.0,
+            (0.21 + 0.27 * index) % 1.0,
+            (0.31 + 0.11 * index) % 1.0,
+        ),
+        axis=1,
+    )
+    positions = fractional @ cell
+    charges = np.linspace(-0.7, 0.9, count, dtype=np.float64)
+    charges -= np.mean(charges)
+    if background:
+        charges[0] += 0.4
+    plan = periodic.PeriodicEwaldPlan(
+        _cell(),
+        _units(),
+        0.8,
+        real_shell=shell,
+        reciprocal_shell=shell,
+        neutrality="uniform-background" if background else "require-neutral",
+        pair_tile_size=3,
+        translation_tile_size=7,
+    )
+    result = plan.prepare().evaluate(positions, charges)
+    expected = _dense_ewald_components(positions, charges, cell, shell, background)
+    np.testing.assert_allclose(
+        result.energy_ledger.components, expected, rtol=1.0e-10, atol=1.0e-10
+    )
+    np.testing.assert_allclose(
+        result.energy, np.sum(expected), rtol=1.0e-10, atol=1.0e-10
+    )
+    step = 2.0e-5
+    forces = np.empty_like(positions)
+    for site in range(count):
+        for axis in range(3):
+            perturbation = np.zeros_like(positions)
+            perturbation[site, axis] = step
+            positive = np.sum(
+                _dense_ewald_components(
+                    positions + perturbation, charges, cell, shell, background
+                )
+            )
+            negative = np.sum(
+                _dense_ewald_components(
+                    positions - perturbation, charges, cell, shell, background
+                )
+            )
+            forces[site, axis] = -(positive - negative) / (2.0 * step)
+    strain_gradient = np.empty_like(cell)
+    for row in range(3):
+        for column in range(3):
+            strain = np.zeros_like(cell)
+            strain[row, column] = step
+            positive_deformation = np.eye(3, dtype=np.float64) + strain
+            negative_deformation = np.eye(3, dtype=np.float64) - strain
+            positive = np.sum(
+                _dense_ewald_components(
+                    positions @ positive_deformation.T,
+                    charges,
+                    cell @ positive_deformation.T,
+                    shell,
+                    background,
+                )
+            )
+            negative = np.sum(
+                _dense_ewald_components(
+                    positions @ negative_deformation.T,
+                    charges,
+                    cell @ negative_deformation.T,
+                    shell,
+                    background,
+                )
+            )
+            strain_gradient[row, column] = (positive - negative) / (2.0 * step)
+    stress = (strain_gradient + strain_gradient.T) / (2.0 * abs(np.linalg.det(cell)))
+    np.testing.assert_allclose(result.forces, forces, rtol=1.0e-5, atol=1.0e-5)
+    np.testing.assert_allclose(result.stress, stress, rtol=1.0e-5, atol=1.0e-5)
+    difference = fractional[:, None, :] - fractional[None, :, :]
+    difference -= np.rint(difference)
+    distances = np.linalg.norm(difference @ cell, axis=-1)
+    np.fill_diagonal(distances, np.inf)
+    np.testing.assert_allclose(
+        result.evidence.minimum_pair_distance, np.min(distances), rtol=1.0e-12
+    )
+    assert bool(result.successful) and bool(result.evidence.successful)
+    assert bool(result.evidence.background_applied) == background
+    np.testing.assert_allclose(result.evidence.net_charge, np.sum(charges), atol=1.0e-12)
+    np.testing.assert_allclose(
+        result.evidence.charge_residual, abs(np.sum(charges)), atol=1.0e-12
+    )
+    assert result.evidence.neutrality == plan.neutrality
+    assert float(result.evidence.energy_closure_residual) <= 1.0e-9
+    assert float(result.evidence.force_balance_residual) <= 1.0e-9
+    assert float(result.evidence.stress_symmetry_residual) <= 1.0e-9
+    assert result.energy_ledger.component_names == (
+        "real-space",
+        "reciprocal-space",
+        "self",
+        "uniform-background",
+    )
+    assert result.plan_id == plan.plan_id
+
+
+def test_ewald_self_exclusion_and_background_are_required() -> None:
+    positions = np.asarray([[0.2, 0.3, 0.4], [1.2, 0.5, 0.6]], dtype=np.float64)
+    charges = np.asarray([1.0, 0.4], dtype=np.float64)
+    plan = periodic.PeriodicEwaldPlan(
+        _cell(),
+        _units(),
+        0.8,
+        real_shell=1,
+        reciprocal_shell=1,
+        neutrality="uniform-background",
+        pair_tile_size=1,
+        translation_tile_size=1,
+    )
+    result = plan.prepare().evaluate(positions, charges)
+    expected = _dense_ewald_components(
+        positions, charges, np.asarray(_cell().vectors), 1, True
+    )
+    np.testing.assert_allclose(
+        result.energy_ledger.components, expected, atol=1.0e-10, rtol=1.0e-10
+    )
+
+
+def test_ewald_tile_policy_identity_and_minimum_distance_refusal() -> None:
+    first = periodic.PeriodicEwaldPlan(
+        _cell(), _units(), 0.8, pair_tile_size=2, translation_tile_size=3
+    )
+    second = periodic.PeriodicEwaldPlan(
+        _cell(), _units(), 0.8, pair_tile_size=4, translation_tile_size=3
+    )
+    third = periodic.PeriodicEwaldPlan(
+        _cell(), _units(), 0.8, pair_tile_size=2, translation_tile_size=5
+    )
+    assert len({first.plan_id, second.plan_id, third.plan_id}) == 3
+    assert (
+        len(
+            {
+                first.prepare().prepared_id,
+                second.prepare().prepared_id,
+                third.prepare().prepared_id,
+            }
+        )
+        == 3
+    )
+    assert first.pair_tile_size == 2 and first.translation_tile_size == 3
+    for invalid in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="tile"):
+            periodic.PeriodicEwaldPlan(_cell(), _units(), 0.8, pair_tile_size=invalid)
+        with pytest.raises(ValueError, match="tile"):
+            periodic.PeriodicEwaldPlan(
+                _cell(), _units(), 0.8, translation_tile_size=invalid
+            )
+    prepared = first.prepare()
+    cell = np.asarray(_cell().vectors)
+    positions = np.asarray([[0.2, 0.3, 0.4], [1.2, 0.5, 0.6]], dtype=np.float64)
+    with pytest.raises(ValueError, match="minimum_distance"):
+        prepared.evaluate(np.stack((positions[0], positions[0] + cell[0])), [1.0, -1.0])
+    near = np.stack((positions[0], positions[0] + np.asarray([0.5e-10, 0.0, 0.0])))
+    with pytest.raises(ValueError, match="minimum_distance"):
+        prepared.evaluate(near, [1.0, -1.0])

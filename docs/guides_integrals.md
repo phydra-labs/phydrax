@@ -83,6 +83,12 @@ and the `adaptive_*_callable` engines keep their documented raw-callable ABIs.
 Fixed plans support interval rules such as `GaussLegendreRule`,
 `GaussKronrodRule`, `ClenshawCurtisRule`, and `TanhSinhRule`. A deterministic fixed
 rule reports no statistical uncertainty. `error_estimate is None` is deliberate.
+Additive component terms retain their own weights, filters, and normalization.
+Fixed-coordinate reuse was evaluated for identical deterministic selectors;
+explicit coordinate sharing did not reduce compiler temporary workspace in the
+measured 1/2/4/8-term cases (largest workspace: 8,208 bytes for either route).
+Consequently the memory gate retains termwise lowering; no cache, stochastic
+sampling change, or cross-selector sharing is introduced.
 
 A `ProbabilityDomain` used through `over(probability.component())` is lowered through
 its quantile map and retains unit probability mass. This is measure-equivalent to

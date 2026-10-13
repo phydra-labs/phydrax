@@ -119,6 +119,13 @@ evidence.
 `CorrelatedGaussianPlan` provide one ordered theory→window→covariance→likelihood path
 for survey and CMB products.
 
+Flat Limber convergence kernels evaluate the lensing efficiency as
+`A_i - r_i B_i`, with exclusive reverse cumulative sums of the weighted source
+density and weighted density divided by safe source radius. This uses linear
+radial workspace rather than a radial-by-radial separation matrix. Quadrature,
+zero-radius handling, tracer calibration, spectrum layout, and plan identity
+remain unchanged.
+
 Precision transfer products use concrete `ClassLinearTheoryBackend` and
 `CambLinearTheoryBackend` wrappers around user-installed, manifest-pinned isolated
 executables. Cross-process requests serialize the complete dimensional scale and its

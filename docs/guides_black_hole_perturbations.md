@@ -196,6 +196,42 @@ These are separate plans with separate source and branch identities. They do not
 second-order self-force, nonlinear spacetime evolution, generic field content, or
 complete resonance catalogs.
 
+`QuadraticRingdownPlan(..., response_workspace_bytes=8 * 1024 * 1024)`
+prepares pole-pair detunings and resonance flags once. The positive integer
+budget selects `min(time_count, max(1, budget // (16 * mode_count**3)))`
+independent time samples per tile. If the entire grid fits, evaluation uses the
+original parallel `vmap` computation without a map or scan wrapper. Otherwise,
+bounded parallel chunks preserve the child-parent-parent contraction and
+resonant Duhamel limit. An optional positive integer `time_chunk_size` overrides
+the budget and is capped at the time-grid extent.
+
+The 8 MiB default is selected from the quiet-wave crossover at 32 modes:
+the former fixed eight-sample chunk took 3.238 ms versus 2.677 ms for the full
+response at 16 samples (1.21 times slower), but 6.186 ms versus 6.283 ms at
+32 samples. The byte budget admits the full 16-sample case and begins tiling
+above it. At 128 samples it bounds logical response workspace to 8 MiB instead
+of 64 MiB. These timing observations describe the former fixed-chunk route,
+not measurements of the new budget-derived default.
+
+Results report the configured `response_workspace_bytes`, the effective
+`time_chunk_size`, and `logical_response_workspace_bytes`. The latter is
+`16 * time_chunk_size * mode_count**3`, excluding retained pole-pair data,
+other compiler temporaries, and the required time-by-mode output. One sample
+is always admitted, even if it exceeds the budget; an explicit chunk may also
+exceed the budget. The `plan_id` now includes both the workspace budget and
+optional chunk override, in addition to poles, amplitudes, coupling, and
+resonance tolerance. Finite, stable, qualified, derivative-valid, and status
+evidence retains its original meaning.
+
+`python -m benchmarks.memory_ringdown` compares the budget-derived route with
+an explicit full-tile `vmap` on the same current code. It records runtime
+capacities of 8 through 128 samples and compile-only capacities of 256 and 512
+samples; the latter never execute the large response. The memory gate applies
+only above the selected tile capacity and requires at least a twofold compiler
+temporary-memory reduction at the largest capacity. Equal memory for
+below-budget single-tile cases is expected, not a gate failure. Historical
+baseline records remain unchanged.
+
 `FixedBranchInverseAdapter` provides JVP/VJP pairing and central-difference evidence
 only while the numeric branch signature remains unchanged.
 `kerr_geometry_inverse_adapter`, `kerr_thermodynamics_inverse_adapter`, and

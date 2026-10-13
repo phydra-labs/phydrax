@@ -724,6 +724,23 @@ rather than presenting an unstable triangular solve as successful. Use
 `DenseSVD` when rank-deficient minimizers or a numerical rank cutoff are part
 of the intended contract.
 
+`solve_block_banded_least_squares(samples, targets, lower, upper,
+coupling_targets, regularization=...)` solves diagonal sample blocks and adjacent
+coupling rows by exact local QR elimination and reverse triangular substitution.
+Samples have `(segments, sample_rows, width)`; coupling matrices have
+`(segments - 1, width, width)`. The diagonal and upper QR blocks remain linear in
+segment count. There is no normal-equation solve or hidden global design.
+
+`BlockBandedLeastSquaresResult` exposes the solution, midpoint estimates of the
+unregularized singular-value brackets, a conservative condition upper bound,
+native `SVDRankEvidence`, residual, status, and finiteness. Numerical-full-rank
+certification is a separate threshold test; a small mode can be certified even
+when the condition upper bound is infinite because the minimum bracket is wide.
+Native certificates fail closed: rank uncertainty names the explicit `dense-svd`
+alternative instead of inventing a truncated minimum-norm solution.
+Regularization augments local QR rows but does not alter the diagnostic operator.
+
+
 Auto selection is deterministic:
 
 1. recognized exact structure;
@@ -1465,6 +1482,43 @@ residual. When their check policy carries a matching positive
 by that lower bound. Availability is independent of convergence. Bounds backed
 by `construction` or `verified` evidence are marked certified; an `asserted`
 bound remains explicitly conditional.
+
+### Streaming inverse-residual certificates
+
+`inverse_residual_certificate(operator, inverse_action, block_size=8)` checks
+every canonical coordinate direction of a nonempty square operator. The
+inverse action accepts a bounded `(dimension, block_size)` RHS block and
+returns `(approximate_inverse_columns, per_column_validity)`. Native
+`solve_many` values and its success, convergence, and finiteness diagnostics
+provide this contract without a second factorization.
+`accumulation_dtype` optionally widens row-sum and certificate arithmetic
+without changing the declared action/RHS dtype; the rounding allowance
+still accounts for the action's own precision.
+
+The certificate streams row sums of `A`, `B`, and `I - A B` in a scan that
+does not archive intermediate blocks. It never retains a dense identity or
+inverse; scratch is O(dimension × block_size). A residual infinity-norm
+bound below one gives a Neumann-series invertibility certificate and the
+conservative 2-norm condition upper bound
+`dimension * norm(A, infinity) * norm(B, infinity) / (1 - residual_bound)`.
+Row sums and product residuals include a conservative floating-point
+rounding allowance. Evidence is numerical verification, not an
+interval-arithmetic theorem for arbitrary user-provided action kernels.
+
+This is distinct from `ConstraintOperatorEvidence`: constraint preparation supports
+rectangular and rank-deficient maps, retains a generalized right inverse, and checks
+Frobenius norms of `MRM - M`, `MR - I`, the nullspace residual, and the pairing
+minimum-norm residual. Those projector and compatibility checks do not certify
+square-operator invertibility or provide a Neumann condition bound. Both certificates
+stream coordinate blocks, but their norms, admissible operators, retained state,
+and refusal contracts differ; neither substitutes for the other.
+
+`InverseResidualCertificate` exposes status, residual/condition bounds,
+rank, validity, operator identity, and evidence scope. Unknown rank is `-1`,
+not an asserted rank deficiency. Action failure, nonfinite arithmetic,
+residual bounds at or above one, and the configured condition limit all
+fail closed. The last block's padded columns are excluded from certification.
+
 
 ## JIT behavior
 

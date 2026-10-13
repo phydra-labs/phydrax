@@ -268,3 +268,53 @@ def test_causal_hmc_scenario_2() -> None:
     assert result.causal_diagnostics is not None
     assert jnp.all(result.causal_diagnostics.converged)
     assert jnp.all(result.causal_diagnostics.transition_evaluations > 0)
+
+
+@pytest.mark.parametrize("route", ["action-scan", "checkpointed-action-scan"])
+def test_causal_hmc_exposes_low_memory_adjoint_end_to_end(
+    route: phx.nonlinear.CausalAdjointRoute,
+) -> None:
+    state = blackjax.hmc.init(jnp.asarray([0.3, -0.2], dtype=jnp.float64), _logdensity)
+    key = jax.random.key(94)
+    policy = phx.nonlinear.CausalAdjointPolicy(
+        route,
+        maximum_dense_bytes=1,
+        checkpoint_block_size=2,
+    )
+
+    def evaluate(adjoint: phx.nonlinear.CausalAdjointPolicy) -> Any:
+        configuration = phx.uq.CausalHMCConfig(
+            linearization="dense-exact",
+            trajectory_block_size=3,
+            adjoint=adjoint,
+            absolute_residual=1e-11,
+            relative_residual=1e-11,
+            maximum_outer_iterations=8,
+        )
+        kernel = build_causal_hmc_kernel(configuration)
+        return jax.jit(
+            lambda current_key, current_state: kernel(
+                current_key,
+                current_state,
+                _logdensity,
+                jnp.asarray(0.1),
+                jnp.asarray([1.0, 0.8]),
+                4,
+            )
+        )(key, state)
+
+    dense_state, dense_info = evaluate(phx.nonlinear.CausalAdjointPolicy())
+    low_state, low_info = evaluate(policy)
+    assert low_info.causal_converged
+    assert low_info.causal_adjoint.route == route
+    assert low_info.causal_adjoint.policy_id == policy.policy_id
+    assert jnp.allclose(low_state.position, dense_state.position, atol=2e-11)
+    assert jnp.allclose(
+        low_info.proposal.position, dense_info.proposal.position, atol=2e-11
+    )
+    assert jnp.allclose(
+        low_info.proposal.momentum, dense_info.proposal.momentum, atol=2e-11
+    )
+    assert jnp.allclose(low_info.acceptance_rate, dense_info.acceptance_rate, atol=2e-11)
+    assert low_info.is_accepted == dense_info.is_accepted
+    assert phx.uq.CausalHMCConfig(adjoint=policy).as_dict()["adjoint_route"] == route

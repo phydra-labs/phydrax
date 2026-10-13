@@ -106,7 +106,25 @@ and momentum units are exact `UnitDefinition` objects; human-readable displays u
 their `.symbol`. Coordinate kind remains part of the scale identity, while epoch and
 frame remain astrodynamics-owned.
 
-Direct and hierarchical gravity delegate to the core `NewtonianPairKernel`,
+`DirectNBodyGravityPlan` and `NearlyKeplerianPlan` evaluate every direct pair
+exactly with a shared bounded target-row action. Their positive integer
+`pair_workspace_bytes` defaults to 4 MiB, admitting the quiet qualification's
+direct problems through 256 bodies and near-Keplerian problems through 32 bodies
+as a single parallel tile. With `target_chunk_size=None` (the default), the tile
+is `clamp(pair_workspace_bytes // (6 * N * dtype.itemsize), 1, N)`.
+The full tile executes directly through the parallel action, without a map
+wrapper; above budget the exact source-axis reductions run in bounded tiles.
+An explicit positive integer `target_chunk_size` overrides the budget.
+The six-floating-array model bounds logical pair workspace, not total compiler
+storage, and one row is the minimum even when it exceeds the budget.
+The budget and override are recorded in plan identity and static PyTree metadata;
+neither selects Barnes–Hut nor truncates interactions.
+Active masks, self exclusion, softened pair-once potential,
+minimum separation, net force, collision status, and rollout rollback remain
+explicit. Near-Keplerian integration retains its indirect heliocentric term and
+universal-Kepler drift.
+
+Hierarchical gravity delegates to the core `NewtonianPairKernel`,
 sparse runtime Morton hierarchy, `BarnesHutGravityPlan`, and
 `UniformFMMPlan`. The Cartesian FMM supports orders one through seven,
 power-of-two coefficient scaling, exact near completion, explicit opening and

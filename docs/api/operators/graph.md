@@ -263,11 +263,27 @@ negative controls.
 
 `query_neighbors` returns fixed-width `RowRelation` routes, minimum-image
 relative vectors, squared distances, distances, counts, and
-`QueryNeighborhoodEvidence`. The default implementation is the dense exact
-authority. Supplying a `MortonNeighborQueryPlan` selects coarse Morton-cell
+`QueryNeighborhoodEvidence`. With default `target_chunk_size=None` and
+`source_chunk_size=None`, `query_workspace_bytes` (4 MiB) derives both tiles
+from the case count, coordinate dimension, float64 pair vectors/distances,
+mask/sort keys, and top-k merge state. Full-fit neighborhoods execute the
+whole-axis parallel sort directly, without tile loops; larger problems use
+the exact two-axis top-k merge. The default admits the quiet qualification's
+256-point small query while bounding larger pair tables.
+Positive, non-boolean integer chunks override the respective automatic tile;
+both explicit chunks bypass budget admission. Evidence reports `backend="dense"`
+or `"blocked"`, the executed source/target tile extents, and the workspace budget.
+The budget excludes required target-by-k output and compiler scratch, and
+clamps to at least one pair. Equal distances retain source-index order.
+`batched_knn_query_graph` and `batched_knn_graph` expose and forward the same
+policy. If `max_neighbors` is omitted without a plan, k equals the source count,
+so required output can still be quadratic.
+Supplying a `MortonNeighborQueryPlan` explicitly selects coarse Morton-cell
 execution with a bounded candidate buffer per target while preserving logical
 indices, source masks, target masks, stable equal-distance ordering, optional
-self exclusion, and per-axis periodicity.
+self exclusion, and per-axis periodicity. Radius boundaries are inclusive.
+The tile arguments are validated with a supplied plan but do not override its
+candidate capacity or execution policy.
 
 ```python
 address = phx.discretization.spatial.MortonAddressPlan(
@@ -761,6 +777,13 @@ Derived graph structures convert one topology into another while preserving the
 `GraphIR` execution contract. Line graphs support edge/flux dynamics, and mesh
 dual graphs support face- or cell-centered finite-volume operators.
 
+Line-graph transitions are joined through endpoint-indexed edge lists rather
+than testing every edge pair. Transitions remain ordered by
+`(source_edge_index, target_edge_index)`; shared-node connectivity records the
+smallest common endpoint, including parallel edges and self-loops. High-valence
+graphs may still require quadratic result storage because those transitions
+are part of the requested graph.
+
 ::: phydrax.graph.line_graph
 
 ---
@@ -776,6 +799,12 @@ dual graphs support face- or cell-centered finite-volume operators.
 ::: phydrax.graph.MeshDualGraph
 
 ## Geometry graph construction
+
+Host radius and kNN builders enumerate candidates in source tiles of 256
+and retain only result indices and the current top-k. Bipartite outputs retain
+target-major ordering (radius source-index order; kNN distance/index order);
+homogeneous point-cloud outputs retain lexicographic sender/receiver ordering.
+Radius inclusion and periodic minimum-image semantics are unchanged.
 
 ::: phydrax.graph.radius_graph
 

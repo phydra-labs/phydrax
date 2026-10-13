@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from collections.abc import Callable
+from typing import assert_never, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -16,8 +18,34 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import AdaptiveQuadraturePlan, IntegrationStatus
-from ....typing import checked
+from ....typing import checked, parse
 from ._core import LayerPotentialTargetReport
+
+
+type DirectTargetExecution = Literal["parallel", "chunked"]
+
+
+def _evaluate_direct_targets(
+    function: Callable[[Array], Array],
+    targets: Array,
+    /,
+    *,
+    target_execution: DirectTargetExecution,
+    target_chunk_size: int,
+) -> Array:
+    """Bound only the target lanes; leave each source reduction unchanged."""
+    execution = parse(target_execution, DirectTargetExecution, "target_execution")
+    if isinstance(target_chunk_size, bool) or not isinstance(target_chunk_size, int):
+        raise TypeError("target_chunk_size must be an integer.")
+    if target_chunk_size < 1:
+        raise ValueError("target_chunk_size must be positive.")
+    match execution:
+        case "parallel":
+            return jax.vmap(function)(targets)
+        case "chunked":
+            return jax.lax.map(function, targets, batch_size=target_chunk_size)
+        case _:
+            assert_never(execution)
 
 
 class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
@@ -28,6 +56,8 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
     near_ratio: float = eqx.field(static=True)
     qbx_order: int = eqx.field(static=True)
     qbx_radius_factor: float = eqx.field(static=True)
+    target_execution: DirectTargetExecution = eqx.field(static=True)
+    target_chunk_size: int = eqx.field(static=True)
     adaptive_plan: AdaptiveQuadraturePlan
     plan_id: str = eqx.field(static=True)
 
@@ -41,9 +71,16 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         qbx_order: int = 6,
         qbx_radius_factor: float = 0.5,
         adaptive_plan: AdaptiveQuadraturePlan | None = None,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
     ) -> None:
         if method not in ("direct", "adaptive", "qbx"):
             raise ValueError("Unknown layer evaluator method.")
+        execution = parse(target_execution, DirectTargetExecution, "target_execution")
+        if isinstance(target_chunk_size, bool) or not isinstance(target_chunk_size, int):
+            raise TypeError("target_chunk_size must be an integer.")
+        if target_chunk_size < 1:
+            raise ValueError("target_chunk_size must be positive.")
         clearance = float(accuracy_clearance)
         ratio = float(near_ratio)
         order = int(qbx_order)
@@ -66,6 +103,8 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         self.near_ratio = ratio
         self.qbx_order = order
         self.qbx_radius_factor = radius_factor
+        self.target_execution = execution
+        self.target_chunk_size = target_chunk_size
         self.adaptive_plan = adaptive_plan_
         self.plan_id = canonical_fingerprint(
             {
@@ -75,6 +114,8 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
                 "near_ratio": ratio,
                 "qbx_order": order,
                 "qbx_radius_factor": radius_factor,
+                "target_execution": execution,
+                "target_chunk_size": target_chunk_size,
                 "adaptive_rule": (
                     f"{type(adaptive_plan_.rule).__module__}.{type(adaptive_plan_.rule).__qualname__}"
                 ),
@@ -98,6 +139,10 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
     representation_id: str = eqx.field(static=True)
     target_fingerprint: str = eqx.field(static=True)
     target_count: int = eqx.field(static=True)
+    target_execution: DirectTargetExecution | None = eqx.field(static=True)
+    direct_target_chunk_size: int = eqx.field(static=True)
+    direct_source_count: int = eqx.field(static=True)
+    direct_workspace_pairs: int = eqx.field(static=True)
     num_evaluations: Array
     error_estimate: Array
     error_kind: str = eqx.field(static=True)
@@ -125,14 +170,31 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         near_panel_count: int = 0,
         far_panel_count: int = 0,
         failed_panel_count: int = 0,
+        direct_source_count: int,
     ) -> None:
         if not representation_id or not error_kind:
             raise ValueError("Layer evaluation identifiers must be nonempty.")
+        if direct_source_count < 0 or (
+            plan.method == "direct" and direct_source_count == 0
+        ):
+            raise ValueError("A direct report requires a positive direct_source_count.")
         self.method = plan.method
         self.plan_id = plan.plan_id
         self.representation_id = str(representation_id)
         self.target_fingerprint = target_report.target_fingerprint
         self.target_count = target_report.target_count
+        self.target_execution = plan.target_execution if plan.method == "direct" else None
+        self.direct_source_count = direct_source_count if plan.method == "direct" else 0
+        self.direct_target_chunk_size = (
+            min(self.target_count, plan.target_chunk_size)
+            if self.target_execution == "chunked"
+            else self.target_count
+            if self.target_execution == "parallel"
+            else 0
+        )
+        self.direct_workspace_pairs = (
+            self.direct_target_chunk_size * self.direct_source_count
+        )
         self.num_evaluations = jnp.asarray(num_evaluations, dtype=jnp.int32)
         self.error_estimate = jnp.asarray(error_estimate)
         self.error_kind = str(error_kind)
@@ -151,6 +213,10 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
                 "representation_id": self.representation_id,
                 "target_fingerprint": self.target_fingerprint,
                 "target_count": self.target_count,
+                "target_execution": self.target_execution,
+                "direct_target_chunk_size": self.direct_target_chunk_size,
+                "direct_source_count": self.direct_source_count,
+                "direct_workspace_pairs": self.direct_workspace_pairs,
                 "num_evaluations": int(self.num_evaluations),
                 "error_kind": self.error_kind,
                 "status": int(self.status),
@@ -246,7 +312,11 @@ def evaluate_layer_potential(
     elif not bool(target_report.pde_membership_valid):
         raise ValueError("Layer evaluators require targets in the declared target side.")
     if plan.method == "direct":
-        values = potential._evaluate_direct(targets_)
+        values = potential._evaluate_direct(
+            targets_,
+            target_execution=plan.target_execution,
+            target_chunk_size=plan.target_chunk_size,
+        )
         finite = jnp.all(jnp.isfinite(values))
         status = jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32)
         error_estimate = jnp.asarray(jnp.inf)
@@ -326,6 +396,7 @@ def evaluate_layer_potential(
         near_panel_count=near_panel_count,
         far_panel_count=far_panel_count,
         failed_panel_count=failed_panel_count,
+        direct_source_count=potential.panelization.node_count,
     )
     if plan.method != "direct" and plan.adaptive_plan.throw:
         values = eqx.error_if(
@@ -344,6 +415,7 @@ def evaluate_layer_potential(
 
 
 __all__ = [
+    "DirectTargetExecution",
     "LayerEvaluationPlan2D",
     "LayerEvaluationReport",
     "LayerEvaluationResult",

@@ -109,6 +109,17 @@ alongside. Integer outcomes (status, interaction counts, media) are identical;
 floating-point fields agree up to the rounding of differently vectorized
 arithmetic.
 
+The truncation ledger retains the existing per-interaction reduction route.
+A scalar-carry candidate was measured at photon batches 1, 16, 256, and 1024,
+each with 16, 64, and 256 interactions, by `benchmarks.memory_sensitivity_optics`.
+At batch 1024 and 256 interactions, compiler temporary storage fell from
+4,400,600 to 2,311,576 bytes, which does not meet the required twofold
+memory-reduction gate. All four batch gates retained baseline. Fixed-key
+terminal-history byte digests matched between both routes in all twelve cases.
+The original reduction order and random draw addressing are therefore retained.
+These are environment-specific compiler measurements, not a public memory bound.
+
+
 ## Media, surfaces, sources, detectors
 
 The transport kernel is closed; physics enters through four protocols.

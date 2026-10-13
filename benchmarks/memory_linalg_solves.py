@@ -226,7 +226,11 @@ def main() -> None:
         "--output", type=Path, default=Path(__file__).with_suffix(".json")
     )
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
+    if args.smoke:
+        args.counts = [4, 8]
+        args.size = 8
     baseline = None if args.baseline is None else json.loads(args.baseline.read_text())
     if (
         baseline is not None

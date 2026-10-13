@@ -13,6 +13,8 @@ transitions; it is neither a relaxation time nor a finite ballistic DC law.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -30,7 +32,7 @@ from ..._validation import positive_finite_float
 from ...discretization._reciprocal import ReciprocalMeshPlan
 from ...ein import contract
 from ...linalg import HermitianSpectrum
-from ...typing import checked
+from ...typing import checked, parse
 from ...units import conversion_factor, derived_unit, JOULE, METER, SECOND
 from ._observables import PeriodicVelocityResult
 
@@ -39,6 +41,9 @@ _BOLTZMANN_CONSTANT_SI = 1.380649e-23
 _ELECTRON_CHARGE_MAGNITUDE_SI = float(ElectromagneticScaleContract.si().elementary_charge)
 _HBAR_SI = 1.0545718176461565e-34
 _VELOCITY_UNIT = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
+
+
+type KuboFrequencyPolicy = Literal["chunked", "parallel"]
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -392,6 +397,13 @@ class KuboResponseEvidence(StrictModule, NonTrainableState):
     linewidth_mechanism_id: str = eqx.field(static=True)
     includes_drude: bool = eqx.field(static=True)
     infers_relaxation_time: bool = eqx.field(static=True)
+    frequency_policy: KuboFrequencyPolicy = eqx.field(static=True)
+    frequency_execution: KuboFrequencyPolicy = eqx.field(static=True)
+    frequency_workspace_bytes: int = eqx.field(static=True)
+    requested_frequency_chunk_size: int | None = eqx.field(static=True)
+    frequency_chunk_size: int = eqx.field(static=True)
+    logical_frequency_workspace_bytes: int = eqx.field(static=True)
+    execution_policy_id: str = eqx.field(static=True)
 
 
 class FiniteFrequencyKuboResponse(StrictModule, NonTrainableState):
@@ -413,8 +425,16 @@ def finite_frequency_kubo_response(
     *,
     f_sum_tolerance: float = 1.0e-8,
     passivity_tolerance: float = 1.0e-10,
+    frequency_policy: KuboFrequencyPolicy = "chunked",
+    frequency_workspace_bytes: int = 72 * 1024 * 1024,
+    frequency_chunk_size: int | None = None,
 ) -> FiniteFrequencyKuboResponse:
-    """Broaden only the regular interband response with a named linewidth."""
+    """Broaden regular interband poles with budget-derived frequency batches.
+
+    The chunked policy uses a conservative complex128 logical workspace budget,
+    excluding raw transitions and required outputs. An explicit chunk overrides
+    the budget; a full batch uses the parallel computation directly.
+    """
 
     if not isinstance(plan, PeriodicKuboPlan):
         raise TypeError("plan must be PeriodicKuboPlan.")
@@ -422,6 +442,23 @@ def finite_frequency_kubo_response(
         raise TypeError("linewidth must be KuboLinewidth.")
     sum_tolerance = positive_finite_float(f_sum_tolerance, "f_sum_tolerance")
     passive_tolerance = positive_finite_float(passivity_tolerance, "passivity_tolerance")
+    policy = parse(frequency_policy, KuboFrequencyPolicy, "frequency_policy")
+    if isinstance(frequency_workspace_bytes, bool) or not isinstance(
+        frequency_workspace_bytes, (int, np.integer)
+    ):
+        raise TypeError("frequency_workspace_bytes must be a positive integer.")
+    workspace_budget = int(frequency_workspace_bytes)
+    if workspace_budget <= 0:
+        raise ValueError("frequency_workspace_bytes must be a positive integer.")
+    chunk_size = None
+    if frequency_chunk_size is not None:
+        if isinstance(frequency_chunk_size, bool) or not isinstance(
+            frequency_chunk_size, (int, np.integer)
+        ):
+            raise TypeError("frequency_chunk_size must be a positive integer.")
+        chunk_size = int(frequency_chunk_size)
+        if chunk_size <= 0:
+            raise ValueError("frequency_chunk_size must be a positive integer.")
     frequencies = np.asarray(angular_frequencies_rad_per_s, dtype=np.float64)
     if (
         frequencies.ndim != 1
@@ -437,26 +474,62 @@ def finite_frequency_kubo_response(
     omega = jnp.asarray(frequencies)
     transition_frequency = raw.transition_energies_joule / _HBAR_SI
     rate = linewidth.energy_width_joule / _HBAR_SI
-    resonant = 1.0 / (
-        omega[:, None, None, None] - transition_frequency[None, :, :, :] + 1j * rate
-    )
-    antiresonant = 1.0 / (
-        omega[:, None, None, None] + transition_frequency[None, :, :, :] + 1j * rate
-    )
-    weighted = raw.transition_factors[None, :, :, :, None, None]
-    product = raw.velocity_products[None, :, :, :, :, :]
-    conductivity = (
-        1j
-        * _ELECTRON_CHARGE_MAGNITUDE_SI**2
-        / plan.cell_volume_m3
-        * jnp.sum(
-            weighted
+
+    def at_frequency(frequency: Array) -> Array:
+        resonant = 1.0 / (frequency - transition_frequency + 1j * rate)
+        antiresonant = 1.0 / (frequency + transition_frequency + 1j * rate)
+        return (
+            1j
+            * _ELECTRON_CHARGE_MAGNITUDE_SI**2
+            / plan.cell_volume_m3
             * (
-                product * resonant[..., None, None]
-                + jnp.swapaxes(product, -1, -2) * antiresonant[..., None, None]
-            ),
-            axis=(1, 2, 3),
+                contract(
+                    "knm,knmab->ab",
+                    raw.transition_factors * resonant,
+                    raw.velocity_products,
+                    backend="jax",
+                )
+                + contract(
+                    "knm,knmba->ab",
+                    raw.transition_factors * antiresonant,
+                    raw.velocity_products,
+                    backend="jax",
+                )
+            )
         )
+
+    bytes_per_frequency = (
+        jnp.dtype(jnp.complex128).itemsize
+        * raw.transition_factors.size
+        * plan.dimension**2
+    )
+    match policy:
+        case "chunked":
+            effective_chunk = min(
+                omega.size,
+                max(1, workspace_budget // bytes_per_frequency)
+                if chunk_size is None
+                else chunk_size,
+            )
+        case "parallel":
+            effective_chunk = omega.size
+        case _:
+            raise ValueError("Invalid Kubo frequency policy.")
+    if effective_chunk == omega.size:
+        execution: KuboFrequencyPolicy = "parallel"
+        conductivity = jax.vmap(at_frequency)(omega)
+    else:
+        execution = "chunked"
+        conductivity = jax.lax.map(at_frequency, omega, batch_size=effective_chunk)
+    workspace_bytes = bytes_per_frequency * effective_chunk
+    execution_policy_id = canonical_fingerprint(
+        {
+            "kind": "periodic-kubo-frequency-execution",
+            "plan_id": plan.plan_id,
+            "frequency_policy": policy,
+            "frequency_workspace_bytes": workspace_budget,
+            "frequency_chunk_size": chunk_size,
+        }
     )
     dissipative = 0.5 * (conductivity + _adjoint(conductivity))
     spectra = HermitianSpectrum(dissipative, tolerance=passive_tolerance)
@@ -478,6 +551,13 @@ def finite_frequency_kubo_response(
         linewidth.mechanism_id,
         False,
         False,
+        policy,
+        execution,
+        workspace_budget,
+        chunk_size,
+        effective_chunk,
+        workspace_bytes,
+        execution_policy_id,
     )
     return FiniteFrequencyKuboResponse(
         omega,
@@ -566,6 +646,7 @@ __all__ = [
     "ConservedCollinearSpinEvidence",
     "FiniteFrequencyKuboResponse",
     "KuboDiamagneticSumRule",
+    "KuboFrequencyPolicy",
     "KuboLinewidth",
     "KuboRawTransitions",
     "KuboResponseEvidence",

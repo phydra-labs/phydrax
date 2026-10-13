@@ -336,8 +336,30 @@ history contracts are different from phase evolution.
 `PolynomialDefectPotential` interprets the canonical
 `phydrax.algebraic.SparsePolynomialSystem` as a scalar or multifield,
 source-identified potential. `MappedInfiniteDefectPlan` uses a rational
-compactification of the real line, fixed vacuum traces, Newton/backtracking,
-the full stability Hessian, translation-mode evidence, energy, and topological
-charge. Radial defects, warm-started coefficient continuation, and damped
+compactification of the real line, fixed vacuum traces, and native matrix-free
+Newton–Krylov steps with strict residual-decrease backtracking. The canonical
+`phydrax.discretization.collocation.ChebyshevDifferentiationAction` retains only
+nodes and barycentric coefficients and evaluates one differentiation row at a
+time with O(N) workspace (O(N²) arithmetic). Mapped physical derivatives apply
+the map factor twice, rather than materializing dense D and D² matrices.
+The existing defect first-derivative orientation is preserved.
+Repeated mapped solves and warm-started continuation reuse module-level compiled
+derivative and Newton-step entry points, with numerical leaves of the residual
+and solver passed dynamically.
+
+Full stability eigenvalues, negative-mode count, translation-mode evidence,
+energy, and topological charge remain available. Full-spectrum admission is
+fail-closed: `maximum_stability_dimension=512` and
+`maximum_stability_bytes=64*1024*1024` bound the interior field dimension and
+a conservative four-matrix float64 eigensolve workspace estimate. Larger
+problems must explicitly raise both applicable budgets; the solver never
+silently substitutes a partial spectrum. `krylov_restart=64` bounds Newton
+Krylov storage and is recorded, together with spectrum budgets, in plan identity.
+Evidence includes the native `solver_status`.
+
+Radial defects use a declared sparse block-tridiagonal derivative pattern,
+compressed native JAX differentiation, and native GMRES full Newton steps
+without mapped backtracking. Their `linear_status` reaches the result.
+Radial defects, warm-started coefficient continuation, and damped
 multifield Klein–Gordon scattering are separate plans. Relativistic scattering
 does not reuse diffusive phase-field time evolution.

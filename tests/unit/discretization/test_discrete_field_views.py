@@ -9,9 +9,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.interpolate import BSpline
 
 import phydrax as phx
 from phydrax._interpolation import apply_gather_stencil, rectilinear_stencil
+from phydrax._model._ports import ValuePort
 from phydrax.discretization import (
     DiscreteFieldFunctionView,
     FieldQueryStatus,
@@ -19,12 +21,25 @@ from phydrax.discretization import (
 )
 from phydrax.discretization.finite_difference import (
     BSplineGridInterpolation,
+    FiniteDifferenceFieldReconstructionKernel,
     MultilinearGridInterpolation,
     prepare_finite_difference_field_reconstruction,
 )
 from phydrax.discretization.finite_volume import (
     prepare_finite_volume_field_reconstruction,
 )
+
+
+def _spline_knots(nodes: np.ndarray, degree: int) -> np.ndarray:
+    """Independent de Boor node-averaged interpolation knots."""
+    interior = [
+        sum(nodes[index : index + degree]) / degree
+        for index in range(1, nodes.size - degree)
+    ]
+    return np.asarray(
+        [nodes[0]] * (degree + 1) + interior + [nodes[-1]] * (degree + 1),
+        dtype=np.float64,
+    )
 
 
 jax.config.update("jax_enable_x64", True)
@@ -400,6 +415,141 @@ def test_bspline_grid_view_interpolates_and_reproduces_tensor_polynomials() -> N
             _finite_difference(periodic=(True, False)),
             interpolation=BSplineGridInterpolation(3),
         )
+
+
+@pytest.mark.parametrize("degree", [2, 3, 5])
+def test_bspline_grid_batched_values_and_derivatives_match_scipy(degree: int) -> None:
+    discretization = _finite_difference((10, 8))
+    reconstruction = prepare_finite_difference_field_reconstruction(
+        discretization,
+        interpolation=BSplineGridInterpolation(degree),
+        value_port=ValuePort(
+            "u",
+            event_shape=(3,),
+            component_ids=("a", "b", "c"),
+            representation="finite-difference-field",
+        ),
+    )
+    axes = tuple(
+        np.asarray(axis)
+        for axis in discretization.grid.primary_entity_layout.coordinates_by_axis
+    )
+    knots = tuple(_spline_knots(axis, degree) for axis in axes)
+    data = np.random.default_rng(10).normal(size=(10, 8, 3))
+    matrices = tuple(
+        BSpline.design_matrix(axis, knot, degree).toarray()
+        for axis, knot in zip(axes, knots, strict=True)
+    )
+    first = np.linalg.solve(matrices[0], data.reshape((10, -1))).reshape(data.shape)
+    coefficients = np.moveaxis(
+        np.linalg.solve(matrices[1], np.moveaxis(first, 1, 0).reshape((8, -1))).reshape(
+            (8, 10, 3)
+        ),
+        0,
+        1,
+    )
+    points = np.asarray(_FD_POINTS)
+    for derivative in ((0, 0), (1, 0), (0, degree - 1)):
+        bases = tuple(
+            BSpline(knot, np.eye(axis.size, dtype=np.float64), degree)(
+                points[:, index], nu=derivative[index]
+            )
+            for index, (axis, knot) in enumerate(zip(axes, knots, strict=True))
+        )
+        expected = np.stack(
+            [
+                bases[0][index] @ coefficients[:, :, component] @ bases[1][index]
+                for index in range(points.shape[0])
+                for component in range(3)
+            ]
+        ).reshape((points.shape[0], 3))
+        result = reconstruction.derivative(jnp.asarray(data), _FD_POINTS, derivative)
+        np.testing.assert_allclose(result.values, expected, rtol=2e-10, atol=2e-10)
+        assert result.evidence.status.tolist() == [_VALID] * points.shape[0]
+
+
+def test_bspline_condition_limit_brackets_independent_condition() -> None:
+    discretization = _finite_difference((9, 7))
+    axes = discretization.grid.primary_entity_layout.coordinates_by_axis
+    conditions = [
+        np.linalg.cond(
+            BSpline.design_matrix(
+                np.asarray(axis), _spline_knots(np.asarray(axis), 3), 3
+            ).toarray()
+        )
+        for axis in axes
+    ]
+    largest = max(conditions)
+    accepted = prepare_finite_difference_field_reconstruction(
+        discretization,
+        interpolation=BSplineGridInterpolation(3, condition_limit=largest * 1.001),
+    )
+    evidence = np.asarray(accepted.validity(_FD_POINTS).conditioning)
+    assert np.all(evidence >= np.prod(conditions) * (1.0 - 1e-12))
+    np.testing.assert_allclose(evidence, np.prod(conditions), rtol=1e-6)
+    kernel = accepted.kernel
+    assert isinstance(kernel, FiniteDifferenceFieldReconstructionKernel)
+    for axis, bracket in zip(axes, kernel.condition_evidence, strict=True):
+        singular = np.linalg.svd(
+            BSpline.design_matrix(
+                np.asarray(axis), _spline_knots(np.asarray(axis), 3), 3
+            ).toarray(),
+            compute_uv=False,
+        )
+        assert int(bracket.status) in (
+            int(phx.linalg.BandedSpectrumStatus.CERTIFIED),
+            int(phx.linalg.BandedSpectrumStatus.BRACKET_NOT_CONVERGED),
+        )
+        assert (
+            float(bracket.minimum_lower) <= singular[-1] <= float(bracket.minimum_upper)
+        )
+        assert float(bracket.maximum_lower) <= singular[0] <= float(bracket.maximum_upper)
+        assert float(bracket.condition_upper_bound) <= largest * 1.001
+    with pytest.raises(ValueError, match="ill-conditioned"):
+        prepare_finite_difference_field_reconstruction(
+            discretization,
+            interpolation=BSplineGridInterpolation(3, condition_limit=largest * 0.999),
+        )
+
+
+def test_bspline_grid_batched_jit_transpose_duality() -> None:
+    import equinox as eqx
+
+    reconstruction = prepare_finite_difference_field_reconstruction(
+        _finite_difference((8, 6)),
+        interpolation=BSplineGridInterpolation(3),
+        value_port=ValuePort(
+            "u",
+            event_shape=(2,),
+            component_ids=("a", "b"),
+            representation="finite-difference-field",
+        ),
+    )
+    values = jnp.asarray(np.random.default_rng(4).normal(size=(8, 6, 2)))
+    cotangent = jnp.asarray(np.random.default_rng(5).normal(size=(3, 2)))
+    evaluate = eqx.filter_jit(
+        lambda data: reconstruction.evaluate(data, _FD_POINTS).values
+    )
+    result, pullback = jax.vjp(evaluate, values)
+    transpose = reconstruction.transpose(_FD_POINTS, cotangent)
+    np.testing.assert_allclose(pullback(cotangent)[0], transpose, atol=2e-12)
+    np.testing.assert_allclose(
+        jnp.vdot(result, cotangent), jnp.vdot(values, transpose), atol=2e-12
+    )
+
+
+def test_bspline_grid_preparation_retained_storage_scales_linearly() -> None:
+    def retained(size: int) -> int:
+        reconstruction = prepare_finite_difference_field_reconstruction(
+            _finite_difference((size, 8)), interpolation=BSplineGridInterpolation(3)
+        )
+        return sum(
+            leaf.size * leaf.dtype.itemsize
+            for leaf in jax.tree.leaves(reconstruction.kernel)
+            if isinstance(leaf, jax.Array)
+        )
+
+    assert retained(32) <= 2.1 * retained(16)
 
 
 def _point_cloud(points: Any) -> Any:

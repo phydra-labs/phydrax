@@ -420,3 +420,78 @@ def test_hard_neighbor_failures_and_case_query_geometry_are_explicit() -> None:
     with pytest.raises(ValueError, match="unbatched fitted case"):
         # ty: ignore[unresolved-attribute]
         case_model.predict_chunked(cases[:, :2], chunk_size=1)
+
+
+@pytest.mark.parametrize("workspace_bytes", [4096, 4 * 1024 * 1024])
+def test_blocked_neighbors_preserve_ties_across_support_tiles(
+    workspace_bytes: int,
+) -> None:
+    import numpy as np
+
+    from phydrax.ml._numerics._pairwise import blocked_top_k
+
+    support = jnp.array(np.tile([[1.0], [-1.0]], (67, 1)), dtype=jnp.float64)
+    query = jnp.array([[0.0], [1.0], [-1.0]], dtype=jnp.float64)
+    mask = jnp.arange(134) % 7 != 0
+    indices, distance = blocked_top_k(
+        query, support, mask, 9, workspace_bytes=workspace_bytes
+    )
+    dense = np.abs(np.asarray(query) - np.asarray(support).T)
+    dense[:, ~np.asarray(mask)] = np.inf
+    reference = np.argsort(dense, axis=-1, kind="stable")[:, :9]
+    np.testing.assert_array_equal(indices, reference)
+    np.testing.assert_allclose(distance, np.take_along_axis(dense, reference, axis=-1))
+
+
+def test_streamed_density_matches_weighted_dense_logsumexp() -> None:
+    import numpy as np
+
+    from phydrax.ml._numerics._pairwise import blocked_logsumexp
+
+    support = jnp.array(np.tile([[1.0], [-1.0]], (67, 1)), dtype=jnp.float64)
+    query = jnp.array([[0.0], [1.0], [-1.0]], dtype=jnp.float64)
+    mask = jnp.arange(134) % 7 != 0
+    log_weight = jnp.where(
+        mask, jnp.log(jnp.arange(134, dtype=jnp.float64) + 1), -jnp.inf
+    )
+    actual = blocked_logsumexp(
+        query, support, log_weight, jnp.asarray(0.5), block_size=16
+    )
+    squared = (np.asarray(query) - np.asarray(support).T) ** 2
+    expected = np.log(
+        np.sum(np.exp(np.asarray(log_weight)[None, :] - 0.5 * squared), axis=-1)
+    )
+    np.testing.assert_allclose(actual, expected, rtol=1e-13)
+
+
+def test_streamed_density_inactive_support_has_zero_gradient() -> None:
+    from phydrax.ml._numerics._pairwise import blocked_logsumexp
+
+    support = jnp.arange(130, dtype=jnp.float64)[:, None]
+    log_weight = jnp.full((130,), -jnp.inf, dtype=jnp.float64)
+
+    def score(query: jax.Array) -> jax.Array:
+        value = blocked_logsumexp(
+            query, support, log_weight, jnp.asarray(0.5), block_size=16
+        )
+        return jnp.sum(jnp.where(jnp.isfinite(value), value, 0.0))
+
+    query = jnp.zeros((2, 1), dtype=jnp.float64)
+    assert jnp.all(
+        jnp.isneginf(
+            blocked_logsumexp(query, support, log_weight, jnp.asarray(0.5), block_size=16)
+        )
+    )
+    assert jnp.array_equal(jax.grad(score)(query), jnp.zeros_like(query))
+
+
+def test_neighbor_workspace_admission_is_bounded_and_explicit() -> None:
+    from phydrax.ml._numerics._pairwise import pair_block_size
+
+    budget = 4 * 1024 * 1024
+    assert pair_block_size(256, 256, 3, 8, budget) == 256
+    extent = pair_block_size(1024, 1024, 3, 8, budget)
+    assert 0 < extent < 1024
+    assert extent * extent * (3 + 3) * 8 <= budget
+    with pytest.raises(ValueError, match="workspace_bytes"):
+        pair_block_size(10, 10, 3, 8, 0)

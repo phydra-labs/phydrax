@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import scipy.sparse as sp
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -25,12 +26,13 @@ from ...linalg import (
     adjoint,
     ComplexMap,
     ComplexMapEvidence,
-    DenseLinearOperator,
+    FunctionLinearOperator,
     transpose,
 )
 from ...typing import parse
 from .._cochain import CochainDiscretization
 from ._cut_cochain import CutCellCochainPlan
+from ._cut_transfer_actions import CommutingAction, ComponentMinimumNorm, SparseAction
 from ._cut_transition import MultivaluedCutCellTransition
 
 
@@ -67,6 +69,7 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         cell_transition: MultivaluedCutCellTransition | None = None,
         tolerance: float = 1.0e-9,
         boundary: ComplexBoundary = "absolute",
+        workspace_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         if not isinstance(source_plan, CutCellCochainPlan) or not isinstance(
             target_plan, CutCellCochainPlan
@@ -90,6 +93,8 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Cut cochain transfer tolerance must be positive.")
+        if workspace_bytes <= 0:
+            raise ValueError("Cut transfer workspace budget must be positive.")
         dimension = source_topology.dimension
         if target_topology.dimension != dimension:
             raise ValueError("Cut cochain transfer dimensions must match.")
@@ -106,22 +111,32 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         source_d = tuple(
             incidence.scipy_boundary()
             .T.tocsr()[source_indices[k + 1]][:, source_indices[k]]
-            .toarray()
+            .astype(np.float64)
             for k, incidence in enumerate(source_topology.incidences)
         )
         target_d = tuple(
             incidence.scipy_boundary()
             .T.tocsr()[target_indices[k + 1]][:, target_indices[k]]
-            .toarray()
+            .astype(np.float64)
             for k, incidence in enumerate(target_topology.incidences)
         )
         topology_changed = source_topology.topology_id != target_topology.topology_id
         source_counts = tuple(entity.count for entity in source_topology.entity_sets)
         target_counts = tuple(entity.count for entity in target_topology.entity_sets)
-        primal: list[np.ndarray] = []
+        primal: list[SparseAction | CommutingAction] = []
         if not topology_changed:
             for lower, upper in zip(source_indices, target_indices, strict=True):
-                primal.append((upper[:, None] == lower[None, :]).astype(np.float64))
+                lookup = {value: index for index, value in enumerate(lower)}
+                rows = [index for index, value in enumerate(upper) if value in lookup]
+                columns = [lookup[upper[index]] for index in rows]
+                primal.append(
+                    SparseAction(
+                        sp.csr_matrix(
+                            (np.ones(len(rows), dtype=np.float64), (rows, columns)),
+                            shape=(upper.size, lower.size),
+                        )
+                    )
+                )
         else:
             if (
                 not isinstance(cell_transition, MultivaluedCutCellTransition)
@@ -132,51 +147,66 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
                     "Changed cut topology requires its exact cell common refinement."
                 )
             remap = cell_transition.remap
-            cell_matrix = np.zeros(
-                (target_counts[-1], source_counts[-1]), dtype=np.float64
-            )
+            routes = np.asarray(remap.target_routes, dtype=np.int32)
+            columns = np.asarray(remap.source_indices, dtype=np.int32)
             weights = (
                 np.asarray(remap.intersection_measures)
                 / np.asarray(remap.source_volumes)[
                     np.asarray(remap.source_indices, dtype=np.int32)
                 ]
             )
-            np.add.at(
-                cell_matrix,
-                (
-                    np.asarray(remap.target_routes, dtype=np.int32),
-                    np.asarray(remap.source_indices, dtype=np.int32),
-                ),
-                weights,
+            cell_matrix = sp.csr_matrix(
+                (weights, (routes, columns)), shape=(target_counts[-1], source_counts[-1])
             )
-            primal = [np.empty((0, 0), dtype=np.float64) for _ in source_counts]
-            primal[-1] = cell_matrix[np.ix_(target_indices[-1], source_indices[-1])]
+            top_action = SparseAction(
+                cell_matrix[target_indices[-1]][:, source_indices[-1]]
+            )
+            primal = [top_action for _ in source_counts]
             for degree in reversed(range(dimension)):
-                desired = primal[degree + 1] @ source_d[degree]
-                pseudoinverse = np.linalg.pinv(target_d[degree], rcond=tolerance_)
+                solve = ComponentMinimumNorm(
+                    target_d[degree], tolerance_, workspace_bytes
+                )
                 source_ids = np.asarray(
                     source_topology.entities(degree).entity_ids, dtype=np.int64
                 )[source_indices[degree]]
                 target_ids = np.asarray(
                     target_topology.entities(degree).entity_ids, dtype=np.int64
                 )[target_indices[degree]]
-                geometric = (target_ids[:, None] == source_ids[None, :]).astype(
-                    np.float64
+                lookup = {value: index for index, value in enumerate(source_ids)}
+                rows = [
+                    index for index, value in enumerate(target_ids) if value in lookup
+                ]
+                columns = [lookup[target_ids[index]] for index in rows]
+                geometric = SparseAction(
+                    sp.csr_matrix(
+                        (np.ones(len(rows), dtype=np.float64), (rows, columns)),
+                        shape=(target_ids.size, source_ids.size),
+                    )
                 )
-                null_projection = (
-                    np.eye(target_ids.size, dtype=np.float64)
-                    - pseudoinverse @ target_d[degree]
+                primal[degree] = CommutingAction(
+                    primal[degree + 1],
+                    SparseAction(source_d[degree]),
+                    SparseAction(target_d[degree]),
+                    geometric,
+                    solve,
                 )
-                primal[degree] = pseudoinverse @ desired + null_projection @ geometric
-        defects = tuple(
-            float(
-                np.max(
-                    np.abs(target_d[k] @ primal[k] - primal[k + 1] @ source_d[k]),
-                    initial=0.0,
+        defects_list = []
+        for degree in range(dimension):
+            source_action = SparseAction(source_d[degree])
+            target_action = SparseAction(target_d[degree])
+            defect = 0.0
+            for column in range(source_indices[degree].size):
+                basis = (
+                    jnp.zeros((source_indices[degree].size,), dtype=jnp.float64)
+                    .at[column]
+                    .set(1.0)
                 )
-            )
-            for k in range(dimension)
-        )
+                residual = target_action(primal[degree](basis)) - primal[degree + 1](
+                    source_action(basis)
+                )
+                defect = max(defect, float(jnp.max(jnp.abs(residual), initial=0.0)))
+            defects_list.append(defect)
+        defects = tuple(defects_list)
         if max(defects, default=0.0) > tolerance_:
             raise ValueError(
                 "Cut cochain topology change has no admitted commuting projection."
@@ -189,11 +219,23 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
                 "boundary": boundary,
                 "source_mask": source_indices,
                 "target_mask": target_indices,
-                "matrices": [array_tree_fingerprint(matrix) for matrix in primal],
+                "solver": "component-svd-global-relative-cutoff",
+                "tolerance": tolerance_,
+                "workspace_bytes": workspace_bytes,
+                "transition": None
+                if cell_transition is None
+                else array_tree_fingerprint(
+                    (
+                        cell_transition.remap.intersection_measures,
+                        cell_transition.remap.source_volumes,
+                        cell_transition.remap.target_routes,
+                        cell_transition.remap.source_indices,
+                    )
+                ),
             }
         )
         maps = tuple(
-            DenseLinearOperator(
+            FunctionLinearOperator(
                 matrix,
                 source=source.space(k),
                 target=target.space(k),

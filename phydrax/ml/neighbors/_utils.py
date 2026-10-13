@@ -13,6 +13,7 @@ from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from .._numerics import pairwise_distances
+from .._numerics._pairwise import blocked_logsumexp, blocked_top_k, pair_block_size
 
 
 def size(shape: tuple[int, ...]) -> int:
@@ -93,6 +94,135 @@ def case_distances(
     query_shape = tuple(x.shape[:-1])
     distance = pairwise_distances(x.reshape((-1, x.shape[-1])), support, metric=metric)
     return distance.reshape(query_shape + (support.shape[-2],)), query_shape
+
+
+def blocked_case_top_k(
+    query: Array,
+    support: Array,
+    mask: Array,
+    case_shape: tuple[int, ...],
+    metric: Any,
+    count: int,
+    *,
+    workspace_bytes: int = 4 * 1024 * 1024,
+) -> tuple[Array, Array]:
+    x, query_shape = _case_queries(query, support, case_shape)
+    indices, distances = blocked_top_k(
+        x,
+        support,
+        mask,
+        count,
+        metric=metric,
+        workspace_bytes=workspace_bytes // size(case_shape),
+    )
+    shape = case_shape + query_shape + (count,)
+    return indices.reshape(shape), distances.reshape(shape)
+
+
+def _case_queries(
+    query: Array, support: Array, case_shape: tuple[int, ...]
+) -> tuple[Array, tuple[int, ...]]:
+    if query.ndim < len(case_shape) + 1 or query.shape[-1] != support.shape[-1]:
+        raise ValueError("Query must end with the fitted feature axis.")
+    if query.shape[: len(case_shape)] != case_shape:
+        raise ValueError(f"Query must begin with fitted case shape {case_shape}.")
+    query_shape = query.shape[len(case_shape) : -1]
+    return query.reshape(case_shape + (size(query_shape), query.shape[-1])), query_shape
+
+
+def blocked_case_logsumexp(
+    query: Array,
+    support: Array,
+    log_weight: Array,
+    scale: Array,
+    case_shape: tuple[int, ...],
+    *,
+    workspace_bytes: int = 4 * 1024 * 1024,
+) -> tuple[Array, tuple[int, ...]]:
+    x, query_shape = _case_queries(query, support, case_shape)
+    value = blocked_logsumexp(
+        x, support, log_weight, scale, workspace_bytes=workspace_bytes // size(case_shape)
+    )
+    return value.reshape(case_shape + query_shape), query_shape
+
+
+def blocked_radius_sum(
+    query: Array,
+    support: Array,
+    mask: Array,
+    weight: Array,
+    values: Array,
+    radius: Array,
+    case_shape: tuple[int, ...],
+    metric: Any,
+    *,
+    workspace_bytes: int = 4 * 1024 * 1024,
+) -> tuple[Array, Array]:
+    x, query_shape = _case_queries(query, support, case_shape)
+    q, n = x.shape[-2], support.shape[-2]
+    b = pair_block_size(
+        q,
+        n,
+        x.shape[-1] + values.shape[-1],
+        jnp.dtype(jnp.result_type(x, weight, values)).itemsize,
+        workspace_bytes // size(case_shape),
+    )
+    if q == 0:
+        return (
+            jnp.zeros(
+                case_shape + query_shape + (values.shape[-1],),
+                dtype=jnp.result_type(values, weight),
+            ),
+            jnp.zeros(case_shape + query_shape, dtype=weight.dtype),
+        )
+    if b >= max(q, n):
+        weights = jnp.where(
+            mask[..., None, :]
+            & (pairwise_distances(x, support, metric=metric) <= radius),
+            weight[..., None, :],
+            0.0,
+        )
+        numerator = jnp.sum(weights[..., None] * values[..., None, :, :], axis=-2)
+        denominator = jnp.sum(weights, axis=-1)
+        return numerator.reshape(
+            case_shape + query_shape + (values.shape[-1],)
+        ), denominator.reshape(case_shape + query_shape)
+    qp, np_ = ((q + b - 1) // b) * b, ((n + b - 1) // b) * b
+    pad = ((0, 0),) * len(case_shape)
+    x = jnp.pad(x, pad + ((0, qp - q), (0, 0)))
+    y = jnp.pad(support, pad + ((0, np_ - n), (0, 0)))
+    w = jnp.pad(jnp.where(mask, weight, 0.0), pad + ((0, np_ - n),))
+    v = jnp.pad(values, pad + ((0, np_ - n), (0, 0)))
+    channels = values.shape[-1]
+    dtype = jnp.result_type(values, weight)
+    output = jnp.zeros(case_shape + (qp, channels + 1), dtype=dtype)
+
+    def row_step(i: Array, output: Array) -> Array:
+        xb = jax.lax.dynamic_slice_in_dim(x, i * b, b, axis=-2)
+
+        def column_step(j: Array, total: Array) -> Array:
+            yb = jax.lax.dynamic_slice_in_dim(y, j * b, b, axis=-2)
+            wb = jax.lax.dynamic_slice_in_dim(w, j * b, b, axis=-1)
+            vb = jax.lax.dynamic_slice_in_dim(v, j * b, b, axis=-2)
+            weights = jnp.where(
+                pairwise_distances(xb, yb, metric=metric) <= radius, wb[..., None, :], 0.0
+            )
+            augmented = jnp.concatenate(
+                (vb, jnp.ones(vb.shape[:-1] + (1,), dtype=vb.dtype)), axis=-1
+            )
+            return total + weights @ augmented
+
+        value = jax.lax.fori_loop(
+            0,
+            np_ // b,
+            column_step,
+            jnp.zeros(case_shape + (b, channels + 1), dtype=dtype),
+        )
+        return jax.lax.dynamic_update_slice_in_dim(output, value, i * b, axis=-2)
+
+    result = jax.lax.fori_loop(0, qp // b, row_step, output)[..., :q, :]
+    result = result.reshape(case_shape + query_shape + (channels + 1,))
+    return result[..., :channels], jnp.real(result[..., -1])
 
 
 def broadcast_support(

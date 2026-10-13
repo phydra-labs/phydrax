@@ -23,6 +23,7 @@ import os
 import shutil
 from typing import TypedDict
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.integrate import quad
@@ -31,6 +32,7 @@ from scipy.special import airye
 import phydrax as phx
 from phydrax._external_runtime import pin_executable, PinnedExecutable
 from phydrax.applications import accelerator
+from phydrax.applications.accelerator import _csr
 from phydrax.discretization import PreparedTensorGrid, TensorGridPlan, UniformCellAxisSpec
 
 
@@ -789,3 +791,98 @@ def test_steady_igf_matches_pinned_pycsr3d() -> None:
     np.testing.assert_allclose(
         ours[center], theirs[center], atol=5.0e-2 * np.max(np.abs(theirs[center]))
     )
+
+
+@pytest.mark.parametrize("elements", [1, 32, 256])
+def test_lattice_chords_match_independent_arc_positions(elements: int) -> None:
+    lengths = np.full(elements, 0.01, dtype=np.float64)
+    curvatures = np.full(elements, 0.2, dtype=np.float64)
+    lattice = accelerator.CSRLattice(
+        lengths, curvatures, element_ids=tuple(f"e{i}" for i in range(elements))
+    )
+    earlier = jnp.asarray([0.002, 0.006], dtype=jnp.float64)
+    later = jnp.asarray([elements * 0.01 - 0.001, elements * 0.01 - 0.003])
+    chord = lattice._forward_chord(
+        later,
+        lattice._segment(later),
+        earlier,
+        lattice._segment(earlier),
+        later - earlier,
+    )
+    start, end = np.asarray(earlier), np.asarray(later)
+    reference = np.column_stack(
+        (
+            (np.sin(0.2 * end) - np.sin(0.2 * start)) / 0.2,
+            (np.cos(0.2 * start) - np.cos(0.2 * end)) / 0.2,
+        )
+    )
+    np.testing.assert_allclose(chord, reference, rtol=1e-13, atol=1e-15)
+
+
+def test_retarded_mesh_matches_dense_observer_source_sum() -> None:
+    shape = (4, 3, 9)
+    grid = _grid((-1e-4, -1e-4, -1e-3), (1e-4, 1e-4, 1e-3), shape)
+    lattice = accelerator.CSRLattice([1.0], [0.1], element_ids=["bend"])
+    plan = accelerator.CSRPlan(
+        "3d-retarded-mesh",
+        lattice,
+        SCALE,
+        grid,
+        reference_rest_energy=REST_ENERGY,
+        reference_momentum=_momentum(500.0),
+        capacity=4,
+        far_nodes=4,
+        resources=accelerator.CSRResources(observer_chunk=2),
+    )
+    density = jnp.asarray(np.arange(np.prod(shape), dtype=np.float64).reshape(shape) + 1)
+    timeline = _csr._Timeline(
+        jnp.asarray([0.0, 0.5]),
+        jnp.stack((density, density)),
+        jnp.zeros((2,) + shape),
+        jnp.asarray(False),
+        jnp.asarray(0.0),
+    )
+    position = jnp.asarray(0.5)
+    fields = plan._mesh_fields(timeline, position, jnp.asarray(0.1))
+    samples = plan._samples(
+        position, plan.line_horizontal, plan.line_vertical, subtract=True
+    )
+    flat = _csr._Timeline(
+        timeline.positions,
+        timeline.densities.reshape(2, 12, 9),
+        timeline.slopes.reshape(2, 12, 9),
+        timeline.dropped,
+        timeline.oldest_retained,
+    )
+    reference = np.zeros((4, 3, 9), dtype=np.float64)
+    for i in range(4):
+        for j in range(3):
+            for source_i in range(4):
+                for source_j in range(3):
+                    offset = (i - source_i + 3) * 5 + j - source_j + 2
+                    sampled = _csr._sample_timeline(
+                        flat,
+                        jnp.asarray(source_i * 3 + source_j, dtype=jnp.int32),
+                        samples.location[offset],
+                        samples.retarded[offset],
+                        plan.lower_centers[-1],
+                        plan.spacing[-1],
+                    )
+                    reference[i, j] += (
+                        np.sum(
+                            np.asarray(samples.weights[0, offset] * sampled.values),
+                            axis=-1,
+                        )
+                        * plan.spacing[0]
+                        * plan.spacing[1]
+                    )
+    np.testing.assert_allclose(fields.potential, reference, rtol=1e-13, atol=1e-15)
+    assert int(fields.failures) == int(samples.failures)
+    expected = (
+        samples.location.shape[0]
+        * shape[-1]
+        * (2 * plan.lag_nodes.shape[0] + 2 * plan.far_nodes)
+        * 6
+        * 8
+    )
+    assert plan.estimate.kernel_bytes == expected + 4 * 2 * 12

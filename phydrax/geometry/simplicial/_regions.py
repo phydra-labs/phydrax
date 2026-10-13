@@ -45,7 +45,7 @@ from ..design._schema import (
     ParameterBinding,
     ParameterId,
 )
-from ._bvh import TriangleBVH
+from ._bvh import _segment_ray_parity, SegmentBVH, TriangleBVH
 from ._mesh import (
     _TriangleCubatureMap,
     _TriangleSurfaceMap,
@@ -75,6 +75,7 @@ class SegmentMesh(StrictModule):
 
     vertices: Array
     topology: SegmentTopology
+    index: SegmentBVH
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -98,6 +99,7 @@ class SegmentMesh(StrictModule):
         self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.topology = topology
         self.source_id = source_id or f"segment-mesh-{uuid4().hex}"
+        self.index = SegmentBVH(self.vertices, topology.edges)
 
     @property
     def edges(self) -> Array:
@@ -116,38 +118,7 @@ class SegmentMesh(StrictModule):
         return jnp.sum(self.lengths)
 
     def query(self, points: Array, /) -> SegmentQueryResult:
-        points_ = jnp.asarray(points, dtype=self.vertices.dtype)
-        if points_.ndim == 0 or points_.shape[-1] != 2:
-            raise ValueError("points must have trailing dimension 2.")
-        leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 2))
-        segments = self.segments
-        direction = segments[:, 1] - segments[:, 0]
-        relative = flat[:, None, :] - segments[None, :, 0, :]
-        coordinate = jnp.clip(
-            jnp.sum(relative * direction, axis=-1)
-            / jnp.sum(direction * direction, axis=-1),
-            0.0,
-            1.0,
-        )
-        closest_by_segment = segments[:, 0] + coordinate[..., None] * direction
-        distance_sq = jnp.sum((flat[:, None, :] - closest_by_segment) ** 2, axis=-1)
-        segment = jnp.argmin(distance_sq, axis=-1).astype(jnp.int32)
-        closest = jnp.take_along_axis(closest_by_segment, segment[:, None, None], axis=1)[
-            :, 0
-        ]
-        distance = jnp.sqrt(
-            jnp.take_along_axis(distance_sq, segment[:, None], axis=1)[:, 0]
-        )
-        selected_direction = direction[segment]
-        normal = jnp.stack((selected_direction[:, 1], -selected_direction[:, 0]), axis=-1)
-        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
-        return SegmentQueryResult(
-            closest_point=closest.reshape((*leading, 2)),
-            distance=distance.reshape(leading),
-            segment_index=segment.reshape(leading),
-            normal=normal.reshape((*leading, 2)),
-        )
+        return self.index.query(points)
 
 
 class _LoopBoundaryMap(AbstractBoundaryMap):
@@ -244,6 +215,7 @@ class PlanarMeshRegion(GeometrySource):
             vertices,
             self.edges,
             self.loop_offsets,
+            SegmentBVH(self.vertices, self.edges),
             source_id=self.feature_id,
         )
 
@@ -252,10 +224,17 @@ class _PlanarMeshRegionKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     edges: Array
     loop_offsets: Array
+    index: SegmentBVH
     source_id: str = eqx.field(static=True)
 
     def __init__(
-        self, vertices: Any, edges: Any, loop_offsets: Any, *, source_id: Any
+        self,
+        vertices: Any,
+        edges: Any,
+        loop_offsets: Any,
+        index: SegmentBVH,
+        *,
+        source_id: Any,
     ) -> None:
         self.vertices, self.edges, self.loop_offsets, self.source_id = (
             vertices,
@@ -263,6 +242,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
             loop_offsets,
             source_id,
         )
+        self.index = index
 
     @property
     def ambient_dimension(self) -> int:
@@ -300,50 +280,12 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         return self.vertices.read(state)
 
     def _query(self, state: Any, points: Any) -> Any:
-        vertices = self._vertices(state)
-        points_ = jnp.asarray(points, dtype=vertices.dtype)
-        leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 2))
-        segments = vertices[self.edges]
-        direction = segments[:, 1] - segments[:, 0]
-        relative = flat[:, None, :] - segments[None, :, 0, :]
-        coordinate = jnp.clip(
-            jnp.sum(relative * direction, axis=-1)
-            / jnp.sum(direction * direction, axis=-1),
-            0.0,
-            1.0,
-        )
-        closest_by_segment = segments[:, 0] + coordinate[..., None] * direction
-        distance_sq = jnp.sum((flat[:, None, :] - closest_by_segment) ** 2, axis=-1)
-        segment = jnp.argmin(distance_sq, axis=-1).astype(jnp.int32)
-        closest = jnp.take_along_axis(closest_by_segment, segment[:, None, None], axis=1)[
-            :, 0
-        ]
-        distance = jnp.sqrt(
-            jnp.take_along_axis(distance_sq, segment[:, None], axis=1)[:, 0]
-        )
-        selected_direction = direction[segment]
-        normal = jnp.stack((selected_direction[:, 1], -selected_direction[:, 0]), axis=-1)
-        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
-        return SegmentQueryResult(
-            closest_point=closest.reshape((*leading, 2)),
-            distance=distance.reshape(leading),
-            segment_index=segment.reshape(leading),
-            normal=normal.reshape((*leading, 2)),
-        )
+        return self.index.refit(self._vertices(state)).query(points)
 
     def contains(self, state: Any, points: Any, /) -> Any:
         vertices = self._vertices(state)
         points_ = jnp.asarray(points, dtype=vertices.dtype)
-        start = vertices[self.edges[:, 0]]
-        end = vertices[self.edges[:, 1]]
-        x = points_[..., 0, None]
-        y = points_[..., 1, None]
-        crossing = (start[:, 1] > y) != (end[:, 1] > y)
-        intersection = (end[:, 0] - start[:, 0]) * (y - start[:, 1]) / jnp.where(
-            end[:, 1] != start[:, 1], end[:, 1] - start[:, 1], 1.0
-        ) + start[:, 0]
-        return jnp.sum(crossing & (x < intersection), axis=-1) % 2 == 1
+        return _segment_ray_parity(points_, vertices, self.edges)
 
     def boundary_field(self, state: Any, points: Any, /) -> Any:
         query = self._query(state, points)
@@ -372,23 +314,31 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         points_ = jnp.asarray(points, dtype=vertices.dtype)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 2))
-        segments = vertices[self.edges]
+        index = self.index.refit(vertices)
+        nearest = index.nearest_segments(flat, k=2)
+        segments = vertices[self.edges[nearest.items[:, 0]]]
         direction = segments[:, 1] - segments[:, 0]
-        relative = flat[:, None, :] - segments[None, :, 0, :]
         coordinate = jnp.clip(
-            jnp.sum(relative * direction, axis=-1)
+            jnp.sum((flat - segments[:, 0]) * direction, axis=-1)
             / jnp.sum(direction * direction, axis=-1),
             0.0,
             1.0,
         )
-        closest_by_segment = segments[:, 0] + coordinate[..., None] * direction
-        query = self._query(state, flat)
+        closest = segments[:, 0] + coordinate[:, None] * direction
+        normal = jnp.stack((direction[:, 1], -direction[:, 0]), axis=-1)
+        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
+        query = SegmentQueryResult(
+            closest_point=closest,
+            distance=jnp.sqrt(nearest.distance_squared[:, 0]),
+            segment_index=nearest.items[:, 0],
+            normal=normal,
+        )
         unique, regular, margin = segment_query_evidence(
             flat,
-            closest_by_segment,
+            closest,
             coordinate,
-            query.segment_index,
             jnp.linalg.norm(direction, axis=-1),
+            nearest.distance_squared[:, 1],
         )
         return represented_mesh_closest_point(
             points_,

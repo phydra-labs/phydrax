@@ -1,0 +1,631 @@
+{
+  "baseline_kind": "independent-dense-pinv-oracle; not pre-edit full-plan capture",
+  "native_mesh_component_evidence": {
+    "fixture": "test_block_amr_cut_complex_3d._plane_complex(0.37, 3)",
+    "incidence_shapes": [[40, 17], [26, 40], [2, 26]],
+    "component_shapes": [[[40, 17]], [[26, 40]], [[2, 26]]],
+    "interpretation": "Each incidence has one connected component; native preparation exercises explicitly budgeted dense component SVD, not subquadratic factors."
+  },
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.213367083,
+      "compiler": {
+        "argument_bytes": 128,
+        "bytes_accessed": 6760,
+        "flops": 176,
+        "generated_code_bytes": 0,
+        "output_bytes": 192,
+        "source": "jax-compiled",
+        "temporary_bytes": 592,
+        "unavailable_reason": null
+      },
+      "component_shapes": [
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "host_peak_bytes": 117513,
+      "lowering_seconds": 0.085386375,
+      "nnz": 48,
+      "oracle_maximum_error": 3.552713678800501e-15,
+      "rank": 16,
+      "retained_bytes": 928
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.160974292,
+      "compiler": {
+        "argument_bytes": 256,
+        "bytes_accessed": 21704,
+        "flops": 352,
+        "generated_code_bytes": 0,
+        "output_bytes": 384,
+        "source": "jax-compiled",
+        "temporary_bytes": 1296,
+        "unavailable_reason": null
+      },
+      "component_shapes": [
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "host_peak_bytes": 113089,
+      "lowering_seconds": 0.068775458,
+      "nnz": 96,
+      "oracle_maximum_error": 1.4210854715202004e-14,
+      "rank": 32,
+      "retained_bytes": 1856
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.203024167,
+      "compiler": {
+        "argument_bytes": 512,
+        "bytes_accessed": 76168,
+        "flops": 704,
+        "generated_code_bytes": 0,
+        "output_bytes": 768,
+        "source": "jax-compiled",
+        "temporary_bytes": 2640,
+        "unavailable_reason": null
+      },
+      "component_shapes": [
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "host_peak_bytes": 219225,
+      "lowering_seconds": 0.141214666,
+      "nnz": 192,
+      "oracle_maximum_error": 4.263256414560601e-14,
+      "rank": 64,
+      "retained_bytes": 3712
+    },
+    {
+      "capacity": 64,
+      "compilation_seconds": 0.435096125,
+      "compiler": {
+        "argument_bytes": 1024,
+        "bytes_accessed": 283400,
+        "flops": 1408,
+        "generated_code_bytes": 0,
+        "output_bytes": 1536,
+        "source": "jax-compiled",
+        "temporary_bytes": 5392,
+        "unavailable_reason": null
+      },
+      "component_shapes": [
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "host_peak_bytes": 441156,
+      "lowering_seconds": 0.100063958,
+      "nnz": 384,
+      "oracle_maximum_error": 5.684341886080802e-14,
+      "rank": 128,
+      "retained_bytes": 7424
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "d0cc7b9ff78fa659f337e27a273299574665a9526c2db23e503480ebf0a5c6b4",
+    "evidence_schema": {
+      "fields": [
+        "capacity",
+        "host_peak_bytes",
+        "retained_bytes"
+      ],
+      "signature": "5c0036fc00015be9a96213ca4cb83109be5e90b5d209a002b9797eba357508f2"
+    },
+    "fingerprint": "9a2c56b2039cf814fc957e189b918e5889490a9d452555ec8dc1a1d6f68f096b",
+    "source_build_fingerprint": "3665b83b07425ac8e41c3a4303300bbe591c425ea448f2614358a2b7bde03719"
+  },
+  "process_peak_rss_bytes": 1429684224,
+  "retained_exponent": 0.9999999999999997
+}

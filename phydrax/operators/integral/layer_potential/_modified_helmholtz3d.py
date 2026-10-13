@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -18,6 +17,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 from ._surface3d import SurfacePanelization3D
 
 
@@ -54,11 +54,23 @@ class ModifiedHelmholtzLayerPotential3D(StrictModule, NonTrainableState):
             "n,n,n->", kernels, self.panelization.weights, self.density, backend="jax"
         )
 
-    def evaluate(self, targets: ArrayLike, /) -> Array:
+    def evaluate(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets)
         if values.ndim != 2 or values.shape[1] != 3:
             raise ValueError("targets must have shape (target_count, 3).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
 
 def prepare_modified_helmholtz_reconstruction_3d(

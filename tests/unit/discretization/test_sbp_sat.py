@@ -144,3 +144,85 @@ def test_sbp_sat_scenario_2() -> None:
             "x",
             interior_order=8,
         ).prepare()
+
+
+def _dense_sbp_oracle(count: int, order: int) -> tuple[np.ndarray, np.ndarray]:
+    """Independent dense polynomial-moment construction of the diagonal-norm family."""
+    norms = {
+        2: (1 / 2,),
+        4: (17 / 48, 59 / 48, 43 / 48, 49 / 48),
+        6: (
+            13649 / 43200,
+            12013 / 8640,
+            2711 / 4320,
+            5359 / 4320,
+            7877 / 8640,
+            43801 / 43200,
+        ),
+        8: (
+            1498139 / 5080320,
+            1107307 / 725760,
+            20761 / 80640,
+            1304999 / 725760,
+            299527 / 725760,
+            103097 / 80640,
+            670091 / 725760,
+            5127739 / 5080320,
+        ),
+    }
+    boundary = len(norms[order])
+    norm = np.ones(count, dtype=np.float64)
+    norm[:boundary] = norms[order]
+    norm[-boundary:] = norms[order][::-1]
+    offsets = np.arange(-order // 2, order // 2 + 1, dtype=np.float64)
+    target = np.zeros(order + 1, dtype=np.float64)
+    target[1] = 1.0
+    central = np.linalg.solve(offsets[None, :] ** np.arange(order + 1)[:, None], target)
+    q = np.zeros((count, count), dtype=np.float64)
+    for row in range(boundary, count - boundary):
+        q[row, row - order // 2 : row + order // 2 + 1] = central
+    q[:boundary, boundary:] = -q[boundary:, :boundary].T
+    q[-boundary:, :-boundary] = -q[:-boundary, -boundary:].T
+    q[0, 0], q[-1, -1] = -0.5, 0.5
+    pairs = [(i, j) for i in range(boundary) for j in range(i + 1, boundary)]
+    if pairs:
+        basis = np.zeros((len(pairs), count, count), dtype=np.float64)
+        for lane, (i, j) in enumerate(pairs):
+            basis[lane, i, j], basis[lane, j, i] = 1.0, -1.0
+        monomials = (
+            np.arange(count, dtype=np.float64)[None, :]
+            ** np.arange(order // 2 + 1)[:, None]
+        )
+        equations = np.stack(
+            [(item @ monomials.T)[:boundary].ravel() for item in basis], axis=1
+        )
+        derivatives = np.zeros_like(monomials)
+        for degree in range(1, order // 2 + 1):
+            derivatives[degree] = degree * monomials[degree - 1]
+        rhs = (norm[:, None] * derivatives.T - q @ monomials.T)[:boundary].ravel()
+        solution = np.linalg.lstsq(equations, rhs, rcond=None)[0]
+        for coefficient, item in zip(solution, basis, strict=True):
+            q += coefficient * item
+    q[-boundary:, -boundary:] = -q[:boundary, :boundary][::-1, ::-1]
+    return q / norm[:, None], norm
+
+
+@pytest.mark.parametrize("order", [2, 4, 6, 8])
+def test_bounded_sbp_dense_oracle(order: Any) -> None:
+    count = 41
+    sbp = phx.discretization.SBPDerivativePlan(
+        _grid(count), "x", interior_order=order
+    ).prepare()
+    expected, norm = _dense_sbp_oracle(count, order)
+    delta = 1.0 / (count - 1)
+    actual = np.asarray(sbp.operator._materialize())
+    np.testing.assert_allclose(actual, expected / delta, rtol=2e-11, atol=2e-10)
+    np.testing.assert_allclose(sbp.axis_norm_weights, delta * norm, rtol=1e-14)
+    boundary = np.zeros_like(actual)
+    boundary[0, 0], boundary[-1, -1] = -1.0, 1.0
+    residual = (
+        delta * norm[:, None] * actual + actual.T * (delta * norm)[None, :] - boundary
+    )
+    np.testing.assert_allclose(residual, 0.0, atol=5e-12)
+    assert sbp.stability_report.passed
+    assert sbp.operator.stencil_set.stencil.indices.shape[1] <= order + len(norm[:order])

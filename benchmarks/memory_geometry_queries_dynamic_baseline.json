@@ -1,0 +1,213 @@
+{
+  "cases": [
+    {
+      "capacity": 128,
+      "dense": {
+        "compilation_seconds": 0.127044042,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 1795876,
+          "flops": 429376,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 524368,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.029425167,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.003323916,
+          "mean_seconds": 0.0023354082000000003,
+          "median_seconds": 0.0022975,
+          "min_seconds": 0.001570166,
+          "samples_seconds": [
+            0.002667917,
+            0.003323916,
+            0.0022975,
+            0.001817542,
+            0.001570166
+          ],
+          "std_seconds": 0.0006233663176862863
+        }
+      },
+      "preparation_peak_bytes": 17589,
+      "prepared_bytes": 4612
+    },
+    {
+      "capacity": 256,
+      "dense": {
+        "compilation_seconds": 0.110830417,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 3574564,
+          "flops": 888128,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 1048656,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.035668375,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.003086708,
+          "mean_seconds": 0.0021705748,
+          "median_seconds": 0.002058542,
+          "min_seconds": 0.001721792,
+          "samples_seconds": [
+            0.001721792,
+            0.003086708,
+            0.001838916,
+            0.002146916,
+            0.002058542
+          ],
+          "std_seconds": 0.0004824551146850451
+        }
+      },
+      "preparation_peak_bytes": 21515,
+      "prepared_bytes": 9220
+    },
+    {
+      "capacity": 512,
+      "dense": {
+        "compilation_seconds": 0.128577167,
+        "compiler": {
+          "argument_bytes": 1024,
+          "bytes_accessed": 7131940,
+          "flops": 1838400,
+          "generated_code_bytes": 0,
+          "output_bytes": 2728,
+          "source": "jax-geometry-segment-query",
+          "temporary_bytes": 2097232,
+          "unavailable_reason": null
+        },
+        "lowering_seconds": 0.046869875,
+        "output_bytes": 2688,
+        "warm": {
+          "count": 5,
+          "max_seconds": 0.009110292,
+          "mean_seconds": 0.0072318415999999995,
+          "median_seconds": 0.006114583,
+          "min_seconds": 0.005901,
+          "samples_seconds": [
+            0.006114583,
+            0.005901,
+            0.009110292,
+            0.00898975,
+            0.006043583
+          ],
+          "std_seconds": 0.0014866191504275196
+        }
+      },
+      "preparation_peak_bytes": 40131,
+      "prepared_bytes": 18436
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+    "jax_version": "0.11.2",
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        "1"
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        "1"
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "71fbfbec85696f68a2f754884a49b8f97e572281e36a21e6f44294811ebd6913",
+    "evidence_fields": [
+      "cases",
+      "environment",
+      "gate",
+      "polygon_pairs",
+      "route"
+    ],
+    "evidence_schema_signature": "b3ece60757b5e428707234877b80ed78126774dfbaa4c82de2c8e4381e6334ba",
+    "fingerprint": "ba66a46924808d129c801cf2d90586b532ce46dedab1f5bbc0168d81b9263c34",
+    "source_build_fingerprint": "fad751d06f2c3ab351e19934013df352dfb18bd72c69697fde068099d54d8f68"
+  },
+  "polygon_pair_doubling_ratios": [
+    4.19902992456293
+  ],
+  "polygon_pairs": [
+    {
+      "capacity": 512,
+      "pair_count": 130304,
+      "peak_bytes": 16782200,
+      "retained_pair_bytes": 1042432
+    },
+    {
+      "capacity": 1024,
+      "pair_count": 522752,
+      "peak_bytes": 70468960,
+      "retained_pair_bytes": 4182016
+    }
+  ],
+  "process_peak_rss_bytes": 1597456384,
+  "route": "baseline",
+  "workspace_formula": {
+    "auto": "dense when 64*Q*E <= dense_workspace_bytes, BVH otherwise",
+    "bvh": "O(min(Q,64)*(leaf_size + k + log2(E))); prepared topology and outputs excluded"
+  }
+}

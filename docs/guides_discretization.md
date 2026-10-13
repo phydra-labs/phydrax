@@ -153,6 +153,15 @@ diffusion = phx.discretization.ConservativeDiffusionPlan(
 multigrid = phx.discretization.StructuredMultigridPlan(diffusion).prepare()
 ```
 
+Structured multigrid transfers retain `restriction_routes` and
+`prolongation_routes`, each an ordered per-axis sparse factor with `rows`,
+`columns`, `weights`, and `shape`. Point injection has one route per output;
+linear interpolation has at most two, and cell restriction stores only actual
+overlaps. Conservation certification contracts axis routes with quadrature
+measures without assembling a global Kronecker matrix. Explicit operator
+materialization remains size-budgeted; normal restriction, prolongation, and
+transpose actions do not materialize dense factors.
+
 Point-primary reference grids can be embedded with `MappedTensorGridPlan`; discrete
 curl metrics certify free streams before physical operators are exposed. Named mapped
 or Cartesian blocks compose through `MultiblockGridPlan`, explicit orientations, and
@@ -303,6 +312,11 @@ dual of the test space; solver adapters perform Riesz conversion explicitly.
 Consistent mass remains distinct from the field pairing. Fixed-topology
 geometry evaluation is JAX-differentiable through
 `space.evaluate_geometry(field_name, coordinates)`.
+For a single field, `space.mass` and `space.stiffness` each assemble only the
+requested operator. `space.assemble_field_operators(field_name, runtime)` explicitly
+assembles both and shares their geometry evaluation. Runtime coordinates are
+numeric inputs, not cache identities; moved geometry is always evaluated anew,
+and operator values, precision policy, and IDs retain the same contract.
 
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
 DOF maps, constraints, functionals, sparse lowering, and DAE integration.

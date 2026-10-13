@@ -340,6 +340,11 @@ nullspace and Hopf analyzers let domain code supply independently justified evid
 the core runtime does not guess symmetry, transversality, or normal-form assumptions.
 Right nullvectors belong to the execution state space, left nullvectors belong to the
 execution residual space, and certificate pairings use the bound Riesz geometry.
+`evaluate_nullspace` prepares the execution residual once at the declared
+point and shares its tangent and transpose actions for right/left evidence.
+The left action still applies the residual-space Riesz map and state-space
+inverse Riesz map; sharing preparation does not replace the weighted adjoint
+with an unweighted transpose.
 
 `fold_normal_form`, `hopf_first_lyapunov`, and `pitchfork_normal_form` consume
 `ContinuationGeometry`, explicit multilinear actions, and a caller-declared range

@@ -476,6 +476,44 @@ def implicit_root_result(
         raise TypeError("method must be AbstractNonlinearMethod or None.")
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
+    return _implicit_root_result(
+        problem,
+        initial,
+        method_,
+        termination_,
+        runtime_args,
+        prepared,
+        derivative_policy,
+        None,
+    )
+
+
+def _attach_implicit_root_derivative(
+    prepared: PreparedNonlinearSolve, result: NonlinearResult, /
+) -> NonlinearResult:
+    """Attach the canonical root derivative without repeating retained primal work."""
+    return _implicit_root_result(
+        prepared.problem,
+        prepared.state,
+        prepared.method,
+        prepared.termination,
+        prepared.args,
+        prepared,
+        None,
+        result,
+    )
+
+
+def _implicit_root_result(
+    problem: NonlinearSystemProblem,
+    initial: PyTree[Any],
+    method_: AbstractNonlinearMethod,
+    termination_: NonlinearTermination,
+    runtime_args: Any,
+    prepared: PreparedNonlinearSolve | None,
+    derivative_policy: ImplicitRootDerivativePolicy | None,
+    primal_result: NonlinearResult | None,
+) -> NonlinearResult:
     tangent_policy, adjoint_policy = _resolve_derivative_policies(
         method_,
         derivative_policy,
@@ -493,15 +531,16 @@ def implicit_root_result(
         raise ValueError("Implicit root differentiation requires a square Jacobian.")
     initial_coordinates = source.flatten(initial)
 
-    if prepared is None:
-        primal_result = method_.solve(
-            _stop_gradient(problem),
-            _stop_gradient(initial),
-            termination=termination_,
-            args=_stop_gradient(runtime_args),
-        )
-    else:
-        primal_result = solve_prepared_nonlinear(_stop_gradient(prepared))
+    if primal_result is None:
+        if prepared is None:
+            primal_result = method_.solve(
+                _stop_gradient(problem),
+                _stop_gradient(initial),
+                termination=termination_,
+                args=_stop_gradient(runtime_args),
+            )
+        else:
+            primal_result = solve_prepared_nonlinear(_stop_gradient(prepared))
     primal_result = _stop_gradient(primal_result)
 
     def coordinate_residual(coordinates: Array) -> Array:
