@@ -2219,7 +2219,11 @@ def _g4_controller(model: Any, operating_states: Any, operating_controls: Any) -
         problem_id="g4-learned-lq",
     )
     return phx.control.RecedingHorizonMPC(
-        problem, prediction_horizon=2, terminal_policy="global", policy=_G4_QP
+        problem,
+        prediction_horizon=2,
+        terminal_policy="global",
+        policy=_G4_QP,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
 
 
@@ -2558,7 +2562,11 @@ def _g19_controller(weights: Any, *, upper: Any = 0.3) -> Any:
         problem_id="g19-tuned-mpc",
     )
     return phx.control.RecedingHorizonMPC(
-        problem, prediction_horizon=3, terminal_policy="global", policy=_G19_QP
+        problem,
+        prediction_horizon=3,
+        terminal_policy="global",
+        policy=_G19_QP,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
 
 
@@ -2616,7 +2624,11 @@ def test_g19_one_weak_window_refuses_the_complete_closed_loop_derivative() -> No
     )
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(
         phx.control.RecedingHorizonMPC(
-            problem, prediction_horizon=1, terminal_policy="none", policy=_G19_QP
+            problem,
+            prediction_horizon=1,
+            terminal_policy="none",
+            policy=_G19_QP,
+            compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
         )
     )
     assert bool(sensitivity.result.successful)

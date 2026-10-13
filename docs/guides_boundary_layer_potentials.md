@@ -74,6 +74,47 @@ target binding, finite status, and evaluator-specific error evidence. The direct
 evaluator deliberately reports `unestimated-direct`; it does not claim close-target
 accuracy merely because the target-clearance policy passes.
 
+### Direct target workspace
+
+Direct evaluation remains parallel by default. Select bounded target lanes
+explicitly when the target/source workset is large:
+
+```python
+plan = phx.operators.LayerEvaluationPlan2D(
+    "direct", target_execution="chunked", target_chunk_size=8
+)
+evaluation = phx.operators.evaluate_layer_potential(
+    potential, targets, plan, target_side="interior"
+)
+```
+
+`DirectTargetExecution` is the closed `"parallel"` / `"chunked"` selector
+declared by `phydrax.operators.integral.layer_potential`. A chunk size must be
+a positive integer; ragged and oversized chunks preserve target order. Chunking
+changes target parallelism only: each target still visits every source and uses
+the same source reduction. Work remains O(targets × sources), and the logical
+pair workset is `min(target_count, target_chunk_size) * source_count`.
+
+`LayerEvaluationReport` exposes `target_execution`,
+`direct_target_chunk_size`, `direct_source_count`, and `direct_workspace_pairs`.
+The effective chunk size is capped by the target count. Non-direct methods report
+no direct target execution and a zero direct workset. These are logical lane/pair
+counts, not an allocator-byte guarantee. Status, continuous-support checks, and
+the `unestimated-direct` accuracy disclaimer are unchanged.
+
+The target policy participates in the plan and evaluation fingerprints and adds
+static plan/report fields; persisted templates must use the current fields.
+Representation, trial-space certificate, discretization, and target-admissibility
+identities do not depend on target chunking. The memory benchmark records both
+parallel and chunked routes, including chunk sizes 8/32/64, rather than silently
+switching routes based on input size.
+
+The same explicit `target_execution` and `target_chunk_size` keywords are
+available on the direct 2D vector/modified-Helmholtz `evaluate` methods and on
+the direct 3D Laplace, Stokes velocity/pressure, and elasticity evaluators.
+Their existing array/admissibility return contracts are unchanged.
+
+
 ## Interior Dirichlet solve
 
 `solve_interior_laplace_dirichlet_2d` uses an outward-normal double-layer

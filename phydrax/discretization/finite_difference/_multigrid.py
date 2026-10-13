@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from typing import Any, Literal, TypeAlias
 
@@ -15,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
 from ...linalg import (
@@ -36,6 +37,7 @@ from ...linalg import (
     pseudoinverse,
     RankPolicy,
 )
+from ...sparse import EdgeRelation, gather_routes, route_reduce
 from ...typing import checked, parse
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
 from .._tensor_entities import StructuredAxis
@@ -101,19 +103,85 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
         )
 
 
+class _AxisTransfer(StrictModule, NonTrainableState):
+    """Ordered nonzero routes for one exact tensor factor."""
+
+    relation: EdgeRelation
+    transpose_relation: EdgeRelation
+    weights: Array
+    shape: tuple[int, int] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        rows: Sequence[int],
+        columns: Sequence[int],
+        weights: Sequence[float],
+        shape: tuple[int, int],
+        precision: FDExecutionPrecisionPolicy,
+        /,
+    ) -> None:
+        self.relation = EdgeRelation(
+            np.asarray(columns, dtype=np.int32),
+            np.asarray(rows, dtype=np.int32),
+            source_size=shape[1],
+            target_size=shape[0],
+        )
+        self.transpose_relation = self.relation.transpose()
+        self.weights = precision.coefficient(weights)
+        self.shape = shape
+
+    @property
+    def rows(self) -> Array:
+        return self.relation.target_indices
+
+    @property
+    def columns(self) -> Array:
+        return self.relation.source_indices
+
+    def fingerprint(self) -> dict[str, Any]:
+        # Stream canonical dense bytes to preserve operator identity without storing
+        # the historical quadratic tensor factor.
+        weights = np.asarray(self.weights)
+        rows = np.asarray(self.rows)
+        columns = np.asarray(self.columns)
+        metadata = {
+            "path": "<root>",
+            "dtype": weights.dtype.str,
+            "shape": list(self.shape),
+        }
+        encoded = canonical_json(metadata).encode("ascii")
+        digest = hashlib.sha256()
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(
+            (self.shape[0] * self.shape[1] * weights.itemsize).to_bytes(8, "big")
+        )
+        row = np.zeros(self.shape[1], dtype=weights.dtype)
+        start = 0
+        for index in range(self.shape[0]):
+            row.fill(0)
+            end = start
+            while end < rows.size and rows[end] == index:
+                row[columns[end]] = weights[end]
+                end += 1
+            digest.update(row.tobytes())
+            start = end
+        return {"signature": [metadata], "sha256": digest.hexdigest()}
+
+
 class StructuredTensorTransferOperator(AbstractLinearOperator):
     """Tensor-product structured restriction or prolongation without global matrices."""
 
     source: ArraySpace
     target: ArraySpace
-    axis_matrices: tuple[Array, ...]
+    axis_routes: tuple[_AxisTransfer, ...]
     precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
         source: ArraySpace,
         target: ArraySpace,
-        axis_matrices: Sequence[ArrayLike],
+        axis_routes: Sequence[_AxisTransfer],
         transfer_kind: str,
         /,
         *,
@@ -134,14 +202,14 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
         expected_dtype = jnp.dtype(precision_.field_dtype)
         if source.dtype != expected_dtype or target.dtype != expected_dtype:
             raise TypeError("Structured transfer spaces must match field precision.")
-        matrices = tuple(precision_.coefficient(value) for value in axis_matrices)
+        matrices = tuple(axis_routes)
         if len(matrices) != len(source.shape) or len(target.shape) != len(source.shape):
-            raise ValueError("Structured transfer matrices must align with tensor rank.")
+            raise ValueError("Structured transfer routes must align with tensor rank.")
         if any(
             matrix.shape != (target.shape[axis], source.shape[axis])
             for axis, matrix in enumerate(matrices)
         ):
-            raise ValueError("Structured transfer axis matrix has incompatible shape.")
+            raise ValueError("Structured transfer axis routes have incompatible shape.")
         self.source = source
         self.target = target
         self.properties = OperatorProperties(evidence={})
@@ -158,29 +226,30 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
                 "transfer_kind": str(transfer_kind),
                 "source": source.space_id,
                 "target": target.space_id,
-                "matrices": [array_tree_fingerprint(value) for value in matrices],
+                "matrices": [value.fingerprint() for value in matrices],
                 "precision": precision_.policy_id,
             }
         )
-        self.axis_matrices = matrices
+        self.axis_routes = matrices
         self.precision = precision_
 
     def mv(self, vector: ArrayLike, /) -> Array:
         value = self.source.validate(jnp.asarray(vector))
-        result = _apply_axis_matrices(
+        result = _apply_axis_routes(
             value,
-            self.axis_matrices,
+            self.axis_routes,
             accumulation_dtype=self.precision.accumulation_dtype,
         )
         return self.target.validate(self.precision.field(result))
 
     def transpose_mv(self, vector: ArrayLike, /) -> Array:
         value = self.target.validate(jnp.asarray(vector))
-        matrices = tuple(jnp.swapaxes(value_, 0, 1) for value_ in self.axis_matrices)
-        result = _apply_axis_matrices(
+        matrices = self.axis_routes
+        result = _apply_axis_routes(
             value,
             matrices,
             accumulation_dtype=self.precision.accumulation_dtype,
+            transpose=True,
         )
         return self.source.validate(self.precision.field(result))
 
@@ -205,19 +274,23 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
         return columns.T
 
 
-def _apply_axis_matrices(
+def _apply_axis_routes(
     value: Array,
-    matrices: Sequence[Array],
+    matrices: Sequence[_AxisTransfer],
     /,
     *,
     accumulation_dtype: DTypeLike | None = None,
+    transpose: bool = False,
 ) -> Array:
     dtype = None if accumulation_dtype is None else jnp.dtype(accumulation_dtype)
     result = jnp.asarray(value, dtype=dtype)
     for axis, matrix in enumerate(matrices):
-        matrix_ = jnp.asarray(matrix, dtype=dtype)
+        weights = jnp.asarray(matrix.weights, dtype=dtype)
         moved = jnp.moveaxis(result, axis, 0)
-        moved = jnp.tensordot(matrix_, moved, axes=((1,), (0,)))
+        relation = matrix.transpose_relation if transpose else matrix.relation
+        gathered = gather_routes(relation, moved)
+        contributions = weights.reshape((-1,) + (1,) * (moved.ndim - 1)) * gathered
+        moved = route_reduce(relation, contributions)
         result = jnp.moveaxis(moved, 0, axis)
     return result
 
@@ -227,8 +300,8 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
 
     fine_grid: PreparedTensorGrid
     coarse_grid: PreparedTensorGrid
-    restriction_matrices: tuple[Array, ...]
-    prolongation_matrices: tuple[Array, ...]
+    restriction_routes: tuple[_AxisTransfer, ...]
+    prolongation_routes: tuple[_AxisTransfer, ...]
     report: StructuredTransferReport
     plan_id: str = eqx.field(static=True)
     precision: FDExecutionPrecisionPolicy
@@ -263,11 +336,12 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
             fine_axis = fine_grid.structured_axes[axis]
             coarse_axis = coarse_grid.structured_axes[axis]
             if entity == "interval":
-                restriction.append(_cell_restriction(fine_axis, coarse_axis))
+                restriction.append(_cell_restriction(fine_axis, coarse_axis, precision_))
                 prolongation.append(
                     _point_interpolation(
                         np.asarray(coarse_axis.interval_centers),
                         np.asarray(fine_axis.interval_centers),
+                        precision_,
                     )
                 )
             else:
@@ -275,33 +349,28 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
                     _point_injection(
                         np.asarray(fine_axis.point_coordinates),
                         np.asarray(coarse_axis.point_coordinates),
+                        precision_,
                     )
                 )
                 prolongation.append(
                     _point_interpolation(
                         np.asarray(coarse_axis.point_coordinates),
                         np.asarray(fine_axis.point_coordinates),
+                        precision_,
                     )
                 )
-        restriction_ = tuple(precision_.coefficient(value) for value in restriction)
-        prolongation_ = tuple(precision_.coefficient(value) for value in prolongation)
+        restriction_ = tuple(restriction)
+        prolongation_ = tuple(prolongation)
         certification_dtype = np.dtype(precision_.certification_dtype)
-        certified_restriction = tuple(
-            np.asarray(value, dtype=certification_dtype) for value in restriction_
-        )
-        certified_prolongation = tuple(
-            np.asarray(value, dtype=certification_dtype) for value in prolongation_
-        )
-        constant_residual = max(
-            max(
-                float(np.max(np.abs(np.asarray(matrix) @ np.ones(matrix.shape[1]) - 1.0)))
-                for matrix in certified_restriction
-            ),
-            max(
-                float(np.max(np.abs(np.asarray(matrix) @ np.ones(matrix.shape[1]) - 1.0)))
-                for matrix in certified_prolongation
-            ),
-        )
+        constant_residual = 0.0
+        for route in restriction_ + prolongation_:
+            sums = np.zeros(route.shape[0], dtype=certification_dtype)
+            np.add.at(
+                sums,
+                np.asarray(route.rows),
+                np.asarray(route.weights, dtype=certification_dtype),
+            )
+            constant_residual = max(constant_residual, float(np.max(np.abs(sums - 1.0))))
         conservation_residual = None
         if conservative:
             fine_measure = np.asarray(
@@ -312,11 +381,22 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
                 coarse_grid.quadrature_weights,
                 dtype=certification_dtype,
             ).reshape((-1,))
-            global_restriction = certified_restriction[0]
-            for matrix in certified_restriction[1:]:
-                global_restriction = np.kron(global_restriction, matrix)
+            contracted = coarse_measure.reshape(coarse_grid.shape)
+            for axis, route in enumerate(restriction_):
+                moved = np.moveaxis(contracted, axis, 0)
+                weights = np.asarray(route.weights, dtype=certification_dtype)
+                columns = np.asarray(route.columns)
+                contributions = (
+                    weights.reshape((-1,) + (1,) * (moved.ndim - 1))
+                    * moved[np.asarray(route.rows)]
+                )
+                output = np.zeros(
+                    (route.shape[1],) + moved.shape[1:], dtype=certification_dtype
+                )
+                np.add.at(output, columns, contributions)
+                contracted = np.moveaxis(output, 0, axis)
             conservation_residual = float(
-                np.max(np.abs(coarse_measure @ global_restriction - fine_measure))
+                np.max(np.abs(contracted.reshape((-1,)) - fine_measure))
             )
         identifier = canonical_fingerprint(
             {
@@ -346,8 +426,8 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
             )
         self.fine_grid = fine_grid
         self.coarse_grid = coarse_grid
-        self.restriction_matrices = restriction_
-        self.prolongation_matrices = prolongation_
+        self.restriction_routes = restriction_
+        self.prolongation_routes = prolongation_
         self.report = report
         self.precision = precision_
         self.plan_id = identifier
@@ -361,14 +441,14 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         restriction = StructuredTensorTransferOperator(
             fine_space,
             coarse_space,
-            self.restriction_matrices,
+            self.restriction_routes,
             "restriction",
             precision=self.precision,
         )
         prolongation = StructuredTensorTransferOperator(
             coarse_space,
             fine_space,
-            self.prolongation_matrices,
+            self.prolongation_routes,
             "prolongation",
             precision=self.precision,
         )
@@ -384,9 +464,9 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(values)
         if value.shape[: len(self.fine_grid.shape)] != self.fine_grid.shape:
             raise ValueError("Restricted array must begin with the fine-grid shape.")
-        result = _apply_axis_matrices(
+        result = _apply_axis_routes(
             value,
-            self.restriction_matrices,
+            self.restriction_routes,
             accumulation_dtype=self.precision.accumulation_dtype,
         )
         if role == "field":
@@ -406,45 +486,80 @@ def _cell_edges(axis: StructuredAxis, /) -> np.ndarray:
 
 
 def _cell_restriction(
-    fine_axis: StructuredAxis, coarse_axis: StructuredAxis, /
-) -> np.ndarray:
+    fine_axis: StructuredAxis,
+    coarse_axis: StructuredAxis,
+    precision: FDExecutionPrecisionPolicy,
+    /,
+) -> _AxisTransfer:
     fine_edges = _cell_edges(fine_axis)
     coarse_edges = _cell_edges(coarse_axis)
-    matrix = np.zeros(
-        (coarse_axis.interval_centers.size, fine_axis.interval_centers.size)
-    )
-    for coarse in range(matrix.shape[0]):
-        for fine in range(matrix.shape[1]):
+    rows: list[int] = []
+    columns: list[int] = []
+    weights: list[float] = []
+    for coarse in range(coarse_axis.interval_centers.size):
+        start = max(
+            0, int(np.searchsorted(fine_edges, coarse_edges[coarse], side="right")) - 1
+        )
+        stop = min(
+            fine_axis.interval_centers.size,
+            int(np.searchsorted(fine_edges, coarse_edges[coarse + 1], side="left")),
+        )
+        for fine in range(start, stop):
             overlap = max(
                 0.0,
                 min(coarse_edges[coarse + 1], fine_edges[fine + 1])
                 - max(coarse_edges[coarse], fine_edges[fine]),
             )
-            matrix[coarse, fine] = overlap / (
-                coarse_edges[coarse + 1] - coarse_edges[coarse]
-            )
-    return matrix
+            if overlap > 0:
+                rows.append(coarse)
+                columns.append(fine)
+                weights.append(
+                    float(overlap / (coarse_edges[coarse + 1] - coarse_edges[coarse]))
+                )
+    return _AxisTransfer(
+        rows,
+        columns,
+        weights,
+        (coarse_axis.interval_centers.size, fine_axis.interval_centers.size),
+        precision,
+    )
 
 
-def _point_injection(fine: np.ndarray, coarse: np.ndarray, /) -> np.ndarray:
-    matrix = np.zeros((coarse.size, fine.size))
-    for row, coordinate in enumerate(coarse):
-        index = int(np.argmin(np.abs(fine - coordinate)))
+def _point_injection(
+    fine: np.ndarray, coarse: np.ndarray, precision: FDExecutionPrecisionPolicy, /
+) -> _AxisTransfer:
+    columns: list[int] = []
+    for coordinate in coarse:
+        insertion = int(np.searchsorted(fine, coordinate))
+        candidates = (max(0, insertion - 1), min(fine.size - 1, insertion))
+        index = min(candidates, key=lambda candidate: abs(fine[candidate] - coordinate))
         if abs(fine[index] - coordinate) > 1e-10:
             raise ValueError("Nodal coarse coordinates must be nested in the fine grid.")
-        matrix[row, index] = 1.0
-    return matrix
+        columns.append(index)
+    return _AxisTransfer(
+        list(range(coarse.size)),
+        columns,
+        [1.0] * coarse.size,
+        (coarse.size, fine.size),
+        precision,
+    )
 
 
-def _point_interpolation(source: np.ndarray, target: np.ndarray, /) -> np.ndarray:
+def _point_interpolation(
+    source: np.ndarray, target: np.ndarray, precision: FDExecutionPrecisionPolicy, /
+) -> _AxisTransfer:
     width = min(2, source.size)
-    matrix = np.zeros((target.size, source.size))
+    rows: list[int] = []
+    columns: list[int] = []
+    weights: list[float] = []
     for row, coordinate in enumerate(target):
         insertion = int(np.searchsorted(source, coordinate))
         start = int(np.clip(insertion - 1, 0, source.size - width))
         indices = np.arange(start, start + width)
-        matrix[row, indices] = fornberg_weights(source[indices], coordinate, 0)
-    return matrix
+        rows.extend([row] * width)
+        columns.extend(indices.tolist())
+        weights.extend(fornberg_weights(source[indices], coordinate, 0).tolist())
+    return _AxisTransfer(rows, columns, weights, (target.size, source.size), precision)
 
 
 class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):

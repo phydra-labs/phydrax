@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Fixed
+- Match operator-workspace benchmark gates by full problem capacity, keep default
+  and smoke campaigns aligned with committed baselines, and support isolated
+  smoke outputs for every memory driver on the discretization branch.
+- Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
+  and combined work evidence; bind changed runtime argument contexts before the
+  temporal scan and avoid eager adaptive numerical refresh.
+- Reject nonfinite Clarabel inputs before provider execution while preserving
+  `NONFINITE_INPUT` and independent valid batch cases.
 - Bound iterative GP covariance actions and action-whitened variational kernel
   products by the computation workspace policy. Budget-admitted full blocks use
   direct dense products; iterative actions retain the kernel once per resolve
@@ -15,6 +23,20 @@
 - Rank-deficient generalized constraints admit certified minimum-norm least-squares
   lifts even when individual identity right-hand sides lie outside their range;
   aggregate stationarity and all generalized-inverse certificates remain required.
+- Prepare compatible spline incidence, traces, and local-support quadrature Gram
+  actions without global dense matrices; preserve realization and operator IDs.
+- Assemble only requested finite-element mass or stiffness tensors; paired assembly
+  continues sharing geometry evaluation.
+- Prepare sparse structured multigrid transfers and fixed-width SBP rows without
+  quadratic host temporaries; certify conservation and complete SBP identities.
+- Stream Fourier split-form pairs with linear retained storage and bounded chunks,
+  preserving interaction ordering and conservation/entropy evidence.
+- Reuse certified native banded factors for B-spline field reconstruction and
+  transpose/adjoint derivatives; bound banded LU compilation with counted loops.
+- Evaluate diffusion-factor Kolmogorov drift terms with one exact JVP rather than
+  materializing observable Jacobians.
+- Enumerate polynomial multiindices only after combinatorial admission and execute
+  product graphs with adjacent-level working storage.
 - Bound implicit least-squares and fixed-rank pseudoinverse derivative workspace
   without changing stationarity, complex tangents, rank admission, or failure evidence.
 - Reuse prepared sparse factors across supported multi-RHS solves and evaluate
@@ -397,6 +419,15 @@
 ### Added
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
   explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
+- Explicit bounded target chunking for direct layer potentials, retaining parallel
+  defaults and reporting target policy and logical workspace evidence.
+- Exact byte-admitted dense, action-scan, and checkpointed causal adjoints, with
+  recurrent-NN and causal HMC policy forwarding and route evidence.
+- Explicit bounded periodic DAE regularity probe batches with ordered certificates.
+- Byte-admitted batched and low-memory reverse/checkpointed iLQR linearization
+  policies with route provenance.
+- Streaming inverse-residual certificates with bounded multi-RHS workspace,
+  all-direction rank admission, and conservative condition bounds.
 - Native certified banded and block-banded spectral/singular-value enclosures,
   condition bounds, and rank-threshold certificates without densification, with
   traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
@@ -2682,6 +2713,34 @@
   and method evidence; unresolved eigenspaces report invalid/nonconverged results.
 - Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
   prepared query hierarchies; source model and revision identities are unchanged.
+- Cut-cochain transfers use budgeted component SVD actions with one global relative
+  singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
+  outputs. Connected components retain quadratic factor storage up to the budget.
+- Prepared spline, structured transfer, Fourier split-form, and field-reconstruction
+  persistence templates use sparse/local-support representations and must be
+  recreated. Input/configuration and documented operator IDs remain unchanged;
+  Fourier certificate-derived IDs may change at roundoff.
+- Direct layer-potential plan and report identities include explicit target policy
+  and workspace metadata; recreate persistence templates with their new fields.
+- Residual-graph curvature is a deterministic factor-local operator, with
+  operator damping and matrix-free Schur/LSMR solves; dense materialization is
+  explicit and byte-admitted. Curvature persistence leaves intentionally change.
+- Structured optimization and KKT sensitivity use sparse derivative actions and
+  prepared matrix-free linearizations, with explicit bounded dense-SVD selection
+  and retained rank, condition, convergence, and refusal evidence.
+- Filter interior-point trial derivatives use selectable bounded batches, while
+  rejected trials retain value-only evaluation and accepted derivative reuse.
+- MPC compiles sparse by default; differentiable and dense-method MPC requires
+  explicit bounded dense compilation. MPC and iLQR policy identities record the
+  selected representation, route, and admission budgets.
+- MAC segmented shadowing defaults to workspace-admitted `auto`: dense SVD within
+  the existing 512 MiB ceiling, exact block-banded QR least squares above it.
+  Explicit routes retain their behavior; plan identity records policy/budget and
+  result identity/evidence records the resolved route. Banded rank admission
+  reuses certified singular lower bounds without weakening threshold certificates.
+- Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
+  qualification derivatives use owner controls and active rows while preserving
+  case parallelism and KKT certificates.
 - Structured Laplace stores diagonal or low-rank precision state and applies
   covariance and sampling scales without dense reconstruction. Full curvature
   remains dense; structured result archive leaves and their fingerprints change.

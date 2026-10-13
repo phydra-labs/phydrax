@@ -133,6 +133,7 @@ def test_dense_mpc_matches_the_host_bounded_optimum_and_replays_on_the_coupled_p
         prediction_horizon=ex.HORIZON,
         terminal_policy="global",
         policy=ex.QP_POLICY,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     assert bool(jnp.all(result.successful))
     size = plant.dynamics.state_shape[0]
@@ -179,6 +180,7 @@ def test_mpc_sensitivity_refuses_a_weakly_active_flux_bound(plant: _Plant) -> No
         prediction_horizon=ex.HORIZON,
         terminal_policy="global",
         policy=ex.QP_POLICY,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
     assert sensitivity.refusal is not None

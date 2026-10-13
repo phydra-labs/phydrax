@@ -1,8 +1,13 @@
 import math
 from typing import Any
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from jax import Array
+from numpy.typing import NDArray
 
 import phydrax as phx
 
@@ -270,3 +275,215 @@ def test_split_form_rejects_unsupported_flux_source_and_basis() -> None:
     )
     with np.testing.assert_raises(ValueError):
         method.prepare(polynomial)
+
+
+def _dense_euler_split_reference(
+    physical: NDArray[np.float64], lengths: tuple[float, ...], gamma: float
+) -> NDArray[np.float64]:
+    """FFT differentiation and quadrature of the logarithmic mean, test only."""
+    density = physical[..., 0]
+    velocity = physical[..., 1:-1] / density[..., None]
+    pressure = (gamma - 1.0) * (
+        physical[..., -1] - 0.5 * density * np.sum(velocity**2, axis=-1)
+    )
+    beta = density / (2.0 * pressure)
+    nodes, weights = np.polynomial.legendre.leggauss(16)
+
+    def log_mean(left: np.float64, right: np.float64) -> float:
+        # L(a,b) = integral_0^1 a^t b^(1-t) dt avoids the implementation's
+        # series/rational branch, including equal arguments.
+        t = 0.5 * (nodes + 1.0)
+        return float(0.5 * np.sum(weights * left**t * right ** (1.0 - t)))
+
+    residual = np.zeros_like(physical)
+    for axis, length in enumerate(lengths):
+        count = physical.shape[axis]
+        frequencies = np.fft.fftfreq(count, d=length / count)
+        if count % 2 == 0:
+            frequencies[count // 2] = 0.0
+        derivative = np.fft.ifft(
+            2j * np.pi * frequencies[:, None] * np.fft.fft(np.eye(count), axis=0),
+            axis=0,
+        ).real
+        for target in np.ndindex(physical.shape[:-1]):
+            for column in range(count):
+                source = target[:axis] + (column,) + target[axis + 1 :]
+                rho_mean = 0.5 * (density[target] + density[source])
+                beta_mean = 0.5 * (beta[target] + beta[source])
+                v_mean = 0.5 * (velocity[target] + velocity[source])
+                mass = log_mean(density[target], density[source]) * v_mean[axis]
+                momentum = mass * v_mean
+                momentum[axis] += rho_mean / (2.0 * beta_mean)
+                internal = 1.0 / (
+                    2.0 * (gamma - 1.0) * log_mean(beta[target], beta[source])
+                )
+                v_square = 0.5 * (velocity[target] ** 2 + velocity[source] ** 2)
+                energy = mass * (internal - 0.5 * np.sum(v_square)) + v_mean @ momentum
+                flux = np.concatenate(
+                    (np.asarray([mass]), momentum, np.asarray([energy]))
+                )
+                residual[target] -= 2.0 * derivative[target[axis], column] * flux
+    return residual
+
+
+@pytest.mark.parametrize("shape", [(7,), (8,), (5, 6)], ids=["odd", "even", "tensor"])
+@pytest.mark.parametrize("chunk", [1, 5, 128], ids=["single", "ragged", "oversized"])
+def test_split_form_matches_independent_dense_reference(
+    shape: tuple[int, ...], chunk: int
+) -> None:
+    from phydrax.discretization import spectral
+
+    lengths = tuple(2.0 + axis for axis in range(len(shape)))
+    space = phx.discretization.TensorSpectralPlan(
+        tuple(phx.discretization.FourierBasisPlan(count) for count in shape),
+        axis_names=tuple(f"x{axis}" for axis in range(len(shape))),
+        field_name="state",
+    ).prepare(
+        tuple(phx.discretization.AxisDomain.periodic(0.0, length) for length in lengths)
+    )
+    system = phx.equations.EulerSystem(len(shape))
+    coordinates = np.meshgrid(
+        *(np.arange(count, dtype=np.float64) / count for count in shape), indexing="ij"
+    )
+    phase = sum((axis + 1) * coordinate for axis, coordinate in enumerate(coordinates))
+    density = 1.0 + 0.17 * np.sin(2.0 * np.pi * phase)
+    velocity = np.stack(
+        tuple(
+            0.23 * np.cos(2.0 * np.pi * coordinate + axis)
+            for axis, coordinate in enumerate(coordinates)
+        ),
+        axis=-1,
+    )
+    pressure = 1.0 + 0.11 * np.cos(4.0 * np.pi * phase)
+    physical = np.concatenate(
+        (
+            density[..., None],
+            density[..., None] * velocity,
+            (
+                pressure / (system.gamma - 1.0)
+                + 0.5 * density * np.sum(velocity**2, axis=-1)
+            )[..., None],
+        ),
+        axis=-1,
+    )
+    dynamics = spectral.PreparedSpectralConservationDynamics(
+        system,
+        space,
+        spectral.SpectralConservationMethodPlan(
+            split_form=spectral.SpectralSplitFormPlan(
+                phx.discretization.EntropyConservativeEulerFluxPlan(),
+                pair_chunk_size=chunk,
+            ),
+            entropy_diagnostics=True,
+        ),
+        entropy_pair=phx.equations.ideal_gas_euler_entropy_pair(system),
+    )
+    state = space.project(jnp.asarray(physical))
+
+    @eqx.filter_jit
+    def evaluate(
+        prepared: spectral.PreparedSpectralConservationDynamics, coefficients: Array
+    ) -> Array:
+        return prepared(jnp.asarray(0.0, dtype=jnp.float64), coefficients)
+
+    result = evaluate(dynamics, state)
+    np.testing.assert_allclose(
+        space.reconstruct(result),
+        _dense_euler_split_reference(physical, lengths, system.gamma),
+        rtol=2e-11,
+        atol=2e-11,
+    )
+    split = dynamics.method.split_form
+    assert split is not None
+    expected_pairs = sum(
+        count * (count - 1) // 2 * math.prod(shape[:axis] + shape[axis + 1 :])
+        for axis, count in enumerate(shape)
+    )
+    assert split.report.pair_count == expected_pairs
+    assert split.report.entropy_stable
+    assert split.report.skew_sbp_defect < split.plan.certification_tolerance
+
+
+@pytest.mark.parametrize("count", [32, 64, 128], ids=["32", "64", "128"])
+def test_split_form_retained_storage_is_linear(count: int) -> None:
+    space = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(count),),
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 2.0),))
+    prepared = phx.discretization.SpectralConservationMethodPlan(
+        split_form=phx.discretization.SpectralSplitFormPlan(
+            phx.discretization.EntropyConservativeEulerFluxPlan(), pair_chunk_size=5
+        )
+    ).prepare(space)
+    split = prepared.split_form
+    assert split is not None
+    retained_bytes = sum(
+        leaf.nbytes
+        for leaf in jax.tree_util.tree_leaves(split)
+        if isinstance(leaf, Array)
+    )
+    assert retained_bytes <= 32 * count
+    assert split.report.pair_workspace_bytes == 5 * 3 * 3 * 8
+
+
+@pytest.mark.parametrize("chunk", [3, 5, 32], ids=["exact", "ragged", "oversized"])
+def test_split_form_flux_observes_lexicographic_pairs(
+    chunk: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from phydrax.discretization import spectral
+
+    count = 7
+    space = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(count),),
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 2.0),))
+    system = phx.equations.EulerSystem(1)
+    physical = system.primitive_to_conserved(
+        jnp.stack(
+            (
+                1.0 + jnp.arange(count, dtype=jnp.float64) / 10.0,
+                jnp.full(count, 0.2, dtype=jnp.float64),
+                jnp.ones(count, dtype=jnp.float64),
+            ),
+            axis=-1,
+        )
+    )
+    observed: list[tuple[int, int]] = []
+
+    def record(left: NDArray[np.float64], right: NDArray[np.float64]) -> None:
+        rows = np.rint((left[..., 0] - 1.0) * 10.0).astype(np.int64)
+        columns = np.rint((right[..., 0] - 1.0) * 10.0).astype(np.int64)
+        observed.extend(zip(rows.tolist(), columns.tolist(), strict=True))
+
+    original = phx.discretization.EntropyConservativeEulerFluxPlan.two_point_flux
+
+    def recording_flux(
+        self: phx.discretization.EntropyConservativeEulerFluxPlan,
+        euler: phx.equations.EulerSystem,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+    ) -> Array:
+        jax.debug.callback(record, left, right, ordered=True)
+        return original(self, euler, left, right, axis, args)
+
+    monkeypatch.setattr(
+        phx.discretization.EntropyConservativeEulerFluxPlan,
+        "two_point_flux",
+        recording_flux,
+    )
+    dynamics = spectral.PreparedSpectralConservationDynamics(
+        system,
+        space,
+        spectral.SpectralConservationMethodPlan(
+            split_form=spectral.SpectralSplitFormPlan(
+                phx.discretization.EntropyConservativeEulerFluxPlan(),
+                pair_chunk_size=chunk,
+            )
+        ),
+        entropy_pair=phx.equations.ideal_gas_euler_entropy_pair(system),
+    )
+    result = dynamics(jnp.asarray(0.0, dtype=jnp.float64), space.project(physical))
+    result.block_until_ready()
+    assert observed == [
+        (row, column) for row in range(count) for column in range(row + 1, count)
+    ]

@@ -1,0 +1,154 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.199965709,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 33536,
+        "bytes_accessed": 1644558,
+        "flops": 105531,
+        "generated_code_bytes": 0,
+        "output_bytes": 224,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 9147140,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 503215,
+      "lowering_seconds": 0.153329292,
+      "rank": 3,
+      "retained_bytes": 208,
+      "route": "baseline",
+      "samples": 128,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.004641542,
+        "mean_seconds": 0.003011354,
+        "median_seconds": 0.003011354,
+        "min_seconds": 0.001381166,
+        "samples_seconds": [
+          0.004641542,
+          0.001381166
+        ],
+        "std_seconds": 0.001630188
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.167027625,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 67072,
+        "bytes_accessed": 8158750,
+        "flops": 420835,
+        "generated_code_bytes": 0,
+        "output_bytes": 416,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 36706884,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 539749,
+      "lowering_seconds": 0.114114417,
+      "rank": 3,
+      "retained_bytes": 400,
+      "route": "baseline",
+      "samples": 128,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.00988775,
+        "mean_seconds": 0.009292021000000001,
+        "median_seconds": 0.009292021000000001,
+        "min_seconds": 0.008696292,
+        "samples_seconds": [
+          0.008696292,
+          0.00988775
+        ],
+        "std_seconds": 0.0005957290000000006
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 0.224168875,
+      "compile_only": false,
+      "compiler": {
+        "argument_bytes": 134144,
+        "bytes_accessed": 32451744,
+        "flops": 1680819,
+        "generated_code_bytes": 0,
+        "output_bytes": 800,
+        "source": "mac-shadowing-least-squares",
+        "temporary_bytes": 146998084,
+        "unavailable_reason": null
+      },
+      "host_peak_bytes": 540079,
+      "lowering_seconds": 0.143045666,
+      "rank": 3,
+      "retained_bytes": 784,
+      "route": "baseline",
+      "samples": 128,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.053847917,
+        "mean_seconds": 0.0530742295,
+        "median_seconds": 0.0530742295,
+        "min_seconds": 0.052300542,
+        "samples_seconds": [
+          0.052300542,
+          0.053847917
+        ],
+        "std_seconds": 0.0007736875000000018
+      }
+    }
+  ],
+  "compiler_scaling_exponent": 2.0031664042224726,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "2c1df4572ffbb671c9b00a7b2a50f9888a739f4caa815f77807e0352f9c8cf83",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment"
+      ],
+      "signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c"
+    },
+    "fingerprint": "a94b236b3772c4bbd88d877234405b377923d150903210a3e68ff0419da0f0f0",
+    "source_build_fingerprint": "1ab3f46522259ede08088ae8d8f91d0a8e690b6ad4c210e1113b0f9b03900843"
+  },
+  "observed_peak_rss_bytes": 1421934592
+}

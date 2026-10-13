@@ -132,6 +132,12 @@ respect to the selected state geometry while retaining time/parameter
 dependencies. Observable outputs may be scalar or tensor-valued; the generator
 acts componentwise. Densities must be scalar-valued.
 
+When a diffusion factor is supplied, the drift term uses one exact directional
+JVP along the evaluated drift, and the second-order term contracts factor HVPs.
+No observable Jacobian is needed for the drift action. The drift and diffusion
+remain evaluated at the same state; scalar, vector, and tensor observable shapes
+are preserved, including differentiation through their parameters.
+
 For Stratonovich input, Phydrax applies the Euclidean drift correction
 
 $$

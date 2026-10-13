@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,7 +24,7 @@ from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import DiscreteStepContext, StateLayout, TimeGrid
-from ..typing import checked
+from ..typing import checked, parse
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
@@ -35,6 +35,36 @@ from ._trajectory import ControlResult, ControlTrajectory
 
 DifferentialFlowStep: TypeAlias = Callable[[Array, Array, Array, Array, Any], ArrayLike]
 ILQRFlow: TypeAlias = Callable[[Array, Array, Array, Array, Array], Array]
+ILQRLinearizationRoute: TypeAlias = Literal[
+    "batched", "reverse-scan", "checkpointed-reverse-scan"
+]
+_StageModel: TypeAlias = Callable[
+    [Array, Array, Array, Array], tuple[Array, Array, Array, Array, Array, Array, Array]
+]
+
+
+class ILQRLinearizationPolicy(StrictModule):
+    """Explicit horizon parallelism and admission for local iLQR derivatives."""
+
+    route: ILQRLinearizationRoute = eqx.field(static=True)
+    max_batched_bytes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        route: ILQRLinearizationRoute = "batched",
+        /,
+        *,
+        max_batched_bytes: int = 256 * 1024 * 1024,
+    ) -> None:
+        route = parse(route, ILQRLinearizationRoute, "route")
+        if (
+            isinstance(max_batched_bytes, bool)
+            or not isinstance(max_batched_bytes, int)
+            or max_batched_bytes < 1
+        ):
+            raise ValueError("max_batched_bytes must be a positive integer.")
+        self.route = route
+        self.max_batched_bytes = max_batched_bytes
 
 
 class ILQRStatus(IntEnum):
@@ -280,6 +310,7 @@ class ILQRDiagnostics(StrictModule):
     failed_step: Array
     converged: Array
     method_id: str = eqx.field(static=True)
+    linearization_route: ILQRLinearizationRoute = eqx.field(static=True)
 
 
 class ILQRResult(StrictModule):
@@ -480,13 +511,13 @@ def _evaluate_ilqr_flow(
     )
 
 
-def _local_model(
+def _stage_model_factory(
     problem: ControlProblem,
     states: Array,
     controls: Array,
     flow: ILQRFlow | None,
     /,
-) -> _LocalModel:
+) -> tuple[_StageModel, Array, Array]:
     state_layout = problem.dynamics.system.state_layout
     geometry = state_layout.geometry
     state_size = state_layout.local_size
@@ -561,21 +592,6 @@ def _local_model(
             hessian[state_size:, :state_size],
         )
 
-    (
-        dynamics_state,
-        dynamics_control,
-        running_state_gradient,
-        running_control_gradient,
-        running_state_hessian,
-        running_control_hessian,
-        running_control_state_hessian,
-    ) = jax.vmap(stage_model)(
-        jnp.arange(problem.time_grid.num_steps, dtype=jnp.int32),
-        states[:-1],
-        states[1:],
-        controls,
-    )
-
     terminal_anchor = states[-1]
     terminal_local = jnp.zeros((state_size,), dtype=states.dtype)
     terminal_template = jnp.asarray(
@@ -606,6 +622,36 @@ def _local_model(
         terminal_local
     )
     terminal_hessian = 0.5 * (terminal_hessian + terminal_hessian.T)
+    return stage_model, terminal_gradient, terminal_hessian
+
+
+def _local_model(
+    problem: ControlProblem,
+    states: Array,
+    controls: Array,
+    flow: ILQRFlow | None,
+    /,
+) -> _LocalModel:
+    stage_model, terminal_gradient, terminal_hessian = _stage_model_factory(
+        problem,
+        states,
+        controls,
+        flow,
+    )
+    (
+        dynamics_state,
+        dynamics_control,
+        running_state_gradient,
+        running_control_gradient,
+        running_state_hessian,
+        running_control_hessian,
+        running_control_state_hessian,
+    ) = jax.vmap(stage_model)(
+        jnp.arange(problem.time_grid.num_steps, dtype=jnp.int32),
+        states[:-1],
+        states[1:],
+        controls,
+    )
 
     def adjoint_step(
         costate: Array, inputs: tuple[Array, Array, Array, Array]
@@ -648,6 +694,7 @@ def solve_ilqr(
     /,
     *,
     differential_flow: DifferentialControlFlow | None = None,
+    linearization_policy: ILQRLinearizationPolicy | None = None,
     max_iterations: int = 100,
     regularization: float = 1.0e-6,
     gradient_tolerance: float = 1.0e-6,
@@ -668,6 +715,7 @@ def solve_ilqr(
 
     plan = plan_ilqr(
         problem,
+        linearization_policy=linearization_policy,
         max_iterations=max_iterations,
         regularization=regularization,
         gradient_tolerance=gradient_tolerance,
@@ -720,6 +768,8 @@ __all__ = [
     "DifferentialControlFlow",
     "DifferentialFlowStep",
     "ILQRDiagnostics",
+    "ILQRLinearizationPolicy",
+    "ILQRLinearizationRoute",
     "ILQRPolicy",
     "ILQRResult",
     "ILQRStatus",

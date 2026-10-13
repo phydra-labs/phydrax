@@ -1,0 +1,155 @@
+{
+  "cases": [
+    {
+      "capacity": 8,
+      "compilation_seconds": 0.681716833,
+      "compiler": {
+        "argument_bytes": 520,
+        "bytes_accessed": 26701,
+        "flops": 1649,
+        "generated_code_bytes": 0,
+        "output_bytes": 560,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 5424,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 662241,
+      "lowering_seconds": 0.601909667,
+      "players": 4,
+      "retained_bytes": 520,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.000347167,
+        "mean_seconds": 0.0002762295,
+        "median_seconds": 0.0002762295,
+        "min_seconds": 0.000205292,
+        "samples_seconds": [
+          0.000347167,
+          0.000205292
+        ],
+        "std_seconds": 7.09375e-05
+      }
+    },
+    {
+      "capacity": 16,
+      "compilation_seconds": 0.783978916,
+      "compiler": {
+        "argument_bytes": 1032,
+        "bytes_accessed": 66797,
+        "flops": 3073,
+        "generated_code_bytes": 0,
+        "output_bytes": 1072,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 9392,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 434896,
+      "lowering_seconds": 0.56930175,
+      "players": 4,
+      "retained_bytes": 1032,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.009285834,
+        "mean_seconds": 0.0058579585,
+        "median_seconds": 0.0058579585,
+        "min_seconds": 0.002430083,
+        "samples_seconds": [
+          0.002430083,
+          0.009285834
+        ],
+        "std_seconds": 0.0034278755
+      }
+    },
+    {
+      "capacity": 32,
+      "compilation_seconds": 1.08056925,
+      "compiler": {
+        "argument_bytes": 2056,
+        "bytes_accessed": 204101,
+        "flops": 6113,
+        "generated_code_bytes": 0,
+        "output_bytes": 2096,
+        "source": "game-kkt-stationarity",
+        "temporary_bytes": 17392,
+        "unavailable_reason": null
+      },
+      "finite": true,
+      "host_peak_bytes": 432121,
+      "lowering_seconds": 1.869244791,
+      "players": 4,
+      "retained_bytes": 2056,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.007377417,
+        "mean_seconds": 0.0040078545,
+        "median_seconds": 0.0040078545,
+        "min_seconds": 0.000638292,
+        "samples_seconds": [
+          0.007377417,
+          0.000638292
+        ],
+        "std_seconds": 0.0033695624999999997
+      }
+    }
+  ],
+  "compiler_scaling_exponent": 0.8404973809454829,
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 884336,
+    "candidate_bytes": 17392,
+    "capacity": 32,
+    "decision": "adopt",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "acf1b08844e32c87094394e5dee77a5721a28d97e8ed612df5fafc366f6e5459",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "environment"
+      ],
+      "signature": "238f44a9b8ae9723fe1b599ab7c2d052ad9163ca83aaab54250fab98d690317c"
+    },
+    "fingerprint": "6ca15468e621e2dfcdd1b4246a200a154d38f2fa0a994b5e7ba2fe4276c5b2d8",
+    "source_build_fingerprint": "af548ea1c1c36d32086d025471c0b414963104b762b1f0ae79f66b49cfa8cbcb"
+  },
+  "observed_peak_rss_bytes": 1560641536
+}

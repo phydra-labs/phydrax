@@ -621,3 +621,59 @@ def test_bifurcation_workflows_scenario_3() -> None:
     assert int(result.nonlinear_result.status) == int(
         nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE
     )
+
+
+def test_nullspace_actions_preserve_weighted_left_riesz_mapping() -> None:
+    matrix = jnp.asarray([[1.0, 2.0], [-3.0, 4.0]], dtype=jnp.float64)
+    state = jnp.asarray([0.2, -0.4], dtype=jnp.float64)
+    state_weights = jnp.asarray([2.0, 5.0], dtype=jnp.float64)
+    residual_weights = jnp.asarray([7.0, 11.0], dtype=jnp.float64)
+    state_space = phx.linalg.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=phx.linalg.DiagonalPairing(state_weights),
+    )
+    residual_space = phx.linalg.ArraySpace(
+        (2,),
+        dtype=jnp.float64,
+        pairing=phx.linalg.DiagonalPairing(residual_weights),
+    )
+    problem = ct.ParameterContinuationProblem(
+        lambda value, parameter, args: matrix @ value + value**2 - parameter,
+        problem_id="weighted-nullspace-actions",
+    )
+    geometry = ct.ContinuationGeometry.resolve(
+        state,
+        problem.residual(state, 0.0),
+        state_space=state_space,
+        residual_space=residual_space,
+    )
+    right = jnp.asarray([0.3, -0.2], dtype=jnp.float64)
+    left = jnp.asarray([-0.7, 0.4], dtype=jnp.float64)
+    evidence = ct.evaluate_nullspace(
+        problem,
+        state,
+        0.0,
+        geometry,
+        right,
+        left,
+        jnp.asarray([0.0, 1.0], dtype=jnp.float64),
+        source_success=True,
+        full_spectrum=True,
+        analyzer_id="weighted-reference",
+    )
+    jacobian = np.asarray(matrix) + np.diag(2.0 * np.asarray(state))
+    right_action = jacobian @ np.asarray(right)
+    left_action = (
+        jacobian.T @ (np.asarray(residual_weights) * np.asarray(left))
+    ) / np.asarray(state_weights)
+    np.testing.assert_allclose(
+        evidence.right_residual_norm,
+        np.sqrt(np.sum(np.asarray(residual_weights) * right_action**2)),
+    )
+    np.testing.assert_allclose(
+        evidence.left_residual_norm,
+        np.sqrt(np.sum(np.asarray(state_weights) * left_action**2)),
+    )
+    assert bool(evidence.source_success)
+    assert bool(jnp.isfinite(evidence.eigenvalue_condition))

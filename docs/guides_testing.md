@@ -28,6 +28,24 @@ uv run --extra tests pytest -n auto --ff
 Rerunning a failed statistical test is not an acceptance policy. Statistical tests use
 deterministic key addressing and a tolerance justified by their standard error.
 
+## Memory benchmark smoke runs
+
+Run memory drivers serially with `python -m benchmarks.memory_<area> --smoke`.
+Use `--output /tmp/memory_<area>.json` to avoid replacing qualification records.
+The paired `memory_cut_cochain_transfer` and `memory_integration_lowering` drivers
+instead accept `--output-dir /tmp/memory-smoke`; they measure independent reference
+routes in the same run and write both records there. `memory_linalg_operators`
+also requires `--phase candidate`, and `memory_linalg_spectral` requires an
+explicit `--output` path.
+
+`memory_operator_workspace` defaults to the candidate campaign at the committed
+baseline capacities. Its `--smoke` campaign uses the first two matching capacities
+of each route; `--full` explicitly selects the default full campaign. Gate
+comparisons match both target capacity and source width, not record position.
+Missing or duplicate historical problem sizes are errors; baseline measurements
+are neither synthesized nor extrapolated. Capture a new baseline only deliberately
+with `--phase baseline`, before changing the implementation being qualified.
+
 ## Test structure
 
 Shared test infrastructure lives under `tests/_support`. Area-specific construction

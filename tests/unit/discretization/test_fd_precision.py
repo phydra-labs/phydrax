@@ -135,7 +135,7 @@ def test_fd_precision_scenario_1() -> None:
     assert diffusion.source.dtype == jnp.float32
     assert diffusion.coefficient.dtype == jnp.float32
     assert all(
-        transfer.restriction_matrices[0].dtype == jnp.float32
+        transfer.restriction_routes[0].weights.dtype == jnp.float32
         for transfer in multigrid.transfers
     )
     assert result.value.dtype == jnp.float32

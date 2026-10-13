@@ -1,6 +1,7 @@
 from typing import Any
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -232,3 +233,120 @@ def test_dae_regularity_scenario_2() -> None:
     )
 
     assert first.domain_id != shifted.domain_id
+
+
+@pytest.mark.parametrize("batch", [None, 1, 2])
+def test_fixed_probe_batches_preserve_order_and_requested_singular_probe(
+    batch: int | None,
+) -> None:
+    def residual(time: Any, state: Any, rate: Any, parameter: Any) -> Any:
+        del parameter
+        coefficient = jnp.where(time == 0.375, 8.0, 0.0)
+        return rate - coefficient * state
+
+    template = _scalar_problem(residual, identity="requested-singular-probe")
+    problem = phx.solver.DifferentialAlgebraicProblem(
+        template.system,
+        jnp.zeros(1),
+        initial_state_rate=jnp.zeros(1),
+        args=template.args,
+        problem_id=template.problem_id,
+    )
+    grid = phx.dynamics.TimeGrid(
+        jnp.arange(5, dtype=jnp.float64) * 0.125,
+        time_id="requested-singular-probe",
+    )
+    solution = phx.solver.solve_dae(
+        problem,
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            method=phx.solver.BDFMethod(1),
+            regularity=phx.solver.DAERegularityPolicy(
+                "periodic",
+                interval=2,
+                probe_batch_size=batch,
+                failure="status",
+            ),
+        ),
+    )
+    assert solution.termination_status == int(
+        phx.solver.DAETerminationStatus.REGULARITY_FAILED
+    )
+    assert jnp.array_equal(
+        solution.regularity.stage_valid, jnp.asarray([True, False, True, False])
+    )
+    assert jnp.array_equal(solution.regularity.stage_rank, jnp.asarray([1, -1, 0, -1]))
+    assert jnp.array_equal(
+        solution.regularity.stage_status,
+        jnp.asarray(
+            [
+                int(phx.solver.DAERegularityStatus.VERIFIED),
+                int(phx.solver.DAERegularityStatus.NOT_RUN),
+                int(phx.solver.DAERegularityStatus.NUMERICALLY_SINGULAR),
+                int(phx.solver.DAERegularityStatus.NOT_RUN),
+            ]
+        ),
+    )
+
+
+def test_probe_batch_policy_validation_and_plan_identity() -> None:
+    with pytest.raises(ValueError, match="probe_batch_size"):
+        phx.solver.DAERegularityPolicy("periodic", probe_batch_size=0)
+    problem = _scalar_problem(
+        lambda time, state, rate, parameter: rate + parameter * state,
+        identity="probe-policy-identity",
+    )
+    grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.1]), time_id="probe-policy-identity")
+    dense = phx.solver.plan_dae(
+        problem,
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            regularity=phx.solver.DAERegularityPolicy("periodic"),
+        ),
+    )
+    bounded = phx.solver.plan_dae(
+        problem,
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            regularity=phx.solver.DAERegularityPolicy("periodic", probe_batch_size=1),
+        ),
+    )
+    assert dense.plan_id != bounded.plan_id
+
+
+@pytest.mark.parametrize("requested_count", [0, 1])
+def test_bounded_probe_empty_and_single_archives(requested_count: int) -> None:
+    residual = (
+        (lambda time, state, rate, parameter: state)
+        if requested_count == 0
+        else (lambda time, state, rate, parameter: rate + parameter * state)
+    )
+    problem = _scalar_problem(residual, identity="probe-empty-single")
+    grid = phx.dynamics.TimeGrid(jnp.asarray([0.0, 0.125]), time_id="probe-empty-single")
+    solutions = tuple(
+        phx.solver.solve_dae(
+            problem,
+            grid,
+            policy=phx.solver.DAESolvePolicy(
+                method=phx.solver.BDFMethod(1),
+                regularity=phx.solver.DAERegularityPolicy(
+                    "periodic", probe_batch_size=batch
+                ),
+            ),
+        )
+        for batch in (None, 1)
+    )
+    parallel, bounded = solutions
+    assert jnp.sum(bounded.regularity.stage_valid) == requested_count
+    assert jnp.array_equal(
+        parallel.regularity.stage_valid, bounded.regularity.stage_valid
+    )
+    assert jnp.array_equal(
+        parallel.regularity.stage_status, bounded.regularity.stage_status
+    )
+    assert jnp.array_equal(parallel.regularity.stage_rank, bounded.regularity.stage_rank)
+    assert jnp.array_equal(
+        parallel.regularity.stage_condition_estimate,
+        bounded.regularity.stage_condition_estimate,
+        equal_nan=True,
+    )

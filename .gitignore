@@ -78,6 +78,7 @@ benchmarks/*
 !benchmarks/distributed_spectral.json
 !benchmarks/spline_de_rham.py
 !benchmarks/spline_de_rham.json
+!benchmarks/spline_de_rham_baseline.json
 !benchmarks/structured_cochain.py
 !benchmarks/structured_cochain.json
 # Statistical periodic-flow drivers and their measured evidence records.
