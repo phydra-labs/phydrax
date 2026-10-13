@@ -65,9 +65,6 @@
   temporal scan and avoid eager adaptive numerical refresh.
 - Reject nonfinite Clarabel inputs before provider execution while preserving
   `NONFINITE_INPUT` and independent valid batch cases.
-- Match operator-workspace benchmark gates by full problem capacity, keep default
-  and smoke campaigns aligned with committed baselines, and support isolated
-  smoke outputs for every memory driver on the discretization branch.
 - Bound iterative GP covariance actions and action-whitened variational kernel
   products by the computation workspace policy. Budget-admitted full blocks use
   direct dense products; iterative actions retain the kernel once per resolve
@@ -487,8 +484,6 @@
   policies with route provenance.
 - Streaming inverse-residual certificates with bounded multi-RHS workspace,
   all-direction rank admission, and conservative condition bounds.
-- Explicit bounded target chunking for direct layer potentials, retaining parallel
-  defaults and reporting target policy and logical workspace evidence.
 - Native certified banded and block-banded spectral/singular-value enclosures,
   condition bounds, and rank-threshold certificates without densification, with
   traceable convergence, interval-pivot, and attainable-rounding-floor evidence.
@@ -2822,34 +2817,6 @@
 - Structured Laplace stores diagonal or low-rank precision state and applies
   covariance and sampling scales without dense reconstruction. Full curvature
   remains dense; structured result archive leaves and their fingerprints change.
-- Residual-graph curvature is a deterministic factor-local operator, with
-  operator damping and matrix-free Schur/LSMR solves; dense materialization is
-  explicit and byte-admitted. Curvature persistence leaves intentionally change.
-- Structured optimization and KKT sensitivity use sparse derivative actions and
-  prepared matrix-free linearizations, with explicit bounded dense-SVD selection
-  and retained rank, condition, convergence, and refusal evidence.
-- Filter interior-point trial derivatives use selectable bounded batches, while
-  rejected trials retain value-only evaluation and accepted derivative reuse.
-- MPC compiles sparse by default; differentiable and dense-method MPC requires
-  explicit bounded dense compilation. MPC and iLQR policy identities record the
-  selected representation, route, and admission budgets.
-- MAC segmented shadowing defaults to workspace-admitted `auto`: dense SVD within
-  the existing 512 MiB ceiling, exact block-banded QR least squares above it.
-  Explicit routes retain their behavior; plan identity records policy/budget and
-  result identity/evidence records the resolved route. Banded rank admission
-  reuses certified singular lower bounds without weakening threshold certificates.
-- Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
-  qualification derivatives use owner controls and active rows while preserving
-  case parallelism and KKT certificates.
-- Cut-cochain transfers use budgeted component SVD actions with one global relative
-  singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
-  outputs. Connected components retain quadratic factor storage up to the budget.
-- Prepared spline, structured transfer, Fourier split-form, and field-reconstruction
-  persistence templates use sparse/local-support representations and must be
-  recreated. Input/configuration and documented operator IDs remain unchanged;
-  Fourier certificate-derived IDs may change at roundoff.
-- Direct layer-potential plan and report identities include explicit target policy
-  and workspace metadata; recreate persistence templates with their new fields.
 - Fixed and adaptive stochastic spectral actions use bounded probe batches and
   absolute-index keyed addressing. Historical keyed samples intentionally change;
   samples are invariant to execution batch size and requested probe capacity.
