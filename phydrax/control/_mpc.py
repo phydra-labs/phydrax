@@ -158,7 +158,7 @@ class RecedingHorizonMPC(StrictModule):
         self.prediction_horizon = prediction_horizon
         self.terminal_policy = terminal_policy
         selected_compilation = (
-            LinearControlCompilationPolicy()
+            LinearControlCompilationPolicy("sparse")
             if compilation_policy is None
             else compilation_policy
         )
@@ -832,6 +832,7 @@ def solve_receding_horizon_mpc(
     *,
     prediction_horizon: int,
     terminal_policy: MPCTerminalPolicy,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
     initial_state: ArrayLike | None = None,
     warm_start: LinearControlQPSolution | None = None,
     cost_tolerance: float = 1e-10,
@@ -844,6 +845,7 @@ def solve_receding_horizon_mpc(
         specification,
         prediction_horizon=prediction_horizon,
         terminal_policy=terminal_policy,
+        compilation_policy=compilation_policy,
         cost_tolerance=cost_tolerance,
         policy=policy,
         warm_start_policy=warm_start_policy,
@@ -929,8 +931,9 @@ def _sensitivity_differentiation(
 ) -> ConvexDifferentiationPolicy:
     if controller.compilation_policy.representation != "dense":
         raise ValueError(
-            "MPC sensitivity is dense-only; sparse control compilations have no "
-            "QP sensitivity."
+            "MPC sensitivity is dense-only; select an explicit "
+            "LinearControlCompilationPolicy('dense'). Sparse control compilations "
+            "have no QP sensitivity."
         )
     if controller.warm_start_policy is not None:
         raise ValueError(

@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "compilation_seconds": 0.029064917,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 3184,
+        "flops": 256,
+        "generated_code_bytes": 0,
+        "output_bytes": 8,
+        "source": "jax-compiled",
+        "temporary_bytes": 1040,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.033308542,
+      "shared": false,
+      "terms": 1,
+      "value": [
+        22.627927828170304
+      ]
+    },
+    {
+      "compilation_seconds": 0.095640542,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 6360,
+        "flops": 641,
+        "generated_code_bytes": 0,
+        "output_bytes": 16,
+        "source": "jax-compiled",
+        "temporary_bytes": 2064,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.052536584,
+      "shared": false,
+      "terms": 2,
+      "value": [
+        22.627927828170304,
+        115.78340042895825
+      ]
+    },
+    {
+      "compilation_seconds": 0.062073083,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 12760,
+        "flops": 1411,
+        "generated_code_bytes": 0,
+        "output_bytes": 32,
+        "source": "jax-compiled",
+        "temporary_bytes": 4096,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.017455541,
+      "shared": false,
+      "terms": 4,
+      "value": [
+        22.627927828170304,
+        115.78340042895825,
+        102.48814863787031,
+        -5.034234362562319
+      ]
+    },
+    {
+      "compilation_seconds": 0.130927291,
+      "compiler": {
+        "argument_bytes": 8,
+        "bytes_accessed": 25656,
+        "flops": 2951,
+        "generated_code_bytes": 0,
+        "output_bytes": 64,
+        "source": "jax-compiled",
+        "temporary_bytes": 8208,
+        "unavailable_reason": null
+      },
+      "lowering_seconds": 0.052328,
+      "shared": false,
+      "terms": 8,
+      "value": [
+        22.627927828170304,
+        115.78340042895825,
+        102.48814863787031,
+        -5.034234362562319,
+        -107.92816550661642,
+        -111.59343902012382,
+        -12.660219338040662,
+        97.91274761784426
+      ]
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "gate": {
+    "baseline_bytes": 8208,
+    "candidate_bytes": 8208,
+    "capacity": 8,
+    "decision": "retain-baseline",
+    "maximum_candidate_fraction": 0.5
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "5078176c05d5ae535ad8506db266ff01df86b743f3de2f0a5f3f052ce9afd1a9",
+    "evidence_schema": {
+      "fields": [
+        "compiler",
+        "terms",
+        "value"
+      ],
+      "signature": "09aad42b5592aff6209b12151f6d7eeaa0108a911513f775d973a94a2b0e1850"
+    },
+    "fingerprint": "1a3b433415c2eb0238fd0930f62eee8583e40027167a0161e890ac340003dace",
+    "source_build_fingerprint": "97ae39c84c0bca51cb508f1826e176f47b74bcdb4af0c4761fbad1850e664285"
+  }
+}

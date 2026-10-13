@@ -212,9 +212,12 @@ rank and orientation checks.
 twist="untwisted", quadrature_degree=..., hodge_policy=...)` is the public
 exterior realization, separate from the scalar `IsogeometricPlan` workflow.
 It supplies exact sparse d and paired degree spaces through
-`hilbert_complex(boundary="absolute" | "relative")`. Identity tensor geometry
-uses native Kronecker Gram blocks; mapped geometry uses explicit pullback
-quadrature and native linear solve preparation.
+`hilbert_complex(boundary="absolute" | "relative")`. Incidence routes are prepared
+directly in canonical row-major order, including periodic cancellation. Identity
+tensor geometry uses native Kronecker Gram blocks; mapped geometry uses
+local-support quadrature gather/transpose actions and prepared local metric
+solves, without a global dense basis table or Gram matrix. At fixed degree and
+dimension, incidence and mapped pairing storage grow linearly with the DOFs.
 
 `interpolant`, physical-component `reconstruction`, commuting `transfer` and
 outward `trace(axis, side)` retain canonical form degree/twist/component ordering.
@@ -227,6 +230,11 @@ Mapped-complex `refresh_geometry(geometry)` reuses prepared basis/quadrature/mom
 data and static binding ids while refreshing metric/face pairings on device.
 For a dynamic identity chart, prepare it as a callable with explicit geometry_id;
 the unmapped identity shortcut deliberately has no geometry refresh contract.
+Geometry refresh always recomputes numerical Jacobians and metrics; it does not
+cache arbitrary geometry callables. Realization, differential, and Gram IDs stay
+unchanged. Prepared PyTree leaves now hold local-support routes and metric-weighted
+basis coefficients rather than global dense basis/Gram arrays; recreate persistence templates
+for this canonical representation.
 
 
 See [IGA APIs](api/discretization/isogeometric.md#public-spline-de-rham-complex)

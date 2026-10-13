@@ -53,6 +53,7 @@ from ._constrained_sensitivity import (
     constrained_solution_vjp,
     ConstrainedSensitivityMode,
     ConstrainedSensitivityResult,
+    ConstrainedSensitivityRoute,
 )
 from ._convex_outer_approximation import (
     ConvexMINLPCertificate,
@@ -989,6 +990,7 @@ __all__ = [
     "solve_factored_kkt",
     "ConstrainedSensitivityMode",
     "ConstrainedSensitivityResult",
+    "ConstrainedSensitivityRoute",
     "constrained_solution_jvp",
     "constrained_solution_vjp",
     "BOBYQA",

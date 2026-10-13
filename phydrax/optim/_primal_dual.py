@@ -30,6 +30,8 @@ from ..linalg import (
     LinearSystem,
     MINRES,
     OperatorProperties,
+    prepare_linearization,
+    PreparedLinearization,
     saddle_point_system,
     solve as solve_linear,
     TolerancePolicy,
@@ -306,6 +308,7 @@ def _point_data(
     flat_parameters: Array,
     args: Any,
     multipliers: tuple[Array, Array],
+    constraint_linearization: PreparedLinearization | None = None,
 ) -> tuple[Array, Array, Array, Array, Array, _ConstraintFunction]:
     equality_multipliers, inequality_multipliers = multipliers
 
@@ -316,9 +319,13 @@ def _point_data(
         return _canonical_constraints(problem, layout, unravel(candidate), args)
 
     value, gradient = jax.value_and_grad(objective)(flat_parameters)
-    equality, inequality = constraints(flat_parameters)
-    _, pullback = jax.vjp(constraints, flat_parameters)
-    multiplier_part = pullback((equality_multipliers, inequality_multipliers))[0]
+    prepared = (
+        prepare_linearization(constraints, flat_parameters)
+        if constraint_linearization is None
+        else constraint_linearization
+    )
+    equality, inequality = prepared.primal
+    multiplier_part = prepared.vjp((equality_multipliers, inequality_multipliers))
     stationarity = gradient + multiplier_part
     return value, gradient, equality, inequality, stationarity, constraints
 
@@ -457,6 +464,7 @@ def _build_kkt_system(
     inequality_multipliers: Array,
     slacks: Array,
     constraints: _ConstraintFunction,
+    constraint_linearization: PreparedLinearization,
     /,
 ) -> LinearSystem:
     inverse_slack = 1.0 / jnp.maximum(slacks, method.minimum_slack)
@@ -471,40 +479,28 @@ def _build_kkt_system(
             + jnp.vdot(inequality_multipliers, candidate_inequality).real
         )
 
+    hessian = prepare_linearization(
+        jax.grad(lagrangian),
+        flat_parameters,
+        linearization_id="primal-dual-lagrangian-gradient",
+    )
+
     def primal_action(tangent: Array) -> Array:
-        hessian_tangent = jax.jvp(
-            jax.grad(lagrangian),
-            (flat_parameters,),
-            (tangent,),
-        )[1]
+        hessian_tangent = hessian.jvp(tangent)
         if slacks.size:
-            inequality_tangent = jax.jvp(
-                lambda candidate: constraints(candidate)[1],
-                (flat_parameters,),
-                (tangent,),
-            )[1]
-            _, inequality_pullback = jax.vjp(
-                lambda candidate: constraints(candidate)[1],
-                flat_parameters,
+            inequality_tangent = constraint_linearization.jvp(tangent)[1]
+            curvature = constraint_linearization.vjp(
+                (jnp.zeros_like(equality), diagonal * inequality_tangent)
             )
-            curvature = inequality_pullback(diagonal * inequality_tangent)[0]
         else:
             curvature = jnp.zeros_like(tangent)
         return hessian_tangent + curvature + method.kkt_regularization * tangent
 
     def equality_action(tangent: Array) -> Array:
-        return jax.jvp(
-            lambda candidate: constraints(candidate)[0],
-            (flat_parameters,),
-            (tangent,),
-        )[1]
+        return constraint_linearization.jvp(tangent)[0]
 
     def equality_transpose(cotangent: Array) -> Array:
-        _, pullback = jax.vjp(
-            lambda candidate: constraints(candidate)[0],
-            flat_parameters,
-        )
-        return pullback(cotangent)[0]
+        return constraint_linearization.vjp((cotangent, jnp.zeros_like(slacks)))
 
     primal_space = ArraySpace(flat_parameters.shape, dtype=flat_parameters.dtype)
     equality_space = ArraySpace(equality.shape, dtype=equality.dtype)
@@ -591,6 +587,7 @@ def _solve_primal_dual_newton_krylov(
         inequality_multipliers,
         slacks,
         initial_constraints,
+        prepare_linearization(initial_constraints, flat_parameters),
     )
     _, linear_refresh_state = prepare_refresh_state(
         initial_kkt,
@@ -661,6 +658,14 @@ def _solve_primal_dual_newton_krylov(
         )
 
     def outer_body(current: _PrimalDualState) -> _PrimalDualState:
+        def current_constraints(candidate: Array) -> tuple[Array, Array]:
+            return _canonical_constraints(problem, layout, unravel(candidate), args)
+
+        constraint_linearization = prepare_linearization(
+            current_constraints,
+            current.parameters,
+            linearization_id="primal-dual-constraints",
+        )
         (
             value,
             _,
@@ -678,12 +683,13 @@ def _solve_primal_dual_newton_krylov(
                 current.equality_multipliers,
                 current.inequality_multipliers,
             ),
+            constraint_linearization,
         )
         evaluated_counters = current.counters._replace(
             objective_evaluations=current.counters.objective_evaluations + 1,
             gradient_evaluations=current.counters.gradient_evaluations + 1,
             constraint_evaluations=(
-                current.counters.constraint_evaluations + 2 * constraint_sources_
+                current.counters.constraint_evaluations + constraint_sources_
             ),
             vjp_evaluations=current.counters.vjp_evaluations + 1,
         )
@@ -752,6 +758,7 @@ def _solve_primal_dual_newton_krylov(
                 current.inequality_multipliers,
                 current.slacks,
                 constraints,
+                constraint_linearization,
             )
             current_refresh_state = eqx.combine(
                 current.linear_refresh_arrays,
@@ -774,18 +781,11 @@ def _solve_primal_dual_newton_krylov(
                         - target
                         - current.inequality_multipliers * inequality_slack
                     )
-                    _, constraint_pullback = jax.vjp(
-                        constraints,
-                        current.parameters,
-                    )
-                    reduced_rhs = (
-                        -stationarity
-                        + constraint_pullback(
-                            (
-                                jnp.zeros_like(current_equality),
-                                reduced_rhs_part,
-                            )
-                        )[0]
+                    reduced_rhs = -stationarity + constraint_linearization.vjp(
+                        (
+                            jnp.zeros_like(current_equality),
+                            reduced_rhs_part,
+                        )
                     )
                 else:
                     reduced_rhs = -stationarity
@@ -795,11 +795,9 @@ def _solve_primal_dual_newton_krylov(
                 )
                 primal_direction, equality_direction_ = result.value
                 if current_inequality.size:
-                    inequality_direction = jax.jvp(
-                        lambda candidate: constraints(candidate)[1],
-                        (current.parameters,),
-                        (primal_direction,),
-                    )[1]
+                    inequality_direction = constraint_linearization.jvp(primal_direction)[
+                        1
+                    ]
                     slack_direction_ = -inequality_slack - inequality_direction
                     multiplier_direction_ = inverse_slack * (
                         -complementarity_vector
@@ -1122,7 +1120,7 @@ def _solve_primal_dual_newton_krylov(
                 ),
                 constraint_evaluations=(
                     solve_counters.constraint_evaluations
-                    + 2 * constraint_sources_ * line_evaluations
+                    + constraint_sources_ * line_evaluations
                 ),
                 globalization_evaluations=(
                     solve_counters.globalization_evaluations + line_evaluations
@@ -1338,7 +1336,7 @@ def _solve_primal_dual_newton_krylov(
         objective_evaluations=state.counters.objective_evaluations + 2,
         gradient_evaluations=state.counters.gradient_evaluations + 1,
         constraint_evaluations=(
-            state.counters.constraint_evaluations + 2 * constraint_sources_
+            state.counters.constraint_evaluations + constraint_sources_
         ),
         vjp_evaluations=state.counters.vjp_evaluations + 1,
     )

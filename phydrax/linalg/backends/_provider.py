@@ -16,6 +16,7 @@ from .._bordered import _bordered_base, _bordered_structure
 from .._plans import LinearBackend, LinearSolvePlan
 from .._policies import LinearSolveControl
 from .._preconditioners import AbstractPreconditioner
+from .._structured_operators import BandedLinearOperator
 from ._jax_dense import prepare_dense, solve_dense, solve_dense_transformed
 from ._jax_sparse import (
     HostSparseState,
@@ -191,9 +192,9 @@ class _StructuredProvider(AbstractLinearProvider):
         return solve_structured(state, rhs, plan)
 
     def supports_transformed(self, state: Any, /) -> bool:
-        return (
-            isinstance(state, StructuredState)
-            and _bordered_base(state.operator) is not None
+        return isinstance(state, StructuredState) and (
+            _bordered_base(state.operator) is not None
+            or isinstance(state.operator, BandedLinearOperator)
         )
 
     def solve_transformed(

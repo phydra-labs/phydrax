@@ -431,6 +431,7 @@ def test_mpc_contracts() -> None:
         prediction_horizon=1,
         terminal_policy="none",
         policy=_TIGHT,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
 
@@ -459,7 +460,10 @@ def test_mpc_contracts() -> None:
     )
     refused = phx.control.prepare_receding_horizon_mpc_sensitivity(
         phx.control.RecedingHorizonMPC(
-            infeasible, prediction_horizon=1, terminal_policy="global"
+            infeasible,
+            prediction_horizon=1,
+            terminal_policy="global",
+            compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
         )
     )
     assert refused.linearization is None
@@ -477,6 +481,9 @@ def test_mpc_contracts() -> None:
     def refused(
         match: Any, error: Any = ValueError, differentiation: Any = None, **options: Any
     ) -> None:
+        options.setdefault(
+            "compilation_policy", phx.control.LinearControlCompilationPolicy("dense")
+        )
         controller = phx.control.RecedingHorizonMPC(
             specification,
             prediction_horizon=1,
@@ -577,6 +584,7 @@ def test_control_qp_mpc_scenario_2() -> None:
         prediction_horizon=1,
         terminal_policy="none",
         policy=_TIGHT,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
 
@@ -607,18 +615,21 @@ def test_control_qp_mpc_scenario_2() -> None:
         prediction_horizon=1,
         terminal_policy="global",
         policy=policy,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     always_result = phx.control.solve_receding_horizon_mpc(
         specification,
         prediction_horizon=1,
         terminal_policy="always",
         policy=policy,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     no_terminal_result = phx.control.solve_receding_horizon_mpc(
         specification,
         prediction_horizon=1,
         terminal_policy="none",
         policy=policy,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     assert global_result.valid
     assert always_result.valid
@@ -701,6 +712,7 @@ def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes
         prediction_horizon=2,
         terminal_policy="global",
         policy=_TIGHT,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     )
     sensitivity = phx.control.prepare_receding_horizon_mpc_sensitivity(controller)
     audited = controller.solve()
@@ -753,12 +765,14 @@ def test_mpc_sensitivity_matches_finite_differences_away_from_active_set_changes
         prediction_horizon=2,
         terminal_policy="global",
         policy=_TIGHT,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     ).solve()
     minus = phx.control.RecedingHorizonMPC(
         _shifted(specification, tangent, -step),
         prediction_horizon=2,
         terminal_policy="global",
         policy=_TIGHT,
+        compilation_policy=phx.control.LinearControlCompilationPolicy("dense"),
     ).solve()
     np.testing.assert_allclose(
         state_tangent, (plus.states - minus.states) / (2 * step), atol=2e-5

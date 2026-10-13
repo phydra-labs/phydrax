@@ -21,6 +21,7 @@ from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 from ._surface3d import SurfacePanelization3D
 
 
@@ -182,11 +183,23 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
             )
         return contract("n,n,n->", kernels, self.panelization.weights, self.density)
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("3D Helmholtz targets must have shape (target_count, 3).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
@@ -291,13 +304,25 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
             self.density,
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError(
                 "3D combined-field targets must have shape (target_count, 3)."
             )
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization

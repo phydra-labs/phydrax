@@ -630,8 +630,10 @@ def test_control_horizon_campaign_reports_warm_and_sparse_evidence() -> None:
     row = report["rows"][0]
 
     assert report["campaign"] == "control-horizon-warm-start"
+    assert report["passed"]
     assert row["horizon"] == 2
     assert row["sparse_value_bytes"] < row["dense_matrix_bytes"]
+    assert row["sparse"]["certificate"]["successful"]
     assert row["cold"]["certificate"]["successful"]
     assert row["warm"]["certificate"]["successful"]
     assert row["cold"]["certificate"]["dynamics_residual"] < 1e-10

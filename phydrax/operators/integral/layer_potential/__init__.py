@@ -23,6 +23,7 @@ from ._displacement_discontinuity3d import __all__ as _displacement_discontinuit
 from ._elasticity2d import __all__ as _elasticity2d_all
 from ._elasticity3d import __all__ as _elasticity_all
 from ._evaluation import (
+    DirectTargetExecution,
     evaluate_layer_potential,
     LayerEvaluationPlan2D,
     LayerEvaluationReport,
@@ -177,6 +178,7 @@ __all__ = [
     "LaplaceLayerKernel2D",
     "LaplaceLayerPotential2D",
     "LayerDiscretizationReport",
+    "DirectTargetExecution",
     "LayerEvaluationPlan2D",
     "LayerEvaluationReport",
     "LayerEvaluationResult",

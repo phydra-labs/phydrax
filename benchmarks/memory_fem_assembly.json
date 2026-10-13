@@ -1,0 +1,272 @@
+{
+  "cases": [
+    {
+      "assembly_seconds": 0.314514959,
+      "cells": 4,
+      "compilation": {
+        "compilation_seconds": 0.196666167,
+        "lowering_seconds": 0.113007166
+      },
+      "compiler": {
+        "argument_bytes": 96,
+        "bytes_accessed": 44661,
+        "flops": 7105,
+        "generated_code_bytes": 0,
+        "output_bytes": 48,
+        "source": "xla",
+        "temporary_bytes": 4488,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 246026,
+      "process_peak_rss_bytes": 1469087744,
+      "requested_tensor_families": 1,
+      "retained_array_bytes": 612,
+      "route": "mass",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000159334,
+        "mean_seconds": 0.000159334,
+        "median_seconds": 0.000159334,
+        "min_seconds": 0.000159334,
+        "samples_seconds": [
+          0.000159334
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "assembly_seconds": 0.149347125,
+      "cells": 4,
+      "compilation": {
+        "compilation_seconds": 0.160972458,
+        "lowering_seconds": 0.056762542
+      },
+      "compiler": {
+        "argument_bytes": 96,
+        "bytes_accessed": 44661,
+        "flops": 7105,
+        "generated_code_bytes": 0,
+        "output_bytes": 48,
+        "source": "xla",
+        "temporary_bytes": 4488,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 107759,
+      "process_peak_rss_bytes": 1481867264,
+      "requested_tensor_families": 1,
+      "retained_array_bytes": 612,
+      "route": "stiffness",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.00342575,
+        "mean_seconds": 0.00342575,
+        "median_seconds": 0.00342575,
+        "min_seconds": 0.00342575,
+        "samples_seconds": [
+          0.00342575
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "assembly_seconds": 0.043973292,
+      "cells": 4,
+      "compilation": {
+        "compilation_seconds": 0.207987958,
+        "lowering_seconds": 0.030917084
+      },
+      "compiler": {
+        "argument_bytes": 96,
+        "bytes_accessed": 44661,
+        "flops": 7105,
+        "generated_code_bytes": 0,
+        "output_bytes": 48,
+        "source": "xla",
+        "temporary_bytes": 4488,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 75837,
+      "process_peak_rss_bytes": 1500332032,
+      "requested_tensor_families": 2,
+      "retained_array_bytes": 1224,
+      "route": "paired",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000113875,
+        "mean_seconds": 0.000113875,
+        "median_seconds": 0.000113875,
+        "min_seconds": 0.000113875,
+        "samples_seconds": [
+          0.000113875
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "assembly_seconds": 0.219657708,
+      "cells": 8,
+      "compilation": {
+        "compilation_seconds": 0.268211333,
+        "lowering_seconds": 0.06470625
+      },
+      "compiler": {
+        "argument_bytes": 160,
+        "bytes_accessed": 87381,
+        "flops": 14125,
+        "generated_code_bytes": 0,
+        "output_bytes": 80,
+        "source": "xla",
+        "temporary_bytes": 8328,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 194866,
+      "process_peak_rss_bytes": 1524301824,
+      "requested_tensor_families": 1,
+      "retained_array_bytes": 1224,
+      "route": "mass",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000155834,
+        "mean_seconds": 0.000155834,
+        "median_seconds": 0.000155834,
+        "min_seconds": 0.000155834,
+        "samples_seconds": [
+          0.000155834
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "assembly_seconds": 0.1073195,
+      "cells": 8,
+      "compilation": {
+        "compilation_seconds": 0.169339292,
+        "lowering_seconds": 0.031525625
+      },
+      "compiler": {
+        "argument_bytes": 160,
+        "bytes_accessed": 87381,
+        "flops": 14125,
+        "generated_code_bytes": 0,
+        "output_bytes": 80,
+        "source": "xla",
+        "temporary_bytes": 8328,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 97177,
+      "process_peak_rss_bytes": 1535328256,
+      "requested_tensor_families": 1,
+      "retained_array_bytes": 1224,
+      "route": "stiffness",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000156834,
+        "mean_seconds": 0.000156834,
+        "median_seconds": 0.000156834,
+        "min_seconds": 0.000156834,
+        "samples_seconds": [
+          0.000156834
+        ],
+        "std_seconds": 0.0
+      }
+    },
+    {
+      "assembly_seconds": 0.074507334,
+      "cells": 8,
+      "compilation": {
+        "compilation_seconds": 0.141332083,
+        "lowering_seconds": 0.030163166
+      },
+      "compiler": {
+        "argument_bytes": 160,
+        "bytes_accessed": 87381,
+        "flops": 14125,
+        "generated_code_bytes": 0,
+        "output_bytes": 80,
+        "source": "xla",
+        "temporary_bytes": 8328,
+        "unavailable_reason": null
+      },
+      "compiler_route": "paired-runtime-assembly",
+      "host_allocation_peak_bytes": 77020,
+      "process_peak_rss_bytes": 1546682368,
+      "requested_tensor_families": 2,
+      "retained_array_bytes": 2448,
+      "route": "paired",
+      "warm": {
+        "count": 1,
+        "max_seconds": 0.000106083,
+        "mean_seconds": 0.000106083,
+        "median_seconds": 0.000106083,
+        "min_seconds": 0.000106083,
+        "samples_seconds": [
+          0.000106083
+        ],
+        "std_seconds": 0.0
+      }
+    }
+  ],
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "0930f345265723803020062fc4a872aa560826e486d632ce4f037f826ebdf4c2",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "52f0c06595e104585a976bcfc41f00d200650dbeeead08b282c50da6537b2680",
+    "evidence_schema": {
+      "fields": [
+        "assembly_seconds",
+        "cells",
+        "compilation",
+        "compiler",
+        "compiler_route",
+        "host_allocation_peak_bytes",
+        "process_peak_rss_bytes",
+        "requested_tensor_families",
+        "retained_array_bytes",
+        "route",
+        "warm"
+      ],
+      "signature": "9e896589c09509ac91fb53ed5a66dc24b5cfd2aa25bd44d1503878b9bfbda37c"
+    },
+    "fingerprint": "3093102a9754c95c1b39a9c2a613b93f1780f89eae925e88dc8464d3ebda9d11",
+    "source_build_fingerprint": "842117cccfa579d85e4f1f28e92dc38bffc712eb0ed11101973854fcd793edac"
+  }
+}

@@ -15,14 +15,15 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
+from scipy.sparse import csr_array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._identity import NumericRevision, SemanticProvenance
+from ..._interpolation._bspline import bspline_jet_stencil
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
-from ...ein import contract
 from ...exterior import FormTwist
 from ...exterior._basis import exterior_indices
 from ...exterior._complex import ComplexBoundary
@@ -59,7 +60,6 @@ from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
 from ._compatible_basis import (
     _PreparedSplineFunctional,
     apply_functionals,
-    basis,
     component_functionals,
     pullback_values,
     tensor_basis,
@@ -96,20 +96,15 @@ def _reduced_grid(grid: BSplineGrid, /) -> BSplineGrid:
 
 
 def _face_restriction(
-    shape: tuple[int, ...],
-    axis: int,
-    side: BoundarySide,
-    orientation: int,
-    /,
+    shape: tuple[int, ...], axis: int, side: BoundarySide, /
 ) -> np.ndarray:
     face_shape = shape[:axis] + shape[axis + 1 :]
-    matrix = np.zeros((prod(face_shape), prod(shape)), dtype=np.float64)
+    columns = np.empty((prod(face_shape),), dtype=np.int32)
     fixed = 0 if side == "lower" else shape[axis] - 1
-    for face_index in np.ndindex(face_shape):
+    for row, face_index in enumerate(np.ndindex(face_shape)):
         volume_index = face_index[:axis] + (fixed,) + face_index[axis:]
-        row = np.ravel_multi_index(face_index, face_shape)
-        matrix[row, np.ravel_multi_index(volume_index, shape)] = float(orientation)
-    return matrix
+        columns[row] = np.ravel_multi_index(volume_index, shape)
+    return columns
 
 
 def _rank(matrix: np.ndarray, tolerance: float, /) -> int:
@@ -259,19 +254,24 @@ class SplineDifferentialSpace(StrictModule, NonTrainableState):
 
 
 def _sparse_operator(
-    matrix: np.ndarray,
+    matrix: np.ndarray | csr_array,
     source: AbstractVectorSpace,
     target: AbstractVectorSpace,
     identifier: str,
     /,
 ) -> SparseCoordinateOperator:
-    rows, columns = np.nonzero(matrix)
+    sparse = csr_array(matrix)
+    sparse.sum_duplicates()
+    sparse.eliminate_zeros()
+    sparse.sort_indices()
+    rows = np.repeat(np.arange(sparse.shape[0]), np.diff(sparse.indptr))
+    columns = sparse.indices
     relation = EdgeRelation(
         columns, rows, source_size=source.size, target_size=target.size
     )
     return SparseCoordinateOperator(
         relation,
-        matrix[rows, columns],
+        sparse.data,
         source=source,
         target=target,
         operator_id=identifier,
@@ -316,7 +316,7 @@ def _gram_properties() -> OperatorProperties:
 
 
 def _make_hilbert(
-    matrices: tuple[np.ndarray, ...],
+    matrices: tuple[csr_array, ...],
     grams: tuple[AbstractLinearOperator, ...],
     identifier: str,
     policy: LinearSolvePolicy | None,
@@ -334,7 +334,7 @@ def _make_hilbert(
 
 
 def _topology(
-    counts: tuple[int, ...], matrices: tuple[np.ndarray, ...], identifier: str, /
+    counts: tuple[int, ...], matrices: tuple[csr_array, ...], identifier: str, /
 ) -> CellComplexTopology:
     entities = tuple(
         EntitySet(
@@ -347,14 +347,13 @@ def _topology(
     )
     incidences = []
     for k, matrix in enumerate(matrices):
-        rows, columns = np.nonzero(matrix)
+        rows = np.repeat(np.arange(matrix.shape[0]), np.diff(matrix.indptr))
+        columns = matrix.indices
         relation = EdgeRelation(
             columns, rows, source_size=counts[k], target_size=counts[k + 1]
         )
         incidences.append(
-            OrientedIncidence(
-                k + 1, entities[k], entities[k + 1], relation, matrix[rows, columns]
-            )
+            OrientedIncidence(k + 1, entities[k], entities[k + 1], relation, matrix.data)
         )
     return CellComplexTopology(
         entities, tuple(incidences), topology_id=f"{identifier}:topology"
@@ -563,7 +562,7 @@ class _SplineComplex(AbstractCellDeRhamComplex):
     def _bind(
         self,
         counts: tuple[int, ...],
-        matrices: tuple[np.ndarray, ...],
+        matrices: tuple[csr_array, ...],
         grams: tuple[AbstractLinearOperator, ...],
         masks: tuple[np.ndarray, ...],
         identifier: str,
@@ -586,7 +585,7 @@ class _SplineComplex(AbstractCellDeRhamComplex):
         absolute = _make_hilbert(matrices, grams, identifier, policy)
         indices = tuple(np.flatnonzero(~mask).astype(np.int32) for mask in masks)
         for k, matrix in enumerate(matrices):
-            if np.any(matrix[np.ix_(np.flatnonzero(masks[k + 1]), indices[k])]):
+            if matrix[np.flatnonzero(masks[k + 1])][:, indices[k]].nnz:
                 raise ValueError(
                     "Spline boundary masks do not define a relative subcomplex."
                 )
@@ -630,8 +629,7 @@ class _SplineComplex(AbstractCellDeRhamComplex):
                 )
             )
         relative_matrices = tuple(
-            matrix[np.ix_(indices[k + 1], indices[k])]
-            for k, matrix in enumerate(matrices)
+            matrix[indices[k + 1]][:, indices[k]] for k, matrix in enumerate(matrices)
         )
         self.dimension = len(counts) - 1
         self.primal_twist = twist
@@ -668,11 +666,11 @@ class _SplineComplex(AbstractCellDeRhamComplex):
 
 def _differentials(
     spaces: tuple[SplineDifferentialSpace, ...], periodic: tuple[bool, ...], /
-) -> tuple[np.ndarray, ...]:
+) -> tuple[csr_array, ...]:
     matrices = []
     for degree, source in enumerate(spaces[:-1]):
         target = spaces[degree + 1]
-        matrix = np.zeros((target.dof_count, source.dof_count), dtype=np.float64)
+        rows, columns, signs = [], [], []
         for offset, component in zip(
             source.component_offsets, source.components, strict=True
         ):
@@ -680,38 +678,115 @@ def _differentials(
                 if axis in component.component_axes:
                     continue
                 axes = tuple(sorted((*component.component_axes, axis)))
-                block_shape = target.components[
+                target_component = target.components[
                     exterior_indices(source.dimension, degree + 1).index(axes)
-                ].coefficient_shape
-                block = np.zeros(
-                    (prod(block_shape), component.coefficient_count), dtype=np.float64
-                )
+                ]
+                block_shape = target_component.coefficient_shape
+                target_offset = target.component_slice(axes).start
                 sign = (-1) ** sum(
                     existing < axis for existing in component.component_axes
                 )
                 for target_index in np.ndindex(block_shape):
-                    lower = list(target_index)
                     upper = list(target_index)
                     upper[axis] = (
                         (upper[axis] + 1) % component.coefficient_shape[axis]
                         if periodic[axis]
                         else upper[axis] + 1
                     )
-                    row = np.ravel_multi_index(target_index, block_shape)
-                    block[
-                        row,
-                        np.ravel_multi_index(tuple(lower), component.coefficient_shape),
-                    ] -= sign
-                    block[
-                        row,
-                        np.ravel_multi_index(tuple(upper), component.coefficient_shape),
-                    ] += sign
-                matrix[
-                    target.component_slice(axes),
-                    offset : offset + component.coefficient_count,
-                ] = block
+                    row = target_offset + np.ravel_multi_index(target_index, block_shape)
+                    rows.extend((row, row))
+                    columns.extend(
+                        (
+                            offset
+                            + np.ravel_multi_index(
+                                target_index, component.coefficient_shape
+                            ),
+                            offset
+                            + np.ravel_multi_index(
+                                tuple(upper), component.coefficient_shape
+                            ),
+                        )
+                    )
+                    signs.extend((-sign, sign))
+        matrix = csr_array(
+            (
+                np.asarray(signs, dtype=np.float64),
+                (np.asarray(rows, dtype=np.int32), np.asarray(columns, dtype=np.int32)),
+            ),
+            shape=(target.dof_count, source.dof_count),
+        )
+        # CSR canonicalization reproduces np.nonzero's row-major routes, and
+        # removes the exact cancellation on singleton periodic axes.
+        matrix.sum_duplicates()
+        matrix.eliminate_zeros()
+        matrix.sort_indices()
         matrices.append(matrix)
     return tuple(matrices)
+
+
+def _local_basis_routes(
+    grids: tuple[BSplineGrid, ...],
+    points: Array,
+    axes: tuple[int, ...],
+    periodic: tuple[bool, ...],
+    /,
+) -> tuple[np.ndarray, Array]:
+    """Tensor span-local basis support, with periodic endpoint identification."""
+    indices = np.zeros((points.shape[0], 1), dtype=np.int32)
+    values = jnp.ones((points.shape[0], 1), dtype=jnp.float64)
+    for axis, grid in enumerate(grids):
+        stencil = bspline_jet_stencil(
+            grid.knots,
+            points[:, axis],
+            degree=grid.degree,
+            maximum_order=0,
+            bounds="clip",
+        )
+        local_indices = np.asarray(stencil.indices, dtype=np.int32)
+        local_values = stencil.jets[:, 0, :]
+        count = grid.coefficient_count
+        if axis in axes:
+            p = grid.degree + 1
+            widths = grid.knots[p:] - grid.knots[:-p]
+            local_values = local_values * (p / widths[stencil.indices])
+        elif periodic[axis]:
+            count -= 1
+            local_indices = np.where(local_indices == count, 0, local_indices)
+        indices = (indices[:, :, None] * count + local_indices[:, None, :]).reshape(
+            (points.shape[0], -1)
+        )
+        values = (values[:, :, None] * local_values[:, None, :]).reshape(
+            (points.shape[0], -1)
+        )
+    return indices, values
+
+
+def _basis_operator(
+    grids: tuple[BSplineGrid, ...],
+    points: Array,
+    axes: tuple[int, ...],
+    periodic: tuple[bool, ...],
+    coordinates: ArraySpace,
+    identifier: str,
+    /,
+) -> SparseCoordinateOperator:
+    indices, values = _local_basis_routes(grids, points, axes, periodic)
+    relation = EdgeRelation(
+        indices.reshape((-1,)),
+        np.repeat(np.arange(points.shape[0], dtype=np.int32), indices.shape[1]),
+        source_size=coordinates.size,
+        target_size=points.shape[0],
+    )
+    samples = ArraySpace(
+        (points.shape[0],), dtype=jnp.float64, space_id=f"{identifier}:samples"
+    )
+    return SparseCoordinateOperator(
+        relation,
+        values.reshape((-1,)),
+        source=coordinates,
+        target=samples,
+        operator_id=identifier,
+    )
 
 
 def _separable_grams(
@@ -730,23 +805,37 @@ def _separable_grams(
             factors = []
             for axis, grid in enumerate(component.grids):
                 points, weights = grid.quadrature(2 * grid.degree + 2)
-                values = basis(
-                    grid,
-                    points,
-                    differential=axis in component.component_axes,
-                    periodic=periodic[axis] and axis not in component.component_axes,
+                count = grid.coefficient_count - (
+                    periodic[axis] and axis not in component.component_axes
                 )
-                matrix = values.T @ (weights[:, None] * values)
                 coordinates = ArraySpace(
-                    (matrix.shape[0],),
+                    (count,),
                     dtype=jnp.float64,
                     space_id=f"{identifier}:{k}:{c}:{axis}:coordinates",
                 )
+                reference = _basis_operator(
+                    (grid,),
+                    points[:, None],
+                    (0,) if axis in component.component_axes else (),
+                    (periodic[axis],),
+                    coordinates,
+                    f"{identifier}:{k}:{c}:{axis}:basis",
+                )
+
+                def factor_action(
+                    value: Array,
+                    *,
+                    reference: SparseCoordinateOperator = reference,
+                    weights: Array = weights,
+                ) -> Array:
+                    return reference.transpose_mv(weights * reference.mv(value))
+
                 factors.append(
-                    DenseLinearOperator(
-                        matrix,
+                    FunctionLinearOperator(
+                        factor_action,
                         source=coordinates,
                         target=coordinates,
+                        transpose_action=factor_action,
                         properties=_gram_properties(),
                         operator_id=f"{identifier}:{k}:{c}:{axis}:gram",
                     )
@@ -805,7 +894,8 @@ class _SplineQuadrature(StrictModule, NonTrainableState):
     spaces: tuple[SplineDifferentialSpace, ...]
     points: Float64[SplineQuadraturePointDim, SplineParameterDim]
     weights: Float64[SplineQuadraturePointDim]
-    reference_bases: tuple[Array, ...]
+    reference_operators: tuple[SparseCoordinateOperator, ...]
+    metric_relations: tuple[EdgeRelation, ...]
 
     def __init__(
         self,
@@ -817,21 +907,68 @@ class _SplineQuadrature(StrictModule, NonTrainableState):
     ) -> None:
         points, weights = tensor_quadrature(base, degree)
         references = []
+        metric_relations = []
         for space in spaces:
-            reference = jnp.zeros(
-                (points.shape[0], len(space.components), space.dof_count),
-                dtype=jnp.float64,
-            )
+            columns, rows, coefficients = [], [], []
             for c, (offset, component) in enumerate(
                 zip(space.component_offsets, space.components, strict=True)
             ):
-                values = tensor_basis(
+                indices, values = _local_basis_routes(
                     component.grids, points, component.component_axes, periodic
                 )
-                reference = reference.at[
-                    :, c, offset : offset + component.coefficient_count
-                ].set(values)
-            references.append(reference)
+                columns.append((indices + offset).reshape((-1,)))
+                rows.append(
+                    np.repeat(
+                        np.arange(points.shape[0], dtype=np.int32) * len(space.components)
+                        + c,
+                        indices.shape[1],
+                    )
+                )
+                coefficients.append(values.reshape((-1,)))
+            local_indices = np.concatenate(
+                tuple(column.reshape((points.shape[0], -1)) for column in columns),
+                axis=1,
+            )
+            metric_relations.append(
+                EdgeRelation(
+                    np.broadcast_to(
+                        local_indices[:, None, :],
+                        (points.shape[0], len(space.components), local_indices.shape[1]),
+                    ).reshape((-1,)),
+                    np.repeat(
+                        np.arange(
+                            points.shape[0] * len(space.components), dtype=np.int32
+                        ),
+                        local_indices.shape[1],
+                    ),
+                    source_size=space.dof_count,
+                    target_size=points.shape[0] * len(space.components),
+                )
+            )
+            coordinates = ArraySpace(
+                (space.dof_count,),
+                dtype=jnp.float64,
+                space_id=f"{space.space_id}:basis-coordinates",
+            )
+            samples = ArraySpace(
+                (points.shape[0] * len(space.components),),
+                dtype=jnp.float64,
+                space_id=f"{space.space_id}:basis-samples",
+            )
+            references.append(
+                SparseCoordinateOperator(
+                    EdgeRelation(
+                        np.concatenate(columns),
+                        np.concatenate(rows),
+                        source_size=space.dof_count,
+                        target_size=samples.size,
+                    ),
+                    jnp.concatenate(tuple(coefficients)),
+                    source=coordinates,
+                    target=samples,
+                    operator_id=f"{space.space_id}:quadrature-basis",
+                )
+            )
         scope = Scope()
         self.spaces = spaces
         self.points = parse(
@@ -843,7 +980,8 @@ class _SplineQuadrature(StrictModule, NonTrainableState):
         self.weights = parse(
             weights, Float64[SplineQuadraturePointDim], "weights", scope=scope
         )
-        self.reference_bases = tuple(references)
+        self.reference_operators = tuple(references)
+        self.metric_relations = tuple(metric_relations)
 
 
 def _mapped_grams(
@@ -863,31 +1001,62 @@ def _mapped_grams(
     volume = jnp.sqrt(determinant)
     grams = []
     for k, (space, reference) in enumerate(
-        zip(quadrature.spaces, quadrature.reference_bases, strict=True)
+        zip(quadrature.spaces, quadrature.reference_operators, strict=True)
     ):
         compound = compound_matrix(metrics, k)
 
-        def metric_solve(matrix: Array, rhs: Array) -> Array:
-            operator = DenseLinearOperator(matrix, operator_id=f"{identifier}:{k}:metric")
-            return solve(
-                LinearSystem(operator, problem_id=f"{identifier}:{k}:metric-system"),
-                rhs,
-                policy=LinearSolvePolicy(DenseLU(), failure=FailurePolicy("error")),
-                rhs_layout=RHSLayout((space.dof_count,)),
-            ).value
+        widths = tuple(
+            prod(grid.degree + 1 for grid in component.grids)
+            for component in space.components
+        )
+        local_reference = jnp.zeros(
+            (points.shape[0], len(space.components), sum(widths)), dtype=jnp.float64
+        )
+        route_offset, support_offset = 0, 0
+        for c, width in enumerate(widths):
+            route_count = points.shape[0] * width
+            values = reference.coefficients[route_offset : route_offset + route_count]
+            local_reference = local_reference.at[
+                :, c, support_offset : support_offset + width
+            ].set(values.reshape((points.shape[0], width)))
+            route_offset += route_count
+            support_offset += width
+        weighted = solve(
+            LinearSystem(
+                DenseLinearOperator(compound, operator_id=f"{identifier}:{k}:metric"),
+                problem_id=f"{identifier}:{k}:metric-system",
+            ),
+            local_reference,
+            policy=LinearSolvePolicy(DenseLU(), failure=FailurePolicy("error")),
+            rhs_layout=RHSLayout((sum(widths),)),
+        ).value
+        metric_reference = SparseCoordinateOperator(
+            quadrature.metric_relations[k],
+            (weighted * (weights * volume)[:, None, None]).reshape((-1,)),
+            source=reference.source,
+            target=reference.target,
+            operator_id=f"{identifier}:{k}:metric-basis",
+        )
 
-        weighted = jax.vmap(metric_solve)(compound, reference)
-        matrix = contract("qci,qcj,q->ij", reference, weighted, weights * volume)
+        def action(
+            value: Array,
+            *,
+            reference: SparseCoordinateOperator = reference,
+            metric_reference: SparseCoordinateOperator = metric_reference,
+        ) -> Array:
+            return reference.transpose_mv(metric_reference.mv(value))
+
         coordinates = ArraySpace(
             (space.dof_count,),
             dtype=jnp.float64,
             space_id=f"{identifier}:{k}:coordinates",
         )
         grams.append(
-            DenseLinearOperator(
-                matrix,
+            FunctionLinearOperator(
+                action,
                 source=coordinates,
                 target=coordinates,
+                transpose_action=action,
                 properties=_gram_properties(),
                 operator_id=f"{identifier}:{k}:gram",
             )
@@ -1151,16 +1320,14 @@ class SplineDeRhamComplex(_SplineComplex):
         maps = []
         for k, target_space in enumerate(target.spaces):
             source_space = self.spaces[k]
-            matrix = np.zeros(
-                (target_space.dof_count, source_space.dof_count), dtype=np.float64
-            )
+            rows, columns, coefficients = [], [], []
             for component in source_space.components:
                 if axis in component.component_axes:
                     continue
                 target_axes = tuple(
                     value - (value > axis) for value in component.component_axes
                 )
-                block = _face_restriction(component.coefficient_shape, axis, side, 1)
+                block = _face_restriction(component.coefficient_shape, axis, side)
                 shape = (
                     component.coefficient_shape[:axis]
                     + component.coefficient_shape[axis + 1 :]
@@ -1174,19 +1341,27 @@ class SplineDeRhamComplex(_SplineComplex):
                                 np.arange(shape[0] - 1, 0, -1, dtype=np.int32),
                             )
                         )
-                    block = np.take(
-                        block.reshape((*shape, component.coefficient_count)),
-                        permutation,
-                        axis=0,
-                    ).reshape(block.shape)
-                    if 0 in target_axes:
-                        block = -block
+                    block = np.take(block.reshape(shape), permutation, axis=0).reshape(
+                        (-1,)
+                    )
+                sign = -1 if orientation < 0 and 0 in target_axes else 1
                 if self.primal_twist == "twisted":
-                    block = orientation * block
-                matrix[
-                    target_space.component_slice(target_axes),
-                    source_space.component_slice(component.component_axes),
-                ] = block
+                    sign *= orientation
+                rows.append(
+                    target_space.component_slice(target_axes).start
+                    + np.arange(block.size, dtype=np.int32)
+                )
+                columns.append(
+                    source_space.component_slice(component.component_axes).start + block
+                )
+                coefficients.append(np.full((block.size,), sign, dtype=np.float64))
+            matrix = csr_array(
+                (
+                    np.concatenate(coefficients),
+                    (np.concatenate(rows), np.concatenate(columns)),
+                ),
+                shape=(target_space.dof_count, source_space.dof_count),
+            )
             maps.append(
                 _sparse_operator(
                     matrix,
@@ -1564,7 +1739,15 @@ class AssembledSplineDeRhamComplex(_SplineComplex):
                 "twist": twist_,
             }
         )
-        self._bind(counts, matrices, grams, masks, identifier, twist_, hodge_policy)
+        self._bind(
+            counts,
+            tuple(csr_array(matrix) for matrix in matrices),
+            grams,
+            masks,
+            identifier,
+            twist_,
+            hodge_policy,
+        )
         self.source_complex_ids = source_ids
         self.assembly_id = assembly_id
         self.boundary_traces = tuple(boundary_traces)

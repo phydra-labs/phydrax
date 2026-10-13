@@ -15,9 +15,14 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
     DenseLinearOperator,
+    FunctionLinearOperator,
+    IdentityLinearOperator,
     LeastSquaresProblem as LinearLeastSquaresProblem,
     LinearSolveStatus,
+    materialize,
     PyTreeSpace,
     solve as solve_linear,
 )
@@ -56,13 +61,27 @@ _BlockLinearization: TypeAlias = tuple[
 ]
 
 
+class _BlockCurvatureAction(StrictModule):
+    """Factor-local curvature with deterministic factor-order accumulation."""
+
+    blocks: tuple[Array, ...]
+    indices: tuple[Array, ...]
+    dimension: int = eqx.field(static=True)
+
+    def __call__(self, vector: Array, /) -> Array:
+        result = jnp.zeros((self.dimension,), dtype=vector.dtype)
+        for block, indices in zip(self.blocks, self.indices, strict=True):
+            result = result.at[indices].add(block @ vector[indices])
+        return result
+
+
 class ResidualGraphLinearization(StrictModule):
     """Block-assembled robust objective, gradient, and positive curvature."""
 
     residuals: tuple[PyTree[Array], ...]
     objective: Array
     gradient: Array
-    curvature: Array
+    curvature: AbstractLinearOperator
     robust_blocks: Array
     clipped_curvature_blocks: Array
     structural_jacobian_nonzeros: Array
@@ -260,7 +279,8 @@ def linearize_residual_graph(
     values, spaces, slices, dimension = _variable_layout(graph, parameters)
     dtype = jax.tree.leaves(parameters)[0].dtype
     gradient = jnp.zeros((dimension,), dtype=dtype)
-    curvature = jnp.zeros((dimension, dimension), dtype=dtype)
+    curvature_blocks = []
+    curvature_indices = []
     objective = jnp.asarray(0.0, dtype=dtype)
     robust_blocks = jnp.asarray(0, dtype=jnp.int32)
     clipped_blocks = jnp.asarray(0, dtype=jnp.int32)
@@ -278,25 +298,28 @@ def linearize_residual_graph(
             clipped,
             block_nonzeros,
             block_finite,
-        ) = _block_linearization(
-            graph,
-            parameters,
-            block,
-            values,
-            spaces,
-            slices,
-            args,
-        )
+        ) = _block_linearization(graph, parameters, block, values, spaces, slices, args)
         residuals.append(residual)
         objective = objective + block_objective
         if indices.size:
             gradient = gradient.at[indices].add(block_gradient)
-            curvature = curvature.at[jnp.ix_(indices, indices)].add(block_curvature)
+            curvature_blocks.append(0.5 * (block_curvature + jnp.conj(block_curvature.T)))
+            curvature_indices.append(indices)
         robust_blocks = robust_blocks + robust.astype(jnp.int32)
         clipped_blocks = clipped_blocks + clipped.astype(jnp.int32)
         nonzeros = nonzeros + block_nonzeros.astype(jnp.int32)
         finite = finite & block_finite
-    curvature = 0.5 * (curvature + jnp.conj(curvature.T))
+    action = _BlockCurvatureAction(
+        tuple(curvature_blocks), tuple(curvature_indices), dimension
+    )
+    space = ArraySpace((dimension,), dtype=dtype)
+    curvature = FunctionLinearOperator(
+        action,
+        source=space,
+        target=space,
+        operator_id=f"{graph.problem_id}:block-curvature:{dimension}",
+        closure_convert=False,
+    )
     return ResidualGraphLinearization(
         tuple(residuals),
         objective,
@@ -310,19 +333,28 @@ def linearize_residual_graph(
 
 
 def _solve_route(
-    matrix: Array,
+    matrix: AbstractLinearOperator,
     gradient: Array,
     route: LeastSquaresRoutePlan,
     schur: SchurComplementPlan | None,
     /,
 ) -> tuple[Array, Array, Array]:
-    if route.route == "schur":
-        if schur is None:
-            raise ValueError("Schur route requires a SchurComplementPlan.")
-        step = solve_schur_system(matrix, gradient, schur)
-        return step, jnp.asarray(1, dtype=jnp.int32), jnp.all(jnp.isfinite(step))
+    match route.route:
+        case "schur":
+            if schur is None:
+                raise ValueError("Schur route requires a SchurComplementPlan.")
+            step = solve_schur_system(matrix, gradient, schur)
+            return step, jnp.asarray(1, dtype=jnp.int32), jnp.all(jnp.isfinite(step))
+        case "dense-qr" | "dense-svd":
+            matrix = DenseLinearOperator(
+                materialize(matrix, route.linear_policy.materialization)
+            )
+        case "sparse-qr" | "lsmr":
+            pass
+        case _:
+            raise ValueError("Unsupported residual-graph solve route.")
     result = solve_linear(
-        LinearLeastSquaresProblem(DenseLinearOperator(matrix)),
+        LinearLeastSquaresProblem(matrix),
         -gradient,
         policy=route.linear_policy,
     )
@@ -444,9 +476,8 @@ def solve_residual_graph(
         active = entry_status == int(OptimizationStatus.ITERATING)
 
         def attempt(value: _ResidualGraphIterationState) -> _ResidualGraphIterationState:
-            matrix = value.model.curvature + value.damping * jnp.eye(
-                dimension,
-                dtype=value.model.curvature.dtype,
+            matrix = value.model.curvature + value.damping * IdentityLinearOperator(
+                value.model.curvature.source
             )
             step, route_iterations, usable = _solve_route(
                 matrix,
@@ -496,7 +527,7 @@ def solve_residual_graph(
                 )
                 predicted = -jnp.real(
                     jnp.vdot(operand.model.gradient, step)
-                ) - 0.5 * jnp.real(jnp.vdot(step, operand.model.curvature @ step))
+                ) - 0.5 * jnp.real(jnp.vdot(step, operand.model.curvature.mv(step)))
                 actual = operand.model.objective - candidate_model.objective
                 ratio = actual / jnp.maximum(predicted, 1e-30)
                 accept = (

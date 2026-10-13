@@ -171,3 +171,54 @@ def test_causal_recurrent_scenario_1() -> None:
         config=_config(steps=1, failure_policy="serial"),
     )
     assert result.outputs.shape == (3, 2)
+
+
+@pytest.mark.parametrize("route", ["action-scan", "checkpointed-action-scan"])
+def test_causal_recurrent_exposes_low_memory_adjoint_end_to_end(
+    route: nl.CausalAdjointRoute,
+) -> None:
+    cell = layers.RNNCell(1, 2, dtype=jnp.float64, key=jax.random.key(44))
+    batch = layers.RecurrentBatch(
+        jnp.asarray([[0.1], [0.2], [-0.1], [0.05]], dtype=jnp.float64),
+        jnp.ones(4, dtype=jnp.bool_),
+    )
+    policy = nl.CausalAdjointPolicy(route, maximum_dense_bytes=1, checkpoint_block_size=2)
+
+    def evaluate(
+        current: layers.RNNCell,
+        adjoint: nl.CausalAdjointPolicy,
+    ) -> layers.CausalRecurrentResult:
+        return layers.run_causal_recurrent(
+            current,
+            batch,
+            config=layers.CausalRecurrentConfig(
+                method=nl.CausalNewton(),
+                adjoint=adjoint,
+                termination=nl.NonlinearTermination(
+                    absolute_residual=1e-10,
+                    relative_residual=1e-10,
+                    maximum_steps=8,
+                ),
+            ),
+        )
+
+    dense_policy = nl.CausalAdjointPolicy()
+    dense, low = evaluate(cell, dense_policy), evaluate(cell, policy)
+    assert jnp.all(low.successful)
+    assert low.diagnostics.adjoint.route == route
+    assert low.diagnostics.adjoint.policy_id == policy.policy_id
+    assert jnp.allclose(low.states, dense.states, atol=1e-10)
+    assert jnp.allclose(low.outputs, dense.outputs, atol=1e-10)
+    dense_gradient = jax.grad(
+        lambda current: jnp.sum(evaluate(current, dense_policy).outputs)
+    )(cell)
+    low_gradient = jax.grad(lambda current: jnp.sum(evaluate(current, policy).outputs))(
+        cell
+    )
+    assert jax.tree.all(
+        jax.tree.map(
+            lambda left, right: jnp.allclose(left, right, atol=1e-9),
+            low_gradient,
+            dense_gradient,
+        )
+    )

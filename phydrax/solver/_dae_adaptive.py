@@ -841,28 +841,32 @@ def _adaptive_primal(
         )
         retained_current = eqx.combine(current.retained_nonlinear, retained_static)
 
-        reused = _seed_nonlinear_continuation(
-            retained_current,
-            prepared.stage_problem,
-            predictor_increment,
-            args=arguments,
-            defer_refresh_steps=policy.nonlinear_termination.maximum_steps,
-        )
-        refreshed = refresh_nonlinear(
-            retained_current,
-            prepared.stage_problem,
-            predictor_increment,
-            args=arguments,
-        )
-        reused_dynamic, _ = eqx.partition(reused, eqx.is_array)
-        refreshed_dynamic, refreshed_static = eqx.partition(refreshed, eqx.is_array)
+        def seed(use_retained: bool) -> Any:
+            seeded = (
+                _seed_nonlinear_continuation(
+                    retained_current,
+                    prepared.stage_problem,
+                    predictor_increment,
+                    args=arguments,
+                    defer_refresh_steps=policy.nonlinear_termination.maximum_steps,
+                )
+                if use_retained
+                else refresh_nonlinear(
+                    retained_current,
+                    prepared.stage_problem,
+                    predictor_increment,
+                    args=arguments,
+                )
+            )
+            return eqx.partition(seeded, eqx.is_array)[0]
+
         seeded_dynamic = jax.lax.cond(
             reuse,
-            lambda _: reused_dynamic,
-            lambda _: refreshed_dynamic,
+            lambda _: seed(True),
+            lambda _: seed(False),
             operand=None,
         )
-        seeded = eqx.combine(seeded_dynamic, refreshed_static)
+        seeded = eqx.combine(seeded_dynamic, retained_static)
         nonlinear_result, retained = _solve_prepared_nonlinear_stateful(seeded)
         retained_dynamic_, _ = eqx.partition(retained, eqx.is_array)
         increment = jnp.asarray(nonlinear_result.state)

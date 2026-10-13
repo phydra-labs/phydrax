@@ -273,9 +273,7 @@ class _FactorHVPKolmogorovCallable(StrictModule):
             local_args[self.observable_state_position] = value
             return self.observable.func(*local_args, key=key, **kwargs)
 
-        gradient = jax.jacrev(evaluate)(state)
-        drift_expanded = drift.reshape((1,) * (gradient.ndim - state.ndim) + state.shape)
-        first_order = jnp.sum(gradient * drift_expanded, axis=-1)
+        first_order = jax.jvp(evaluate, (state,), (drift,))[1]
         second_order = factor_hvp_contraction(evaluate, state, diffusion)
         return first_order + 0.5 * second_order
 
