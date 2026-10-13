@@ -160,9 +160,10 @@
 - SPH density-diffusion variance evidence reduces the dynamic active mask on
   device and excludes inactive density slots, remaining valid in compiled
   fixed-step rollouts without host tracer conversion.
-- Structural sparse differentiation handles JAX empty allocations as
-  input-independent values without claiming backend-dependent contents are
-  constants; zero-sized battery collocation blocks now compile.
+- Structural sparse differentiation handles JAX's input-independent `empty`
+  allocation primitive without claiming backend-dependent contents are
+  constants or introducing false dependencies; absent direct-collocation
+  constraint blocks and zero-sized battery collocation blocks now compile.
 - Structural control-flow tracing consumes current JAX scan input-tree metadata
   and unified nested-program constants instead of removed parameter names and
   closed-program wrappers. While-loop condition and body captures bind to their
@@ -170,9 +171,6 @@
 - Meshfree moment-obstruction regression coverage requests native SVD rank
   certification explicitly; adaptation documentation distinguishes certified
   infeasibility from unresolved approximate-null Krylov evidence.
-- Sparse structural differentiation handles JAX's input-independent `empty`
-  allocation primitive, including absent direct-collocation constraint blocks,
-  without introducing false dependencies.
 - Mean-field planner refusal coverage follows the checked nominal signature's
   diagnostic while retaining the explicit externality requirement.
 - Thermal/isothermal battery transport regression comparisons scale the
