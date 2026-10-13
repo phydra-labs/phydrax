@@ -151,7 +151,7 @@ def _initialize(beam: dict[str, Any], mode: str, step: float) -> Any:
 
 def _gauss_bound(beam: dict[str, Any], field: Any) -> float:
     """Max-norm Gauss bound implied by the certified Hodge-norm Poisson residual."""
-    stars = np.asarray(beam["bridge"].cochain.hodge_stars[0])
+    stars = np.asarray(beam["bridge"].cochain.hodge_diagonal(0))
     free = ~np.asarray(beam["solver"].electrostatic.boundary.dirichlet_mask)
     charge = np.where(free, np.asarray(field.primary.charge), 0.0)
     return _TOLERANCE * np.sqrt(np.sum(stars * charge**2)) / beam["h"] ** 1.5
