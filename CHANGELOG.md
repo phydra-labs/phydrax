@@ -57,6 +57,9 @@
 - London/PTV capacities reject booleans and fractional truncation; failed London
   inductance solves expose native status through explicit refusals, including at
   cable bridges. Seeded PTV trajectory identity excludes execution capacities.
+- Match operator-workspace benchmark gates by full problem capacity, keep default
+  and smoke campaigns aligned with committed baselines, and support isolated
+  smoke outputs for every memory driver on the discretization branch.
 - Reuse guarded fixed-grid DAE numerical preparation with mandatory fresh retries
   and combined work evidence; bind changed runtime argument contexts before the
   temporal scan and avoid eager adaptive numerical refresh.
@@ -475,6 +478,8 @@
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
   explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
+- Explicit bounded target chunking for direct layer potentials, retaining parallel
+  defaults and reporting target policy and logical workspace evidence.
 - Exact byte-admitted dense, action-scan, and checkpointed causal adjoints, with
   recurrent-NN and causal HMC policy forwarding and route evidence.
 - Explicit bounded periodic DAE regularity probe batches with ordered certificates.
@@ -2786,6 +2791,34 @@
   and method evidence; unresolved eigenspaces report invalid/nonconverged results.
 - Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
   prepared query hierarchies; source model and revision identities are unchanged.
+- Cut-cochain transfers use budgeted component SVD actions with one global relative
+  singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
+  outputs. Connected components retain quadratic factor storage up to the budget.
+- Prepared spline, structured transfer, Fourier split-form, and field-reconstruction
+  persistence templates use sparse/local-support representations and must be
+  recreated. Input/configuration and documented operator IDs remain unchanged;
+  Fourier certificate-derived IDs may change at roundoff.
+- Direct layer-potential plan and report identities include explicit target policy
+  and workspace metadata; recreate persistence templates with their new fields.
+- Residual-graph curvature is a deterministic factor-local operator, with
+  operator damping and matrix-free Schur/LSMR solves; dense materialization is
+  explicit and byte-admitted. Curvature persistence leaves intentionally change.
+- Structured optimization and KKT sensitivity use sparse derivative actions and
+  prepared matrix-free linearizations, with explicit bounded dense-SVD selection
+  and retained rank, condition, convergence, and refusal evidence.
+- Filter interior-point trial derivatives use selectable bounded batches, while
+  rejected trials retain value-only evaluation and accepted derivative reuse.
+- MPC compiles sparse by default; differentiable and dense-method MPC requires
+  explicit bounded dense compilation. MPC and iLQR policy identities record the
+  selected representation, route, and admission budgets.
+- MAC segmented shadowing defaults to workspace-admitted `auto`: dense SVD within
+  the existing 512 MiB ceiling, exact block-banded QR least squares above it.
+  Explicit routes retain their behavior; plan identity records policy/budget and
+  result identity/evidence records the resolved route. Banded rank admission
+  reuses certified singular lower bounds without weakening threshold certificates.
+- Private nonlinear open-loop game stationarity uses multiplier-weighted VJPs;
+  qualification derivatives use owner controls and active rows while preserving
+  case parallelism and KKT certificates.
 - Structured Laplace stores diagonal or low-rank precision state and applies
   covariance and sampling scales without dense reconstruction. Full curvature
   remains dense; structured result archive leaves and their fingerprints change.
