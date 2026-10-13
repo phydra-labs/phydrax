@@ -45,6 +45,7 @@ from ..design._schema import (
     ParameterBinding,
     ParameterId,
 )
+from ..simplicial._bvh import _segment_ray_parity, SegmentBVH
 from ._primitives import (
     _check_points,
     _compile_orthotope,
@@ -529,9 +530,12 @@ class Polygon(GeometrySource):
             role="position",
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
+        count = self.vertices.shape[0]
+        edge_vertices = jnp.arange(count, dtype=jnp.int32)
+        edges = jnp.stack((edge_vertices, (edge_vertices + 1) % count), axis=1)
         return _PolygonKernel(
             vertices,
-            vertex_count=self.vertices.shape[0],
+            SegmentBVH(self.vertices, edges),
             source_id=self.feature_id,
         )
 
@@ -539,21 +543,14 @@ class Polygon(GeometrySource):
 class _PolygonKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
-    intersection_pairs: Array
+    index: SegmentBVH
 
     def __init__(
-        self, vertices: ParameterBinding, *, vertex_count: int, source_id: str
+        self, vertices: ParameterBinding, index: SegmentBVH, *, source_id: str
     ) -> None:
-        pairs = [
-            (first, second)
-            for first in range(vertex_count)
-            for second in range(first + 1, vertex_count)
-            if (first + 1) % vertex_count != second
-            and (second + 1) % vertex_count != first
-        ]
         self.vertices = vertices
         self.source_id = source_id
-        self.intersection_pairs = jnp.asarray(pairs, dtype=jnp.int32).reshape((-1, 2))
+        self.index = index
 
     @property
     def ambient_dimension(self) -> int:
@@ -587,30 +584,48 @@ class _PolygonKernel(GeometryKernel):
             vertices[:, 0] * successors[:, 1] - successors[:, 0] * vertices[:, 1]
         )
 
-        segments = jnp.stack((vertices, successors), axis=1)
-        first_segments = segments[self.intersection_pairs[:, 0]]
-        second_segments = segments[self.intersection_pairs[:, 1]]
-        a, b = first_segments[:, 0], first_segments[:, 1]
-        c, d = second_segments[:, 0], second_segments[:, 1]
-        first_direction = b - a
-        second_direction = d - c
+        # Scan nonadjacent pairs in lexicographic row/tile order. No pair table
+        # survives preparation or enters the polygon's persistence leaves.
+        count = vertices.shape[0]
+        width = 64
+        lanes = jnp.arange(width, dtype=jnp.int32)
 
         def cross2(left: Array, right: Array) -> Array:
-            return left[:, 0] * right[:, 1] - left[:, 1] * right[:, 0]
+            return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
 
-        first_c = cross2(first_direction, c - a)
-        first_d = cross2(first_direction, d - a)
-        second_a = cross2(second_direction, a - c)
-        second_b = cross2(second_direction, b - c)
-        overlaps = jnp.all(
-            jnp.maximum(jnp.minimum(a, b), jnp.minimum(c, d))
-            <= jnp.minimum(jnp.maximum(a, b), jnp.maximum(c, d)) + edge_tolerance,
-            axis=-1,
+        def row(first: Array, intersects: Array) -> Array:
+            a, b = vertices[first], successors[first]
+            first_direction = b - a
+
+            def tile(block: Array, found: Array) -> Array:
+                second = block * width + lanes
+                safe_second = jnp.minimum(second, count - 1)
+                c, d = vertices[safe_second], successors[safe_second]
+                second_direction = d - c
+                first_c = cross2(first_direction, c - a)
+                first_d = cross2(first_direction, d - a)
+                second_a = cross2(second_direction, a - c)
+                second_b = cross2(second_direction, b - c)
+                overlaps = jnp.all(
+                    jnp.maximum(jnp.minimum(a, b), jnp.minimum(c, d))
+                    <= jnp.minimum(jnp.maximum(a, b), jnp.maximum(c, d)) + edge_tolerance,
+                    axis=-1,
+                )
+                crosses = (first_c * first_d <= area_tolerance * area_tolerance) & (
+                    second_a * second_b <= area_tolerance * area_tolerance
+                )
+                valid = (
+                    (second < count)
+                    & (second > first + 1)
+                    & ~((first == 0) & (second == count - 1))
+                )
+                return found | jnp.any(valid & overlaps & crosses)
+
+            return jax.lax.fori_loop(0, (count + width - 1) // width, tile, intersects)
+
+        self_intersects = jax.lax.fori_loop(
+            0, count, row, jnp.asarray(False, dtype=jnp.bool_)
         )
-        crosses = (first_c * first_d <= area_tolerance * area_tolerance) & (
-            second_a * second_b <= area_tolerance * area_tolerance
-        )
-        self_intersects = jnp.any(overlaps & crosses)
 
         minimum_edge = jnp.min(edge_lengths)
         return GeometryValidityEvidence(
@@ -640,28 +655,14 @@ class _PolygonKernel(GeometryKernel):
         return self.vertices.read(state)
 
     def _unsigned_distance(self, state: DesignState, points: Array) -> Array:
-        vertices = self._vertices(state)
-        start = vertices
-        edge = jnp.roll(vertices, -1, axis=0) - vertices
         points_ = _check_points(points, 2)
-        relative = points_[..., None, :] - start
-        denominator = jnp.sum(edge * edge, axis=-1)
-        coordinate = jnp.clip(jnp.sum(relative * edge, axis=-1) / denominator, 0.0, 1.0)
-        closest = start + coordinate[..., None] * edge
-        return jnp.min(_finite_norm(points_[..., None, :] - closest), axis=-1)
+        query = self.index.refit(self._vertices(state)).query(points_)
+        return _finite_norm(points_ - query.closest_point)
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
         vertices = self._vertices(state)
         points_ = _check_points(points, 2)
-        start = vertices
-        end = jnp.roll(vertices, -1, axis=0)
-        px = points_[..., 0, None]
-        py = points_[..., 1, None]
-        crosses = (start[:, 1] > py) != (end[:, 1] > py)
-        x_intersection = (end[:, 0] - start[:, 0]) * (py - start[:, 1]) / jnp.where(
-            end[:, 1] != start[:, 1], end[:, 1] - start[:, 1], 1.0
-        ) + start[:, 0]
-        inside = jnp.sum(crosses & (px < x_intersection), axis=-1) % 2 == 1
+        inside = _segment_ray_parity(points_, vertices, self.index.edges)
         return inside | (
             self._unsigned_distance(state, points_) <= 16.0 * jnp.finfo(points_.dtype).eps
         )
@@ -671,23 +672,8 @@ class _PolygonKernel(GeometryKernel):
         return jnp.where(self.contains(state, points), -distance, distance)
 
     def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
-        vertices = self._vertices(state)
         points_ = _check_points(points, 2)
-        leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 2))
-        edge = jnp.roll(vertices, -1, axis=0) - vertices
-        relative = flat[:, None, :] - vertices
-        coordinate = jnp.clip(
-            jnp.sum(relative * edge, axis=-1) / jnp.sum(edge * edge, axis=-1),
-            0.0,
-            1.0,
-        )
-        closest = vertices + coordinate[..., None] * edge
-        index = jnp.argmin(_finite_norm(flat[:, None, :] - closest), axis=-1)
-        selected = edge[index]
-        normal = jnp.stack((selected[:, 1], -selected[:, 0]), axis=-1)
-        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
-        return normal.reshape((*leading, 2))
+        return self.index.refit(self._vertices(state)).query(points_).normal
 
     def bounds(self, state: DesignState, /) -> Array:
         vertices = self._vertices(state)

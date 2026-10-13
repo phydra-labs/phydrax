@@ -37,6 +37,8 @@ from .._contracts import (
 )
 from .._schema import AbstractFittedModel
 from ._utils import (
+    blocked_case_top_k,
+    blocked_radius_sum,
     broadcast_support,
     case_distances,
     chunked_call,
@@ -169,18 +171,24 @@ class ExactNeighborRegressorModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return _selection_contract("neighbor_indices")
 
-    def neighbor_indices(self, x: ArrayLike, /) -> tuple[Array, Array]:
-        distances, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, self.metric
+    def neighbor_indices(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> tuple[Array, Array]:
+        return blocked_case_top_k(
+            jnp.asarray(x),
+            self.support,
+            self.support_mask,
+            self.case_shape,
+            self.metric,
+            self.neighbor_count,
+            workspace_bytes=workspace_bytes,
         )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape)
-        safe = jnp.where(mask, distances, jnp.inf)
-        negative, indices = jax.lax.top_k(-safe, self.neighbor_count)
-        return indices, -negative
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        indices, distances = self.neighbor_indices(x)
+        indices, distances = self.neighbor_indices(x, workspace_bytes=workspace_bytes)
         values = gather_support(self.targets, indices, self.case_shape)
         weight = gather_support(self.support_weight[..., None], indices, self.case_shape)[
             ..., 0
@@ -258,31 +266,39 @@ class ExactNeighborClassifierModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return _selection_contract("neighbor_indices", "predict")
 
-    def predict_proba(self, x: ArrayLike, /) -> Array:
-        distances, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, self.metric
-        )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape)
-        negative, indices = jax.lax.top_k(
-            -jnp.where(mask, distances, jnp.inf), self.neighbor_count
+    def predict_proba(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        indices, distances = blocked_case_top_k(
+            jnp.asarray(x),
+            self.support,
+            self.support_mask,
+            self.case_shape,
+            self.metric,
+            self.neighbor_count,
+            workspace_bytes=workspace_bytes,
         )
         labels = gather_support(self.labels[..., None], indices, self.case_shape)[..., 0]
         weight = gather_support(self.support_weight[..., None], indices, self.case_shape)[
             ..., 0
         ]
-        weight = jnp.where(jnp.isfinite(-negative), weight, 0.0)
+        weight = jnp.where(jnp.isfinite(distances), weight, 0.0)
         scores = jnp.sum(
             weight[..., None] * jax.nn.one_hot(labels, self.class_count), axis=-2
         )
         total = jnp.sum(scores, axis=-1, keepdims=True)
         return jnp.where(total > 0, scores / jnp.where(total > 0, total, 1.0), 0.0)
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        return self.predict_proba(x)
+        return self.predict_proba(x, workspace_bytes=workspace_bytes)
 
-    def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.predict_proba(x)
+    def predict(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        probability = self.predict_proba(x, workspace_bytes=workspace_bytes)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
@@ -526,24 +542,22 @@ class RadiusNeighborRegressorModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return _selection_contract("radius_membership")
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        distances, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, self.metric
+        numerator, denominator = blocked_radius_sum(
+            jnp.asarray(x),
+            self.support,
+            self.support_mask,
+            self.support_weight,
+            self.targets,
+            self.radius,
+            self.case_shape,
+            self.metric,
+            workspace_bytes=workspace_bytes,
         )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape) & (
-            distances <= self.radius
-        )
-        weight = (
-            broadcast_support(self.support_weight, len(query_shape), self.case_shape)
-            * mask
-        )
-        targets = broadcast_support(self.targets, len(query_shape), self.case_shape)
-        denominator = jnp.sum(weight, axis=-1)
-        prediction = (
-            jnp.sum(weight[..., None] * targets, axis=-2)
-            / jnp.where(denominator > 0, denominator, 1.0)[..., None]
-        )
+        prediction = numerator / jnp.where(denominator > 0, denominator, 1.0)[..., None]
         prediction = jnp.where((denominator > 0)[..., None], prediction, jnp.nan)
         if not self.output_shape:
             return prediction[..., 0]
@@ -612,30 +626,35 @@ class RadiusNeighborClassifierModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return _selection_contract("radius_membership", "predict")
 
-    def predict_proba(self, x: ArrayLike, /) -> Array:
-        distances, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, self.metric
-        )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape) & (
-            distances <= self.radius
-        )
-        weight = (
-            broadcast_support(self.support_weight, len(query_shape), self.case_shape)
-            * mask
-        )
-        labels = broadcast_support(self.labels, len(query_shape), self.case_shape)
-        scores = jnp.sum(
-            weight[..., None] * jax.nn.one_hot(labels, self.class_count), axis=-2
+    def predict_proba(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        scores, _ = blocked_radius_sum(
+            jnp.asarray(x),
+            self.support,
+            self.support_mask,
+            self.support_weight,
+            jax.nn.one_hot(
+                self.labels, self.class_count, dtype=self.support_weight.dtype
+            ),
+            self.radius,
+            self.case_shape,
+            self.metric,
+            workspace_bytes=workspace_bytes,
         )
         total = jnp.sum(scores, axis=-1, keepdims=True)
         return jnp.where(total > 0, scores / jnp.where(total > 0, total, 1.0), 0.0)
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        return self.predict_proba(x)
+        return self.predict_proba(x, workspace_bytes=workspace_bytes)
 
-    def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.predict_proba(x)
+    def predict(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        probability = self.predict_proba(x, workspace_bytes=workspace_bytes)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 

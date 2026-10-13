@@ -8,12 +8,13 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, lax
 from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._validation import positive_integer
 
 
 class PhaseGeometryMetrics(StrictModule):
@@ -41,6 +42,7 @@ class InterfaceDistanceMetrics(StrictModule):
     symmetric_mean_distance: Array
     hausdorff_distance: Array
     percentile_hausdorff_distance: Array
+    interface_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -48,7 +50,11 @@ class InterfaceDistanceMetrics(StrictModule):
         symmetric_mean_distance: ArrayLike,
         hausdorff_distance: ArrayLike,
         percentile_hausdorff_distance: ArrayLike,
+        interface_workspace_bytes: int = 2 * 1024 * 1024,
     ) -> None:
+        self.interface_workspace_bytes = positive_integer(
+            interface_workspace_bytes, "interface_workspace_bytes"
+        )
         self.symmetric_mean_distance = jnp.asarray(symmetric_mean_distance)
         self.hausdorff_distance = jnp.asarray(hausdorff_distance)
         self.percentile_hausdorff_distance = jnp.asarray(percentile_hausdorff_distance)
@@ -145,28 +151,109 @@ def _checked_active_points(points: Array, mask: Array, name: str, /) -> Array:
     return jnp.where(mask[..., None], points, 0.0)
 
 
+def _interface_tiles(
+    source: Array,
+    target: Array,
+    chunk_size: int | None,
+    target_chunk_size: int | None,
+    interface_workspace_bytes: int,
+) -> tuple[int, int]:
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
+    source_tile = source_count if chunk_size is None else min(chunk_size, source_count)
+    if target_chunk_size is None or chunk_size is None:
+        pair_capacity = max(
+            1,
+            interface_workspace_bytes
+            // (max(1, math.prod(source.shape[:-2])) * source.dtype.itemsize),
+        )
+        if chunk_size is None:
+            source_tile = min(source_tile, pair_capacity)
+        target_tile = (
+            min(target_count, max(1, pair_capacity // source_tile))
+            if target_chunk_size is None
+            else min(target_chunk_size, target_count)
+        )
+        if chunk_size is None and target_chunk_size is not None:
+            source_tile = min(source_count, max(1, pair_capacity // target_tile))
+    else:
+        target_tile = min(target_chunk_size, target_count)
+    return source_tile, target_tile
+
+
 def _directed_nearest_distances(
     source: Array,
     target: Array,
     target_mask: Array,
     /,
     *,
-    chunk_size: int,
+    chunk_size: int | None,
+    target_chunk_size: int | None,
+    interface_workspace_bytes: int = 2 * 1024 * 1024,
 ) -> Array:
-    target_square = jnp.sum(target * target, axis=-1)
-    blocks = []
-    for start in range(0, source.shape[-2], chunk_size):
-        stop = min(start + chunk_size, source.shape[-2])
-        block = source[..., start:stop, :]
-        block_square = jnp.sum(block * block, axis=-1, keepdims=True)
-        cross = ein.contract("...id,...jd->...ij", block, target)
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
+    source_tile, target_tile = _interface_tiles(
+        source, target, chunk_size, target_chunk_size, interface_workspace_bytes
+    )
+    if source_tile == source_count and target_tile == target_count:
+        source_square = jnp.sum(source * source, axis=-1, keepdims=True)
+        target_square = jnp.sum(target * target, axis=-1)
+        cross = ein.contract("...id,...jd->...ij", source, target)
         squared = jnp.maximum(
-            block_square + target_square[..., None, :] - 2.0 * cross,
-            0.0,
+            source_square + target_square[..., None, :] - 2.0 * cross, 0.0
         )
         squared = jnp.where(target_mask[..., None, :], squared, jnp.inf)
-        blocks.append(jnp.sqrt(jnp.min(squared, axis=-1)))
-    return jnp.concatenate(blocks, axis=-1)
+        return jnp.sqrt(jnp.min(squared, axis=-1))
+    source_padding = (-source_count) % source_tile
+    target_padding = (-target_count) % target_tile
+    point_padding = [(0, 0)] * source.ndim
+    point_padding[-2] = (0, source_padding)
+    source = jnp.pad(source, point_padding)
+    point_padding[-2] = (0, target_padding)
+    target = jnp.pad(target, point_padding)
+    mask_padding = [(0, 0)] * target_mask.ndim
+    mask_padding[-1] = (0, target_padding)
+    target_mask = jnp.pad(target_mask, mask_padding, constant_values=False)
+    case_shape = source.shape[:-2]
+    output = jnp.zeros(case_shape + (source_count + source_padding,), dtype=source.dtype)
+
+    def source_body(index: Array, distances: Array) -> Array:
+        start = index * source_tile
+        block = lax.dynamic_slice_in_dim(source, start, source_tile, axis=-2)
+        block_square = jnp.sum(block * block, axis=-1, keepdims=True)
+
+        def target_body(target_index: Array, minima: Array) -> Array:
+            target_start = target_index * target_tile
+            candidates = lax.dynamic_slice_in_dim(
+                target, target_start, target_tile, axis=-2
+            )
+            active = lax.dynamic_slice_in_dim(
+                target_mask, target_start, target_tile, axis=-1
+            )
+            target_square = jnp.sum(candidates * candidates, axis=-1)
+            cross = ein.contract("...id,...jd->...ij", block, candidates)
+            squared = jnp.maximum(
+                block_square + target_square[..., None, :] - 2.0 * cross, 0.0
+            )
+            # Padded candidates cannot displace an active target's minimum.
+            squared = jnp.where(active[..., None, :], squared, jnp.inf)
+            return jnp.minimum(minima, jnp.min(squared, axis=-1))
+
+        minima = lax.fori_loop(
+            0,
+            (target_count + target_padding) // target_tile,
+            target_body,
+            jnp.full(case_shape + (source_tile,), jnp.inf, dtype=source.dtype),
+        )
+        return lax.dynamic_update_slice_in_dim(
+            distances, jnp.sqrt(minima), start, axis=-1
+        )
+
+    output = lax.fori_loop(
+        0, (source_count + source_padding) // source_tile, source_body, output
+    )
+    return output[..., :source_count]
 
 
 def _masked_mean(values: Array, mask: Array, /) -> Array:
@@ -267,7 +354,9 @@ def interface_distance_metrics(
     predicted_mask: ArrayLike | None = None,
     reference_mask: ArrayLike | None = None,
     percentile: float = 0.95,
-    chunk_size: int = 1024,
+    chunk_size: int | None = None,
+    target_chunk_size: int | None = None,
+    interface_workspace_bytes: int = 2 * 1024 * 1024,
 ) -> InterfaceDistanceMetrics:
     """Return symmetric mean, Hausdorff, and percentile-Hausdorff distances.
 
@@ -276,6 +365,15 @@ def interface_distance_metrics(
     symmetric mean averages the two directed nearest-point means; Hausdorff
     quantities take the maximum of their two directed values. Percentiles use
     linear interpolation over active directed distances.
+    ``None`` source/target chunk sizes derive tiles from
+    ``interface_workspace_bytes`` (default 2 MiB), counting broadcast cases and
+    dtype item size for the pair table. Full-fit sets use the dense parallel
+    computation without tile loops. Explicit positive chunk sizes override the
+    respective automatic tile; supplying both bypasses budget derivation.
+    All controls must be static under JIT. The budget excludes inputs, outputs,
+    percentile sorting, and other compiler scratch; it is not a process-RSS
+    limit. At least one pair is processed even under a smaller budget.
+    All active targets remain candidates under either route.
     """
 
     predicted = _point_cloud(predicted_points, "predicted_points")
@@ -285,9 +383,13 @@ def interface_distance_metrics(
     percentile_ = float(percentile)
     if not math.isfinite(percentile_) or not 0.0 <= percentile_ <= 1.0:
         raise ValueError("percentile must be finite and lie in [0, 1].")
-    chunk = int(chunk_size)
-    if chunk <= 0:
-        raise ValueError("chunk_size must be positive.")
+    chunk = None if chunk_size is None else positive_integer(chunk_size, "chunk_size")
+    target_chunk = (
+        None
+        if target_chunk_size is None
+        else positive_integer(target_chunk_size, "target_chunk_size")
+    )
+    workspace = positive_integer(interface_workspace_bytes, "interface_workspace_bytes")
 
     predicted_count = predicted.shape[-2]
     reference_count = reference.shape[-2]
@@ -342,12 +444,16 @@ def interface_distance_metrics(
         reference,
         reference_active,
         chunk_size=chunk,
+        target_chunk_size=target_chunk,
+        interface_workspace_bytes=workspace,
     )
     reference_to_predicted = _directed_nearest_distances(
         reference,
         predicted,
         predicted_active,
         chunk_size=chunk,
+        target_chunk_size=target_chunk,
+        interface_workspace_bytes=workspace,
     )
     mean_distance = 0.5 * (
         _masked_mean(predicted_to_reference, predicted_active)
@@ -365,6 +471,7 @@ def interface_distance_metrics(
         symmetric_mean_distance=mean_distance,
         hausdorff_distance=hausdorff,
         percentile_hausdorff_distance=percentile_hausdorff,
+        interface_workspace_bytes=workspace,
     )
 
 

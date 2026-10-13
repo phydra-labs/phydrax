@@ -6,8 +6,11 @@
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
+from phydrax.graph._derived import LineGraphConnectivity
 
 
 def _path_graph() -> phx.graph.GraphIR:
@@ -111,3 +114,46 @@ def test_line_graph_integrates_with_graph_domain_model() -> None:
     model = domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=u)
 
     assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([-2.0, 2.0]))
+
+
+@pytest.mark.parametrize("connectivity", ["directed_path", "shared_node"])
+@pytest.mark.parametrize("include_self", [False, True], ids=["no-self", "self"])
+def test_line_graph_endpoint_joins_match_ordered_brute_force(
+    connectivity: LineGraphConnectivity,
+    include_self: bool,
+) -> None:
+    # Parallel/reversed edges, self-loops, and an isolate exercise duplicate
+    # joins and the smallest-common-endpoint evidence.
+    senders = np.asarray([2, 0, 1, 0, 2, 4], dtype=np.int32)
+    receivers = np.asarray([0, 2, 1, 2, 3, 4], dtype=np.int32)
+    expected: list[tuple[int, int, int]] = []
+    for i in range(senders.size):
+        for j in range(senders.size):
+            if i == j and not include_self:
+                continue
+            if connectivity == "directed_path":
+                common = [int(receivers[i])] if receivers[i] == senders[j] else []
+            else:
+                common = sorted(
+                    {int(senders[i]), int(receivers[i])}
+                    & {int(senders[j]), int(receivers[j])}
+                )
+            if common:
+                expected.append((i, j, common[0]))
+    graph = phx.graph.GraphIR(
+        senders=senders,
+        receivers=receivers,
+        n_node=jnp.asarray([5], dtype=jnp.int32),
+        n_edge=jnp.asarray([6], dtype=jnp.int32),
+    )
+    line = phx.graph.line_graph(
+        graph,
+        connectivity=connectivity,
+        include_self_transitions=include_self,
+    ).graph
+    assert line.senders is not None
+    assert line.receivers is not None
+    np.testing.assert_array_equal(
+        np.stack((line.senders, line.receivers, line.edges["shared_node"]), axis=-1),
+        np.asarray(expected, dtype=np.int32),
+    )

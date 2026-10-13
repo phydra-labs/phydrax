@@ -68,26 +68,48 @@ def project_process_memory_subspace(
             jnp.asarray(0.0),
         )
     system = process.spec.system_dimension
-    selector_memory = jnp.eye(old, dtype=process.initial_state.dtype)[:retained]
-    selector = jnp.kron(
-        jnp.eye(system, dtype=process.initial_state.dtype), selector_memory
+    initial = process.initial_state.reshape(system, old, system, old)[
+        :, :retained, :, :retained
+    ].reshape(system * retained, system * retained)
+    # Dense selectors propagated nonfinite discarded entries into the projection.
+    initial = jnp.where(jnp.all(jnp.isfinite(process.initial_state)), initial, jnp.nan)
+    channel_finite = tuple(
+        jnp.all(jnp.isfinite(kraus), axis=(1, 2)) for kraus in process.channel_kraus
     )
-    projector = jnp.conj(selector.T) @ selector
-    identity = jnp.eye(system * old, dtype=process.initial_state.dtype)
     leakage = jnp.stack(
         [
-            jnp.sqrt(jnp.sum(jnp.abs((identity - projector) @ operator @ projector) ** 2))
-            for kraus in process.channel_kraus
-            for operator in kraus
+            jnp.where(
+                finite,
+                jnp.sqrt(
+                    jnp.sum(
+                        jnp.abs(
+                            operator.reshape(system, old, system, old)[
+                                :, retained:, :, :retained
+                            ]
+                        )
+                        ** 2
+                    )
+                ),
+                jnp.nan,
+            )
+            for kraus, finite_kraus in zip(
+                process.channel_kraus, channel_finite, strict=True
+            )
+            for operator, finite in zip(kraus, finite_kraus, strict=True)
         ]
     )
     maximum_leakage = jnp.max(leakage)
-    initial = selector @ process.initial_state @ jnp.conj(selector.T)
     retained_weight = jnp.real(jnp.trace(initial))
     initial = initial / jnp.where(retained_weight > 0.0, retained_weight, 1.0)
     channels = tuple(
-        jnp.stack([selector @ operator @ jnp.conj(selector.T) for operator in kraus])
-        for kraus in process.channel_kraus
+        jnp.where(
+            finite[:, None, None],
+            kraus.reshape(kraus.shape[0], system, old, system, old)[
+                :, :, :retained, :, :retained
+            ].reshape(kraus.shape[0], system * retained, system * retained),
+            jnp.nan,
+        )
+        for kraus, finite in zip(process.channel_kraus, channel_finite, strict=True)
     )
     compressed = CausalProcessTensor(
         CombLegSpec(

@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..ein import contract
 from ..linalg import HermitianSpectrum
 
 
@@ -188,7 +189,6 @@ class CausalProcessTensor(StrictModule):
         state = self.initial_state
         system = self.spec.system_dimension
         memory = self.spec.memory_dimension
-        memory_identity = jnp.eye(memory, dtype=state.dtype)
         valid = self.valid
         for slot, (instrument, outcome) in enumerate(
             zip(operations, selected, strict=True)
@@ -202,11 +202,14 @@ class CausalProcessTensor(StrictModule):
                     "Instrument outcome is incompatible or inactive for the process."
                 )
             updated = jnp.zeros_like(state)
+            tensor = state.reshape(system, memory, system, memory)
             for index in range(instrument.kraus.shape[1]):
-                local = jnp.kron(instrument.kraus[outcome, index], memory_identity)
+                local = instrument.kraus[outcome, index]
+                left = contract("ai,imjn->amjn", local, tensor)
+                transformed = contract("amjn,bj->ambn", left, jnp.conj(local))
                 updated = updated + jnp.where(
                     instrument.kraus_active[outcome, index],
-                    local @ state @ jnp.conj(local.T),
+                    transformed.reshape(state.shape),
                     0.0,
                 )
             state = jnp.zeros_like(updated)

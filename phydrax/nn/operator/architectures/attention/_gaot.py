@@ -12,6 +12,7 @@ import jax.random as jr
 from jax import Array
 
 from phydrax._doc import DOC_KEY0
+from phydrax._validation import positive_integer
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -45,6 +46,7 @@ def _magno_transfer(
     reference_measure: float,
     fusion: Literal["concat", "gated"],
     target_chunk_size: int | None,
+    query_workspace_bytes: int,
     key: PRNGKey,
 ) -> MultiscaleGraphTransfer:
     keys = jr.split(key, len(radii) + 1)
@@ -62,6 +64,7 @@ def _magno_transfer(
             coordinate_scale=float(coordinate_scale),
             require_measure=True,
             target_chunk_size=target_chunk_size,
+            query_workspace_bytes=query_workspace_bytes,
             key=scale_key,
         )
         for radius, scale_key in zip(radii, keys[:-1], strict=True)
@@ -83,6 +86,11 @@ class GAOT(AbstractOperatorModel):
     onto a structured 2D or 3D latent grid. A patchwise U-shaped transformer
     processes that grid before a multiscale attention decoder evaluates the
     result at arbitrary query coordinates.
+
+    ``query_chunk_size=None`` derives exact-query tiles automatically from
+    ``query_workspace_bytes=4 * 1024 * 1024``. A positive, non-boolean integer
+    overrides the target tile. Both controls are static model metadata and
+    are forwarded to every multiscale transfer and geometry-moment query.
     """
 
     operator_architecture = "GAOT"
@@ -95,6 +103,8 @@ class GAOT(AbstractOperatorModel):
     patch_shape: tuple[int, ...] = eqx.field(static=True)
     transfer_radii: tuple[float, ...] = eqx.field(static=True)
     source_keys: tuple[str, ...] = eqx.field(static=True)
+    query_chunk_size: int | None = eqx.field(static=True)
+    query_workspace_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -128,10 +138,16 @@ class GAOT(AbstractOperatorModel):
         reference_measure: float = 1.0,
         source_key: str | None = None,
         query_channels: int = 0,
-        query_chunk_size: int | None = 256,
+        query_chunk_size: int | None = None,
+        query_workspace_bytes: int = 4 * 1024 * 1024,
         assume_uniform_measure: bool = False,
         key: PRNGKey = DOC_KEY0,
     ) -> None:
+        if query_chunk_size is not None:
+            query_chunk_size = positive_integer(query_chunk_size, "query_chunk_size")
+        query_workspace_bytes = positive_integer(
+            query_workspace_bytes, "query_workspace_bytes"
+        )
         if int(coord_dim) not in (2, 3):
             raise ValueError("GAOT supports coord_dim 2 or 3.")
         shape = tuple(latent_shape)
@@ -211,6 +227,7 @@ class GAOT(AbstractOperatorModel):
                 reference_measure=float(reference_measure),
                 fusion=transfer_fusion,
                 target_chunk_size=query_chunk_size,
+                query_workspace_bytes=query_workspace_bytes,
                 key=keys[index],
             )
             for index, channels in enumerate(source_channels)
@@ -242,6 +259,7 @@ class GAOT(AbstractOperatorModel):
             reference_measure=float(reference_measure),
             fusion=transfer_fusion,
             target_chunk_size=query_chunk_size,
+            query_workspace_bytes=query_workspace_bytes,
             key=keys[-2],
         )
         latent_mixer = (
@@ -272,6 +290,8 @@ class GAOT(AbstractOperatorModel):
         self.patch_shape = patches
         self.transfer_radii = radii
         self.source_keys = source_keys
+        self.query_chunk_size = query_chunk_size
+        self.query_workspace_bytes = query_workspace_bytes
 
     def __call_operator_batch__(
         self,

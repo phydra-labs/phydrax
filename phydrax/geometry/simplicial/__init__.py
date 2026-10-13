@@ -3,7 +3,13 @@
 #
 
 from ._affine import AffineSimplexEvidence, AffineSimplexMap
-from ._bvh import TriangleBVH, WindingNumberResult, WindingNumberRoute
+from ._bvh import (
+    SegmentBVH,
+    SegmentQueryExecution,
+    TriangleBVH,
+    WindingNumberResult,
+    WindingNumberRoute,
+)
 from ._ddg import DDGOperators, discrete_operators
 from ._io import (
     mesh_region_from_source,
@@ -34,6 +40,8 @@ __all__ = [
     "PlanarMeshRegion",
     "planar_region_from_source",
     "planar_region_from_triangles",
+    "SegmentBVH",
+    "SegmentQueryExecution",
     "SegmentMesh",
     "discrete_operators",
     "SegmentQueryResult",

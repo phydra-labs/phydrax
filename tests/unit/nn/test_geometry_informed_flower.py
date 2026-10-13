@@ -227,3 +227,18 @@ def test_geometry_informed_flower_scenario_1() -> None:
 
     assert jnp.allclose(diagnostics.latent_support, 0.25)
     assert jnp.all(diagnostics.latent_mask)
+
+
+def test_flower_graph_tiles_roundtrip_with_matching_static_template(
+    tmp_path: Any,
+) -> None:
+    model = _model(key=jr.key(21), query_chunk_size=3)
+    path = tmp_path / "geometry-flower.eqx"
+    eqx.tree_serialise_leaves(path, model)
+    restored = eqx.tree_deserialise_leaves(
+        path, _model(key=jr.key(21), query_chunk_size=3)
+    )
+
+    assert restored.core.encoders[0].target_chunk_size == 3
+    assert restored.core.decoder.target_chunk_size == 3
+    assert eqx.tree_equal(restored, model)

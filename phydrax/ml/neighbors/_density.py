@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Any, ClassVar, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -33,14 +32,16 @@ from .._contracts import (
     ML_SUCCESS,
     prediction_fit_contract,
 )
+from .._numerics._pairwise import blocked_top_k
 from .._schema import AbstractFittedModel
 from ._utils import (
-    broadcast_support,
-    case_distances,
+    blocked_case_logsumexp,
+    blocked_case_top_k,
     chunked_call,
     gather_support,
     metric_regularity,
     pad_support,
+    size,
     validate_metric,
     validated_weights,
 )
@@ -107,19 +108,23 @@ class KernelDensityModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return _KERNEL_DENSITY_CONTRACT
 
-    def log_density(self, x: ArrayLike, /) -> Array:
-        squared, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, "squared-euclidean"
+    def log_density(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        active = self.support_mask & (self.support_weight > 0)
+        log_weight = jnp.where(
+            active,
+            jnp.log(jnp.maximum(self.support_weight, jnp.finfo(jnp.float64).tiny)),
+            -jnp.inf,
         )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape)
-        weight = broadcast_support(self.support_weight, len(query_shape), self.case_shape)
-        active = mask & (weight > 0)
-        logits = jnp.log(jnp.maximum(weight, jnp.finfo(jnp.float64).tiny))
-        logits = logits - 0.5 * squared / (self.bandwidth * self.bandwidth)
-        any_active = jnp.any(active, axis=-1, keepdims=True)
-        safe_logits = jnp.where(active, logits, -jnp.inf)
-        safe_logits = jnp.where(any_active, safe_logits, 0.0)
-        log_sum = jax.scipy.special.logsumexp(safe_logits, axis=-1)
+        log_sum, query_shape = blocked_case_logsumexp(
+            jnp.asarray(x),
+            self.support,
+            log_weight,
+            0.5 / (self.bandwidth * self.bandwidth),
+            self.case_shape,
+            workspace_bytes=workspace_bytes,
+        )
         total = jnp.sum(jnp.where(self.support_mask, self.support_weight, 0.0), axis=-1)
         total = total.reshape(self.case_shape + (1,) * len(query_shape))
         normalizer = (
@@ -129,12 +134,16 @@ class KernelDensityModel(AbstractFittedModel):
         )
         return jnp.where(total > 0, log_sum - normalizer, -jnp.inf)
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        return jnp.exp(self.log_density(x))
+        return jnp.exp(self.log_density(x, workspace_bytes=workspace_bytes))
 
-    def score_samples(self, x: ArrayLike, /) -> Array:
-        return self.log_density(x)
+    def score_samples(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        return self.log_density(x, workspace_bytes=workspace_bytes)
 
     def predict_chunked(self, x: ArrayLike, /, *, chunk_size: int) -> Array:
         if self.case_shape:
@@ -314,15 +323,18 @@ class LocalOutlierFactorModel(AbstractFittedModel):
             nondifferentiable_outputs=("neighbor_indices", "predict"),
         )
 
-    def score_samples(self, x: ArrayLike, /) -> Array:
-        distances, query_shape = case_distances(
-            jnp.asarray(x), self.support, self.case_shape, self.metric
+    def score_samples(
+        self, x: ArrayLike, /, *, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
+        indices, selected_distance = blocked_case_top_k(
+            jnp.asarray(x),
+            self.support,
+            self.support_mask,
+            self.case_shape,
+            self.metric,
+            self.neighbor_count,
+            workspace_bytes=workspace_bytes,
         )
-        mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape)
-        negative, indices = jax.lax.top_k(
-            -jnp.where(mask, distances, jnp.inf), self.neighbor_count
-        )
-        selected_distance = -negative
         neighbor_k_distance = gather_support(
             self.k_distance[..., None], indices, self.case_shape
         )[..., 0]
@@ -350,14 +362,26 @@ class LocalOutlierFactorModel(AbstractFittedModel):
         ) / jnp.maximum(total_weight, jnp.finfo(reachability.dtype).tiny)
         return mean_neighbor_lrd / query_lrd
 
-    def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
+    def __call__(
+        self, x: ArrayLike, /, *, key: Any = None, workspace_bytes: int = 4 * 1024 * 1024
+    ) -> Array:
         del key
-        return self.score_samples(x)
+        return self.score_samples(x, workspace_bytes=workspace_bytes)
 
-    def predict(self, x: ArrayLike, /, *, threshold: ArrayLike = 1.5) -> Array:
-        return jnp.where(self.score_samples(x) <= jnp.asarray(threshold), 1, -1).astype(
-            jnp.int32
-        )
+    def predict(
+        self,
+        x: ArrayLike,
+        /,
+        *,
+        threshold: ArrayLike = 1.5,
+        workspace_bytes: int = 4 * 1024 * 1024,
+    ) -> Array:
+        return jnp.where(
+            self.score_samples(x, workspace_bytes=workspace_bytes)
+            <= jnp.asarray(threshold),
+            1,
+            -1,
+        ).astype(jnp.int32)
 
     def predict_chunked(self, x: ArrayLike, /, *, chunk_size: int) -> Array:
         if self.case_shape:
@@ -403,26 +427,16 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
             0.0,
         )
         support_mask = batch.sample_mask & (support_weight > 0) & feature_valid
-        index_parts = []
-        distance_parts = []
-        sample_axis = len(batch.case_shape)
-        for start in range(0, batch.sample_count, self.chunk_size):
-            stop = min(start + self.chunk_size, batch.sample_count)
-            query = jnp.take(support, jnp.arange(start, stop), axis=sample_axis)
-            distances, query_shape = case_distances(
-                query, support, batch.case_shape, self.metric
-            )
-            mask = broadcast_support(support_mask, len(query_shape), batch.case_shape)
-            local_rows = jnp.arange(stop - start)
-            global_rows = jnp.arange(start, stop)
-            distances = distances.at[(..., local_rows, global_rows)].set(jnp.inf)
-            negative, indices = jax.lax.top_k(
-                -jnp.where(mask, distances, jnp.inf), self.neighbor_count
-            )
-            index_parts.append(indices)
-            distance_parts.append(-negative)
-        indices = jnp.concatenate(tuple(index_parts), axis=sample_axis)
-        distances = jnp.concatenate(tuple(distance_parts), axis=sample_axis)
+        indices, distances = blocked_top_k(
+            support,
+            support,
+            support_mask,
+            self.neighbor_count,
+            metric=self.metric,
+            block_size=self.chunk_size,
+            workspace_bytes=(4 * 1024 * 1024) // size(batch.case_shape),
+            exclude_self=True,
+        )
         k_distance = distances[..., -1]
         neighbor_k = gather_support(k_distance[..., None], indices, batch.case_shape)[
             ..., 0

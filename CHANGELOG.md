@@ -417,6 +417,8 @@
   before execution.
 
 ### Added
+- Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
+  explicit `auto`/`bvh`/`dense` execution and dense-workspace admission.
 - Explicit bounded target chunking for direct layer potentials, retaining parallel
   defaults and reporting target policy and logical workspace evidence.
 - Exact byte-admitted dense, action-scan, and checkpointed causal adjoints, with
@@ -2681,6 +2683,36 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Geometry queries stream polygon validity and ray parity, reuse prepared segment
+  hierarchies and refitted triangle BVHs, and consume selected closest geometry
+  rather than full pair tables. BRep winding retains its measured dense route.
+- Interface distance metrics derive both default tiles from validated
+  `interface_workspace_bytes` (2 MiB); full-fit pairs use the dense computation
+  without tile loops, while explicit positive source/target caps remain selectable.
+- Exact graph radius/kNN candidates and line-graph endpoint joins avoid dense
+  rejection tables while preserving radius boundaries, ties, and edge order.
+  Graph queries derive source/target tiles from `query_workspace_bytes` (4 MiB),
+  using a whole-axis parallel sort when the pair workspace fits. Graph-transfer,
+  regional-processor, and geometry-architecture defaults inherit this policy;
+  budgets and optional tile fields intentionally change static model identities.
+- Balanced and unbalanced Sinkhorn default to `block_size="auto"` under a
+  validated 128 MiB `sinkhorn_workspace_bytes` policy. Full-fit cost/kernel work
+  uses the dense route; explicit integer tiles and `None` (dense) remain available.
+  Provenance records the executed tile (`None` for dense) and workspace policy.
+- Automatic non-float32 measure-aware attention admits dense scores under an
+  8 MiB `attention_workspace_bytes` budget and derives bounded source tiles above
+  it. Float32 fused and explicit dense/tile selections remain available;
+  attention wrappers and architectures inherit automatic optional tile defaults.
+- Process-memory compression uses axis slicing and local Kraus contractions
+  rather than expanded Kronecker selectors, preserving failure and leakage evidence.
+- Exact ML neighbors, KDE, and density clustering derive tiles from positive
+  `workspace_bytes` budgets (4 MiB by default); small admitted cases use one tile.
+- Spectral clustering defaults to certified matrix-free `RestartedLanczos`;
+  explicit `DenseEigh` is budget-admitted. Spectral recipe identities and
+  `ClusterDiagnostics` archive templates change to retain eigenvalue, residual,
+  and method evidence; unresolved eigenspaces report invalid/nonconverged results.
+- Polygon, planar-segment, and fixed-topology BRep persistence templates now carry
+  prepared query hierarchies; source model and revision identities are unchanged.
 - Cut-cochain transfers use budgeted component SVD actions with one global relative
   singular cutoff; map IDs hash transfer inputs and solver policy instead of dense
   outputs. Connected components retain quadratic factor storage up to the budget.
@@ -3615,6 +3647,8 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- Polygon's retained `intersection_pairs` leaf and implicit unbounded `None`
+  graph-query tile selections; graph and NN operator callers use positive integers.
 - Duplicate CSR leaves in host sparse prepared state and the duplicate upper
   Cholesky factor in nuisance plans; their persistence leaf structures change.
 - Breaking DEM cutover: `SoftSphereDEMMethodPlan` and
