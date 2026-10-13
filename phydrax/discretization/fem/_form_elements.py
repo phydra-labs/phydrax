@@ -8,7 +8,6 @@ All component axes follow the exterior owner's lexicographic blade convention.
 
 from __future__ import annotations
 
-from functools import lru_cache
 from itertools import combinations, product
 from math import comb, factorial, prod
 from typing import final, Literal, NamedTuple
@@ -22,6 +21,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._polynomial._cubature import simplex_rule_data, tensor_product_rule_data
 from ..._polynomial._orthogonal import (
     standard_series_derivative_coefficients,
@@ -482,7 +482,7 @@ def _solve_interval_moments(moments: _HostArray, rhs: _HostArray) -> _HostArray:
     return np.asarray(jax.device_get(result.value), dtype=np.float64)
 
 
-@lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _tensor_interval(r: int) -> _TensorInterval:
     """Admit reusable interval duals, never a global tensor Vandermonde."""
     q, quadrature = _tensor_quadrature(1, r + 1)
@@ -553,7 +553,7 @@ def _tensor_coefficients(
     return coefficients
 
 
-@lru_cache(maxsize=32)
+@host_table_cache(max_entries=256, max_bytes=16777216)
 def _tensor_derivative(
     r: int, source: tuple[DofLabel, ...], target: tuple[DofLabel, ...]
 ) -> _HostArray:

@@ -14,13 +14,13 @@ from typing import Any
 
 import numpy as np
 
-from ._external_resource import (
-    bounded_resource_from_bytes,
-    BoundedResource,
-    ResourceLimits,
-    ResourceReadError,
+from ._external_resource import BoundedResource, ResourceReadError
+from ._resource_archive import (
+    _iter_zip_members,
+    _open_admitted_zip,
+    admit_zip_resource,
+    ArchiveLimits,
 )
-from ._resource_archive import admit_zip_resource, ArchiveLimits, read_zip_members
 
 
 _NPY_MAGIC = b"\x93NUMPY"
@@ -74,7 +74,7 @@ DEFAULT_NUMPY_FORMAT_LIMITS = NumpyFormatLimits()
 
 @dataclass(frozen=True, slots=True)
 class DecodedNumpyArray:
-    """One defensively copied, read-only external NPY array."""
+    """One read-only external NPY view over its immutable resource bytes."""
 
     value: np.ndarray
     resource: BoundedResource
@@ -100,20 +100,18 @@ def decode_npy_resource(
         raise TypeError("resource must be a BoundedResource.")
     if resource.manifest.size_bytes > limits.max_array_bytes:
         raise ResourceReadError("limit", "NPY resource exceeds its array byte limit.")
-    dtype, shape, _ = _read_npy_metadata(resource.data, limits)
-    try:
-        value = np.load(
-            io.BytesIO(resource.data),
-            allow_pickle=False,
-            max_header_size=limits.max_header_bytes,
-        )
-    except (EOFError, OSError, ValueError) as error:
-        raise ResourceReadError("malformed", "NPY resource is invalid.") from error
+    dtype, shape, _, offset, fortran = _read_npy_metadata(resource.data, limits)
+    value = np.ndarray(
+        shape,
+        dtype=dtype,
+        buffer=resource.data,
+        offset=offset,
+        order="F" if fortran else "C",
+    )
     if value.dtype != dtype or value.shape != shape:
         raise ResourceReadError("inconsistent", "NPY metadata changed during decoding.")
-    defensive = np.array(value, copy=True, order="C", subok=False)
-    defensive.setflags(write=False)
-    return DecodedNumpyArray(defensive, resource)
+    value.setflags(write=False)
+    return DecodedNumpyArray(value, resource)
 
 
 def decode_npz_resource(
@@ -152,31 +150,38 @@ def decode_npz_resource(
             raise ValueError("expected_names must be a unique tuple or None.")
         if set(logical_names) != set(expected_names):
             raise ResourceReadError("policy", "NPZ inventory does not match expectation.")
-    payloads = read_zip_members(archive, member_names)
-    arrays: dict[str, np.ndarray] = {}
     total_elements = 0
-    for member_name, logical_name in zip(member_names, logical_names, strict=True):
-        payload = payloads[member_name]
-        source_limits = resource.manifest.limits
-        member_resource = bounded_resource_from_bytes(
-            payload,
-            limits=ResourceLimits(
-                max(source_limits.max_bytes, limits.max_array_bytes),
-                source_limits.max_depth,
-                source_limits.max_nodes,
-                source_limits.max_attributes,
-                source_limits.max_losses,
-            ),
-            source_path=f"{resource.manifest.source_path or '<memory>'}!/{member_name}",
-        )
-        decoded = decode_npy_resource(member_resource, limits=limits)
-        elements = int(decoded.value.size)
+    admitted: dict[str, tuple[np.dtype[Any], tuple[int, ...]]] = {}
+    for member_name, payload in _iter_zip_members(archive, member_names):
+        dtype, shape, elements, _, _ = _read_npy_metadata(payload, limits)
+        admitted[member_name] = (dtype, shape)
         if total_elements > limits.max_total_elements - elements:
             raise ResourceReadError(
                 "limit", "NPZ arrays exceed their aggregate element limit."
             )
         total_elements += elements
-        arrays[logical_name] = decoded.value
+    del payload
+    arrays: dict[str, np.ndarray] = {}
+    with _open_admitted_zip(archive) as container:
+        for member_name in member_names:
+            dtype, shape = admitted[member_name]
+            try:
+                with container.open(member_name, mode="r") as stream:
+                    value = np.load(
+                        stream,
+                        allow_pickle=False,
+                        max_header_size=limits.max_header_bytes,
+                    )
+            except (EOFError, OSError, ValueError) as error:
+                raise ResourceReadError(
+                    "malformed", "NPY resource is invalid."
+                ) from error
+            if value.dtype != dtype or value.shape != shape:
+                raise ResourceReadError(
+                    "inconsistent", "NPY metadata changed during decoding."
+                )
+            value.setflags(write=False)
+            arrays[member_name[:-4]] = value
     return DecodedNumpyArchive(arrays, resource)
 
 
@@ -184,7 +189,7 @@ def _read_npy_metadata(
     payload: bytes,
     limits: NumpyFormatLimits,
     /,
-) -> tuple[np.dtype[Any], tuple[int, ...], int]:
+) -> tuple[np.dtype[Any], tuple[int, ...], int, int, bool]:
     stream = io.BytesIO(payload)
     if _read_exact(stream, len(_NPY_MAGIC)) != _NPY_MAGIC:
         raise ResourceReadError("malformed", "NPY resource has invalid magic.")
@@ -248,7 +253,7 @@ def _read_npy_metadata(
         raise ResourceReadError(
             "malformed", "NPY byte size is inconsistent with metadata."
         )
-    return dtype, shape, elements
+    return dtype, shape, elements, stream.tell(), header["fortran_order"]
 
 
 def _read_exact(stream: io.BytesIO, size: int, /) -> bytes:

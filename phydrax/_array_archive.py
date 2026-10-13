@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import io
 import json
 import math
 import os
@@ -21,6 +20,7 @@ from typing import Any, BinaryIO, IO
 import jax
 import jax.numpy as jnp
 import numpy as np
+from numpy.lib._format_impl import _write_array_header  # ty: ignore[unresolved-import]
 
 from ._host_io import open_regular_file
 from ._publication import publish_file
@@ -176,40 +176,131 @@ def _open_regular_archive(path: str | os.PathLike[str], /) -> Iterator[BinaryIO]
         ) from error
 
 
+class _PayloadSink:
+    """Hash/count a NumPy stream, optionally teeing it to its ZIP member."""
+
+    def __init__(
+        self,
+        stream: IO[bytes] | None = None,
+        collection: Any = None,
+        payload_size: int = 0,
+    ) -> None:
+        self.stream = stream
+        self.collection = collection
+        self.payload_size = payload_size
+        self.digest = hashlib.sha256()
+        self.byte_count = 0
+
+    def write(self, payload: bytes) -> int:
+        if self.collection is not None:
+            if self.byte_count == 0:
+                self.collection.update(
+                    (len(payload) + self.payload_size).to_bytes(8, "big")
+                )
+            self.collection.update(payload)
+        self.digest.update(payload)
+        self.byte_count += len(payload)
+        if self.stream is not None:
+            return self.stream.write(payload)
+        return len(payload)
+
+    def flush(self) -> None:
+        if self.stream is not None:
+            self.stream.flush()
+
+
+@dataclass(frozen=True, slots=True)
+class _ArrayEvidence:
+    shape: tuple[int, ...]
+    dtype: str
+    digest: str
+    byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedArrays:
+    entries: dict[str, _ArrayEvidence]
+    collection_digest: str
+    byte_count: int
+
+
+def _save_array(value: Any, sink: _PayloadSink, /) -> np.ndarray:
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise TypeError("Archive arrays cannot have object dtype.")
+    if array.flags.c_contiguous and array.nbytes <= 65_536:
+        np.save(sink, array, allow_pickle=False)
+    else:
+        # NumPy's version-selecting header preserves np.save bytes exactly.
+        # Its default 16-MiB data chunks and whole-member C copies are unnecessary.
+        header = np.lib.format.header_data_from_array_1_0(array)
+        header["fortran_order"] = False
+        _write_array_header(sink, header)
+        with np.nditer(
+            array,
+            flags=["external_loop", "buffered", "zerosize_ok"],
+            op_flags=["readonly"],
+            order="C",
+            buffersize=max(1, 65_536 // max(1, array.dtype.itemsize)),
+        ) as iterator:
+            for chunk in iterator:
+                sink.write(np.asarray(chunk).tobytes(order="C"))
+    return array
+
+
 def array_payload_digest(value: Any, /) -> str:
     """Return the checksum used by the canonical archive for one array."""
-
-    return hashlib.sha256(_array_payload(value)).hexdigest()
+    sink = _PayloadSink()
+    _save_array(value, sink)
+    return sink.digest.hexdigest()
 
 
 def array_payload_byte_count(value: Any, /) -> int:
     """Return the encoded byte count used by the canonical archive."""
+    sink = _PayloadSink()
+    _save_array(value, sink)
+    return sink.byte_count
 
-    return len(_array_payload(value))
+
+def _prepare_arrays(
+    arrays: Mapping[str, Any],
+    /,
+    limits: ArrayArchiveLimits | None = None,
+) -> _PreparedArrays:
+    policy = _resolved_archive_limits(limits)
+    if len(arrays) + 1 > policy.max_members:
+        raise ValueError("Archive exceeds the member count limit.")
+    collection = hashlib.sha256()
+    entries: dict[str, _ArrayEvidence] = {}
+    total_elements = 0
+    total_bytes = 0
+    for name in sorted(arrays):
+        if not isinstance(name, str) or not name:
+            raise TypeError("Archive array names must be non-empty strings.")
+        source = np.asarray(arrays[name])
+        elements = _admit_array_for_archive(source, policy, name)
+        if total_elements > policy.max_total_array_elements - elements:
+            raise ValueError("Archive arrays exceed the aggregate element limit.")
+        total_elements += elements
+        encoded_name = name.encode("utf-8")
+        collection.update(len(encoded_name).to_bytes(8, "big"))
+        collection.update(encoded_name)
+        sink = _PayloadSink(collection=collection, payload_size=source.nbytes)
+        array = _save_array(source, sink)
+        if sink.byte_count > policy.max_member_bytes:
+            raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
+        if total_bytes > policy.max_aggregate_bytes - sink.byte_count:
+            raise ValueError("Archive exceeds the aggregate member byte limit.")
+        total_bytes += sink.byte_count
+        entries[name] = _ArrayEvidence(
+            array.shape, array.dtype.str, sink.digest.hexdigest(), sink.byte_count
+        )
+    return _PreparedArrays(entries, collection.hexdigest(), total_bytes)
 
 
 def array_collection_digest(arrays: Mapping[str, Any], /) -> str:
     """Content-address an ordered logical collection of canonical array payloads."""
-
-    digest = hashlib.sha256()
-    for name in sorted(arrays):
-        if not isinstance(name, str) or not name:
-            raise TypeError("Archive array names must be non-empty strings.")
-        payload = _array_payload(arrays[name])
-        for part in (name.encode("utf-8"), payload):
-            digest.update(len(part).to_bytes(8, "big"))
-            digest.update(part)
-    return digest.hexdigest()
-
-
-def _array_payload(value: Any, /) -> bytes:
-    value_array = np.asarray(value)
-    array = np.ascontiguousarray(value_array) if value_array.ndim else value_array
-    if array.dtype.hasobject:
-        raise TypeError("Archive arrays cannot have object dtype.")
-    buffer = io.BytesIO()
-    np.save(buffer, array, allow_pickle=False)
-    return buffer.getvalue()
+    return _prepare_arrays(arrays).collection_digest
 
 
 def _write_stored_member(
@@ -302,38 +393,37 @@ def write_array_archive(
 ) -> Path:
     """Atomically write finite JSON metadata and pickle-free NumPy arrays."""
 
+    return _write_prepared_array_archive(
+        path,
+        manifest=manifest,
+        arrays=arrays,
+        limits=limits,
+        prepared=_prepare_arrays(arrays, limits),
+    )
+
+
+def _write_prepared_array_archive(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    manifest: Mapping[str, Any],
+    limits: ArrayArchiveLimits | None,
+    arrays: Mapping[str, Any],
+    prepared: _PreparedArrays,
+) -> Path:
     policy = _resolved_archive_limits(limits)
-    if len(arrays) + 1 > policy.max_members:
-        raise ValueError("Archive exceeds the member count limit.")
     destination = Path(os.fspath(path))
-    inventory: dict[str, dict[str, Any]] = {}
-    payloads: dict[str, bytes] = {}
-    total_elements = 0
-    total_member_bytes = 0
-    for index, name in enumerate(sorted(arrays)):
-        if not isinstance(name, str) or not name:
-            raise TypeError("Archive array names must be non-empty strings.")
-        source_array = np.asarray(arrays[name])
-        array = np.ascontiguousarray(source_array) if source_array.ndim else source_array
-        elements = _admit_array_for_archive(array, policy, name)
-        if total_elements > policy.max_total_array_elements - elements:
-            raise ValueError("Archive arrays exceed the aggregate element limit.")
-        total_elements += elements
-        payload = _array_payload(array)
-        if len(payload) > policy.max_member_bytes:
-            raise ValueError(f"Archive array {name!r} exceeds the member byte limit.")
-        if total_member_bytes > policy.max_aggregate_bytes - len(payload):
-            raise ValueError("Archive exceeds the aggregate member byte limit.")
-        total_member_bytes += len(payload)
-        member = f"arrays/{index:06d}.npy"
-        payloads[member] = payload
-        inventory[name] = {
-            "member": member,
-            "shape": list(array.shape),
-            "dtype": array.dtype.str,
-            "sha256": hashlib.sha256(payload).hexdigest(),
+    inventory = {
+        name: {
+            "member": f"arrays/{index:06d}.npy",
+            "shape": list(entry.shape),
+            "dtype": entry.dtype,
+            "sha256": entry.digest,
             "order": "C",
         }
+        for index, (name, entry) in enumerate(prepared.entries.items())
+    }
+    total_member_bytes = prepared.byte_count
     complete_manifest = dict(manifest)
     if "arrays" in complete_manifest:
         raise ValueError("Archive manifest reserves the field 'arrays'.")
@@ -361,8 +451,24 @@ def write_array_archive(
             strict_timestamps=False,
         ) as archive:
             _write_stored_member(archive, "manifest.json", manifest_payload)
-            for member in sorted(payloads):
-                _write_stored_member(archive, member, payloads[member])
+            for index, (name, entry) in enumerate(prepared.entries.items()):
+                information = zipfile.ZipInfo(
+                    f"arrays/{index:06d}.npy", date_time=(1980, 1, 1, 0, 0, 0)
+                )
+                information.compress_type = zipfile.ZIP_STORED
+                information.create_system = 3
+                information.external_attr = 0o600 << 16
+                information.file_size = entry.byte_count
+                with archive.open(information, mode="w") as member:
+                    sink = _PayloadSink(member)
+                    value = _save_array(arrays[name], sink)
+                if (
+                    sink.byte_count != entry.byte_count
+                    or sink.digest.hexdigest() != entry.digest
+                    or value.shape != entry.shape
+                    or value.dtype.str != entry.dtype
+                ):
+                    raise ValueError(f"Archive array {name!r} changed while writing.")
 
     def validator(staged: os.PathLike[str]) -> None:
         with (
@@ -705,6 +811,19 @@ def read_array_archive(
     explicitly only for a trusted local archive that must retain legacy,
     effectively unbounded size limits.
     """
+    return _read_array_archive(
+        path, limits=limits, expected_inventory=expected_inventory, map_arrays=False
+    )
+
+
+def _read_array_archive(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    expected_inventory: Mapping[str, tuple[tuple[int, ...], Any | None]] | None = None,
+    map_arrays: bool = False,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     source = Path(os.fspath(path))
     policy = _resolved_archive_limits(limits)
     expected: dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]] | None = None
@@ -847,11 +966,39 @@ def read_array_archive(
                 member, dtype, shape = admitted[logical_name]
                 try:
                     with archive.open(member, mode="r") as stream:
-                        value = np.load(
-                            stream,
-                            allow_pickle=False,
-                            max_header_size=policy.max_npy_header_bytes,
-                        )
+                        if map_arrays:
+                            _read_npy_metadata(stream, member.file_size, policy)
+                            array_offset = stream.tell()
+                            container.seek(member.header_offset)
+                            local_header = container.read(30)
+                            name_size, extra_size = struct.unpack_from(
+                                "<HH", local_header, 26
+                            )
+                            offset = (
+                                member.header_offset
+                                + 30
+                                + name_size
+                                + extra_size
+                                + array_offset
+                            )
+                            value = (
+                                np.memmap(
+                                    container,
+                                    mode="r",
+                                    dtype=dtype,
+                                    shape=shape,
+                                    offset=offset,
+                                    order="C",
+                                )
+                                if math.prod(shape)
+                                else np.empty(shape, dtype=dtype)
+                            )
+                        else:
+                            value = np.load(
+                                stream,
+                                allow_pickle=False,
+                                max_header_size=policy.max_npy_header_bytes,
+                            )
                 except (EOFError, OSError, ValueError) as error:
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} is invalid."
@@ -860,9 +1007,8 @@ def read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata changed while loading."
                     )
-                defensive = np.array(value, copy=True, order="C", subok=False)
-                defensive.setflags(write=False)
-                values[logical_name] = defensive
+                value.setflags(write=False)
+                values[logical_name] = value
             return manifest, values
     except ArrayArchiveError:
         raise

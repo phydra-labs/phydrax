@@ -26,6 +26,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._host_table_cache import host_table_cache, logical_table_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh, PolyhedralConnectivity
@@ -256,7 +257,19 @@ class _CornerTable:
     ideal_scaled: np.ndarray
 
 
-@cache
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    weight=lambda value: logical_table_bytes(
+        (
+            value.vertices,
+            value.neighbors,
+            value.ideal_inverse,
+            value.ideal_determinant,
+            value.ideal_scaled,
+        )
+    ),
+)
 def _corner_table(kind: str, arity: int, /) -> _CornerTable:
     ideal = _ideal_vertices(kind, arity)
     if kind == "polygon":

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from operator import index
 
 import equinox as eqx
@@ -19,6 +18,7 @@ from s2fft.recursions.risbo_jax import compute_full as _wigner_small_d
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...typing import checked
@@ -26,7 +26,7 @@ from ._spherical import SphericalSpectralDiscretization
 from ._spherical_layout import SphericalModeLayout
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _coupled_angular_momentum_block(
     degree_left: int,
     degree_right: int,

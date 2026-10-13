@@ -7,7 +7,6 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from fractions import Fraction
-from functools import lru_cache
 from numbers import Integral
 from typing import NamedTuple
 
@@ -22,6 +21,7 @@ import phydrax.ein as ein
 
 from .._array_archive import array_collection_digest
 from .._fingerprint import canonical_fingerprint
+from .._host_table_cache import host_table_cache, logical_table_bytes
 from .._strict import StrictModule
 
 
@@ -65,7 +65,23 @@ class _SU2CouplingEntry(NamedTuple):
     square: Fraction
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    weight=lambda entries: sum(
+        logical_table_bytes(
+            (
+                entry.left,
+                entry.right,
+                entry.output,
+                entry.sign,
+                entry.square.numerator,
+                entry.square.denominator,
+            )
+        )
+        for entry in entries
+    ),
+)
 def _su2_clebsch_gordan_entries(
     left: int, right: int, output: int, /
 ) -> tuple[_SU2CouplingEntry, ...]:

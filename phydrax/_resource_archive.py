@@ -11,6 +11,8 @@ import io
 import stat
 import struct
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -240,6 +242,15 @@ def read_zip_members(
     /,
 ) -> dict[str, bytes]:
     """Read an exact subset after matching it to an admitted archive inventory."""
+    return dict(_iter_zip_members(archive, names))
+
+
+def _iter_zip_members(
+    archive: BoundedArchive,
+    names: tuple[str, ...],
+    /,
+) -> Iterator[tuple[str, bytes]]:
+    """Yield individually verified members without retaining earlier payloads."""
 
     if not isinstance(archive, BoundedArchive):
         raise TypeError("archive must be a BoundedArchive.")
@@ -248,26 +259,33 @@ def read_zip_members(
     inventory = {member.relative_path: member for member in archive.members}
     if any(name not in inventory for name in names):
         raise ResourceReadError("policy", "Requested archive member was not admitted.")
-    values: dict[str, bytes] = {}
+    with _open_admitted_zip(archive) as container:
+        for name in names:
+            expected = inventory[name]
+            with container.open(name, mode="r") as stream:
+                payload = stream.read(expected.size_bytes + 1)
+            if (
+                len(payload) != expected.size_bytes
+                or hashlib.sha256(payload).hexdigest() != expected.content_sha256
+            ):
+                raise ResourceReadError(
+                    "inconsistent", "Archive member changed after admission."
+                )
+            yield name, payload
+
+
+@contextmanager
+def _open_admitted_zip(archive: BoundedArchive, /) -> Iterator[zipfile.ZipFile]:
+    """Open the immutable admitted container with resource-boundary errors."""
+    if not isinstance(archive, BoundedArchive):
+        raise TypeError("archive must be a BoundedArchive.")
     try:
         with zipfile.ZipFile(io.BytesIO(archive.resource.data), mode="r") as container:
-            for name in names:
-                expected = inventory[name]
-                with container.open(name, mode="r") as stream:
-                    payload = stream.read(expected.size_bytes + 1)
-                if (
-                    len(payload) != expected.size_bytes
-                    or hashlib.sha256(payload).hexdigest() != expected.content_sha256
-                ):
-                    raise ResourceReadError(
-                        "inconsistent", "Archive member changed after admission."
-                    )
-                values[name] = payload
+            yield container
     except ResourceReadError:
         raise
     except (OSError, RuntimeError, zipfile.BadZipFile) as error:
         raise ResourceReadError("malformed", "External archive is invalid.") from error
-    return values
 
 
 def _preflight_zip_directory(data: bytes, /) -> tuple[int, int, int]:

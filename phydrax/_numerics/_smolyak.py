@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 import math
-from functools import lru_cache
 from typing import cast, Literal, NamedTuple, Sequence, TypeAlias
 
 import equinox as eqx
 import numpy as np
 
+from .._host_table_cache import host_table_cache
 from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -297,7 +297,7 @@ def _maximum_level(
     return level
 
 
-@lru_cache(maxsize=256)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _weighted_total_degree_indices_cached(
     dimension: int,
     level: int,
@@ -340,7 +340,7 @@ def weighted_total_degree_indices(
     return _weighted_total_degree_indices_cached(dimension_, level_, weights)
 
 
-@lru_cache(maxsize=256)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _smolyak_terms_cached(
     dimension: int,
     level: int,
@@ -401,7 +401,7 @@ def _clenshaw_curtis_ids(level: int, count: int, /) -> tuple[NodeIdentifier, ...
     return tuple(identifiers)
 
 
-@lru_cache(maxsize=512)
+@host_table_cache(max_entries=512, max_bytes=1048576)
 def _leja_nodes(count: int) -> tuple[float, ...]:
     count_ = int(count)
     if count_ < 1:
@@ -417,7 +417,7 @@ def _leja_nodes(count: int) -> tuple[float, ...]:
     return tuple(nodes[:count_])
 
 
-@lru_cache(maxsize=512)
+@host_table_cache(max_entries=512, max_bytes=1048576)
 def smolyak_axis_data(rule: SmolyakAxisRule, level: int, /) -> SmolyakAxisData:
     """Materialize one canonical interpolation/quadrature operator level."""
     level_ = int(level)

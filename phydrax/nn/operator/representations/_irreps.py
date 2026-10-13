@@ -29,7 +29,6 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from fractions import Fraction
-from functools import lru_cache
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
@@ -39,6 +38,7 @@ from jax import Array, core as jax_core
 from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
+from phydrax._host_table_cache import host_table_cache, logical_table_bytes
 from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
@@ -441,7 +441,19 @@ def o3_real_coupling(
     return _prepared_real_coupling(left, right, output)
 
 
-@lru_cache(maxsize=None)
+@host_table_cache(
+    max_entries=256,
+    max_bytes=1048576,
+    weight=lambda value: logical_table_bytes(
+        (
+            value.left_degree,
+            value.right_degree,
+            value.output_degree,
+            value.indices,
+            value.values,
+        )
+    ),
+)
 def _prepared_real_coupling(left: int, right: int, output: int, /) -> O3RealCoupling:
     entries = _real_coupling_entries(left, right, output)
     indices = np.asarray([entry[:3] for entry in entries], dtype=np.int32).reshape(

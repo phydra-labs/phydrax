@@ -24,7 +24,6 @@ are fixed data and never become independent trainable parameters.
 
 from __future__ import annotations
 
-import functools
 import itertools
 import math
 from collections import defaultdict
@@ -42,6 +41,7 @@ from jax.typing import ArrayLike, DTypeLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._identity import NumericRevision, SemanticProvenance
 from ..._model import register_artifact_value
 from ..._polynomial import ProductGraphPlan, project_tuple_coefficients
@@ -436,7 +436,7 @@ def _native_coupling_basis(
     return terms, projection
 
 
-@functools.lru_cache(maxsize=64)
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _native_coupling_span(
     blocks: tuple[tuple[int, int, int], ...],
     size: int,

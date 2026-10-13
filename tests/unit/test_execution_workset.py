@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -354,3 +357,57 @@ def test_workset_entry_is_stale_until_reprepared_for_a_new_topology() -> None:
                 ),
             ),
         )
+
+
+@pytest.mark.parametrize("capacity", [1, 3, 8])
+def test_skewed_workset_prepared_identity_matches_legacy(capacity: int) -> None:
+    signatures = (_signature("rare"),) * 2 + (_signature("common"),) * 37
+    identifiers = tuple(f"item-{index:03d}" for index in range(len(signatures)))
+    plan = ExecutionWorksetPlan(
+        tuple(reversed(identifiers)),
+        tuple(reversed(signatures)),
+        bucket_capacity=capacity,
+    )
+    prepared = plan.prepare()
+    rows: list[list[int]] = []
+    masks: list[list[bool]] = []
+    signature_ids: list[str] = []
+    for signature_id in sorted({value.signature_id for value in plan.signatures}):
+        items = [
+            index
+            for index, value in enumerate(plan.signatures)
+            if value.signature_id == signature_id
+        ]
+        for start in range(0, len(items), capacity):
+            active = items[start : start + capacity]
+            rows.append(active + [active[0]] * (capacity - len(active)))
+            masks.append([True] * len(active) + [False] * (capacity - len(active)))
+            signature_ids.append(signature_id)
+    payload = {
+        "kind": "prepared-fixed-shape-execution-worksets",
+        "plan": plan.plan_id,
+        "bucket_signatures": signature_ids,
+        "item_indices": rows,
+        "valid_mask": masks,
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert prepared.prepared_id == expected
+    np.testing.assert_array_equal(prepared.item_indices, rows)
+    np.testing.assert_array_equal(prepared.valid_mask, masks)
+    assert int(np.sum(prepared.valid_mask)) == plan.item_count
+    np.testing.assert_array_equal(
+        prepared.bucket_rng_indices,
+        np.asarray(plan.semantic_rng_indices)[np.asarray(rows)],
+    )
+    recovered = prepared.scatter(
+        prepared.gather(jnp.arange(plan.item_count, dtype=jnp.int32))
+    )
+    np.testing.assert_array_equal(recovered, np.arange(plan.item_count))

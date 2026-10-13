@@ -5,20 +5,24 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import math
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, get_args, Literal, Protocol, TypeAlias
+from typing import Any, BinaryIO, get_args, Iterator, Literal, Protocol, TypeAlias
 
 import numpy as np
 
 from .._array_archive import (
+    _prepare_arrays,
+    _PreparedArrays,
+    _read_array_archive,
+    _write_prepared_array_archive,
     array_collection_digest,
     array_payload_byte_count,
     array_payload_digest,
@@ -32,7 +36,7 @@ from .._execution_plan import ExecutionPlan
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._host_io import open_regular_file
 from .._identity import ArtifactBindingIdentity, NumericRevision
-from .._publication import publish_bytes
+from .._publication import publish_file
 from ..diagnostics import Diagnostic, DiagnosticError
 from ..logging import emit
 from ._chunk_repository import (
@@ -463,7 +467,8 @@ def create(
     arrays_ = {str(name): np.asarray(value) for name, value in arrays.items()}
     if any(not name for name in arrays_):
         raise ValueError("Lifecycle payload names must be non-empty.")
-    _validate_payloads(manifest, arrays_)
+    prepared = _prepare_arrays(arrays_, limits)
+    _validate_payloads(manifest, arrays_, prepared=prepared)
     _validate_parent_archive(manifest, parent)
     record = _encode_record(manifest)
     record_digest = canonical_fingerprint(record)
@@ -471,10 +476,10 @@ def create(
         {
             "kind": "lifecycle-archive",
             "record_digest": record_digest,
-            "payload_digest": array_collection_digest(arrays_),
+            "payload_digest": prepared.collection_digest,
         }
     )
-    write_array_archive(
+    _write_prepared_array_archive(
         path,
         manifest={
             "kind": "lifecycle-archive",
@@ -484,6 +489,7 @@ def create(
         },
         arrays=arrays_,
         limits=limits,
+        prepared=prepared,
     )
     archive = open(path, allow_incomplete=True, limits=limits, parent=parent)
     emit(
@@ -491,7 +497,7 @@ def create(
         "lifecycle.archive.created",
         "Lifecycle archive created",
         archive_id=archive.archive_id,
-        array_bytes=sum(array_payload_byte_count(value) for value in arrays_.values()),
+        array_bytes=prepared.byte_count,
         array_count=len(arrays_),
         record_kind=record["kind"],
     )
@@ -759,7 +765,6 @@ def support_bundle(
     if authorization.source_archive_id != archive.archive_id:
         raise ValueError("Support authorization is not bound to the source archive.")
 
-    payload = _verified_archive_snapshot(archive, limits=archive_limits)
     record = _encode_record(archive.manifest)
     authorization_record = {
         "authorization_id": authorization.authorization_id,
@@ -771,26 +776,31 @@ def support_bundle(
     authorization_record["authorization_fingerprint"] = canonical_fingerprint(
         authorization_record
     )
-    output = write_array_archive(
-        destination,
-        manifest={
-            "kind": "lifecycle-support-bundle",
-            "disclosure": "data-owner-authorized",
-            "telemetry": telemetry,
-            "audit": {
-                "data_owner_authorized": True,
-                **authorization_record,
-            },
-            "source": {
-                "archive_id": archive.archive_id,
-                "record_kind": record["kind"],
-                "record_id": _record_id(archive.manifest),
-                "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
-                "archive_sha256": hashlib.sha256(payload).hexdigest(),
-            },
-        },
-        arrays={"archive": np.frombuffer(payload, dtype=np.uint8)},
-    )
+    with _verified_archive_snapshot(archive, limits=archive_limits) as (snapshot, digest):
+        payload = np.memmap(snapshot, dtype=np.uint8, mode="r")
+        try:
+            output = write_array_archive(
+                destination,
+                manifest={
+                    "kind": "lifecycle-support-bundle",
+                    "disclosure": "data-owner-authorized",
+                    "telemetry": telemetry,
+                    "audit": {
+                        "data_owner_authorized": True,
+                        **authorization_record,
+                    },
+                    "source": {
+                        "archive_id": archive.archive_id,
+                        "record_kind": record["kind"],
+                        "record_id": _record_id(archive.manifest),
+                        "diagnostic_ids": list(_diagnostic_ids(archive.manifest)),
+                        "archive_sha256": digest,
+                    },
+                },
+                arrays={"archive": payload},
+            )
+        finally:
+            del payload
     emit(
         "INFO",
         "lifecycle.support_bundle.created",
@@ -814,16 +824,18 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
             for field in query_.fields
         ],
     }
-    buffer = io.BytesIO()
-    np.savez(
-        buffer,
-        allow_pickle=True,
-        metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
-        **arrays,
-    )
-    publish_bytes(
+
+    def writer(stream: BinaryIO) -> None:
+        np.savez(
+            stream,
+            allow_pickle=True,
+            metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
+            **arrays,
+        )
+
+    publish_file(
         destination,
-        buffer.getvalue(),
+        writer,
         maximum_bytes=16 * 1024 * 1024 * 1024,
         mode="atomic_replace",
     )
@@ -855,6 +867,8 @@ def _validate_payloads(
     manifest: LifecycleRecord,
     arrays: Mapping[str, Any],
     /,
+    *,
+    prepared: _PreparedArrays | None = None,
 ) -> None:
     expected: tuple[tuple[str, str, int | None], ...]
     if isinstance(manifest, CheckpointManifest):
@@ -885,11 +899,12 @@ def _validate_payloads(
     names = {name for name, _, _ in expected}
     if names != set(arrays):
         raise ValueError("Lifecycle payload inventory does not match its manifest.")
+    evidence = _prepare_arrays(arrays) if prepared is None else prepared
     for name, digest, byte_count in expected:
-        value = arrays[name]
-        if array_payload_digest(value) != digest:
+        value = evidence.entries[name]
+        if value.digest != digest:
             raise ValueError(f"Lifecycle payload {name!r} checksum mismatch.")
-        if byte_count is not None and array_payload_byte_count(value) != byte_count:
+        if byte_count is not None and value.byte_count != byte_count:
             raise ValueError(f"Lifecycle payload {name!r} byte count mismatch.")
 
 
@@ -949,89 +964,86 @@ def _validate_parent_archive(
         raise ValueError("This lifecycle record cannot declare a parent archive.")
 
 
+@contextmanager
 def _verified_archive_snapshot(
     archive: LifecycleArchive,
     /,
     *,
     limits: ArrayArchiveLimits | None,
-) -> bytes:
-    """Read one bounded descriptor-held snapshot and revalidate its archive identity."""
-
+) -> Iterator[tuple[Path, str]]:
+    """Hold a bounded disk snapshot through validation and bundle publication."""
     admitted_limits = DEFAULT_ARRAY_ARCHIVE_LIMITS if limits is None else limits
-    try:
-        with open_regular_file(archive.path) as stream:
-            before = os.fstat(stream.fileno())
-            if before.st_size > admitted_limits.max_container_bytes:
-                raise ArrayArchiveCorruptionError(
-                    "Lifecycle archive exceeds the container byte limit."
-                )
-            payload = stream.read(admitted_limits.max_container_bytes + 1)
-            after = os.fstat(stream.fileno())
-    except ValueError as error:
-        raise ArrayArchiveCorruptionError(
-            "Lifecycle archive source must remain a regular file."
-        ) from error
-    if len(payload) > admitted_limits.max_container_bytes:
-        raise ArrayArchiveCorruptionError(
-            "Lifecycle archive exceeds the container byte limit."
-        )
-    before_identity = (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-        before.st_ctime_ns,
-    )
-    after_identity = (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-        after.st_mtime_ns,
-        after.st_ctime_ns,
-    )
-    if before_identity != after_identity or len(payload) != before.st_size:
-        raise ArrayArchiveCorruptionError(
-            "Lifecycle archive changed while its support snapshot was read."
-        )
     with tempfile.TemporaryDirectory(prefix="phydrax-lifecycle-snapshot-") as directory:
         snapshot = Path(directory) / "archive.zip"
-        descriptor = os.open(
-            snapshot,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
+        digest = hashlib.sha256()
+        observed = 0
         try:
-            view = memoryview(payload)
-            while view:
-                written = os.write(descriptor, view)
-                if written <= 0:
-                    raise OSError("Cannot write lifecycle archive snapshot.")
-                view = view[written:]
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        container, arrays = read_array_archive(snapshot, limits=admitted_limits)
-    record = container.get("record")
-    if container.get("kind") != "lifecycle-archive" or not isinstance(record, Mapping):
-        raise ArrayArchiveCorruptionError("Support source is not a lifecycle archive.")
-    record_digest = canonical_fingerprint(record)
-    _decode_verified_record(record, arrays)
-    snapshot_id = canonical_fingerprint(
-        {
-            "kind": "lifecycle-archive",
-            "record_digest": record_digest,
-            "payload_digest": array_collection_digest(arrays),
-        }
-    )
-    if (
-        container.get("record_digest") != record_digest
-        or container.get("archive_id") != snapshot_id
-        or snapshot_id != archive.archive_id
-    ):
-        raise ArrayArchiveCorruptionError(
-            "Lifecycle archive changed after support-bundle admission."
+            with open_regular_file(archive.path) as source, snapshot.open("xb") as target:
+                before = os.fstat(source.fileno())
+                if before.st_size > admitted_limits.max_container_bytes:
+                    raise ArrayArchiveCorruptionError(
+                        "Lifecycle archive exceeds the container byte limit."
+                    )
+                while chunk := source.read(1_048_576):
+                    observed += len(chunk)
+                    if observed > admitted_limits.max_container_bytes:
+                        raise ArrayArchiveCorruptionError(
+                            "Lifecycle archive exceeds the container byte limit."
+                        )
+                    digest.update(chunk)
+                    target.write(chunk)
+                after = os.fstat(source.fileno())
+        except ValueError as error:
+            raise ArrayArchiveCorruptionError(
+                "Lifecycle archive source must remain a regular file."
+            ) from error
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
         )
-    return payload
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if before_identity != after_identity or observed != before.st_size:
+            raise ArrayArchiveCorruptionError(
+                "Lifecycle archive changed while its support snapshot was read."
+            )
+        container, arrays = _read_array_archive(
+            snapshot, limits=admitted_limits, map_arrays=True
+        )
+        record = container.get("record")
+        if container.get("kind") != "lifecycle-archive" or not isinstance(
+            record, Mapping
+        ):
+            raise ArrayArchiveCorruptionError(
+                "Support source is not a lifecycle archive."
+            )
+        record_digest = canonical_fingerprint(record)
+        _decode_verified_record(record, arrays)
+        snapshot_id = canonical_fingerprint(
+            {
+                "kind": "lifecycle-archive",
+                "record_digest": record_digest,
+                "payload_digest": array_collection_digest(arrays),
+            }
+        )
+        if (
+            container.get("record_digest") != record_digest
+            or container.get("archive_id") != snapshot_id
+            or snapshot_id != archive.archive_id
+        ):
+            raise ArrayArchiveCorruptionError(
+                "Lifecycle archive changed after support-bundle admission."
+            )
+        del arrays
+        yield snapshot, digest.hexdigest()
 
 
 def _lineage_revision(semantic_id: str, arrays: Mapping[str, Any], /) -> NumericRevision:

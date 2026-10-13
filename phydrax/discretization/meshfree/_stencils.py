@@ -14,7 +14,6 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Sequence
 from enum import IntEnum
-from functools import cache
 from math import factorial, prod
 from typing import assert_never, final, NamedTuple
 
@@ -27,6 +26,7 @@ from jax.typing import ArrayLike
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_table_cache import host_table_cache
 from ..._strict import StrictModule
 from ...linalg import FactorizationPolicy, FailurePolicy, pseudoinverse, RankPolicy
 from ...typing import parse
@@ -351,7 +351,7 @@ def _safe_norm(values: Array) -> Array:
     return jnp.where(positive, jnp.sqrt(jnp.where(positive, squared, 1.0)), 0.0)
 
 
-@cache
+@host_table_cache(max_entries=256, max_bytes=1048576)
 def _basis_exponents(dimension: int, degree: int) -> tuple[tuple[int, ...], ...]:
     """Constant followed by the total-degree monomial exponents (static).
 

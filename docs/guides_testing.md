@@ -166,6 +166,35 @@ update an oracle from Phydrax output. Manifests record source, method, generator
 provider release, precision, input regime, tolerance rationale, digest, and license.
 They do not carry internal schema-version fields.
 
+### Bounded identity hashing
+
+Array fingerprints preserve the historical metadata framing and C-order byte stream,
+including scalar promotion, byte order, and NaN payloads. Contiguous host arrays are
+hashed through a byte view; strided arrays use bounded 64-KiB staging chunks.
+Atomistic surface evaluation transfers identity leaves together and reuses the host
+snapshot for its source and evaluation IDs. Runtime distribution integrity hashes
+files incrementally and retains before/after mutation checks.
+
+Prepared worksets count active lanes while forming buckets and stream the historical
+sorted canonical JSON into their identity digest. Bucket order, padding, semantic RNG
+addresses, and `prepared_id` do not change. Tests compare array hashing to an
+independent legacy byte-stream oracle and workset identity to ordinary Python rows.
+Run `python -m benchmarks.memory_fingerprint_workset --smoke` for phase-separated
+host-allocation evidence, including legacy-reference versus streamed identity scratch.
+
+### Host preparation retention
+
+Dynamic host-table caches use deterministic LRU eviction under both entry and
+logical-payload byte ceilings. Site budgets are the larger of one MiB and the
+next power of two covering eight times the measured representative hot set;
+oversized results are returned without retention. The quota excludes in-flight
+calculations, allocator overhead, and caller-held references. Weak class keys
+keep trainable-role metadata from retaining transient classes. Virasoro plans
+admit descendant counts before enumerating partitions.
+
+Run `python -m benchmarks.memory_host_caches --smoke` to exercise all migrated
+sites, oversized-result behavior, and the retained-byte plateau.
+
 ## Performance evidence
 
 `--durations`, collection timing, import timing, process RSS, and JAX compile logs only
