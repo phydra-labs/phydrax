@@ -21,6 +21,7 @@ from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCert
 from ....special import hankel1
 from ....typing import checked, PRNGKey
 from ._core import AbstractLayerKernel, BoundaryPanelization2D, LayerDiscretizationReport
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 
 
 class HelmholtzLayerKernel2D(AbstractLayerKernel):
@@ -201,11 +202,23 @@ class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
             self.density,
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Direct layer targets must have shape (target_count, 2).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
@@ -317,11 +330,23 @@ class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
             self.density,
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Direct layer targets must have shape (target_count, 2).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization

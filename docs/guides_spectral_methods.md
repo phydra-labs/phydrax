@@ -572,6 +572,21 @@ scatters equal-and-opposite contributions; unsupported fluxes or resource excess
 before execution. The projected-flux route remains distinct and does not inherit this
 certificate.
 
+Pairs stream in lexicographic upper-triangle order, including the final ragged chunk.
+The prepared split form retains signed-index-difference weights and row offsets,
+not dense differentiation matrices or quadratic pair routes: storage per axis is
+`O(n)` and live pair workspace is `O(pair_chunk_size)` per transverse line. The
+exact dense Fourier interaction still requires `O(n²)` pair work. Changing
+`pair_chunk_size` changes workspace admission, not the mathematical residual or
+entropy certificate. The report retains the total pair count and the maximum
+three-state-buffer workspace over all axes, including every transverse line.
+
+Prepared split-form PyTrees now store `difference_weights` and `pair_row_offsets`;
+old dense-field archive templates must be prepared again. Rowwise constant
+certification can change defect values at floating-point roundoff and therefore
+defect-derived report/prepared IDs; plan IDs, tolerances, and status semantics
+are unchanged.
+
 `HermitianSpectralCoordinates` is the independent-real archive/backend chart for a
 real periodic spectral field; the live ETDRK, compiled-flow, callback, and public
 solution state remains full complex. A `RuntimeCheckpointLeafBinding` may apply the

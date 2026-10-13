@@ -98,7 +98,8 @@ class ProductGraphPlan(StrictModule, NonTrainableState):
 
     ``parent`` and ``factor`` list the non-constant nodes level by level (level
     sizes in ``level_sizes``); ``parent`` indexes the previous level's nodes.
-    ``term_node`` gathers each canonical term from the concatenated node values.
+    ``term_node`` identifies each terminal in the conceptual level-major node order;
+    execution gathers terminals from their level without concatenating all nodes.
     ``node_count`` includes the constant node.
     """
 
@@ -266,10 +267,14 @@ class ProductGraphPlan(StrictModule, NonTrainableState):
         return position
 
     def live_bytes(self, lane_count: int, itemsize: int, /) -> int:
-        """Bytes of node values live for ``lane_count`` lanes (all levels retained)."""
+        """Peak logical bytes for two adjacent levels and the required term output."""
         lanes = nonnegative_integer(lane_count, "lane_count")
         item = positive_integer(itemsize, "itemsize")
-        return lanes * self.node_count * item
+        level_peak = max(
+            (left + right for left, right in itertools.pairwise(self.level_sizes)),
+            default=self.level_sizes[0],
+        )
+        return lanes * (level_peak + len(self.terms)) * item
 
     def evaluate(self, variables: ArrayLike, /, *, lane_tile: int | None = None) -> Array:
         """Evaluate ``(*lanes, variable_count)`` inputs to ``(*lanes, term_count)``."""
@@ -320,17 +325,28 @@ class ProductGraphPlan(StrictModule, NonTrainableState):
     def _monomials(self, variables: Array, /) -> Array:
         """Term values of flat ``(lanes, variable_count)`` inputs."""
         level = jnp.ones((variables.shape[0], 1), dtype=variables.dtype)
-        nodes = [level]
+        output = jnp.zeros((variables.shape[0], len(self.terms)), dtype=variables.dtype)
+        term_start = 0
+        node_offset = 0
         start = 0
-        # Graph depth is static architecture: one multiplication pass per level.
-        for size in self.level_sizes[1:]:
-            stop = start + size
-            level = (
-                level[:, self.parent[start:stop]] * variables[:, self.factor[start:stop]]
-            )
-            nodes.append(level)
-            start = stop
-        return jnp.concatenate(nodes, axis=-1)[:, self.term_node]
+        # Static depth retains within-level parallelism and multiplication order.
+        for depth, size in enumerate(self.level_sizes):
+            if depth:
+                stop = start + size
+                level = (
+                    level[:, self.parent[start:stop]]
+                    * variables[:, self.factor[start:stop]]
+                )
+                start = stop
+            term_stop = term_start
+            while term_stop < len(self.terms) and len(self.terms[term_stop]) == depth:
+                term_stop += 1
+            if term_stop > term_start:
+                terminal = self.term_node[term_start:term_stop] - node_offset
+                output = output.at[:, term_start:term_stop].set(level[:, terminal])
+            term_start = term_stop
+            node_offset += size
+        return output
 
 
 def _map_lanes(

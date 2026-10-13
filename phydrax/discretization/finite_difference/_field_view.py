@@ -44,12 +44,21 @@ from ..._model._ports import ValuePort
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
-    DenseLinearOperator,
-    FactorizationPolicy,
-    factorize,
-    PreparedFactorization,
+    banded_singular_value_brackets,
+    BandedLinearOperator,
+    BandedSingularValueBrackets,
+    FailurePolicy,
+    LinearDerivativeSolvePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare,
+    PreparedLinearSolve,
     RHSLayout,
+    solve,
+    solve_transpose,
+    StructuredDirect,
 )
+from ...linalg._rank import singular_value_backward_error
 from ...sparse import linear_apply, linear_transpose_apply
 from .._spaces import TensorDofLayout
 from .._view_support import tensor_box_support_geometry
@@ -124,10 +133,26 @@ def _averaged_knots(nodes: np.ndarray, degree: int, /) -> np.ndarray:
     return knots
 
 
+def _collocation_operator(
+    knots: np.ndarray, nodes: np.ndarray, degree: int, /
+) -> BandedLinearOperator:
+    """Store exact local-support collocation in the native band convention."""
+    stencil = bspline_stencil(knots, nodes, degree=degree)
+    columns = np.asarray(stencil.indices)
+    weights = np.asarray(stencil.weights)
+    offsets = np.arange(nodes.size)[:, None] - columns
+    active = weights != 0.0
+    lower = max(0, int(np.max(offsets[active])))
+    upper = max(0, int(np.max(-offsets[active])))
+    bands = np.zeros((lower + upper + 1, nodes.size), dtype=np.float64)
+    np.add.at(bands, (upper + offsets[active], columns[active]), weights[active])
+    return BandedLinearOperator(bands, lower_bandwidth=lower, upper_bandwidth=upper)
+
+
 def _collocation(
     nodes: np.ndarray, degree: int, condition_limit: float, /
-) -> tuple[np.ndarray, PreparedFactorization, float]:
-    """Knots, the prepared collocation factorization, and its condition number."""
+) -> tuple[np.ndarray, PreparedLinearSolve, BandedSingularValueBrackets]:
+    """Knots, one reusable banded factor, and certified conditioning evidence."""
     count = nodes.size
     if count < degree + 1:
         raise ValueError(
@@ -135,23 +160,33 @@ def _collocation(
             "nodes per axis."
         )
     knots = _averaged_knots(nodes, degree)
-    stencil = bspline_stencil(knots, nodes, degree=degree)
-    matrix = np.zeros((count, count), dtype=np.float64)
-    np.add.at(
-        matrix,
-        (np.arange(count)[:, None], np.asarray(stencil.indices)),
-        np.asarray(stencil.weights),
+    operator = _collocation_operator(knots, nodes, degree)
+    spectrum = banded_singular_value_brackets(
+        operator.bands,
+        rows=count,
+        lower_bandwidth=operator.lower_bandwidth,
+        upper_bandwidth=operator.upper_bandwidth,
     )
-    operator = DenseLinearOperator(jnp.asarray(matrix))
-    spectrum = factorize(operator, FactorizationPolicy("svd"))
-    singular = np.asarray(spectrum.singular_values())
-    condition = float(singular[0] / singular[-1]) if singular[-1] > 0.0 else np.inf
-    if int(np.asarray(spectrum.rank())) != count or not condition <= condition_limit:
+    condition = float(np.asarray(spectrum.condition_upper_bound))
+    # Use the native default SVD rank cutoff, with outward spectral endpoints.
+    rank_cutoff = singular_value_backward_error(spectrum.maximum_upper, count, count)
+    full_rank = bool(np.asarray(spectrum.minimum_lower > rank_cutoff))
+    if not full_rank or not condition <= condition_limit:
         raise ValueError(
-            "The B-spline collocation system is singular or ill-conditioned "
-            f"(condition {condition:.6g})."
+            "The B-spline collocation system is singular, ill-conditioned, or "
+            "uncertifiable "
+            f"(condition upper bound {condition:.6g}, "
+            f"spectrum status {int(np.asarray(spectrum.status))})."
         )
-    return knots, factorize(operator, FactorizationPolicy("lu")), condition
+    prepared = prepare(
+        LinearSystem(operator),
+        LinearSolvePolicy(
+            StructuredDirect(),
+            failure=FailurePolicy("error"),
+            derivative_solve=LinearDerivativeSolvePolicy(route="primal-factors"),
+        ),
+    )
+    return knots, prepared, spectrum
 
 
 @final
@@ -163,7 +198,8 @@ class FiniteDifferenceFieldReconstructionKernel(
     interpolation: GridInterpolation
     nodes: tuple[Array, ...]
     knots: tuple[Array, ...]
-    collocation: tuple[PreparedFactorization, ...]
+    collocation: tuple[PreparedLinearSolve, ...]
+    condition_evidence: tuple[BandedSingularValueBrackets, ...]
     box: tuple[tuple[float, float], ...] = eqx.field(static=True)
     condition: float = eqx.field(static=True)
     periodic: tuple[bool, ...] = eqx.field(static=True)
@@ -183,7 +219,8 @@ class FiniteDifferenceFieldReconstructionKernel(
     ) -> None:
         axes = tuple(np.asarray(values, dtype=np.float64) for values in nodes)
         knots: tuple[np.ndarray, ...] = ()
-        collocation: tuple[PreparedFactorization, ...] = ()
+        collocation: tuple[PreparedLinearSolve, ...] = ()
+        condition_evidence: tuple[BandedSingularValueBrackets, ...] = ()
         condition = 1.0
         match interpolation:
             case MultilinearGridInterpolation():
@@ -202,7 +239,15 @@ class FiniteDifferenceFieldReconstructionKernel(
                 )
                 knots = tuple(item[0] for item in prepared)
                 collocation = tuple(item[1] for item in prepared)
-                condition = float(np.prod([item[2] for item in prepared]))
+                condition_evidence = tuple(item[2] for item in prepared)
+                condition = float(
+                    np.prod(
+                        [
+                            float(np.asarray(item.condition_upper_bound))
+                            for item in condition_evidence
+                        ]
+                    )
+                )
             case _:
                 raise TypeError(
                     "interpolation must be MultilinearGridInterpolation or "
@@ -212,6 +257,7 @@ class FiniteDifferenceFieldReconstructionKernel(
         self.nodes = tuple(jnp.asarray(values) for values in axes)
         self.knots = tuple(jnp.asarray(values) for values in knots)
         self.collocation = collocation
+        self.condition_evidence = condition_evidence
         self.box = tuple(
             (float(first), float(last)) for first, last in zip(lower, upper, strict=True)
         )
@@ -340,9 +386,9 @@ class FiniteDifferenceFieldReconstructionKernel(
             columns = moved.reshape((moved.shape[0], -1))
             layout = RHSLayout((columns.shape[1],))
             solved = (
-                factorization.solve_transpose(columns, rhs_layout=layout)
+                solve_transpose(factorization, columns, rhs_layout=layout)
                 if transpose
-                else factorization.solve(columns, rhs_layout=layout)
+                else solve(factorization, columns, rhs_layout=layout)
             )
             values = jnp.moveaxis(solved.value.reshape(moved.shape), 0, axis)
         return values

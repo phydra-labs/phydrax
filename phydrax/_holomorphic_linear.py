@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from itertools import product
+from math import comb
 from operator import index
 from typing import ClassVar, Protocol, runtime_checkable, TYPE_CHECKING
 
@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import canonical_fingerprint
+from ._polynomial._multiindex import total_degree_multiindices
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .typing import checked
@@ -117,11 +118,17 @@ class HolomorphicMultiIndexSet(StrictModule, NonTrainableState):
         maximum = int(maximum_total_order)
         if dimension <= 0 or maximum < 0:
             raise ValueError("Total-degree index dimensions and order are invalid.")
-        indices = tuple(
-            value
-            for value in product(range(maximum + 1), repeat=dimension)
-            if sum(value) <= maximum
-        )
+        if isinstance(maximum_count, bool):
+            raise TypeError("maximum_count must be an integer.")
+        maximum_count_ = index(maximum_count)
+        if maximum_count_ <= 0:
+            raise ValueError("Holomorphic multi-index resource limits are invalid.")
+        count = comb(dimension + maximum, maximum)
+        if count > maximum_count_:
+            raise ValueError(
+                f"Holomorphic multi-index count {count} exceeds the configured maximum {maximum_count_}."
+            )
+        indices = total_degree_multiindices(dimension, maximum)
         return cls(
             dimension,
             indices,

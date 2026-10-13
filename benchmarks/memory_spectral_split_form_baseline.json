@@ -1,0 +1,235 @@
+{
+  "cases": [
+    {
+      "chunk": 512,
+      "compilation_seconds": 0.238977,
+      "compiler": {
+        "argument_bytes": 14464,
+        "bytes_accessed": 279200,
+        "flops": 56960,
+        "generated_code_bytes": 0,
+        "output_bytes": 1560,
+        "source": "jax-fourier-split-form",
+        "temporary_bytes": 60288,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 1.117595599398058e-15,
+      "constant_state_defect": 3.4638958368304884e-14,
+      "count": 32,
+      "entropy_defect": 2.183583175385806e-16,
+      "host_preparation_peak_bytes": 121088,
+      "lowering_seconds": 0.098868292,
+      "output_bytes": 1536,
+      "pair_count": 496,
+      "pair_workspace_bytes": 35712,
+      "preparation_seconds": 0.07851779204793274,
+      "process_peak_rss_bytes": 1441218560,
+      "report_id": "6b1d8cd93cb859ba8ff3409bea0b2e5fb19f1da5c0e61b275e0043bad2d7cf32",
+      "retained_split_bytes": 12416,
+      "skew_sbp_defect": 3.4638958368304884e-14,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.001319375,
+        "mean_seconds": 0.001233729,
+        "median_seconds": 0.001233729,
+        "min_seconds": 0.001148083,
+        "samples_seconds": [
+          0.001148083,
+          0.001319375
+        ],
+        "std_seconds": 8.564599999999999e-05
+      }
+    },
+    {
+      "chunk": 512,
+      "compilation_seconds": 0.355685042,
+      "compiler": {
+        "argument_bytes": 53504,
+        "bytes_accessed": 1211168,
+        "flops": 218496,
+        "generated_code_bytes": 0,
+        "output_bytes": 3096,
+        "source": "jax-fourier-split-form",
+        "temporary_bytes": 206592,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 6.195124437318594e-15,
+      "constant_state_defect": 8.348877145181177e-14,
+      "count": 64,
+      "entropy_defect": 3.929148673087468e-16,
+      "host_preparation_peak_bytes": 300021,
+      "lowering_seconds": 0.122954459,
+      "output_bytes": 3072,
+      "pair_count": 2016,
+      "pair_workspace_bytes": 36864,
+      "preparation_seconds": 0.09521787497214973,
+      "process_peak_rss_bytes": 1525678080,
+      "report_id": "443fb039605d668b698066c7274cfb022b75da808206e7b125b5cd3014bda5a3",
+      "retained_split_bytes": 49408,
+      "skew_sbp_defect": 8.348877145181177e-14,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.01019875,
+        "mean_seconds": 0.007113145499999999,
+        "median_seconds": 0.007113145499999999,
+        "min_seconds": 0.004027541,
+        "samples_seconds": [
+          0.01019875,
+          0.004027541
+        ],
+        "std_seconds": 0.0030856044999999998
+      }
+    },
+    {
+      "chunk": 512,
+      "compilation_seconds": 0.866717167,
+      "compiler": {
+        "argument_bytes": 205312,
+        "bytes_accessed": 6563360,
+        "flops": 853760,
+        "generated_code_bytes": 0,
+        "output_bytes": 6168,
+        "source": "jax-fourier-split-form",
+        "temporary_bytes": 791552,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 9.78746909365523e-15,
+      "constant_state_defect": 1.6608936448392342e-13,
+      "count": 128,
+      "entropy_defect": 9.703609443745265e-17,
+      "host_preparation_peak_bytes": 1056917,
+      "lowering_seconds": 0.519047,
+      "output_bytes": 6144,
+      "pair_count": 8128,
+      "pair_workspace_bytes": 36864,
+      "preparation_seconds": 0.08388679102063179,
+      "process_peak_rss_bytes": 1610006528,
+      "report_id": "44fcf61838a8016a94c6f8f5bd29af7a0a8cdd4c8c99e23885b1b5df28cf953f",
+      "retained_split_bytes": 197120,
+      "skew_sbp_defect": 1.6608936448392342e-13,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.003432,
+        "mean_seconds": 0.0029266455,
+        "median_seconds": 0.0029266455,
+        "min_seconds": 0.002421291,
+        "samples_seconds": [
+          0.002421291,
+          0.003432
+        ],
+        "std_seconds": 0.0005053545000000001
+      }
+    },
+    {
+      "chunk": 512,
+      "compilation_seconds": 3.790722083,
+      "compiler": {
+        "argument_bytes": 803840,
+        "bytes_accessed": 52939808,
+        "flops": 3399168,
+        "generated_code_bytes": 0,
+        "output_bytes": 12312,
+        "source": "jax-fourier-split-form",
+        "temporary_bytes": 3144704,
+        "unavailable_reason": null
+      },
+      "conservation_defect": 1.0716745551956133e-14,
+      "constant_state_defect": 6.696865284538944e-13,
+      "count": 256,
+      "entropy_defect": 8.559125630469566e-15,
+      "host_preparation_peak_bytes": 4204726,
+      "lowering_seconds": 1.781473584,
+      "output_bytes": 12288,
+      "pair_count": 32640,
+      "pair_workspace_bytes": 36864,
+      "preparation_seconds": 0.06932783289812505,
+      "process_peak_rss_bytes": 1872445440,
+      "report_id": "ac3a78bb75ab0fe30620fb3910cb931ba23d8aa476bc2f8cbd1f167f07d55514",
+      "retained_split_bytes": 787456,
+      "skew_sbp_defect": 6.696865284538944e-13,
+      "warm": {
+        "count": 2,
+        "max_seconds": 0.017358667,
+        "mean_seconds": 0.010758604000000001,
+        "median_seconds": 0.010758604000000001,
+        "min_seconds": 0.004158541,
+        "samples_seconds": [
+          0.017358667,
+          0.004158541
+        ],
+        "std_seconds": 0.006600063000000001
+      }
+    }
+  ],
+  "compiler_gates": [],
+  "configuration": {
+    "chunks": [
+      512
+    ],
+    "repeats": 2,
+    "sizes": [
+      32,
+      64,
+      128,
+      256
+    ]
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "03223e269b432b92596bc2e2eb7ebedb45ba4cbdc73b76e536638ba96edda87e",
+    "evidence_schema": {
+      "fields": [
+        "cases",
+        "compiler_gates",
+        "configuration",
+        "environment",
+        "scaling"
+      ],
+      "signature": "47b5c92d737b2db08b976ed20050bb6854f8857e31cd49986f28c60d70043066"
+    },
+    "fingerprint": "0f0cad7d68af11698fe3dfeeffe231375e369e16bc41723c673d95ccece12f68",
+    "source_build_fingerprint": "1f38b1f1ea08e54c5b7007a2745a6dcb597f35e35befc581b65d1fd7b617ecd4"
+  },
+  "scaling": [
+    {
+      "chunk": 512,
+      "retained_exponent": 1.9957038435638284
+    }
+  ]
+}

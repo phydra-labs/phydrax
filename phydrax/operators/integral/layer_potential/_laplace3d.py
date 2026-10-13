@@ -21,6 +21,7 @@ from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....typing import checked, PRNGKey
 from ._core import LayerDiscretizationReport
+from ._evaluation import _evaluate_direct_targets, DirectTargetExecution
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 
 
@@ -175,11 +176,23 @@ class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
             self.density,
         )
 
-    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
+    def _evaluate_direct(
+        self,
+        targets: ArrayLike,
+        /,
+        *,
+        target_execution: DirectTargetExecution = "parallel",
+        target_chunk_size: int = 8,
+    ) -> Array:
         values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
             raise ValueError("3D layer targets must have shape (target_count, 3).")
-        return jax.vmap(self)(values)
+        return _evaluate_direct_targets(
+            self,
+            values,
+            target_execution=target_execution,
+            target_chunk_size=target_chunk_size,
+        )
 
     def discretization_report(self) -> LayerDiscretizationReport:
         return self._discretization
@@ -195,6 +208,8 @@ def evaluate_laplace_layer_3d(
     *,
     target_side: Literal["interior", "exterior", "boundary"],
     accuracy_clearance: float = 0.0,
+    target_execution: DirectTargetExecution = "parallel",
+    target_chunk_size: int = 8,
 ) -> tuple[Array, SurfaceTargetReport3D]:
     """Evaluate an off-surface 3D layer with continuous geometry evidence."""
     if not isinstance(potential, LaplaceLayerPotential3D):
@@ -211,7 +226,9 @@ def evaluate_laplace_layer_3d(
     )
     if not bool(report.pde_membership_valid):
         raise ValueError("3D direct layer evaluation requires off-surface targets.")
-    output = potential._evaluate_direct(values)
+    output = potential._evaluate_direct(
+        values, target_execution=target_execution, target_chunk_size=target_chunk_size
+    )
     return (output[0] if single else output), report
 
 
