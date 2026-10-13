@@ -1281,6 +1281,11 @@ the native batched pseudoinverse (`z = C⁺c`, projector `I - C⁺C` per target)
 so the native rectangular `MinimumNormProblem` (`linear_policy`) only carries
 one conservation row per source; nonnegative requests use the native sparse
 conic program (`conic_policy`). An already feasible base is kept unchanged.
+Signed preparation also requests a bounded native QR-SVD rank and
+retained-spectrum certificate for the reduced conservation operator, using
+`linear_policy.materialization` and the local pseudoinverse's rank cutoff.
+If certification exceeds its native budgets, approximate-null residuals
+remain unresolved rather than becoming infeasibility claims.
 `PointTransferEvidence` audits every equation, sign and coverage on the host:
 conservation, constant and moment residuals, the correction and objective, the
 Lebesgue constant `max_r Σ_e |t_e|`, and `PointTransferStatus`. A degree-`p`
@@ -1869,6 +1874,11 @@ The signed route is the native rectangular `MinimumNormProblem` with
 `GeneralizedLSMR` on the equilibrated design `E A S`, `S = sqrt(Phi)`; the map is
 affine in the candidate and `project` is differentiable through the native
 `rhs-only` derivative, which is exactly the weighted projector.
+Preparation requests a native rank and retained-spectrum certificate for this
+fixed equilibrated design using the correction policy's `rank` SVD policy
+(QR by default). Its materialization and resource bounds still apply: unavailable
+evidence never licenses an approximate-null cotangent solve, which remains
+undefined unless the native solve can certify its action independently.
 
 `MeshfreeMetricCorrectionPolicy(route, margin=..., sign=...)` declares the
 route (`"signed-minimum-norm"` or `"nonnegative-conic"`), a required positive

@@ -73,6 +73,42 @@ def test_charge_conservation_on_exact_knot_intervals(order: PICShapeOrder) -> No
     np.testing.assert_allclose(boundary, difference, atol=4e-13, rtol=4e-13)
 
 
+@pytest.mark.parametrize("order", (1, 2, 3), ids=("linear", "quadratic", "cubic"))
+@pytest.mark.parametrize("direction", (1, -1), ids=("forward", "reverse"))
+def test_positive_endpoint_slivers_are_integrated_or_reported_as_overflow(
+    order: PICShapeOrder, direction: int
+) -> None:
+    bridge = _bridge()
+    kernel = CubicalSplineWhitneyKernel(bridge, order)
+    knot = 0.5625 if order == 2 else 0.5
+    endpoint = np.nextafter(knot, np.inf if direction > 0 else -np.inf)
+    start = jnp.asarray(((0.31, 0.36, knot - direction * 0.0625),), dtype=jnp.float64)
+    end = jnp.asarray(((0.31, 0.36, endpoint),), dtype=jnp.float64)
+    query = jax.jit(lambda a, b: kernel.integrate_segments(a, b, maximum_segments=2))(
+        start, end
+    )
+    assert bool(query.successful[0])
+    assert not bool(query.overflow[0])
+    field = np.asarray((0.4, -1.2, 2.1))
+    np.testing.assert_allclose(
+        query.gather(_electric(bridge, field)),
+        np.asarray(end - start) @ field,
+        atol=3e-14,
+    )
+    difference = kernel.integrate_points(end).deposit(jnp.ones((1,))) - (
+        kernel.integrate_points(start).deposit(jnp.ones((1,)))
+    )
+    boundary = (
+        bridge.cochain.topology.incidences[0]
+        .exterior_derivative()
+        .transpose_mv(query.deposit(jnp.ones((1,))))
+    )
+    np.testing.assert_allclose(boundary, difference, atol=4e-13, rtol=4e-13)
+    limited = kernel.integrate_segments(start, end, maximum_segments=1)
+    assert bool(limited.overflow[0])
+    assert not bool(limited.successful[0])
+
+
 def test_nonuniform_segment_work_uses_actual_cell_widths() -> None:
     bridge = _bridge(nonuniform=True)
     kernel = CubicalSplineWhitneyKernel(bridge, 1)
@@ -87,6 +123,37 @@ def test_nonuniform_segment_work_uses_actual_cell_widths() -> None:
     )
     samples = kernel.evaluate(start, 1).gather(electric)
     np.testing.assert_allclose(samples, np.broadcast_to(field, samples.shape), atol=3e-14)
+
+
+def test_closed_face_segments_preserve_work_and_chain_boundary() -> None:
+    grid = TensorGridPlan(
+        tuple(UniformCellAxisSpec(6, periodic=False) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+    ).prepare(jnp.asarray(((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))))
+    bridge = StructuredCochainBridge(grid)
+    kernel = CubicalSplineWhitneyKernel(bridge, 1)
+    start = jnp.asarray(((0.3, 1.0, 0.4), (0.97, 0.2, 0.3), (0.6, 0.6, 0.99)))
+    end = jnp.asarray(((0.35, 1.0, 0.4), (1.0, 0.205, 0.3), (0.604, 0.6, 1.0)))
+    field = np.asarray((2.3, -1.1, 0.7))
+    charges = jnp.asarray((0.7, -2.0, 1.1))
+    query = jax.jit(lambda a, b: kernel.integrate_segments(a, b, maximum_segments=4))(
+        start, end
+    )
+    assert bool(jnp.all(query.successful))
+    np.testing.assert_allclose(
+        query.gather(_electric(bridge, field)),
+        np.asarray(end - start) @ field,
+        atol=3e-14,
+    )
+    difference = kernel.integrate_points(end).deposit(charges) - kernel.integrate_points(
+        start
+    ).deposit(charges)
+    boundary = (
+        bridge.cochain.topology.incidences[0]
+        .exterior_derivative()
+        .transpose_mv(query.deposit(charges))
+    )
+    np.testing.assert_allclose(boundary, difference, atol=4e-13, rtol=4e-13)
 
 
 @pytest.mark.parametrize("order", (1, 2, 3), ids=("linear", "quadratic", "cubic"))

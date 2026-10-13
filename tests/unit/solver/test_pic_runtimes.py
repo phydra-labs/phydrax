@@ -76,7 +76,7 @@ def test_pic_runtimes_scenario_1() -> None:
     # A separated nonzero charge distribution has positive Coulomb energy.
     charge = state.field.primary.charge
     field = pic.solver.electrostatic.solve(charge)
-    weights = pic.solver.electrostatic.bridge.cochain.hodge_stars[0]
+    weights = pic.solver.electrostatic.bridge.cochain.hodge_diagonal(0)
     assert jnp.sum(weights * charge * field.potential) > 0.0
     np.testing.assert_allclose(maxwell.electric_constraint(state.field), 0.0, atol=1e-10)
 

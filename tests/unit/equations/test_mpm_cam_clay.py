@@ -498,6 +498,54 @@ def test_strict_branch_tangent_jvp_vjp_matches_finite_difference(branch: str) ->
     )
 
 
+def test_mixed_elastic_plastic_batch_preserves_reverse_tangents() -> None:
+    reference = _Reference(alpha0=2.0)
+    plan = phx.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan()
+    parameters = reference.parameters()
+    history = jnp.broadcast_to(_prestress(plan, reference, ocr=3.0), (2, 9))
+    identity = jnp.eye(3, dtype=jnp.float64)
+    gradient = jnp.stack((identity, np.exp(-0.01) * identity))
+    direction = jnp.broadcast_to(
+        jnp.asarray(
+            ((0.2, 0.1, -0.05), (-0.03, -0.3, 0.1), (0.04, -0.02, 0.4)),
+            dtype=jnp.float64,
+        ),
+        gradient.shape,
+    )
+    cotangent = jnp.broadcast_to(
+        jnp.asarray(
+            ((0.3, -0.2, 0.1), (0.07, 0.4, -0.1), (-0.03, 0.2, -0.5)),
+            dtype=jnp.float64,
+        ),
+        gradient.shape,
+    )
+    response = plan.evaluate(gradient, history, 1.0, parameters, 0.0, 0.01)
+    assert bool(jnp.all(response.successful))
+    assert bool(jnp.all(response.diagnostics["tangent_successful"]))
+    np.testing.assert_array_equal(response.diagnostics["branch_code"], (0, 1))
+
+    def stress(deformation: Array) -> Array:
+        return plan.evaluate(deformation, history, 1.0, parameters, 0.0, 0.01).first_piola
+
+    step = 2e-6
+    plus = plan.evaluate(gradient + step * direction, history, 1.0, parameters, 0.0, 0.01)
+    minus = plan.evaluate(
+        gradient - step * direction, history, 1.0, parameters, 0.0, 0.01
+    )
+    assert bool(jnp.all(plus.successful & minus.successful))
+    fd = (plus.first_piola - minus.first_piola) / (2.0 * step)
+    _, jvp = jax.jvp(stress, (gradient,), (direction,))
+    vjp = jax.vjp(stress, gradient)[1](cotangent)[0]
+    assert bool(jnp.all(jnp.isfinite(vjp)))
+    np.testing.assert_allclose(jvp, fd, rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(
+        jnp.sum(vjp * direction, axis=(-2, -1)),
+        jnp.sum(cotangent * fd, axis=(-2, -1)),
+        rtol=2e-5,
+        atol=2e-6,
+    )
+
+
 def test_plastic_yield_hardening_and_metric_determinant() -> None:
     reference = _Reference(alpha0=2.0)
     plan = phx.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan()

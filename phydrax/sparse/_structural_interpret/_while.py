@@ -34,7 +34,7 @@ def _prop_while(
     The cond jaxpr only produces a boolean and doesn't contribute to carry state_indices.
 
     Layout:
-        invars: [body_consts..., cond_consts..., carry_init...]
+        invars: [cond_consts..., body_consts..., carry_init...]
         outvars: [carry_final...]
         params: body_jaxpr, body_nconsts, cond_jaxpr, cond_nconsts
 
@@ -44,14 +44,13 @@ def _prop_while(
 
     https://docs.jax.dev/en/latest/_autosummary/jax.lax.while_loop.html
     """
-    body_closed = eqn.params["body_jaxpr"]
-    body_jaxpr = body_closed.jaxpr
+    body_jaxpr = eqn.params["body_jaxpr"]
     body_nconsts = eqn.params["body_nconsts"]
     cond_nconsts = eqn.params["cond_nconsts"]
 
-    # Split invars: [body_consts | cond_consts | carry_init]
+    # Split invars: [cond_consts | body_consts | carry_init]
     n_carry = len(eqn.outvars)
-    body_consts = eqn.invars[:body_nconsts]
+    body_consts = eqn.invars[cond_nconsts : cond_nconsts + body_nconsts]
     carry_init = eqn.invars[body_nconsts + cond_nconsts :]
     assert len(carry_init) == n_carry
 
@@ -59,7 +58,7 @@ def _prop_while(
     # loop invariant, so carry is never forwarded as a known value.
     inner_consts, inner_bounds = _nested_scope(
         body_jaxpr.constvars,
-        body_closed.consts,
+        body_jaxpr.consts,
         body_consts,
         body_jaxpr.invars[:body_nconsts],
         state_consts,
