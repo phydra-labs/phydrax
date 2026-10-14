@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere import (
     BulkSurfaceExchangePlan,
     MoistThermodynamicPlan,
@@ -34,7 +35,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 1 or not np.isfinite(args.time_step) or args.time_step <= 0:
         parser.error("steps and time-step must be positive and finite")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     thermo = MoistThermodynamicPlan()
     exchange = BulkSurfaceExchangePlan()
     slab_plan = WetSlabPlan(thermo, dry_heat_capacity=5e5)

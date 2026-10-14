@@ -25,6 +25,7 @@ from benchmarks._runtime import (
     capture_benchmark_identity,
     capture_environment,
 )
+from phydrax import config as pxconfig
 from phydrax.combinatorial import ShortestPathFieldPlan
 from phydrax.sparse import EdgeRelation
 
@@ -152,7 +153,7 @@ def main() -> None:
     args = parser.parse_args()
     driver = Path(__file__).resolve()
     identity = capture_benchmark_identity(driver.parents[1], driver, EVIDENCE_FIELDS)
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     if args.repeats < 1 or any(side < 2 for side in args.sides):
         raise ValueError("Sides must be at least two and repeats positive.")
     sides = sorted(set(args.sides))

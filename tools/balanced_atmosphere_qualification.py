@@ -2,7 +2,7 @@
 
 """Measured balance, wave, transport and integrated-AD qualification, not climate skill.
 
-JAX_ENABLE_X64=1 python tools/balanced_atmosphere_qualification.py --output result.json
+python tools/balanced_atmosphere_qualification.py --output result.json
 The default short campaign is intentionally small. Criteria are emitted with the
 measurements; an unmet criterion or rejected step exits unsuccessfully. No paper
 reference trajectory or high-resolution weather result is manufactured here.

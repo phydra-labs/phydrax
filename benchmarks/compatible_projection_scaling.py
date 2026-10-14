@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     CochainDiscretization,
     StructuredCochainBridge,
@@ -202,7 +203,7 @@ def main() -> None:
     arguments = parser.parse_args()
     if any(size < 2 for size in (*arguments.structured_cells, *arguments.meshfree_sides)):
         raise ValueError("Benchmark sizes must be at least two.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     preconditioners: tuple[CompatiblePressurePreconditioner, ...] = get_args(
         CompatiblePressurePreconditioner
     )

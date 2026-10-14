@@ -8,15 +8,14 @@ gradient, and compares the continuous-harmonic route at a high harmonic.
 
 from __future__ import annotations
 
-from jax import config
+import phydrax as phx
 
 
-config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 import jax.numpy as jnp
 import numpy as np
 
-import phydrax as phx
 from phydrax.electromagnetics import (
     ColdPlasmaDielectric,
     MagnetobremsstrahlungPlan,

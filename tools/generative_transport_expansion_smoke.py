@@ -15,6 +15,7 @@ import jax.random as jr
 import lineax as lx
 
 import phydrax as phx
+from phydrax._score_field import StateTimeScoreField
 
 
 def _case(name: Any, condition: Any, **values: Any) -> Any:
@@ -127,8 +128,7 @@ def run_smoke() -> Any:
     likelihood = domain.Function("x", "t", "observation")(
         lambda x, t, observation: -0.5 * jnp.sum((x - observation) ** 2)
     )
-    # ty: ignore[possibly-missing-submodule]
-    base = phx._score_field.StateTimeScoreField(
+    base = StateTimeScoreField(
         base_field,
         state_label="x",
         time_label="t",

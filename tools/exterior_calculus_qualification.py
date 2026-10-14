@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from benchmarks._io import write_json_atomic
+from phydrax import config as pxconfig
 from tools._pytest_outcomes import NodeOutcome, PytestRun, run_pytest_subprocess
 
 
@@ -168,7 +169,9 @@ def run(
         [f"{_PROJECT_ROOT.as_posix()}/{reference}" for reference in references],
         root=_PROJECT_ROOT,
         workers=workers,
-        environment={"JAX_ENABLE_X64": "1"},
+        environment=pxconfig.environment(
+            pxconfig.RuntimeConfig(enable_x64=True), base={}, mode="override"
+        ),
     )
     node_ids = tuple(node.nodeid for node in observation.nodes)
     if len(set(node_ids)) != len(node_ids):

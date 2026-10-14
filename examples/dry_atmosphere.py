@@ -1,6 +1,6 @@
 """Run a dry atmospheric column or Cartesian vertical-slice reference case.
 
-Run from the repository: JAX_ENABLE_X64=1 python -m examples.dry_atmosphere
+Run from the repository: python -m examples.dry_atmosphere
 These inviscid, compressible cases qualify this Cartesian method, not global
 circulation or a moist atmospheric model.
 """

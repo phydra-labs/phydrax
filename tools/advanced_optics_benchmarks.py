@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
-from phydrax import RelativityScaleContract
+from phydrax import config as pxconfig, RelativityScaleContract
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import (
     CylindricalHankelPlan,
@@ -60,7 +60,7 @@ from phydrax.optics.wave import (
 from phydrax.solver.maxwell import FixedFrequencyGuidedModePlan
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _timed(function: Any) -> Any:

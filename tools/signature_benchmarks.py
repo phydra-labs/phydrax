@@ -19,6 +19,7 @@ import numpy as np
 
 import phydrax as phx
 from benchmarks._runtime import measure_lower_and_compile, measure_repeated
+from phydrax import config as pxconfig
 
 
 _Result = TypeVar("_Result")
@@ -285,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if arguments.max_feature_size <= 0:
         raise ValueError("max_feature_size must be positive.")
     if arguments.platform is not None:
-        jax.config.update("jax_platform_name", arguments.platform)
+        pxconfig.configure(pxconfig.RuntimeConfig(platforms=(arguments.platform,)))
 
     signax = (
         importlib.import_module("signax")

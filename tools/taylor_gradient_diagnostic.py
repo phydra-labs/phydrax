@@ -23,6 +23,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from phydrax import config as pxconfig
+
 
 _CASES = ("pure", "mixed-linear", "mixed-single", "mixed-prime")
 _PHASES = ("forward", "parameter", "direction")
@@ -66,7 +68,7 @@ def _child(case: str, phase: str, repeats: int, journal: Path) -> None:
         TaylorContractionStrategy,
     )
 
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     counts = (8,) if case == "pure" else (4, 4)
     strategy: TaylorContractionStrategy = "linear"
     if case == "mixed-single":

@@ -12,18 +12,17 @@ resource observations, never scientific qualification or release evidence.
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from _runtime import capture_environment, logical_array_bytes, measure_repeated
 
+from phydrax import config as pxconfig
 from phydrax.chemistry.periodic._boltzmann import (
     ConstantRelaxationTime,
     PeriodicBoltzmannPlan,
@@ -67,7 +66,9 @@ def _periodic_inputs(k_points: int, bands: int) -> Any:
     return energies, velocity, weights
 
 
-def _independent_f_sum(energies: Any, velocity: Any, weights: Any, temperature: Any, volume: Any) -> Any:
+def _independent_f_sum(
+    energies: Any, velocity: Any, weights: Any, temperature: Any, volume: Any
+) -> Any:
     occupations = 1.0 / (1.0 + np.exp(energies / (_KB * temperature)))
     derivative = occupations * (1.0 - occupations) / (_KB * temperature)
     dimension = velocity.shape[-1]
@@ -227,7 +228,7 @@ def main() -> None:
         or arguments.repeats < 1
     ):
         raise ValueError("Transport benchmark axes or sample counts are invalid.")
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("This physical-units benchmark requires JAX_ENABLE_X64=1.")
     payload = {
         "environment": capture_environment().to_dict(),

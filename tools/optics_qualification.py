@@ -7,9 +7,9 @@ import hashlib
 import json
 from pathlib import Path
 
-import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import (
     CylindricalHankelPlan,
@@ -62,7 +62,7 @@ from phydrax.optics.wave import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _interface_case() -> dict[str, float | int | bool]:

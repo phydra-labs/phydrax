@@ -24,6 +24,7 @@ import numpy as np
 
 import phydrax as phx
 from benchmarks._runtime import measure_repeated, measure_synchronized
+from phydrax import config as pxconfig
 from phydrax.optim._multipoint_state_design import (
     MultipointStateDesignProblem,
     StateDesignCase,
@@ -346,7 +347,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be positive")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     rows = []
     if args.case in ("analytic", "all"):
         rows.append(analytic_shared_local(args.repeats))

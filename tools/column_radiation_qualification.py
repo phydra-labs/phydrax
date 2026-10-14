@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere._radiation import (
     ColumnOpticalProperties,
     ColumnRadiationPlan,
@@ -33,7 +34,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.layers < 1:
         parser.error("layers must be positive")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     optics = ColumnOpticalProperties(
         shortwave_absorption=(2e-6, 0.003, 0.15, 0.1),
         shortwave_scattering=(1e-5, 0.0, 50.0, 30.0),

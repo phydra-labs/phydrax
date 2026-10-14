@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from math import prod
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -164,7 +163,7 @@ def simulate() -> dict[str, object]:
 
 
 def main() -> None:
-    jax.config.update("jax_enable_x64", True)
+    phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
     evidence = simulate()
     print(json.dumps(evidence, indent=2, sort_keys=True, allow_nan=False))
     if not evidence["successful"]:

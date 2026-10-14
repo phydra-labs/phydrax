@@ -4,18 +4,18 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
 import numpy as np
 
 from benchmarks._runtime import capture_environment
+from phydrax import config as pxconfig
 from tools.skeletal_muscle_thermal_qualification import (
     manufactured_case,
     manufactured_source,
@@ -75,7 +75,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     cases = [_case(1)] if args.smoke else [_case(n) for n in (2, 4, 8)]
     payload = {
         "environment": capture_environment().to_dict(),

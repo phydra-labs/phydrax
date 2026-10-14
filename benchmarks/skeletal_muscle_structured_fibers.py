@@ -6,15 +6,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
 from benchmarks._runtime import (
@@ -24,6 +22,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.cellular import ShortenFastTwitchModel
 from phydrax.applications.skeletal_muscle.fibers import (
     PrescribedFiberStimulusSchedule,
@@ -134,7 +133,7 @@ def main() -> None:
         args.fibers is not None and (args.fibers < 1 or args.nodes < 3)
     ):
         parser.error("repeats/fibers must be positive and nodes must be at least three")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     shapes = (
         [(args.fibers, args.nodes)]
         if args.fibers is not None

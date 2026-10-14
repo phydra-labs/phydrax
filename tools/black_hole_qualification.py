@@ -23,8 +23,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 
-jax.config.update("jax_enable_x64", True)
+
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 _PROFILE_METADATA: dict[str, dict[str, object]] = {
@@ -451,7 +453,7 @@ def _runtime_manifest(valid_at: int, /) -> dict[str, object]:
             for device in devices
         ],
         "precision": {
-            "jax_enable_x64": bool(jax.config.jax_enable_x64),
+            "jax_enable_x64": bool(pxconfig.x64_enabled()),
             "scientific_profiles": "float64",
             "production_and_native_electromagnetic_controls": "float32",
         },

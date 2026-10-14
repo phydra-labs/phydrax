@@ -21,6 +21,7 @@ from benchmarks._runtime import (
     compiler_evidence,
     measure_lower_and_compile,
 )
+from phydrax import config as pxconfig
 
 
 def nearest(nodes: Array, values: Array, period: Array | None = None) -> Array:
@@ -74,7 +75,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     root = Path(__file__).parent
     capacities = [32, 128] if args.smoke else [32, 128, 512, 2048]
     shell_capacities = [8, 16] if args.smoke else [8, 16, 32, 64]

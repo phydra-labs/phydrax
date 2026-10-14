@@ -1,7 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Run actual native energy solves; report time, status, and independent replay.
 
-Usage: PYTHONPATH=. JAX_ENABLE_X64=1 python tools/energy_planning_benchmarks.py
+Usage: PYTHONPATH=. python tools/energy_planning_benchmarks.py
 """
 
 from __future__ import annotations

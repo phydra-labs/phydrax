@@ -35,6 +35,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
+from phydrax import config as pxconfig
 from phydrax.discretization import AxisDomain
 from phydrax.discretization.spectral import (
     FourierBasisPlan,
@@ -219,7 +220,7 @@ def run(sizes: tuple[int, ...] = (8, 16, 32), repeats: int = 5, /) -> dict[str, 
         raise ValueError("sizes must contain unique modal capacities of at least three.")
     if repeats < 1:
         raise ValueError("repeats must be positive.")
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("The exterior-calculus benchmark requires JAX_ENABLE_X64=1.")
     cases = [_case(size, repeats) for size in sizes]
     return {

@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -19,6 +18,7 @@ from examples.energy._artifacts import (
     archive_workflow,
     execution_identity,
 )
+from phydrax import config as pxconfig
 from phydrax.applications import building_energy as be, energy_planning as ep, power
 from phydrax.applications.thermofluids import ConstantCOPHeatPumpLaw
 from phydrax.units import (
@@ -229,7 +229,7 @@ def run_building_dispatch(
     """
     if intervals not in (2, 3, 4):
         raise ValueError("Choose 2, 3 or 4 intervals for this bounded workflow.")
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution
     text = (

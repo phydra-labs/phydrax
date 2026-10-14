@@ -52,6 +52,7 @@ from benchmarks.meshfree_scaling import (
     PROJECT_ROOT,
     unit_cube_probes,
 )
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization import PointDiffusionForm
 from phydrax.discretization.meshfree import (
@@ -4934,7 +4935,7 @@ _plan_q17_refusal = partial(_q15q17_plan, "Q17-refusal", _Q17_REFUSAL_ROWS)
 # Q16 distributed campaigns.
 #
 # Forced host CPU rows run in one dedicated subprocess per (workloads, config)
-# with XLA_FLAGS forcing four devices before JAX initializes; they prove
+# with native configuration forcing four CPU devices before JAX initializes; they prove
 # functional distributed parity only. GPU/multi-host rows stay declared and
 # are blocked by the driver when that hardware is absent; on such hardware
 # they execute in-process on the driver's own runtime.
@@ -6157,7 +6158,7 @@ def run(
         )
     # Morton codes, sort keys and stable IDs are 64-bit for every precision;
     # ``precision`` is the declared coordinate/field dtype of each row.
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     profiles = _profiles()
     criteria_at = time.time_ns()
     planned: list[

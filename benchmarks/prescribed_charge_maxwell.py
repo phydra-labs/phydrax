@@ -16,9 +16,10 @@ from _runtime import (
 )
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 D = phx.discretization
 PIC = phx.discretization.pic

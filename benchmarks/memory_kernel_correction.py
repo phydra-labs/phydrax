@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from phydrax import config as pxconfig
 from phydrax.conditions import ArrayCodomain, FieldSpec, ProductFieldSpec
 from phydrax.kernels import (
     KernelFunctional,
@@ -159,7 +160,7 @@ def main() -> None:
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     sizes = [8, 16] if args.smoke else args.sizes
     cases: list[dict[str, Any]] = []
     for count in sizes:

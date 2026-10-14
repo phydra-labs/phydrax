@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.climate import (
     ClimateDrivers,
     GasBoxModel,
@@ -46,7 +47,7 @@ def _problem(plan: Any, count: Any, end_time: Any = 20.0) -> Any:
 
 
 def qualify() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         gas = GasBoxModel(((1.0,), (1.0,), (1.0,)), ((0.0,), (1.0e-14,), (0.2,)))
         initial_boxes = jnp.asarray(((2.0,), (3.0,), (4.0,)))
         emission = jnp.asarray((1.0, 2.0, 3.0))

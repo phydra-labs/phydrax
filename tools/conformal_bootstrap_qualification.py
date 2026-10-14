@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.conformal_bootstrap import (
     audit_pmp_samples,
     conformal_bootstrap_candidate_profiles,
@@ -32,7 +32,7 @@ from phydrax.applications.conformal_bootstrap import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _data() -> Any:

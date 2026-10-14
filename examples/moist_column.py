@@ -11,9 +11,9 @@ import argparse
 import json
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere import MoistColumnPlan
 
 
@@ -25,7 +25,7 @@ def main() -> None:
         "--restart", help="Optional output path for a plan-bound native checkpoint."
     )
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     plan = MoistColumnPlan(mixing_rate=2e-5, forcing_cadence=6)
     initial = plan.initialize(
         jnp.asarray((0.7, 0.85, 1.0, 1.15)),

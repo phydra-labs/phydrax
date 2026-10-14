@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._io import write_json_atomic
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization.discrete_velocity._learned_thermal_research import (
     IntegerVelocityFrameShiftPlan,
@@ -632,7 +633,7 @@ def _qualification() -> dict[str, Any]:
 
 
 def main() -> int:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = _qualification()
     if not report["passed"]:
         return 1

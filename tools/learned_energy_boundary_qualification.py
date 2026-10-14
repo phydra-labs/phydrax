@@ -9,11 +9,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._io import write_json_atomic
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization.discrete_velocity._energy_equilibrium import (
     PositiveEnergyEquilibriumPlan,
@@ -1371,7 +1371,7 @@ def _validate_output_path(path: Path, /) -> Path:
 def main() -> int:
     arguments = _parse_arguments()
     output = _validate_output_path(arguments.output)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = _qualification(
             arguments.parent_spatial_id,
             arguments.model_id,

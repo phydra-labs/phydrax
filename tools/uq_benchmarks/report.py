@@ -17,6 +17,8 @@ from typing import Any, Literal
 
 import jax
 
+from phydrax import config as pxconfig
+
 
 MetricCategory = Literal[
     "accuracy",
@@ -381,7 +383,7 @@ def collect_environment() -> dict[str, Any]:
         "platform": platform.platform(),
         "machine": platform.machine(),
         "jax_backend": jax.default_backend(),
-        "jax_enable_x64": bool(jax.config.read("jax_enable_x64")),
+        "jax_enable_x64": bool(pxconfig.x64_enabled()),
         "devices": devices,
         "package_versions": {
             name: package_version(name)

@@ -16,7 +16,7 @@ columns, per-interaction halo message bytes, and migration counts are
 retained; no scaling efficiency is inferred.
 
 Owners execute either on forced/real devices (``--owners devices``; run with
-``XLA_FLAGS=--xla_force_host_platform_device_count=N``) or as lane-reference
+native configuration with ``RuntimeConfig(cpu_device_count=N)``) or as lane-reference
 vmap lanes on one device (``--owners lanes``). Forced CPU devices and lanes are
 functional evidence only, never accelerator or multi-host performance.
 Compiler bytes are official XLA estimates of the transformed executable.

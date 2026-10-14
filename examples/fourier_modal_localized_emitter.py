@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.discretization.spectral import BrillouinZonePlan, LatticeHarmonicPlan
 from phydrax.solver.maxwell import fourier_modal as fm
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def main() -> None:

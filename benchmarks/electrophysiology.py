@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +16,7 @@ from _runtime import (
     measure_repeated,
 )
 
+from phydrax import config as pxconfig
 from phydrax.applications import electrophysiology as ep
 from phydrax.linalg import (
     DenseLinearOperator,
@@ -229,7 +229,7 @@ def main() -> None:
         raise ValueError(
             "steps/repeats/compartments must be positive; warmup/dense-limit nonnegative"
         )
-    with jax.enable_x64(args.dtype == "float64"):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=args.dtype == "float64")):
         payload = {
             "environment": capture_environment().to_dict(),
             "configuration": {

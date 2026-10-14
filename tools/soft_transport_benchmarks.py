@@ -22,6 +22,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
+from phydrax import config as pxconfig
 from phydrax.axes import AxisArray
 
 
@@ -564,7 +565,7 @@ def _metadata() -> dict[str, Any]:
         "machine": platform.machine(),
         "byteorder": sys.byteorder,
         "default_backend": jax.default_backend(),
-        "jax_enable_x64": bool(jax.config.read("jax_enable_x64")),
+        "jax_enable_x64": bool(pxconfig.x64_enabled()),
         "devices": devices,
     }
 

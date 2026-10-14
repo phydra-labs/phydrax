@@ -7,7 +7,7 @@ positions, projects the predicted velocity with the weak GMLS pressure
 projection and moves the points. A deliberately oversized step is refused by
 the Courant check and rolled back; the run then continues. The final state is
 transferred to a fixed GMLS cloud with conservative positive coefficients.
-Run with ``JAX_ENABLE_X64=1 python -m examples.meshfree_lagrangian_flow``.
+Run with ``python -m examples.meshfree_lagrangian_flow``.
 """
 
 from __future__ import annotations

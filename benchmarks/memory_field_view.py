@@ -20,6 +20,7 @@ import numpy as np
 from jax import Array
 from scipy.interpolate import BSpline
 
+from phydrax import config as pxconfig
 from phydrax.discretization.finite_difference._field_view import (
     BSplineGridInterpolation,
     FiniteDifferenceFieldReconstructionKernel,
@@ -147,7 +148,7 @@ def main() -> None:
     if args.smoke:
         args.sizes = [16, 32]
         args.repeats = 1
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     cases = [_case(size, args.degree, args.repeats) for size in args.sizes]
     record = {
         "environment": asdict(capture_environment()),

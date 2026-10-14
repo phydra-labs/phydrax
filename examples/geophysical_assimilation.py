@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.geophysics import (
     geophysical_analysis_increments,
     GeophysicalAnalysisInventory,
@@ -246,5 +247,5 @@ def run_twin(*, ensemble_size: Any = 24) -> Any:
 
 
 if __name__ == "__main__":
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         print(json.dumps(run_twin(), indent=2))

@@ -1,18 +1,17 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Numerical rigid mechanics benchmark; synthetic pairs are not duplex calibration.
 
-Run: JAX_ENABLE_X64=1 python -m benchmarks.nucleic_rigid --bodies 16 --steps 100
+Run: python -m benchmarks.nucleic_rigid --bodies 16 --steps 100
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 import argparse
 import hashlib
 import json
 from copy import deepcopy
 from dataclasses import asdict
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +37,7 @@ from phydrax.discretization.particle._rigid_body import (
 from phydrax.qualification._reference import ReferenceArtifactManifest
 
 
-def parameter_data(family: Any="average-dna") -> Any:
+def parameter_data(family: Any = "average-dna") -> Any:
     """Independently authored noncalibrated coefficients for all equation paths.
 
     These are not a transcription of any model table. They are useful for
@@ -167,7 +166,7 @@ def parameter_data(family: Any="average-dna") -> Any:
     }
 
 
-def parameter_artifact(family: Any="average-dna") -> Any:
+def parameter_artifact(family: Any = "average-dna") -> Any:
     payload = json.dumps(parameter_data(family), sort_keys=True).encode()
     manifest = ReferenceArtifactManifest(
         "analytic-pair-mechanics",
@@ -187,7 +186,7 @@ def parameter_artifact(family: Any="average-dna") -> Any:
     return NucleotideParameterArtifact(manifest, payload, AtomisticUnitSystem.reduced())
 
 
-def make_fixture(count: Any=16) -> Any:
+def make_fixture(count: Any = 16) -> Any:
     """Independent noninteracting pairs with nonzero orientation torques."""
     if count < 2 or count % 2:
         raise ValueError("Body count must be positive and even.")
@@ -220,7 +219,7 @@ def make_fixture(count: Any=16) -> Any:
     return model, state
 
 
-def run(count: Any=16, steps: Any=100, repeats: Any=5) -> Any:
+def run(count: Any = 16, steps: Any = 100, repeats: Any = 5) -> Any:
     model, state = make_fixture(count)
     energy_force = jax.jit(lambda value: model.evaluate(value))
     compiled, compilation = measure_lower_and_compile(
