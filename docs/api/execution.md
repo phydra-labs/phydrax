@@ -7,9 +7,9 @@ enabled by an explicit runtime or execution group.
 
 ## Bootstrap before device initialization
 
-Launcher rank settings must exist before `import phydrax`. The package consumes
-them before loading any device-owning module, then preserves its dependency-
-ordered public imports:
+Launcher rank settings must exist before `import phydrax`. The lazy root consumes
+them and coordinates without device discovery; `runtime_info()` discovers
+devices. Explicit bootstrap intent belongs to [configuration](configuration.md).
 
 ```python
 # PHYDRAX_COORDINATOR_ADDRESS, PHYDRAX_NUM_PROCESSES, and
@@ -21,20 +21,19 @@ runtime = phx.execution.ExecutionRuntime.current()
 ```
 
 The bootstrap accepts explicit `PHYDRAX_COORDINATOR_ADDRESS`,
-`PHYDRAX_NUM_PROCESSES`, `PHYDRAX_PROCESS_ID`, and
-`PHYDRAX_LOCAL_DEVICE_IDS` settings. It also delegates to JAX launcher
-detection under Slurm, Open MPI, PMI, and PMIx. `PHYDRAX_CPU_COLLECTIVES`
+`PHYDRAX_NUM_PROCESSES`, `PHYDRAX_PROCESS_ID`, `PHYDRAX_LOCAL_DEVICE_IDS`,
+`PHYDRAX_COORDINATOR_BIND_ADDRESS`, `PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS`, and
+`PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS` settings. It also delegates to JAX
+launcher detection under Slurm, Open MPI, PMI, and PMIx. `PHYDRAX_CPU_COLLECTIVES`
 selects `gloo` or `mpi` before CPU backend initialization. An attempted
 distributed initialization after JAX has initialized fails rather than
 silently producing an incomplete process set.
 
 For a local process set, `LocalProcessLaunchPlan` and
 `launch_local_processes` start one shell-free argument vector per rank and
-inject the same explicit rendezvous identity.
-
-`phydrax.execution.RuntimeBootstrap`
-
----
+inject the same explicit rendezvous identity. Each rank's environment replaces
+the base environment's rank settings as one group, clearing local device IDs and
+bind addresses it does not set, while keeping timeouts the base already selects.
 
 `phydrax.execution.RuntimeInfo`
 
@@ -211,7 +210,7 @@ rolls every owner back atomically.
 the same query over an `ExecutionGroup`, returning rows in logical target order
 with global logical source indices.
 
-Forced CPU devices (`--xla_force_host_platform_device_count`) demonstrate
+Forced CPU devices (`JAX_NUM_CPU_DEVICES=N`) demonstrate
 functional distributed parity only; accelerator and multi-host performance need
 real hardware campaigns.
 

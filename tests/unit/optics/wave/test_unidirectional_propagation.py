@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import FourierAxisSpec, TensorGridPlan
 from phydrax.geometry import RigidFrame
@@ -34,7 +35,7 @@ from phydrax.optics.wave._unidirectional import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _provenance() -> RefractiveIndexProvenance:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import socket
 import sys
 import time
@@ -20,12 +19,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax.experimental import multihost_utils
 
+from phydrax import config as pxconfig
 from phydrax.execution import (
     ExecutionRuntime,
     global_weighted_mean,
-    initialize_from_environment,
     launch_local_processes,
     LocalProcessLaunchPlan,
+    runtime_info,
     shard_array_axis,
 )
 from phydrax.linalg import (
@@ -50,7 +50,7 @@ def _time(operation: Any, iterations: int) -> tuple[object, float]:
 def run(size: int, iterations: int) -> dict[str, object]:
     if size <= 0 or iterations <= 0:
         raise ValueError("size and iterations must be positive")
-    info = initialize_from_environment()
+    info = runtime_info()
     runtime = ExecutionRuntime.current()
     device_count = runtime.root_group.spec.device_count
     group_token = np.asarray(
@@ -146,8 +146,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
-        environment = dict(os.environ)
-        environment["PHYDRAX_CPU_COLLECTIVES"] = "gloo"
+        environment = pxconfig.environment(
+            pxconfig.RuntimeConfig(cpu_collectives_implementation="gloo")
+        )
         results = launch_local_processes(
             (
                 sys.executable,

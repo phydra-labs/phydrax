@@ -90,7 +90,7 @@ def inexact_result_type(*values: object) -> np.dtype:
 
 @dataclass(frozen=True, slots=True)
 class DTypeRule:
-    """One accepted dtype: an exact canonical dtype or a dtype category."""
+    """One accepted dtype: an exact declared dtype or a dtype category."""
 
     exact: np.dtype | None
     category: DTypeCategory | None
@@ -105,8 +105,8 @@ class DTypeRule:
 
 
 def exact_dtype_rule(value: DTypeLike, /) -> DTypeRule:
-    """Return the rule accepting only the canonical dtype named by `value`."""
-    return DTypeRule(canonical_dtype(value), None)
+    """Return the rule accepting only the declared NumPy dtype named by `value`."""
+    return DTypeRule(np.dtype(value), None)
 
 
 def category_dtype_rule(category: DTypeCategory, /) -> DTypeRule:

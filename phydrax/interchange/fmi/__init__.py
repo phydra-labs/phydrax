@@ -10,6 +10,7 @@ session layer does not pull in the partitioned-coupling runtime.
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
 
+from ..._jax_config import process_numerics
 from ._session import (
     FMICoSimulationSession,
     FMIModelDescription,
@@ -42,9 +43,10 @@ _BINDING_EXPORTS = (
 
 
 def __getattr__(name: str) -> Any:
-    if name in _BINDING_EXPORTS:
-        return getattr(import_module("._binding", __name__), name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        if name in _BINDING_EXPORTS:
+            return getattr(import_module("._binding", __name__), name)
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

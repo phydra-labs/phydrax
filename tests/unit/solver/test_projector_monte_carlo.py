@@ -13,6 +13,7 @@ import numpy.typing as npt
 import pytest
 from jax.typing import ArrayLike
 
+from phydrax import config as pxconfig
 from phydrax._sampling._addressing import derive_key, SampleAddress
 from phydrax.operators.quantum.lattice._address import (
     QuantumAddressCodec,
@@ -713,7 +714,10 @@ def test_wrong_packed_word_dtype_is_refused_before_conversion() -> None:
 
 def test_x64_disabled_is_explicit_admission_refusal() -> None:
     operator = _cancelling_operator()
-    with jax.enable_x64(False), pytest.raises(ValueError):
+    with (
+        pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)),
+        pytest.raises(ValueError),
+    ):
         ProjectorMonteCarloProblem(
             operator,
             np.asarray(((0,),), dtype=np.uint32),

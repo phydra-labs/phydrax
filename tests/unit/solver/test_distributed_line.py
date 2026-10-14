@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.linalg._distributed_line import (
     DistributedLineSolvePlan,
     ExtrudedAxisInvarianceCertificate,
@@ -26,7 +27,7 @@ from phydrax.linalg._transform_line import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _poisson_line(size: int) -> tuple[jax.Array, jax.Array, jax.Array]:

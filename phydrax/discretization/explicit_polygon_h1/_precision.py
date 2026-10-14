@@ -7,12 +7,12 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 
 from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -120,14 +120,18 @@ class ExplicitPolygonH1PrecisionPolicy(StrictModule, NonTrainableState):
         return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
     def validate_backend(self) -> None:
-        if "float64" in (
-            self.geometry_dtype,
-            self.basis_dtype,
-            self.factorization_dtype,
-            self.accumulation_dtype,
-            self.output_dtype,
-            self.certification_dtype,
-        ) and not bool(jax.config.read("jax_enable_x64")):
+        if (
+            "float64"
+            in (
+                self.geometry_dtype,
+                self.basis_dtype,
+                self.factorization_dtype,
+                self.accumulation_dtype,
+                self.output_dtype,
+                self.certification_dtype,
+            )
+            and not x64_enabled()
+        ):
             raise ValueError("Requested explicit polygon float64 precision is disabled.")
 
 

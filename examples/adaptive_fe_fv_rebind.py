@@ -49,7 +49,7 @@ from phydrax.discretization.fem import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 cpl = phx.solver.coupling
 lc = phx.lifecycle

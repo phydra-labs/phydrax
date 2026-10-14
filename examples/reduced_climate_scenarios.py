@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.climate import (
     ClimateDrivers,
     GasBoxModel,
@@ -24,7 +25,7 @@ from phydrax.solver import FixedStepRolloutPlan
 
 
 def run() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         gases = GasBoxModel(
             response_coefficients=((0.01, 0.2, 0.01), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
         )

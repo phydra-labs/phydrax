@@ -7,12 +7,12 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 
 from ..._dtype_names import real_precision_dtype_name, RealPrecisionDType
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._numerics._compensated import Axis, compensated_sum
 from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
@@ -136,7 +136,7 @@ class FiniteElementPrecisionPolicy(StrictModule, NonTrainableState):
                 self.accumulation_dtype,
                 self.output_dtype,
             )
-            and not jax.config.x64_enabled
+            and not x64_enabled()
         ):
             raise ValueError("Requested finite-element float64 precision is disabled.")
 

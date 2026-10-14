@@ -21,9 +21,10 @@ import jax
 import numpy as np
 
 import phydrax.bubble_dynamics as bd
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 AMBIENT = 101325.0
 DENSITY = 998.0

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._jax_config import x64_enabled
 from ..operators.quantum.lattice._address import QuantumConfigurationDomain
 from ..operators.quantum.lattice._guide import GuidedQuantumColumnOperator
 from ..sparse import KeyGroupPlan, reduce_key_groups
@@ -31,7 +32,7 @@ def _require_local_arrays(
     | ProjectorMonteCarloProblem
     | ProjectorMonteCarloState,
 ) -> None:
-    if not jax.config.x64_enabled:
+    if not x64_enabled():
         raise ValueError("Projector Monte Carlo requires jax_enable_x64.")
     if jax.process_count() != 1:
         raise ValueError(
@@ -189,7 +190,7 @@ def prepare_projector_monte_carlo(
         plan, ProjectorMonteCarloPlan
     ):
         raise TypeError("Preparation requires a projector problem and plan.")
-    if not jax.config.x64_enabled:
+    if not x64_enabled():
         raise ValueError("Projector Monte Carlo requires jax_enable_x64.")
     _require_local_arrays(problem)
     retained, workspace = _resource_bytes(problem, plan)

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.atomic_quantum import (
     AtomicManifold,
     AtomicQuantumPlan,
@@ -26,7 +27,7 @@ from phydrax.solver._lindblad import solve_lindblad
 from phydrax.solver._quantum_jump import solve_quantum_jump_ensemble
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _manifolds() -> Any:

@@ -6,9 +6,10 @@ import pytest
 
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _gmres_policy(*, max_steps: Any = 64, restart: Any = 8) -> Any:

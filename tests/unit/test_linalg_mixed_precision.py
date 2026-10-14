@@ -10,13 +10,14 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 la = phx.linalg
 
 
 pytestmark = pytest.mark.skipif(
-    not bool(jax.config.read("jax_enable_x64")),
+    not bool(pxconfig.x64_enabled()),
     reason="Mixed float64/float32 certification requires JAX x64.",
 )
 

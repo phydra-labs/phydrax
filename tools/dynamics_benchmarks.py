@@ -21,6 +21,7 @@ import numpy as np
 
 import phydrax as phx
 from benchmarks._runtime import logical_array_bytes, measure_repeated, synchronize
+from phydrax import config as pxconfig
 from phydrax.optim import adam
 
 
@@ -1249,7 +1250,7 @@ def run_benchmarks(
             "machine": platform.machine(),
             "system": platform.system(),
             "system_release": platform.release(),
-            "x64_enabled": bool(jax.config.read("jax_enable_x64")),
+            "x64_enabled": bool(pxconfig.x64_enabled()),
         },
     }
     passed = True

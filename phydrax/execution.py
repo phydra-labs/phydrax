@@ -8,13 +8,8 @@
 from importlib import import_module
 from typing import Any
 
-from ._execution_bootstrap import (
-    initialize,
-    initialize_from_environment,
-    runtime_info,
-    RuntimeBootstrap,
-    RuntimeInfo,
-)
+from ._execution_bootstrap import runtime_info, RuntimeInfo
+from ._jax_config import process_numerics
 
 
 _SYMBOL_MODULES = {
@@ -133,13 +128,14 @@ _SYMBOL_MODULES = {
 
 
 def __getattr__(name: str) -> Any:
-    module_name = _SYMBOL_MODULES.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = import_module(module_name, __package__)
-    value = module.__dict__[name]
-    globals()[name] = value
-    return value
+    with process_numerics():
+        module_name = _SYMBOL_MODULES.get(name)
+        if module_name is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        module = import_module(module_name, __package__)
+        value = module.__dict__[name]
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:
@@ -223,15 +219,12 @@ __all__ = (
     "RecoveryPolicy",
     "ResourceInventory",
     "ResourceRequest",
-    "RuntimeBootstrap",
     "RuntimeInfo",
     "TrainingIterationKind",
     "TrainingIterationMetrics",
     "evaluate_execution_worksets_filter_vmap",
     "evaluate_execution_worksets_serial",
     "evaluate_execution_worksets_vmap",
-    "initialize",
-    "initialize_from_environment",
     "SpawnedProcessTaskExecutor",
     "TaskHandle",
     "restore_execution_workset_checkpoint",

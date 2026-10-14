@@ -45,6 +45,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.applications.soap_film_tunnel import (
     PreparedSoapFilmTunnel,
     SoapFilmInflow,
@@ -378,7 +379,7 @@ def run(
             "load_average_at_report": list(os.getloadavg()),
             "jax": jax.__version__,
             "backend": jax.default_backend(),
-            "x64": bool(jax.config.read("jax_enable_x64")),
+            "x64": bool(pxconfig.x64_enabled()),
         },
         "reference": (
             "Williamson 1988 parallel-shedding St(Re) fit plus Allen--Vincenti "

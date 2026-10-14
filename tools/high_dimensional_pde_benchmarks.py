@@ -28,6 +28,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
+from phydrax import config as pxconfig
 from phydrax.equations import (
     analyze_randomized_compilation,
     compile_pde_randomized_term,
@@ -1241,7 +1242,7 @@ def _benchmark_environment() -> dict[str, Any]:
         "machine": platform.machine(),
         "backend": jax.default_backend(),
         "device_kind": device.device_kind,
-        "x64_enabled": bool(jax.config.read("jax_enable_x64")),
+        "x64_enabled": bool(pxconfig.x64_enabled()),
     }
 
 
@@ -1636,7 +1637,7 @@ def run_native_taylor_pde_benchmarks(
         raise ValueError("Taylor PDE dimensions must be at least two.")
     if points < 1 or probes < 2 or workset < 1 or repeats < 1:
         raise ValueError("points/workset/repeats must be positive; probes at least two.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     records: list[dict[str, Any]] = []
     variants: tuple[tuple[RandomizedDifferentialMethod, RandomizedPopulation], ...] = (
         ("hutchinson", "coordinate"),

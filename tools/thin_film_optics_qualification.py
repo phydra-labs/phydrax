@@ -31,6 +31,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.artifacts import (
     admit_external_artifact,
     ArtifactManifest,
@@ -47,7 +48,7 @@ from phydrax.rendering import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _CIE_BASE_URL = "https://files.cie.co.at/Publications-datasets/"
 _LICENSE = "CC-BY-SA-4.0"
@@ -280,7 +281,7 @@ def qualify(cache: Path, fetch: bool, /) -> dict[str, Any]:
             "jax": jax.__version__,
             "numpy": np.__version__,
             "backend": jax.default_backend(),
-            "x64": bool(jax.config.jax_enable_x64),
+            "x64": bool(pxconfig.x64_enabled()),
         },
         "sources": {
             key: {

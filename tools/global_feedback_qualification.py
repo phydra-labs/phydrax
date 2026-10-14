@@ -3,9 +3,9 @@
 """Chunked native global feedback experiment; execution is not climate qualification.
 
 Long recipe (420 days per case, 180-day excluded spinup):
-JAX_ENABLE_X64=1 python tools/global_feedback_qualification.py --sensitivity
+python tools/global_feedback_qualification.py --sensitivity
 Short path exercise, never statistically qualified:
-JAX_ENABLE_X64=1 python tools/global_feedback_qualification.py --smoke --scenarios baseline
+python tools/global_feedback_qualification.py --smoke --scenarios baseline
 """
 
 from __future__ import annotations

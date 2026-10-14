@@ -1909,9 +1909,10 @@ _OMEGA_H_WORKER_HINT = (
 
 def _omega_h_worker(worker: str | None, /) -> str | None:
     """Resolve the Omega_h worker exactly as ``OmegaHProvider`` does."""
-    return shutil.which(
-        worker or os.environ.get("PHYDRAX_OMEGA_H_WORKER", "phydrax-omega-h-worker")
+    configured = (
+        phx.config.snapshot().workers.get("omega_h") if worker is None else worker
     )
+    return shutil.which("phydrax-omega-h-worker" if configured is None else configured)
 
 
 def _qualify_omega_h_ranks(worker: str | None, ranks: int, /) -> dict[str, object]:

@@ -27,6 +27,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ...sparse import EdgeRelation, RowRelation
 from ..spatial import (
@@ -75,7 +76,7 @@ def _precision_policy(
     plans refuse construction when ``jax_enable_x64`` is disabled; reduced
     coordinate precision is declared through the policy's geometry role.
     """
-    if not jax.config.read("jax_enable_x64"):
+    if not x64_enabled():
         raise ValueError(
             "Meshfree neighborhoods require jax_enable_x64 for 64-bit Morton "
             "addressing; declare a float32 geometry role for float32 coordinates."

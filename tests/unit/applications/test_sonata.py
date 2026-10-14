@@ -9,15 +9,15 @@ from dataclasses import replace
 from typing import Any
 
 import h5py
-import jax
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications import electrophysiology as ep
 from phydrax.interchange import AdapterError, require_lossless, ResourceReadError
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _fixture(root: Any, *, delay: Any = 0.25) -> Any:

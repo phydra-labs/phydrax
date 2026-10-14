@@ -1706,8 +1706,9 @@ class OmegaHProvider:
     """Adapt affine planar triangles or volume tetrahedra with real Omega_h.
 
     Build ``native/providers/omega_h`` against an installed Omega_h CMake
-    package and set PHYDRAX_OMEGA_H_WORKER (or pass the executable). The worker
-    stays alive between calls: one session per rank count, identity probed
+    package. The explicit executable wins over native ``ProviderConfig.workers``
+    or PHYDRAX_OMEGA_H_WORKER, then ``phydrax-omega-h-worker`` on PATH. The worker
+    stays alive between calls: one lazily launched session per rank count, identity probed
     once. Distributed runs launch ``(*mpi_launcher, "-n", ranks)``; launcher
     arguments and environment are deployment configuration passed explicitly.
     Differentiation, CAD projection, and lineage are deliberately not claimed.
@@ -1747,7 +1748,7 @@ class OmegaHProvider:
                 worker = ProviderWorker(
                     "omega_h",
                     executable=self.executable,
-                    environment_variable="PHYDRAX_OMEGA_H_WORKER",
+                    setting="omega_h",
                     default_executable="phydrax-omega-h-worker",
                     build_hint=(
                         "Build native/providers/omega_h against an Omega_h CMake "

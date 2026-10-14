@@ -7,6 +7,7 @@ The ASE calculator resolves lazily because its module imports ASE.
 from importlib import import_module
 from typing import Any
 
+from ..._jax_config import process_numerics
 from ._adapters import (
     force_field_from_mapping,
     force_field_to_mapping,
@@ -86,12 +87,13 @@ _ASE_CALCULATOR_EXPORTS = ("NativeASECalculator", "NativeASECalculatorPlan")
 
 
 def __getattr__(name: str) -> Any:
-    if name in _ASE_CALCULATOR_EXPORTS:
-        require_ase()
-        value = getattr(import_module("._ase_calculator", __package__), name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        if name in _ASE_CALCULATOR_EXPORTS:
+            require_ase()
+            value = getattr(import_module("._ase_calculator", __package__), name)
+            globals()[name] = value
+            return value
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:

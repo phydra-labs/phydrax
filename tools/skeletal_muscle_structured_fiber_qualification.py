@@ -11,10 +11,10 @@ import json
 from pathlib import Path
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.cellular import ShortenFastTwitchModel
 from phydrax.applications.skeletal_muscle.fibers import (
     PrescribedFiberStimulusSchedule,
@@ -127,7 +127,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     payload = qualify((1, 2) if arguments.smoke else (1, 2, 4, 8))
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if arguments.output is not None:

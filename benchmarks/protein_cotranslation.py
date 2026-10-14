@@ -7,11 +7,10 @@ Run: .venv/bin/python benchmarks/protein_cotranslation.py --residues 6 --steps 8
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import json
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +23,7 @@ from _runtime import (
     measure_synchronized,
 )
 
+from phydrax import config as pxconfig
 from phydrax.applications.protein_folding._construct import ProteinConstruct
 from phydrax.applications.protein_folding.cotranslation import (
     CotranslationProtocol,
@@ -156,7 +156,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.residues < 2 or args.steps < 1 or args.repeats < 1:
         parser.error("residues >= 2, steps >= 1 and repeats >= 1 are required")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     (protocol, initial), preparation = measure_synchronized(
         lambda: prepare_case(args.residues, args.steps)
     )

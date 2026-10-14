@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 def _rectangle_mesh(
@@ -422,7 +422,7 @@ def _backend_qualification() -> dict[str, object]:
 
 
 def qualify() -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Phase-field qualification requires JAX float64 support.")
     planar = _planar_interface_qualification()
     temporal = _temporal_qualification()

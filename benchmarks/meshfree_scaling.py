@@ -37,6 +37,7 @@ from benchmarks._runtime import (
     logical_array_bytes,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.execution import compiled_memory_estimate, PhaseMemorySampler
 from phydrax.typing import parse
@@ -304,7 +305,7 @@ def configure_precision(config: MeshfreeConfig, /, *, supported: tuple[str, ...]
             f"Precision {config.precision} is not declared for this workload "
             f"(supported: {', '.join(supported)})."
         )
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 class PhaseRecorder:

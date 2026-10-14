@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere._interactive_column import InteractiveMoistColumnPlan
 from phydrax.applications.atmosphere._moist import MoistThermodynamicPlan
 from phydrax.applications.atmosphere._radiation import (
@@ -245,7 +246,7 @@ def test_interactive_moist_column_scenario_3() -> None:
     assert not rejected.successful
     _same_state(rejected.state, initial)
     for outward in [-1.0, 1.0]:
-        with jax.enable_x64(True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
             plan = _quiet()
             temperature = (
                 plan.thermodynamics.minimum_temperature
@@ -311,7 +312,7 @@ def test_short_observable_derivative_epsilon_sweep_and_switch_invalidity() -> No
 
 def test_state_precision_survives_mixed_parameter_precision_and_native_scan() -> None:
     for dtype in [jnp.float32, jnp.float64]:
-        with jax.enable_x64(True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
             # Radiation, slab and exchange constructors contain float64 numerical
             # leaves under x64. Explicit float32 inventory ownership must still be
             # coherent before and throughout a scan, not repaired at its endpoint.
@@ -396,7 +397,7 @@ def test_state_precision_survives_mixed_parameter_precision_and_native_scan() ->
 
 
 def test_active_mixing_length_floor_has_unequal_one_sided_physical_derivatives() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan = InteractiveMoistColumnPlan(
             mixing_length=1.0, rain_fall_speed=0.0, snow_fall_speed=0.0
         )

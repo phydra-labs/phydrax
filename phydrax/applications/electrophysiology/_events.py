@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 
 
@@ -50,7 +51,7 @@ def initialize_event_queue(
     resolved_dtype = jnp.asarray(0.0, dtype=dtype).dtype
     if not jnp.issubdtype(resolved_dtype, jnp.floating):
         raise TypeError("Event times and amplitudes require a floating dtype.")
-    sequence_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
+    sequence_dtype = jnp.int64 if x64_enabled() else jnp.int32
     return NeuralEventQueue(
         jnp.full((capacity,), jnp.inf, dtype=resolved_dtype),
         jnp.full((capacity,), -1, dtype=jnp.int32),

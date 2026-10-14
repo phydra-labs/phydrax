@@ -19,6 +19,7 @@ import numpy as np
 
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint, canonical_json
 from phydrax.backends._types import BackendAvailability
 from phydrax.closure_data._kinetic_equilibrium_artifact import (
@@ -1443,7 +1444,7 @@ def _validate_output_path(arguments: argparse.Namespace, /) -> None:
 def main() -> int:
     arguments = _parse_arguments()
     _validate_output_path(arguments)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = qualification_report(
             model_artifact_path=arguments.model_artifact,
             parent_spatial_path=arguments.parent_spatial,

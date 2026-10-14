@@ -7,12 +7,11 @@ Run from the repository root with JAX_ENABLE_X64=true:
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import json
 from dataclasses import asdict
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +25,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.applications.nucleic_acid_biophysics._construct import NucleicAcidConstruct
 from phydrax.applications.nucleic_acid_biophysics.electronics import (
     electronic_coherences,
@@ -60,7 +60,14 @@ UNITS = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 PER_FS = derived_unit("1/fs", ((FEMTOSECOND, -1),))
 
 
-def fixture(size: Any, *, dephasing: Any=0.0, coupling: Any=True, units: Any=UNITS, energy_unit: Any=ELECTRONVOLT) -> Any:
+def fixture(
+    size: Any,
+    *,
+    dephasing: Any = 0.0,
+    coupling: Any = True,
+    units: Any = UNITS,
+    energy_unit: Any = ELECTRONVOLT,
+) -> Any:
     construct = NucleicAcidConstruct(("benchmark",), ("A" * size,), ("DNA",), (False,))
     sites = tuple(10_000 + index * 7 for index in range(size))
     graph = ElectronicSiteGraph(
@@ -272,7 +279,7 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=4)
     parser.add_argument("--trajectories", type=int, default=1024)
     args = parser.parse_args()
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("Run this physical-unit benchmark with JAX_ENABLE_X64=true.")
     print(
         json.dumps(

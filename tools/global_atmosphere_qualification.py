@@ -2,7 +2,7 @@
 
 """Small scientific qualification; no climatology or forecast-skill claims.
 
-Run with JAX_ENABLE_X64=1. --refine compares dt, dt/2, dt/4 at equal duration.
+Phydrax enables float64 by default. --refine compares dt, dt/2, dt/4 at equal duration.
 The JSON records measured values and fails on any rejected step. It does not
 turn a short stable run into a Held--Suarez or aquaplanet validation claim.
 """
@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.sparse.linalg import expm
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere._global import (
     GlobalPrimitiveEquationPlan,
     read_global_atmosphere_checkpoint,
@@ -295,7 +296,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 1 or args.levels < 1:
         parser.error("steps and levels must be positive")
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         parser.error("Spherical transforms require JAX_ENABLE_X64=1")
     results = [
         qualify(

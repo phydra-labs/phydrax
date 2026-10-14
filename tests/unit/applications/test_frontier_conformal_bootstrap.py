@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._external_runtime import PinnedExecutable
 from phydrax.applications.conformal_bootstrap import (
     assemble_scalar_crossing_cone,
@@ -26,7 +27,7 @@ from phydrax.applications.conformal_bootstrap import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_frontier_contracts() -> None:

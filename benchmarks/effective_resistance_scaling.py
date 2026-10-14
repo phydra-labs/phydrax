@@ -38,6 +38,7 @@ from numpy.typing import NDArray
 from scipy.sparse import coo_matrix, csc_matrix
 from scipy.sparse.linalg import splu
 
+from phydrax import config as pxconfig
 from phydrax.graph import EffectiveResistancePlan, EffectiveResistanceResult
 from phydrax.linalg import (
     JacobiPreconditionerBuilder,
@@ -346,7 +347,7 @@ def main() -> None:
         raise ValueError("Query count must not exceed the grid node count.")
     if arguments.repeats < 1 or arguments.workspace_bytes < 1:
         raise ValueError("Repeats and workspace bytes must be positive.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     rows = [
         row
         for side in sorted(set(arguments.sizes))

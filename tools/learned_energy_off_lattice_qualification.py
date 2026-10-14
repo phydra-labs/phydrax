@@ -26,6 +26,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint, canonical_json
 from phydrax.discretization.discrete_velocity._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
@@ -488,7 +489,7 @@ def _fixed_step_refusal(
 
 
 def _run_d2v17_rejection_probe() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         material = IdealGasMaterial(1.4, 1.0)
         closure = ConstantTransport(
             PARTICLE_RELAXATION_TIME, TOTAL_ENERGY_RELAXATION_TIME
@@ -1158,7 +1159,7 @@ def _validate_output_path(path: Path, /) -> Path:
 def main() -> int:
     arguments = _parse_arguments()
     output = _validate_output_path(arguments.output)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = qualification_report(
             coarse_resolution=arguments.coarse_resolution,
             runtime_resolution=arguments.runtime_resolution,

@@ -46,7 +46,7 @@ from examples import _coupled_heat_transient as heat
 from phydrax.solver import coupling as cpl
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 M = phx.measurement
 CELLS = 4

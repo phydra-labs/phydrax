@@ -11,6 +11,7 @@ import pytest
 from jax.typing import ArrayLike, DTypeLike
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.combinatorial import (
     CapacitatedAuctionPlan,
     CapacitatedAuctionResult,
@@ -297,7 +298,7 @@ def test_traced_plan_solve_refuses_inconsistent_device_candidates() -> None:
 
 @pytest.mark.strict_jax
 def test_traced_candidate_labels_refuse_uint64_wrap_before_narrowing() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan = CapacitatedAuctionPlan(1, 1, 1)
         values = jnp.asarray([[1.0]])
         counts = jnp.asarray([1], dtype=jnp.int64)
@@ -317,9 +318,11 @@ def test_traced_candidate_labels_refuse_uint64_wrap_before_narrowing() -> None:
 
 
 @pytest.mark.strict_jax
-@pytest.mark.parametrize("count", [2**31, 2**32], ids=["int32-max-plus-one", "uint32-wrap"])
+@pytest.mark.parametrize(
+    "count", [2**31, 2**32], ids=["int32-max-plus-one", "uint32-wrap"]
+)
 def test_traced_count_bounds_refuse_values_above_int32(count: int) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan = CapacitatedAuctionPlan(1, 1, 1)
         prepared = plan.prepare([[0]])
 
@@ -336,7 +339,7 @@ def test_traced_count_bounds_refuse_values_above_int32(count: int) -> None:
 
 @pytest.mark.strict_jax
 def test_traced_count_bound_accepts_int32_max_without_narrowing_change() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan = CapacitatedAuctionPlan(1, 2, 2)
         prepared = plan.prepare([[0, 1]])
 
@@ -358,7 +361,7 @@ def test_traced_count_bound_accepts_int32_max_without_narrowing_change() -> None
 
 @pytest.mark.strict_jax
 def test_traced_initial_slot_sentinel_and_zero_are_accepted() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = CapacitatedAuctionPlan(1, 1, 1).prepare([[0]])
 
         @jax.jit
@@ -387,7 +390,7 @@ def test_traced_initial_slot_sentinel_and_zero_are_accepted() -> None:
     ids=["int32-max-semantic", "int32-max-plus-one", "uint32-wrap"],
 )
 def test_traced_initial_slots_refuse_invalid_values_without_wrap(slot: int) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = CapacitatedAuctionPlan(1, 1, 1).prepare([[0]])
 
         @jax.jit
@@ -441,7 +444,7 @@ def test_host_boundaries_refuse_integer_values_outside_int32() -> None:
 def test_assignment_canonicalization_refuses_invalid_slots_before_cast(
     slot: int, dtype: DTypeLike
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         relation = phx.sparse.RowRelation(
             np.asarray([[0]], dtype=np.int32), source_size=1
         )
@@ -473,6 +476,7 @@ def test_assignment_canonicalization_preserves_valid_slots_and_audit() -> None:
         valid=np.asarray([[True, False], [True, True]]),
     )
     space = phx.combinatorial.CapacitatedAssignmentSpace(relation, [1, 1], [1, 1])
+
     @jax.jit
     def canonicalize_and_audit(
         slots: jax.Array, /

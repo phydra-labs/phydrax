@@ -215,7 +215,7 @@ import numpy as np
 import phydrax as phx
 from phydrax.execution import ExecutionRuntime
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 cutoff, skin = 2.4, 0.3
@@ -313,7 +313,7 @@ lane reference is a numerical oracle: for two- and three-layer native MACE it is
 compared with an independent single-device global MACE on brute-force image routes. It
 is not hardware evidence. Omitting `owner_lanes` maps one owner per device of the
 `ExecutionGroup` through `shard_map`. On forced host CPU devices
-(`XLA_FLAGS=--xla_force_host_platform_device_count=2`) that route demonstrates
+(`JAX_NUM_CPU_DEVICES=2`) that route demonstrates
 functional collective parity only. Multi-host, GPU, and performance tuples are
 unqualified.
 

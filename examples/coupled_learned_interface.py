@@ -44,7 +44,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -56,7 +55,7 @@ from phydrax.discretization import EntitySelection, FacetTraceRule, IntegrationD
 from phydrax.optim import adam
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 cpl = phx.solver.coupling
 M = phx.measurement

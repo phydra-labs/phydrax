@@ -710,7 +710,7 @@ enable it before training.
 File sinks are owned by `phydrax.logging`, not by an individual solver:
 
 ```python
-phx.logging.enable()
+phx.config.configure(phx.config.LoggingConfig(enabled=True))
 handler_id = phx.logging.add_json_sink("runs/example.events.jsonl")
 try:
     trained = solver.solve(num_iter=200, log_every=10)

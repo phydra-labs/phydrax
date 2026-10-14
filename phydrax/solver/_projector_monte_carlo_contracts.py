@@ -9,11 +9,11 @@ from math import isfinite
 from typing import Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._jax_config import x64_enabled
 from .._strict import StrictModule
 from .._validation import finite_real_scalar
 from ..operators.quantum.lattice._column import QuantumLatticeColumnOperator
@@ -129,7 +129,7 @@ class ProjectorMonteCarloProblem(StrictModule):
         observables: tuple[QuantumLatticeColumnOperator, ...] = (),
         observable_units: Sequence[UnitDefinition] = (),
     ) -> None:
-        if not jax.config.x64_enabled:
+        if not x64_enabled():
             raise ValueError("Projector Monte Carlo requires jax_enable_x64.")
         if not isinstance(hamiltonian, QuantumLatticeColumnOperator):
             raise TypeError("hamiltonian must be the native original column operator.")

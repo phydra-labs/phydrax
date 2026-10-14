@@ -1,5 +1,7 @@
 # Global hydrostatic reference atmosphere
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `GlobalPrimitiveEquationPlan` implements a rotating spherical hydrostatic primitive-equation PDE. It is a small-resolution reference, not an operational forecast model. Horizontal derivatives and Helmholtz wind inversion use native spin-weighted spherical operators. Layers interact through mass continuity, vertical transport, hydrostatic pressure gradients and pressure work; they are not independently advanced columns.
 
 ## Running

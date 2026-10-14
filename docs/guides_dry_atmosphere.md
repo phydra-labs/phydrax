@@ -1,5 +1,7 @@
 # Dry column and Cartesian vertical-slice atmosphere
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 The dry atmosphere application is a compressible, inviscid reference testbed on a
 fixed uniform Cartesian finite-volume mesh. A column uses `(z,)`; a slice uses
 `(x, z)`, with height increasing upward. Coordinates, times, pressure,

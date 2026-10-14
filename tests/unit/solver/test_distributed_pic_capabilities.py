@@ -9,14 +9,13 @@ matrix against the structural protocols the PIC runtime checks, the declared
 distribution refusals, and the consumers' refusals of withheld protocols (a
 one-device mesh builds every distributed wrapper). Every protocol a distributed
 wrapper publishes is exercised numerically on four forced host devices in a
-subprocess (``XLA_FLAGS=--xla_force_host_platform_device_count=4``) against the
+subprocess (``JAX_NUM_CPU_DEVICES=4``) against the
 single-device base solver or an analytic reference. These checks are PIC-owned
 regressions, not physical-device or distributed-spectral qualification evidence.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -31,6 +30,7 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization.spectral._qualification import (
     distributed_spectral_candidate_profiles,
 )
@@ -950,8 +950,7 @@ _SCENARIOS: dict[str, Callable[[], None]] = {
 
 
 def _run_scenario(name: str) -> None:
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+    environment = pxconfig.environment(pxconfig.RuntimeConfig(cpu_device_count=4))
     environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
     script = (
         "import sys; "

@@ -43,7 +43,6 @@ they are not data for any real rod.
 ```python
 from pathlib import Path
 
-import jax
 import numpy as np
 
 from phydrax.applications.nuclear_fuel import (
@@ -74,7 +73,9 @@ from phydrax.materials import PropertyValidityRange
 from phydrax.nuclear import FissionGasYieldTable
 from tools.nuclear_fuel_qualification import numerical_helium_production
 
-jax.config.update("jax_enable_x64", True)
+from phydrax import config
+
+config.configure(config.RuntimeConfig(enable_x64=True))
 
 radius, height, length = 4.095e-3, 10.0e-3, 0.3
 specification = FuelRodSpecification(

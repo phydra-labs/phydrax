@@ -10,6 +10,7 @@ import pytest
 from jax import Array
 from jax.typing import DTypeLike
 
+from phydrax import config as pxconfig
 from phydrax.linalg import (
     hermitian_exp,
     hermitian_inverse_sqrt,
@@ -24,7 +25,7 @@ from phydrax.nonlinear import LocalRootPlan, VectorLocalRootPlan
 
 
 pytestmark = pytest.mark.strict_jax
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 class MatrixFunction(Protocol):

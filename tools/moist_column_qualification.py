@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere import MoistColumnPlan, MoistThermodynamicPlan
 
 
@@ -30,7 +31,7 @@ def main() -> None:
     args = parser.parse_args()
     if min(args.layers, args.steps, args.repeats) < 1:
         parser.error("layers, steps, and repeats must be positive")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     thermo = MoistThermodynamicPlan()
     plan = MoistColumnPlan(thermo, mixing_rate=2e-5, forcing_cadence=5)
     initial = plan.initialize(

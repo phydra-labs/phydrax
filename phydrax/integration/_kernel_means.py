@@ -20,15 +20,19 @@ from jax.typing import ArrayLike
 import phydrax.axes as cx
 import phydrax.ein as ein
 from phydrax.domain import Interval1d, PointBatch
-from phydrax.kernels import (
-    AbstractFiniteFeatureKernel,
-    AbstractPositiveDefiniteKernel,
+from phydrax.kernels._algebra import (
     AmplitudeKernel,
+    ScaleKernel,
+)
+from phydrax.kernels._base import AbstractPositiveDefiniteKernel
+from phydrax.kernels._finite_feature import (
+    AbstractFiniteFeatureKernel,
     FiniteFeatureKernel,
     kernel_features,
+)
+from phydrax.kernels._stationary import (
     Matern32Kernel,
     Matern52Kernel,
-    ScaleKernel,
     SquaredExponentialKernel,
 )
 

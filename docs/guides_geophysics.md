@@ -232,7 +232,7 @@ PYTHONPATH=. python examples/geophysics/acoustic_survey.py
 PYTHONPATH=. python benchmarks/dc_resistivity.py --warmup 1 --repeats 5
 PYTHONPATH=. python benchmarks/porous_media.py --warmup 1 --repeats 5
 PYTHONPATH=. python benchmarks/acoustic_propagation.py --warmup 1 --repeats 5
-XLA_FLAGS=--xla_force_host_platform_device_count=4 PYTHONPATH=. \
+JAX_NUM_CPU_DEVICES=4 PYTHONPATH=. \
   python benchmarks/geophysics_production.py --partitions 1 2 4
 ```
 

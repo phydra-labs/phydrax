@@ -176,10 +176,11 @@ The repository material constants are used exactly. They differ from the coeffic
 
 ```python
 import equinox as eqx
-import jax
 from phydrax.applications.skeletal_muscle import continuum
 
-with jax.enable_x64(True):
+from phydrax import config
+
+with config.context(config.NumericsConfig(enable_x64=True)):
     plan, parameters, history, dt, _ = continuum.almonacid_2024_repository_case(
         "tests/fixtures/flexodeal_0698e3d"
     )

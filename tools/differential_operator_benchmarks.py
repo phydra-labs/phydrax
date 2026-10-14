@@ -25,6 +25,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.operators.differential import (
     evaluate_fused_coordinate_derivatives,
     evaluate_taylor_contractions,
@@ -471,7 +472,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     if not 0 <= arguments.reference_order_limit <= 8:
         raise ValueError("reference-order-limit must be between zero and eight.")
-    jax.config.update("jax_enable_x64", arguments.dtype == "float64")
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=arguments.dtype == "float64"))
     dtype = np.dtype(arguments.dtype)
     records: list[dict[str, Any]] = []
     strategies: tuple[TaylorContractionStrategy, ...] = ("linear", "single", "prime")

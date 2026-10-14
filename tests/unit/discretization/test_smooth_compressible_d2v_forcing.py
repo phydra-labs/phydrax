@@ -5,10 +5,10 @@
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.discretization.discrete_velocity._quadrature import d2v17_quadrature
 from phydrax.discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleD2VKineticMethod,
@@ -23,7 +23,7 @@ from phydrax.equations._materials import IdealGasMaterial
 from phydrax.equations._transport_closures import ConstantTransport
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _method_and_state() -> Any:

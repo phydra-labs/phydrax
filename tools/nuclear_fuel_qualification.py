@@ -32,7 +32,7 @@ from benchmarks._runtime import (
     capture_environment,
     source_build_fingerprint,
 )
-from phydrax import linalg as la, nonlinear as nl
+from phydrax import config as pxconfig, linalg as la, nonlinear as nl
 from phydrax._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
@@ -125,7 +125,7 @@ class FuelHistoryBalanceRecord(TypedDict):
     source_status: dict[str, str]
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def numerical_helium_production() -> HeliumSource:

@@ -5,6 +5,10 @@ from typing import Any, TYPE_CHECKING
 
 
 _SYMBOL_MODULES: dict[str, tuple[str, str]] = {
+    "SurfaceBooleanOperation": (
+        "...geometry.surface._boolean",
+        "SurfaceBooleanOperation",
+    ),
     "FTetWildMeshingPlan": ("._ftetwild", "FTetWildMeshingPlan"),
     "FTetWildOptions": ("._ftetwild", "FTetWildOptions"),
     "FTetWildProvider": ("._ftetwild", "FTetWildProvider"),
@@ -204,6 +208,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "SurfaceBooleanOperation",
     "FTetWildMeshingPlan",
     "FTetWildOptions",
     "FTetWildProvider",

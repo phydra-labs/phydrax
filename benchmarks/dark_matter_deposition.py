@@ -4,11 +4,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,6 +20,7 @@ from _runtime import (
     measure_repeated,
 )
 
+from phydrax import config as pxconfig
 from phydrax.applications.cosmology._energy_deposition import (
     CascadeKernelProduct,
     InjectionSpectrum,
@@ -110,7 +110,7 @@ def main() -> None:
             "redshift/energy nodes must be at least two, species/channels/repeats "
             "positive, and warmup non-negative."
         )
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     kernel, injection = _problem(
         arguments.redshift_nodes,
         arguments.energy_nodes,

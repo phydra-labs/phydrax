@@ -5,13 +5,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,6 +22,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
+from phydrax import config as pxconfig
 
 
 def _square_mesh() -> Any:
@@ -256,7 +255,7 @@ def _structural_cases(repeats: int) -> dict[str, Any]:
 
 
 def benchmark(*, quick: bool, repeats: int) -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Extended phase-field benchmark requires float64.")
     repetitions = 1 if quick else repeats
     binary = _binary_case(repetitions)

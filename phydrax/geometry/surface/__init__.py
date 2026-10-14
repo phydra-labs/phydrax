@@ -7,22 +7,7 @@
 from importlib import import_module
 from typing import Any
 
-from ._arrangement import (
-    arrange_triangle_surfaces,
-    SurfaceArrangement,
-    SurfaceArrangementError,
-    SurfaceArrangementEvidence,
-    SurfaceArrangementLimits,
-    SurfaceArrangementStatus,
-)
-from ._boolean import (
-    surface_boolean,
-    SurfaceBooleanError,
-    SurfaceBooleanOperation,
-    SurfaceBooleanResult,
-    SurfaceBooleanStatus,
-    SurfaceClosureEvidence,
-)
+from ..._jax_config import process_numerics
 from ._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -49,17 +34,18 @@ from ._intersection import (
 from ._model import SurfaceModel, SurfaceRealization
 
 
-_FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop")
+_FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop", "._arrangement", "._boolean")
 
 
 def __getattr__(name: str) -> Any:
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        for module_name in reversed(_FACADE_EXPORT_MODULES):
+            module = import_module(module_name, __package__)
+            if name in module.__all__:
+                value = getattr(module, name)
+                globals()[name] = value
+                return value
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
@@ -85,18 +71,11 @@ __all__ = [
     "SurfaceSelection",
     "SurfaceValidityCertificate",
     "intersect_plane_surface",
-]
-__all__ += [
     "SurfaceArrangement",
     "SurfaceArrangementError",
-    "SurfaceArrangementEvidence",
     "SurfaceArrangementLimits",
-    "SurfaceArrangementStatus",
     "SurfaceBooleanError",
     "SurfaceBooleanOperation",
-    "SurfaceBooleanResult",
-    "SurfaceBooleanStatus",
-    "SurfaceClosureEvidence",
     "arrange_triangle_surfaces",
     "surface_boolean",
 ]

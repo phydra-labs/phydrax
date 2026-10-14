@@ -3,21 +3,23 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_repository_case
 
 
-def run(inputs: Any, refinement: Any, steps: Any, repetitions: Any, sensitivity: Any) -> Any:
+def run(
+    inputs: Any, refinement: Any, steps: Any, repetitions: Any, sensitivity: Any
+) -> Any:
     start = time.perf_counter()
     plan, parameters, history, dt, _ = almonacid_2024_repository_case(
         inputs, refinement=refinement
@@ -154,7 +156,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 1 or args.repetitions < 1:
         parser.error("steps and repetitions must be positive")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     result = run(
         args.inputs,
         0 if args.smoke else args.refinement,

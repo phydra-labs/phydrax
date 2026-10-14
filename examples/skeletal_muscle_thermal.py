@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import json
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.energetics import (
     uchida_umberger_retained_heat,
     UchidaUmberger2010Parameters,
@@ -22,7 +22,7 @@ from tools.skeletal_muscle_thermal_qualification import manufactured_case
 
 
 def main() -> None:
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     fixture = manufactured_case()
     model = UchidaUmberger2010Plan(
         UchidaUmberger2010Parameters(

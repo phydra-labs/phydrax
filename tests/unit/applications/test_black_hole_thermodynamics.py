@@ -1,9 +1,9 @@
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._physical import RelativityScaleContract
 from phydrax.applications.compact_objects._black_hole_thermodynamics import (
     classify_kerr,
@@ -17,7 +17,7 @@ from phydrax.applications.compact_objects._black_hole_thermodynamics import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_black_hole_thermodynamics_scenario_1() -> None:

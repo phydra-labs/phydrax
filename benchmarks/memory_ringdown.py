@@ -17,6 +17,7 @@ import numpy as np
 from jax import Array
 from numpy.typing import NDArray
 
+from phydrax import config as pxconfig
 from phydrax.applications.compact_objects import QuadraticRingdownPlan
 
 from ._io import write_json_atomic
@@ -108,7 +109,7 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     runtime_sizes = [8, 16] if args.smoke else args.times
     compile_only_sizes = [] if args.smoke else args.compile_only_times
     sizes = runtime_sizes + compile_only_sizes

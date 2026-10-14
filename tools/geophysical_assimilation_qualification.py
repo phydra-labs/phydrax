@@ -13,6 +13,7 @@ import jax
 import numpy as np
 
 from examples.geophysical_assimilation import make_twin_problem, run_twin
+from phydrax import config as pxconfig
 from phydrax.uq import ensemble_filter_step, initialize_ensemble_filter
 
 
@@ -62,7 +63,7 @@ def qualify() -> Any:
 
 
 if __name__ == "__main__":
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = qualify()
     print(json.dumps(report, indent=2))
     raise SystemExit(0 if report["passed"] else 1)

@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 def _full_support(chart: Any, support_id: Any) -> Any:
@@ -89,7 +90,7 @@ def test_legendre_geometry_scenario_1() -> None:
     geometry = _quadratic_geometry()
     point = jnp.asarray([0.4, -0.7], dtype=jnp.float32)
     vector = jnp.ones((2,), dtype=jnp.float32)
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         precision = phx.metrix.GeometryPrecisionPolicy(
             coordinate_dtype=jnp.float32,
             compute_dtype=jnp.float64,
@@ -146,7 +147,7 @@ def test_legendre_geometry_scenario_1() -> None:
 def test_legendre_contracts() -> None:
     geometry = _quadratic_geometry()
     points = jnp.asarray([[0.4, -0.7], [1.2, 0.3]], dtype=jnp.float32)
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         precision = phx.metrix.GeometryPrecisionPolicy(
             coordinate_dtype=jnp.float32,
             compute_dtype=jnp.float64,

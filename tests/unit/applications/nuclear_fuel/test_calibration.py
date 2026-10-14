@@ -13,6 +13,7 @@ from examples.nuclear_fuel_calibration import (
     build_synthetic_calibration,
     prepare_synthetic_inference_rod,
 )
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     evaluate_fuel_identifiability,
     fuel_parameterization,
@@ -36,7 +37,7 @@ from phydrax.optim import (
 
 
 def test_pressure_sensor_gain_and_fill_inventory_are_confounded() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         # p_meas = gain * n_fill * R * T / V. At unit gain and inventory,
         # the two dimensionless scale derivatives coincide at every T.
         temperature = jnp.asarray([300.0, 450.0, 600.0], dtype=jnp.float64)
@@ -77,7 +78,7 @@ class _SyntheticFit:
 @pytest.fixture(scope="module")
 def synthetic_fit() -> _SyntheticFit:
     """Prior-bearing fit of synthetic noisy data from a rod with known truth."""
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan, truth, heldout, heldout_data = build_synthetic_calibration(seed=17)
         problem = prepare_fuel_least_squares(
             plan,
@@ -114,7 +115,7 @@ def test_synthetic_fit_recovers_shared_coefficient_with_rod_and_sensor_nuisances
     synthetic_fit: _SyntheticFit,
 ) -> None:
     assert synthetic_fit.successful, synthetic_fit.status
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         evaluation = synthetic_fit.plan.evaluate_physical(synthetic_fit.physical)
     assert bool(evaluation.successful)
     np.testing.assert_allclose(
@@ -127,7 +128,7 @@ def test_synthetic_fit_predicts_heldout_synthetic_rod_within_sensor_noise(
 ) -> None:
     assert synthetic_fit.successful, synthetic_fit.status
     heldout = synthetic_fit.heldout
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         bundle = synthetic_fit.plan.parameterization.bundle(
             heldout.prepared.admission.bundle, synthetic_fit.physical.shared_physical
         )
@@ -147,7 +148,7 @@ def test_synthetic_fit_predicts_heldout_synthetic_rod_within_sensor_noise(
 def test_replay_sensor_loss_reverse_derivative_matches_independent_accepted_trajectories() -> (
     None
 ):
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_synthetic_inference_rod()
         grid = FuelFixedGrid((0.0, 5.0), prepared.prepared_id)
         specification = prepared.admission.specification

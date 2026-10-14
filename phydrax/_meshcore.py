@@ -16,8 +16,8 @@ validated and converted to contiguous float64/int32 arrays, results are fresh
 arrays, and native statuses reach the caller (per-item status arrays for batched
 clipping, exceptions for rejected calls).
 
-Library lookup order: the ``PHYDRAX_MESHCORE_LIBRARY`` environment variable
-(path to the shared library), then ``phydrax_meshcore.library_path()``.  A
+Library lookup order: the native ``ProviderConfig.library_paths`` override,
+then ``PHYDRAX_MESHCORE_LIBRARY``, then ``phydrax_meshcore.library_path()``. A
 library is usable only when its exported ``phx_mc_abi_contract`` equals this
 binding's C ABI contract (verified before any other entry point is bound), it
 exports every C ABI symbol bound here, and its version equals the installed
@@ -34,7 +34,6 @@ import importlib
 import importlib.metadata
 import importlib.util
 import math
-import os
 import sys
 import threading
 import weakref
@@ -55,12 +54,14 @@ from jax.sharding import Mesh
 from jax.typing import ArrayLike, DTypeLike
 from numpy.typing import NDArray
 
+from ._config_environment import LIBRARY_ENVIRONMENT
+from ._config_state import library_input
+
 
 if TYPE_CHECKING:
     from .meshing._measurements import NativeExecutionRecord
     from .meshing.providers._native_layer import PreparedLayerCore
 
-_ENVIRONMENT = "PHYDRAX_MESHCORE_LIBRARY"
 # SHA-256 of ``native/meshcore/include/phydrax_meshcore.h`` with CRLF normalized
 # to LF: the public C declarations that ``_SIGNATURES`` binds. The native build
 # exports the same digest of the header it compiled.
@@ -1576,13 +1577,13 @@ def _library_location(configured: str, /) -> Path | str:
     if configured:
         path = Path(configured)
         if not path.is_file():
-            return f"{_ENVIRONMENT} names a missing meshcore library: {configured!r}."
+            return f"{LIBRARY_ENVIRONMENT['meshcore']} names a missing meshcore library: {configured!r}."
         return path
     if importlib.util.find_spec("phydrax_meshcore") is None:
         return (
             "The meshcore library is unavailable: install the optional "
             "'phydrax[meshcore]' extra or set "
-            f"{_ENVIRONMENT} to libphydrax_meshcore."
+            f"{LIBRARY_ENVIRONMENT['meshcore']} to libphydrax_meshcore."
         )
     return Path(importlib.import_module("phydrax_meshcore").library_path())
 
@@ -1743,7 +1744,7 @@ def _resolve(configured: str, /) -> MeshcoreLibrary | str:
 
 
 def _current() -> MeshcoreLibrary | str:
-    return _resolve(os.environ.get(_ENVIRONMENT, "").strip())
+    return _resolve((library_input("meshcore") or "").strip())
 
 
 def meshcore_available() -> bool:

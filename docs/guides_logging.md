@@ -23,7 +23,7 @@ from pathlib import Path
 
 import phydrax as phx
 
-phx.logging.enable()
+phx.config.configure(phx.config.LoggingConfig(enabled=True))
 handler_id = phx.logging.add_json_sink(Path("run.events.jsonl"))
 try:
     with phx.logging.context(run_id="run-42", execution_plan_id="plan-7"):
@@ -36,7 +36,7 @@ try:
         # Invoke PhydraX operations here.
 finally:
     phx.logging.remove_sink(handler_id)
-    phx.logging.disable()
+    phx.config.configure(phx.config.LoggingConfig(enabled=False))
 ```
 
 `add_text_sink()` provides a one-line human view. `add_json_sink()` emits canonical
@@ -45,7 +45,7 @@ PhydraX events and return the exact Loguru handler ID that owns the sink. Removi
 that ID never removes an application-owned handler.
 
 Applications that already configure `loguru.logger` only need to call
-`phydrax.logging.enable()`. Canonical fields are stored under
+`phx.config.configure(phx.config.LoggingConfig(enabled=True))`. Canonical fields are stored under
 `record["extra"]["phydrax"]`.
 
 ## Correlation context
@@ -96,7 +96,7 @@ logging is enabled. `log_every` defaults to zero. `log_terms=True` adds per-term
 model-loss metrics to the same bounded event.
 
 ```python
-phx.logging.enable()
+phx.config.configure(phx.config.LoggingConfig(enabled=True))
 handler_id = phx.logging.add_text_sink("training.log")
 try:
     trained = solver.solve(num_iter=100, log_every=10)

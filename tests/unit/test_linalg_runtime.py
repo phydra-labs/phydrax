@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.linalg.backends._native_krylov import _pcg_batched_raw
 
 
@@ -1084,7 +1085,7 @@ def test_dense_solve_is_differentiable_with_respect_to_operator_values() -> None
 
 
 def test_space_operator_and_preconditioner_constructors_enforce_invariants() -> None:
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         canonical = la.ArraySpace((2,), dtype=jnp.float64)
         assert canonical.dtype == jnp.dtype(jnp.float32)
         assert canonical.validate(canonical.zeros()).dtype == jnp.float32

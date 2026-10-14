@@ -23,7 +23,6 @@ not accepted.
 
 import time
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -51,7 +50,7 @@ from phydrax.solver.coupling import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 INTERFACE_X = 1.0
 LEVELS = (1, 2, 3)

@@ -1,5 +1,7 @@
 # Semiconductor devices
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications.semiconductor` provides a bounded family of classical,
 electrothermal, quantum, inference, and qualification models on native Phydrax
 substrates. Every constitutive law declares its physical domain and provenance.
@@ -95,8 +97,8 @@ admissibility on arbitrary distorted, anisotropic, or curved elements.
 Enable double precision before constructing device arrays:
 
 ```python
-import jax
-jax.config.update("jax_enable_x64", True)
+from phydrax import config
+config.configure(config.RuntimeConfig(enable_x64=True))
 import jax.numpy as jnp
 from phydrax.applications import semiconductor as sc
 

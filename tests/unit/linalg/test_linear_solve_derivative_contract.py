@@ -11,6 +11,7 @@ import pytest
 
 import phydrax as phx
 from phydrax import (
+    config as pxconfig,
     DerivativeRoute,
     DerivativeSurface,
     DifferentiationRequest,
@@ -402,7 +403,7 @@ def test_complex_native_dense_solve_has_strict_dtype_jit_parameter_derivative(
         return space.flatten(result.value)
 
     diagonal = jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float64)
-    with jax.numpy_dtype_promotion("strict"):
+    with pxconfig.context(pxconfig.NumericsConfig(dtype_promotion="strict")):
         np.testing.assert_allclose(
             jax.jit(mapped)(diagonal),
             rhs / diagonal.astype(jnp.complex128),

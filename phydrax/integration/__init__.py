@@ -5,265 +5,17 @@
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from .._axis_factorization import (
-    AxisContractionPlan,
-    AxisContractionResult,
-    AxisFactor,
-    AxisFactorizedField,
-    AxisGather,
-    AxisProductTerm,
-    contract_axis_factors,
-)
-from .._coordinate_measure import (
-    CoordinateFrame,
-    CoordinateMeasure,
-    CoordinateMeasurePlan,
-)
-from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
-from ._adaptive_cubature import adaptive_cubature_callable, integrate_adaptive_cubature
-from ._adaptive_signed import (
-    AdaptiveImportanceEstimator,
-    AdaptiveSignedDiagnostics,
-    AdaptiveSignedEstimator,
-    AdaptiveSignedPopulation,
-    AdaptiveStratifiedEstimator,
-)
-from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
-from ._atlas import (
-    AtlasIntegrationResult,
-    AtlasIntegrationTarget,
-    AtlasPatchQuadrature,
-    integrate_atlas_scalar,
-)
-from ._batches import (
-    IntegrationBatch,
-    MappedIntegrationBatch,
-    PointIntegrationBatch,
-    SeparableIntegrationBatch,
-    WeightedSampleBatch,
-)
-from ._bayesian_quadrature import GaussianKernelMean
-from ._breakpoints import discover_breakpoints
-from ._calabi_yau import (
-    integrate_projective_samples,
-    projective_measure_target,
-    ProjectiveIntegralResult,
-    ProjectiveMeasureKind,
-    ProjectiveMeasureTarget,
-)
-from ._calabi_yau_observables import (
-    CalabiYauModuliObservablePlan,
-    CalabiYauModuliObservableResult,
-    evaluate_calabi_yau_moduli_observables,
-    ModuliRepresentativeKind,
-    PreparedCalabiYauModuliSamples,
-)
-from ._calibration import calibrate, MeasureCalibrationDiagnostics
+from .._deferred_exports import deferred_exports
 from ._complex_weight import __all__ as _complex_weight_all
-from ._compression import compress, MeasureCompressionDiagnostics
-from ._deformed_measure import (
-    DeformedMeasureKind,
-    DeformedMeasurePlan,
-    DeformedMeasureState,
-)
-from ._diffrax_collocation import (
-    DiffraxCollocationDiagnostics,
-    DiffraxCollocationQuadraturePlan,
-    integrate_diffrax_collocation,
-    materialize_diffrax_collocation,
-)
-from ._discrete_support import spatial_measure
-from ._empirical_cubature import (
-    empirical_cubature,
-    EmpiricalCubatureDiagnostics,
-    EmpiricalCubaturePlan,
-)
-from ._estimates import (
-    AdaptiveCubatureDiagnostics,
-    AdaptiveCubaturePartition,
-    AdaptivePartition,
-    AdaptiveQuadratureDiagnostics,
-    AdaptiveTriangleDiagnostics,
-    AdaptiveTrianglePartition,
-    AntitheticDiagnostics,
-    BayesianQuadratureDiagnostics,
-    DiscoveredBreakpoints,
-    FixedQuadratureDiagnostics,
-    IntegrationEstimate,
-    IntegrationProvenance,
-    MappedIntegrationDiagnostics,
-    MonteCarloDiagnostics,
-    ProductIntegrationDiagnostics,
-    RandomizedQMCDiagnostics,
-    SparseGridDiagnostics,
-    StratifiedDiagnostics,
-    WeightedSampleDiagnostics,
-)
-from ._execution import (
-    adaptive,
-    AdaptiveIntegration,
-    caller,
-    CallerIntegration,
-    fixed,
-    FixedIntegration,
-    IntegrationSource,
-    per_step,
-    PerStepIntegration,
-    resolve_integration,
-)
-from ._factorized import (
-    factorized_bilinear_form,
-    factorized_inner_product,
-    FactorizedBilinearEvaluation,
-    FactorizedBilinearTerm,
-)
-from ._fidelity import (
-    fidelity_multilevel_target,
-    FidelityBatchEvaluation,
-    FidelityInputSampler,
-    FidelityLevelEvaluator,
-    FidelityMultilevelSampler,
-)
-from ._kernel_mean_bq import (
-    FixedBayesianQuadratureDesign,
-    prepare_kernel_mean_bayesian_quadrature,
-    PreparedKernelMeanBayesianQuadrature,
-    reduce_kernel_mean_bayesian_quadrature,
-    SequentialBayesianQuadratureDesign,
-)
-from ._kernel_means import (
-    AbstractKernelMean,
-    FiniteFeatureKernelMean,
-    FiniteMeasureKernelMean,
-    IntervalKernelMean,
-)
-from ._linear import (
-    LinearReductionEvidence,
-    LinearReductionSchema,
-    prepare_linear_reduction,
-    PreparedLinearReduction,
-    refresh_linear_reduction,
-)
-from ._markov import markov_chain_measure
-from ._multilevel import (
-    advance_multilevel,
-    finalize_multilevel,
-    initialize_multilevel,
-    MLMCErrorLedger,
-    MultilevelDiagnostics,
-    MultilevelEstimatorState,
-    MultilevelRealization,
-    MultilevelResultArchive,
-    MultilevelSampleBatch,
-    read_multilevel_checkpoint,
-    read_multilevel_result,
-    write_multilevel_checkpoint,
-    write_multilevel_result,
-)
-from ._plans import (
-    AdaptiveCubaturePlan,
-    AdaptiveQuadraturePlan,
-    AdaptiveSparseGridPlan,
-    AdaptiveTrianglePlan,
-    AntitheticDesign,
-    BayesianQuadraturePlan,
-    BreakpointDiscoveryPlan,
-    CellQuadraturePlan,
-    ControlVariateEstimator,
-    FixedQuadraturePlan,
-    IIDDesign,
-    ImportanceSamplingPlan,
-    IntegrationPlan,
-    LatinHypercubeDesign,
-    MonteCarloPlan,
-    MultilevelMonteCarloPlan,
-    ProductIntegrationPlan,
-    QuasiMonteCarloPlan,
-    RandomizedQMCDesign,
-    SampleMeanEstimator,
-    SelfNormalizedEstimator,
-    SparseGridPlan,
-    StratifiedDesign,
-    StratifiedMonteCarloPlan,
-)
-from ._precision import IntegrationPrecisionPolicy
-from ._product import ProductIntegrationRealization
-from ._riemannian import (
-    MetricMeasureNormalization,
-    normalize_metric_measure,
-    riemannian_boundary_target,
-)
-from ._rules import (
-    AdaptiveCubatureRule,
-    ClenshawCurtisRule,
-    CubatureRule,
-    GaussHermiteRule,
-    GaussianCubatureRule,
-    GaussKronrodRule,
-    GaussLegendreRule,
-    GaussLobattoLegendreRule,
-    GenzMalikRule,
-    interval_rule_data,
-    IntervalRule,
-    ProbabilityRule,
-    reference_rule_data,
-    ReferenceCellData,
-    ReferenceHexahedronRule,
-    ReferenceIntervalRule,
-    ReferencePrismRule,
-    ReferencePyramidRule,
-    ReferenceQuadrilateralRule,
-    ReferenceRule,
-    ReferenceTetrahedronRule,
-    ReferenceTriangleRule,
-    TanhSinhRule,
-    TensorProductCubatureRule,
-)
-from ._sparse_grid import (
-    AdaptiveSparseGridDiagnostics,
-    AdaptiveSparseGridResult,
-    prepare_adaptive_sparse_grid,
-    SparseGridRealization,
-)
-from ._status import IntegrationStatus, status_message
-from ._targets import (
-    ComponentTarget,
-    density,
-    DensityTarget,
-    discrete,
-    DiscreteMeasureTarget,
-    expectation,
-    IntegrationTarget,
-    mapped,
-    MappedTarget,
-    mean_over,
-    multilevel,
-    MultilevelSampler,
-    MultilevelTarget,
-    normalized_density,
-    over,
-    ProbabilityTarget,
-    weighted,
-    WeightedSampleTarget,
-)
-from ._transformations import (
-    MeasureTransformationRecord,
-    TransformedIntegrationDiagnostics,
-)
 from ._vegas import __all__ as _vegas_all
 
 
-_FACADE_EXPORT_MODULES = (
-    "._complex_weight",
-    "._vegas",
-    "._splitting",
-    "._surrogate",
-)
+_FACADE_EXPORT_MODULES = ("._complex_weight", "._vegas")
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -273,8 +25,506 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
+def _facade_dir() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "AxisContractionPlan": ".._axis_factorization",
+    "AxisContractionResult": ".._axis_factorization",
+    "AxisFactor": ".._axis_factorization",
+    "AxisFactorizedField": ".._axis_factorization",
+    "AxisGather": ".._axis_factorization",
+    "AxisProductTerm": ".._axis_factorization",
+    "contract_axis_factors": ".._axis_factorization",
+    "CoordinateFrame": ".._coordinate_measure",
+    "CoordinateMeasure": ".._coordinate_measure",
+    "CoordinateMeasurePlan": ".._coordinate_measure",
+    "adaptive_interval_callable": "._adaptive_callable",
+    "adaptive_triangle_callable": "._adaptive_callable",
+    "adaptive_cubature_callable": "._adaptive_cubature",
+    "integrate_adaptive_cubature": "._adaptive_cubature",
+    "AdaptiveImportanceEstimator": "._adaptive_signed",
+    "AdaptiveSignedDiagnostics": "._adaptive_signed",
+    "AdaptiveSignedEstimator": "._adaptive_signed",
+    "AdaptiveSignedPopulation": "._adaptive_signed",
+    "AdaptiveStratifiedEstimator": "._adaptive_signed",
+    "from_samples": "._api",
+    "integrate": "._api",
+    "IntegrationRealization": "._api",
+    "materialize": "._api",
+    "reduce": "._api",
+    "AtlasIntegrationResult": "._atlas",
+    "AtlasIntegrationTarget": "._atlas",
+    "AtlasPatchQuadrature": "._atlas",
+    "integrate_atlas_scalar": "._atlas",
+    "IntegrationBatch": "._batches",
+    "MappedIntegrationBatch": "._batches",
+    "PointIntegrationBatch": "._batches",
+    "SeparableIntegrationBatch": "._batches",
+    "WeightedSampleBatch": "._batches",
+    "GaussianKernelMean": "._bayesian_quadrature",
+    "discover_breakpoints": "._breakpoints",
+    "integrate_projective_samples": "._calabi_yau",
+    "projective_measure_target": "._calabi_yau",
+    "ProjectiveIntegralResult": "._calabi_yau",
+    "ProjectiveMeasureKind": "._calabi_yau",
+    "ProjectiveMeasureTarget": "._calabi_yau",
+    "CalabiYauModuliObservablePlan": "._calabi_yau_observables",
+    "CalabiYauModuliObservableResult": "._calabi_yau_observables",
+    "evaluate_calabi_yau_moduli_observables": "._calabi_yau_observables",
+    "ModuliRepresentativeKind": "._calabi_yau_observables",
+    "PreparedCalabiYauModuliSamples": "._calabi_yau_observables",
+    "calibrate": "._calibration",
+    "MeasureCalibrationDiagnostics": "._calibration",
+    "compress": "._compression",
+    "MeasureCompressionDiagnostics": "._compression",
+    "DeformedMeasureKind": "._deformed_measure",
+    "DeformedMeasurePlan": "._deformed_measure",
+    "DeformedMeasureState": "._deformed_measure",
+    "DiffraxCollocationDiagnostics": "._diffrax_collocation",
+    "DiffraxCollocationQuadraturePlan": "._diffrax_collocation",
+    "integrate_diffrax_collocation": "._diffrax_collocation",
+    "materialize_diffrax_collocation": "._diffrax_collocation",
+    "spatial_measure": "._discrete_support",
+    "empirical_cubature": "._empirical_cubature",
+    "EmpiricalCubatureDiagnostics": "._empirical_cubature",
+    "EmpiricalCubaturePlan": "._empirical_cubature",
+    "AdaptiveCubatureDiagnostics": "._estimates",
+    "AdaptiveCubaturePartition": "._estimates",
+    "AdaptivePartition": "._estimates",
+    "AdaptiveQuadratureDiagnostics": "._estimates",
+    "AdaptiveTriangleDiagnostics": "._estimates",
+    "AdaptiveTrianglePartition": "._estimates",
+    "AntitheticDiagnostics": "._estimates",
+    "BayesianQuadratureDiagnostics": "._estimates",
+    "DiscoveredBreakpoints": "._estimates",
+    "FixedQuadratureDiagnostics": "._estimates",
+    "IntegrationEstimate": "._estimates",
+    "IntegrationProvenance": "._estimates",
+    "MappedIntegrationDiagnostics": "._estimates",
+    "MonteCarloDiagnostics": "._estimates",
+    "ProductIntegrationDiagnostics": "._estimates",
+    "RandomizedQMCDiagnostics": "._estimates",
+    "SparseGridDiagnostics": "._estimates",
+    "StratifiedDiagnostics": "._estimates",
+    "WeightedSampleDiagnostics": "._estimates",
+    "adaptive": "._execution",
+    "AdaptiveIntegration": "._execution",
+    "caller": "._execution",
+    "CallerIntegration": "._execution",
+    "fixed": "._execution",
+    "FixedIntegration": "._execution",
+    "IntegrationSource": "._execution",
+    "per_step": "._execution",
+    "PerStepIntegration": "._execution",
+    "resolve_integration": "._execution",
+    "factorized_bilinear_form": "._factorized",
+    "factorized_inner_product": "._factorized",
+    "FactorizedBilinearEvaluation": "._factorized",
+    "FactorizedBilinearTerm": "._factorized",
+    "fidelity_multilevel_target": "._fidelity",
+    "FidelityBatchEvaluation": "._fidelity",
+    "FidelityInputSampler": "._fidelity",
+    "FidelityLevelEvaluator": "._fidelity",
+    "FidelityMultilevelSampler": "._fidelity",
+    "FixedBayesianQuadratureDesign": "._kernel_mean_bq",
+    "prepare_kernel_mean_bayesian_quadrature": "._kernel_mean_bq",
+    "PreparedKernelMeanBayesianQuadrature": "._kernel_mean_bq",
+    "reduce_kernel_mean_bayesian_quadrature": "._kernel_mean_bq",
+    "SequentialBayesianQuadratureDesign": "._kernel_mean_bq",
+    "AbstractKernelMean": "._kernel_means",
+    "FiniteFeatureKernelMean": "._kernel_means",
+    "FiniteMeasureKernelMean": "._kernel_means",
+    "IntervalKernelMean": "._kernel_means",
+    "LinearReductionEvidence": "._linear",
+    "LinearReductionSchema": "._linear",
+    "prepare_linear_reduction": "._linear",
+    "PreparedLinearReduction": "._linear",
+    "refresh_linear_reduction": "._linear",
+    "markov_chain_measure": "._markov",
+    "advance_multilevel": "._multilevel",
+    "finalize_multilevel": "._multilevel",
+    "initialize_multilevel": "._multilevel",
+    "MLMCErrorLedger": "._multilevel",
+    "MultilevelDiagnostics": "._multilevel",
+    "MultilevelEstimatorState": "._multilevel",
+    "MultilevelRealization": "._multilevel",
+    "MultilevelResultArchive": "._multilevel",
+    "MultilevelSampleBatch": "._multilevel",
+    "read_multilevel_checkpoint": "._multilevel",
+    "read_multilevel_result": "._multilevel",
+    "write_multilevel_checkpoint": "._multilevel",
+    "write_multilevel_result": "._multilevel",
+    "AdaptiveCubaturePlan": "._plans",
+    "AdaptiveQuadraturePlan": "._plans",
+    "AdaptiveSparseGridPlan": "._plans",
+    "AdaptiveTrianglePlan": "._plans",
+    "AntitheticDesign": "._plans",
+    "BayesianQuadraturePlan": "._plans",
+    "BreakpointDiscoveryPlan": "._plans",
+    "CellQuadraturePlan": "._plans",
+    "ControlVariateEstimator": "._plans",
+    "FixedQuadraturePlan": "._plans",
+    "IIDDesign": "._plans",
+    "ImportanceSamplingPlan": "._plans",
+    "IntegrationPlan": "._plans",
+    "LatinHypercubeDesign": "._plans",
+    "MonteCarloPlan": "._plans",
+    "MultilevelMonteCarloPlan": "._plans",
+    "ProductIntegrationPlan": "._plans",
+    "QuasiMonteCarloPlan": "._plans",
+    "RandomizedQMCDesign": "._plans",
+    "SampleMeanEstimator": "._plans",
+    "SelfNormalizedEstimator": "._plans",
+    "SparseGridPlan": "._plans",
+    "StratifiedDesign": "._plans",
+    "StratifiedMonteCarloPlan": "._plans",
+    "IntegrationPrecisionPolicy": "._precision",
+    "ProductIntegrationRealization": "._product",
+    "MetricMeasureNormalization": "._riemannian",
+    "normalize_metric_measure": "._riemannian",
+    "riemannian_boundary_target": "._riemannian",
+    "AdaptiveCubatureRule": "._rules",
+    "ClenshawCurtisRule": "._rules",
+    "CubatureRule": "._rules",
+    "GaussHermiteRule": "._rules",
+    "GaussianCubatureRule": "._rules",
+    "GaussKronrodRule": "._rules",
+    "GaussLegendreRule": "._rules",
+    "GaussLobattoLegendreRule": "._rules",
+    "GenzMalikRule": "._rules",
+    "interval_rule_data": "._rules",
+    "IntervalRule": "._rules",
+    "ProbabilityRule": "._rules",
+    "reference_rule_data": "._rules",
+    "ReferenceCellData": "._rules",
+    "ReferenceHexahedronRule": "._rules",
+    "ReferenceIntervalRule": "._rules",
+    "ReferencePrismRule": "._rules",
+    "ReferencePyramidRule": "._rules",
+    "ReferenceQuadrilateralRule": "._rules",
+    "ReferenceRule": "._rules",
+    "ReferenceTetrahedronRule": "._rules",
+    "ReferenceTriangleRule": "._rules",
+    "TanhSinhRule": "._rules",
+    "TensorProductCubatureRule": "._rules",
+    "AdaptiveSparseGridDiagnostics": "._sparse_grid",
+    "AdaptiveSparseGridResult": "._sparse_grid",
+    "prepare_adaptive_sparse_grid": "._sparse_grid",
+    "SparseGridRealization": "._sparse_grid",
+    "adaptive_multilevel_splitting": "._splitting",
+    "AdaptiveMultilevelSplittingPlan": "._splitting",
+    "AdaptiveMultilevelSplittingResult": "._splitting",
+    "AdaptiveSplittingBranchRequest": "._splitting",
+    "AdaptiveSplittingDiagnostics": "._splitting",
+    "AdaptiveSplittingEnsembleResult": "._splitting",
+    "AdaptiveSplittingStatus": "._splitting",
+    "InitialPathSampler": "._splitting",
+    "PathBranchSampler": "._splitting",
+    "replicate_adaptive_multilevel_splitting": "._splitting",
+    "IntegrationStatus": "._status",
+    "status_message": "._status",
+    "smolyak_surrogate_expectation": "._surrogate",
+    "SmolyakInputSampler": "._surrogate",
+    "SmolyakProbabilityInputSampler": "._surrogate",
+    "SmolyakSurrogateHierarchyAdapter": "._surrogate",
+    "ComponentTarget": "._targets",
+    "density": "._targets",
+    "DensityTarget": "._targets",
+    "discrete": "._targets",
+    "DiscreteMeasureTarget": "._targets",
+    "expectation": "._targets",
+    "IntegrationTarget": "._targets",
+    "mapped": "._targets",
+    "MappedTarget": "._targets",
+    "mean_over": "._targets",
+    "multilevel": "._targets",
+    "MultilevelSampler": "._targets",
+    "MultilevelTarget": "._targets",
+    "normalized_density": "._targets",
+    "over": "._targets",
+    "ProbabilityTarget": "._targets",
+    "weighted": "._targets",
+    "WeightedSampleTarget": "._targets",
+    "MeasureTransformationRecord": "._transformations",
+    "TransformedIntegrationDiagnostics": "._transformations",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from .._axis_factorization import (
+        AxisContractionPlan,
+        AxisContractionResult,
+        AxisFactor,
+        AxisFactorizedField,
+        AxisGather,
+        AxisProductTerm,
+        contract_axis_factors,
+    )
+    from .._coordinate_measure import (
+        CoordinateFrame,
+        CoordinateMeasure,
+        CoordinateMeasurePlan,
+    )
+    from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
+    from ._adaptive_cubature import (
+        adaptive_cubature_callable,
+        integrate_adaptive_cubature,
+    )
+    from ._adaptive_signed import (
+        AdaptiveImportanceEstimator,
+        AdaptiveSignedDiagnostics,
+        AdaptiveSignedEstimator,
+        AdaptiveSignedPopulation,
+        AdaptiveStratifiedEstimator,
+    )
+    from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
+    from ._atlas import (
+        AtlasIntegrationResult,
+        AtlasIntegrationTarget,
+        AtlasPatchQuadrature,
+        integrate_atlas_scalar,
+    )
+    from ._batches import (
+        IntegrationBatch,
+        MappedIntegrationBatch,
+        PointIntegrationBatch,
+        SeparableIntegrationBatch,
+        WeightedSampleBatch,
+    )
+    from ._bayesian_quadrature import GaussianKernelMean
+    from ._breakpoints import discover_breakpoints
+    from ._calabi_yau import (
+        integrate_projective_samples,
+        projective_measure_target,
+        ProjectiveIntegralResult,
+        ProjectiveMeasureKind,
+        ProjectiveMeasureTarget,
+    )
+    from ._calabi_yau_observables import (
+        CalabiYauModuliObservablePlan,
+        CalabiYauModuliObservableResult,
+        evaluate_calabi_yau_moduli_observables,
+        ModuliRepresentativeKind,
+        PreparedCalabiYauModuliSamples,
+    )
+    from ._calibration import calibrate, MeasureCalibrationDiagnostics
+    from ._compression import compress, MeasureCompressionDiagnostics
+    from ._deformed_measure import (
+        DeformedMeasureKind,
+        DeformedMeasurePlan,
+        DeformedMeasureState,
+    )
+    from ._diffrax_collocation import (
+        DiffraxCollocationDiagnostics,
+        DiffraxCollocationQuadraturePlan,
+        integrate_diffrax_collocation,
+        materialize_diffrax_collocation,
+    )
+    from ._discrete_support import spatial_measure
+    from ._empirical_cubature import (
+        empirical_cubature,
+        EmpiricalCubatureDiagnostics,
+        EmpiricalCubaturePlan,
+    )
+    from ._estimates import (
+        AdaptiveCubatureDiagnostics,
+        AdaptiveCubaturePartition,
+        AdaptivePartition,
+        AdaptiveQuadratureDiagnostics,
+        AdaptiveTriangleDiagnostics,
+        AdaptiveTrianglePartition,
+        AntitheticDiagnostics,
+        BayesianQuadratureDiagnostics,
+        DiscoveredBreakpoints,
+        FixedQuadratureDiagnostics,
+        IntegrationEstimate,
+        IntegrationProvenance,
+        MappedIntegrationDiagnostics,
+        MonteCarloDiagnostics,
+        ProductIntegrationDiagnostics,
+        RandomizedQMCDiagnostics,
+        SparseGridDiagnostics,
+        StratifiedDiagnostics,
+        WeightedSampleDiagnostics,
+    )
+    from ._execution import (
+        adaptive,
+        AdaptiveIntegration,
+        caller,
+        CallerIntegration,
+        fixed,
+        FixedIntegration,
+        IntegrationSource,
+        per_step,
+        PerStepIntegration,
+        resolve_integration,
+    )
+    from ._factorized import (
+        factorized_bilinear_form,
+        factorized_inner_product,
+        FactorizedBilinearEvaluation,
+        FactorizedBilinearTerm,
+    )
+    from ._fidelity import (
+        fidelity_multilevel_target,
+        FidelityBatchEvaluation,
+        FidelityInputSampler,
+        FidelityLevelEvaluator,
+        FidelityMultilevelSampler,
+    )
+    from ._kernel_mean_bq import (
+        FixedBayesianQuadratureDesign,
+        prepare_kernel_mean_bayesian_quadrature,
+        PreparedKernelMeanBayesianQuadrature,
+        reduce_kernel_mean_bayesian_quadrature,
+        SequentialBayesianQuadratureDesign,
+    )
+    from ._kernel_means import (
+        AbstractKernelMean,
+        FiniteFeatureKernelMean,
+        FiniteMeasureKernelMean,
+        IntervalKernelMean,
+    )
+    from ._linear import (
+        LinearReductionEvidence,
+        LinearReductionSchema,
+        prepare_linear_reduction,
+        PreparedLinearReduction,
+        refresh_linear_reduction,
+    )
+    from ._markov import markov_chain_measure
+    from ._multilevel import (
+        advance_multilevel,
+        finalize_multilevel,
+        initialize_multilevel,
+        MLMCErrorLedger,
+        MultilevelDiagnostics,
+        MultilevelEstimatorState,
+        MultilevelRealization,
+        MultilevelResultArchive,
+        MultilevelSampleBatch,
+        read_multilevel_checkpoint,
+        read_multilevel_result,
+        write_multilevel_checkpoint,
+        write_multilevel_result,
+    )
+    from ._plans import (
+        AdaptiveCubaturePlan,
+        AdaptiveQuadraturePlan,
+        AdaptiveSparseGridPlan,
+        AdaptiveTrianglePlan,
+        AntitheticDesign,
+        BayesianQuadraturePlan,
+        BreakpointDiscoveryPlan,
+        CellQuadraturePlan,
+        ControlVariateEstimator,
+        FixedQuadraturePlan,
+        IIDDesign,
+        ImportanceSamplingPlan,
+        IntegrationPlan,
+        LatinHypercubeDesign,
+        MonteCarloPlan,
+        MultilevelMonteCarloPlan,
+        ProductIntegrationPlan,
+        QuasiMonteCarloPlan,
+        RandomizedQMCDesign,
+        SampleMeanEstimator,
+        SelfNormalizedEstimator,
+        SparseGridPlan,
+        StratifiedDesign,
+        StratifiedMonteCarloPlan,
+    )
+    from ._precision import IntegrationPrecisionPolicy
+    from ._product import ProductIntegrationRealization
+    from ._riemannian import (
+        MetricMeasureNormalization,
+        normalize_metric_measure,
+        riemannian_boundary_target,
+    )
+    from ._rules import (
+        AdaptiveCubatureRule,
+        ClenshawCurtisRule,
+        CubatureRule,
+        GaussHermiteRule,
+        GaussianCubatureRule,
+        GaussKronrodRule,
+        GaussLegendreRule,
+        GaussLobattoLegendreRule,
+        GenzMalikRule,
+        interval_rule_data,
+        IntervalRule,
+        ProbabilityRule,
+        reference_rule_data,
+        ReferenceCellData,
+        ReferenceHexahedronRule,
+        ReferenceIntervalRule,
+        ReferencePrismRule,
+        ReferencePyramidRule,
+        ReferenceQuadrilateralRule,
+        ReferenceRule,
+        ReferenceTetrahedronRule,
+        ReferenceTriangleRule,
+        TanhSinhRule,
+        TensorProductCubatureRule,
+    )
+    from ._sparse_grid import (
+        AdaptiveSparseGridDiagnostics,
+        AdaptiveSparseGridResult,
+        prepare_adaptive_sparse_grid,
+        SparseGridRealization,
+    )
+    from ._splitting import (
+        adaptive_multilevel_splitting,
+        AdaptiveMultilevelSplittingPlan,
+        AdaptiveMultilevelSplittingResult,
+        AdaptiveSplittingBranchRequest,
+        AdaptiveSplittingDiagnostics,
+        AdaptiveSplittingEnsembleResult,
+        AdaptiveSplittingStatus,
+        InitialPathSampler,
+        PathBranchSampler,
+        replicate_adaptive_multilevel_splitting,
+    )
+    from ._status import IntegrationStatus, status_message
+    from ._surrogate import (
+        smolyak_surrogate_expectation,
+        SmolyakInputSampler,
+        SmolyakProbabilityInputSampler,
+        SmolyakSurrogateHierarchyAdapter,
+    )
+    from ._targets import (
+        ComponentTarget,
+        density,
+        DensityTarget,
+        discrete,
+        DiscreteMeasureTarget,
+        expectation,
+        IntegrationTarget,
+        mapped,
+        MappedTarget,
+        mean_over,
+        multilevel,
+        MultilevelSampler,
+        MultilevelTarget,
+        normalized_density,
+        over,
+        ProbabilityTarget,
+        weighted,
+        WeightedSampleTarget,
+    )
+    from ._transformations import (
+        MeasureTransformationRecord,
+        TransformedIntegrationDiagnostics,
+    )
 
 
 __all__ = [

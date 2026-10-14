@@ -24,7 +24,6 @@ import time
 from collections.abc import Callable
 from typing import assert_never, Literal, TypeAlias
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -69,7 +68,7 @@ from phydrax.solver.coupling import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 INTERFACE_X = 1.0
 K_MINUS = 1.0

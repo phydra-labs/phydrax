@@ -57,9 +57,10 @@ _DONOR_ARRAYS = tuple(_RANK_ARRAYS)[3:]
 class TiogaOptions(StrictModule, NonTrainableState):
     """Persistent TIOGA worker options; no native dependency is loaded on import.
 
-    Build ``native/providers/tioga`` against a real TIOGA installation and put
-    ``phydrax-tioga-worker`` on PATH, set PHYDRAX_TIOGA_WORKER, or pass
-    ``executable``. ``ranks`` distributes complete parts round-robin, not cells
+    Build ``native/providers/tioga`` against a real TIOGA installation. The
+    explicit ``executable`` wins over native ``ProviderConfig.workers`` or
+    PHYDRAX_TIOGA_WORKER, then ``phydrax-tioga-worker`` on PATH, resolved lazily.
+    ``ranks`` distributes complete parts round-robin, not cells
     within a part; more than one rank launches the worker through
     ``mpi_launcher`` with ``mpi_arguments`` and ``-n ranks``, whose MPI
     implementation must match the linked one. Linear nodal interpolation is not
@@ -850,7 +851,7 @@ class TiogaProvider:
         self.worker = ProviderWorker(
             "tioga",
             executable=self.options.executable,
-            environment_variable="PHYDRAX_TIOGA_WORKER",
+            setting="tioga",
             default_executable="phydrax-tioga-worker",
             build_hint=(
                 "Build native/providers/tioga and set PHYDRAX_TIOGA_WORKER or "

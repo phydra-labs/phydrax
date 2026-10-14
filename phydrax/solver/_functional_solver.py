@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import optax
 from jax import Array
 
 from phydrax.domain import DomainFunction
 
+from .._config_state import context as configuration_context
+from .._config_types import NumericsConfig
 from .._differentiation import ComponentAuthority, RegularityPolicy
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
@@ -464,7 +465,9 @@ class FunctionalSolver(StrictModule):
         precision_context = (
             nullcontext()
             if self.precision is None
-            else jax.default_matmul_precision(self.precision.matmul_precision)
+            else configuration_context(
+                NumericsConfig(matmul_precision=self.precision.matmul_precision)
+            )
         )
         with precision_context:
             return evaluate_prepared_objective(prepared, self.functions).total

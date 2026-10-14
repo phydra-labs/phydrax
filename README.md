@@ -562,6 +562,8 @@ $$
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+# Native configuration is device-inert; x64 is enabled by default unless
+# JAX_ENABLE_X64 is explicitly set. See docs/guides_configuration.md.
 import phydrax as phx
 
 geom = phx.domain.GeometryDomain(

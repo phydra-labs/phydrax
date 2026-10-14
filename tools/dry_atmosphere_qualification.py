@@ -1,6 +1,6 @@
 """Executable Cartesian dry-atmosphere qualification, not global validation.
 
-JAX_ENABLE_X64=1 python -m tools.dry_atmosphere_qualification --nx 16 --nz 12 --steps 4
+python -m tools.dry_atmosphere_qualification --nx 16 --nz 12 --steps 4
 Outputs measured rest, budget, manufactured-shear refinement, continuation,
 thermal/gravity-wave/cold-pool onset, and execution-time evidence. These are
 inviscid method-qualification cases, not claims of resolved turbulent fronts.
@@ -19,6 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from examples.dry_atmosphere import build_case
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere._dry import (
     DryAtmospherePlan,
     DryHydrostaticReference,
@@ -157,7 +158,7 @@ def main() -> None:
     ]
     report = {
         "scope": "fixed-Cartesian inviscid dry column and slice; not global atmospheric qualification",
-        "x64_enabled": bool(jax.config.jax_enable_x64),
+        "x64_enabled": bool(pxconfig.x64_enabled()),
         "rest": rests,
         "manufactured_steady_shear": {
             "vertical_cells": counts,
@@ -182,7 +183,7 @@ def main() -> None:
         and item["unstable_step_rejected_atomically"]
         for item in cases
     )
-    if not (jax.config.jax_enable_x64 and rest_ok and refinement_ok and cases_ok):
+    if not (pxconfig.x64_enabled() and rest_ok and refinement_ok and cases_ok):
         raise RuntimeError(
             "Dry atmospheric qualification failed; inspect measured evidence above."
         )

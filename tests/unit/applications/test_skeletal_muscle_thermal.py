@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.energetics import (
     uchida_umberger_retained_heat,
     UchidaUmberger2010Parameters,
@@ -30,7 +31,7 @@ from tools.skeletal_muscle_thermal_qualification import (
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

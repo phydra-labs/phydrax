@@ -1,12 +1,15 @@
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
+from phydrax import _config_state, config as pxconfig
 from phydrax._external_exchange import read_exchange, write_exchange
 from phydrax._external_runtime import NativeWorkerPolicy
 from phydrax.meshing import MeshingFailure, MeshingFailureCategory, MeshingLimits
@@ -73,12 +76,103 @@ def _worker(tmp_path: Any, mode: Any, **options: Any) -> Any:
     return ProviderWorker(
         "fake",
         executable=str(path),
-        environment_variable="PHYDRAX_FAKE_WORKER",
+        setting="mmg",
         default_executable="phydrax-fake-worker",
         build_hint="Build the fake worker.",
         arguments=(mode,),
         **options,
     )
+
+
+@pytest.fixture(autouse=True)
+def restore_worker_settings() -> Iterator[None]:
+    """Own MMG test overrides and restore process-wide worker state exactly."""
+    previous = _config_state._STATE.workers.copy()
+    _config_state._STATE.workers.pop("mmg", None)
+    try:
+        yield
+    finally:
+        _config_state._STATE.workers.clear()
+        _config_state._STATE.workers.update(previous)
+
+
+def _selection_worker(tmp_path: Path, *, executable: str | None = None) -> ProviderWorker:
+    for name in ("explicit", "configured", "ambient", "default"):
+        path = tmp_path / name
+        path.write_text(_FAKE_WORKER.format(python=sys.executable), encoding="utf-8")
+        path.chmod(0o755)
+    return ProviderWorker(
+        "fake",
+        executable=executable,
+        setting="mmg",
+        default_executable=str(tmp_path / "default"),
+        build_hint="Build the fake worker.",
+        arguments=("echo",),
+    )
+
+
+@pytest.mark.parametrize("selection", ("explicit", "configured", "ambient", "default"))
+def test_worker_selection_precedence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str
+) -> None:
+    monkeypatch.delenv("PHYDRAX_MMG_WORKER", raising=False)
+    if selection != "default":
+        monkeypatch.setenv("PHYDRAX_MMG_WORKER", str(tmp_path / "ambient"))
+    if selection in ("explicit", "configured"):
+        pxconfig.configure(
+            pxconfig.ProviderConfig(workers={"mmg": str(tmp_path / "configured")})
+        )
+    worker = _selection_worker(
+        tmp_path,
+        executable=str(tmp_path / "explicit") if selection == "explicit" else None,
+    )
+    try:
+        assert worker.identity.executable == str(tmp_path / selection)
+        assert worker.launches == 1
+    finally:
+        worker.close()
+
+
+def test_present_empty_worker_environment_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PHYDRAX_MMG_WORKER", "")
+    worker = _selection_worker(tmp_path)
+    with pytest.raises(MeshingFailure, match="worker ''") as failure:
+        worker.session()
+    assert failure.value.category is MeshingFailureCategory.PROVIDER_UNAVAILABLE
+    assert worker.launches == 0
+
+
+def test_explicit_none_worker_setting_masks_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PHYDRAX_MMG_WORKER", "")
+    pxconfig.configure(pxconfig.ProviderConfig(workers={"mmg": None}))
+    worker = _selection_worker(tmp_path)
+    try:
+        assert worker.identity.executable == str(tmp_path / "default")
+    finally:
+        worker.close()
+
+
+def test_worker_selection_is_lazy_and_rechecked_for_each_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PHYDRAX_MMG_WORKER", str(tmp_path / "missing"))
+    worker = _selection_worker(tmp_path)
+    assert worker.launches == 0
+    monkeypatch.setenv("PHYDRAX_MMG_WORKER", str(tmp_path / "ambient"))
+    try:
+        first = worker.session()
+        assert first.identity.executable == str(tmp_path / "ambient")
+        monkeypatch.setenv("PHYDRAX_MMG_WORKER", str(tmp_path / "configured"))
+        assert worker.session() is first
+        worker.close()
+        assert worker.identity.executable == str(tmp_path / "configured")
+        assert worker.launches == 2
+    finally:
+        worker.close()
 
 
 def test_worker_session_is_reused_and_identity_is_probed_once(tmp_path: Any) -> None:
@@ -230,7 +324,7 @@ def test_missing_worker_is_provider_unavailable(tmp_path: Any) -> None:
     worker = ProviderWorker(
         "fake",
         executable=str(tmp_path / "missing-worker"),
-        environment_variable="PHYDRAX_FAKE_WORKER",
+        setting="mmg",
         default_executable="phydrax-fake-worker",
         build_hint="Build the fake worker.",
     )

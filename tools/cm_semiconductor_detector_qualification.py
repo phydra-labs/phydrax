@@ -11,11 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
-from phydrax import ElectromagneticScaleContract
+from phydrax import config as pxconfig, ElectromagneticScaleContract
 from phydrax.applications.semiconductor import quantum as semiconductor_quantum
 from phydrax.applications.semiconductor._detector import (
     DetectorElectrode,
@@ -43,7 +42,7 @@ from phydrax.dynamics import StateLayout, TrajectoryData
 from phydrax.units import METER
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 _SI_ELECTROMAGNETIC_SCALE = ElectromagneticScaleContract.si()
 _EPSILON = 11.7 * float(_SI_ELECTROMAGNETIC_SCALE.vacuum_permittivity)
 _ELEMENTARY_CHARGE = float(_SI_ELECTROMAGNETIC_SCALE.elementary_charge)

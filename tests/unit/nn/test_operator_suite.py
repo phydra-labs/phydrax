@@ -251,7 +251,8 @@ def test_operator_suite_scenario_1() -> None:
     assert status.name == "TFNO"
     assert status.architecture == "FNO"
     assert status.configuration == (("factorization", "tucker"),)
-    assert not hasattr(phx.nn, "TFNO")
+    with pytest.raises(AttributeError):
+        phx.nn.TFNO
     status = phx.nn.operator.operator_architecture_status(
         "multiple-input operator network"
     )

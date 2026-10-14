@@ -4,6 +4,7 @@
 
 from typing import Any
 
+from ..._jax_config import process_numerics
 from ._schema import (
     DesignState,
     ParameterBinding,
@@ -83,23 +84,24 @@ _SKETCH_EXPORTS = frozenset(
 def __getattr__(name: str) -> Any:
     """Load construction layers lazily to keep the kernel/schema import acyclic."""
 
-    if name in _CONSTRAINT_EXPORTS:
-        from . import _constraints as module
-    elif name in _CONTINUATION_EXPORTS:
-        from . import _continuation as module
-    elif name in _SEARCH_EXPORTS:
-        from . import _search as module
-    elif name in _QUALIFICATION_EXPORTS:
-        from . import _qualification as module
-    elif name in _REDUCED_EXPORTS:
-        from . import _reduced as module
-    elif name in _SKETCH_EXPORTS:
-        from . import _sketch as module
-    else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = vars(module)[name]
-    globals()[name] = value
-    return value
+    with process_numerics():
+        if name in _CONSTRAINT_EXPORTS:
+            from . import _constraints as module
+        elif name in _CONTINUATION_EXPORTS:
+            from . import _continuation as module
+        elif name in _SEARCH_EXPORTS:
+            from . import _search as module
+        elif name in _QUALIFICATION_EXPORTS:
+            from . import _qualification as module
+        elif name in _REDUCED_EXPORTS:
+            from . import _reduced as module
+        elif name in _SKETCH_EXPORTS:
+            from . import _sketch as module
+        else:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        value = vars(module)[name]
+        globals()[name] = value
+        return value
 
 
 __all__ = [

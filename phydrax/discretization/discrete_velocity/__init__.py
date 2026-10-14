@@ -4,6 +4,7 @@
 
 from typing import TYPE_CHECKING
 
+from ..._jax_config import process_numerics
 from ._compressible_adaptivity import (
     KineticAMRTransferEvidence,
     KineticAMRTransferPlan,
@@ -321,39 +322,40 @@ _THERMAL_RESEARCH_EXPORTS = frozenset(
 
 
 def __getattr__(name: str) -> object:
-    if name in _SMOOTH_COMPRESSIBLE_EXPORTS:
-        from . import _smooth_compressible
+    with process_numerics():
+        if name in _SMOOTH_COMPRESSIBLE_EXPORTS:
+            from . import _smooth_compressible
 
-        return getattr(_smooth_compressible, name)
-    if name in _HYBRID_EXPORTS:
-        from . import _hybrid
+            return getattr(_smooth_compressible, name)
+        if name in _HYBRID_EXPORTS:
+            from . import _hybrid
 
-        return getattr(_hybrid, name)
-    if name in _HYBRID_RUNTIME_EXPORTS:
-        from . import _hybrid_runtime
+            return getattr(_hybrid, name)
+        if name in _HYBRID_RUNTIME_EXPORTS:
+            from . import _hybrid_runtime
 
-        return getattr(_hybrid_runtime, name)
-    if name in _SPATIAL_EXPORTS:
-        from . import _spatial
+            return getattr(_hybrid_runtime, name)
+        if name in _SPATIAL_EXPORTS:
+            from . import _spatial
 
-        return getattr(_spatial, name)
-    if name in _BOUNDARY_EXPORTS:
-        from . import _spatial_boundary
+            return getattr(_spatial, name)
+        if name in _BOUNDARY_EXPORTS:
+            from . import _spatial_boundary
 
-        return getattr(_spatial_boundary, name)
-    if name in _FORCING_EXPORTS:
-        from . import _spatial_forcing
+            return getattr(_spatial_boundary, name)
+        if name in _FORCING_EXPORTS:
+            from . import _spatial_forcing
 
-        return getattr(_spatial_forcing, name)
-    if name in _CHECKPOINT_EXPORTS:
-        from . import _checkpoint
+            return getattr(_spatial_forcing, name)
+        if name in _CHECKPOINT_EXPORTS:
+            from . import _checkpoint
 
-        return getattr(_checkpoint, name)
-    if name in _THERMAL_RESEARCH_EXPORTS:
-        from . import _learned_thermal_research
+            return getattr(_checkpoint, name)
+        if name in _THERMAL_RESEARCH_EXPORTS:
+            from . import _learned_thermal_research
 
-        return getattr(_learned_thermal_research, name)
-    raise AttributeError(name)
+            return getattr(_learned_thermal_research, name)
+        raise AttributeError(name)
 
 
 def __dir__() -> list[str]:

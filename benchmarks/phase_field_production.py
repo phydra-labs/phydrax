@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -24,6 +23,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
+from phydrax import config as pxconfig
 from tools.phase_field_production_qualification import (
     _allen_cahn,
     _cahn_hilliard,
@@ -146,7 +146,7 @@ def _benchmark_method(
 
 
 def benchmark(*, quick: bool, repeats: int) -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Phase-field benchmarks require JAX float64 support.")
     resolutions = (8,) if quick else (8, 16, 24)
     warmup = 0 if quick else 1

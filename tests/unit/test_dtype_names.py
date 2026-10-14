@@ -4,6 +4,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._dtype_names import (
     category_dtype_rule,
     dtype_matches,
@@ -58,3 +59,12 @@ def test_dtype_names_scenario_2() -> None:
         DTypeRule(None, None)
     with pytest.raises(ValueError):
         DTypeRule(np.dtype(np.float64), "floating")
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["x64-off", "x64-on"])
+def test_exact_rules_preserve_declared_width(enabled: bool) -> None:
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=enabled)):
+        for dtype in (np.float64, np.int64, np.complex128):
+            rule = exact_dtype_rule(dtype)
+            assert rule.exact == np.dtype(dtype)
+            assert dtype_matches(rule, np.dtype(dtype))

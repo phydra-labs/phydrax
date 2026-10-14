@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from ...ein import contract
@@ -109,9 +110,7 @@ def _stable_global_ids(name: str, value: ArrayLike | None, count: int, /) -> np.
         identifiers = raw.astype(np.int64, copy=False)
     if np.any(identifiers < 0) or np.unique(identifiers).size != count:
         raise ValueError(f"{name} must contain unique nonnegative IDs.")
-    if not bool(jax.config.read("jax_enable_x64")) and np.any(
-        identifiers > np.iinfo(np.int32).max
-    ):
+    if not x64_enabled() and np.any(identifiers > np.iinfo(np.int32).max):
         raise ValueError(f"{name} must fit signed int32 when JAX x64 is disabled.")
     return identifiers
 
@@ -1374,9 +1373,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             DiscretizationCapability.MATRIX_FREE,
             DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
         )
-        global_id_dtype = (
-            jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
-        )
+        global_id_dtype = jnp.int64 if x64_enabled() else jnp.int32
         self.mesh = mesh
         self.vertices = jnp.asarray(points)
         self.triangles = jnp.asarray(triangle_cells)

@@ -16,6 +16,7 @@ import jax.random as jr
 
 import phydrax as phx
 from benchmarks._runtime import measure_lower_and_compile, measure_synchronized
+from phydrax import config as pxconfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +150,7 @@ def run_trefftz_benchmarks(
         "environment": {
             "platform": device.platform,
             "device_kind": device.device_kind,
-            "jax_enable_x64": bool(jax.config.x64_enabled),
+            "jax_enable_x64": bool(pxconfig.x64_enabled()),
         },
         "records": [asdict(record) for record in records],
         "passed": all(record.passed for record in records),

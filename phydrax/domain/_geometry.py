@@ -13,23 +13,31 @@ from jax import Array
 
 from .._doc import DOC_KEY0
 from .._mass import Mass
-from ..geometry import (
-    BoundaryAtlas,
-    bounded_rejection_sample,
-    CompiledGeometry,
-    CubatureAtlas,
-    CubatureComponent,
+from ..geometry._atlas import BoundaryAtlas
+from ..geometry._capabilities import GeometryCapability
+from ..geometry._certificate import (
     DistanceSemantics,
     FieldCertificate,
-    GeometryCapability,
+)
+from ..geometry._contracts import (
+    ClosestPointResult,
+    CompiledGeometry,
     GeometryKind,
-    ReconstructionReport,
-    ReconstructionReportProvider,
+)
+from ..geometry._cubature import (
+    CubatureAtlas,
+    CubatureComponent,
+)
+from ..geometry._sampling import (
+    bounded_rejection_sample,
     RejectionSamplingPlan,
+    require_complete,
     SamplingResult,
 )
-from ..geometry._contracts import ClosestPointResult
-from ..geometry._sampling import require_complete
+from ..geometry.reconstruction import (
+    ReconstructionReport,
+    ReconstructionReportProvider,
+)
 from ..typing import Bool, checked, PRNGKey, Scalar
 from ._base import _make_compact_boundary_factor, AbstractGeometry
 

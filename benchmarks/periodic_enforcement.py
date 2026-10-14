@@ -32,6 +32,7 @@ import jax.random as jr
 from jax import Array
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 from ._runtime import (
     capture_benchmark_identity,
@@ -244,7 +245,7 @@ def main() -> None:
         raise ValueError(
             "Axes, queries, and repeats must be positive; orders nonnegative."
         )
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     # Order/axis sweep at the reference query count, then a query sweep at the
     # reference axis count and order; the shared reference case runs once.
     grid = [

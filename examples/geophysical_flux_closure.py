@@ -337,7 +337,7 @@ def _column_restart(operators: Any, data: Any, thermo: Any) -> Any:
 
 
 def run_example(*, steps: Any = 200, artifact_directory: Any = None) -> Any:
-    jax.config.update("jax_enable_x64", True)
+    phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
     thermo = MoistThermodynamicPlan()
     tasks = column_flux_tasks(
         "native-closed-vapor-diffusion",

@@ -1,108 +1,106 @@
-"""Lazy imaging facade."""
+"""Scientific image supports, camera models, and audited medical preparation."""
 
-from importlib import import_module
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+from .._deferred_exports import deferred_exports
 
 
-_SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
-    "ANTsRegistrationProvider": ("._providers", "ANTsRegistrationProvider"),
-    "BackgroundOrientedSchlierenPlan": (".schlieren", "BackgroundOrientedSchlierenPlan"),
-    "CompartmentSurface": ("._segmentation", "CompartmentSurface"),
-    "CompartmentSurfaceResult": ("._segmentation", "CompartmentSurfaceResult"),
-    "ConservativeVoxelCellTransfer": ("._transfer", "ConservativeVoxelCellTransfer"),
-    "CoveragePolicy": ("._transfer", "CoveragePolicy"),
-    "CurvedSchlierenPlan": (".schlieren", "CurvedSchlierenPlan"),
-    "CurvedSchlierenResult": (".schlieren", "CurvedSchlierenResult"),
-    "Dcm2NiixProvider": ("._providers", "Dcm2NiixProvider"),
-    "DeidentificationEvidence": ("._core", "DeidentificationEvidence"),
-    "DiffusionTensorImage": ("._core", "DiffusionTensorImage"),
-    "FastSurferProvider": ("._providers", "FastSurferProvider"),
-    "FreeSurferProvider": ("._providers", "FreeSurferProvider"),
-    "GladstoneDaleRelation": (".schlieren", "GladstoneDaleRelation"),
-    "GreedyRegistrationProvider": ("._providers", "GreedyRegistrationProvider"),
-    "HUCalibrationAnchor": ("._ct", "HUCalibrationAnchor"),
-    "HUToMaterialCalibration": ("._ct", "HUToMaterialCalibration"),
-    "HUToMaterialResult": ("._ct", "HUToMaterialResult"),
-    "HelmholtzContinuationEvidence": (".schlieren", "HelmholtzContinuationEvidence"),
-    "HelmholtzContinuationResult": (".schlieren", "HelmholtzContinuationResult"),
-    "HostMetadataValue": ("._core", "HostMetadataValue"),
-    "ImageAsset": ("._asset", "ImageAsset"),
-    "ImageAxisConvention": ("._core", "ImageAxisConvention"),
-    "ImageFieldSpec": ("._asset", "ImageFieldSpec"),
-    "ImageIndexAffine": ("._core", "ImageIndexAffine"),
-    "ImagePlaneSupport": ("._plane", "ImagePlaneSupport"),
-    "ImageSample2D": ("._sampling", "ImageSample2D"),
-    "ImageToP1ProjectionPlan": ("._transfer", "ImageToP1ProjectionPlan"),
-    "ImageTransferResult": ("._transfer", "ImageTransferResult"),
-    "KnifeEdgeSchlierenPlan": (".schlieren", "KnifeEdgeSchlierenPlan"),
-    "LabelDefinition": ("._core", "LabelDefinition"),
-    "LabelImageTransferPlan": ("._transfer", "LabelImageTransferPlan"),
-    "LabelOntology": ("._core", "LabelOntology"),
-    "LabelVolume": ("._core", "LabelVolume"),
-    "MedicalImageAsset": ("._core", "MedicalImageAsset"),
-    "MedicalImageSupport": ("._core", "MedicalImageSupport"),
-    "MedicalToolProvider": ("._providers", "MedicalToolProvider"),
-    "MedicalToolResult": ("._providers", "MedicalToolResult"),
-    "MultisliceEvidence": (".schlieren", "MultisliceEvidence"),
-    "MultisliceRefractivePlan": (".schlieren", "MultisliceRefractivePlan"),
-    "MultisliceResult": (".schlieren", "MultisliceResult"),
-    "NibabelImageProvider": ("._nibabel", "NibabelImageProvider"),
-    "NiftiExportResult": ("._nibabel", "NiftiExportResult"),
-    "PreparedImageToP1Projection": ("._transfer", "PreparedImageToP1Projection"),
-    "PreparedRegistrationEvaluation": (
-        "._registration",
-        "PreparedRegistrationEvaluation",
-    ),
-    "ProbabilityImageTransferPlan": ("._transfer", "ProbabilityImageTransferPlan"),
-    "RefractivePhaseEvidence": (".schlieren", "RefractivePhaseEvidence"),
-    "RefractivePhaseScreenPlan": (".schlieren", "RefractivePhaseScreenPlan"),
-    "RegistrationCandidate": ("._registration", "RegistrationCandidate"),
-    "RegistrationCheckpoint": ("._registration", "RegistrationCheckpoint"),
-    "RegistrationDirection": ("._registration", "RegistrationDirection"),
-    "RegistrationEvaluationPlan": ("._registration", "RegistrationEvaluationPlan"),
-    "RegistrationEvidence": ("._registration", "RegistrationEvidence"),
-    "ScalarHelmholtzContinuationPlan": (".schlieren", "ScalarHelmholtzContinuationPlan"),
-    "SchlierenDeflectionPlan": (".schlieren", "SchlierenDeflectionPlan"),
-    "SchlierenDeflectionResult": (".schlieren", "SchlierenDeflectionResult"),
-    "SchlierenImageFormationResult": (".schlieren", "SchlierenImageFormationResult"),
-    "SchlierenImagePair": (".schlieren", "SchlierenImagePair"),
-    "SchlierenMethod": (".schlieren", "SchlierenMethod"),
-    "SegmentationOperation": ("._segmentation", "SegmentationOperation"),
-    "SegmentationOperationKind": ("._segmentation", "SegmentationOperationKind"),
-    "SegmentationOperationReport": ("._segmentation", "SegmentationOperationReport"),
-    "SegmentationProcessingPlan": ("._segmentation", "SegmentationProcessingPlan"),
-    "SegmentationTransition": ("._segmentation", "SegmentationTransition"),
-    "SynthSegProvider": ("._providers", "SynthSegProvider"),
-    "TensorImageTransferPlan": ("._transfer", "TensorImageTransferPlan"),
-    "TensorInterpolationPolicy": ("._transfer", "TensorInterpolationPolicy"),
-    "TransferEvidence": ("._transfer", "TransferEvidence"),
-    "VoxelReference": ("._core", "VoxelReference"),
-    "WaveSchlierenEvidence": (".schlieren", "WaveSchlierenEvidence"),
-    "WaveSchlierenPlan": (".schlieren", "WaveSchlierenPlan"),
-    "WaveSchlierenResult": (".schlieren", "WaveSchlierenResult"),
-    "apply_hu_calibration": ("._ct", "apply_hu_calibration"),
-    "backward_warp": ("._sampling", "backward_warp"),
-    "bilinear_sample": ("._sampling", "bilinear_sample"),
-    "build_compartment_complex": ("._segmentation", "build_compartment_complex"),
-    "camera": (".camera", None),
-    "extract_compartment_surfaces": ("._segmentation", "extract_compartment_surfaces"),
-    "image_coordinates": ("._sampling", "image_coordinates"),
-    "imaging_candidate_profile": ("._qualification", "imaging_candidate_profile"),
-    "imaging_candidate_profiles": ("._qualification", "imaging_candidate_profiles"),
-    "interchange": (".interchange", None),
-    "mri": (".mri", None),
-    "tomography": (".tomography", None),
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "camera": "module:.camera",
+    "interchange": "module:.interchange",
+    "mri": "module:.mri",
+    "tomography": "module:.tomography",
+    "ImageAsset": "._asset",
+    "ImageFieldSpec": "._asset",
+    "DeidentificationEvidence": "._core",
+    "DiffusionTensorImage": "._core",
+    "HostMetadataValue": "._core",
+    "ImageAxisConvention": "._core",
+    "ImageIndexAffine": "._core",
+    "LabelDefinition": "._core",
+    "LabelOntology": "._core",
+    "LabelVolume": "._core",
+    "MedicalImageAsset": "._core",
+    "MedicalImageSupport": "._core",
+    "VoxelReference": "._core",
+    "apply_hu_calibration": "._ct",
+    "HUCalibrationAnchor": "._ct",
+    "HUToMaterialCalibration": "._ct",
+    "HUToMaterialResult": "._ct",
+    "NibabelImageProvider": "._nibabel",
+    "NiftiExportResult": "._nibabel",
+    "ImagePlaneSupport": "._plane",
+    "ANTsRegistrationProvider": "._providers",
+    "Dcm2NiixProvider": "._providers",
+    "FastSurferProvider": "._providers",
+    "FreeSurferProvider": "._providers",
+    "GreedyRegistrationProvider": "._providers",
+    "MedicalToolProvider": "._providers",
+    "MedicalToolResult": "._providers",
+    "SynthSegProvider": "._providers",
+    "imaging_candidate_profile": "._qualification",
+    "imaging_candidate_profiles": "._qualification",
+    "PreparedRegistrationEvaluation": "._registration",
+    "RegistrationCandidate": "._registration",
+    "RegistrationCheckpoint": "._registration",
+    "RegistrationDirection": "._registration",
+    "RegistrationEvaluationPlan": "._registration",
+    "RegistrationEvidence": "._registration",
+    "backward_warp": "._sampling",
+    "bilinear_sample": "._sampling",
+    "image_coordinates": "._sampling",
+    "ImageSample2D": "._sampling",
+    "build_compartment_complex": "._segmentation",
+    "CompartmentSurface": "._segmentation",
+    "CompartmentSurfaceResult": "._segmentation",
+    "extract_compartment_surfaces": "._segmentation",
+    "SegmentationOperation": "._segmentation",
+    "SegmentationOperationKind": "._segmentation",
+    "SegmentationOperationReport": "._segmentation",
+    "SegmentationProcessingPlan": "._segmentation",
+    "SegmentationTransition": "._segmentation",
+    "ConservativeVoxelCellTransfer": "._transfer",
+    "CoveragePolicy": "._transfer",
+    "ImageToP1ProjectionPlan": "._transfer",
+    "ImageTransferResult": "._transfer",
+    "LabelImageTransferPlan": "._transfer",
+    "PreparedImageToP1Projection": "._transfer",
+    "ProbabilityImageTransferPlan": "._transfer",
+    "TensorImageTransferPlan": "._transfer",
+    "TensorInterpolationPolicy": "._transfer",
+    "TransferEvidence": "._transfer",
+    "BackgroundOrientedSchlierenPlan": ".schlieren",
+    "CurvedSchlierenPlan": ".schlieren",
+    "CurvedSchlierenResult": ".schlieren",
+    "GladstoneDaleRelation": ".schlieren",
+    "HelmholtzContinuationEvidence": ".schlieren",
+    "HelmholtzContinuationResult": ".schlieren",
+    "KnifeEdgeSchlierenPlan": ".schlieren",
+    "MultisliceEvidence": ".schlieren",
+    "MultisliceRefractivePlan": ".schlieren",
+    "MultisliceResult": ".schlieren",
+    "RefractivePhaseEvidence": ".schlieren",
+    "RefractivePhaseScreenPlan": ".schlieren",
+    "ScalarHelmholtzContinuationPlan": ".schlieren",
+    "SchlierenDeflectionPlan": ".schlieren",
+    "SchlierenDeflectionResult": ".schlieren",
+    "SchlierenImageFormationResult": ".schlieren",
+    "SchlierenImagePair": ".schlieren",
+    "SchlierenMethod": ".schlieren",
+    "WaveSchlierenEvidence": ".schlieren",
+    "WaveSchlierenPlan": ".schlieren",
+    "WaveSchlierenResult": ".schlieren",
 }
 
-_FACADE_EXPORT_MODULES = ()
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
 
 if TYPE_CHECKING:
     from . import camera, interchange, mri, tomography
-    from ._asset import (
-        ImageAsset,
-        ImageFieldSpec,
-    )
+    from ._asset import ImageAsset, ImageFieldSpec
     from ._core import (
         DeidentificationEvidence,
         DiffusionTensorImage,
@@ -122,13 +120,8 @@ if TYPE_CHECKING:
         HUToMaterialCalibration,
         HUToMaterialResult,
     )
-    from ._nibabel import (
-        NibabelImageProvider,
-        NiftiExportResult,
-    )
-    from ._plane import (
-        ImagePlaneSupport,
-    )
+    from ._nibabel import NibabelImageProvider, NiftiExportResult
+    from ._plane import ImagePlaneSupport
     from ._providers import (
         ANTsRegistrationProvider,
         Dcm2NiixProvider,
@@ -139,10 +132,7 @@ if TYPE_CHECKING:
         MedicalToolResult,
         SynthSegProvider,
     )
-    from ._qualification import (
-        imaging_candidate_profile,
-        imaging_candidate_profiles,
-    )
+    from ._qualification import imaging_candidate_profile, imaging_candidate_profiles
     from ._registration import (
         PreparedRegistrationEvaluation,
         RegistrationCandidate,
@@ -203,27 +193,6 @@ if TYPE_CHECKING:
         WaveSchlierenPlan,
         WaveSchlierenResult,
     )
-
-
-def __getattr__(name: str) -> Any:
-    owner = _SYMBOL_MODULES.get(name)
-    if owner is not None:
-        module_name, symbol = owner
-        module = import_module(module_name, __package__)
-        value = module if symbol is None else getattr(module, symbol)
-        globals()[name] = value
-        return value
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

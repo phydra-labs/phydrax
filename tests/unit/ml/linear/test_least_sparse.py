@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
@@ -192,7 +193,7 @@ def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradie
         pytest.param(
             jnp.float64,
             marks=pytest.mark.skipif(
-                not bool(jax.config.read("jax_enable_x64")),
+                not bool(pxconfig.x64_enabled()),
                 reason="JAX x64 is disabled",
             ),
         ),

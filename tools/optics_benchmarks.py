@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.discretization import FourierAxisSpec, TensorGridPlan, UniformAxisSpec
 from phydrax.geometry import RigidFrame
 from phydrax.optics.geometric import evaluate_refractive_interface
@@ -27,7 +28,7 @@ from phydrax.optics.wave import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _timed(function: Any) -> Any:

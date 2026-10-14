@@ -1,920 +1,433 @@
-"""Lazy finite-volume facade."""
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
 
-from importlib import import_module
-from typing import Any, TYPE_CHECKING
+"""Structured conservative finite-volume discretizations."""
+
+from typing import TYPE_CHECKING
+
+from ..._deferred_exports import deferred_exports
 
 
-_SYMBOL_MODULES: dict[str, tuple[str, str | None]] = {
-    "ALEBoundaryContext": (".._conservation_boundary", "ALEBoundaryContext"),
-    "ALEGeometryConsistencyPolicy": (
-        "._geometry_protocol",
-        "ALEGeometryConsistencyPolicy",
-    ),
-    "AbstractArbitraryNormalALENumericalFluxPlan": (
-        "._riemann",
-        "AbstractArbitraryNormalALENumericalFluxPlan",
-    ),
-    "AbstractArbitraryNormalNumericalFluxPlan": (
-        "._riemann",
-        "AbstractArbitraryNormalNumericalFluxPlan",
-    ),
-    "AbstractConservationBoundary": (
-        ".._conservation_boundary",
-        "AbstractConservationBoundary",
-    ),
-    "AbstractFaceClosurePlan": ("._closure", "AbstractFaceClosurePlan"),
-    "AbstractFaceReconstructionPlan": (
-        "._reconstruction",
-        "AbstractFaceReconstructionPlan",
-    ),
-    "AbstractNumericalFluxPlan": ("._riemann", "AbstractNumericalFluxPlan"),
-    "AbstractSlopeLimiter": ("._reconstruction", "AbstractSlopeLimiter"),
-    "AbstractSymmetricTwoPointFluxPlan": (
-        "._riemann",
-        "AbstractSymmetricTwoPointFluxPlan",
-    ),
-    "AbstractWavePropagationPlan": ("._wave", "AbstractWavePropagationPlan"),
-    "AcceptedConservationFluxIntegralBlock": (
-        ".._conservation_ledger",
-        "AcceptedConservationFluxIntegralBlock",
-    ),
-    "AcceptedConservationIntegralLedger": (
-        ".._conservation_ledger",
-        "AcceptedConservationIntegralLedger",
-    ),
-    "AdvectionForm": ("._diffusion", "AdvectionForm"),
-    "AdvectionReconstruction": ("._diffusion", "AdvectionReconstruction"),
-    "ArbitraryNormalFaceClosurePlan": ("._closure", "ArbitraryNormalFaceClosurePlan"),
-    "BalancedCapillaryOperator": ("._capillarity", "BalancedCapillaryOperator"),
-    "BalancedPositivityBlendResult": ("._positivity", "BalancedPositivityBlendResult"),
-    "BalancedShallowWaterBackend": (
-        "._shallow_water_lowerings",
-        "BalancedShallowWaterBackend",
-    ),
-    "BlockAMRConservationPlan": ("._amr", "BlockAMRConservationPlan"),
-    "BlockAMRFiniteVolumePlan": ("._block_amr", "BlockAMRFiniteVolumePlan"),
-    "BlockAMRFiniteVolumeStageResult": ("._block_amr", "BlockAMRFiniteVolumeStageResult"),
-    "BoundaryTraceResult": (".._conservation_boundary", "BoundaryTraceResult"),
-    "CapillaryFaceRateBlock": ("._capillarity", "CapillaryFaceRateBlock"),
-    "CellPolynomialBasis": ("._cell_polynomial", "CellPolynomialBasis"),
-    "CellPolynomialReconstructionPlan": (
-        "._cell_polynomial",
-        "CellPolynomialReconstructionPlan",
-    ),
-    "CellPolynomialReconstructionReport": (
-        "._cell_polynomial",
-        "CellPolynomialReconstructionReport",
-    ),
-    "CharacteristicInflowBoundary": (
-        "._physical_boundaries",
-        "CharacteristicInflowBoundary",
-    ),
-    "CharacteristicOutflowBoundary": (
-        "._physical_boundaries",
-        "CharacteristicOutflowBoundary",
-    ),
-    "CharacteristicReconstructionPlan": (
-        "._high_resolution",
-        "CharacteristicReconstructionPlan",
-    ),
-    "CharacteristicSystem": ("._high_resolution", "CharacteristicSystem"),
-    "CompositeAMRDiffusionPlan": ("._amr_diffusion", "CompositeAMRDiffusionPlan"),
-    "CompositeFaceVelocity": ("._mac_composite_marker_transfer", "CompositeFaceVelocity"),
-    "CompositeMACMarkerRelation": (
-        "._mac_composite_marker_transfer",
-        "CompositeMACMarkerRelation",
-    ),
-    "CompositeMACMarkerTransferDiagnostics": (
-        "._mac_composite_marker_transfer",
-        "CompositeMACMarkerTransferDiagnostics",
-    ),
-    "CompositeMACMarkerTransferPlan": (
-        "._mac_composite_marker_transfer",
-        "CompositeMACMarkerTransferPlan",
-    ),
-    "CompositeMarkerImpulseLedger": (
-        "._mac_composite_marker_transfer",
-        "CompositeMarkerImpulseLedger",
-    ),
-    "CompositeMarkerImpulseReflux": (
-        "._mac_composite_marker_transfer",
-        "CompositeMarkerImpulseReflux",
-    ),
-    "ConservationStageFluxRateBlock": (
-        ".._conservation_ledger",
-        "ConservationStageFluxRateBlock",
-    ),
-    "ConservationStageLedger": (".._conservation_ledger", "ConservationStageLedger"),
-    "ConservativeAdvectionPlan": ("._diffusion", "ConservativeAdvectionPlan"),
-    "ConservativeBoundaryCondition": ("._diffusion", "ConservativeBoundaryCondition"),
-    "ConservativeBoundaryKind": ("._diffusion", "ConservativeBoundaryKind"),
-    "ConservativeDiffusionPlan": ("._diffusion", "ConservativeDiffusionPlan"),
-    "ConservativeMultiblockFluxResult": (
-        "._multiblock",
-        "ConservativeMultiblockFluxResult",
-    ),
-    "ConservativeMultiblockInterfacePlan": (
-        "._multiblock",
-        "ConservativeMultiblockInterfacePlan",
-    ),
-    "ConservativeSmallCellRedistributionEvidence": (
-        "._small_cell",
-        "ConservativeSmallCellRedistributionEvidence",
-    ),
-    "ConservativeSmallCellRedistributionPlan": (
-        "._small_cell",
-        "ConservativeSmallCellRedistributionPlan",
-    ),
-    "ConservativeSmallCellRedistributionReport": (
-        "._small_cell",
-        "ConservativeSmallCellRedistributionReport",
-    ),
-    "ConservativeSmallCellRedistributionResult": (
-        "._small_cell",
-        "ConservativeSmallCellRedistributionResult",
-    ),
-    "ConstantStateBoundary": (".._conservation_boundary", "ConstantStateBoundary"),
-    "ContactAngleCondition": ("._contact_angle", "ContactAngleCondition"),
-    "ContactAngleEvidence": ("._contact_angle", "ContactAngleEvidence"),
-    "ContactAngleReconstructionResult": (
-        "._contact_angle",
-        "ContactAngleReconstructionResult",
-    ),
-    "ContactAngleStatus": ("._contact_angle", "ContactAngleStatus"),
-    "ContinuumGasWallMaterial": ("._rarefied_wall", "ContinuumGasWallMaterial"),
-    "ConvexStateLimiterPlan": ("._dynamics", "ConvexStateLimiterPlan"),
-    "CurvatureEvidence": ("._capillarity", "CurvatureEvidence"),
-    "CurvatureGeometryError": ("._capillarity", "CurvatureGeometryError"),
-    "CurvatureStatus": ("._capillarity", "CurvatureStatus"),
-    "CurvatureUncertaintyError": ("._capillarity", "CurvatureUncertaintyError"),
-    "DistributedMACMarkerTransfer": (
-        "._distributed_marker_transfer",
-        "DistributedMACMarkerTransfer",
-    ),
-    "DistributedMarkerExchange": (
-        "._distributed_marker_transfer",
-        "DistributedMarkerExchange",
-    ),
-    "DistributedMarkerOwnershipPlan": (
-        "._distributed_marker_transfer",
-        "DistributedMarkerOwnershipPlan",
-    ),
-    "DistributedMarkerTransferDiagnostics": (
-        "._distributed_marker_transfer",
-        "DistributedMarkerTransferDiagnostics",
-    ),
-    "DyadicFiniteVolumeDiscretization": ("._dyadic", "DyadicFiniteVolumeDiscretization"),
-    "DyadicFiniteVolumePlan": ("._dyadic", "DyadicFiniteVolumePlan"),
-    "EinfeldtHLLFluxPlan": ("._positivity", "EinfeldtHLLFluxPlan"),
-    "EmbeddedBoundaryContactAngleSet": (
-        "._contact_angle",
-        "EmbeddedBoundaryContactAngleSet",
-    ),
-    "EmbeddedBoundaryEvidence": (
-        "._unstructured_embedded_boundary",
-        "EmbeddedBoundaryEvidence",
-    ),
-    "EmbeddedBoundaryMetrics": (
-        "._unstructured_embedded_boundary",
-        "EmbeddedBoundaryMetrics",
-    ),
-    "EmbeddedBoundaryPlan": ("._unstructured_embedded_boundary", "EmbeddedBoundaryPlan"),
-    "EmbeddedBoundaryReport": (
-        "._unstructured_embedded_boundary",
-        "EmbeddedBoundaryReport",
-    ),
-    "EmbeddedBoundaryStabilizationPolicy": (
-        "._unstructured_embedded_boundary",
-        "EmbeddedBoundaryStabilizationPolicy",
-    ),
-    "EmbeddedBoundaryStatus": (
-        "._unstructured_embedded_boundary",
-        "EmbeddedBoundaryStatus",
-    ),
-    "EntropyConservativeEulerFluxPlan": ("._riemann", "EntropyConservativeEulerFluxPlan"),
-    "EntropyStableEulerFluxPlan": ("._riemann", "EntropyStableEulerFluxPlan"),
-    "EntropyStableFluxPlan": ("._riemann", "EntropyStableFluxPlan"),
-    "ExplicitFaceBlockGeometry": ("._geometry_protocol", "ExplicitFaceBlockGeometry"),
-    "ExplicitStabilizationPlan": (
-        "._high_resolution_extended",
-        "ExplicitStabilizationPlan",
-    ),
-    "ExtrapolationBoundary": (".._conservation_boundary", "ExtrapolationBoundary"),
-    "FaceClosureFrame": ("._closure", "FaceClosureFrame"),
-    "FaceCoefficientPlan": ("._diffusion", "FaceCoefficientPlan"),
-    "FaceFluxContext": ("._closure", "FaceFluxContext"),
-    "FaceInterpolationKind": ("._diffusion", "FaceInterpolationKind"),
-    "FaceMomentumFlux": ("._mac_variable_density", "FaceMomentumFlux"),
-    "FaceVelocity": ("._incompressible", "FaceVelocity"),
-    "FarFieldBoundary": ("._physical_boundaries", "FarFieldBoundary"),
-    "FiniteVolumeAdmissibilityReport": (
-        "._positivity",
-        "FiniteVolumeAdmissibilityReport",
-    ),
-    "FiniteVolumeBoundaryPair": ("._boundary", "FiniteVolumeBoundaryPair"),
-    "FiniteVolumeBoundarySet": ("._boundary", "FiniteVolumeBoundarySet"),
-    "FiniteVolumeBoundaryTrace": ("._dynamics", "FiniteVolumeBoundaryTrace"),
-    "FiniteVolumeDecompositionPlan": ("._distributed", "FiniteVolumeDecompositionPlan"),
-    "FiniteVolumeDiffusionEvaluation": ("._viscous", "FiniteVolumeDiffusionEvaluation"),
-    "FiniteVolumeDiscretization": ("._structured", "FiniteVolumeDiscretization"),
-    "FiniteVolumeEntropyDiagnostics": ("._entropy", "FiniteVolumeEntropyDiagnostics"),
-    "FiniteVolumeEntropyProductionDiagnostics": (
-        "._entropy",
-        "FiniteVolumeEntropyProductionDiagnostics",
-    ),
-    "FiniteVolumeFaceBlock": ("._geometry_protocol", "FiniteVolumeFaceBlock"),
-    "FiniteVolumeGeometryStatus": ("._geometry_protocol", "FiniteVolumeGeometryStatus"),
-    "FiniteVolumeGhostedAxis": ("._halo", "FiniteVolumeGhostedAxis"),
-    "FiniteVolumeHaloPlan": ("._halo", "FiniteVolumeHaloPlan"),
-    "FiniteVolumeHaloRoute": ("._distributed", "FiniteVolumeHaloRoute"),
-    "FiniteVolumeMethodPlan": ("._dynamics", "FiniteVolumeMethodPlan"),
-    "FiniteVolumeMultiblockRuntimePlan": (
-        "._multiblock",
-        "FiniteVolumeMultiblockRuntimePlan",
-    ),
-    "FiniteVolumePlan": ("._structured", "FiniteVolumePlan"),
-    "FiniteVolumePrecisionPolicy": ("._precision", "FiniteVolumePrecisionPolicy"),
-    "FiniteVolumeResidualDiagnostics": ("._dynamics", "FiniteVolumeResidualDiagnostics"),
-    "FiniteVolumeShardingReport": ("._distributed", "FiniteVolumeShardingReport"),
-    "FiniteVolumeStageEpochTransfer": (
-        "._stage_transition",
-        "FiniteVolumeStageEpochTransfer",
-    ),
-    "FiniteVolumeStageEpochTransition": (
-        "._stage_transition",
-        "FiniteVolumeStageEpochTransition",
-    ),
-    "FiniteVolumeStageFaceBlock": ("._geometry_protocol", "FiniteVolumeStageFaceBlock"),
-    "FiniteVolumeStageFaceLayout": ("._geometry_protocol", "FiniteVolumeStageFaceLayout"),
-    "FiniteVolumeStageGeometryEvidence": (
-        "._geometry_protocol",
-        "FiniteVolumeStageGeometryEvidence",
-    ),
-    "FiniteVolumeStageMetrics": ("._geometry_protocol", "FiniteVolumeStageMetrics"),
-    "FixedConnectivityMotionPlan": (
-        "._unstructured_motion",
-        "FixedConnectivityMotionPlan",
-    ),
-    "FluxPositivityPlan": ("._positivity", "FluxPositivityPlan"),
-    "FrozenMACVariationalViscosityAction": (
-        "._mac_variational_viscosity",
-        "FrozenMACVariationalViscosityAction",
-    ),
-    "GeostrophicBalancePlan": ("._shallow_water_advanced", "GeostrophicBalancePlan"),
-    "HLLCFluxPlan": ("._riemann", "HLLCFluxPlan"),
-    "HLLDFluxPlan": ("._riemann", "HLLDFluxPlan"),
-    "HLLFluxPlan": ("._riemann", "HLLFluxPlan"),
-    "HeightFunctionCurvaturePlan": (
-        "._mac_height_function",
-        "HeightFunctionCurvaturePlan",
-    ),
-    "HeightFunctionCurvatureResult": (
-        "._mac_height_function",
-        "HeightFunctionCurvatureResult",
-    ),
-    "HighResolutionMethod": ("._high_resolution", "HighResolutionMethod"),
-    "HighResolutionReconstructionPlan": (
-        "._high_resolution",
-        "HighResolutionReconstructionPlan",
-    ),
-    "HybridDiffusionBoundary": ("._diffusion_boundary", "HybridDiffusionBoundary"),
-    "HybridMimeticDiffusion": ("._hybrid_diffusion", "HybridMimeticDiffusion"),
-    "HydrostaticMetricEpoch": ("._hydrostatic_grid", "HydrostaticMetricEpoch"),
-    "JAXPLICStageReconstruction": ("._unstructured_vof", "JAXPLICStageReconstruction"),
-    "LatitudeLongitudeHydrostaticGridPlan": (
-        "._hydrostatic_grid",
-        "LatitudeLongitudeHydrostaticGridPlan",
-    ),
-    "LinearSurfaceTensionLaw": ("._capillarity", "LinearSurfaceTensionLaw"),
-    "MACBalancedCapillaryOperator": ("._capillarity", "MACBalancedCapillaryOperator"),
-    "MACBoundaryCorrectionDescriptor": (
-        "._mac_boundary",
-        "MACBoundaryCorrectionDescriptor",
-    ),
-    "MACBoundaryKind": ("._mac_boundary", "MACBoundaryKind"),
-    "MACBoundaryPlan": ("._mac_boundary", "MACBoundaryPlan"),
-    "MACBoundaryProvider": ("._mac_boundary", "MACBoundaryProvider"),
-    "MACBoundaryProviderFunction": ("._mac_boundary", "MACBoundaryProviderFunction"),
-    "MACBoundarySide": ("._mac_boundary", "MACBoundarySide"),
-    "MACBoundarySideName": ("._mac_boundary", "MACBoundarySideName"),
-    "MACBoundaryStageData": ("._mac_boundary", "MACBoundaryStageData"),
-    "MACCapillaryForceResult": ("._capillarity", "MACCapillaryForceResult"),
-    "MACCapillaryResult": ("._mac_capillarity", "MACCapillaryResult"),
-    "MACDensityUpdateResult": ("._mac_variable_density", "MACDensityUpdateResult"),
-    "MACDiffuseSDFGeometryPlan": ("._mac_cut_cell", "MACDiffuseSDFGeometryPlan"),
-    "MACDiffuseSDFGeometryState": ("._mac_cut_cell", "MACDiffuseSDFGeometryState"),
-    "MACDistributedDiagnostics": ("._mac_distributed", "MACDistributedDiagnostics"),
-    "MACDistributedPlanStatus": ("._mac_distributed", "MACDistributedPlanStatus"),
-    "MACDistributedState": ("._mac_distributed", "MACDistributedState"),
-    "MACDistributedTopologyPlan": ("._mac_distributed", "MACDistributedTopologyPlan"),
-    "MACElectrochemicalFluxEvaluation": (
-        "._mac_electrochemical",
-        "MACElectrochemicalFluxEvaluation",
-    ),
-    "MACElectrochemicalReason": ("._mac_electrochemical", "MACElectrochemicalReason"),
-    "MACEnthalpyAdvection": ("._mac_enthalpy", "MACEnthalpyAdvection"),
-    "MACEnthalpyDiagnostics": ("._mac_enthalpy", "MACEnthalpyDiagnostics"),
-    "MACEnthalpyFluxResult": ("._mac_enthalpy", "MACEnthalpyFluxResult"),
-    "MACEnthalpyStepRestriction": ("._mac_enthalpy", "MACEnthalpyStepRestriction"),
-    "MACEnthalpyTransportPlan": ("._mac_enthalpy", "MACEnthalpyTransportPlan"),
-    "MACExactSDFMeasurePlan": ("._mac_sharp_geometry", "MACExactSDFMeasurePlan"),
-    "MACFreeSurfaceGeometryState": (
-        "._mac_interface_state",
-        "MACFreeSurfaceGeometryState",
-    ),
-    "MACFreeSurfaceViscousMeasurePlan": (
-        "._mac_viscous_measures",
-        "MACFreeSurfaceViscousMeasurePlan",
-    ),
-    "MACFreeSurfaceViscousMeasures": (
-        "._mac_viscous_measures",
-        "MACFreeSurfaceViscousMeasures",
-    ),
-    "MACGhostFluidCapillaryPlan": ("._mac_capillarity", "MACGhostFluidCapillaryPlan"),
-    "MACHaloMetadata": ("._mac_distributed", "MACHaloMetadata"),
-    "MACInterfaceFaceOwnership": ("._mac_distributed", "MACInterfaceFaceOwnership"),
-    "MACLocalStencilPlan": ("._mac_distributed", "MACLocalStencilPlan"),
-    "MACMarkerAccumulation": ("._mac_marker_transfer", "MACMarkerAccumulation"),
-    "MACMarkerKernelName": ("._mac_marker_transfer", "MACMarkerKernelName"),
-    "MACMarkerKernelPlan": ("._mac_marker_transfer", "MACMarkerKernelPlan"),
-    "MACMarkerRelation": ("._mac_marker_transfer", "MACMarkerRelation"),
-    "MACMarkerRouteState": ("._mac_marker_transfer", "MACMarkerRouteState"),
-    "MACMarkerTransferDiagnostics": (
-        "._mac_marker_transfer",
-        "MACMarkerTransferDiagnostics",
-    ),
-    "MACMarkerTransferPlan": ("._mac_marker_transfer", "MACMarkerTransferPlan"),
-    "MACMomentumDiagnostics": ("._mac_momentum", "MACMomentumDiagnostics"),
-    "MACMomentumPlan": ("._mac_momentum", "MACMomentumPlan"),
-    "MACMomentumReport": ("._mac_momentum", "MACMomentumReport"),
-    "MACOceanForcingEvidence": ("._mac_ocean", "MACOceanForcingEvidence"),
-    "MACOperatorPlan": ("._incompressible", "MACOperatorPlan"),
-    "MACOperatorReport": ("._incompressible", "MACOperatorReport"),
-    "MACPassiveTracerCharacteristicIntegrator": (
-        "._mac_passive_tracer",
-        "MACPassiveTracerCharacteristicIntegrator",
-    ),
-    "MACPassiveTracerConservation": (
-        "._mac_passive_tracer",
-        "MACPassiveTracerConservation",
-    ),
-    "MACPassiveTracerInterpolation": (
-        "._mac_passive_tracer",
-        "MACPassiveTracerInterpolation",
-    ),
-    "MACPassiveTracerMacCormackPlan": (
-        "._mac_passive_tracer",
-        "MACPassiveTracerMacCormackPlan",
-    ),
-    "MACPassiveTracerMacCormackResult": (
-        "._mac_passive_tracer",
-        "MACPassiveTracerMacCormackResult",
-    ),
-    "MACPassiveTracerStatus": ("._mac_passive_tracer", "MACPassiveTracerStatus"),
-    "MACPressureClosureKind": ("._mac_boundary", "MACPressureClosureKind"),
-    "MACScalarAdvection": ("._mac_scalar", "MACScalarAdvection"),
-    "MACScalarBoundaryCondition": ("._mac_scalar", "MACScalarBoundaryCondition"),
-    "MACScalarBoundaryKind": ("._mac_scalar", "MACScalarBoundaryKind"),
-    "MACScalarBoundarySet": ("._mac_scalar", "MACScalarBoundarySet"),
-    "MACScalarDiagnostics": ("._mac_scalar", "MACScalarDiagnostics"),
-    "MACScalarFieldDiagnostics": ("._mac_scalar", "MACScalarFieldDiagnostics"),
-    "MACScalarFluxResult": ("._mac_scalar", "MACScalarFluxResult"),
-    "MACScalarLayout": ("._mac_scalar", "MACScalarLayout"),
-    "MACScalarProblem": ("._mac_scalar", "MACScalarProblem"),
-    "MACScalarReaction": ("._mac_scalar", "MACScalarReaction"),
-    "MACScalarSGSField": ("._mac_scalar", "MACScalarSGSField"),
-    "MACScalarSGSNumberKind": ("._mac_scalar", "MACScalarSGSNumberKind"),
-    "MACScalarSGSPlan": ("._mac_scalar", "MACScalarSGSPlan"),
-    "MACScalarStepRestriction": ("._mac_scalar", "MACScalarStepRestriction"),
-    "MACScalarTransport": ("._mac_scalar", "MACScalarTransport"),
-    "MACSharpGeometryRefreshResult": (
-        "._mac_sharp_geometry",
-        "MACSharpGeometryRefreshResult",
-    ),
-    "MACThermalBoundaryCondition": ("._mac_enthalpy", "MACThermalBoundaryCondition"),
-    "MACThermalBoundaryKind": ("._mac_enthalpy", "MACThermalBoundaryKind"),
-    "MACThermalBoundarySet": ("._mac_enthalpy", "MACThermalBoundarySet"),
-    "MACVariableDensityPlan": ("._mac_variable_density", "MACVariableDensityPlan"),
-    "MACVariableDensityReport": ("._mac_variable_density", "MACVariableDensityReport"),
-    "MACVariableDensityTransportResult": (
-        "._mac_variable_density",
-        "MACVariableDensityTransportResult",
-    ),
-    "MACVariationalViscosityResult": (
-        "._mac_variational_viscosity",
-        "MACVariationalViscosityResult",
-    ),
-    "MCLimiter": ("._reconstruction", "MCLimiter"),
-    "MHDCTRateResult": ("._mhd_ct", "MHDCTRateResult"),
-    "MUSCLReconstruction": ("._reconstruction", "MUSCLReconstruction"),
-    "MappedFiniteVolumeDiscretization": ("._mapped", "MappedFiniteVolumeDiscretization"),
-    "MappedFiniteVolumePlan": ("._mapped", "MappedFiniteVolumePlan"),
-    "MappedMACGeometryPlan": ("._mac_ale", "MappedMACGeometryPlan"),
-    "MappedMACMarkerRelation": (
-        "._mapped_mac_marker_transfer",
-        "MappedMACMarkerRelation",
-    ),
-    "MappedMACMarkerRouteState": (
-        "._mapped_mac_marker_transfer",
-        "MappedMACMarkerRouteState",
-    ),
-    "MappedMACMarkerTransferDiagnostics": (
-        "._mapped_mac_marker_transfer",
-        "MappedMACMarkerTransferDiagnostics",
-    ),
-    "MappedMACMarkerTransferPlan": (
-        "._mapped_mac_marker_transfer",
-        "MappedMACMarkerTransferPlan",
-    ),
-    "MappedMACReport": ("._mac_ale", "MappedMACReport"),
-    "MappedNestedRemapEvidence": ("._remap_evidence", "MappedNestedRemapEvidence"),
-    "MappedPeriodicSeam": ("._mapped", "MappedPeriodicSeam"),
-    "MappedPeriodicSeamPlan": ("._mapped", "MappedPeriodicSeamPlan"),
-    "MappedSurfaceChartRemapEvidence": (
-        "._remap_evidence",
-        "MappedSurfaceChartRemapEvidence",
-    ),
-    "MaskedFiniteVolumeConservation": (
-        "._unstructured",
-        "MaskedFiniteVolumeConservation",
-    ),
-    "MaskedFiniteVolumeGeometry": ("._unstructured", "MaskedFiniteVolumeGeometry"),
-    "MaxwellSmoluchowskiContinuumWallPlan": (
-        "._rarefied_wall",
-        "MaxwellSmoluchowskiContinuumWallPlan",
-    ),
-    "MaxwellSmoluchowskiWallCoefficients": (
-        "._rarefied_wall",
-        "MaxwellSmoluchowskiWallCoefficients",
-    ),
-    "MetricLineConservationEvidence": ("._metric_line", "MetricLineConservationEvidence"),
-    "MetricLinePlan": ("._metric_line", "MetricLinePlan"),
-    "MinmodLimiter": ("._reconstruction", "MinmodLimiter"),
-    "MovingSlipWallBoundary": ("._physical_boundaries", "MovingSlipWallBoundary"),
-    "MultiblockPositivityResult": ("._multiblock", "MultiblockPositivityResult"),
-    "MultivaluedCutCellDiffusionPlan": (
-        "._cut_diffusion",
-        "MultivaluedCutCellDiffusionPlan",
-    ),
-    "NoSlipAdiabaticWallBoundary": (
-        "._physical_boundaries",
-        "NoSlipAdiabaticWallBoundary",
-    ),
-    "NoSlipIsothermalWallBoundary": (
-        "._physical_boundaries",
-        "NoSlipIsothermalWallBoundary",
-    ),
-    "NonuniformWENOReconstructionPlan": (
-        "._high_resolution",
-        "NonuniformWENOReconstructionPlan",
-    ),
-    "NumericalFluxResult": ("._riemann", "NumericalFluxResult"),
-    "PLICFaceApertures": ("._unstructured_vof", "PLICFaceApertures"),
-    "PLICInterfaceStatus": ("._unstructured_vof", "PLICInterfaceStatus"),
-    "PLICReconstruction": ("._unstructured_vof", "PLICReconstruction"),
-    "PeriodicSlidingCoupling": ("._unstructured_overset", "PeriodicSlidingCoupling"),
-    "PeriodicSlidingInterfacePlan": (
-        "._unstructured_overset",
-        "PeriodicSlidingInterfacePlan",
-    ),
-    "PeriodicSlidingRefreshArtifact": (
-        "._unstructured_overset",
-        "PeriodicSlidingRefreshArtifact",
-    ),
-    "PiecewiseConstantReconstruction": (
-        "._reconstruction",
-        "PiecewiseConstantReconstruction",
-    ),
-    "PositivityBlendResult": ("._positivity", "PositivityBlendResult"),
-    "PrecisionDType": ("._precision", "PrecisionDType"),
-    "PreparedBalancedShallowWaterLowering": (
-        "._shallow_water_lowerings",
-        "PreparedBalancedShallowWaterLowering",
-    ),
-    "PreparedBlockAMRFiniteVolumeDynamics": (
-        "._block_amr",
-        "PreparedBlockAMRFiniteVolumeDynamics",
-    ),
-    "PreparedCellPolynomialReconstruction": (
-        "._cell_polynomial",
-        "PreparedCellPolynomialReconstruction",
-    ),
-    "PreparedCompositeAMRDiffusion": ("._amr_diffusion", "PreparedCompositeAMRDiffusion"),
-    "PreparedConservativeAdvection": ("._diffusion", "PreparedConservativeAdvection"),
-    "PreparedConservativeDiffusion": ("._diffusion", "PreparedConservativeDiffusion"),
-    "PreparedFiniteVolumeDecomposition": (
-        "._distributed",
-        "PreparedFiniteVolumeDecomposition",
-    ),
-    "PreparedFiniteVolumeDynamics": ("._dynamics", "PreparedFiniteVolumeDynamics"),
-    "PreparedFiniteVolumeGeometry": (
-        "._geometry_protocol",
-        "PreparedFiniteVolumeGeometry",
-    ),
-    "PreparedFiniteVolumeHaloPlan": ("._halo", "PreparedFiniteVolumeHaloPlan"),
-    "PreparedGeostrophicBalance": (
-        "._shallow_water_advanced",
-        "PreparedGeostrophicBalance",
-    ),
-    "PreparedHydrostaticGrid": ("._hydrostatic_grid", "PreparedHydrostaticGrid"),
-    "PreparedMACBoundaryPlan": ("._mac_boundary", "PreparedMACBoundaryPlan"),
-    "PreparedMACDistributedTopology": (
-        "._mac_distributed",
-        "PreparedMACDistributedTopology",
-    ),
-    "PreparedMACElectrochemicalFlux": (
-        "._mac_electrochemical",
-        "PreparedMACElectrochemicalFlux",
-    ),
-    "PreparedMACEnthalpyTransport": ("._mac_enthalpy", "PreparedMACEnthalpyTransport"),
-    "PreparedMACMarkerTransfer": ("._mac_marker_transfer", "PreparedMACMarkerTransfer"),
-    "PreparedMACMomentumOperators": ("._mac_momentum", "PreparedMACMomentumOperators"),
-    "PreparedMACOceanForcing": ("._mac_ocean", "PreparedMACOceanForcing"),
-    "PreparedMACOperators": ("._incompressible", "PreparedMACOperators"),
-    "PreparedMACPassiveTracerMacCormack": (
-        "._mac_passive_tracer",
-        "PreparedMACPassiveTracerMacCormack",
-    ),
-    "PreparedMACScalarSGS": ("._mac_scalar", "PreparedMACScalarSGS"),
-    "PreparedMACScalarTransport": ("._mac_scalar", "PreparedMACScalarTransport"),
-    "PreparedMACVariableDensityOperators": (
-        "._mac_variable_density",
-        "PreparedMACVariableDensityOperators",
-    ),
-    "PreparedMACVariationalViscosityAction": (
-        "._mac_variational_viscosity",
-        "PreparedMACVariationalViscosityAction",
-    ),
-    "PreparedMappedMACGeometry": ("._mac_ale", "PreparedMappedMACGeometry"),
-    "PreparedMappedMACMarkerTransfer": (
-        "._mapped_mac_marker_transfer",
-        "PreparedMappedMACMarkerTransfer",
-    ),
-    "PreparedMetricLine": ("._metric_line", "PreparedMetricLine"),
-    "PreparedNonlinearFaceTrace": ("._side_trace", "PreparedNonlinearFaceTrace"),
-    "PreparedPolyhedralFiniteVolumeGeometry": (
-        "._polyhedral",
-        "PreparedPolyhedralFiniteVolumeGeometry",
-    ),
-    "PreparedShallowWaterBathymetry": (
-        "._shallow_water",
-        "PreparedShallowWaterBathymetry",
-    ),
-    "PreparedTriangleFiniteVolumeDynamics": (
-        "._triangle_dynamics",
-        "PreparedTriangleFiniteVolumeDynamics",
-    ),
-    "PreparedTriangleQuadratic": ("._triangle_polynomial", "PreparedTriangleQuadratic"),
-    "PreparedTriangleWLSQ": ("._triangle_reconstruction", "PreparedTriangleWLSQ"),
-    "PreparedUnstructuredCollocatedOperators": (
-        "._unstructured_incompressible",
-        "PreparedUnstructuredCollocatedOperators",
-    ),
-    "PreparedUnstructuredConservativeRemap": (
-        "._remap_evidence",
-        "PreparedUnstructuredConservativeRemap",
-    ),
-    "PreparedUnstructuredFiniteVolumeCoupling": (
-        "._coupling",
-        "PreparedUnstructuredFiniteVolumeCoupling",
-    ),
-    "PreparedUnstructuredFiniteVolumeDynamics": (
-        "._unstructured_dynamics",
-        "PreparedUnstructuredFiniteVolumeDynamics",
-    ),
-    "PreparedUnstructuredWENOZReconstruction": (
-        "._unstructured_weno",
-        "PreparedUnstructuredWENOZReconstruction",
-    ),
-    "PrescribedHeatFluxWallBoundary": (
-        "._physical_boundaries",
-        "PrescribedHeatFluxWallBoundary",
-    ),
-    "PrescribedNormalFluxBoundary": (
-        ".._conservation_boundary",
-        "PrescribedNormalFluxBoundary",
-    ),
-    "PrescribedStateBoundary": (".._conservation_boundary", "PrescribedStateBoundary"),
-    "RarefiedWallEvaluation": ("._rarefied_wall", "RarefiedWallEvaluation"),
-    "RarefiedWallReason": ("._rarefied_wall", "RarefiedWallReason"),
-    "ReflectiveBoundary": (".._conservation_boundary", "ReflectiveBoundary"),
-    "RemapPreparationFailure": ("._remap_evidence", "RemapPreparationFailure"),
-    "RoeFluxPlan": ("._riemann", "RoeFluxPlan"),
-    "RoeWavePropagationPlan": ("._wave", "RoeWavePropagationPlan"),
-    "RusanovFluxPlan": ("._riemann", "RusanovFluxPlan"),
-    "ShallowWaterAcceptedFaceIntegrals": (
-        "._shallow_water",
-        "ShallowWaterAcceptedFaceIntegrals",
-    ),
-    "ShallowWaterBalancedFaceResult": (
-        "._shallow_water",
-        "ShallowWaterBalancedFaceResult",
-    ),
-    "ShallowWaterBathymetryPlan": ("._shallow_water", "ShallowWaterBathymetryPlan"),
-    "ShallowWaterBoundaryStatus": (
-        "._shallow_water_advanced",
-        "ShallowWaterBoundaryStatus",
-    ),
-    "ShallowWaterBoundaryTrace": (
-        "._shallow_water_advanced",
-        "ShallowWaterBoundaryTrace",
-    ),
-    "ShallowWaterCharacteristicOpenBoundary": (
-        "._shallow_water_advanced",
-        "ShallowWaterCharacteristicOpenBoundary",
-    ),
-    "ShallowWaterEquilibriumWENOZPlan": (
-        "._shallow_water_advanced",
-        "ShallowWaterEquilibriumWENOZPlan",
-    ),
-    "ShallowWaterHydrostaticHLLPlan": (
-        "._shallow_water",
-        "ShallowWaterHydrostaticHLLPlan",
-    ),
-    "ShallowWaterNormalDischargeBoundary": (
-        "._shallow_water_advanced",
-        "ShallowWaterNormalDischargeBoundary",
-    ),
-    "ShallowWaterObservables": ("._shallow_water", "ShallowWaterObservables"),
-    "ShallowWaterReconstructionEvidence": (
-        "._shallow_water_advanced",
-        "ShallowWaterReconstructionEvidence",
-    ),
-    "ShallowWaterShorelineEvent": (
-        "._shallow_water_advanced",
-        "ShallowWaterShorelineEvent",
-    ),
-    "ShallowWaterWetDryPolicy": ("._shallow_water", "ShallowWaterWetDryPolicy"),
-    "ShorelineDerivativeStatus": (
-        "._shallow_water_advanced",
-        "ShorelineDerivativeStatus",
-    ),
-    "SignedDistanceProvider": ("._mac_sharp_geometry", "SignedDistanceProvider"),
-    "SlipWallBoundary": ("._physical_boundaries", "SlipWallBoundary"),
-    "StefanHeatFluxReconstruction": (
-        "._vof_phase_change",
-        "StefanHeatFluxReconstruction",
-    ),
-    "StructuredFiniteVolumeFieldReconstructionKernel": (
-        "._field_view",
-        "StructuredFiniteVolumeFieldReconstructionKernel",
-    ),
-    "StructuredPLICPlan": ("._structured_plic", "StructuredPLICPlan"),
-    "StructuredPLICReconstruction": ("._structured_plic", "StructuredPLICReconstruction"),
-    "SuperbeeLimiter": ("._reconstruction", "SuperbeeLimiter"),
-    "SupersonicInflowBoundary": ("._physical_boundaries", "SupersonicInflowBoundary"),
-    "SupersonicOutflowBoundary": ("._physical_boundaries", "SupersonicOutflowBoundary"),
-    "SurfaceTensionEvaluation": ("._capillarity", "SurfaceTensionEvaluation"),
-    "SurfaceTensionPolicy": ("._capillarity", "SurfaceTensionPolicy"),
-    "SweptMeasureRateProvider": ("._mac_sharp_geometry", "SweptMeasureRateProvider"),
-    "SymmetrizedFaceClosure": ("._closure", "SymmetrizedFaceClosure"),
-    "SymmetrizedFaceClosureCertificate": (
-        "._closure",
-        "SymmetrizedFaceClosureCertificate",
-    ),
-    "TENOQualification": ("._high_resolution_extended", "TENOQualification"),
-    "TensorZHydrostaticGridPlan": ("._hydrostatic_grid", "TensorZHydrostaticGridPlan"),
-    "TransverseWaveSolverPlan": ("._wave", "TransverseWaveSolverPlan"),
-    "TriangleFiniteVolumeBoundarySet": (
-        "._triangle_dynamics",
-        "TriangleFiniteVolumeBoundarySet",
-    ),
-    "TriangleFiniteVolumeDiagnostics": (
-        "._triangle_dynamics",
-        "TriangleFiniteVolumeDiagnostics",
-    ),
-    "TriangleFiniteVolumeDiscretization": (
-        "._triangle_fv",
-        "TriangleFiniteVolumeDiscretization",
-    ),
-    "TriangleFiniteVolumeMethodPlan": (
-        "._triangle_dynamics",
-        "TriangleFiniteVolumeMethodPlan",
-    ),
-    "TriangleFiniteVolumePlan": ("._triangle_fv", "TriangleFiniteVolumePlan"),
-    "TriangleFiniteVolumeQualityReport": (
-        "._triangle_fv",
-        "TriangleFiniteVolumeQualityReport",
-    ),
-    "TriangleKExactReconstructionPlan": (
-        "._triangle_polynomial",
-        "TriangleKExactReconstructionPlan",
-    ),
-    "TriangleLimiterKind": ("._triangle_reconstruction", "TriangleLimiterKind"),
-    "TriangleMUSCLReconstructionPlan": (
-        "._triangle_reconstruction",
-        "TriangleMUSCLReconstructionPlan",
-    ),
-    "TriangleQuadraticReport": ("._triangle_polynomial", "TriangleQuadraticReport"),
-    "TriangleViscousFluxPlan": ("._triangle_viscous", "TriangleViscousFluxPlan"),
-    "TriangleViscousStabilityReport": (
-        "._triangle_viscous",
-        "TriangleViscousStabilityReport",
-    ),
-    "TriangleWLSQReport": ("._triangle_reconstruction", "TriangleWLSQReport"),
-    "UnlimitedLimiter": ("._reconstruction", "UnlimitedLimiter"),
-    "UnstructuredALEStepGeometry": (
-        "._unstructured_motion",
-        "UnstructuredALEStepGeometry",
-    ),
-    "UnstructuredAMRFluxRegister": ("._unstructured_amr", "UnstructuredAMRFluxRegister"),
-    "UnstructuredAMRHierarchyPlan": (
-        "._unstructured_amr",
-        "UnstructuredAMRHierarchyPlan",
-    ),
-    "UnstructuredAMRSelection": ("._unstructured_amr", "UnstructuredAMRSelection"),
-    "UnstructuredCollocatedOperatorReport": (
-        "._unstructured_incompressible",
-        "UnstructuredCollocatedOperatorReport",
-    ),
-    "UnstructuredConservativeRemapPlan": (
-        "._unstructured_remap",
-        "UnstructuredConservativeRemapPlan",
-    ),
-    "UnstructuredEmbeddedBoundarySet": (
-        "._embedded_dynamics",
-        "UnstructuredEmbeddedBoundarySet",
-    ),
-    "UnstructuredFiniteVolumeBoundarySet": (
-        "._unstructured_dynamics",
-        "UnstructuredFiniteVolumeBoundarySet",
-    ),
-    "UnstructuredFiniteVolumeCouplingPlan": (
-        "._coupling",
-        "UnstructuredFiniteVolumeCouplingPlan",
-    ),
-    "UnstructuredFiniteVolumeDiagnostics": (
-        "._unstructured_dynamics",
-        "UnstructuredFiniteVolumeDiagnostics",
-    ),
-    "UnstructuredFiniteVolumeDiscretization": (
-        "._unstructured",
-        "UnstructuredFiniteVolumeDiscretization",
-    ),
-    "UnstructuredFiniteVolumeFieldReconstructionKernel": (
-        "._field_view",
-        "UnstructuredFiniteVolumeFieldReconstructionKernel",
-    ),
-    "UnstructuredFiniteVolumeGeometryState": (
-        "._unstructured_motion",
-        "UnstructuredFiniteVolumeGeometryState",
-    ),
-    "UnstructuredFiniteVolumeMethodPlan": (
-        "._unstructured_dynamics",
-        "UnstructuredFiniteVolumeMethodPlan",
-    ),
-    "UnstructuredFiniteVolumePlan": ("._unstructured", "UnstructuredFiniteVolumePlan"),
-    "UnstructuredFiniteVolumeQualityReport": (
-        "._unstructured",
-        "UnstructuredFiniteVolumeQualityReport",
-    ),
-    "UnstructuredMotionMetrics": ("._unstructured_motion", "UnstructuredMotionMetrics"),
-    "UnstructuredMotionReport": ("._unstructured_motion", "UnstructuredMotionReport"),
-    "UnstructuredOversetPlan": ("._unstructured_overset", "UnstructuredOversetPlan"),
-    "UnstructuredOversetReport": ("._unstructured_overset", "UnstructuredOversetReport"),
-    "UnstructuredRemapLimiter": ("._unstructured_remap", "UnstructuredRemapLimiter"),
-    "UnstructuredRemapReport": ("._unstructured_remap", "UnstructuredRemapReport"),
-    "UnstructuredSecondOrderRemapPlan": (
-        "._unstructured_remap",
-        "UnstructuredSecondOrderRemapPlan",
-    ),
-    "UnstructuredSecondOrderRemapResult": (
-        "._unstructured_remap",
-        "UnstructuredSecondOrderRemapResult",
-    ),
-    "UnstructuredThermalBoundaryCondition": (
-        "._unstructured_thermal",
-        "UnstructuredThermalBoundaryCondition",
-    ),
-    "UnstructuredThermalBoundaryKind": (
-        "._unstructured_thermal",
-        "UnstructuredThermalBoundaryKind",
-    ),
-    "UnstructuredThermalDiffusionEvaluation": (
-        "._unstructured_thermal",
-        "UnstructuredThermalDiffusionEvaluation",
-    ),
-    "UnstructuredTwoMaterialThermalDiffusionPlan": (
-        "._unstructured_thermal",
-        "UnstructuredTwoMaterialThermalDiffusionPlan",
-    ),
-    "UnstructuredVOFPlan": ("._unstructured_vof", "UnstructuredVOFPlan"),
-    "UnstructuredWENOLimiter": ("._unstructured_weno", "UnstructuredWENOLimiter"),
-    "UnstructuredWENOZReconstructionPlan": (
-        "._unstructured_weno",
-        "UnstructuredWENOZReconstructionPlan",
-    ),
-    "UpwindConstrainedTransportPlan": ("._mhd_ct", "UpwindConstrainedTransportPlan"),
-    "VOFPhaseChangePlan": ("._vof_phase_change", "VOFPhaseChangePlan"),
-    "VOFPhaseChangeStageEvaluation": (
-        "._vof_phase_change",
-        "VOFPhaseChangeStageEvaluation",
-    ),
-    "VanLeerLimiter": ("._reconstruction", "VanLeerLimiter"),
-    "VariableSurfaceTensionPolicy": ("._capillarity", "VariableSurfaceTensionPolicy"),
-    "ViscousFluxPlan": ("._viscous", "ViscousFluxPlan"),
-    "ViscousStabilityReport": ("._viscous", "ViscousStabilityReport"),
-    "WENOOrder": ("._weno", "WENOOrder"),
-    "WENOReconstructionPlan": ("._weno", "WENOReconstructionPlan"),
-    "WallRegimePolicy": ("._rarefied_wall", "WallRegimePolicy"),
-    "WallVelocityProvider": ("._mac_sharp_geometry", "WallVelocityProvider"),
-    "WaveDecomposition": ("._wave", "WaveDecomposition"),
-    "WaveFamilyLimiterPlan": ("._wave", "WaveFamilyLimiterPlan"),
-    "WaveLimiterKind": ("._wave", "WaveLimiterKind"),
-    "composite_amr_multigrid_builder": (
-        "._amr_diffusion",
-        "composite_amr_multigrid_builder",
-    ),
-    "evaluate_conservation_boundary": (
-        ".._conservation_boundary",
-        "evaluate_conservation_boundary",
-    ),
-    "evaluate_content_form_entropy_diagnostics": (
-        "._entropy",
-        "evaluate_content_form_entropy_diagnostics",
-    ),
-    "evaluate_mapped_finite_volume_geometry": (
-        "._mapped",
-        "evaluate_mapped_finite_volume_geometry",
-    ),
-    "evaluate_masked_fv_conservation": (
-        "._unstructured",
-        "evaluate_masked_fv_conservation",
-    ),
-    "evaluate_masked_fv_geometry": ("._unstructured", "evaluate_masked_fv_geometry"),
-    "evaluate_triangle_fv_geometry": ("._triangle_fv", "evaluate_triangle_fv_geometry"),
-    "evaluate_triangle_second_moments": (
-        "._triangle_polynomial",
-        "evaluate_triangle_second_moments",
-    ),
-    "evaluate_unstructured_fv_geometry": (
-        "._unstructured",
-        "evaluate_unstructured_fv_geometry",
-    ),
-    "integrated_finite_volume_relative_entropy": (
-        "._entropy",
-        "integrated_finite_volume_relative_entropy",
-    ),
-    "lower_dgsem_shallow_water": (
-        "._shallow_water_lowerings",
-        "lower_dgsem_shallow_water",
-    ),
-    "lower_embedded_stage_metrics": (
-        "._embedded_dynamics",
-        "lower_embedded_stage_metrics",
-    ),
-    "lower_global_spectral_shallow_water": (
-        "._shallow_water_lowerings",
-        "lower_global_spectral_shallow_water",
-    ),
-    "lower_sbp_shallow_water": ("._shallow_water_lowerings", "lower_sbp_shallow_water"),
-    "lower_static_unstructured_stage_metrics": (
-        "._geometry_protocol",
-        "lower_static_unstructured_stage_metrics",
-    ),
-    "lower_triangle_unstructured_shallow_water": (
-        "._shallow_water_lowerings",
-        "lower_triangle_unstructured_shallow_water",
-    ),
-    "mac_cell_to_faces": ("._mac_electrochemical", "mac_cell_to_faces"),
-    "masked_fv_flux_divergence": ("._unstructured", "masked_fv_flux_divergence"),
-    "plane_volume_fraction": ("._structured_plic", "plane_volume_fraction"),
-    "prepare_finite_volume_field_reconstruction": (
-        "._field_view",
-        "prepare_finite_volume_field_reconstruction",
-    ),
-    "prepare_polyhedral_finite_volume_geometry": (
-        "._polyhedral",
-        "prepare_polyhedral_finite_volume_geometry",
-    ),
-    "prepare_unstructured_conservative_remap": (
-        "._automatic_remap",
-        "prepare_unstructured_conservative_remap",
-    ),
-    "read_triangle_fv_archive": ("._triangle_archive", "read_triangle_fv_archive"),
-    "read_unstructured_fv_archive": (
-        "._unstructured_archive",
-        "read_unstructured_fv_archive",
-    ),
-    "reconstruct_wall_interface_normal": (
-        "._contact_angle",
-        "reconstruct_wall_interface_normal",
-    ),
-    "reconstruction_ghost_width": ("._halo", "reconstruction_ghost_width"),
-    "reflux_composite_marker_impulse": (
-        "._mac_composite_marker_transfer",
-        "reflux_composite_marker_impulse",
-    ),
-    "shallow_water_observables": ("._shallow_water", "shallow_water_observables"),
-    "write_triangle_fv_archive": ("._triangle_archive", "write_triangle_fv_archive"),
-    "write_unstructured_fv_archive": (
-        "._unstructured_archive",
-        "write_unstructured_fv_archive",
-    ),
-    "StructuredFaceConductancePlan": ("._face_conductance", "StructuredFaceConductancePlan"),
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "AbstractConservationBoundary": ".._conservation_boundary",
+    "ALEBoundaryContext": ".._conservation_boundary",
+    "BoundaryTraceResult": ".._conservation_boundary",
+    "ConstantStateBoundary": ".._conservation_boundary",
+    "evaluate_conservation_boundary": ".._conservation_boundary",
+    "ExtrapolationBoundary": ".._conservation_boundary",
+    "PrescribedNormalFluxBoundary": ".._conservation_boundary",
+    "PrescribedStateBoundary": ".._conservation_boundary",
+    "ReflectiveBoundary": ".._conservation_boundary",
+    "AcceptedConservationFluxIntegralBlock": ".._conservation_ledger",
+    "AcceptedConservationIntegralLedger": ".._conservation_ledger",
+    "ConservationStageFluxRateBlock": ".._conservation_ledger",
+    "ConservationStageLedger": ".._conservation_ledger",
+    "BlockAMRConservationPlan": "._amr",
+    "composite_amr_multigrid_builder": "._amr_diffusion",
+    "CompositeAMRDiffusionPlan": "._amr_diffusion",
+    "PreparedCompositeAMRDiffusion": "._amr_diffusion",
+    "prepare_unstructured_conservative_remap": "._automatic_remap",
+    "PreparedUnstructuredConservativeRemap": "._automatic_remap",
+    "BlockAMRFiniteVolumePlan": "._block_amr",
+    "BlockAMRFiniteVolumeStageResult": "._block_amr",
+    "PreparedBlockAMRFiniteVolumeDynamics": "._block_amr",
+    "FiniteVolumeBoundaryPair": "._boundary",
+    "FiniteVolumeBoundarySet": "._boundary",
+    "BalancedCapillaryOperator": "._capillarity",
+    "CapillaryFaceRateBlock": "._capillarity",
+    "CurvatureEvidence": "._capillarity",
+    "CurvatureGeometryError": "._capillarity",
+    "CurvatureStatus": "._capillarity",
+    "CurvatureUncertaintyError": "._capillarity",
+    "LinearSurfaceTensionLaw": "._capillarity",
+    "MACBalancedCapillaryOperator": "._capillarity",
+    "MACCapillaryForceResult": "._capillarity",
+    "SurfaceTensionEvaluation": "._capillarity",
+    "SurfaceTensionPolicy": "._capillarity",
+    "VariableSurfaceTensionPolicy": "._capillarity",
+    "CellPolynomialBasis": "._cell_polynomial",
+    "CellPolynomialReconstructionPlan": "._cell_polynomial",
+    "CellPolynomialReconstructionReport": "._cell_polynomial",
+    "PreparedCellPolynomialReconstruction": "._cell_polynomial",
+    "AbstractFaceClosurePlan": "._closure",
+    "ArbitraryNormalFaceClosurePlan": "._closure",
+    "FaceClosureFrame": "._closure",
+    "FaceFluxContext": "._closure",
+    "SymmetrizedFaceClosure": "._closure",
+    "SymmetrizedFaceClosureCertificate": "._closure",
+    "ContactAngleCondition": "._contact_angle",
+    "ContactAngleEvidence": "._contact_angle",
+    "ContactAngleReconstructionResult": "._contact_angle",
+    "ContactAngleStatus": "._contact_angle",
+    "EmbeddedBoundaryContactAngleSet": "._contact_angle",
+    "reconstruct_wall_interface_normal": "._contact_angle",
+    "PreparedUnstructuredFiniteVolumeCoupling": "._coupling",
+    "UnstructuredFiniteVolumeCouplingPlan": "._coupling",
+    "MultivaluedCutCellDiffusionPlan": "._cut_diffusion",
+    "AdvectionForm": "._diffusion",
+    "AdvectionReconstruction": "._diffusion",
+    "ConservativeAdvectionPlan": "._diffusion",
+    "ConservativeBoundaryCondition": "._diffusion",
+    "ConservativeBoundaryKind": "._diffusion",
+    "ConservativeDiffusionPlan": "._diffusion",
+    "FaceCoefficientPlan": "._diffusion",
+    "FaceInterpolationKind": "._diffusion",
+    "PreparedConservativeAdvection": "._diffusion",
+    "PreparedConservativeDiffusion": "._diffusion",
+    "HybridDiffusionBoundary": "._diffusion_boundary",
+    "FiniteVolumeDecompositionPlan": "._distributed",
+    "FiniteVolumeHaloRoute": "._distributed",
+    "FiniteVolumeShardingReport": "._distributed",
+    "PreparedFiniteVolumeDecomposition": "._distributed",
+    "DistributedMACMarkerTransfer": "._distributed_marker_transfer",
+    "DistributedMarkerExchange": "._distributed_marker_transfer",
+    "DistributedMarkerOwnershipPlan": "._distributed_marker_transfer",
+    "DistributedMarkerTransferDiagnostics": "._distributed_marker_transfer",
+    "DyadicFiniteVolumeDiscretization": "._dyadic",
+    "DyadicFiniteVolumePlan": "._dyadic",
+    "ConvexStateLimiterPlan": "._dynamics",
+    "FiniteVolumeBoundaryTrace": "._dynamics",
+    "FiniteVolumeMethodPlan": "._dynamics",
+    "FiniteVolumeResidualDiagnostics": "._dynamics",
+    "PreparedFiniteVolumeDynamics": "._dynamics",
+    "lower_embedded_stage_metrics": "._embedded_dynamics",
+    "UnstructuredEmbeddedBoundarySet": "._embedded_dynamics",
+    "evaluate_content_form_entropy_diagnostics": "._entropy",
+    "FiniteVolumeEntropyDiagnostics": "._entropy",
+    "FiniteVolumeEntropyProductionDiagnostics": "._entropy",
+    "integrated_finite_volume_relative_entropy": "._entropy",
+    "StructuredFaceConductancePlan": "._face_conductance",
+    "prepare_finite_volume_field_reconstruction": "._field_view",
+    "StructuredFiniteVolumeFieldReconstructionKernel": "._field_view",
+    "UnstructuredFiniteVolumeFieldReconstructionKernel": "._field_view",
+    "ALEGeometryConsistencyPolicy": "._geometry_protocol",
+    "ExplicitFaceBlockGeometry": "._geometry_protocol",
+    "FiniteVolumeFaceBlock": "._geometry_protocol",
+    "FiniteVolumeGeometryStatus": "._geometry_protocol",
+    "FiniteVolumeStageFaceBlock": "._geometry_protocol",
+    "FiniteVolumeStageFaceLayout": "._geometry_protocol",
+    "FiniteVolumeStageGeometryEvidence": "._geometry_protocol",
+    "FiniteVolumeStageMetrics": "._geometry_protocol",
+    "lower_static_unstructured_stage_metrics": "._geometry_protocol",
+    "PreparedFiniteVolumeGeometry": "._geometry_protocol",
+    "FiniteVolumeGhostedAxis": "._halo",
+    "FiniteVolumeHaloPlan": "._halo",
+    "PreparedFiniteVolumeHaloPlan": "._halo",
+    "reconstruction_ghost_width": "._halo",
+    "CharacteristicReconstructionPlan": "._high_resolution",
+    "CharacteristicSystem": "._high_resolution",
+    "HighResolutionMethod": "._high_resolution",
+    "HighResolutionReconstructionPlan": "._high_resolution",
+    "NonuniformWENOReconstructionPlan": "._high_resolution",
+    "ExplicitStabilizationPlan": "._high_resolution_extended",
+    "TENOQualification": "._high_resolution_extended",
+    "HybridMimeticDiffusion": "._hybrid_diffusion",
+    "HydrostaticMetricEpoch": "._hydrostatic_grid",
+    "LatitudeLongitudeHydrostaticGridPlan": "._hydrostatic_grid",
+    "PreparedHydrostaticGrid": "._hydrostatic_grid",
+    "TensorZHydrostaticGridPlan": "._hydrostatic_grid",
+    "FaceVelocity": "._incompressible",
+    "MACOperatorPlan": "._incompressible",
+    "MACOperatorReport": "._incompressible",
+    "PreparedMACOperators": "._incompressible",
+    "MappedMACGeometryPlan": "._mac_ale",
+    "MappedMACReport": "._mac_ale",
+    "PreparedMappedMACGeometry": "._mac_ale",
+    "MACBoundaryCorrectionDescriptor": "._mac_boundary",
+    "MACBoundaryKind": "._mac_boundary",
+    "MACBoundaryPlan": "._mac_boundary",
+    "MACBoundaryProvider": "._mac_boundary",
+    "MACBoundaryProviderFunction": "._mac_boundary",
+    "MACBoundarySide": "._mac_boundary",
+    "MACBoundarySideName": "._mac_boundary",
+    "MACBoundaryStageData": "._mac_boundary",
+    "MACPressureClosureKind": "._mac_boundary",
+    "PreparedMACBoundaryPlan": "._mac_boundary",
+    "MACCapillaryResult": "._mac_capillarity",
+    "MACGhostFluidCapillaryPlan": "._mac_capillarity",
+    "CompositeFaceVelocity": "._mac_composite_marker_transfer",
+    "CompositeMACMarkerRelation": "._mac_composite_marker_transfer",
+    "CompositeMACMarkerTransferDiagnostics": "._mac_composite_marker_transfer",
+    "CompositeMACMarkerTransferPlan": "._mac_composite_marker_transfer",
+    "CompositeMarkerImpulseLedger": "._mac_composite_marker_transfer",
+    "CompositeMarkerImpulseReflux": "._mac_composite_marker_transfer",
+    "reflux_composite_marker_impulse": "._mac_composite_marker_transfer",
+    "MACDiffuseSDFGeometryPlan": "._mac_cut_cell",
+    "MACDiffuseSDFGeometryState": "._mac_cut_cell",
+    "MACDistributedDiagnostics": "._mac_distributed",
+    "MACDistributedPlanStatus": "._mac_distributed",
+    "MACDistributedState": "._mac_distributed",
+    "MACDistributedTopologyPlan": "._mac_distributed",
+    "MACHaloMetadata": "._mac_distributed",
+    "MACInterfaceFaceOwnership": "._mac_distributed",
+    "MACLocalStencilPlan": "._mac_distributed",
+    "PreparedMACDistributedTopology": "._mac_distributed",
+    "mac_cell_to_faces": "._mac_electrochemical",
+    "MACElectrochemicalFluxEvaluation": "._mac_electrochemical",
+    "MACElectrochemicalReason": "._mac_electrochemical",
+    "PreparedMACElectrochemicalFlux": "._mac_electrochemical",
+    "MACEnthalpyAdvection": "._mac_enthalpy",
+    "MACEnthalpyDiagnostics": "._mac_enthalpy",
+    "MACEnthalpyFluxResult": "._mac_enthalpy",
+    "MACEnthalpyStepRestriction": "._mac_enthalpy",
+    "MACEnthalpyTransportPlan": "._mac_enthalpy",
+    "MACThermalBoundaryCondition": "._mac_enthalpy",
+    "MACThermalBoundaryKind": "._mac_enthalpy",
+    "MACThermalBoundarySet": "._mac_enthalpy",
+    "PreparedMACEnthalpyTransport": "._mac_enthalpy",
+    "HeightFunctionCurvaturePlan": "._mac_height_function",
+    "HeightFunctionCurvatureResult": "._mac_height_function",
+    "MACFreeSurfaceGeometryState": "._mac_interface_state",
+    "MACMarkerAccumulation": "._mac_marker_transfer",
+    "MACMarkerKernelName": "._mac_marker_transfer",
+    "MACMarkerKernelPlan": "._mac_marker_transfer",
+    "MACMarkerRelation": "._mac_marker_transfer",
+    "MACMarkerRouteState": "._mac_marker_transfer",
+    "MACMarkerTransferDiagnostics": "._mac_marker_transfer",
+    "MACMarkerTransferPlan": "._mac_marker_transfer",
+    "PreparedMACMarkerTransfer": "._mac_marker_transfer",
+    "MACMomentumDiagnostics": "._mac_momentum",
+    "MACMomentumPlan": "._mac_momentum",
+    "MACMomentumReport": "._mac_momentum",
+    "PreparedMACMomentumOperators": "._mac_momentum",
+    "MACOceanForcingEvidence": "._mac_ocean",
+    "PreparedMACOceanForcing": "._mac_ocean",
+    "MACPassiveTracerCharacteristicIntegrator": "._mac_passive_tracer",
+    "MACPassiveTracerConservation": "._mac_passive_tracer",
+    "MACPassiveTracerInterpolation": "._mac_passive_tracer",
+    "MACPassiveTracerMacCormackPlan": "._mac_passive_tracer",
+    "MACPassiveTracerMacCormackResult": "._mac_passive_tracer",
+    "MACPassiveTracerStatus": "._mac_passive_tracer",
+    "PreparedMACPassiveTracerMacCormack": "._mac_passive_tracer",
+    "MACScalarAdvection": "._mac_scalar",
+    "MACScalarBoundaryCondition": "._mac_scalar",
+    "MACScalarBoundaryKind": "._mac_scalar",
+    "MACScalarBoundarySet": "._mac_scalar",
+    "MACScalarDiagnostics": "._mac_scalar",
+    "MACScalarFieldDiagnostics": "._mac_scalar",
+    "MACScalarFluxResult": "._mac_scalar",
+    "MACScalarLayout": "._mac_scalar",
+    "MACScalarProblem": "._mac_scalar",
+    "MACScalarReaction": "._mac_scalar",
+    "MACScalarSGSField": "._mac_scalar",
+    "MACScalarSGSNumberKind": "._mac_scalar",
+    "MACScalarSGSPlan": "._mac_scalar",
+    "MACScalarStepRestriction": "._mac_scalar",
+    "MACScalarTransport": "._mac_scalar",
+    "PreparedMACScalarSGS": "._mac_scalar",
+    "PreparedMACScalarTransport": "._mac_scalar",
+    "MACExactSDFMeasurePlan": "._mac_sharp_geometry",
+    "MACSharpGeometryRefreshResult": "._mac_sharp_geometry",
+    "SignedDistanceProvider": "._mac_sharp_geometry",
+    "SweptMeasureRateProvider": "._mac_sharp_geometry",
+    "WallVelocityProvider": "._mac_sharp_geometry",
+    "FaceMomentumFlux": "._mac_variable_density",
+    "MACDensityUpdateResult": "._mac_variable_density",
+    "MACVariableDensityPlan": "._mac_variable_density",
+    "MACVariableDensityReport": "._mac_variable_density",
+    "MACVariableDensityTransportResult": "._mac_variable_density",
+    "PreparedMACVariableDensityOperators": "._mac_variable_density",
+    "FrozenMACVariationalViscosityAction": "._mac_variational_viscosity",
+    "MACVariationalViscosityResult": "._mac_variational_viscosity",
+    "PreparedMACVariationalViscosityAction": "._mac_variational_viscosity",
+    "MACFreeSurfaceViscousMeasurePlan": "._mac_viscous_measures",
+    "MACFreeSurfaceViscousMeasures": "._mac_viscous_measures",
+    "evaluate_mapped_finite_volume_geometry": "._mapped",
+    "MappedFiniteVolumeDiscretization": "._mapped",
+    "MappedFiniteVolumePlan": "._mapped",
+    "MappedPeriodicSeam": "._mapped",
+    "MappedPeriodicSeamPlan": "._mapped",
+    "MappedMACMarkerRelation": "._mapped_mac_marker_transfer",
+    "MappedMACMarkerRouteState": "._mapped_mac_marker_transfer",
+    "MappedMACMarkerTransferDiagnostics": "._mapped_mac_marker_transfer",
+    "MappedMACMarkerTransferPlan": "._mapped_mac_marker_transfer",
+    "PreparedMappedMACMarkerTransfer": "._mapped_mac_marker_transfer",
+    "MetricLineConservationEvidence": "._metric_line",
+    "MetricLinePlan": "._metric_line",
+    "PreparedMetricLine": "._metric_line",
+    "MHDCTRateResult": "._mhd_ct",
+    "UpwindConstrainedTransportPlan": "._mhd_ct",
+    "ConservativeMultiblockFluxResult": "._multiblock",
+    "ConservativeMultiblockInterfacePlan": "._multiblock",
+    "FiniteVolumeMultiblockRuntimePlan": "._multiblock",
+    "MultiblockPositivityResult": "._multiblock",
+    "CharacteristicInflowBoundary": "._physical_boundaries",
+    "CharacteristicOutflowBoundary": "._physical_boundaries",
+    "FarFieldBoundary": "._physical_boundaries",
+    "MovingSlipWallBoundary": "._physical_boundaries",
+    "NoSlipAdiabaticWallBoundary": "._physical_boundaries",
+    "NoSlipIsothermalWallBoundary": "._physical_boundaries",
+    "PrescribedHeatFluxWallBoundary": "._physical_boundaries",
+    "SlipWallBoundary": "._physical_boundaries",
+    "SupersonicInflowBoundary": "._physical_boundaries",
+    "SupersonicOutflowBoundary": "._physical_boundaries",
+    "prepare_polyhedral_finite_volume_geometry": "._polyhedral",
+    "PreparedPolyhedralFiniteVolumeGeometry": "._polyhedral",
+    "BalancedPositivityBlendResult": "._positivity",
+    "EinfeldtHLLFluxPlan": "._positivity",
+    "FiniteVolumeAdmissibilityReport": "._positivity",
+    "FluxPositivityPlan": "._positivity",
+    "PositivityBlendResult": "._positivity",
+    "FiniteVolumePrecisionPolicy": "._precision",
+    "PrecisionDType": "._precision",
+    "ContinuumGasWallMaterial": "._rarefied_wall",
+    "MaxwellSmoluchowskiContinuumWallPlan": "._rarefied_wall",
+    "MaxwellSmoluchowskiWallCoefficients": "._rarefied_wall",
+    "RarefiedWallEvaluation": "._rarefied_wall",
+    "RarefiedWallReason": "._rarefied_wall",
+    "WallRegimePolicy": "._rarefied_wall",
+    "AbstractFaceReconstructionPlan": "._reconstruction",
+    "AbstractSlopeLimiter": "._reconstruction",
+    "MCLimiter": "._reconstruction",
+    "MinmodLimiter": "._reconstruction",
+    "MUSCLReconstruction": "._reconstruction",
+    "PiecewiseConstantReconstruction": "._reconstruction",
+    "SuperbeeLimiter": "._reconstruction",
+    "UnlimitedLimiter": "._reconstruction",
+    "VanLeerLimiter": "._reconstruction",
+    "AbstractArbitraryNormalALENumericalFluxPlan": "._riemann",
+    "AbstractArbitraryNormalNumericalFluxPlan": "._riemann",
+    "AbstractNumericalFluxPlan": "._riemann",
+    "AbstractSymmetricTwoPointFluxPlan": "._riemann",
+    "EntropyConservativeEulerFluxPlan": "._riemann",
+    "EntropyStableEulerFluxPlan": "._riemann",
+    "EntropyStableFluxPlan": "._riemann",
+    "HLLCFluxPlan": "._riemann",
+    "HLLDFluxPlan": "._riemann",
+    "HLLFluxPlan": "._riemann",
+    "NumericalFluxResult": "._riemann",
+    "RoeFluxPlan": "._riemann",
+    "RusanovFluxPlan": "._riemann",
+    "PreparedShallowWaterBathymetry": "._shallow_water",
+    "shallow_water_observables": "._shallow_water",
+    "ShallowWaterAcceptedFaceIntegrals": "._shallow_water",
+    "ShallowWaterBalancedFaceResult": "._shallow_water",
+    "ShallowWaterBathymetryPlan": "._shallow_water",
+    "ShallowWaterHydrostaticHLLPlan": "._shallow_water",
+    "ShallowWaterObservables": "._shallow_water",
+    "ShallowWaterWetDryPolicy": "._shallow_water",
+    "GeostrophicBalancePlan": "._shallow_water_advanced",
+    "PreparedGeostrophicBalance": "._shallow_water_advanced",
+    "ShallowWaterBoundaryStatus": "._shallow_water_advanced",
+    "ShallowWaterBoundaryTrace": "._shallow_water_advanced",
+    "ShallowWaterCharacteristicOpenBoundary": "._shallow_water_advanced",
+    "ShallowWaterEquilibriumWENOZPlan": "._shallow_water_advanced",
+    "ShallowWaterNormalDischargeBoundary": "._shallow_water_advanced",
+    "ShallowWaterReconstructionEvidence": "._shallow_water_advanced",
+    "ShallowWaterShorelineEvent": "._shallow_water_advanced",
+    "ShorelineDerivativeStatus": "._shallow_water_advanced",
+    "BalancedShallowWaterBackend": "._shallow_water_lowerings",
+    "lower_dgsem_shallow_water": "._shallow_water_lowerings",
+    "lower_global_spectral_shallow_water": "._shallow_water_lowerings",
+    "lower_sbp_shallow_water": "._shallow_water_lowerings",
+    "lower_triangle_unstructured_shallow_water": "._shallow_water_lowerings",
+    "PreparedBalancedShallowWaterLowering": "._shallow_water_lowerings",
+    "PreparedNonlinearFaceTrace": "._side_trace",
+    "ConservativeSmallCellRedistributionEvidence": "._small_cell",
+    "ConservativeSmallCellRedistributionPlan": "._small_cell",
+    "ConservativeSmallCellRedistributionReport": "._small_cell",
+    "ConservativeSmallCellRedistributionResult": "._small_cell",
+    "FiniteVolumeStageEpochTransfer": "._stage_transition",
+    "FiniteVolumeStageEpochTransition": "._stage_transition",
+    "FiniteVolumeDiscretization": "._structured",
+    "FiniteVolumePlan": "._structured",
+    "plane_volume_fraction": "._structured_plic",
+    "StructuredPLICPlan": "._structured_plic",
+    "StructuredPLICReconstruction": "._structured_plic",
+    "read_triangle_fv_archive": "._triangle_archive",
+    "write_triangle_fv_archive": "._triangle_archive",
+    "PreparedTriangleFiniteVolumeDynamics": "._triangle_dynamics",
+    "TriangleFiniteVolumeBoundarySet": "._triangle_dynamics",
+    "TriangleFiniteVolumeDiagnostics": "._triangle_dynamics",
+    "TriangleFiniteVolumeMethodPlan": "._triangle_dynamics",
+    "evaluate_triangle_fv_geometry": "._triangle_fv",
+    "TriangleFiniteVolumeDiscretization": "._triangle_fv",
+    "TriangleFiniteVolumePlan": "._triangle_fv",
+    "TriangleFiniteVolumeQualityReport": "._triangle_fv",
+    "evaluate_triangle_second_moments": "._triangle_polynomial",
+    "PreparedTriangleQuadratic": "._triangle_polynomial",
+    "TriangleKExactReconstructionPlan": "._triangle_polynomial",
+    "TriangleQuadraticReport": "._triangle_polynomial",
+    "PreparedTriangleWLSQ": "._triangle_reconstruction",
+    "TriangleLimiterKind": "._triangle_reconstruction",
+    "TriangleMUSCLReconstructionPlan": "._triangle_reconstruction",
+    "TriangleWLSQReport": "._triangle_reconstruction",
+    "TriangleViscousFluxPlan": "._triangle_viscous",
+    "TriangleViscousStabilityReport": "._triangle_viscous",
+    "evaluate_masked_fv_conservation": "._unstructured",
+    "evaluate_masked_fv_geometry": "._unstructured",
+    "evaluate_unstructured_fv_geometry": "._unstructured",
+    "masked_fv_flux_divergence": "._unstructured",
+    "MaskedFiniteVolumeConservation": "._unstructured",
+    "MaskedFiniteVolumeGeometry": "._unstructured",
+    "UnstructuredFiniteVolumeDiscretization": "._unstructured",
+    "UnstructuredFiniteVolumePlan": "._unstructured",
+    "UnstructuredFiniteVolumeQualityReport": "._unstructured",
+    "UnstructuredAMRFluxRegister": "._unstructured_amr",
+    "UnstructuredAMRHierarchyPlan": "._unstructured_amr",
+    "UnstructuredAMRSelection": "._unstructured_amr",
+    "read_unstructured_fv_archive": "._unstructured_archive",
+    "write_unstructured_fv_archive": "._unstructured_archive",
+    "PreparedUnstructuredFiniteVolumeDynamics": "._unstructured_dynamics",
+    "UnstructuredFiniteVolumeBoundarySet": "._unstructured_dynamics",
+    "UnstructuredFiniteVolumeDiagnostics": "._unstructured_dynamics",
+    "UnstructuredFiniteVolumeMethodPlan": "._unstructured_dynamics",
+    "EmbeddedBoundaryEvidence": "._unstructured_embedded_boundary",
+    "EmbeddedBoundaryMetrics": "._unstructured_embedded_boundary",
+    "EmbeddedBoundaryPlan": "._unstructured_embedded_boundary",
+    "EmbeddedBoundaryReport": "._unstructured_embedded_boundary",
+    "EmbeddedBoundaryStabilizationPolicy": "._unstructured_embedded_boundary",
+    "EmbeddedBoundaryStatus": "._unstructured_embedded_boundary",
+    "PreparedUnstructuredCollocatedOperators": "._unstructured_incompressible",
+    "UnstructuredCollocatedOperatorReport": "._unstructured_incompressible",
+    "FixedConnectivityMotionPlan": "._unstructured_motion",
+    "UnstructuredALEStepGeometry": "._unstructured_motion",
+    "UnstructuredFiniteVolumeGeometryState": "._unstructured_motion",
+    "UnstructuredMotionMetrics": "._unstructured_motion",
+    "UnstructuredMotionReport": "._unstructured_motion",
+    "PeriodicSlidingCoupling": "._unstructured_overset",
+    "PeriodicSlidingInterfacePlan": "._unstructured_overset",
+    "PeriodicSlidingRefreshArtifact": "._unstructured_overset",
+    "UnstructuredOversetPlan": "._unstructured_overset",
+    "UnstructuredOversetReport": "._unstructured_overset",
+    "UnstructuredConservativeRemapPlan": "._unstructured_remap",
+    "UnstructuredRemapLimiter": "._unstructured_remap",
+    "UnstructuredRemapReport": "._unstructured_remap",
+    "UnstructuredSecondOrderRemapPlan": "._unstructured_remap",
+    "UnstructuredSecondOrderRemapResult": "._unstructured_remap",
+    "UnstructuredThermalBoundaryCondition": "._unstructured_thermal",
+    "UnstructuredThermalBoundaryKind": "._unstructured_thermal",
+    "UnstructuredThermalDiffusionEvaluation": "._unstructured_thermal",
+    "UnstructuredTwoMaterialThermalDiffusionPlan": "._unstructured_thermal",
+    "JAXPLICStageReconstruction": "._unstructured_vof",
+    "PLICFaceApertures": "._unstructured_vof",
+    "PLICInterfaceStatus": "._unstructured_vof",
+    "PLICReconstruction": "._unstructured_vof",
+    "UnstructuredVOFPlan": "._unstructured_vof",
+    "PreparedUnstructuredWENOZReconstruction": "._unstructured_weno",
+    "UnstructuredWENOLimiter": "._unstructured_weno",
+    "UnstructuredWENOZReconstructionPlan": "._unstructured_weno",
+    "FiniteVolumeDiffusionEvaluation": "._viscous",
+    "ViscousFluxPlan": "._viscous",
+    "ViscousStabilityReport": "._viscous",
+    "StefanHeatFluxReconstruction": "._vof_phase_change",
+    "VOFPhaseChangePlan": "._vof_phase_change",
+    "VOFPhaseChangeStageEvaluation": "._vof_phase_change",
+    "AbstractWavePropagationPlan": "._wave",
+    "RoeWavePropagationPlan": "._wave",
+    "TransverseWaveSolverPlan": "._wave",
+    "WaveDecomposition": "._wave",
+    "WaveFamilyLimiterPlan": "._wave",
+    "WaveLimiterKind": "._wave",
+    "WENOOrder": "._weno",
+    "WENOReconstructionPlan": "._weno",
 }
 
-_FACADE_EXPORT_MODULES = ()
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
 
 
 if TYPE_CHECKING:
@@ -935,9 +448,7 @@ if TYPE_CHECKING:
         ConservationStageFluxRateBlock,
         ConservationStageLedger,
     )
-    from ._amr import (
-        BlockAMRConservationPlan,
-    )
+    from ._amr import BlockAMRConservationPlan
     from ._amr_diffusion import (
         composite_amr_multigrid_builder,
         CompositeAMRDiffusionPlan,
@@ -945,16 +456,14 @@ if TYPE_CHECKING:
     )
     from ._automatic_remap import (
         prepare_unstructured_conservative_remap,
+        PreparedUnstructuredConservativeRemap,
     )
     from ._block_amr import (
         BlockAMRFiniteVolumePlan,
         BlockAMRFiniteVolumeStageResult,
         PreparedBlockAMRFiniteVolumeDynamics,
     )
-    from ._boundary import (
-        FiniteVolumeBoundaryPair,
-        FiniteVolumeBoundarySet,
-    )
+    from ._boundary import FiniteVolumeBoundaryPair, FiniteVolumeBoundarySet
     from ._capillarity import (
         BalancedCapillaryOperator,
         CapillaryFaceRateBlock,
@@ -995,9 +504,7 @@ if TYPE_CHECKING:
         PreparedUnstructuredFiniteVolumeCoupling,
         UnstructuredFiniteVolumeCouplingPlan,
     )
-    from ._cut_diffusion import (
-        MultivaluedCutCellDiffusionPlan,
-    )
+    from ._cut_diffusion import MultivaluedCutCellDiffusionPlan
     from ._diffusion import (
         AdvectionForm,
         AdvectionReconstruction,
@@ -1010,9 +517,7 @@ if TYPE_CHECKING:
         PreparedConservativeAdvection,
         PreparedConservativeDiffusion,
     )
-    from ._diffusion_boundary import (
-        HybridDiffusionBoundary,
-    )
+    from ._diffusion_boundary import HybridDiffusionBoundary
     from ._distributed import (
         FiniteVolumeDecompositionPlan,
         FiniteVolumeHaloRoute,
@@ -1025,10 +530,7 @@ if TYPE_CHECKING:
         DistributedMarkerOwnershipPlan,
         DistributedMarkerTransferDiagnostics,
     )
-    from ._dyadic import (
-        DyadicFiniteVolumeDiscretization,
-        DyadicFiniteVolumePlan,
-    )
+    from ._dyadic import DyadicFiniteVolumeDiscretization, DyadicFiniteVolumePlan
     from ._dynamics import (
         ConvexStateLimiterPlan,
         FiniteVolumeBoundaryTrace,
@@ -1046,6 +548,7 @@ if TYPE_CHECKING:
         FiniteVolumeEntropyProductionDiagnostics,
         integrated_finite_volume_relative_entropy,
     )
+    from ._face_conductance import StructuredFaceConductancePlan
     from ._field_view import (
         prepare_finite_volume_field_reconstruction,
         StructuredFiniteVolumeFieldReconstructionKernel,
@@ -1080,9 +583,7 @@ if TYPE_CHECKING:
         ExplicitStabilizationPlan,
         TENOQualification,
     )
-    from ._hybrid_diffusion import (
-        HybridMimeticDiffusion,
-    )
+    from ._hybrid_diffusion import HybridMimeticDiffusion
     from ._hydrostatic_grid import (
         HydrostaticMetricEpoch,
         LatitudeLongitudeHydrostaticGridPlan,
@@ -1112,10 +613,7 @@ if TYPE_CHECKING:
         MACPressureClosureKind,
         PreparedMACBoundaryPlan,
     )
-    from ._mac_capillarity import (
-        MACCapillaryResult,
-        MACGhostFluidCapillaryPlan,
-    )
+    from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
     from ._mac_composite_marker_transfer import (
         CompositeFaceVelocity,
         CompositeMACMarkerRelation,
@@ -1125,10 +623,7 @@ if TYPE_CHECKING:
         CompositeMarkerImpulseReflux,
         reflux_composite_marker_impulse,
     )
-    from ._mac_cut_cell import (
-        MACDiffuseSDFGeometryPlan,
-        MACDiffuseSDFGeometryState,
-    )
+    from ._mac_cut_cell import MACDiffuseSDFGeometryPlan, MACDiffuseSDFGeometryState
     from ._mac_distributed import (
         MACDistributedDiagnostics,
         MACDistributedPlanStatus,
@@ -1160,9 +655,7 @@ if TYPE_CHECKING:
         HeightFunctionCurvaturePlan,
         HeightFunctionCurvatureResult,
     )
-    from ._mac_interface_state import (
-        MACFreeSurfaceGeometryState,
-    )
+    from ._mac_interface_state import MACFreeSurfaceGeometryState
     from ._mac_marker_transfer import (
         MACMarkerAccumulation,
         MACMarkerKernelName,
@@ -1179,10 +672,7 @@ if TYPE_CHECKING:
         MACMomentumReport,
         PreparedMACMomentumOperators,
     )
-    from ._mac_ocean import (
-        MACOceanForcingEvidence,
-        PreparedMACOceanForcing,
-    )
+    from ._mac_ocean import MACOceanForcingEvidence, PreparedMACOceanForcing
     from ._mac_passive_tracer import (
         MACPassiveTracerCharacteristicIntegrator,
         MACPassiveTracerConservation,
@@ -1254,10 +744,7 @@ if TYPE_CHECKING:
         MetricLinePlan,
         PreparedMetricLine,
     )
-    from ._mhd_ct import (
-        MHDCTRateResult,
-        UpwindConstrainedTransportPlan,
-    )
+    from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
     from ._multiblock import (
         ConservativeMultiblockFluxResult,
         ConservativeMultiblockInterfacePlan,
@@ -1287,10 +774,7 @@ if TYPE_CHECKING:
         FluxPositivityPlan,
         PositivityBlendResult,
     )
-    from ._precision import (
-        FiniteVolumePrecisionPolicy,
-        PrecisionDType,
-    )
+    from ._precision import FiniteVolumePrecisionPolicy, PrecisionDType
     from ._rarefied_wall import (
         ContinuumGasWallMaterial,
         MaxwellSmoluchowskiContinuumWallPlan,
@@ -1309,12 +793,6 @@ if TYPE_CHECKING:
         SuperbeeLimiter,
         UnlimitedLimiter,
         VanLeerLimiter,
-    )
-    from ._remap_evidence import (
-        MappedNestedRemapEvidence,
-        MappedSurfaceChartRemapEvidence,
-        PreparedUnstructuredConservativeRemap,
-        RemapPreparationFailure,
     )
     from ._riemann import (
         AbstractArbitraryNormalALENumericalFluxPlan,
@@ -1361,9 +839,7 @@ if TYPE_CHECKING:
         lower_triangle_unstructured_shallow_water,
         PreparedBalancedShallowWaterLowering,
     )
-    from ._side_trace import (
-        PreparedNonlinearFaceTrace,
-    )
+    from ._side_trace import PreparedNonlinearFaceTrace
     from ._small_cell import (
         ConservativeSmallCellRedistributionEvidence,
         ConservativeSmallCellRedistributionPlan,
@@ -1374,10 +850,7 @@ if TYPE_CHECKING:
         FiniteVolumeStageEpochTransfer,
         FiniteVolumeStageEpochTransition,
     )
-    from ._structured import (
-        FiniteVolumeDiscretization,
-        FiniteVolumePlan,
-    )
+    from ._structured import FiniteVolumeDiscretization, FiniteVolumePlan
     from ._structured_plic import (
         plane_volume_fraction,
         StructuredPLICPlan,
@@ -1510,31 +983,7 @@ if TYPE_CHECKING:
         WaveFamilyLimiterPlan,
         WaveLimiterKind,
     )
-    from ._weno import (
-        WENOOrder,
-        WENOReconstructionPlan,
-    )
-
-
-def __getattr__(name: str) -> Any:
-    owner = _SYMBOL_MODULES.get(name)
-    if owner is not None:
-        module_name, symbol = owner
-        module = import_module(module_name, __package__)
-        value = module if symbol is None else getattr(module, symbol)
-        globals()[name] = value
-        return value
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+    from ._weno import WENOOrder, WENOReconstructionPlan
 
 
 __all__ = [
@@ -1556,9 +1005,6 @@ __all__ = [
     "PreparedFiniteVolumeGeometry",
     "lower_static_unstructured_stage_metrics",
     "PreparedUnstructuredConservativeRemap",
-    "MappedNestedRemapEvidence",
-    "MappedSurfaceChartRemapEvidence",
-    "RemapPreparationFailure",
     "prepare_unstructured_conservative_remap",
     "BalancedCapillaryOperator",
     "CapillaryFaceRateBlock",
@@ -1684,6 +1130,7 @@ __all__ = [
     "ViscousFluxPlan",
     "ViscousStabilityReport",
     "FaceCoefficientPlan",
+    "StructuredFaceConductancePlan",
     "FaceInterpolationKind",
     "PreparedConservativeAdvection",
     "PreparedConservativeDiffusion",
@@ -1952,5 +1399,4 @@ __all__ = [
     "prepare_polyhedral_finite_volume_geometry",
     "HybridDiffusionBoundary",
     "HybridMimeticDiffusion",
-    "StructuredFaceConductancePlan",
 ]

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -22,6 +21,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
+from phydrax import config as pxconfig
 from tools.phase_field_multiphysics_qualification import build_coupled_case
 
 
@@ -139,7 +139,7 @@ def _subsystem_cases(repeats: int) -> dict[str, dict[str, Any]]:
 
 
 def benchmark(*, quick: bool, repeats: int) -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Multiphysics benchmark requires float64.")
     repetitions = 1 if quick else repeats
     coupled = _coupled_case(repetitions)

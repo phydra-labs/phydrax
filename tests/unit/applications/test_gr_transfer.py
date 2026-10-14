@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._physical import ElectromagneticScaleContract, RelativityScaleContract
 from phydrax.applications.astrophysics._gr_medium import FastLightSnapshot
@@ -31,7 +32,7 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import CENTIMETER, COULOMB, SOLAR_MASS
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _snapshot(

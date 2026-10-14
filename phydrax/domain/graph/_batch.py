@@ -10,7 +10,7 @@ import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
-from ...graph import GraphIR
+from ...graph._ir import GraphIR
 from .._structure import _validate_reserved_axes, Points, SampleLayout
 from ._components import GraphComponentKind
 

@@ -5,10 +5,10 @@
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.artifacts import ArtifactManifest
 from phydrax.discretization import FourierAxisSpec, TensorGridPlan
 from phydrax.discretization.spectral import CylindricalHankelPlan
@@ -28,7 +28,7 @@ from phydrax.optics.wave._nonlinear_response import InstantaneousScalarSusceptib
 from phydrax.optics.wave._pulse_time import PulseTimeSpace
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _provenance() -> RefractiveIndexProvenance:

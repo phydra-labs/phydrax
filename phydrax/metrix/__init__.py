@@ -5,422 +5,17 @@
 """Differentiable coordinate, Riemannian, and signed geometry for Phydrax."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from . import algebra, clifford
-from ._adm import (
-    ADMDecomposition,
-    ADMParameterization,
-    ADMValidationReport,
-    decompose_adm_metric,
-    parameterized_adm_metric,
-    validate_adm_decomposition,
-)
-from ._adm_exchange import (
-    ADMGridGeometry,
-    combine_stress_energy_projections,
-    StressEnergyProjection,
-)
-from ._adm_geometry import (
-    adm_constraint_residuals,
-    adm_extrinsic_curvature,
-    adm_hamiltonian_constraint,
-    adm_momentum_constraint,
-    adm_normal_covector,
-    adm_normal_vector,
-    adm_spacetime_projector,
-    ADMConstraintResiduals,
-)
-from ._ambient import (
-    ImmersedRiemannianManifoldAdapter,
-    LevelSetNormalProjectionResult,
-    ManifoldTangentMeasureEvidence,
-    RegularLevelSetManifold,
-    RiemannianMapMeasureEvidence,
-)
-from ._atlas import (
-    AtlasValidationReport,
-    ComplexAtlasStructure,
-    CoordinateAtlas,
-    PatchwiseScalarField,
-    validate_coordinate_atlas,
-)
-from ._atlas_construction import (
-    AtlasCandidate,
-    AtlasConstructionCertificate,
-    AtlasConstructionPolicy,
-    CompactAtlasDomain,
-    level_set_graph_candidate,
-    prepare_atlas,
-    PreparedAtlasConstruction,
-)
-from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
-from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
-from ._black_hole_metrics import (
-    boyer_lindquist_to_ingoing_kerr_transition,
-    ExactMetricDomainStatus,
-    ingoing_kerr_domain_evidence,
-    ingoing_kerr_metric,
-    ingoing_schwarzschild_domain_evidence,
-    ingoing_schwarzschild_metric,
-    kerr_boyer_lindquist_domain_evidence,
-    kerr_boyer_lindquist_metric,
-    kerr_ergosurface_radii,
-    kerr_horizon_radii,
-    kerr_kretschmann_scalar,
-    kerr_pontryagin_scalar,
-)
-from ._bosonic_gaussian import (
-    BosonicGaussianChannel,
-    BosonicGaussianState,
-    canonical_commutation_matrix,
-)
-from ._boundary import (
-    induced_boundary_density,
-    induced_boundary_metric,
-    RiemannianHypersurface,
-)
-from ._bundle import (
-    bundle_covariant_derivative,
-    bundle_curvature,
-    gauge_curvature_residual,
-    gauge_transform_connection,
-    VectorBundleConnection,
-)
-from ._characteristic_forms import (
-    CharacteristicNumberEvidence,
-    chern_character_form,
-    ChernCharacterForm,
-    integrate_top_characteristic_form,
-)
-from ._chart import ChartTransition, CoordinateChart
-from ._chern import ChernConnection, HolomorphicBundleFrame, HolomorphicBundleTransition
-from ._classical_manifold import (
-    HyperboloidManifold,
-    PoincareBallManifold,
-    ProbabilitySimplexManifold,
-)
-from ._compact_spectrum import SphereLaplacianLevels
-from ._complex import (
-    AlmostComplexStructure,
-    AlmostComplexValidationReport,
-    ComplexCoordinateConvention,
-    holomorphicity_residual,
-    nijenhuis_tensor,
-    standard_complex_structure,
-    validate_almost_complex_structure,
-    wirtinger_derivatives,
-)
-from ._complex_euclidean import ComplexEuclideanManifold
-from ._complex_matrix_manifold import (
-    AffineInvariantHPDManifold,
-    ComplexStiefelManifold,
-    SpecialUnitaryGroup,
-    SpecialUnitaryManifold,
-    UnitaryGroup,
-    UnitaryManifold,
-)
-from ._complex_projective import ComplexProjectiveManifold
-from ._connection import (
-    AbstractAffineConnection,
-    CallableAffineConnection,
-    christoffel_from_metric_jet,
-    connection_geodesic_acceleration,
-    connection_geodesic_rhs,
-    connection_parallel_transport_rhs,
-    connection_transformation_residual,
-    geodesic_acceleration,
-    geodesic_rhs,
-    LeviCivitaConnection,
-    nonmetricity_tensor,
-    parallel_transport_rhs,
-    pullback_affine_connection,
-    torsion_tensor,
-)
-from ._curvature import (
-    connection_ricci_tensor,
-    connection_riemann_tensor,
-    einstein_tensor,
-    ricci_tensor,
-    riemann_tensor,
-    scalar_curvature,
-    sectional_curvature,
-)
-from ._density import (
-    metric_volume_density,
-    pullback_density,
-    validate_volume_density,
-    VolumeDensity,
-    VolumeDensityValidationReport,
-)
-from ._embedded import EmbeddedChart, tangent_projector_from_normal
-from ._fermionic_gaussian import FermionicGaussianState
-from ._flat_torus import FlatTorusStateGeometry
-from ._forms import (
-    codifferential,
-    DifferentialForm,
-    exterior_derivative,
-    hodge_laplacian,
-    hodge_star,
-    interior_product,
-    lie_derivative,
-    pullback_form,
-    to_twisted,
-    to_untwisted,
-    wedge,
-)
-from ._gauge_renormalization import (
-    GaugeRenormalizationEvidence,
-    GaugeRenormalizationPlan,
-)
+from .._deferred_exports import deferred_exports
 from ._gauge_representation import __all__ as _gauge_representation_all
 from ._gaussian_entanglement import __all__ as _gaussian_entanglement_all
-from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
-from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
-from ._holomorphic_gauge import (
-    KahlerGaugeInvarianceReport,
-    KahlerHolomorphicGauge,
-)
-from ._information_operator import (
-    InformationMetricOperator,
-    pulled_back_information_operator,
-)
-from ._jet import metric_jet, MetricJet
-from ._kahler import (
-    HermitianStructure,
-    HermitianValidationReport,
-    KahlerStructure,
-    KahlerValidationReport,
-    validate_hermitian_structure,
-    validate_kahler_structure,
-)
-from ._kahler_potential import KahlerPotentialGeometry
-from ._killing_tetrad import (
-    axial_killing_vector,
-    kerr_principal_null_tetrad,
-    killing_equation_residual,
-    KillingInnerProductEvidence,
-    maximum_killing_equation_residual,
-    metric_inner_product_evidence,
-    MetricInnerProductEvidence,
-    orthonormal_tetrad,
-    OrthonormalTetrad,
-    PrincipalNullTetrad,
-    stationary_axial_inner_product_evidence,
-    stationary_killing_vector,
-    tetrad_dual,
-    tetrad_parallel_transport_evidence,
-    tetrad_parallel_transport_residual,
-    tetrad_project_covector,
-    tetrad_project_vector,
-    tetrad_reconstruct_covector,
-    tetrad_reconstruct_vector,
-    TetradParallelTransportEvidence,
-    zamo_observer_tetrad,
-)
-from ._legendre_geometry import (
-    LegendreGeometry,
-    LegendreValidationReport,
-    validate_legendre_geometry,
-)
-from ._lie_algebra_metric import LieAlgebraCoordinateMetric
-from ._lie_group import (
-    AbstractLieGroup,
-    LieGroupStateGeometry,
-    RightLieGroupStateGeometry,
-    SpecialEuclideanGroup,
-    SpecialOrthogonalGroup,
-)
-from ._lorentzian import adm_metric, flrw_metric, minkowski_metric, schwarzschild_metric
-from ._manifold import (
-    AbstractGeodesicManifold,
-    AbstractRiemannianManifold,
-    EuclideanManifold,
-    SphereManifold,
-)
-from ._manifold_state_geometry import GeodesicManifoldStateGeometry
-from ._manifold_validation import (
-    ManifoldValidationReport,
-    StateGeometryValidationReport,
-    validate_manifold,
-    validate_state_geometry,
-)
-from ._map import (
-    DifferentiableMap,
-    Immersion,
-    ImmersionValidationReport,
-    validate_immersion,
-)
-from ._map_geometry import RiemannianMapGeometry
-from ._matrix_manifold import (
-    AffineInvariantSPDManifold,
-    FixedRankManifold,
-    GrassmannManifold,
-    ObliqueManifold,
-    SpecialOrthogonalManifold,
-    StiefelManifold,
-)
-from ._metric import (
-    AbstractSemiRiemannianMetric,
-    cholesky_metric,
-    diagonal_metric,
-    diagonal_semi_riemannian_metric,
-    euclidean_metric,
-    LorentzianConvention,
-    LorentzianMetric,
-    MetricSignature,
-    pullback_lorentzian_metric,
-    pullback_metric,
-    pullback_semi_riemannian_metric,
-    RiemannianMetric,
-    SemiRiemannianMetric,
-)
-from ._metric_domain import (
-    MetricDomainEvidence,
-    MetricDomainStatus,
-)
-from ._metric_measure import WeightedRiemannianMeasure
-from ._operator_kernels import (
-    apply_cotangent_map,
-    covariant_symbol_contraction,
-    density_divergence,
-)
-from ._operators import (
-    affine_covariant_derivative,
-    connection_covariant_hessian,
-    connection_divergence,
-    covariant_derivative,
-    covariant_hessian,
-    divergence,
-    gradient,
-    laplace_beltrami,
-)
-from ._patchwise import (
-    PatchwiseDensity,
-    PatchwiseDifferentialForm,
-    PatchwiseMetric,
-    PatchwiseTensorField,
-)
-from ._precision import GeometryPrecisionPolicy
-from ._product_spectrum import product_laplacian_eigenbasis
-from ._product_state_geometry import ProductStateGeometry, ProductStateGeometryBlock
-from ._quantum_density import (
-    bures_squared_distance,
-    BuresDensityManifold,
-    density_fidelity,
-    DensityRankStratification,
-    faithful_density_from_cholesky,
-    faithful_density_from_generator,
-    FaithfulDensityReport,
-    FixedRankDensityManifold,
-    principal_purification,
-    RankStratumEvidence,
-    RankTransitionProposal,
-    SLDQuantumFisherGeometry,
-    uhlmann_alignment,
-    UhlmannAlignment,
-)
-from ._quaternion_state_geometry import (
-    QuaternionConvention,
-    QuaternionPoseStateGeometry,
-    ScalarFirstQuaternionStateGeometry,
-)
-from ._semi_riemannian import (
-    causal_character,
-    CausalCharacter,
-    dalembertian,
-    proper_time_rate,
-    semi_riemannian_gradient,
-    TimeOrientation,
-)
-from ._signed_validation import (
-    SignedMetricValidationReport,
-    validate_lorentzian_metric,
-    validate_semi_riemannian_metric,
-)
-from ._spacetime_conventions import (
-    OrientationSign,
-    RelativityConvention,
-)
-from ._special_holonomy import (
-    G2DerivationInvarianceReport,
-    LocalG2Structure,
-    LocalG2ValidationReport,
-    LocalSUNStructure,
-    LocalSUNValidationReport,
-    OctonionG2Bridge,
-    validate_g2_derivations,
-    validate_local_g2_structure,
-    validate_local_su_structure,
-)
-from ._state_geometry import (
-    AbstractStateGeometry,
-    EmbeddedStateGeometry,
-    EuclideanStateGeometry,
-    LocalRetraction,
-    PointwiseStateGeometry,
-    SpecialOrthogonalStateGeometry,
-    StateChartEvidence,
-    StateTransportEvidence,
-    SymmetricPositiveDefiniteStateGeometry,
-)
-from ._statistics import frechet_mean, frechet_objective, FrechetMeanResult
-from ._stochastic import (
-    brownian_generator,
-    coordinate_stratonovich_to_ito_drift,
-    coordinate_to_covariant_drift,
-    covariant_fokker_planck_operator,
-    covariant_kolmogorov_generator,
-)
-from ._sub_riemannian import (
-    horizontal_gradient,
-    horizontal_hamiltonian,
-    HorizontalCometric,
-    HorizontalValidationReport,
-    step_two_horizontal_rank,
-    sub_laplacian,
-    sub_riemannian_hamiltonian_rhs,
-    validate_horizontal_cometric,
-)
-from ._symplectic import (
-    canonical_symplectic_form,
-    casimir_residual,
-    hamiltonian_vector_field,
-    liouville_volume_form,
-    poisson_bracket,
-    poisson_jacobi_tensor,
-    PoissonStructure,
-    PoissonValidationReport,
-    symplectic_to_poisson,
-    SymplecticForm,
-    symplecticity_residual,
-    SymplecticValidationReport,
-    validate_poisson_structure,
-    validate_symplectic_form,
-)
-from ._tensor import (
-    contract_indices,
-    COVECTOR_TENSOR,
-    DENSITY_TENSOR,
-    inner_product,
-    lower_index,
-    pullback_covector,
-    pushforward_vector,
-    raise_index,
-    reexpress_tensor,
-    SCALAR_TENSOR,
-    tensor_norm_squared,
-    TensorType,
-    TensorVariance,
-    VECTOR_TENSOR,
-)
-from ._validation import MetricValidationReport, validate_metric
 
 
 _FACADE_EXPORT_MODULES = ("._gauge_representation", "._gaussian_entanglement")
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -430,8 +25,773 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
+def _facade_dir() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "algebra": "module:.algebra",
+    "clifford": "module:.clifford",
+    "ADMDecomposition": "._adm",
+    "ADMParameterization": "._adm",
+    "ADMValidationReport": "._adm",
+    "decompose_adm_metric": "._adm",
+    "parameterized_adm_metric": "._adm",
+    "validate_adm_decomposition": "._adm",
+    "ADMGridGeometry": "._adm_exchange",
+    "combine_stress_energy_projections": "._adm_exchange",
+    "StressEnergyProjection": "._adm_exchange",
+    "adm_constraint_residuals": "._adm_geometry",
+    "adm_extrinsic_curvature": "._adm_geometry",
+    "adm_hamiltonian_constraint": "._adm_geometry",
+    "adm_momentum_constraint": "._adm_geometry",
+    "adm_normal_covector": "._adm_geometry",
+    "adm_normal_vector": "._adm_geometry",
+    "adm_spacetime_projector": "._adm_geometry",
+    "ADMConstraintResiduals": "._adm_geometry",
+    "ImmersedRiemannianManifoldAdapter": "._ambient",
+    "LevelSetNormalProjectionResult": "._ambient",
+    "ManifoldTangentMeasureEvidence": "._ambient",
+    "RegularLevelSetManifold": "._ambient",
+    "RiemannianMapMeasureEvidence": "._ambient",
+    "AtlasValidationReport": "._atlas",
+    "ComplexAtlasStructure": "._atlas",
+    "CoordinateAtlas": "._atlas",
+    "PatchwiseScalarField": "._atlas",
+    "validate_coordinate_atlas": "._atlas",
+    "AtlasCandidate": "._atlas_construction",
+    "AtlasConstructionCertificate": "._atlas_construction",
+    "AtlasConstructionPolicy": "._atlas_construction",
+    "CompactAtlasDomain": "._atlas_construction",
+    "level_set_graph_candidate": "._atlas_construction",
+    "prepare_atlas": "._atlas_construction",
+    "PreparedAtlasConstruction": "._atlas_construction",
+    "AtlasCover": "._atlas_cover",
+    "AtlasOverlap": "._atlas_cover",
+    "ChartSupport": "._atlas_cover",
+    "bigraded_wedge": "._bigraded_forms",
+    "BigradedForm": "._bigraded_forms",
+    "partial": "._bigraded_forms",
+    "partial_bar": "._bigraded_forms",
+    "boyer_lindquist_to_ingoing_kerr_transition": "._black_hole_metrics",
+    "ExactMetricDomainStatus": "._black_hole_metrics",
+    "ingoing_kerr_domain_evidence": "._black_hole_metrics",
+    "ingoing_kerr_metric": "._black_hole_metrics",
+    "ingoing_schwarzschild_domain_evidence": "._black_hole_metrics",
+    "ingoing_schwarzschild_metric": "._black_hole_metrics",
+    "kerr_boyer_lindquist_domain_evidence": "._black_hole_metrics",
+    "kerr_boyer_lindquist_metric": "._black_hole_metrics",
+    "kerr_ergosurface_radii": "._black_hole_metrics",
+    "kerr_horizon_radii": "._black_hole_metrics",
+    "kerr_kretschmann_scalar": "._black_hole_metrics",
+    "kerr_pontryagin_scalar": "._black_hole_metrics",
+    "BosonicGaussianChannel": "._bosonic_gaussian",
+    "BosonicGaussianState": "._bosonic_gaussian",
+    "canonical_commutation_matrix": "._bosonic_gaussian",
+    "induced_boundary_density": "._boundary",
+    "induced_boundary_metric": "._boundary",
+    "RiemannianHypersurface": "._boundary",
+    "bundle_covariant_derivative": "._bundle",
+    "bundle_curvature": "._bundle",
+    "gauge_curvature_residual": "._bundle",
+    "gauge_transform_connection": "._bundle",
+    "VectorBundleConnection": "._bundle",
+    "CharacteristicNumberEvidence": "._characteristic_forms",
+    "chern_character_form": "._characteristic_forms",
+    "ChernCharacterForm": "._characteristic_forms",
+    "integrate_top_characteristic_form": "._characteristic_forms",
+    "ChartTransition": "._chart",
+    "CoordinateChart": "._chart",
+    "ChernConnection": "._chern",
+    "HolomorphicBundleFrame": "._chern",
+    "HolomorphicBundleTransition": "._chern",
+    "HyperboloidManifold": "._classical_manifold",
+    "PoincareBallManifold": "._classical_manifold",
+    "ProbabilitySimplexManifold": "._classical_manifold",
+    "SphereLaplacianLevels": "._compact_spectrum",
+    "AlmostComplexStructure": "._complex",
+    "AlmostComplexValidationReport": "._complex",
+    "ComplexCoordinateConvention": "._complex",
+    "holomorphicity_residual": "._complex",
+    "nijenhuis_tensor": "._complex",
+    "standard_complex_structure": "._complex",
+    "validate_almost_complex_structure": "._complex",
+    "wirtinger_derivatives": "._complex",
+    "ComplexEuclideanManifold": "._complex_euclidean",
+    "AffineInvariantHPDManifold": "._complex_matrix_manifold",
+    "ComplexStiefelManifold": "._complex_matrix_manifold",
+    "SpecialUnitaryGroup": "._complex_matrix_manifold",
+    "SpecialUnitaryManifold": "._complex_matrix_manifold",
+    "UnitaryGroup": "._complex_matrix_manifold",
+    "UnitaryManifold": "._complex_matrix_manifold",
+    "ComplexProjectiveManifold": "._complex_projective",
+    "AbstractAffineConnection": "._connection",
+    "CallableAffineConnection": "._connection",
+    "christoffel_from_metric_jet": "._connection",
+    "connection_geodesic_acceleration": "._connection",
+    "connection_geodesic_rhs": "._connection",
+    "connection_parallel_transport_rhs": "._connection",
+    "connection_transformation_residual": "._connection",
+    "geodesic_acceleration": "._connection",
+    "geodesic_rhs": "._connection",
+    "LeviCivitaConnection": "._connection",
+    "nonmetricity_tensor": "._connection",
+    "parallel_transport_rhs": "._connection",
+    "pullback_affine_connection": "._connection",
+    "torsion_tensor": "._connection",
+    "connection_ricci_tensor": "._curvature",
+    "connection_riemann_tensor": "._curvature",
+    "einstein_tensor": "._curvature",
+    "ricci_tensor": "._curvature",
+    "riemann_tensor": "._curvature",
+    "scalar_curvature": "._curvature",
+    "sectional_curvature": "._curvature",
+    "metric_volume_density": "._density",
+    "pullback_density": "._density",
+    "validate_volume_density": "._density",
+    "VolumeDensity": "._density",
+    "VolumeDensityValidationReport": "._density",
+    "EmbeddedChart": "._embedded",
+    "tangent_projector_from_normal": "._embedded",
+    "FermionicGaussianState": "._fermionic_gaussian",
+    "FlatTorusStateGeometry": "._flat_torus",
+    "codifferential": "._forms",
+    "DifferentialForm": "._forms",
+    "exterior_derivative": "._forms",
+    "hodge_laplacian": "._forms",
+    "hodge_star": "._forms",
+    "interior_product": "._forms",
+    "lie_derivative": "._forms",
+    "pullback_form": "._forms",
+    "to_twisted": "._forms",
+    "to_untwisted": "._forms",
+    "wedge": "._forms",
+    "GaugeRenormalizationEvidence": "._gauge_renormalization",
+    "GaugeRenormalizationPlan": "._gauge_renormalization",
+    "integrate_metric_geodesic": "._geodesic_problem",
+    "MetricGeodesicResult": "._geodesic_problem",
+    "HessianGeometry": "._hessian_geometry",
+    "validate_hessian_geometry": "._hessian_geometry",
+    "KahlerGaugeInvarianceReport": "._holomorphic_gauge",
+    "KahlerHolomorphicGauge": "._holomorphic_gauge",
+    "InformationMetricOperator": "._information_operator",
+    "pulled_back_information_operator": "._information_operator",
+    "metric_jet": "._jet",
+    "MetricJet": "._jet",
+    "HermitianStructure": "._kahler",
+    "HermitianValidationReport": "._kahler",
+    "KahlerStructure": "._kahler",
+    "KahlerValidationReport": "._kahler",
+    "validate_hermitian_structure": "._kahler",
+    "validate_kahler_structure": "._kahler",
+    "KahlerPotentialGeometry": "._kahler_potential",
+    "axial_killing_vector": "._killing_tetrad",
+    "kerr_principal_null_tetrad": "._killing_tetrad",
+    "killing_equation_residual": "._killing_tetrad",
+    "KillingInnerProductEvidence": "._killing_tetrad",
+    "maximum_killing_equation_residual": "._killing_tetrad",
+    "metric_inner_product_evidence": "._killing_tetrad",
+    "MetricInnerProductEvidence": "._killing_tetrad",
+    "orthonormal_tetrad": "._killing_tetrad",
+    "OrthonormalTetrad": "._killing_tetrad",
+    "PrincipalNullTetrad": "._killing_tetrad",
+    "stationary_axial_inner_product_evidence": "._killing_tetrad",
+    "stationary_killing_vector": "._killing_tetrad",
+    "tetrad_dual": "._killing_tetrad",
+    "tetrad_parallel_transport_evidence": "._killing_tetrad",
+    "tetrad_parallel_transport_residual": "._killing_tetrad",
+    "tetrad_project_covector": "._killing_tetrad",
+    "tetrad_project_vector": "._killing_tetrad",
+    "tetrad_reconstruct_covector": "._killing_tetrad",
+    "tetrad_reconstruct_vector": "._killing_tetrad",
+    "TetradParallelTransportEvidence": "._killing_tetrad",
+    "zamo_observer_tetrad": "._killing_tetrad",
+    "LegendreGeometry": "._legendre_geometry",
+    "LegendreValidationReport": "._legendre_geometry",
+    "validate_legendre_geometry": "._legendre_geometry",
+    "LieAlgebraCoordinateMetric": "._lie_algebra_metric",
+    "AbstractLieGroup": "._lie_group",
+    "LieGroupStateGeometry": "._lie_group",
+    "RightLieGroupStateGeometry": "._lie_group",
+    "SpecialEuclideanGroup": "._lie_group",
+    "SpecialOrthogonalGroup": "._lie_group",
+    "adm_metric": "._lorentzian",
+    "flrw_metric": "._lorentzian",
+    "minkowski_metric": "._lorentzian",
+    "schwarzschild_metric": "._lorentzian",
+    "AbstractGeodesicManifold": "._manifold",
+    "AbstractRiemannianManifold": "._manifold",
+    "EuclideanManifold": "._manifold",
+    "SphereManifold": "._manifold",
+    "GeodesicManifoldStateGeometry": "._manifold_state_geometry",
+    "ManifoldValidationReport": "._manifold_validation",
+    "StateGeometryValidationReport": "._manifold_validation",
+    "validate_manifold": "._manifold_validation",
+    "validate_state_geometry": "._manifold_validation",
+    "DifferentiableMap": "._map",
+    "Immersion": "._map",
+    "ImmersionValidationReport": "._map",
+    "validate_immersion": "._map",
+    "RiemannianMapGeometry": "._map_geometry",
+    "AffineInvariantSPDManifold": "._matrix_manifold",
+    "FixedRankManifold": "._matrix_manifold",
+    "GrassmannManifold": "._matrix_manifold",
+    "ObliqueManifold": "._matrix_manifold",
+    "SpecialOrthogonalManifold": "._matrix_manifold",
+    "StiefelManifold": "._matrix_manifold",
+    "AbstractSemiRiemannianMetric": "._metric",
+    "cholesky_metric": "._metric",
+    "diagonal_metric": "._metric",
+    "diagonal_semi_riemannian_metric": "._metric",
+    "euclidean_metric": "._metric",
+    "LorentzianConvention": "._metric",
+    "LorentzianMetric": "._metric",
+    "MetricSignature": "._metric",
+    "pullback_lorentzian_metric": "._metric",
+    "pullback_metric": "._metric",
+    "pullback_semi_riemannian_metric": "._metric",
+    "RiemannianMetric": "._metric",
+    "SemiRiemannianMetric": "._metric",
+    "MetricDomainEvidence": "._metric_domain",
+    "MetricDomainStatus": "._metric_domain",
+    "WeightedRiemannianMeasure": "._metric_measure",
+    "apply_cotangent_map": "._operator_kernels",
+    "covariant_symbol_contraction": "._operator_kernels",
+    "density_divergence": "._operator_kernels",
+    "affine_covariant_derivative": "._operators",
+    "connection_covariant_hessian": "._operators",
+    "connection_divergence": "._operators",
+    "covariant_derivative": "._operators",
+    "covariant_hessian": "._operators",
+    "divergence": "._operators",
+    "gradient": "._operators",
+    "laplace_beltrami": "._operators",
+    "PatchwiseDensity": "._patchwise",
+    "PatchwiseDifferentialForm": "._patchwise",
+    "PatchwiseMetric": "._patchwise",
+    "PatchwiseTensorField": "._patchwise",
+    "GeometryPrecisionPolicy": "._precision",
+    "product_laplacian_eigenbasis": "._product_spectrum",
+    "ProductStateGeometry": "._product_state_geometry",
+    "ProductStateGeometryBlock": "._product_state_geometry",
+    "bures_squared_distance": "._quantum_density",
+    "BuresDensityManifold": "._quantum_density",
+    "density_fidelity": "._quantum_density",
+    "DensityRankStratification": "._quantum_density",
+    "faithful_density_from_cholesky": "._quantum_density",
+    "faithful_density_from_generator": "._quantum_density",
+    "FaithfulDensityReport": "._quantum_density",
+    "FixedRankDensityManifold": "._quantum_density",
+    "principal_purification": "._quantum_density",
+    "RankStratumEvidence": "._quantum_density",
+    "RankTransitionProposal": "._quantum_density",
+    "SLDQuantumFisherGeometry": "._quantum_density",
+    "uhlmann_alignment": "._quantum_density",
+    "UhlmannAlignment": "._quantum_density",
+    "QuaternionConvention": "._quaternion_state_geometry",
+    "QuaternionPoseStateGeometry": "._quaternion_state_geometry",
+    "ScalarFirstQuaternionStateGeometry": "._quaternion_state_geometry",
+    "causal_character": "._semi_riemannian",
+    "CausalCharacter": "._semi_riemannian",
+    "dalembertian": "._semi_riemannian",
+    "proper_time_rate": "._semi_riemannian",
+    "semi_riemannian_gradient": "._semi_riemannian",
+    "TimeOrientation": "._semi_riemannian",
+    "SignedMetricValidationReport": "._signed_validation",
+    "validate_lorentzian_metric": "._signed_validation",
+    "validate_semi_riemannian_metric": "._signed_validation",
+    "OrientationSign": "._spacetime_conventions",
+    "RelativityConvention": "._spacetime_conventions",
+    "G2DerivationInvarianceReport": "._special_holonomy",
+    "LocalG2Structure": "._special_holonomy",
+    "LocalG2ValidationReport": "._special_holonomy",
+    "LocalSUNStructure": "._special_holonomy",
+    "LocalSUNValidationReport": "._special_holonomy",
+    "OctonionG2Bridge": "._special_holonomy",
+    "validate_g2_derivations": "._special_holonomy",
+    "validate_local_g2_structure": "._special_holonomy",
+    "validate_local_su_structure": "._special_holonomy",
+    "AbstractStateGeometry": "._state_geometry",
+    "EmbeddedStateGeometry": "._state_geometry",
+    "EuclideanStateGeometry": "._state_geometry",
+    "LocalRetraction": "._state_geometry",
+    "PointwiseStateGeometry": "._state_geometry",
+    "SpecialOrthogonalStateGeometry": "._state_geometry",
+    "StateChartEvidence": "._state_geometry",
+    "StateTransportEvidence": "._state_geometry",
+    "SymmetricPositiveDefiniteStateGeometry": "._state_geometry",
+    "frechet_mean": "._statistics",
+    "frechet_objective": "._statistics",
+    "FrechetMeanResult": "._statistics",
+    "brownian_generator": "._stochastic",
+    "coordinate_stratonovich_to_ito_drift": "._stochastic",
+    "coordinate_to_covariant_drift": "._stochastic",
+    "covariant_fokker_planck_operator": "._stochastic",
+    "covariant_kolmogorov_generator": "._stochastic",
+    "horizontal_gradient": "._sub_riemannian",
+    "horizontal_hamiltonian": "._sub_riemannian",
+    "HorizontalCometric": "._sub_riemannian",
+    "HorizontalValidationReport": "._sub_riemannian",
+    "step_two_horizontal_rank": "._sub_riemannian",
+    "sub_laplacian": "._sub_riemannian",
+    "sub_riemannian_hamiltonian_rhs": "._sub_riemannian",
+    "validate_horizontal_cometric": "._sub_riemannian",
+    "canonical_symplectic_form": "._symplectic",
+    "casimir_residual": "._symplectic",
+    "hamiltonian_vector_field": "._symplectic",
+    "liouville_volume_form": "._symplectic",
+    "poisson_bracket": "._symplectic",
+    "poisson_jacobi_tensor": "._symplectic",
+    "PoissonStructure": "._symplectic",
+    "PoissonValidationReport": "._symplectic",
+    "symplectic_to_poisson": "._symplectic",
+    "SymplecticForm": "._symplectic",
+    "symplecticity_residual": "._symplectic",
+    "SymplecticValidationReport": "._symplectic",
+    "validate_poisson_structure": "._symplectic",
+    "validate_symplectic_form": "._symplectic",
+    "contract_indices": "._tensor",
+    "COVECTOR_TENSOR": "._tensor",
+    "DENSITY_TENSOR": "._tensor",
+    "inner_product": "._tensor",
+    "lower_index": "._tensor",
+    "pullback_covector": "._tensor",
+    "pushforward_vector": "._tensor",
+    "raise_index": "._tensor",
+    "reexpress_tensor": "._tensor",
+    "SCALAR_TENSOR": "._tensor",
+    "tensor_norm_squared": "._tensor",
+    "TensorType": "._tensor",
+    "TensorVariance": "._tensor",
+    "VECTOR_TENSOR": "._tensor",
+    "MetricValidationReport": "._validation",
+    "validate_metric": "._validation",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from . import algebra, clifford
+    from ._adm import (
+        ADMDecomposition,
+        ADMParameterization,
+        ADMValidationReport,
+        decompose_adm_metric,
+        parameterized_adm_metric,
+        validate_adm_decomposition,
+    )
+    from ._adm_exchange import (
+        ADMGridGeometry,
+        combine_stress_energy_projections,
+        StressEnergyProjection,
+    )
+    from ._adm_geometry import (
+        adm_constraint_residuals,
+        adm_extrinsic_curvature,
+        adm_hamiltonian_constraint,
+        adm_momentum_constraint,
+        adm_normal_covector,
+        adm_normal_vector,
+        adm_spacetime_projector,
+        ADMConstraintResiduals,
+    )
+    from ._ambient import (
+        ImmersedRiemannianManifoldAdapter,
+        LevelSetNormalProjectionResult,
+        ManifoldTangentMeasureEvidence,
+        RegularLevelSetManifold,
+        RiemannianMapMeasureEvidence,
+    )
+    from ._atlas import (
+        AtlasValidationReport,
+        ComplexAtlasStructure,
+        CoordinateAtlas,
+        PatchwiseScalarField,
+        validate_coordinate_atlas,
+    )
+    from ._atlas_construction import (
+        AtlasCandidate,
+        AtlasConstructionCertificate,
+        AtlasConstructionPolicy,
+        CompactAtlasDomain,
+        level_set_graph_candidate,
+        prepare_atlas,
+        PreparedAtlasConstruction,
+    )
+    from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
+    from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
+    from ._black_hole_metrics import (
+        boyer_lindquist_to_ingoing_kerr_transition,
+        ExactMetricDomainStatus,
+        ingoing_kerr_domain_evidence,
+        ingoing_kerr_metric,
+        ingoing_schwarzschild_domain_evidence,
+        ingoing_schwarzschild_metric,
+        kerr_boyer_lindquist_domain_evidence,
+        kerr_boyer_lindquist_metric,
+        kerr_ergosurface_radii,
+        kerr_horizon_radii,
+        kerr_kretschmann_scalar,
+        kerr_pontryagin_scalar,
+    )
+    from ._bosonic_gaussian import (
+        BosonicGaussianChannel,
+        BosonicGaussianState,
+        canonical_commutation_matrix,
+    )
+    from ._boundary import (
+        induced_boundary_density,
+        induced_boundary_metric,
+        RiemannianHypersurface,
+    )
+    from ._bundle import (
+        bundle_covariant_derivative,
+        bundle_curvature,
+        gauge_curvature_residual,
+        gauge_transform_connection,
+        VectorBundleConnection,
+    )
+    from ._characteristic_forms import (
+        CharacteristicNumberEvidence,
+        chern_character_form,
+        ChernCharacterForm,
+        integrate_top_characteristic_form,
+    )
+    from ._chart import ChartTransition, CoordinateChart
+    from ._chern import (
+        ChernConnection,
+        HolomorphicBundleFrame,
+        HolomorphicBundleTransition,
+    )
+    from ._classical_manifold import (
+        HyperboloidManifold,
+        PoincareBallManifold,
+        ProbabilitySimplexManifold,
+    )
+    from ._compact_spectrum import SphereLaplacianLevels
+    from ._complex import (
+        AlmostComplexStructure,
+        AlmostComplexValidationReport,
+        ComplexCoordinateConvention,
+        holomorphicity_residual,
+        nijenhuis_tensor,
+        standard_complex_structure,
+        validate_almost_complex_structure,
+        wirtinger_derivatives,
+    )
+    from ._complex_euclidean import ComplexEuclideanManifold
+    from ._complex_matrix_manifold import (
+        AffineInvariantHPDManifold,
+        ComplexStiefelManifold,
+        SpecialUnitaryGroup,
+        SpecialUnitaryManifold,
+        UnitaryGroup,
+        UnitaryManifold,
+    )
+    from ._complex_projective import ComplexProjectiveManifold
+    from ._connection import (
+        AbstractAffineConnection,
+        CallableAffineConnection,
+        christoffel_from_metric_jet,
+        connection_geodesic_acceleration,
+        connection_geodesic_rhs,
+        connection_parallel_transport_rhs,
+        connection_transformation_residual,
+        geodesic_acceleration,
+        geodesic_rhs,
+        LeviCivitaConnection,
+        nonmetricity_tensor,
+        parallel_transport_rhs,
+        pullback_affine_connection,
+        torsion_tensor,
+    )
+    from ._curvature import (
+        connection_ricci_tensor,
+        connection_riemann_tensor,
+        einstein_tensor,
+        ricci_tensor,
+        riemann_tensor,
+        scalar_curvature,
+        sectional_curvature,
+    )
+    from ._density import (
+        metric_volume_density,
+        pullback_density,
+        validate_volume_density,
+        VolumeDensity,
+        VolumeDensityValidationReport,
+    )
+    from ._embedded import EmbeddedChart, tangent_projector_from_normal
+    from ._fermionic_gaussian import FermionicGaussianState
+    from ._flat_torus import FlatTorusStateGeometry
+    from ._forms import (
+        codifferential,
+        DifferentialForm,
+        exterior_derivative,
+        hodge_laplacian,
+        hodge_star,
+        interior_product,
+        lie_derivative,
+        pullback_form,
+        to_twisted,
+        to_untwisted,
+        wedge,
+    )
+    from ._gauge_renormalization import (
+        GaugeRenormalizationEvidence,
+        GaugeRenormalizationPlan,
+    )
+    from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
+    from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
+    from ._holomorphic_gauge import (
+        KahlerGaugeInvarianceReport,
+        KahlerHolomorphicGauge,
+    )
+    from ._information_operator import (
+        InformationMetricOperator,
+        pulled_back_information_operator,
+    )
+    from ._jet import metric_jet, MetricJet
+    from ._kahler import (
+        HermitianStructure,
+        HermitianValidationReport,
+        KahlerStructure,
+        KahlerValidationReport,
+        validate_hermitian_structure,
+        validate_kahler_structure,
+    )
+    from ._kahler_potential import KahlerPotentialGeometry
+    from ._killing_tetrad import (
+        axial_killing_vector,
+        kerr_principal_null_tetrad,
+        killing_equation_residual,
+        KillingInnerProductEvidence,
+        maximum_killing_equation_residual,
+        metric_inner_product_evidence,
+        MetricInnerProductEvidence,
+        orthonormal_tetrad,
+        OrthonormalTetrad,
+        PrincipalNullTetrad,
+        stationary_axial_inner_product_evidence,
+        stationary_killing_vector,
+        tetrad_dual,
+        tetrad_parallel_transport_evidence,
+        tetrad_parallel_transport_residual,
+        tetrad_project_covector,
+        tetrad_project_vector,
+        tetrad_reconstruct_covector,
+        tetrad_reconstruct_vector,
+        TetradParallelTransportEvidence,
+        zamo_observer_tetrad,
+    )
+    from ._legendre_geometry import (
+        LegendreGeometry,
+        LegendreValidationReport,
+        validate_legendre_geometry,
+    )
+    from ._lie_algebra_metric import LieAlgebraCoordinateMetric
+    from ._lie_group import (
+        AbstractLieGroup,
+        LieGroupStateGeometry,
+        RightLieGroupStateGeometry,
+        SpecialEuclideanGroup,
+        SpecialOrthogonalGroup,
+    )
+    from ._lorentzian import (
+        adm_metric,
+        flrw_metric,
+        minkowski_metric,
+        schwarzschild_metric,
+    )
+    from ._manifold import (
+        AbstractGeodesicManifold,
+        AbstractRiemannianManifold,
+        EuclideanManifold,
+        SphereManifold,
+    )
+    from ._manifold_state_geometry import GeodesicManifoldStateGeometry
+    from ._manifold_validation import (
+        ManifoldValidationReport,
+        StateGeometryValidationReport,
+        validate_manifold,
+        validate_state_geometry,
+    )
+    from ._map import (
+        DifferentiableMap,
+        Immersion,
+        ImmersionValidationReport,
+        validate_immersion,
+    )
+    from ._map_geometry import RiemannianMapGeometry
+    from ._matrix_manifold import (
+        AffineInvariantSPDManifold,
+        FixedRankManifold,
+        GrassmannManifold,
+        ObliqueManifold,
+        SpecialOrthogonalManifold,
+        StiefelManifold,
+    )
+    from ._metric import (
+        AbstractSemiRiemannianMetric,
+        cholesky_metric,
+        diagonal_metric,
+        diagonal_semi_riemannian_metric,
+        euclidean_metric,
+        LorentzianConvention,
+        LorentzianMetric,
+        MetricSignature,
+        pullback_lorentzian_metric,
+        pullback_metric,
+        pullback_semi_riemannian_metric,
+        RiemannianMetric,
+        SemiRiemannianMetric,
+    )
+    from ._metric_domain import (
+        MetricDomainEvidence,
+        MetricDomainStatus,
+    )
+    from ._metric_measure import WeightedRiemannianMeasure
+    from ._operator_kernels import (
+        apply_cotangent_map,
+        covariant_symbol_contraction,
+        density_divergence,
+    )
+    from ._operators import (
+        affine_covariant_derivative,
+        connection_covariant_hessian,
+        connection_divergence,
+        covariant_derivative,
+        covariant_hessian,
+        divergence,
+        gradient,
+        laplace_beltrami,
+    )
+    from ._patchwise import (
+        PatchwiseDensity,
+        PatchwiseDifferentialForm,
+        PatchwiseMetric,
+        PatchwiseTensorField,
+    )
+    from ._precision import GeometryPrecisionPolicy
+    from ._product_spectrum import product_laplacian_eigenbasis
+    from ._product_state_geometry import ProductStateGeometry, ProductStateGeometryBlock
+    from ._quantum_density import (
+        bures_squared_distance,
+        BuresDensityManifold,
+        density_fidelity,
+        DensityRankStratification,
+        faithful_density_from_cholesky,
+        faithful_density_from_generator,
+        FaithfulDensityReport,
+        FixedRankDensityManifold,
+        principal_purification,
+        RankStratumEvidence,
+        RankTransitionProposal,
+        SLDQuantumFisherGeometry,
+        uhlmann_alignment,
+        UhlmannAlignment,
+    )
+    from ._quaternion_state_geometry import (
+        QuaternionConvention,
+        QuaternionPoseStateGeometry,
+        ScalarFirstQuaternionStateGeometry,
+    )
+    from ._semi_riemannian import (
+        causal_character,
+        CausalCharacter,
+        dalembertian,
+        proper_time_rate,
+        semi_riemannian_gradient,
+        TimeOrientation,
+    )
+    from ._signed_validation import (
+        SignedMetricValidationReport,
+        validate_lorentzian_metric,
+        validate_semi_riemannian_metric,
+    )
+    from ._spacetime_conventions import (
+        OrientationSign,
+        RelativityConvention,
+    )
+    from ._special_holonomy import (
+        G2DerivationInvarianceReport,
+        LocalG2Structure,
+        LocalG2ValidationReport,
+        LocalSUNStructure,
+        LocalSUNValidationReport,
+        OctonionG2Bridge,
+        validate_g2_derivations,
+        validate_local_g2_structure,
+        validate_local_su_structure,
+    )
+    from ._state_geometry import (
+        AbstractStateGeometry,
+        EmbeddedStateGeometry,
+        EuclideanStateGeometry,
+        LocalRetraction,
+        PointwiseStateGeometry,
+        SpecialOrthogonalStateGeometry,
+        StateChartEvidence,
+        StateTransportEvidence,
+        SymmetricPositiveDefiniteStateGeometry,
+    )
+    from ._statistics import frechet_mean, frechet_objective, FrechetMeanResult
+    from ._stochastic import (
+        brownian_generator,
+        coordinate_stratonovich_to_ito_drift,
+        coordinate_to_covariant_drift,
+        covariant_fokker_planck_operator,
+        covariant_kolmogorov_generator,
+    )
+    from ._sub_riemannian import (
+        horizontal_gradient,
+        horizontal_hamiltonian,
+        HorizontalCometric,
+        HorizontalValidationReport,
+        step_two_horizontal_rank,
+        sub_laplacian,
+        sub_riemannian_hamiltonian_rhs,
+        validate_horizontal_cometric,
+    )
+    from ._symplectic import (
+        canonical_symplectic_form,
+        casimir_residual,
+        hamiltonian_vector_field,
+        liouville_volume_form,
+        poisson_bracket,
+        poisson_jacobi_tensor,
+        PoissonStructure,
+        PoissonValidationReport,
+        symplectic_to_poisson,
+        SymplecticForm,
+        symplecticity_residual,
+        SymplecticValidationReport,
+        validate_poisson_structure,
+        validate_symplectic_form,
+    )
+    from ._tensor import (
+        contract_indices,
+        COVECTOR_TENSOR,
+        DENSITY_TENSOR,
+        inner_product,
+        lower_index,
+        pullback_covector,
+        pushforward_vector,
+        raise_index,
+        reexpress_tensor,
+        SCALAR_TENSOR,
+        tensor_norm_squared,
+        TensorType,
+        TensorVariance,
+        VECTOR_TENSOR,
+    )
+    from ._validation import MetricValidationReport, validate_metric
 
 
 __all__ = [

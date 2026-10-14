@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.energetics import RetainedHeatLedger
 from phydrax.applications.skeletal_muscle.thermal import (
     Pennes1948Boundary,
@@ -325,7 +325,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     result = run_qualification(args.smoke)
     print(json.dumps(result, indent=2, sort_keys=True))
     if not result["all_successful"]:

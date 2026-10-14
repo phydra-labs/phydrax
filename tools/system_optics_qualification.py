@@ -9,6 +9,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.discretization import TensorGridPlan, UniformAxisSpec
 from phydrax.geometry import RigidFrame
 from phydrax.optics.beamlets import (
@@ -26,7 +27,7 @@ from phydrax.optics.wave import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _finite_space(count: int, extent: float) -> PlaneFieldSpace:

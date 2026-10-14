@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import equinox as eqx
-import jax
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     CoolantBoundaryKind,
     FuelModelBundle,
@@ -20,7 +20,7 @@ from tests._support.nuclear_fuel import synthetic_model_bundle
 
 @pytest.fixture(scope="module")
 def bundle() -> FuelModelBundle:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return synthetic_model_bundle(mode_count=4)
 
 
@@ -50,7 +50,7 @@ def _profile(
 def test_execution_support_changes_with_dynamic_parameters(
     bundle: FuelModelBundle,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         changed = eqx.tree_at(
             lambda value: value.bore_emissivity.value,
             bundle,

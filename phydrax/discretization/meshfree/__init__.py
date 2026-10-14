@@ -4,8 +4,41 @@
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
 
+from ..._jax_config import process_numerics
+
 
 _FACADE_EXPORT_MODULES: dict[str, str] = {
+    "EvolutionMeasure": "._evolution",
+    "MaterialParticleMeasure": "._evolution",
+    "MechanicsStatus": "._mechanics",
+    "MeshfreeConservationProblem": "._conservation_solve",
+    "MeshfreeDiffusionLaw": "._evolution",
+    "MeshfreeElasticityPlan": "._mechanics",
+    "MeshfreeEvolutionPlan": "._evolution",
+    "MeshfreeEvolutionStatus": "._evolution",
+    "MeshfreeGeneralizedStokesPlan": "._mechanics",
+    "MeshfreeHyperelasticPlan": "._mechanics",
+    "MeshfreeMotion": "._evolution",
+    "MeshfreeReactionLaw": "._evolution",
+    "MovingArchiveMode": "._moving",
+    "MovingGCLPolicy": "._moving",
+    "MovingMeasureLaw": "._moving",
+    "MovingSurfaceEpochResult": "._moving",
+    "MovingSurfaceEvidence": "._moving",
+    "MovingSurfaceFixedStepMethod": "._runtime",
+    "MovingSurfacePlan": "._moving",
+    "MovingSurfaceState": "._moving",
+    "MovingSurfaceStatus": "._moving",
+    "MovingSurfaceStepResult": "._moving",
+    "PreparedMeshfreeConservationSolve": "._conservation_solve",
+    "PreparedMeshfreeEvolution": "._evolution",
+    "PreparedMeshfreeHyperelastic": "._mechanics",
+    "meshfree_runtime_inventory": "._runtime",
+    "moving_archive_policy": "._runtime",
+    "ownership_migration_relation": "._runtime",
+    "prepare_meshfree_conservation_solve": "._conservation_solve",
+    "resume_support_epochs": "._runtime",
+    "support_epoch_relation": "._runtime",
     "MeshfreeApproximation": "._types",
     "MeshfreeRowStatus": "._types",
     "StencilAcceptance": "._types",
@@ -726,12 +759,13 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
-    module = _FACADE_EXPORT_MODULES.get(name)
-    if module is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module, __name__), name)
-    globals()[name] = value
-    return value
+    with process_numerics():
+        module = _FACADE_EXPORT_MODULES.get(name)
+        if module is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        value = getattr(import_module(module, __name__), name)
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:

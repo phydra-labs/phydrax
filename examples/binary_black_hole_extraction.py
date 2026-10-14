@@ -10,15 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from jax import config
+import phydrax as phx
 
 
-config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 import jax
 import jax.numpy as jnp
-
-import phydrax as phx
 
 
 def metric_norm(vector: Any, metric: Any) -> Any:

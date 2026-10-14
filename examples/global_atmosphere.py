@@ -2,7 +2,7 @@
 
 """Run a small real global primitive-equation model with paired moist processes.
 
-JAX_ENABLE_X64=1 python examples/global_atmosphere.py --moist --steps 2
+python examples/global_atmosphere.py --moist --steps 2
 """
 
 import argparse

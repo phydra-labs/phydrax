@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from phydrax import config as pxconfig
 from phydrax.applications.incompressible_flow._forcing import (
     SolenoidalHermitianFourierBasis,
     SolenoidalOUForcingPlan,
@@ -37,7 +38,7 @@ from phydrax.solver import ETDRKMethod
 from phydrax.stochastic import OrnsteinUhlenbeckRealization
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _periodic_problem(*, count: int = 4, viscosity: float = 0.04) -> Any:
@@ -503,7 +504,7 @@ def qualification(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "platform": platform.platform(),
-            "x64": bool(jax.config.x64_enabled),
+            "x64": bool(pxconfig.x64_enabled()),
         },
         "coefficient_covariance_and_subdivision": coefficient,
         "basis_spectrum_and_isotropy": basis_spectrum,

@@ -22,6 +22,21 @@ _ARTIFACT_VALUES_BY_ID: dict[str, Any] = {}
 _ARTIFACT_IDS_BY_VALUE: dict[int, tuple[Any, str]] = {}
 
 
+def _load_builtin_registrations() -> None:
+    """Import the complete package so that every built-in registration exists.
+
+    The package loads lazily, so a cold restore cannot rely on a prior import of
+    the owner of a serialized identity. The fixed public module list and the
+    facades' own re-exports, never the serialized identity, select what loads.
+    """
+    from .._deferred_exports import load_all, load_module
+    from .._package_modules import PUBLIC_MODULES
+
+    for name in PUBLIC_MODULES:
+        load_module(f"phydrax.{name}")
+    load_all()
+
+
 def _register_artifact_identity(
     value_id: str,
     value: Any,
@@ -76,6 +91,9 @@ def artifact_value(value_id: str, /) -> Any:
     """Resolve one explicitly registered path-independent artifact identity."""
     identity = str(value_id)
     registered = _ARTIFACT_VALUES_BY_ID.get(identity)
+    if registered is None:
+        _load_builtin_registrations()
+        registered = _ARTIFACT_VALUES_BY_ID.get(identity)
     if registered is None:
         raise ValueError(f"Unknown artifact value ID {identity!r}.")
     return registered
@@ -230,6 +248,9 @@ def register_operator_architecture_codec(
 def operator_architecture_codec(architecture_id: str, /) -> OperatorArchitectureCodec:
     """Resolve one explicitly registered architecture ID."""
     codec = _CODECS_BY_ID.get(str(architecture_id))
+    if codec is None:
+        _load_builtin_registrations()
+        codec = _CODECS_BY_ID.get(str(architecture_id))
     if codec is None:
         raise ValueError(
             f"Unknown operator architecture ID {architecture_id!r}; register its codec before loading the artifact."

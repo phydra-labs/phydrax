@@ -262,7 +262,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise ValueError(
             "dimension/probes must be at least two; points must be positive."
         )
-    jax.config.update("jax_enable_x64", True)
+    phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
     payload = {
         "dimension": dimension,
         "reused_plan": _prepared_contractions(dimension),

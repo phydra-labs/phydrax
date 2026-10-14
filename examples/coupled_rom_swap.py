@@ -49,7 +49,7 @@ import phydrax as phx
 from phydrax.discretization import EntitySelection, FacetTraceRule, IntegrationDomain
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 cpl = phx.solver.coupling
 M = phx.measurement

@@ -13,6 +13,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.discretization.finite_volume._unstructured_embedded_boundary as embedded_boundary_module
+from phydrax import config as pxconfig
 from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
 from phydrax.discretization.finite_volume._embedded_dynamics import (
     lower_embedded_stage_metrics,
@@ -188,7 +189,7 @@ def test_embedded_body_policies_are_complete_typed_and_deterministically_routed(
 
 
 def test_embedded_stage_realizes_clipped_fluid_centroids_in_float32_evidence() -> None:
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         discretization = _quadrilateral_strip()
         metrics = _embedded(
             discretization,

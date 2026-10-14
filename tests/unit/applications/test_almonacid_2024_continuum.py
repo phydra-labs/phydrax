@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax import combine_parameters, partition_parameters
+from phydrax import combine_parameters, config as pxconfig, partition_parameters
 from phydrax.applications.skeletal_muscle.continuum import (
     Almonacid2024Control,
     Almonacid2024InputHistory,
@@ -27,7 +27,7 @@ INPUTS = Path(__file__).resolve().parents[2] / "fixtures/flexodeal_0698e3d"
 
 @pytest.fixture(scope="module")
 def model() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan, parameters, _, _, _ = almonacid_2024_repository_case(INPUTS, refinement=0)
         yield plan.prepare(parameters)
 
@@ -84,7 +84,7 @@ def test_uniform_translation_has_source_backward_euler_total_inertia(model: Any)
 
 
 def test_history_rejects_undefined_pre_start_and_holds_last_value() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         history = Almonacid2024InputHistory(
             ((0.1, 0.0), (0.3, 1.0)), ((0.1, 0.0), (0.2, 0.02)), source_id="history"
         )

@@ -19,6 +19,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 
 from .adapters.base import (
     Availability,
@@ -89,18 +90,14 @@ def execute_case(
                 lambda: adapter.compile(setup_state)
             )
             prepared_state = compiled_state
-            timing["compilation"] = DurationDistribution(
-                (sample,)
-            ).to_milliseconds_dict()
+            timing["compilation"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
         if adapter.preparation_applicable(compiled_state):
             phase = "preparation"
             prepared_state, sample = measure_synchronized(
                 lambda: adapter.prepare(compiled_state)
             )
-            timing["preparation"] = DurationDistribution(
-                (sample,)
-            ).to_milliseconds_dict()
+            timing["preparation"] = DurationDistribution((sample,)).to_milliseconds_dict()
         else:
             prepared_state = compiled_state
 
@@ -109,9 +106,7 @@ def execute_case(
             prepared_state, sample = measure_synchronized(
                 lambda: adapter.compile(prepared_state)
             )
-            timing["compilation"] = DurationDistribution(
-                (sample,)
-            ).to_milliseconds_dict()
+            timing["compilation"] = DurationDistribution((sample,)).to_milliseconds_dict()
         adapter.mark_warmup(prepared_state, warmup)
 
         if warmup:
@@ -161,9 +156,7 @@ def execute_case(
             )
         )
         certificate, converged, operations = verification
-        timing["verification"] = DurationDistribution(
-            (sample,)
-        ).to_milliseconds_dict()
+        timing["verification"] = DurationDistribution((sample,)).to_milliseconds_dict()
         initial_memory = adapter.memory(prepared_state, result)
 
         refresh_evidence: RefreshEvidence = NOT_APPLICABLE_REFRESH
@@ -199,15 +192,13 @@ def execute_case(
                     "adapter refreshed a problem other than the declared deterministic "
                     "numeric perturbation"
                 )
-            refreshed_verification, refreshed_verification_sample = (
-                measure_synchronized(
-                    lambda: _materialize_and_certify(
-                        adapter,
-                        prepared_state,
-                        refreshed_certificate_problem,
-                        refreshed_result,
-                        spec.tolerances,
-                    )
+            refreshed_verification, refreshed_verification_sample = measure_synchronized(
+                lambda: _materialize_and_certify(
+                    adapter,
+                    prepared_state,
+                    refreshed_certificate_problem,
+                    refreshed_result,
+                    spec.tolerances,
                 )
             )
             refreshed_certificate, refreshed_converged, _ = refreshed_verification
@@ -335,11 +326,10 @@ def run_campaign(
     /,
 ) -> dict[str, Any]:
     """Build and run one immutable deterministic campaign descriptor."""
-    import jax
 
     from .campaign import build_cases
 
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     selected_adapters = tuple(config.adapters)
     selected_cases = tuple(config.cases)
     cases = build_cases(config)
@@ -365,17 +355,13 @@ def run_campaign(
         for case_name in selected_cases
         for adapter_name in selected_adapters
     ]
-    passed = all(
-        row["outcome"]["status"] in {"success", "skipped"} for row in rows
-    )
+    passed = all(row["outcome"]["status"] in {"success", "skipped"} for row in rows)
     report = {
         "passed": passed,
         "environment": environment,
         "provenance": {
             "harness_source_fingerprint": _source_fingerprint(Path(__file__)),
-            "certificate_evaluator_fingerprint": (
-                certificate_evaluator_fingerprint()
-            ),
+            "certificate_evaluator_fingerprint": (certificate_evaluator_fingerprint()),
             "case_source_fingerprint": _source_fingerprint(
                 Path(__file__).with_name("problems.py")
             ),
@@ -579,9 +565,7 @@ def _expected_refreshed_problem(problem: Any, /) -> Any:
     if isinstance(problem, MathematicalProgramProblem):
         return replace(
             problem,
-            quadratic=(
-                None if problem.quadratic is None else problem.quadratic * 1.01
-            ),
+            quadratic=(None if problem.quadratic is None else problem.quadratic * 1.01),
             linear=problem.linear * 1.01,
         )
     if isinstance(problem, ContinuationProblem):
@@ -589,9 +573,7 @@ def _expected_refreshed_problem(problem: Any, /) -> Any:
             problem,
             initial_coordinate=problem.initial_coordinate * 0.99,
         )
-    raise TypeError(
-        f"no deterministic refresh contract for {type(problem).__name__!r}"
-    )
+    raise TypeError(f"no deterministic refresh contract for {type(problem).__name__!r}")
 
 
 def _device_array_bytes(value: Any, /) -> int:

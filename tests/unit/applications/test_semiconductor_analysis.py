@@ -13,13 +13,14 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.applications import semiconductor as sc
 from phydrax.linalg import GMRES, LinearSolvePolicy, TolerancePolicy
 from phydrax.nonlinear import NewtonKrylov, NonlinearTermination
 from phydrax.solver import DAESolvePolicy
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 Q = 1.602176634e-19
 LENGTH = 1e-6
 AREA = 1e-12

@@ -1,7 +1,7 @@
 """Distributed point relations on forced CPU devices.
 
 Run in a dedicated process with
-``XLA_FLAGS=--xla_force_host_platform_device_count=4``. Forced CPU devices
+``JAX_NUM_CPU_DEVICES=4``. Forced CPU devices
 prove functional distributed parity of the collectives only; they are not
 accelerator or multi-host performance evidence. Oracles are brute-force NumPy
 minimum-image distances ordered by ``(distance, stable_id)``.
@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from jax.sharding import PartitionSpec as P
 
+from phydrax import config as pxconfig
 from phydrax._execution_runtime import ExecutionGroup, ExecutionRuntime
 from phydrax.discretization.spatial import (
     DistributedHaloPlan,
@@ -30,10 +31,7 @@ from phydrax.discretization.spatial import (
 def _owner_group() -> ExecutionGroup:
     devices = jax.devices()
     if len(devices) < 4 or len(devices) % 4:
-        pytest.skip(
-            "Run with XLA_FLAGS=--xla_force_host_platform_device_count=4 to "
-            "exercise four owners."
-        )
+        pytest.skip("Run with JAX_NUM_CPU_DEVICES=4 to exercise four owners.")
     return ExecutionRuntime.current().child_groups(len(devices) // 4)[0]
 
 
@@ -274,7 +272,7 @@ def test_x64_disabled_runtime_is_an_explicit_refusal() -> None:
         plan, points.astype(np.float32), np.asarray([0, 1, 2, 3])
     )
     query = DistributedNeighborQueryPlan(plan, plan, 2)
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         with pytest.raises(ValueError, match="jax_enable_x64=True"):
             DistributedOwnershipPlan(address, group, 4)
         with pytest.raises(ValueError, match="jax_enable_x64=True"):

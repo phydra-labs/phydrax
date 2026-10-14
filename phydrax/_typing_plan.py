@@ -110,6 +110,16 @@ class ArrayContract:
     tensor: TensorContract
 
 
+def effective_dtype(contract: ArrayContract, /) -> np.dtype | None:
+    """Resolve declared exact dtype intent against the current backend policy."""
+    rule = contract.tensor.dtype
+    if rule is None or rule.exact is None:
+        return None
+    if contract.backend == "jax":
+        return jax.dtypes.canonicalize_dtype(rule.exact)
+    return rule.exact
+
+
 @dataclass(frozen=True, slots=True)
 class KeyContract:
     pass
@@ -675,14 +685,20 @@ def _check_array(
             "type", f"{path}: symbolic extents are unsupported; got {shape}."
         ), value
     violation = _check_terms(tensor.shape, shape, scope, path)
+    target = effective_dtype(contract)
     if (
         violation is None
         and tensor.dtype is not None
-        and not dtype_matches(tensor.dtype, value.dtype)
+        and (
+            value.dtype != target
+            if target is not None
+            else not dtype_matches(tensor.dtype, value.dtype)
+        )
     ):
+        label = target.name if target is not None else tensor.dtype.label
         violation = Violation(
             "type",
-            f"{path}: expected {tensor.label} with dtype {tensor.dtype.label}; "
+            f"{path}: expected {tensor.label} with dtype {label}; "
             f"got {_describe_array(value.dtype, shape)}.",
         )
     return violation, value

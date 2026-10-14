@@ -9,12 +9,12 @@ from math import prod
 from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
+from .._jax_config import x64_enabled
 from ._stencil import GatherStencil
 from ._types import InterpolationCapabilities, InterpolationResourcePolicy
 
@@ -168,7 +168,7 @@ def rectilinear_stencil(
     batch_count = prod(batch) if batch else 1
     query_count = prod(query_shape) if query_shape else 1
     route_count = batch_count * query_count * (1 << dimensions)
-    index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
+    index_dtype = jnp.int64 if x64_enabled() else jnp.int32
     index_bytes = route_count * jnp.dtype(index_dtype).itemsize
     weight_bytes = route_count * jnp.dtype(dtype).itemsize
     if route_count > resource_policy.maximum_routes:

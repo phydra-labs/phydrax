@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import phydrax.typing as pt
-from phydrax import StrictModule
+from phydrax import config as pxconfig, StrictModule
 from phydrax._model._structure import (
     model_from_array_recipe,
     model_structure_recipe,
@@ -261,7 +261,9 @@ def test_structural_validation_has_no_numerical_equations_or_extra_leaves() -> N
     assert [leaf.shape for leaf in opted_leaves] == [leaf.shape for leaf in twin_leaves]
     assert opted_tree.num_leaves == twin_tree.num_leaves
 
-    with jax.transfer_guard_device_to_host("disallow"):
+    with pxconfig.context(
+        pxconfig.NumericsConfig(transfer_guard_device_to_host="disallow")
+    ):
         Field(jnp.zeros((3,)), 3)
     with pytest.raises(RuntimeError, match="owner invariant"):
         Checked(jnp.asarray(1.0))
@@ -316,3 +318,30 @@ def test_concurrent_first_construction_compiles_one_consistent_plan() -> None:
     assert errors == []
 
     assert_tree_equal(Concurrent(values), Concurrent(values))
+
+
+def test_cached_class_plan_preserves_arrays_across_scoped_x64() -> None:
+    wide = Field(jnp.ones(2, dtype=np.float64), 2)
+    for enabled in (False, True, False):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=enabled)):
+            dtype = np.float64 if enabled else np.float32
+            values = jnp.ones(2, dtype=dtype)
+            field = Field(values, 2)
+            assert field.values is values
+            pt.validate(field)
+            leaves, structure = jax.tree_util.tree_flatten(field)
+            restored = jax.tree_util.tree_unflatten(structure, leaves)
+            pt.validate(restored)
+            assert restored.values is values
+            if enabled:
+                pt.validate(wide)
+            else:
+                with pytest.raises(TypeError, match="values"):
+                    pt.validate(wide)
+                leaves, structure = jax.tree_util.tree_flatten(wide)
+                restored_wide = jax.tree_util.tree_unflatten(structure, leaves)
+                with pytest.raises(TypeError, match="values"):
+                    pt.validate(restored_wide)
+                assert restored_wide.values is wide.values
+                assert wide.values.dtype == np.dtype(np.float64)
+    pt.validate(wide)

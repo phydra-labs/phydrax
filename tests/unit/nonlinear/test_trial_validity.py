@@ -10,6 +10,7 @@ from jax import Array
 
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
+from phydrax import config as pxconfig
 
 
 def _positive_log(state: Any, _: Any) -> Any:
@@ -295,7 +296,7 @@ def test_guarded_native_preparation_preserves_constitutive_jvp_and_vjp(
 
 
 def test_rematerialized_guarded_constitutive_hessian_action() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         coefficient = jnp.asarray(0.4, dtype=jnp.float64)
         point = jnp.asarray([2.0, 4.0], dtype=jnp.float64)
         direction = jnp.asarray([0.3, -0.2], dtype=jnp.float64)
@@ -318,7 +319,7 @@ def test_rematerialized_guarded_constitutive_hessian_action() -> None:
 
 
 def test_guarded_constitutive_auxiliary_tree_preserves_primal_evidence() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         coefficient = jnp.asarray(0.4, dtype=jnp.float64)
         point = jnp.asarray([2.0, 4.0], dtype=jnp.float64)
         covector = jnp.asarray([-0.5, 0.7], dtype=jnp.float64)
@@ -588,7 +589,7 @@ def _guarded_polynomial(state: Array, targets: Array) -> Array:
 def test_guarded_linearization_retains_exact_primal_and_dual_actions(
     storage: la.RematerializationPolicy,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         point = jnp.asarray([1.2, 1.3], dtype=jnp.float64)
         targets = jnp.asarray([4.0, 8.0], dtype=jnp.float64)
         problem = nl.NonlinearSystemProblem(
@@ -616,7 +617,7 @@ def test_guarded_linearization_retains_exact_primal_and_dual_actions(
 def test_rematerialized_root_preserves_rejected_mapped_lane_and_solves_valid_lane() -> (
     None
 ):
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         initial = jnp.asarray([[1.2, 1.3], [-1.2, 1.3]], dtype=jnp.float64)
         targets = jnp.asarray([4.0, 8.0], dtype=jnp.float64)
         problem = nl.NonlinearSystemProblem(
@@ -654,7 +655,7 @@ def test_rematerialized_root_preserves_rejected_mapped_lane_and_solves_valid_lan
 def test_inactive_fractional_power_parameter_does_not_poison_root_sensitivity(
     kind: Literal["scalar", "vector"],
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         scalar = nl.LocalRootPlan(plan_id="inactive-flux-scalar-root")
         vector = nl.VectorLocalRootPlan(1, plan_id="inactive-flux-vector-root")
         load = jnp.asarray(1.0, dtype=jnp.float64)
@@ -682,7 +683,7 @@ def test_inactive_fractional_power_parameter_does_not_poison_root_sensitivity(
 def test_active_undefined_source_derivative_is_not_reported_as_finite_sensitivity(
     kind: Literal["scalar", "vector"],
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         scalar = nl.LocalRootPlan(plan_id="singular-flux-scalar-root")
         vector = nl.VectorLocalRootPlan(1, plan_id="singular-flux-vector-root")
         exponent = jnp.asarray(0.85, dtype=jnp.float64)
@@ -729,7 +730,7 @@ def test_pure_guard_keeps_nan_unsafe_refused_lanes_out_of_values_and_derivatives
     expected_values: tuple[tuple[float, float], tuple[float, float]],
     expected_derivatives: tuple[tuple[float, float], tuple[float, float]],
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
 
         def residual(state: Array, _: None) -> Array:
             return jnp.log(state) + jnp.sqrt(state)
@@ -755,7 +756,7 @@ def test_pure_guard_keeps_nan_unsafe_refused_lanes_out_of_values_and_derivatives
 
 
 def test_pure_error_check_raises_only_for_selected_valid_lanes() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
 
         def residual(state: Array, _: None) -> Array:
             checked = eqx.error_if(
@@ -790,7 +791,7 @@ def test_pure_error_check_raises_only_for_selected_valid_lanes() -> None:
 
 @pytest.mark.strict_jax
 def test_shared_guard_operands_remain_dynamic_under_nested_linearization() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
 
         def evaluate(
             point: tuple[Array, tuple[Array, ...]],
@@ -866,7 +867,7 @@ def test_shared_guard_operands_remain_dynamic_under_nested_linearization() -> No
 def test_unselected_undefined_shared_operand_has_zero_value_and_derivative(
     policy: la.LinearizationPolicy,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
 
         def evaluate(point: tuple[Array, Array]) -> Array:
             states, coefficient = point

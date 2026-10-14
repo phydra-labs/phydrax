@@ -12,9 +12,10 @@ from dataclasses import asdict
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
+from ...._config_state import context as configuration_context
+from ...._config_types import NumericsConfig
 from ...._doc import DOC_KEY0
 from ...._external_runtime import _require_execution
 from ...._frozendict import frozendict
@@ -382,7 +383,9 @@ def _operator_prediction(
     compute_model = dtype_policy.compute_model(model)
     precision = dtype_policy.matmul_precision
     precision_context = (
-        nullcontext() if precision is None else jax.default_matmul_precision(precision)
+        nullcontext()
+        if precision is None
+        else configuration_context(NumericsConfig(matmul_precision=precision))
     )
     with precision_context:
         return compute_model.predict_prevalidated(batch, key=key)

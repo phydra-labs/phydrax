@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax._score_field import StateTimeScoreField
 
 
 def _domains() -> Any:
@@ -22,7 +23,7 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
     likelihood = domain.Function("x", "t", "observation")(
         lambda state, time, observation: -0.5 * jnp.sum((state - observation) ** 2)
     )
-    base = phx._score_field.StateTimeScoreField(
+    base = StateTimeScoreField(
         base_function,
         state_label="x",
         time_label="t",
@@ -41,12 +42,12 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
     assert evaluations[0].exactness == "exact"
     assert jnp.allclose(score, expected)
     domain = _domains()
-    unconditional = phx._score_field.StateTimeScoreField(
+    unconditional = StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",
         time_label="t",
     )
-    conditional = phx._score_field.StateTimeScoreField(
+    conditional = StateTimeScoreField(
         domain.Function("x", "t", "observation")(
             lambda state, time, observation: -state + observation
         ),
@@ -83,7 +84,7 @@ def test_advanced_diffusion_guidance_scenario_1() -> None:
         jnp.full((2,), -10.0), jnp.full((2,), 10.0), label="x"
     )
     domain = state_domain @ phx.domain.TimeInterval(0.0, 1.0)
-    score = phx._score_field.StateTimeScoreField(
+    score = StateTimeScoreField(
         domain.Function("x", "t")(lambda state, time: -state),
         state_label="x",
         time_label="t",

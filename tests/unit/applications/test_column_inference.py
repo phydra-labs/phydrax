@@ -6,12 +6,12 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from examples.interactive_column_inference import twin_data, twin_experiment, twin_model
+from phydrax import config as pxconfig
 from phydrax._array_archive import write_array_archive
 from phydrax._fingerprint import array_tree_fingerprint
 from phydrax.applications.geophysics._inference import (
@@ -24,7 +24,7 @@ from phydrax.applications.geophysics._observations import prepare_geophysical_ob
 
 
 def test_column_inference_scenario_1() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         result = column_local_information(
             lambda z: jnp.atleast_1d(2 * z[0] + z[1]), jnp.ones(2)
         )
@@ -49,7 +49,7 @@ def test_column_inference_scenario_1() -> None:
         np.testing.assert_allclose(
             full.covariance_on_identifiable_subspace, 0.2 * jnp.eye(2), atol=1e-12
         )
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan, initial, _, _ = twin_model()
         experiment = twin_experiment(
             initial, steps=2, signals=("temperature",), times=(0.0,)
@@ -90,7 +90,7 @@ def test_column_inference_scenario_1() -> None:
                 covariance=[[9.0, 1.5], [1.5, 1.0]],
             )
         assert bool(experiment.predict(plan).successful)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan, initial, space, truth = twin_model()
         experiment = twin_experiment(
             initial, steps=2, signals=("temperature",), times=(0.0, 2.0)
@@ -111,7 +111,7 @@ def test_column_inference_scenario_1() -> None:
 
 
 def test_phase_boundary_is_not_reported_as_a_regular_inverse_map() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         plan, _, space, truth = twin_model()
         initial = plan.initialize(
             [100.0, 110.0],
@@ -137,7 +137,7 @@ def test_inference_archive_rejects_invalid_continuation_index_before_loading_sta
     tmp_path: Any,
 ) -> None:
     for index in [True, -1, 0.5, 1]:
-        with jax.enable_x64(True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
             plan, initial, space, truth = twin_model()
             experiment = twin_experiment(
                 initial, steps=2, signals=("temperature",), times=(0.0,)

@@ -1,5 +1,7 @@
 # Nucleic-acid biophysics workflows
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 This cookbook separates an actual processed-assay fit from structural, mechanical,
 secondary-CTMC and electronic numerical checks. They do not share one inferred
 physical clock or one accuracy claim. See the [scientific guide](../guides_nucleic_acid_biophysics.md),

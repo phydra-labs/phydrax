@@ -157,7 +157,19 @@ _PLANAR_EXPORTS = frozenset(
 )
 
 
+_OWNER_EXPORTS = {
+    "PlanarEmbedding": ".._planar_embedding",
+    "model_from_occt_shape": "...interchange._cad_occt",
+    "persist_occt_shape": "...interchange._cad_occt",
+    "read_occt_shape": "...interchange._cad_occt",
+}
+
+
 def __getattr__(name: str) -> Any:
+    if name in _OWNER_EXPORTS:
+        value = getattr(import_module(_OWNER_EXPORTS[name], __package__), name)
+        globals()[name] = value
+        return value
     if name in _PLANAR_EXPORTS:
         module = import_module("._planar", __package__)
         value = getattr(module, name)
@@ -171,6 +183,10 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "PlanarEmbedding",
+    "model_from_occt_shape",
+    "persist_occt_shape",
+    "read_occt_shape",
     "BRepAssemblyContainer",
     "BRepQualifiedIncidence",
     "boolean_brep",

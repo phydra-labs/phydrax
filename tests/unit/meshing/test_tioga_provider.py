@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._physical import SpatialCoordinateContract
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.meshing._assembly import MeshAssembly, MeshPart
@@ -94,7 +95,9 @@ def _options(executable: Any, ranks: Any) -> Any:
 @pytest.fixture(scope="module")
 def overset_case() -> Any:
     executable = shutil.which(
-        os.environ.get("PHYDRAX_TIOGA_WORKER", "phydrax-tioga-worker")
+        "phydrax-tioga-worker"
+        if (configured := pxconfig.snapshot().workers.get("tioga")) is None
+        else configured
     )
     if executable is None:
         pytest.skip("Real phydrax-tioga-worker is not installed")

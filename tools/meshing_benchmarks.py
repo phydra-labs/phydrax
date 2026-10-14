@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import resource
 import shutil
 import subprocess
@@ -1900,16 +1899,18 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     }
 
 
-_PROVIDER_WORKERS = (
-    ("mmg", "PHYDRAX_MMG_WORKER", "phydrax-mmg-worker"),
-    ("omega_h", "PHYDRAX_OMEGA_H_WORKER", "phydrax-omega-h-worker"),
+_PROVIDER_WORKERS: tuple[tuple[phx.config.WorkerSetting, str], ...] = (
+    ("mmg", "phydrax-mmg-worker"),
+    ("omega_h", "phydrax-omega-h-worker"),
 )
 
 
 def _provider_worker() -> tuple[str, str] | None:
     """First installed provider worker, resolved exactly as its provider does."""
-    for provider, variable, default in _PROVIDER_WORKERS:
-        located = shutil.which(os.environ.get(variable, default))
+    workers = phx.config.snapshot().workers
+    for provider, default in _PROVIDER_WORKERS:
+        configured = workers.get(provider)
+        located = shutil.which(default if configured is None else configured)
         if located is not None:
             return provider, located
     return None

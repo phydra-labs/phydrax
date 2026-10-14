@@ -1,7 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Deterministic physical twin: this is NOT Earth-climate validation.
 
-Run: JAX_ENABLE_X64=1 PYTHONPATH=. python examples/interactive_column_inference.py
+Run: PYTHONPATH=. python examples/interactive_column_inference.py
 All gray optical coefficients and synthetic instrument errors below are declared
 experimental choices, not measurements or claimed Earth parameter estimates.
 """
@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere import (
     BulkSurfaceExchangePlan,
     ColumnOpticalProperties,
@@ -236,7 +237,7 @@ def twin_candidate(experiment: Any) -> Any:
 
 
 def run_twin(*, steps: Any = 12, maximum_steps: Any = 24, audit: Any = True) -> Any:
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError(
             "This qualification requires JAX_ENABLE_X64=1 for small physical response differences."
         )

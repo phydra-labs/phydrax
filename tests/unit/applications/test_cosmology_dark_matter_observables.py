@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.applications.cosmology._dark_matter_observables import (
     ComponentForceWorkLedgerPlan,
     DarkMatterSpatialContract,
@@ -35,7 +35,7 @@ from phydrax.applications.cosmology._simulation_products import (
 from phydrax.artifacts import ScientificArtifactEnvelope
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _wave_observable_plan(shape: Any = (8, 8)) -> Any:

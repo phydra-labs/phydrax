@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.curved_spacetime_qft import (
     adiabatic_hadamard_subtraction,
     adiabatic_initial_state,
@@ -24,7 +25,7 @@ from phydrax.applications.curved_spacetime_qft import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _minkowski_preparation() -> Any:

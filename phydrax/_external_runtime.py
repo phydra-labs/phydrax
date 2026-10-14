@@ -51,7 +51,6 @@ from ._jax_context import inside_jax_transformation
 from ._model._component import ExecutionCapabilities
 from ._publication import publish_file
 from .artifacts import ScientificArtifactEnvelope
-from .backends._types import BackendUnavailableError
 from .logging import emit
 from .typing import checked, parse
 
@@ -874,6 +873,9 @@ def run_radiance_command(
 
 
 def _require_optional(module: str, requirement: str) -> None:
+    # The backends package imports this module; its refusal type loads on use.
+    from .backends._types import BackendUnavailableError
+
     _host_only()
     if importlib.util.find_spec(module) is None:
         raise BackendUnavailableError(

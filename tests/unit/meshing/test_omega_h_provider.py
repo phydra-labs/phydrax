@@ -17,7 +17,9 @@ M = phx.meshing
 
 def _worker() -> str | None:
     return shutil.which(
-        os.environ.get("PHYDRAX_OMEGA_H_WORKER", "phydrax-omega-h-worker")
+        "phydrax-omega-h-worker"
+        if (configured := phx.config.snapshot().workers.get("omega_h")) is None
+        else configured
     )
 
 

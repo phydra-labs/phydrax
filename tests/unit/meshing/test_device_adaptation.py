@@ -4,7 +4,6 @@
 
 
 import itertools
-import os
 import subprocess
 import sys
 import textwrap
@@ -899,9 +898,9 @@ def test_masked_poisson_on_the_device_state_equals_the_committed_solve() -> None
 
 @pytest.mark.parametrize("scenario", ("chain", "owners", "protected", "capacity"))
 def test_part_sharded_neighbor_closure_semantics(scenario: str) -> None:
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
-    environment["JAX_PLATFORMS"] = "cpu"
+    environment = phx.config.environment(
+        phx.config.RuntimeConfig(platforms=("cpu",), cpu_device_count=4)
+    )
     environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
     subprocess.run(
         [sys.executable, "-c", _NEIGHBOR_PARTS_SCRIPT, scenario],

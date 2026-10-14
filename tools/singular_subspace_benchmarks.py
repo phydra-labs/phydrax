@@ -30,7 +30,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
-from phydrax import linalg as la
+from phydrax import config as pxconfig, linalg as la
 from phydrax.linalg._svd_qualification import (
     singular_subspace_candidate_profiles,
     singular_subspace_qualification_record,
@@ -986,7 +986,7 @@ def main() -> None:
         raise ValueError("Capacities must lie between 16 and 1024.")
     if arguments.repeats < 1:
         raise ValueError("Repeats must be positive.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     cases = _capacity_cases(capacities) + (_grid_cases() if arguments.grid else ())
     ordered = tuple(
         sorted(

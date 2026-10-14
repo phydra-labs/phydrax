@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import PyTree
 
+from .._config_state import logging_enabled as _logging_enabled
 from .._frozendict import frozendict
 from .._iteration import IterationSession
 from .._sampling import derive_key, SampleAddress
@@ -33,7 +34,6 @@ from .._training_kernel import (
     TrainingAttemptOutcome,
     TrainingKernelSpec,
 )
-from ..logging import is_enabled as _logging_enabled
 from ..optim._evolution_strategy import (
     AbstractDistributionEvolutionMethod,
     DistributionEvolutionPayload,

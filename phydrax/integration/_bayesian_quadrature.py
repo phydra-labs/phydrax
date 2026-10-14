@@ -13,7 +13,8 @@ from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein
-from phydrax.kernels import ScaleKernel, SquaredExponentialKernel
+from phydrax.kernels._algebra import ScaleKernel
+from phydrax.kernels._stationary import SquaredExponentialKernel
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict

@@ -37,6 +37,7 @@ from benchmarks._runtime import (
     capture_benchmark_identity,
     capture_environment,
 )
+from phydrax import config as pxconfig
 
 
 EVIDENCE_FIELDS = (
@@ -52,7 +53,7 @@ EVIDENCE_FIELDS = (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 type Matrix = NDArray[np.float64]
 type Mask = NDArray[np.bool_]

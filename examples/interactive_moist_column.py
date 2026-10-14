@@ -15,9 +15,9 @@ import json
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere import (
     BulkSurfaceExchangePlan,
     ColumnOpticalProperties,
@@ -47,7 +47,7 @@ def build_column(layers: Any = 8) -> Any:
         background_diffusivity=0.5,
         mixing_length=50.0,
     )
-    dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
+    dtype = jnp.float64 if pxconfig.x64_enabled() else jnp.float32
     thickness = 4000.0 / layers
     height = thickness * (
         jnp.arange(layers - 1, -1, -1, dtype=dtype) + jnp.asarray(0.5, dtype)
@@ -158,7 +158,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.layers < 2 or args.steps < 1 or args.spinup_steps < 0 or args.dt <= 0:
         parser.error("layers>=2, steps>=1, spinup>=0 and dt>0 are required")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     plan, initial = build_column(args.layers)
     if args.resume:
         initial = plan.load_checkpoint(args.resume)

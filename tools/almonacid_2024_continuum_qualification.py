@@ -21,6 +21,7 @@ import jax
 import numpy as np
 from scipy.spatial import cKDTree
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_repository_case
 
 
@@ -418,7 +419,7 @@ def main() -> None:
     parser.add_argument("--save-native", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     result = qualify(
         args.reference_directory,
         args.inputs,

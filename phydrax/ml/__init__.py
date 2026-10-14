@@ -3,6 +3,7 @@
 import importlib
 from types import ModuleType
 
+from .._jax_config import process_numerics
 from . import _numerics as _numerics
 from ._batch import MLBatch, WeightPolicy
 from ._classification import ClassificationObjective, ClassificationObjectiveKind
@@ -79,11 +80,12 @@ _ML_SUBMODULES = frozenset(
 
 
 def __getattr__(name: str) -> ModuleType:
-    if name not in _ML_SUBMODULES:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(f"{__name__}.{name}")
-    globals()[name] = module
-    return module
+    with process_numerics():
+        if name not in _ML_SUBMODULES:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        module = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = module
+        return module
 
 
 __all__ = [

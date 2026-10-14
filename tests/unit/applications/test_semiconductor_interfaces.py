@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.semiconductor._interfaces import (
     interface_electrostatics,
     ThermionicInterface,
@@ -14,7 +15,7 @@ from phydrax.applications.semiconductor._interfaces import (
 from phydrax.applications.semiconductor._quantities import BOLTZMANN_CONSTANT_SI as K
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_semiconductor_interfaces_scenario_1() -> None:

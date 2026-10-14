@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.cardiovascular.electrophysiology._membrane_scaling import (
     CardiacMembraneScaling,
 )
@@ -39,7 +40,7 @@ from phydrax.applications.cardiovascular.electrophysiology._ventricular_models i
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 @pytest.fixture

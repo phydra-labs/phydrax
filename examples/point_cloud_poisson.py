@@ -8,7 +8,6 @@ import argparse
 import math
 from typing import assert_never, get_args, Literal, TypeAlias, TypedDict
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from scipy.spatial import cKDTree
@@ -162,7 +161,7 @@ def run_workflow(
             rng.uniform(-0.04, 0.04, (np.count_nonzero(~boundary_host), dimension)) / side
         )
     else:
-        if not jax.config.x64_enabled:
+        if not phx.config.x64_enabled():
             raise ValueError(
                 "The native tensor SBP workflow requires JAX float64 execution."
             )

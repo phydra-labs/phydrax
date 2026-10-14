@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import os
 import platform
-import shlex
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
@@ -34,6 +33,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.discretization.spectral import (
     DistributedSpectralExecutionPlan,
@@ -66,24 +66,11 @@ def _shape(value: str) -> tuple[int, ...]:
     return shape
 
 
-_FORCED_HOST_DEVICE_COUNT_FLAG = "--xla_force_host_platform_device_count"
-
-
-def _has_forced_host_device_count(flags: str, /) -> bool:
-    tokens = tuple(shlex.split(flags))
-    return any(
-        token == _FORCED_HOST_DEVICE_COUNT_FLAG
-        or token.startswith(f"{_FORCED_HOST_DEVICE_COUNT_FLAG}=")
-        for token in tokens
-    )
-
-
 def _campaign_contract(
     campaign: Campaign, schedule: Schedule, mesh_shape: tuple[int, ...]
 ) -> None:
     device_count = int(np.prod(mesh_shape))
-    flags = os.environ.get("XLA_FLAGS", "")
-    forces_host_devices = _has_forced_host_device_count(flags)
+    forces_host_devices = pxconfig.snapshot().cpu_device_count is not None
     physical = campaign in ("physical-slab", "physical-pencil")
     if physical:
         if forces_host_devices:

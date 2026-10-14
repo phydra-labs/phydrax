@@ -500,8 +500,9 @@ class VoroCrustProvider:
 
     ``executable`` is the upstream ``vc_mesh`` CLI, run once per call as a
     bounded subprocess. Extraction runs in one persistent
-    ``phydrax-vorocrust-worker`` session (explicit ``worker`` path, else
-    PHYDRAX_VOROCRUST_WORKER, else PATH) whose identity is probed once.
+    ``phydrax-vorocrust-worker`` session (explicit ``worker`` path, else native
+    ``ProviderConfig.workers`` or PHYDRAX_VOROCRUST_WORKER, else PATH), launched
+    lazily with identity probed once.
     Radius is the backend sphere-sizing bound, not a guaranteed cell-edge size.
     Material/selection transfer is not inferred from provisional seed colors.
     """
@@ -515,7 +516,7 @@ class VoroCrustProvider:
         self.worker = ProviderWorker(
             "vorocrust",
             executable=worker,
-            environment_variable="PHYDRAX_VOROCRUST_WORKER",
+            setting="vorocrust",
             default_executable="phydrax-vorocrust-worker",
             build_hint=(
                 "Build native/providers/vorocrust and set PHYDRAX_VOROCRUST_WORKER "

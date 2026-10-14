@@ -12,18 +12,18 @@ never timed as a successful result. No schema or external-reference claim.
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from _runtime import capture_environment, measure_lower_and_compile, measure_repeated
 
+from phydrax import config as pxconfig
 from phydrax.applications.semiconductor import (
     bipolar_transistor,
     mos_capacitor,
@@ -240,7 +240,7 @@ def main() -> None:
         raise ValueError(
             "Use at least five nodes, nonnegative warmup, and positive repeats"
         )
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError(
             "This benchmark requires JAX_ENABLE_X64=1 for matched physical accuracy"
         )

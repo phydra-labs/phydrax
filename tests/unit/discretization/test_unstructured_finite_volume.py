@@ -272,15 +272,15 @@ def test_global_ids_are_lossless_or_rejected_for_the_active_jax_width(
     script = r"""
 import sys
 
-import jax
+from phydrax import config as pxconfig
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 from phydrax._array_archive import read_array_archive
 
-jax.config.update("jax_enable_x64", False)
-assert not bool(jax.config.read("jax_enable_x64"))
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=False))
+assert not bool(pxconfig.x64_enabled())
 int32_max = np.iinfo(np.int32).max
 vertices = np.asarray(
     ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))

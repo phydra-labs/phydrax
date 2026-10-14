@@ -1,5 +1,7 @@
 # Monolithic implicit contact and affine bodies
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 Monolithic contact solves one shared physical residual over an ordered tuple of
 mechanics blocks. It is neither partitioned force exchange nor an impulse or
 penalty method. Geometry, mechanics, search, safety, and accepted history remain

@@ -13,14 +13,22 @@ from typing import Any
 
 import polars as pl
 
+from phydrax import config as pxconfig
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_operator_uq_cli_runs_end_to_end_and_writes_artifacts(tmp_path: Any) -> None:
     environment = os.environ.copy()
-    environment.setdefault("JAX_PLATFORM_NAME", "cpu")
-    environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            platforms=("cpu",),
+            launch_environment=pxconfig.LaunchEnvironmentConfig(preallocate=False),
+        ),
+        base=environment,
+        mode="defaults",
+    )
     completed = subprocess.run(
         [
             sys.executable,

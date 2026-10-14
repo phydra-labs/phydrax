@@ -3,18 +3,18 @@
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from examples.energy.building_dispatch import make_dispatch_system, replay_dispatch_heat
+from phydrax import config as pxconfig
 from phydrax.applications import energy_planning as ep
 
 
 @pytest.fixture(scope="module")
 def dispatch() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         heat_W = np.array([1500.0, 1800.0])
         spec = make_dispatch_system(
             heat_W, np.array([300.0, 300.0]), np.array([3600.0, 7200.0])

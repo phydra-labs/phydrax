@@ -14,6 +14,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from ..._jax_config import process_numerics
+
 
 if TYPE_CHECKING:
     from ._acceptance import (
@@ -193,6 +195,36 @@ if TYPE_CHECKING:
 
 # Public name -> defining submodule; `__all__` follows this order.
 _EXPORTS: dict[str, str] = {
+    "CoupledChannelCoolant": "_coupled_coolant",
+    "FuelAcceptancePolicy": "_acceptance",
+    "FuelCalibrationParameters": "_calibration",
+    "FuelCalibrationPlan": "_calibration",
+    "FuelCalibrationRod": "_calibration",
+    "FuelDenseSignalJacobian": "_calibration",
+    "FuelEnsembleMember": "_ensembles",
+    "FuelFixedGrid": "_sensitivity",
+    "FuelNumericalExecution": "_execution",
+    "FuelObservationPlan": "_observables",
+    "FuelParameterName": "_sensitivity",
+    "FuelParameterization": "_sensitivity",
+    "FuelReplayResult": "_sensitivity",
+    "FuelRodResult": "_result",
+    "FuelRodSimulation": "_simulation",
+    "FuelSensitivityPlan": "_sensitivity",
+    "FuelSensitivityResult": "_sensitivity",
+    "FuelSensor": "_observables",
+    "FuelSensorParameters": "_observables",
+    "FuelStepEvidence": "_acceptance",
+    "FuelStepStatus": "_acceptance",
+    "IrradiationHistory": "_irradiation",
+    "PreparedFuelRod": "_problem",
+    "admit_fuel_rod": "_problem",
+    "evaluate_fuel_calibration_identifiability": "_identifiability",
+    "evaluate_fuel_identifiability": "_identifiability",
+    "fuel_parameterization": "_sensitivity",
+    "prepare_fuel_least_squares": "_calibration",
+    "prepare_fuel_rod": "_problem",
+    "replay_fuel_grid": "_sensitivity",
     "AinscoughGrainGrowth": "_grain_boundary",
     "AthermalRelease": "_fission_gas",
     "AxialInteraction": "_identity",
@@ -313,12 +345,13 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in _EXPORTS:
-        raise AttributeError(f"{__name__!r} has no public capability {name!r}.")
-    module = import_module(f"{__name__}.{_EXPORTS[name]}")
-    value = getattr(module, name)
-    globals()[name] = value
-    return value
+    with process_numerics():
+        if name not in _EXPORTS:
+            raise AttributeError(f"{__name__!r} has no public capability {name!r}.")
+        module = import_module(f"{__name__}.{_EXPORTS[name]}")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:

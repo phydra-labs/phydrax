@@ -62,6 +62,7 @@ import jax
 
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment, source_build_fingerprint
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.qualification import (
     CampaignObservationRecord,
@@ -1793,9 +1794,11 @@ def route_environment(host_devices: int, /) -> dict[str, str]:
     """Startup variables of a fresh interpreter with ``host_devices`` host devices."""
     if host_devices == 1:
         return {}
-    flags = os.environ.get("XLA_FLAGS", "")
-    forced = f"--xla_force_host_platform_device_count={host_devices}"
-    return {"XLA_FLAGS": f"{flags} {forced}".strip()}
+    return pxconfig.environment(
+        pxconfig.RuntimeConfig(cpu_device_count=host_devices),
+        base=os.environ,
+        mode="override",
+    )
 
 
 def registered_benchmark_rows(root: Path = _PROJECT_ROOT, /) -> frozenset[str] | None:
@@ -2338,7 +2341,7 @@ def main() -> None:
         },
         environment=capture_environment().to_dict(),
         backend=jax.default_backend(),
-        precision="float64" if jax.config.jax_enable_x64 else "float32",
+        precision="float64" if pxconfig.x64_enabled() else "float32",
     )
     if arguments.output is None:
         print(json.dumps(report, indent=2, sort_keys=True))

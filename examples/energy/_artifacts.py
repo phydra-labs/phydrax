@@ -13,7 +13,7 @@ from typing import Any
 import jax
 import numpy as np
 
-from phydrax import lifecycle
+from phydrax import config as pxconfig, lifecycle
 
 
 def json_bytes(value: Any) -> Any:
@@ -51,7 +51,7 @@ def execution_identity() -> Any:
         "machine": platform.machine(),
         "packages": dict(sorted(packages.items())),
         "backend": jax.default_backend(),
-        "jax_enable_x64": bool(jax.config.x64_enabled),
+        "jax_enable_x64": bool(pxconfig.x64_enabled()),
         "devices": [str(device) for device in jax.devices()],
     }
     return {

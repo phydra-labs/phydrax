@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.energetics import (
     integrate_metabolic_energy_joule,
     UCHIDA_UMBERGER_2010_SOURCE_REVISION,
@@ -20,7 +20,7 @@ from phydrax.applications.skeletal_muscle.energetics import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _source_terms(

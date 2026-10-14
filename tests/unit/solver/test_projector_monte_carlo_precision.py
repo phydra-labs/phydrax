@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._strict import StrictModule
 from phydrax.operators.quantum._amplitude import LogAmplitude
 from phydrax.operators.quantum.lattice._address import (
@@ -54,7 +55,10 @@ def test_strict_complex_euler_and_physical_observation(guided: bool) -> None:
     operator = control_operator(control)
     keys = control_keys(operator, control)
     initial = np.asarray((0.4 + 0.2j, -0.3j, 0.7 - 0.1j), dtype=np.complex128)
-    with jax.numpy_dtype_promotion("strict"), jax.numpy_rank_promotion("raise"):
+    with (
+        pxconfig.context(pxconfig.NumericsConfig(dtype_promotion="strict")),
+        pxconfig.context(pxconfig.NumericsConfig(rank_promotion="raise")),
+    ):
         guide = None
         if guided:
             guide = QuantumGuide(

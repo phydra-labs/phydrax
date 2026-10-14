@@ -10,10 +10,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax._external_runtime import pin_executable
 from phydrax.applications.building_energy import (
     Adjacency,
@@ -247,7 +247,7 @@ def main() -> None:
     parser.add_argument("--radiance-version", default="6.0.2")
     parser.add_argument("--radiance-license", default="Radiance")
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     report = run_native()
     if args.energyplus:
         report["energyplus-reference"] = run_energyplus_reference(

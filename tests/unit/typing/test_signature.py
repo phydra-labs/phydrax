@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import phydrax.typing as pt
-from phydrax import StrictModule
+from phydrax import config as pxconfig, StrictModule
 
 
 pytestmark = pytest.mark.strict_jax
@@ -455,3 +455,22 @@ def test_custom_derivative_primal_keeps_its_rule() -> None:
 def test_checked_refuses_non_functions_and_repeated_decoration(target: object) -> None:
     with pytest.raises(TypeError, match="checked"):
         pt.checked(target)  # ty: ignore[invalid-argument-type]
+
+
+def test_cached_checked_and_jit_plans_follow_scoped_x64() -> None:
+    @pt.checked
+    def identity(values: pt.Float64[NodeDim]) -> jax.Array:
+        return values
+
+    compiled = jax.jit(identity)
+    for enabled in (True, False, True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=enabled)):
+            dtype = np.float64 if enabled else np.float32
+            values = jnp.ones(2, dtype=dtype)
+            assert identity(values) is values
+            assert compiled(values).dtype == np.dtype(dtype)
+            wrong = jnp.ones(2, dtype=np.int32)
+            with pytest.raises(TypeError, match="values"):
+                identity(wrong)
+            with pytest.raises(TypeError, match="values"):
+                compiled(wrong)

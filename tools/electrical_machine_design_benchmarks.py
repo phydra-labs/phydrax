@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Run ``JAX_ENABLE_X64=1 python tools/electrical_machine_design_benchmarks.py``.
+"""Run ``python tools/electrical_machine_design_benchmarks.py``.
 
 Actual rotating Az FEM solves, energy/air-stress torque checks, a circular
 magnet reference, and native bounded design. No analytic replacement residuals.
@@ -21,6 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._runtime import measure_repeated, measure_synchronized
+from phydrax import config as pxconfig
 from phydrax.applications.electrical_machines import (
     optimize_machine_design,
     polar_machine,
@@ -61,7 +62,7 @@ def main() -> Any:
     options = parser.parse_args()
     if options.samples < 1 or options.repeats < 1 or options.optimization_steps < 1:
         parser.error("samples, repeats, and optimization steps must be positive")
-    if not jax.config.jax_enable_x64:
+    if not pxconfig.x64_enabled():
         parser.error("this certification benchmark requires JAX_ENABLE_X64=1")
     rows = []
     angles = np.linspace(0, 2 * np.pi, options.samples, endpoint=False) + 0.13
@@ -253,7 +254,7 @@ def main() -> Any:
             {
                 "platform": platform.platform(),
                 "jax_backend": jax.default_backend(),
-                "jax_enable_x64": bool(jax.config.jax_enable_x64),
+                "jax_enable_x64": bool(pxconfig.x64_enabled()),
                 "fidelity": (
                     "2D prescribed-angle linear isotropic magnetostatics; no "
                     "nonlinear B-H, motion-induced voltage, electrical or "

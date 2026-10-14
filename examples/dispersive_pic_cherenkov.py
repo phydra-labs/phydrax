@@ -28,13 +28,13 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 
+import phydrax as phx
 
-jax.config.update("jax_enable_x64", True)
+
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 import jax.numpy as jnp
 import numpy as np
-
-import phydrax as phx
 
 
 D = phx.discretization

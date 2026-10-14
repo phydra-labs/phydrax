@@ -7,8 +7,9 @@
 ``MeshPartitionKind.METIS`` selects this route by name; the canonical GRAPH
 route is the native partitioner of :mod:`phydrax.graph` and never falls back to
 METIS. METIS is reached through its plain C ABI with ctypes. The library is
-resolved from ``PHYDRAX_METIS_LIBRARY`` and then the platform loader search
-path; absence is reported with :class:`MetisUnavailableError`.
+resolved from the native ``ProviderConfig.library_paths`` override, then
+``PHYDRAX_METIS_LIBRARY``, then the platform loader search path; absence is
+reported with :class:`MetisUnavailableError`.
 """
 
 from __future__ import annotations
@@ -20,8 +21,10 @@ import os
 
 import numpy as np
 
+from .._config_environment import LIBRARY_ENVIRONMENT
+from .._config_state import library_input
 
-_ENVIRONMENT = "PHYDRAX_METIS_LIBRARY"
+
 _OPTION_COUNT = 40
 _OPTION_SEED = 8
 _OPTION_UFACTOR = 16
@@ -45,18 +48,18 @@ class MetisPartitionError(RuntimeError):
 
 
 def _library_path() -> str:
-    configured = os.environ.get(_ENVIRONMENT, "").strip()
+    configured = (library_input("metis") or "").strip()
     if configured:
         if not os.path.isfile(configured):
             raise MetisUnavailableError(
-                f"{_ENVIRONMENT} names a missing METIS library: {configured!r}."
+                f"{LIBRARY_ENVIRONMENT['metis']} names a missing METIS library: {configured!r}."
             )
         return configured
     located = ctypes.util.find_library("metis")
     if located is None:
         raise MetisUnavailableError(
             "The METIS partition route requires METIS; set "
-            f"{_ENVIRONMENT} to the libmetis shared library path."
+            f"{LIBRARY_ENVIRONMENT['metis']} to the libmetis shared library path."
         )
     return located
 

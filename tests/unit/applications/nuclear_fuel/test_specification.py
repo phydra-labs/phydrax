@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-import jax
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._strict import StrictModule
 from phydrax.applications.nuclear_fuel import (
     admit_fuel_rod,
@@ -212,7 +212,7 @@ def _bundle(
 
 
 def test_bundle_friction_is_a_coefficient_not_an_energy_fraction() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         # The deposition fractions sum to 0.925 + 0.025 < 1, while the friction
         # coefficient exceeds one: it is not part of the energy partition.
         bundle = _bundle(
@@ -248,7 +248,7 @@ def test_energy_deposition_refuses_fractions_summing_above_one() -> None:
 
 
 def test_strict_source_support_refuses_statically_unsourced_closures() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         with pytest.raises(
             ValueError,
             match=re.escape(
@@ -276,7 +276,7 @@ def test_closure_refuses_non_string_source_id() -> None:
 
 
 def test_single_channel_admission_refuses_stagnant_coolant() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         specification = synthetic_rod_specification()
         times = np.asarray((0.0, 1.0, 2.0), dtype=np.float64)
         power = np.full((3, 1), 100.0, dtype=np.float64)

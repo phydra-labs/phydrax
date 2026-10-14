@@ -16,6 +16,7 @@ import equinox as eqx
 import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import (
     almonacid_2024_repository_case,
 )
@@ -127,7 +128,7 @@ def main() -> None:
     parser.add_argument("--end-time", type=float, default=0.02)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     result = qualify(args.inputs, end_s=args.end_time)
     payload = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
     args.output.write_text(payload + "\n")

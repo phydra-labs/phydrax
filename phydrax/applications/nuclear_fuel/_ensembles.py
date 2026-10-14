@@ -9,6 +9,7 @@ import jax
 from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import default_device
 from ..._strict import StrictModule
 from ..._validation import canonical_identifier, positive_finite_float
 from ...execution import (
@@ -232,7 +233,7 @@ class FuelEnsemblePlan(StrictModule):
                 if member.parameters is None
                 else jax.device_put(member.parameters, group.devices[0])
             )
-            with jax.default_device(group.devices[0]):
+            with default_device(group.devices[0]):
                 if signature.signature_id not in numerical_executions:
                     numerical_executions[signature.signature_id] = FuelNumericalExecution(
                         prepared, policy=member.policy

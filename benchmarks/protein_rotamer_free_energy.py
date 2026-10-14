@@ -6,12 +6,11 @@ This proves the numerical bridge only. No biological parameter corpus is bundled
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import hashlib
 import json
 from dataclasses import asdict
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +23,7 @@ from _runtime import (
     measure_repeated,
 )
 
+from phydrax import config as pxconfig
 from phydrax.applications.protein_folding._construct import ProteinConstruct
 from phydrax.applications.protein_folding.potentials import (
     RotamerFreeEnergyTerm,
@@ -208,7 +208,7 @@ def main() -> None:
     args = parser.parse_args()
     if any(size < 3 for size in args.sizes):
         parser.error("sizes must be at least three for loop comparisons")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     results = [
         run_case(size, loop, args.tolerances, args.repeats)
         for size in args.sizes
