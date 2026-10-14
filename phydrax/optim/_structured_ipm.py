@@ -996,7 +996,7 @@ def solve_sparse_structured_ipm(
         sparse_provider_capabilities("spineax-cudss").reliable_zero_inertia
     ):
         raise ValueError(
-            "Spineax cuDSS cannot drive the nonconvex structured IPM until zero-inertia evidence is reliable."
+            "Spineax cuDSS cannot drive the structured IPM, including convex problems, until zero-inertia evidence is reliable."
         )
     plan = plan_sparse_augmented_kkt(prepared.template)
     state = initialize_sparse_structured_ipm(

@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from jaxtyping import PyTree
 
 from .._admissibility import guard_derivative_validity
@@ -97,6 +97,7 @@ from .backends._jax_sparse import HostSparseState
 from .backends._native_block_krylov import NativeBlockKrylovBackendOutput
 from .backends._native_krylov import _minimum_norm_lsmr, NativeKrylovBackendOutput
 from .backends._provider import AbstractLinearProvider, provider_for
+from .backends._spineax import SpineaxBackendOutput
 from .krylov._results import KrylovBreakdownStatus
 
 
@@ -398,6 +399,21 @@ def _bind_for_template(
         preconditioning_state=preconditioning_state,
         numeric_version=numeric_version,
     )
+
+
+def _derivative_tolerances(
+    policy: LinearDerivativeSolvePolicy,
+    dtype: DTypeLike,
+    /,
+) -> tuple[float, float]:
+    """Resolve omitted tolerances without relaxing an explicit accuracy request."""
+    relative = (
+        max(1e-8, 10.0 * float(jnp.finfo(dtype).eps))
+        if policy.relative_tolerance is None
+        else policy.relative_tolerance
+    )
+    absolute = 1e-10 if policy.absolute_tolerance is None else policy.absolute_tolerance
+    return relative, absolute
 
 
 def _preconditioner_provenance(
@@ -987,7 +1003,7 @@ def _solve_prepared(
     condition_out = _restore_rhs_axes(
         _rhs_broadcast(backend.condition_estimate, status.shape), layout
     )
-    if isinstance(backend, DenseBackendOutput):
+    if isinstance(backend, (DenseBackendOutput, SpineaxBackendOutput)):
         refinement_steps_out = _restore_rhs_axes(
             jnp.broadcast_to(backend.refinement_steps, status.shape),
             layout,
@@ -1080,6 +1096,9 @@ def _solve_prepared(
         refinement_steps=refinement_steps_out,
         singular_values=backend.singular_values,
     )
+    derivative_relative, derivative_absolute = _derivative_tolerances(
+        prepared.plan.policy.derivative_solve, canonical_rhs.real.dtype
+    )
     provenance = LinearSolveProvenance(
         backend=prepared.plan.backend,
         method=prepared.plan.method,
@@ -1100,6 +1119,8 @@ def _solve_prepared(
         recycling_state_bytes=prepared.plan.recycling_state_bytes,
         **_preconditioner_provenance(prepared),
         **_precision_provenance(prepared),
+        derivative_relative_tolerance=derivative_relative,
+        derivative_absolute_tolerance=derivative_absolute,
     )
     iteration_evidence: IterationEvidence | None = None
     if iteration is not None:
@@ -1476,6 +1497,13 @@ def solve_many(
     )
 
 
+def _prepared_transform_supported(prepared: PreparedLinearSolve, /) -> bool:
+    provider = provider_for(prepared.plan.backend)
+    return (
+        not prepared.problem.operator.batch_shape or provider.supports_batched_transformed
+    ) and provider.supports_transformed(prepared.state)
+
+
 def solve_transpose(
     problem_or_prepared: LinearSystem | PreparedLinearSolve,
     rhs: PyTree[Any],
@@ -1495,13 +1523,7 @@ def solve_transpose(
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
         declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
-        if (
-            iteration is None
-            and not problem_or_prepared.problem.operator.batch_shape
-            and provider_for(problem_or_prepared.plan.backend).supports_transformed(
-                problem_or_prepared.state
-            )
-        ):
+        if iteration is None and _prepared_transform_supported(problem_or_prepared):
             return _solve_prepared_transformed(
                 problem_or_prepared,
                 rhs,
@@ -1538,13 +1560,7 @@ def solve_adjoint(
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
         declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
-        if (
-            iteration is None
-            and not problem_or_prepared.problem.operator.batch_shape
-            and provider_for(problem_or_prepared.plan.backend).supports_transformed(
-                problem_or_prepared.state
-            )
-        ):
+        if iteration is None and _prepared_transform_supported(problem_or_prepared):
             return _solve_prepared_transformed(
                 problem_or_prepared,
                 rhs,
@@ -1682,9 +1698,14 @@ def _assess_linear_system_result(
     residual = operator.mv_block(canonical_value) - canonical_rhs
     residual_norm = _coordinate_norm(operator.target, residual)
     rhs_norm = _coordinate_norm(operator.target, canonical_rhs)
-    threshold = (
-        check_policy.absolute_tolerance + check_policy.relative_tolerance * rhs_norm
-    )
+    if isinstance(check_policy, LinearDerivativeSolvePolicy):
+        relative, absolute = _derivative_tolerances(
+            check_policy, canonical_rhs.real.dtype
+        )
+    else:
+        relative = check_policy.relative_tolerance
+        absolute = check_policy.absolute_tolerance
+    threshold = absolute + relative * rhs_norm
     finite = (
         jnp.all(jnp.isfinite(canonical_rhs), axis=-2)
         & jnp.all(jnp.isfinite(canonical_value), axis=-2)
@@ -1935,7 +1956,7 @@ def _solve_prepared_transformed(
     status_out = _restore_rhs_axes(status, layout)
     transformed_refinement_steps = (
         backend.refinement_steps
-        if isinstance(backend, DenseBackendOutput)
+        if isinstance(backend, (DenseBackendOutput, SpineaxBackendOutput))
         else jnp.zeros(status.shape, dtype=jnp.int32)
     )
     diagnostics = LinearSolveDiagnostics(
@@ -1971,6 +1992,9 @@ def _solve_prepared_transformed(
     value = _unpack_value(transformed_operator.source, canonical_value, layout)
     if prepared.plan.policy.failure.mode == "error":
         value = _error_on_failure(value, status_out)
+    derivative_relative, derivative_absolute = _derivative_tolerances(
+        prepared.plan.policy.derivative_solve, canonical_rhs.real.dtype
+    )
     provenance = LinearSolveProvenance(
         backend=prepared.plan.backend,
         method=(
@@ -1989,6 +2013,8 @@ def _solve_prepared_transformed(
         recycling_state_bytes=prepared.plan.recycling_state_bytes,
         **_preconditioner_provenance(prepared),
         **_precision_provenance(prepared),
+        derivative_relative_tolerance=derivative_relative,
+        derivative_absolute_tolerance=derivative_absolute,
     )
     return LinearSolveResult(
         value,
@@ -2108,7 +2134,10 @@ def _require_rhs_resources(
     estimate = plan.candidates[-1]
     required_krylov = rhs_count * estimate.krylov_basis_bytes_per_rhs
     available_krylov = plan.policy.resources.krylov_basis_bytes
-    if required_krylov > available_krylov:
+    if (
+        plan.backend in ("native-krylov", "native-block-krylov", "lineax")
+        and required_krylov > available_krylov
+    ):
         raise ValueError(
             f"Selected {estimate.method} requires {required_krylov} Krylov basis "
             f"bytes for {rhs_count} right-hand sides, exceeding the policy budget "
@@ -2125,6 +2154,27 @@ def _require_rhs_resources(
             f"bytes for {rhs_count} right-hand sides, exceeding the policy budget "
             f"{available_workspace}."
         )
+
+
+def _require_derivative_rhs_resources(
+    right_hand_side: Array, plan: LinearSolvePlan, /
+) -> Array:
+    """Enforce derivative storage when the tangent/cotangent actually executes.
+
+    custom_root traces its tangent solve even for a primal-only invocation.
+    A staged guard avoids charging the primal for that unexecuted derivative.
+    """
+    rhs_count = right_hand_side.shape[-1]
+    required = rhs_count * plan.candidates[-1].krylov_basis_bytes_per_rhs
+    available = plan.policy.resources.krylov_basis_bytes
+    if required > available:
+        return eqx.error_if(
+            right_hand_side,
+            jnp.asarray(True, dtype=jnp.bool_),
+            f"Implicit derivative requires {required} Krylov basis bytes for "
+            f"{rhs_count} right-hand sides, exceeding the policy budget {available}.",
+        )
+    return right_hand_side
 
 
 def _pack_rhs(
@@ -2689,6 +2739,7 @@ def _pseudoinverse_columns(
             ),
             dtype=right_hand_side.dtype,
         )
+    right_hand_side = _require_derivative_rhs_resources(right_hand_side, plan)
     domain, codomain = (
         (operator.target, operator.source)
         if adjoint
@@ -2702,8 +2753,9 @@ def _pseudoinverse_columns(
     flattened = right_hand_side.reshape((batch_count, codomain.size, rhs_count))
     policy = plan.policy.derivative_solve
     dtype = right_hand_side.real.dtype
-    relative = jnp.asarray(policy.relative_tolerance, dtype=dtype)
-    absolute = jnp.asarray(policy.absolute_tolerance, dtype=dtype)
+    relative_, absolute_ = _derivative_tolerances(policy, dtype)
+    relative = jnp.asarray(relative_, dtype=dtype)
+    absolute = jnp.asarray(absolute_, dtype=dtype)
     max_steps = policy.maximum_steps or max(domain.size, codomain.size)
     ranks = jnp.broadcast_to(spectrum[0], batch_shape).reshape((batch_count,))
     retained_bounds = jnp.broadcast_to(spectrum[1], batch_shape).reshape((batch_count,))
@@ -2846,9 +2898,10 @@ def _implicit_factored_value(
         dtype = right.real.dtype
         right_norm = jnp.linalg.norm(right, axis=-2)
         residual_norm = jnp.linalg.norm(action(output.value) - right, axis=-2)
+        relative, absolute = _derivative_tolerances(derivative_policy, dtype)
         threshold = (
-            jnp.asarray(derivative_policy.absolute_tolerance, dtype=dtype)
-            + jnp.asarray(derivative_policy.relative_tolerance, dtype=dtype) * right_norm
+            jnp.asarray(absolute, dtype=dtype)
+            + jnp.asarray(relative, dtype=dtype) * right_norm
         )
         valid = (
             jnp.all(output.status == int(LinearSolveStatus.SUCCESS))
@@ -2963,6 +3016,7 @@ def _solve_independent_columns(
 ) -> Array:
     if right_hand_side.size == 0:
         return jnp.zeros_like(right_hand_side)
+    right_hand_side = _require_derivative_rhs_resources(right_hand_side, plan)
     batch_shape = right_hand_side.shape[:-2]
     dimension = right_hand_side.shape[-2]
     rhs_count = right_hand_side.shape[-1]
@@ -3204,14 +3258,15 @@ def _callable_derivative_solve(
 ) -> Array:
     dimension = rhs.shape[0]
     policy = plan.policy.derivative_solve
+    relative, absolute = _derivative_tolerances(policy, rhs.real.dtype)
     max_steps = policy.maximum_steps or dimension
     if plan.derivative_pcg:
         result = _run_callable_pcg(
             action,
             rhs,
             max_steps=max_steps,
-            relative=policy.relative_tolerance,
-            absolute=policy.absolute_tolerance,
+            relative=relative,
+            absolute=absolute,
             preconditioner=preconditioner,
         )
     else:
@@ -3222,8 +3277,8 @@ def _callable_derivative_solve(
             max_steps=max_steps,
             restart=restart,
             stagnation_iterations=max_steps + 1,
-            relative=policy.relative_tolerance,
-            absolute=policy.absolute_tolerance,
+            relative=relative,
+            absolute=absolute,
             preconditioner=preconditioner,
         )
     return _checked_callable_value(

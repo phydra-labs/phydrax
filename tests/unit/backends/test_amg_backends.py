@@ -230,11 +230,13 @@ class _FakeSolver(_FakeHandle):
         solution.array = np.linalg.solve(self.matrix.array, right_hand_side.array)
         self.provider.solve_calls += 1
 
-    def get_iterations_number(self) -> int:
+    @property
+    def iterations_number(self) -> int:
         return 5
 
-    def get_status(self) -> str:
-        return "converged"
+    @property
+    def status(self) -> str:
+        return "success"
 
 
 class _FakeAmgX:
@@ -287,7 +289,7 @@ def test_amgx_official_lifecycle_reuses_hierarchy_for_multiple_rhs(
     assert provider.solve_calls == 2
     assert jnp.allclose(matrix @ coordinates, expected_rhs)
     assert jnp.all(result.diagnostics.iterations == 5)
-    assert result.diagnostics.provider_reasons == ("converged", "converged")
+    assert result.diagnostics.provider_reasons == ("success", "success")
     assert int(result.transfers.host_to_device_bytes) == 2 * expected_rhs.nbytes
     assert int(result.transfers.device_to_host_bytes) == expected_rhs.nbytes
     assert int(result.transfers.synchronization_count) == 2
@@ -305,3 +307,85 @@ def test_amgx_official_lifecycle_reuses_hierarchy_for_multiple_rhs(
     assert all(handle.destroyed == 1 for handle in persistent_handles)
     with pytest.raises(ValueError, match="released"):
         amg.solve_amgx(prepared, _rhs())
+
+
+@pytest.mark.parametrize(
+    ("dtype", "tolerance"),
+    [(jnp.float32, 1e-4), (jnp.float64, None)],
+    ids=("float32", "float64-default-policy"),
+)
+def test_amgx_real_provider_policy_and_refresh(
+    dtype: Any, tolerance: float | None
+) -> None:
+    if not amg.amgx_availability().available:
+        pytest.skip("pyamgx is not installed")
+    # A 1D Poisson system large enough for a genuine multigrid hierarchy; AmgX
+    # FGMRES does not guard exact Krylov breakdown on tiny systems.
+    size = 64
+    matrix = (
+        2.0 * jnp.eye(size, dtype=dtype)
+        - jnp.eye(size, k=1, dtype=dtype)
+        - jnp.eye(size, k=-1, dtype=dtype)
+    )
+    space = la.ArraySpace((size,), dtype=dtype)
+    rows, columns = jnp.nonzero(matrix)
+
+    def system(values: Any) -> Any:
+        return la.LinearSystem(
+            phx.sparse.SparseCoordinateOperator(
+                phx.sparse.EdgeRelation(
+                    columns, rows, source_size=size, target_size=size
+                ),
+                values[rows, columns],
+                source=space,
+                target=space,
+                operator_id="amgx-poisson",
+            )
+        )
+
+    problem = system(matrix)
+    # The float32 solution is verified by a float32 residual, whose roundoff floor
+    # (about cond(A) * eps) exceeds the default 1e-8 relative tolerance.
+    policy = (
+        amg.AmgXPolicy()
+        if tolerance is None
+        else amg.AmgXPolicy(
+            {
+                "config_version": 2,
+                "solver": {
+                    "solver": "FGMRES",
+                    "preconditioner": {
+                        "solver": "AMG",
+                        "algorithm": "AGGREGATION",
+                        "selector": "SIZE_2",
+                        "max_iters": 1,
+                    },
+                    "max_iters": 100,
+                    "tolerance": tolerance,
+                    "norm": "L2",
+                    "monitor_residual": 1,
+                    "convergence": "RELATIVE_INI_CORE",
+                },
+            }
+        )
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    rhs = jnp.stack(
+        (jnp.ones((size,), dtype=dtype), jnp.linspace(-1.0, 1.0, size, dtype=dtype)),
+        axis=1,
+    )
+    try:
+        result = amg.solve_amgx(prepared, rhs)
+        assert jnp.all(result.success)
+        assert result.diagnostics.iterations is not None
+        assert result.diagnostics.provider_reasons == ("success", "success")
+        # Forward error is bounded by cond(A) ~ 1.7e3 times the residual tolerance.
+        reference = np.linalg.solve(np.asarray(matrix, dtype=np.float64), np.asarray(rhs))
+        solution_rtol = 1e-2 if dtype == jnp.float32 else 1e-4
+        np.testing.assert_allclose(result.value, reference, rtol=solution_rtol)
+        refreshed = amg.refresh_amgx(prepared, system(2 * matrix))
+        amg.release_amgx(refreshed)
+        # Retiring the refreshed hierarchy leaves the live one usable.
+        assert jnp.all(amg.solve_amgx(prepared, rhs).success)
+    finally:
+        amg.release_amgx(prepared)

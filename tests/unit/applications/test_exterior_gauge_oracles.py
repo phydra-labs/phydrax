@@ -108,7 +108,7 @@ def test_distributed_wilson_force_is_negative_action_derivative() -> None:
         jnp.trace(basis[None, ...] @ force.value[:, None, ...], axis1=-2, axis2=-1)
     )
     np.testing.assert_allclose(components, -derivative, atol=2e-12, rtol=2e-12)
-    generic_force = gauge.gauge_force(links, geometry.staples.staples(links))
+    generic_force = gauge.gauge_force(links)
     native_force = (
         jnp.zeros_like(links)
         .at[geometry.transport.forward_edges]

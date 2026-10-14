@@ -33,11 +33,11 @@ from .typing import parse
 
 
 MemoryMeasurementScope: TypeAlias = Literal["baseline", "peak"]
-"""`baseline` is an instantaneous value; `peak` is a maximum over a window."""
+"""`baseline` is instantaneous; `peak` is a high-water counter or sampled maximum."""
 
 MemoryMeasurementMethod: TypeAlias = Literal[
     "getrusage_max_rss",
-    "procfs_statm",
+    "procfs_status",
     "mach_task_basic_info",
     "sysconf_physical_pages",
     "procfs_meminfo_available",
@@ -133,9 +133,10 @@ class MemoryMeasurement:
     def is_upper_bound(self) -> bool:
         """Whether this value bounds every instantaneous value in its window.
 
-        Kernel and allocator high-water counters are maintained on every change,
-        so they bound the true peak. A maximum over discrete samples misses
-        transients between samples and is never an upper bound.
+        Darwin and allocator high-water counters bound the provider-accounted
+        peak. Linux procfs RSS counters use approximate accounting; even VmHWM
+        can miss a sampled RSS value after pages are freed. Discrete samples
+        also miss transients and never provide an upper bound.
         """
 
         if self.value_bytes is None or self.scope != "peak":
@@ -145,7 +146,7 @@ class MemoryMeasurement:
                 return True
             case (
                 "interval_sampling"
-                | "procfs_statm"
+                | "procfs_status"
                 | "mach_task_basic_info"
                 | "sysconf_physical_pages"
                 | "procfs_meminfo_available"
@@ -170,8 +171,10 @@ class MemoryMeasurement:
 class HostMemorySample:
     """Process RSS, RSS high-water mark, and host memory at one instant.
 
-    ``process_peak_resident`` is the kernel high-water mark since process start;
-    it bounds the RSS peak of every phase that ran in this process.
+    ``process_peak_resident`` is the kernel high-water counter since process start.
+    Linux ``VmRSS`` and ``VmHWM`` are approximate, although one status snapshot
+    guarantees ``VmRSS <= VmHWM``. Only providers whose peak measurement declares
+    ``is_upper_bound`` can certify a phase RSS bound.
     ``host_available`` is the provider's reclaimable-memory estimate
     (Linux ``MemAvailable``; Darwin free plus inactive pages).
     """
@@ -378,8 +381,9 @@ class PhaseMemoryEvidence:
     ``sampled_peak_resident`` is the maximum RSS over ``sample_count`` discrete
     samples at the declared interval; transients between samples are missed, so
     it is reported as sampled and is never an upper bound. ``interval_peak_resident``
-    is exact (to counter resolution) only when the kernel high-water mark rose
-    during the phase; ``resident_peak_upper_bound`` always bounds the phase peak.
+    is exact (to counter resolution) only when a trustworthy kernel high-water
+    mark rose during the phase. ``resident_peak_upper_bound`` is unavailable when
+    the provider's approximate accounting cannot certify a bound.
     """
 
     phase: str
@@ -435,30 +439,41 @@ class PhaseMemoryEvidence:
 
     @property
     def resident_peak_upper_bound(self) -> MemoryMeasurement:
-        """Kernel RSS high-water mark at phase end; bounds the phase peak."""
+        """Kernel RSS bound at phase end, or why the provider cannot certify it."""
 
-        return self.final.process_peak_resident
+        peak = self.final.process_peak_resident
+        if not peak.available or peak.is_upper_bound:
+            return peak
+        return MemoryMeasurement.unavailable(
+            peak.method,
+            "peak",
+            "the provider's approximate RSS high-water accounting does not "
+            "certify an upper bound",
+        )
 
     @property
     def interval_peak_resident(self) -> MemoryMeasurement:
-        """Exact phase RSS peak when the process high-water mark rose during it."""
+        """Exact phase RSS peak when a trustworthy high-water mark rose during it."""
 
+        bound = self.resident_peak_upper_bound
+        if not bound.available:
+            return bound
         before = self.baseline.process_peak_resident.value_bytes
-        after = self.final.process_peak_resident.value_bytes
+        after = bound.value_bytes
         if before is None or after is None:
             return MemoryMeasurement.unavailable(
-                "getrusage_max_rss",
+                bound.method,
                 "peak",
                 "the provider does not report the process RSS high-water mark",
             )
         if after <= before:
             return MemoryMeasurement.unavailable(
-                "getrusage_max_rss",
+                bound.method,
                 "peak",
                 "the process RSS high-water mark predates the phase; "
                 "only its upper bound is known",
             )
-        return self.final.process_peak_resident
+        return bound
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -550,21 +565,47 @@ def _page_size() -> int:
     return os.sysconf("SC_PAGE_SIZE")
 
 
-def _current_resident(provider: HostMemoryProvider, /) -> MemoryMeasurement:
+def _linux_resident() -> tuple[MemoryMeasurement, MemoryMeasurement]:
+    try:
+        with open("/proc/self/status", encoding="ascii") as stream:
+            lines = stream.read().splitlines()
+    except OSError as error:
+        reason = f"/proc/self/status unreadable: {error}"
+        return (
+            MemoryMeasurement.unavailable("procfs_status", "baseline", reason),
+            MemoryMeasurement.unavailable("procfs_status", "peak", reason),
+        )
+    counters: dict[str, int] = {}
+    for line in lines:
+        name, _, value = line.partition(":")
+        if name in ("VmRSS", "VmHWM"):
+            amount, unit = value.split()
+            if unit != "kB":
+                raise ValueError(f"/proc/self/status {name} has unit {unit!r}.")
+            counters[name] = int(amount) * _KIB
+
+    # task_mem computes VmHWM as max(hiwater_rss, the same RSS it prints).
+    # Separate statm/getrusage reads need not agree, and procfs high-water
+    # accounting is approximate rather than a bound on past RSS snapshots.
+    def measurement(name: str, scope: MemoryMeasurementScope, /) -> MemoryMeasurement:
+        if name not in counters:
+            return MemoryMeasurement.unavailable(
+                "procfs_status", scope, f"the kernel does not report {name}"
+            )
+        return MemoryMeasurement.measured("procfs_status", scope, counters[name], _KIB)
+
+    return measurement("VmRSS", "baseline"), measurement("VmHWM", "peak")
+
+
+def _resident_measurements(
+    provider: HostMemoryProvider, /
+) -> tuple[MemoryMeasurement, MemoryMeasurement]:
     match provider:
         case "linux_procfs":
-            try:
-                with open("/proc/self/statm", encoding="ascii") as stream:
-                    fields = stream.read().split()
-            except OSError as error:
-                return MemoryMeasurement.unavailable(
-                    "procfs_statm", "baseline", f"/proc/self/statm unreadable: {error}"
-                )
-            page = _page_size()
-            return MemoryMeasurement.measured(
-                "procfs_statm", "baseline", int(fields[1]) * page, page
-            )
+            return _linux_resident()
         case "darwin_mach":
+            import resource
+
             library = _darwin_system()
             info = _MachTaskBasicInfo()
             count = ctypes.c_uint32(ctypes.sizeof(_MachTaskBasicInfo) // 4)
@@ -572,41 +613,34 @@ def _current_resident(provider: HostMemoryProvider, /) -> MemoryMeasurement:
             status = library.task_info(
                 task, _MACH_TASK_BASIC_INFO, ctypes.byref(info), ctypes.byref(count)
             )
-            if status != 0:
-                return MemoryMeasurement.unavailable(
+            resident = (
+                MemoryMeasurement.unavailable(
                     "mach_task_basic_info",
                     "baseline",
                     f"task_info returned kern_return_t {status}",
                 )
-            return MemoryMeasurement.measured(
-                "mach_task_basic_info", "baseline", info.resident_size, _page_size()
+                if status != 0
+                else MemoryMeasurement.measured(
+                    "mach_task_basic_info", "baseline", info.resident_size, _page_size()
+                )
             )
-        case "unsupported":
-            return MemoryMeasurement.unavailable(
-                "procfs_statm",
-                "baseline",
-                f"process RSS is not exposed on platform {sys.platform!r}",
-            )
-        case _:
-            assert_never(provider)
-
-
-def _peak_resident(provider: HostMemoryProvider, /) -> MemoryMeasurement:
-    match provider:
-        case "linux_procfs" | "darwin_mach":
-            import resource
-
+            # Darwin reports ru_maxrss in bytes.
             maximum = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            # Darwin reports ru_maxrss in bytes and Linux in KiB.
-            unit = 1 if provider == "darwin_mach" else _KIB
-            return MemoryMeasurement.measured(
-                "getrusage_max_rss", "peak", maximum * unit, unit
+            return resident, MemoryMeasurement.measured(
+                "getrusage_max_rss", "peak", maximum, 1
             )
         case "unsupported":
-            return MemoryMeasurement.unavailable(
-                "getrusage_max_rss",
-                "peak",
-                f"getrusage is not available on platform {sys.platform!r}",
+            return (
+                MemoryMeasurement.unavailable(
+                    "procfs_status",
+                    "baseline",
+                    f"process RSS is not exposed on platform {sys.platform!r}",
+                ),
+                MemoryMeasurement.unavailable(
+                    "getrusage_max_rss",
+                    "peak",
+                    f"getrusage is not available on platform {sys.platform!r}",
+                ),
             )
         case _:
             assert_never(provider)
@@ -705,12 +739,15 @@ def sample_host_memory() -> HostMemorySample:
     """Measure this process's RSS and RSS high-water mark and host memory now."""
 
     provider = _host_provider()
+    process = jax.process_index()
+    timestamp = time.time_ns()
+    resident, peak = _resident_measurements(provider)
     return HostMemorySample(
         provider,
-        jax.process_index(),
-        time.time_ns(),
-        _current_resident(provider),
-        _peak_resident(provider),
+        process,
+        timestamp,
+        resident,
+        peak,
         _host_total(provider),
         _host_available(provider),
     )
@@ -760,11 +797,14 @@ def sample_device_memory(
     """Measure allocator counters and live JAX array bytes on addressable devices."""
 
     devices_ = _addressable_devices(devices)
-    live = {device.id: 0 for device in devices_}
-    for array in jax.live_arrays():
-        for shard in array.addressable_shards:
-            if shard.device.id in live:
-                live[shard.device.id] += shard.data.nbytes
+    live = {device: 0 for device in devices_}
+    # Device IDs are client-local, and the default backend can differ from
+    # every requested device's backend.
+    for client in dict.fromkeys(device.client for device in devices_):
+        for array in jax.live_arrays(client):
+            for shard in array.addressable_shards:
+                if shard.device in live:
+                    live[shard.device] += shard.data.nbytes
     samples: list[DeviceMemorySample] = []
     for device in devices_:
         statistics = device.memory_stats()
@@ -782,7 +822,7 @@ def sample_device_memory(
                 _allocator_measurement(statistics, "bytes_in_use", "baseline", platform),
                 _allocator_measurement(statistics, "peak_bytes_in_use", "peak", platform),
                 MemoryMeasurement.measured(
-                    "jax_live_arrays", "baseline", live[device.id], 1
+                    "jax_live_arrays", "baseline", live[device], 1
                 ),
             )
         )
@@ -901,7 +941,7 @@ class PhaseMemorySampler:
             self._failure = error
 
     def _record(self) -> None:
-        resident = _current_resident(self._provider).value_bytes
+        resident = _resident_measurements(self._provider)[0].value_bytes
         now = time.perf_counter()
         self._maximum_gap = max(self._maximum_gap, now - self._last)
         self._last = now

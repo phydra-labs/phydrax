@@ -221,6 +221,74 @@
   prepared mass actions inside mixed-method coupling scans without NumPy
   tracer conversion. Namespace and grouped-derivative refusal tests now reflect
   the public periodic certificate and explicit-coordinate-axis contract.
+- Spineax cuDSS numeric-refresh implicit matrix derivatives, batched prepared
+  transpose/adjoint solves, batched factor resource bounds, and refinement-step
+  diagnostics.
+- Automatically selected CUDA SparseQR prepares numerically and enforces the
+  same 32-bit CSR index contract as explicitly selected CUDA QR. Because the native
+  call raises on singular systems instead of returning failure status, automatic
+  planning selects it only under `FailurePolicy("error")`; the default status policy
+  selects a status-capable Krylov route. CUDA SparseQR declares complex support.
+- Default `DenseSVD()` resolves to the QR driver on CUDA, where divide-and-conquer
+  is unsupported, and keeps divide-and-conquer elsewhere (CPU plan identity is
+  unchanged); explicit divide-and-conquer on CUDA is refused at planning.
+  Randomized SVD lifting and orthogonality evidence use full float32 precision.
+- Rectangular dense SVDs with aspect ratio at least 2:1 are QR-reduced before the
+  economy decomposition, so CUDA no longer allocates a long-dimension square
+  scratch factor beyond the admitted workspace; dense-SVD resource estimates
+  include that scratch, and pseudoinverse construction and certification products
+  use full float32 precision.
+- `BiCGStab` runs on the native Krylov substrate instead of Lineax (backend
+  provenance and plan identities change). It confirms true-residual convergence
+  of the alpha half-step before stabilization, so exact half-step convergence no
+  longer produces `0/0`, and counts every executed operator action.
+- Spineax cuDSS and AmgX availability require a JAX CUDA device; the structured
+  IPM refusal of Spineax cuDSS states that it applies to convex problems too.
+- Eager accelerated MACE coupling checks the platform of its operands rather than
+  the default backend.
+- Linux host memory samples read current RSS and its high-water mark from one
+  `/proc/self/status` snapshot (`procfs_status`); the approximate Linux high-water
+  mark is no longer reported as a phase peak upper bound. Live-array device memory
+  is counted through each requested PJRT client and attributed by actual device,
+  so CPU samples in an accelerator process no longer mix in GPU buffers.
+- NVIDIA CUDA is identified from the loaded JAX runtime, so CUDA clients reporting
+  the generic `"gpu"` platform are admitted and ROCm devices are no longer admitted
+  to CUDA-only routes (accelerated MACE coupling, CUDA sparse QR, Spineax cuDSS,
+  Pallas spatial kernels). Discovered resource inventories now report the device
+  vendor, so vendor-constrained resource requests can match real accelerators.
+- Accelerated MACE coupling admits the explicit CUDA architecture set {9.0, 12.0}
+  instead of every compute capability at or above 9.0.
+- Compiled Pallas spatial norms and pair accelerations pad coordinates and blocks
+  to powers of two, so three-dimensional Morton queries, radius relations, particle
+  neighborhoods, and the particle-FMM near field compile on GPUs. Complete compiled
+  `UniformFMMPlan` evaluation (fields, signed strength refreshes, strength JVP/VJP,
+  and reverse-mode position/mass derivatives) is regression-tested on CUDA in
+  float32 and float64 against the JAX backend and direct references.
+- AmgX: the default policy uses an aggregation selector the provider registers;
+  float32 systems are promoted at the pyamgx double-precision boundary; provider
+  iteration counts and status reach the result and set failure status; refreshed
+  and released hierarchies no longer free native pools still used by live ones;
+  capabilities no longer claim JAX transformations.
+- Lattice kernel providers share one links-and-geometry contract: gauge action and
+  force take canonical links, explicit block geometry/boundary flags, and owned
+  output masks instead of precomputed plaquettes and staples (native provider and
+  distributed QCD consumers migrated). `create_lattice_provider()` constructs
+  executable PyQUDA (CUDA; gauge action/force and Wilson/clover Dirac actions,
+  adjoints, and blocks; DLPack interchange eagerly, host-staged under `jit`), GPT/Grid
+  (CPU; the same operations in complex64/complex128), and Qlat (CPU; complex128
+  gauge action/force only, since Qlat exposes no Wilson Dirac primitive) adapters.
+  Availability reports an external provider only when its adapter can execute,
+  and PyQUDA no longer claims operation-specific JVPs.
+- `Mpi4JaxCollectiveProvider(gpu_direct=...)` must agree with the process-global
+  `MPI4JAX_USE_CUDA_MPI` setting, and CUDA-direct transport requires CUDA-aware MPI;
+  the transport route is part of `provider_id`. Two-rank GPU collectives are
+  qualified for both device-buffer (CUDA-aware OpenMPI) and host-staged routes;
+  device-buffer dispatch is not a CUDA IPC or GPUDirect RDMA claim.
+- `FunctionalPrecisionPolicy` evidence no longer reports unobserved compute and
+  accumulation dtypes.
+- Resolving `phydrax.atomistic.interchange.NativeASECalculator` or
+  `NativeASECalculatorPlan` without ASE installed raises `ImportError`, like other
+  optional-provider exports, instead of the conversion-boundary `AdapterError`.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
@@ -2739,6 +2807,22 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Omitted `LinearDerivativeSolvePolicy` tolerances resolve from the coordinate
+  dtype (relative `max(1e-8, 10 * eps)`, absolute `1e-10`), so float32 implicit
+  derivatives, including Spineax cuDSS matrix-value JVPs/VJPs, no longer fail
+  float64-scale residual checks and return NaN. Float64 effective defaults and
+  explicit tolerances are unchanged; solve provenance reports the effective
+  derivative tolerances, and default policy and plan identities change.
+- `AdjointLinearOperator` preserves positive-definite and semidefinite claims, so
+  certified SPD systems remain admissible to PCG adjoint solves.
+- Direct primal solves are no longer charged derivative-only Krylov basis bytes
+  per right-hand side; implicit derivative solves enforce that budget for their
+  actual right-hand-side count when they execute.
+- Importing Phydrax sets `jax_default_matmul_precision="highest"` unless the
+  process already chose a default, so float32 contractions no longer default to
+  TF32 on NVIDIA GPUs. Contractions traced without an explicit precision now carry
+  `Precision.HIGHEST` in their jaxprs. `FunctionalPrecisionPolicy()` defaults to
+  `"highest"`; `"default"` still selects JAX's backend default explicitly.
 - Bound exact gravity target rows and quadratic-ringdown time batches with explicit
   chunk controls; replace dense FEL wake products with exact FFT convolution.
 - Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer

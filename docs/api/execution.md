@@ -32,6 +32,12 @@ For a local process set, `LocalProcessLaunchPlan` and
 `launch_local_processes` start one shell-free argument vector per rank and
 inject the same explicit rendezvous identity.
 
+Importing Phydrax also fixes two numeric defaults: 64-bit JAX types are enabled,
+and float32 contractions default to `jax_default_matmul_precision="highest"`
+(IEEE float32 rather than TF32 on NVIDIA GPUs) unless the process already chose a
+default through `JAX_DEFAULT_MATMUL_PRECISION` or `jax.config`. Per-call
+precision arguments and `jax.default_matmul_precision(...)` scopes still apply.
+
 ::: phydrax.execution.RuntimeBootstrap
 
 ---
@@ -81,25 +87,37 @@ Memory quantities are distinct measurements, never one number. A
 `MemoryMeasurement` records its method, its scope (`baseline` instantaneous or
 `peak` over a window), the source counter resolution, or an explicit
 `unavailable_reason`. `sample_host_memory` reports process RSS, the kernel RSS
-high-water mark, and host physical and available memory (Linux procfs; Darwin
-Mach). `sample_device_memory` reports the PJRT allocator limit, pool
-reservation, live allocations and allocator high-water mark, plus the bytes of
-live JAX arrays; the CPU provider exposes no allocator statistics, and the
-sample says so. `compiled_memory_estimate` returns XLA's buffer-assignment plan
-for a compiled executable, which is an estimate rather than a measurement.
+high-water counter, and host physical and available memory (Linux procfs; Darwin
+Mach). On Linux, RSS and high-water counters come from one `/proc/self/status`
+snapshot (`VmRSS` and `VmHWM`), so the reported current value cannot exceed that
+snapshot's high-water value. Both counters use approximate kernel accounting:
+`VmHWM` can fall below an earlier RSS observation after pages are freed, and it
+does not certify an RSS upper bound. `sample_device_memory` reports the PJRT
+allocator limit, pool reservation, live allocations and allocator high-water
+mark, plus the bytes of live JAX arrays from each requested device's client;
+device IDs are not treated as interchangeable across clients. The CPU provider
+exposes no allocator statistics, and the sample says so.
+`compiled_memory_estimate` returns XLA's buffer-assignment plan for a compiled
+executable, which is an estimate rather than a measurement.
 
 ```python
 with phx.execution.PhaseMemorySampler("assemble", interval_seconds=0.005) as s:
     assemble()
 evidence = s.evidence
 evidence.sampled_peak_resident       # sampled maximum, never an upper bound
-evidence.resident_peak_upper_bound   # kernel high-water mark at phase end
-evidence.interval_peak_resident      # exact only if the high-water mark rose
+evidence.resident_peak_upper_bound   # trustworthy kernel bound, or unavailable
+evidence.interval_peak_resident      # exact only if a trustworthy bound rose
 payload = evidence.to_payload()
 ```
 
 The sampler keeps constant-size state and reports its sample count and largest
-observed gap; transients shorter than the gap can be missed.
+observed gap; transients shorter than the gap can be missed. Linux procfs cannot
+certify either `resident_peak_upper_bound` or `interval_peak_resident`: both
+report explicit unavailability, while the sampled RSS maximum and approximate
+process high-water counter remain measured evidence.
+The [Linux procfs documentation](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html)
+marks RSS and high-water counters as inaccurate; source counter resolution is
+their granularity, not an accuracy guarantee.
 
 `discover_resource_inventory` attaches local host and device samples to the
 `ResourceInventory` as evidence excluded from `inventory_id`, and uses the

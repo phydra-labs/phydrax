@@ -10,6 +10,9 @@ import importlib.util
 import sys
 from types import ModuleType
 
+import jax
+
+from .._execution_device import device_platform as runtime_platform
 from ..logging import emit
 from ._types import (
     BackendAvailability,
@@ -73,8 +76,14 @@ def probe_backend(
     requirement: str,
     distributions: tuple[str, ...] = (),
     supported_platforms: tuple[str, ...] | None = None,
+    device_platform: str | None = None,
 ) -> BackendAvailability:
-    """Probe one optional module and preserve missing/import/linker evidence."""
+    """Probe one optional module and preserve missing/import/linker evidence.
+
+    ``device_platform`` names the JAX runtime (for example ``"cuda"``) that a
+    device provider executes on; without such a device it is unavailable and the
+    module is not imported.
+    """
     if not isinstance(capabilities, BackendCapabilities):
         raise TypeError("capabilities must be BackendCapabilities.")
     module_ = str(module)
@@ -110,6 +119,17 @@ def probe_backend(
             failure_category="not_installed",
             requirement=requirement_,
             reason=f"required module {module_!r} is not installed",
+            versions=versions,
+        )
+    if device_platform is not None and not any(
+        runtime_platform(device) == device_platform for device in jax.devices()
+    ):
+        return _probe_result(
+            capabilities,
+            available=False,
+            failure_category="unsupported_device",
+            requirement=requirement_,
+            reason=f"no JAX {device_platform} device is available",
             versions=versions,
         )
     try:

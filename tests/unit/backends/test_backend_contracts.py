@@ -11,6 +11,35 @@ import pytest
 import phydrax as phx
 
 
+@pytest.mark.parametrize(
+    "probe",
+    [
+        phx.backends.pyquda_availability,
+        phx.backends.grid_availability,
+        phx.backends.qlat_availability,
+    ],
+    ids=("pyquda", "grid", "qlat"),
+)
+def test_external_lattice_availability_admits_only_executable_adapters(
+    probe: Any,
+) -> None:
+    from phydrax.backends.lattice import create_lattice_provider
+
+    status = probe()
+    if not status.available:
+        with pytest.raises(phx.backends.BackendUnavailableError):
+            status.require(status.capabilities.problem_kinds[0])
+        return
+    provider = create_lattice_provider(status.backend)
+    assert provider.status().available
+    assert provider.capabilities.operations == status.capabilities.problem_kinds
+    assert provider.capabilities.dtypes == status.capabilities.coordinate_dtypes
+    assert (
+        provider.capabilities.transformations
+        == status.capabilities.distribution.transformations
+    )
+
+
 def _capabilities() -> Any:
     return phx.backends.BackendCapabilities(
         backend="contract-probe",

@@ -35,6 +35,7 @@ def spineax_availability() -> BackendAvailability:
         ),
         distributions=("spineax",),
         supported_platforms=("linux",),
+        device_platform="cuda",
     )
 
 

@@ -11,6 +11,7 @@ from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 
+from .._execution_device import device_platform
 from .._strict import StrictModule
 from ..typing import parse
 
@@ -70,7 +71,7 @@ SPARSE_PROVIDER_CATALOG = (
         package=None,
         jit=True,
         transpose_solve=False,
-        complex=False,
+        complex=True,
         batched_shared_pattern=True,
     ),
     SparseProviderCapabilities(
@@ -135,7 +136,17 @@ def sparse_provider_capabilities(
     name: SparseProviderName,
     /,
 ) -> SparseProviderCapabilities:
-    """Return one provider declaration from the immutable built-in catalog."""
+    """Return one provider declaration from the immutable built-in catalog.
+
+    The JAX CUDA QR provider supports real and complex square systems, but does
+    not expose singular-system failure status. cuSolver reports a singularity
+    index; JAX converts it into an XLA runtime error instead of returning it.
+    Consequently, even ``FailurePolicy("status")`` cannot turn a singular CUDA
+    QR solve into a ``LinearSolveResult``. No rank-deficient recovery is offered.
+    Automatic selection therefore considers this provider only with
+    ``FailurePolicy("error")``; explicit CUDA QR selection remains available
+    with either failure mode and still raises on singular systems.
+    """
     for capabilities in SPARSE_PROVIDER_CATALOG:
         if capabilities.name == name:
             return capabilities
@@ -174,7 +185,7 @@ def sparse_provider_availability(
         case "jax-cuda":
             import jax
 
-            available = any(device.platform == "gpu" for device in jax.devices())
+            available = any(device_platform(device) == "cuda" for device in jax.devices())
             reason = (
                 "CUDA device available."
                 if available
@@ -186,7 +197,9 @@ def sparse_provider_availability(
             package_available = _package_available("spineax")
             platform_supported = sys.platform.startswith("linux")
             architecture_supported = platform.machine().lower() in ("x86_64", "amd64")
-            cuda_available = any(device.platform == "gpu" for device in jax.devices())
+            cuda_available = any(
+                device_platform(device) == "cuda" for device in jax.devices()
+            )
             available = (
                 package_available
                 and platform_supported

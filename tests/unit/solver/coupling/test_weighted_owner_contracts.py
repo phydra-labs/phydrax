@@ -192,21 +192,20 @@ def test_gauged_kernel_accepts_exactly_the_compatible_loads() -> None:
         _plan(owner, gauge=cpl.CoupledGauge(compatibility="error")),
         arguments={"graph": _arguments(compatible)},
     )
-    policy = phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU())
-
+    # The default route handles the declared kernel; a dense LU of the singular
+    # operator truthfully reports SINGULAR instead of producing a solution.
     solution = cpl.solve_coupled_problem(
-        prepared, arguments={"graph": _arguments(compatible)}, policy=policy
+        prepared, arguments={"graph": _arguments(compatible)}
     )
     u = np.asarray(solution.field("graph", "u"))
     np.testing.assert_allclose(_LAPLACIAN @ u, compatible, atol=1.0e-12)
-    # Dense LU reports the singular gauged pivot; the compatibility test and the
-    # original equations are what this contract certifies.
     assert solution.linear is not None
+    assert bool(solution.linear.successful)
     assert float(solution.linear.diagnostics.compatibility_residual) <= 1.0e-14
     assert all(bool(item.accepted) for item in solution.components)
     with pytest.raises(eqx.EquinoxRuntimeError, match="incompatible with the declared"):
         cpl.solve_coupled_problem(
-            prepared, arguments={"graph": _arguments(misidentified)}, policy=policy
+            prepared, arguments={"graph": _arguments(misidentified)}
         )
 
 

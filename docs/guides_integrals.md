@@ -1072,10 +1072,17 @@ required/allocated interaction capacity, per-pass work counts, node scale
 range, accumulation policy, and completion. Capacity exhaustion invalidates
 the complete result rather than evaluating a truncated traversal.
 
-The optional Pallas P2P realization has a native custom JVP for relative
-positions and source masses; its VJP is the transpose of that same rule.
-Masked pairs remain zero. This bidirectional primitive capability does not
-change the whole-FMM orientation below.
+Select the optional Pallas P2P realization with
+`execution_backend="pallas", pallas_interpret=False` for compiled CUDA/TPU
+execution. `phx.backends.pallas_spatial_availability()` is its availability
+boundary; on CPU, explicitly select `pallas_interpret=True` for the semantic
+interpreter rather than compiled execution. Coordinate widths and positive
+block sizes are padded to power-of-two kernel tiles, so three-dimensional
+positions and nonmultiple particle counts do not require caller padding.
+The pair kernel has a native custom JVP for relative positions and source
+masses; its VJP is the transpose of that same rule. Masked pairs remain zero.
+This bidirectional primitive capability does not change the whole-FMM
+orientation below: `evaluate` supports reverse-mode differentiation, not JVP.
 
 The whole FMM has a rematerializing custom VJP: the forward pass does not
 retain an ordinary JAX tape for every tree pass, and the backward pass rebuilds
@@ -1102,7 +1109,8 @@ inside `jax.jit` and `lax.while_loop` and refresh strengths on every
 iteration. The gravity route `evaluate` composes the same preparation and
 kernel. Plans with `short_range_scale` are refused. With the Pallas P2P
 backend, the near gradient uses that kernel; the near potential sum is plain
-JAX.
+JAX. On a fixed prepared structure, strength refreshes and forward- and
+reverse-mode strength differentiation use this same field route.
 
 ```python
 plan = phx.solver.UniformFMMPlan(

@@ -638,6 +638,13 @@ The base install includes native JAXPR structural tracing and deterministic
 coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans
 integrate directly with `phydrax.linalg` and require no external tracing runtime.
 
+Importing Phydrax enables 64-bit JAX types and, unless you already chose a
+default through `JAX_DEFAULT_MATMUL_PRECISION` or `jax.config`, sets
+`jax_default_matmul_precision="highest"`, so float32 contractions use IEEE
+float32 arithmetic instead of TF32 tensor cores on NVIDIA GPUs. Reduced-precision
+contractions remain available through explicit per-call precision,
+`jax.default_matmul_precision(...)` scopes, or Phydrax precision policies.
+
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).

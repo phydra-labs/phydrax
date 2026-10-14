@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import ctypes
 import importlib
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -304,7 +306,8 @@ class Mpi4JaxCollectiveProvider:
         self.communicator = communicator
         self.communicator_id = identifier
         self.gpu_direct = bool(gpu_direct)
-        self.provider_id = f"mpi4jax:{identifier}"
+        route = "cuda-direct" if self.gpu_direct else "host-staged"
+        self.provider_id = f"mpi4jax:{identifier}:{route}"
         availability = mpi4jax_availability()
         self._mpi4jax = import_backend_module(
             availability,
@@ -312,6 +315,28 @@ class Mpi4JaxCollectiveProvider:
             "mpi4jax",
         )
         self._mpi = importlib.import_module("mpi4py.MPI")
+        configured_direct = os.environ.get("MPI4JAX_USE_CUDA_MPI", "").lower() in (
+            "true",
+            "1",
+            "on",
+        )
+        if self.gpu_direct != configured_direct:
+            raise ValueError(
+                "gpu_direct must match process-global MPI4JAX_USE_CUDA_MPI; "
+                "configure it before the first mpi4jax GPU operation"
+            )
+        if self.gpu_direct:
+            if not self._mpi4jax.has_cuda_support():
+                raise RuntimeError("mpi4jax was built without CUDA support")
+            # Query the MPI library already linked into mpi4py, never another ABI.
+            library = ctypes.CDLL(self._mpi.__file__)
+            query = getattr(library, "MPIX_Query_cuda_support", None)
+            if query is None:
+                raise RuntimeError("MPI exposes no CUDA-awareness qualification query")
+            query.argtypes = ()
+            query.restype = ctypes.c_int
+            if not query():
+                raise RuntimeError("gpu_direct requires CUDA-aware MPI")
 
     def _modules(self) -> tuple[Any, Any]:
         return self._mpi4jax, self._mpi

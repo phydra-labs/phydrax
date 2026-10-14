@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "962a9176729054340cc3ba240c47ba7c3d5bf5644ac0f871ac22e1ff1c8eaba1",
+  "manifest_id": "65fdff1699b88101ffaf762270958e29ae3f520d10ef72cefea313d4cc3c3b33",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -9723,6 +9723,7 @@
       "phydrax.backends.LatticeKernelCapabilities",
       "phydrax.backends.LatticeKernelCapabilityError",
       "phydrax.backends.LatticeKernelProvider",
+      "phydrax.backends.LatticeProviderName",
       "phydrax.backends.LatticeProviderStatus",
       "phydrax.backends.MACAULAY2_CAPABILITIES",
       "phydrax.backends.MACECouplingRole",
@@ -9786,6 +9787,7 @@
       "phydrax.backends.WARPGROUP_LANES",
       "phydrax.backends.amgx_availability",
       "phydrax.backends.clarabel_availability",
+      "phydrax.backends.create_lattice_provider",
       "phydrax.backends.cvxpy_availability",
       "phydrax.backends.decode_homotopy_geometry_result",
       "phydrax.backends.distribution_versions",
@@ -9851,9 +9853,11 @@
       "phydrax.backends.lattice.LatticeKernelCapabilities",
       "phydrax.backends.lattice.LatticeKernelCapabilityError",
       "phydrax.backends.lattice.LatticeKernelProvider",
+      "phydrax.backends.lattice.LatticeProviderName",
       "phydrax.backends.lattice.LatticeProviderStatus",
       "phydrax.backends.lattice.NATIVE_JAX_LATTICE_CAPABILITIES",
       "phydrax.backends.lattice.NativeJaxLatticeProvider",
+      "phydrax.backends.lattice.create_lattice_provider",
       "phydrax.backends.lattice.grid_availability",
       "phydrax.backends.lattice.optional_lattice_provider_availability",
       "phydrax.backends.lattice.pyquda_availability",

@@ -9,6 +9,13 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+# Float32 contractions default to IEEE float32 rather than reduced-precision
+# tensor-core formats (TF32 on NVIDIA GPUs). An explicit choice through
+# JAX_DEFAULT_MATMUL_PRECISION or an earlier jax.config update is kept, and
+# per-call precision arguments or jax.default_matmul_precision scopes still apply.
+if jax.config.jax_default_matmul_precision is None:
+    jax.config.update("jax_default_matmul_precision", "highest")
+
 # Launcher-provided rank settings must be consumed before any device-owning module
 # is imported. Local imports remain unchanged and preserve the package's deliberate
 # dependency order.

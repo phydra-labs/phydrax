@@ -15,7 +15,7 @@ semantics, ownership and transformation rules; it is not GPU qualification.
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from functools import partial
 from typing import Any
 
@@ -54,6 +54,15 @@ from phydrax.special import RealCartesianHarmonics
 
 
 pytestmark = pytest.mark.strict_jax
+
+
+@pytest.fixture(autouse=True)
+def _interpreter_on_cpu() -> Iterator[None]:
+    # The "cpu_interpret" target executes only on CPU devices, also when an
+    # accelerator is the default backend.
+    with jax.default_device(jax.devices("cpu")[0]):
+        yield
+
 
 CHANNELS = 2
 NODES = 7

@@ -15,6 +15,10 @@ import phydrax as phx
 
 la = phx.linalg
 eig = la.eigen
+# The JAX Schur substrate refuses non-CPU default backends at planning.
+cpu_schur = pytest.mark.skipif(
+    jax.default_backend() != "cpu", reason="the JAX Schur backend is CPU-only"
+)
 
 
 def _problem(matrix: Any, *, operator_id: Any = "general-schur") -> Any:
@@ -23,6 +27,7 @@ def _problem(matrix: Any, *, operator_id: Any = "general-schur") -> Any:
     )
 
 
+@cpu_schur
 def test_linalg_schur_scenario_1() -> None:
     matrix = jnp.asarray(
         [
@@ -36,13 +41,17 @@ def test_linalg_schur_scenario_1() -> None:
     reconstructed = (
         result.schur_vectors @ result.schur_form @ jnp.conj(result.schur_vectors.T)
     )
-    expected_eigenvalues = np.sort_complex(np.asarray(jnp.linalg.eigvals(matrix)))
-    actual_eigenvalues = np.sort_complex(np.asarray(result.eigenvalues))
+    # Characteristic-polynomial coefficients compare eigenvalue multisets without
+    # depending on a sort order that rounding can flip for conjugate pairs.
+    expected_characteristic = np.poly(np.asarray(jnp.linalg.eigvals(matrix)))
+    actual_characteristic = np.poly(np.asarray(result.eigenvalues))
 
     assert result.status == int(eig.SchurSolveStatus.SUCCESS)
     assert result.successful
     assert jnp.allclose(reconstructed, matrix, rtol=1e-11, atol=1e-12)
-    assert np.allclose(actual_eigenvalues, expected_eigenvalues, rtol=1e-11, atol=1e-12)
+    assert np.allclose(
+        actual_characteristic, expected_characteristic, rtol=1e-11, atol=1e-12
+    )
     assert result.diagnostics.departure_from_normality > 0.5
     assert result.provenance.ordering == "backend Schur order; no eigenvalue reordering"
     matrix = jnp.asarray(
@@ -123,6 +132,7 @@ def test_linalg_schur_scenario_1() -> None:
     assert result.schur_vectors.shape == (3, 3)
 
 
+@cpu_schur
 def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan() -> None:
     first_matrix = jnp.asarray([[1.0, 3.0], [-2.0, 4.0]])
     second_matrix = jnp.asarray([[2.0, -1.0], [5.0, 3.0]])
@@ -144,6 +154,6 @@ def test_prepared_schur_is_jittable_and_refreshes_under_same_symbolic_plan() -> 
     assert refreshed.refresh_count == 1
     assert second.provenance.numeric_version == 1
     assert np.allclose(
-        np.sort_complex(np.asarray(second.eigenvalues)),
-        np.sort_complex(np.asarray(jnp.linalg.eigvals(second_matrix))),
+        np.poly(np.asarray(second.eigenvalues)),
+        np.poly(np.asarray(jnp.linalg.eigvals(second_matrix))),
     )

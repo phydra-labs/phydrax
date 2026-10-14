@@ -11,7 +11,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, lax
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
@@ -40,6 +40,7 @@ class SpineaxBackendOutput(StrictModule):
     value: Array
     status: Array
     iterations: Array
+    refinement_steps: Array
     rank: Array
     condition_estimate: Array
     singular_values: Array | None
@@ -93,7 +94,7 @@ def _factor_values(storage: SparseStorage, /) -> Array:
 def _inertia(token: Any, batch_shape: tuple[int, ...], /) -> tuple[Array, Array, Array]:
     cudss = _cudss()
     batch_size = prod(batch_shape) if batch_shape else 1
-    counts = cudss.inertia(cudss.query(token), batch_size=batch_size)
+    counts = cudss.inertia(cudss.query(lax.stop_gradient(token)), batch_size=batch_size)
     if not batch_shape:
         positive, negative = counts[0], counts[1]
         zero = jnp.asarray(-1, dtype=jnp.int32)
@@ -218,6 +219,7 @@ def solve_spineax(
         value=value,
         status=status,
         iterations=jnp.full(status.shape, method.refinement_steps, dtype=jnp.int32),
+        refinement_steps=jnp.full(status.shape, method.refinement_steps, dtype=jnp.int32),
         rank=jnp.asarray(-1, dtype=jnp.int32),
         condition_estimate=jnp.full(status.shape, jnp.nan, dtype=rhs.real.dtype),
         singular_values=None,

@@ -413,6 +413,8 @@ class LinearSolveProvenance(StrictModule):
     recycling_update_count: Array
     requested_precision: MixedPrecisionPolicy | None
     effective_precision: LinearPrecisionEvidence | None
+    derivative_relative_tolerance: float | None = eqx.field(static=True)
+    derivative_absolute_tolerance: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -441,6 +443,8 @@ class LinearSolveProvenance(StrictModule):
         recycling_update_count: Any = 0,
         requested_precision: MixedPrecisionPolicy | None = None,
         effective_precision: LinearPrecisionEvidence | None = None,
+        derivative_relative_tolerance: float | None = None,
+        derivative_absolute_tolerance: float | None = None,
     ) -> None:
         values = (
             str(backend),
@@ -451,6 +455,20 @@ class LinearSolveProvenance(StrictModule):
         )
         if any(not value for value in values):
             raise ValueError("Solve provenance identifiers and reason must be non-empty.")
+        if (derivative_relative_tolerance is None) != (
+            derivative_absolute_tolerance is None
+        ):
+            raise ValueError("Effective derivative tolerances must be present together.")
+        if any(
+            value is not None and (not math.isfinite(value) or value < 0.0)
+            for value in (
+                derivative_relative_tolerance,
+                derivative_absolute_tolerance,
+            )
+        ):
+            raise ValueError(
+                "Effective derivative tolerances must be finite and non-negative."
+            )
         (
             self.backend,
             self.method,
@@ -550,6 +568,8 @@ class LinearSolveProvenance(StrictModule):
         )
         if self.recycling_update_count.ndim != 0:
             raise ValueError("recycling_update_count must be scalar.")
+        self.derivative_relative_tolerance = derivative_relative_tolerance
+        self.derivative_absolute_tolerance = derivative_absolute_tolerance
 
 
 _SOLVE_CONVERGED = "solve-converged"

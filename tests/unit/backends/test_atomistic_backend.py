@@ -4,10 +4,12 @@
 
 """Admission, refusal and identity of the accelerated atomistic kernel backend."""
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import phydrax.backends.atomistic as atomistic_backend
 from phydrax.backends._types import BackendUnavailableError
 from phydrax.backends.atomistic import (
     AtomisticKernelAdmission,
@@ -105,3 +107,24 @@ def test_precision_and_accumulation_are_distinct_admitted_identities() -> None:
     assert (
         float64.admission_id == AtomisticKernelAdmission(_request(), target).admission_id
     )
+
+
+@pytest.mark.parametrize(
+    ("capability", "admitted"),
+    [
+        ((9, 0), True),
+        ((12, 0), True),
+        ((8, 9), False),
+        ((10, 0), False),
+        ((12, 1), False),
+        ((13, 0), False),
+    ],
+)
+def test_cuda_architecture_admission_is_explicit(
+    monkeypatch: pytest.MonkeyPatch, capability: tuple[int, int], admitted: bool
+) -> None:
+    device = SimpleNamespace(device_kind="test NVIDIA device")
+    monkeypatch.setattr(atomistic_backend, "_cuda_device", lambda: (device, "test CUDA"))
+    monkeypatch.setattr(atomistic_backend, "_compute_capability", lambda _: capability)
+    availability = pallas_atomistic_availability("cuda")
+    assert availability.available is admitted

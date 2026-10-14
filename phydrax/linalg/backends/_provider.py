@@ -69,6 +69,8 @@ class AbstractLinearProvider(abc.ABC):
     backends: tuple[LinearBackend, ...]
     accepts_initial_guess: bool = False
     supports_implicit_differentiation: bool = False
+    # Prepared transpose/adjoint solves of batched operators reuse the factors.
+    supports_batched_transformed: bool = False
     # Solve is a pure device program over prepared state: the runtime executes
     # it through its stable compiled entry so loops are traced once per structure.
     compiled_execution: bool = False
@@ -301,6 +303,7 @@ class _SparseProvider(AbstractLinearProvider):
 class _SpineaxProvider(AbstractLinearProvider):
     backends = ("spineax-cudss",)
     supports_implicit_differentiation = True
+    supports_batched_transformed = True
 
     def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> SpineaxSymbolicState:
         return analyze_spineax(problem, plan)

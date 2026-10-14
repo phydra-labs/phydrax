@@ -28,6 +28,7 @@ from ._types import (
     AbstractExternalBackend,
     BackendAvailability,
     BackendCapabilities,
+    BackendDistributionCapabilities,
     BackendTransferEvidence,
 )
 
@@ -58,6 +59,13 @@ AMGX_CAPABILITIES = BackendCapabilities(
     supports_assembled=True,
     coordinate_dtypes=("float32", "float64"),
     requires_explicit_release=True,
+    # The pyamgx adapter crosses the host boundary eagerly: no JAX transformations.
+    distribution=BackendDistributionCapabilities(
+        array_model="global",
+        scopes=("single_device",),
+        platforms=("cuda",),
+        transformations=(),
+    ),
 )
 
 
@@ -68,10 +76,18 @@ _DEFAULT_AMGX_CONFIG = {
     "config_version": 2,
     "solver": {
         "solver": "FGMRES",
-        "preconditioner": {"solver": "AMG", "algorithm": "AGGREGATION"},
+        "preconditioner": {
+            "solver": "AMG",
+            "algorithm": "AGGREGATION",
+            # AmgX defaults to the classical PMIS selector, which aggregation lacks.
+            "selector": "SIZE_2",
+            "max_iters": 1,
+        },
         "max_iters": 100,
         "tolerance": 1.0e-8,
         "norm": "L2",
+        "monitor_residual": 1,
+        "convergence": "RELATIVE_INI_CORE",
     },
 }
 
@@ -316,6 +332,7 @@ class AmgXBackend(AbstractExternalBackend):
             module="pyamgx",
             requirement="install NVIDIA AmgX and the optional pyamgx bindings",
             distributions=("pyamgx",),
+            device_platform="cuda",
         )
 
     def plan(
@@ -515,6 +532,7 @@ def prepare_pyamgcl(
 
 _AMGX_LOCK = Lock()
 _AMGX_REFERENCES: dict[int, int] = {}
+_AMGX_RETIRED: dict[int, list[tuple[Any, Any]]] = {}
 
 
 def _acquire_amgx(module: Any, /) -> None:
@@ -526,15 +544,36 @@ def _acquire_amgx(module: Any, /) -> None:
         _AMGX_REFERENCES[key] = count + 1
 
 
-def _release_amgx_module(module: Any, /) -> None:
+def _release_amgx_module(
+    module: Any, resources: Any = None, config: Any = None, /
+) -> None:
     key = id(module)
     with _AMGX_LOCK:
-        count = _AMGX_REFERENCES.get(key, 0)
-        if count <= 1:
-            _AMGX_REFERENCES.pop(key, None)
-            module.finalize()
-        else:
+        if resources is not None or config is not None:
+            _AMGX_RETIRED.setdefault(key, []).append((resources, config))
+        count = _AMGX_REFERENCES[key]
+        if count > 1:
             _AMGX_REFERENCES[key] = count - 1
+            return
+        _AMGX_REFERENCES.pop(key)
+        # AmgX Resources destruction frees process-global device pools. All
+        # hierarchies must be destroyed before retiring any Resources handle.
+        failure: Exception | None = None
+        retired = _AMGX_RETIRED.pop(key, [])
+        for resource in (*[pair[0] for pair in retired], *[pair[1] for pair in retired]):
+            if resource is not None:
+                try:
+                    resource.destroy()
+                except Exception as error:
+                    if failure is None:
+                        failure = error
+        try:
+            module.finalize()
+        except Exception as error:
+            if failure is None:
+                failure = error
+        if failure is not None:
+            raise failure
 
 
 def prepare_amgx(
@@ -555,16 +594,21 @@ def prepare_amgx(
         config = module.Config().create_from_dict(_config_dict(plan.policy.config))
         resources = module.Resources().create_simple(config)
         matrix = module.Matrix().create(resources)
-        matrix.upload_CSR(_scipy_csr(storage))
+        provider_matrix = _scipy_csr(storage).astype(np.float64, copy=False)
+        matrix.upload_CSR(provider_matrix)
         solver = module.Solver().create(resources, config)
         solver.setup(matrix)
     except Exception:
-        for resource in (solver, matrix, resources, config):
+        for resource in (solver, matrix):
             if resource is not None:
                 resource.destroy()
-        _release_amgx_module(module)
+        _release_amgx_module(module, resources, config)
         raise
-    matrix_bytes = storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
+    matrix_bytes = (
+        provider_matrix.data.nbytes
+        + provider_matrix.indices.nbytes
+        + provider_matrix.indptr.nbytes
+    )
     return PreparedAmgX(
         problem=problem,
         plan=plan,
@@ -825,6 +869,10 @@ def solve_amgx(
     guess = _initial_coordinates(
         prepared.problem.operator.source, initial_guess, rhs_shape
     )
+    # pyamgx high-level uploads and downloads require double-precision buffers.
+    # Materialize before creating native handles, so tracing fails without side effects.
+    host_rhs = np.asarray(rhs, dtype=np.float64)
+    host_guess = None if guess is None else np.asarray(guess, dtype=np.float64)
     solutions = []
     iteration_values = []
     reasons: list[str | None] = []
@@ -834,21 +882,17 @@ def solve_amgx(
             prepared.runtime.resources
         )
         try:
-            rhs_vector.upload(np.asarray(rhs[:, index]))
+            rhs_vector.upload(np.ascontiguousarray(host_rhs[:, index]))
             initial = (
-                np.zeros((rhs.shape[0],), dtype=np.dtype(rhs.dtype))
-                if guess is None
-                else np.asarray(guess[:, index])
+                np.zeros((rhs.shape[0],), dtype=np.float64)
+                if host_guess is None
+                else np.ascontiguousarray(host_guess[:, index])
             )
             solution_vector.upload(initial)
             prepared.runtime.solver.solve(rhs_vector, solution_vector)
             solutions.append(np.asarray(solution_vector.download()))
-            iterations, provider_reasons = _provider_metadata(
-                prepared.runtime.solver, None
-            )
-            if iterations is not None:
-                iteration_values.append(iterations)
-            reasons.append(provider_reasons[0] if provider_reasons else None)
+            iteration_values.append(prepared.runtime.solver.iterations_number)
+            reasons.append(prepared.runtime.solver.status)
         finally:
             solution_vector.destroy()
             rhs_vector.destroy()
@@ -867,7 +911,15 @@ def solve_amgx(
         if len(iteration_values) != rhs.shape[1]
         else jnp.asarray(iteration_values, dtype=jnp.int32).reshape(rhs_shape or ())
     )
-    bytes_per_columns = rhs.nbytes
+    provider_success = jnp.asarray([reason == "success" for reason in reasons]).reshape(
+        rhs_shape or ()
+    )
+    status = jnp.where(
+        (status == int(AMGSolveStatus.SUCCESS)) & ~provider_success,
+        int(AMGSolveStatus.PROVIDER_FAILURE),
+        status,
+    ).astype(jnp.int32)
+    bytes_per_columns = host_rhs.nbytes
     return AMGSolveResult(
         value=_unpack_rhs(coordinates, rhs_shape, treedef, specifications),
         status=status,
@@ -903,8 +955,6 @@ def release_amgx(prepared: PreparedAmgX, /) -> None:
     for resource in (
         runtime.solver,
         runtime.matrix,
-        runtime.resources,
-        runtime.config,
     ):
         try:
             resource.destroy()
@@ -912,7 +962,7 @@ def release_amgx(prepared: PreparedAmgX, /) -> None:
             if failure is None:
                 failure = error
     try:
-        _release_amgx_module(runtime.module)
+        _release_amgx_module(runtime.module, runtime.resources, runtime.config)
     except Exception as error:
         if failure is None:
             failure = error

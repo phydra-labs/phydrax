@@ -197,9 +197,8 @@ def test_distributed_qcd_production_closure_scenario_2() -> None:
     assert float(serial_action.value) > 0.0
     np.testing.assert_allclose(distributed_action.value, serial_action.value, rtol=1e-13)
 
-    staples = np.roll(links, 1, axis=0) + np.roll(links, -1, axis=0)
-    serial_force = serial.gauge_force(links, staples)
-    distributed_force = distributed.gauge_force(links, staples)
+    serial_force = serial.gauge_force(links)
+    distributed_force = distributed.gauge_force(links)
     assert bool(serial_force.successful)
     assert bool(distributed_force.successful)
     assert float(jnp.linalg.norm(serial_force.value)) > 0.0

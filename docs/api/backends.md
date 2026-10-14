@@ -62,7 +62,26 @@ for a hardware support claim.
 route installed with `phydrax[mpi]`. Its communicator is caller-owned, and
 automatic differentiation and batching remain operation-specific. Host
 `mpi4py` traffic must not be interleaved on the same communicator with deferred
-device MPI operations.
+device MPI operations. mpi4jax selects GPU transport once per process from
+`MPI4JAX_USE_CUDA_MPI`; set it to `1` before importing/using mpi4jax for
+`gpu_direct=True`, or `0` for `gpu_direct=False` (host staging), and do not change
+it afterward. Direct transport requires a CUDA-enabled mpi4jax build, a CUDA
+device, and CUDA-aware MPI: the MPI library actually linked by mpi4py must
+report `MPIX_Query_cuda_support() == 1`. Build OpenMPI with
+`--with-cuda=/usr/local/cuda`, then build both mpi4py and mpi4jax against that
+installation's `mpicc`; use its matching `mpirun`, not a system launcher from
+another MPI installation. MPI libraries must remain discoverable through RPATH
+or the deployment's library path. Direct mode passes device buffers to MPI
+without mpi4jax host staging; MPI may still copy internally. CUDA awareness does
+not guarantee CUDA IPC or network GPUDirect RDMA. Single-node OpenMPI can use
+its CUDA-aware shared-memory transport without UCX, including a copy route when
+CUDA IPC export is unavailable. The provider refuses an unqualified direct
+route instead of falling back.
+Rank-local MPI does not require JAX multi-host initialization; avoid enabling
+the independent launcher-detected Phydrax/JAX distributed bootstrap when both
+ranks deliberately share one GPU. Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` for
+that deployment. The CUDA MPI integration test accepts a matching launcher
+(and deployment-specific flags) through `PHYDRAX_MPI_LAUNCHER`.
 
 Vendor profiles are admission envelopes rather than blanket qualification:
 
@@ -90,6 +109,54 @@ Phydrax does not claim one heterogeneous global JAX mesh.
 ---
 
 ::: phydrax.backends.mpi4jax_availability
+
+## Lattice kernel providers
+
+`create_lattice_provider("jax-native-lattice" | "pyquda" | "gpt-grid" | "qlat")`
+selects one canonical `LatticeKernelProvider`. The external availability functions
+(`pyquda_availability`, `grid_availability`, `qlat_availability`, and
+`optional_lattice_provider_availability`) admit executable adapter prerequisites,
+not merely importable packages. Construction refuses unavailable runtimes; no
+adapter silently substitutes native JAX execution.
+
+Gauge operations take canonical `(site, direction, color, color)` links, `beta`,
+an owned-output mask, and explicit `lattice_shape` and `periodic` keyword arguments.
+Site ordering is C order. Action masks are `(site, plane)` with planes ordered
+by ascending `mu < nu`; force masks are `(site, direction)`. Native JAX supports
+periodic axes and bounded halo-extended blocks, excluding faces that leave bounded
+axes. External adapters currently support single-process periodic 4D SU(3)
+lattices; their action requires full ownership, while force supports output masks.
+The PyQUDA and Grid adapters additionally require even lattice extents; PyQUDA
+requires Wilson `r=1`.
+No external adapter currently declares distributed halo exchange or MPI reductions.
+
+Fermion operations consume canonical Wilson/clover-Wilson operators and
+`(site, spin, color)` spinors (an optional final RHS axis denotes a block).
+They execute the full Dirac action, including mass, spacing, boundary phases,
+spin-basis conversion, and supplied local clover blocks—not just the library's
+raw hopping term. The adjoint flag denotes the Hermitian adjoint.
+PyQUDA uses QUDA Wilson hopping with a faithful spin-basis conversion and applies
+the operator's arbitrary local clover blocks in CuPy; it does not replace those
+blocks with QUDA's gauge-generated clover term.
+
+| Provider | Operations | Dtypes | JAX transformations |
+| --- | --- | --- | --- |
+| Native JAX | Gauge action/force, Wilson/clover/block, projected halo | complex64/complex128 | jit, vmap, jvp, vjp, rematerialization |
+| PyQUDA | Gauge action/force, Wilson/clover/block | complex64/complex128 | jit (explicit host-staged callback); no autodiff |
+| Grid/gpt | Gauge action/force, Wilson/clover/block | complex64/complex128 | eager only |
+| Qlat | Gauge action/force | complex128 | eager only |
+
+PyQUDA eager CUDA inputs use zero-copy JAX/CuPy DLPack interchange, followed by
+explicit copies for QUDA's checkerboard layout. Outputs return through DLPack.
+Under `jit`, an explicit host callback stages arrays between JAX and CuPy;
+this path does not claim zero-copy execution. QUDA's process-global resident
+gauge state is serialized. CPU adapters explicitly transfer arrays to their host
+runtime. External adapters declare no automatic differentiation; differentiating
+through them is refused rather than returning an incorrect derivative. Provider
+status preserves runtime and version evidence.
+
+::: phydrax.backends.create_lattice_provider
+
 
 
 ## Clarabel conic programming
@@ -481,11 +548,14 @@ pattern and increments the numeric version; structural drift is an error.
 
 PyAMGCL is a host provider. Its result reports iteration or reason data only when the
 binding exposes them; missing counters remain absent. AmgX is a device provider. One
-prepared hierarchy uploads CSR once, solves multiple right-hand sides without setup
+high-level pyamgx adapter promotes float32 buffers to float64 for its dDDI runtime
+and casts results back to the declared coordinate dtype. It does not support JIT
+or automatic differentiation. One prepared hierarchy uploads CSR once, solves multiple right-hand sides without setup
 repetition, downloads before independent residual verification, and reports exact
 transfer and synchronization evidence. `release_amgx` is idempotent and releases the
 solver, vectors, matrix, resources, configuration, and reference-counted global AmgX
-runtime.
+runtime. Native resources/configurations are retained until the last live hierarchy
+is released because Resources destruction frees global device pools.
 
 ```python
 if phx.backends.amgx_availability().available:

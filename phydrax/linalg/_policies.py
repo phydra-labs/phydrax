@@ -692,6 +692,13 @@ class LinearSolveCheckPolicy(StrictModule):
 class LinearDerivativeSolvePolicy(StrictModule):
     """Independent work and acceptance requirements for implicit derivative solves.
 
+    Omitted (``None``) relative tolerance resolves to
+    ``max(1e-8, 10 * eps)`` in the derivative coordinate dtype; omitted absolute
+    tolerance resolves to ``1e-10``. Explicit tolerances are honored unchanged,
+    including values below attainable roundoff. Solve provenance reports the
+    effective values. Thus float64 retains the original default accuracy while
+    float32 does not demand a sub-roundoff relative residual.
+
     ``route`` selects how implicit tangent and cotangent linear solves execute:
 
     - ``"krylov"`` runs an independent preconditioned CG solve for prepared PCG
@@ -712,8 +719,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
       therefore refuses ``require_nullspace``.
     """
 
-    relative_tolerance: float = eqx.field(static=True)
-    absolute_tolerance: float = eqx.field(static=True)
+    relative_tolerance: float | None = eqx.field(static=True)
+    absolute_tolerance: float | None = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
     nullspace_tolerance: float = eqx.field(static=True)
     stability_lower_bound: StabilityLowerBound | None
@@ -723,8 +730,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
     def __init__(
         self,
         *,
-        relative_tolerance: float = 1e-8,
-        absolute_tolerance: float = 1e-10,
+        relative_tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
         maximum_steps: int | None = None,
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
@@ -737,8 +744,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
             nullspace,
             stability_lower_bound,
         ) = _linear_check_parameters(
-            relative_tolerance,
-            absolute_tolerance,
+            1e-8 if relative_tolerance is None else relative_tolerance,
+            1e-10 if absolute_tolerance is None else absolute_tolerance,
             nullspace_tolerance,
             stability_lower_bound,
         )
@@ -762,8 +769,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
                     )
             case _:
                 raise ValueError(f"Unsupported derivative solve route {route!r}.")
-        self.relative_tolerance = relative
-        self.absolute_tolerance = absolute
+        self.relative_tolerance = None if relative_tolerance is None else relative
+        self.absolute_tolerance = None if absolute_tolerance is None else absolute
         self.nullspace_tolerance = nullspace
         self.stability_lower_bound = stability_lower_bound
         self.maximum_steps = steps

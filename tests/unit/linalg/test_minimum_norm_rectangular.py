@@ -16,6 +16,7 @@ import pytest
 from jax import Array
 
 import phydrax.linalg as la
+from phydrax._execution_device import device_platform
 from phydrax.sparse import EdgeRelation, SparseCoordinateOperator
 
 
@@ -493,6 +494,8 @@ def test_dense_svd_rank_certificate_carries_native_exact_evidence() -> None:
 def test_dense_svd_drivers_certify_exactly_clustered_spectrum(
     algorithm: la.svd.DenseSVDAlgorithm,
 ) -> None:
+    if algorithm == "divide-and-conquer" and device_platform(jax.devices()[0]) == "cuda":
+        pytest.skip("Divide-and-conquer is not a CUDA SVD driver.")
     # Kronecker-sum lattice Laplacian: exactly repeated eigenvalues, the spectrum
     # class on which divide-and-conquer drivers can fail. Oracle: closed form.
     size = 12

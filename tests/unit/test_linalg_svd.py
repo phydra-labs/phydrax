@@ -11,10 +11,57 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._execution_device import device_platform
 
 
 la = phx.linalg
 svd = la.svd
+
+
+@pytest.mark.parametrize("compiled", (False, True), ids=("eager", "jit"))
+def test_default_dense_svd_reconstructs_on_default_platform(compiled: bool) -> None:
+    matrix = jnp.asarray([[3.0, 1.0], [0.0, 2.0], [1.0, 0.0]])
+    problem = svd.SVDProblem(la.DenseLinearOperator(matrix))
+    policy = svd.SVDSolvePolicy(svd.DenseSVD(), count=2)
+    prepared = svd.prepare_svd(problem, policy)
+    result = jax.jit(svd.svd)(prepared) if compiled else svd.svd(prepared)
+    assert bool(result.successful)
+    np.testing.assert_allclose(
+        result.singular_values, np.linalg.svd(np.asarray(matrix), compute_uv=False)
+    )
+    np.testing.assert_allclose(
+        (result.left_coordinates * result.singular_values)
+        @ result.right_coordinates.conj().T,
+        matrix,
+        atol=1e-12,
+    )
+
+
+def test_cpu_default_dense_svd_retains_plan_identity() -> None:
+    with jax.default_device(jax.devices("cpu")[0]):
+        problem = svd.SVDProblem(
+            la.DenseLinearOperator(jnp.asarray([[3.0, 0.0], [0.0, 2.0]]))
+        )
+        implicit = svd.plan_svd(problem, svd.SVDSolvePolicy(svd.DenseSVD(), count=2))
+        explicit = svd.plan_svd(
+            problem,
+            svd.SVDSolvePolicy(svd.DenseSVD(algorithm="divide-and-conquer"), count=2),
+        )
+    assert implicit.plan_id == explicit.plan_id
+
+
+@pytest.mark.parametrize("preparing", (False, True), ids=("plan", "prepare"))
+def test_cuda_refuses_explicit_divide_and_conquer(preparing: bool) -> None:
+    if device_platform(jax.devices()[0]) != "cuda":
+        pytest.skip("Requires the CUDA backend.")
+    matrix = jnp.asarray([[3.0, 0.0], [0.0, 2.0]])
+    problem = svd.SVDProblem(la.DenseLinearOperator(matrix))
+    policy = svd.SVDSolvePolicy(svd.DenseSVD(algorithm="divide-and-conquer"), count=2)
+    action = svd.prepare_svd if preparing else svd.plan_svd
+    # Concrete CUDA operands own admission even under a CPU default-device context.
+    with jax.default_device(jax.devices("cpu")[0]):
+        with pytest.raises(ValueError, match="divide-and-conquer.*platform 'cuda'"):
+            action(problem, policy)
 
 
 class _DensePairing(la.AbstractPairing):

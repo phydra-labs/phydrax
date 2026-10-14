@@ -11,6 +11,7 @@ from typing import Literal, TypeAlias
 import jax
 import jax.numpy as jnp
 
+from .._execution_device import device_platform
 from ._types import (
     BackendAvailability,
     BackendCapabilities,
@@ -46,9 +47,9 @@ PALLAS_SPATIAL_CAPABILITIES = BackendCapabilities(
 
 def pallas_spatial_availability(*, interpret: bool = False) -> BackendAvailability:
     """Return whether the built-in Pallas spatial kernel can execute here."""
-    platforms = tuple(device.platform for device in jax.devices())
+    platforms = tuple(device_platform(device) for device in jax.devices())
     available = bool(interpret) or any(
-        platform in ("cuda", "gpu", "tpu") for platform in platforms
+        platform in ("cuda", "tpu") for platform in platforms
     )
     reason = (
         "Pallas interpret mode is explicitly enabled"
@@ -76,12 +77,16 @@ def _pallas_squared_norm(
 
     values = jnp.asarray(relative)
     dimension = values.shape[-1]
+    padded_dimension = 1 << (dimension - 1).bit_length()
+    block_size = 1 << (block_size - 1).bit_length()
     leading_shape = values.shape[:-1]
     item_count = values.size // dimension
     blocks = ceil(item_count / block_size)
     padded_count = blocks * block_size
     flattened = values.reshape((item_count, dimension))
-    padded = jnp.pad(flattened, ((0, padded_count - item_count), (0, 0)))
+    padded = jnp.pad(
+        flattened, ((0, padded_count - item_count), (0, padded_dimension - dimension))
+    )
 
     def kernel(value_ref: jax.Ref, output_ref: jax.Ref) -> None:
         value = value_ref[...]
@@ -91,7 +96,9 @@ def _pallas_squared_norm(
         kernel,
         out_shape=jax.ShapeDtypeStruct((padded_count,), values.dtype),
         grid=(blocks,),
-        in_specs=(pl.BlockSpec((block_size, dimension), lambda block: (block, 0)),),
+        in_specs=(
+            pl.BlockSpec((block_size, padded_dimension), lambda block: (block, 0)),
+        ),
         out_specs=pl.BlockSpec((block_size,), lambda block: (block,)),
         interpret=bool(interpret),
         name="phydrax_spatial_squared_norm",
@@ -143,13 +150,15 @@ def _pallas_pair_acceleration(
     from jax.experimental import pallas as pl
 
     dimension = relative.shape[-1]
+    padded_dimension = 1 << (dimension - 1).bit_length()
+    block_size = 1 << (block_size - 1).bit_length()
     leading_shape = relative.shape[:-1]
     item_count = source_mass.size
     blocks = ceil(item_count / block_size)
     padded_count = blocks * block_size
     flat_displacement = jnp.pad(
         relative.reshape((item_count, dimension)),
-        ((0, padded_count - item_count), (0, 0)),
+        ((0, padded_count - item_count), (0, padded_dimension - dimension)),
     )
     flat_mass = jnp.pad(
         source_mass.reshape((item_count,)),
@@ -176,18 +185,18 @@ def _pallas_pair_acceleration(
 
     call = pl.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((padded_count, dimension), relative.dtype),
+        out_shape=jax.ShapeDtypeStruct((padded_count, padded_dimension), relative.dtype),
         grid=(blocks,),
         in_specs=(
-            pl.BlockSpec((block_size, dimension), lambda block: (block, 0)),
+            pl.BlockSpec((block_size, padded_dimension), lambda block: (block, 0)),
             pl.BlockSpec((block_size,), lambda block: (block,)),
             pl.BlockSpec((block_size,), lambda block: (block,)),
         ),
-        out_specs=pl.BlockSpec((block_size, dimension), lambda block: (block, 0)),
+        out_specs=pl.BlockSpec((block_size, padded_dimension), lambda block: (block, 0)),
         interpret=bool(interpret),
         name="phydrax_particle_fmm_pair_acceleration",
     )
-    return call(flat_displacement, flat_mass, flat_mask)[:item_count].reshape(
+    return call(flat_displacement, flat_mass, flat_mask)[:item_count, :dimension].reshape(
         leading_shape + (dimension,)
     )
 

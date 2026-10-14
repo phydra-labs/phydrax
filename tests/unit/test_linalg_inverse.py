@@ -549,5 +549,8 @@ def test_complex_pseudoinverse_preserves_dtype_and_moore_penrose_action(
     assert bool(result.successful)
     np.testing.assert_allclose(result.value, expected, rtol=tolerance, atol=tolerance)
     np.testing.assert_allclose(
-        matrix @ result.value @ matrix, matrix, rtol=tolerance, atol=tolerance
+        np.asarray(matrix) @ np.asarray(result.value) @ np.asarray(matrix),
+        matrix,
+        rtol=tolerance,
+        atol=tolerance,
     )
