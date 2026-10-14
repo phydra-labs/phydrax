@@ -98,3 +98,17 @@ The tensor forms `Bool`, `Int32`, `Int64`, `UInt32`, `Float32`, `Float64`,
 static types. `Size[D]` is `int`, `Identifier` is `str`, `Identifiers[D]` is
 `tuple[str, ...]`, `PRNGKey` is `jax.Array`, and `ConvertibleToArray` and
 `Like[F]` describe conversion inputs.
+
+Exact forms retain their declared NumPy dtype in immutable contract plans.
+For JAX forms, checking and conversion resolve that declaration to JAX's effective
+canonical width under the current x64 setting. Thus `Float64` means float32 with
+x64 disabled and float64 with x64 enabled; `Int64` and `Complex128` follow the same
+canonicalization policy. Host exact forms retain the declared NumPy width
+regardless of x64; float32 never satisfies `HostFloat64`.
+
+Cached parse, class, and signature plans do not freeze effective widths. Scoped
+numerical settings apply when checking or converting, including during JIT
+tracing. Validation preserves array identity and refuses incompatible historical
+arrays rather than converting them; explicit conversion with `casting="safe"`
+refuses narrowing to the effective target. Scientific precision requirements
+remain with their owning substrates.

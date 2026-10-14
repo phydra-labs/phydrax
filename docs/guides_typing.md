@@ -56,11 +56,49 @@ that carries the dtype for exact forms.
 | JAX | Host | Accepted dtypes |
 |---|---|---|
 | `Bool` | `HostBool` | boolean |
-| `Int32`, `Int64`, `UInt32` | `HostInt32`, `HostInt64` | that exact dtype |
-| `Float32`, `Float64` | `HostFloat32`, `HostFloat64` | that exact dtype |
-| `Complex64`, `Complex128` | `HostComplex128` | that exact dtype |
+| `Int32`, `Int64`, `UInt32` | `HostInt32`, `HostInt64` | declared dtype (JAX canonical width; exact host width) |
+| `Float32`, `Float64` | `HostFloat32`, `HostFloat64` | declared dtype (JAX canonical width; exact host width) |
+| `Complex64`, `Complex128` | `HostComplex128` | declared dtype (JAX canonical width; exact host width) |
 | `Integer`, `Float`, `Complex`, `Inexact` | `HostInteger`, `HostFloat`, `HostInexact` | the dtype category |
 | `Shaped` | `HostShaped` | any dtype |
+
+Exact forms store the **declared** NumPy dtype. JAX checks and conversions resolve
+its **effective** canonical width under the current x64 setting: `Float64` accepts
+float32 when x64 is disabled and float64 when it is enabled. Host forms always
+retain their exact NumPy width: `HostFloat64` accepts float64, never float32,
+regardless of x64. Cached parse, class, and checked-signature plans retain only
+declarations, so scoped changes apply at checking/conversion time; checks inside
+JIT run during tracing under JAX's compilation context.
+
+```python executable
+import numpy as np
+from phydrax import config
+import phydrax.typing as pt
+
+class NodeDim(pt.Dim):
+    pass
+
+host = np.ones(2, dtype=np.float64)
+form = pt.Float64[NodeDim]
+before = config.x64_enabled()
+before_dtype = np.float64 if before else np.float32
+assert pt.as_host_array(host, pt.HostFloat64[NodeDim], "host") is host
+assert pt.as_array(host, form, "before").dtype == np.dtype(before_dtype)
+with config.context(config.NumericsConfig(enable_x64=not before)):
+    effective = np.float32 if before else np.float64
+    values = pt.as_array(host, form, "scoped")
+    assert values.dtype == np.dtype(effective)
+    assert pt.parse(values, form, "scoped") is values
+    assert pt.parse(host, pt.HostFloat64[NodeDim], "host") is host
+assert config.x64_enabled() == before
+assert pt.as_array(host, form, "restored").dtype == np.dtype(before_dtype)
+```
+
+Scientific owners may independently require x64 or a specific precision and
+must preserve their own refusal and evidence. Structural validation never
+converts historical stored arrays to a newly effective width: an incompatible
+artifact is refused. Explicit conversion with `casting="safe"` still refuses
+narrowing, including float64 to the effective float32 target.
 
 Shape arguments are:
 
@@ -323,7 +361,7 @@ declaration order, so reordering would change PyTree leaves and fingerprints.
 
 ## Outlook: JAX-level types
 
-Structural contracts are backend-neutral records of canonical dtype names and
+Structural contracts are backend-neutral records of declared dtype names and
 nominal dimensions. Opaque JAX-level value types, whose semantic identity,
 tangent, batching, and sharding rules would be visible inside jaxprs, are a
 separate future track; package code does not depend on experimental JAX type

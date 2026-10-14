@@ -99,6 +99,7 @@ from ._typing_forms import (
 from ._typing_plan import (
     ArrayContract,
     check,
+    effective_dtype,
     parse_contract,
     raise_violation,
     Scope,
@@ -153,15 +154,16 @@ def _target_dtype(
     rule = contract.tensor.dtype
     if rule is None:
         return source
-    if rule.exact is None:
+    target = effective_dtype(contract)
+    if target is None:
         if not dtype_matches(rule, source):
             raise TypeError(f"{name}: dtype {source} is not {rule.label}.")
         return source
-    if not np.can_cast(source, rule.exact, casting=casting):
+    if not np.can_cast(source, target, casting=casting):
         raise TypeError(
-            f"{name}: cannot cast {source} to {rule.exact} under {casting!r} casting."
+            f"{name}: cannot cast {source} to {target} under {casting!r} casting."
         )
-    return rule.exact
+    return target
 
 
 def as_array(
