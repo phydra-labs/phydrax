@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from examples.nuclear_fuel_calibration import prepare_synthetic_inference_rod
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel._inventory import FuelGasLedger
 from phydrax.applications.nuclear_fuel._observables import (
     FuelGasAncestry,
@@ -40,7 +40,7 @@ def _ledger(
 
 
 def test_refabricated_fgr_preserves_parent_transfers_not_current_stock() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         ancestor = _ledger(100.0, 20.0, 80.0, 5.0)
         segment_start = _ledger(0.0, 0.0, 80.0, 8.0)
         current = _ledger(50.0, 5.0, 125.0, 8.0)
@@ -59,7 +59,7 @@ def test_refabricated_fgr_preserves_parent_transfers_not_current_stock() -> None
 
 
 def test_thermocouple_lag_has_exact_ramp_response_on_nonuniform_grid() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         time = np.asarray([0.0, 0.2, 0.9, 2.0, 3.0])
         tau = 0.7
         slope = 12.0
@@ -71,7 +71,7 @@ def test_thermocouple_lag_has_exact_ramp_response_on_nonuniform_grid() -> None:
 
 @pytest.fixture(scope="module")
 def cooled_rod() -> tuple[PreparedFuelRod, FuelFixedGrid, FuelReplayResult]:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_synthetic_inference_rod(
             include_cooldown=True, initial_oxide_thickness=1.0e-6
         )
@@ -211,7 +211,7 @@ def test_thermocouple_drift_window_is_observation_validity_not_temperature_clipp
 def test_valid_pressure_sample_does_not_hide_failed_production_history(
     tmp_path: Path,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_synthetic_inference_rod()
         # One 60 s maximum step could reach the history end, so the run is
         # admitted; the first 5 s step then exhausts the one-step budget.
@@ -248,7 +248,7 @@ def lagged_sensor_plan(
     cooled_rod: tuple[PreparedFuelRod, FuelFixedGrid, FuelReplayResult],
 ) -> FuelObservationPlan:
     prepared, grid, _ = cooled_rod
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return _lagged_sensor_plan(prepared, grid)
 
 
@@ -290,7 +290,7 @@ def test_sensor_nuisance_scales_offsets_and_drifts_the_lagged_signal(
 ) -> None:
     _, grid, replay = cooled_rod
     plan = lagged_sensor_plan
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         physical = plan.evaluate_states(replay.states)
         measured = plan.evaluate_states(replay.states, sensor_nuisance=_nuisance(plan))
     # Independent measurement model on the nuisance-free lagged signal:
@@ -311,7 +311,7 @@ def test_zero_sensor_gain_invalidates_only_that_sensors_samples(
 ) -> None:
     _, _, replay = cooled_rod
     plan = lagged_sensor_plan
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         rejected = plan.evaluate_states(
             replay.states, sensor_nuisance=_nuisance(plan, gain=(1.3, 0.0))
         )
@@ -331,7 +331,7 @@ def test_sensor_parameters_of_another_sensor_layout_are_refused(
         offset=jnp.asarray(_NUISANCE_OFFSET, dtype=jnp.float64),
         drift=jnp.asarray(_NUISANCE_DRIFT, dtype=jnp.float64),
     )
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         with pytest.raises(ValueError, match="observation sensor layout"):
             lagged_sensor_plan.evaluate_states(replay.states, sensor_nuisance=reordered)
 
@@ -342,7 +342,7 @@ def test_nonfinite_sensor_parameters_invalidate_that_sensors_samples(
 ) -> None:
     _, _, replay = cooled_rod
     plan = lagged_sensor_plan
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         rejected = plan.evaluate_states(
             replay.states, sensor_nuisance=_nuisance(plan, offset=(np.inf, -3.0))
         )

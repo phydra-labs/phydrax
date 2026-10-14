@@ -1,3 +1,5 @@
+import pytest
+
 import phydrax as phx
 
 
@@ -66,4 +68,5 @@ def test_constraint_public_api_scenario_1() -> None:
 
 def test_collocation_policy_attachment_is_not_a_parallel_term_surface() -> None:
     assert "with_collocation_policy" not in phx.sampling.collocation.__all__
-    assert not hasattr(phx.sampling.collocation, "with_collocation_policy")
+    with pytest.raises(AttributeError):
+        phx.sampling.collocation.with_collocation_policy

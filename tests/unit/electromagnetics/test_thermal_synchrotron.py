@@ -11,12 +11,16 @@ import numpy as np
 import pytest
 from scipy import integrate, special
 
-from phydrax import ElectromagneticScaleContract, RelativityScaleContract
+from phydrax import (
+    config as pxconfig,
+    ElectromagneticScaleContract,
+    RelativityScaleContract,
+)
 from phydrax.electromagnetics import ThermalSynchrotronModel
 from phydrax.electromagnetics._thermal_synchrotron import _validated_log_bessel_k2
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 # CODATA 2022 SI constants, written independently of the scale contract.
 _E = 1.602176634e-19

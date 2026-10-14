@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.flatten_util import ravel_pytree
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import (
     Almonacid2024Control,
     Almonacid2024MuscleAponeurosisPlan,
@@ -91,7 +92,7 @@ def test_source_scaled_tangent_adjoint_and_local_schur_under_numeric_refresh() -
         (True, "condensed-jax-cpu"),
         (True, "full-mixed-jax-cpu"),
     ):
-        with jax.enable_x64(True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
             source_plan, parameters, _, _, _ = almonacid_2024_repository_case(
                 INPUTS, refinement=0
             )

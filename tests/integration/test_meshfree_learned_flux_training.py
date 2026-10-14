@@ -2,7 +2,6 @@
 from collections.abc import Iterator
 from typing import cast
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -18,13 +17,14 @@ from examples.meshfree_learned_edge_flux import (
     prepare_recovery,
     run_workflow,
 )
+from phydrax import config as pxconfig
 from phydrax._training_kernel import TrainingRejectionBudgetError
 from phydrax.sparse import EdgeRelation
 
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Iterator[None]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

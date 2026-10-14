@@ -11,12 +11,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications import electrophysiology as ep
 from phydrax.interchange import AdapterError, AdapterStatus, require_lossless
 from phydrax.units import MILLIVOLT, TIME, UnitDefinition
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _single(*mechanisms: Any, dt: Any = 0.05, scheme: Any = "backward-euler") -> Any:

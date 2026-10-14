@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +16,7 @@ import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
+from phydrax import config as pxconfig
 from phydrax._data_plane import IndexEpochPlan
 from phydrax.backends import APPLE_METAL_PROFILE
 from phydrax.discretization._distributed_field import (
@@ -35,12 +35,14 @@ from phydrax.execution import (
     ExecutionRequirements,
     ExecutionRuntime,
     ExecutionWorksetPlan,
+    LocalProcessLaunchPlan,
     LogicalAxis,
     LogicalAxisKind,
     partition_execution_group_specs,
     PlacementKind,
     PoolExecutionSignature,
     ProviderBinding,
+    RankEnvironment,
     resolve_execution_plan,
     ResourceInventory,
     ValuePlacement,
@@ -73,17 +75,19 @@ from phydrax.linalg import (
 
 def test_distributed_execution_substrate_scenario_1() -> None:
     root = Path(__file__).parents[2]
-    environment = dict(os.environ)
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(cpu_collectives_implementation="gloo")
+    )
     environment["PYTHONPATH"] = str(root)
-    environment["PHYDRAX_CPU_COLLECTIVES"] = "gloo"
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             (
-                "import phydrax; import jax; "
-                "assert jax.config.jax_cpu_collectives_implementation == 'gloo'; "
-                "info = phydrax.execution.initialize(); "
+                "import phydrax; "
+                "assert phydrax.config.snapshot().cpu_collectives_implementation == 'gloo'; "
+                "assert phydrax.config.snapshot().backends_initialized is False; "
+                "info = phydrax.execution.runtime_info(); "
                 "assert info.process_count == 1; "
                 "assert info.global_device_count >= 1"
             ),
@@ -611,3 +615,63 @@ def test_checkpoint_shard_decode_refuses_invalid_payload_contract(
         )
     with pytest.raises(RepositoryCorruptionError):
         checkpoint_module._read_shard_payload(repository, shard, shape, dtype, limits)
+
+
+def test_rank_projection_replaces_old_rank_and_retains_custom_timeouts() -> None:
+    base = {
+        "PHYDRAX_COORDINATOR_ADDRESS": "old:1234",
+        "PHYDRAX_NUM_PROCESSES": "malformed-old-value",
+        "PHYDRAX_PROCESS_ID": "old",
+        "PHYDRAX_LOCAL_DEVICE_IDS": "7",
+        "PHYDRAX_COORDINATOR_BIND_ADDRESS": "old:1234",
+        "PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS": "29",
+        "PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS": "47",
+        "OTHER": "kept",
+    }
+    projected = RankEnvironment("127.0.0.1:1234", 2, 1).apply(base)
+    assert projected == {
+        "PHYDRAX_COORDINATOR_ADDRESS": "127.0.0.1:1234",
+        "PHYDRAX_NUM_PROCESSES": "2",
+        "PHYDRAX_PROCESS_ID": "1",
+        "PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS": "29",
+        "PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS": "47",
+        "OTHER": "kept",
+    }
+    assert base["PHYDRAX_LOCAL_DEVICE_IDS"] == "7"
+
+
+@pytest.mark.parametrize(
+    ("base", "heartbeat", "initialization"),
+    [
+        ({}, 100, 300),
+        ({"PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS": "29"}, 29, 300),
+        ({"PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS": "47"}, 100, 47),
+    ],
+    ids=["constructor-defaults", "heartbeat-only", "initialization-only"],
+)
+def test_rank_projection_composes_independent_timeout_overrides(
+    base: dict[str, str], heartbeat: int, initialization: int
+) -> None:
+    projected = RankEnvironment("127.0.0.1:1234", 2, 0).apply(base)
+    assert projected["PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS"] == str(heartbeat)
+    assert projected["PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS"] == str(initialization)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS", "PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS"],
+    ids=["heartbeat", "initialization"],
+)
+def test_rank_projection_refuses_malformed_present_timeout(key: str) -> None:
+    with pytest.raises(ValueError, match=key):
+        RankEnvironment("127.0.0.1:1234", 2, 0).apply({key: "0"})
+
+
+def test_local_launch_rank_projection_retains_disjoint_device_ids() -> None:
+    plan = LocalProcessLaunchPlan(2, "127.0.0.1:1234", devices_per_process=2)
+    first = plan.rank(0).apply({})
+    second = plan.rank(1).apply(first)
+    assert first["PHYDRAX_LOCAL_DEVICE_IDS"] == "0,1"
+    assert second["PHYDRAX_LOCAL_DEVICE_IDS"] == "2,3"
+    assert first["PHYDRAX_COORDINATOR_BIND_ADDRESS"] == "127.0.0.1:1234"
+    assert "PHYDRAX_COORDINATOR_BIND_ADDRESS" not in second

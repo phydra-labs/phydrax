@@ -310,4 +310,4 @@ def test_semidiscrete_scenario_4() -> None:
         "semidiscrete_problem",
     }
     assert expected <= set(phx.transport.__all__)
-    assert all(vars(phx.transport)[name] is not None for name in expected)
+    assert all(getattr(phx.transport, name) is not None for name in expected)

@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications import electrophysiology as ep
 from phydrax.linalg import (
     LinearSolvePolicy,
@@ -27,7 +28,7 @@ from phydrax.linalg import (
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Any:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

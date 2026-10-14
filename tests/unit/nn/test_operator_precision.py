@@ -14,6 +14,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 class _LinearOperator(phx.nn.operator.AbstractOperatorModel):
@@ -533,7 +534,7 @@ def test_nonfinite_optimizer_candidate_is_not_treated_as_scale_overflow() -> Non
 
 
 @pytest.mark.skipif(
-    not bool(jax.config.read("jax_enable_x64")),
+    not bool(pxconfig.x64_enabled()),
     reason="Float64 accumulator coverage requires JAX x64.",
 )
 def test_float64_accumulation_casts_back_to_float32_optimizer_boundary() -> None:

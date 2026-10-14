@@ -9,10 +9,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization.collocation import ChebyshevDifferentiationAction
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _dense_second_reference(nodes: np.ndarray, values: np.ndarray) -> np.ndarray:

@@ -12,6 +12,7 @@ import pytest
 from jax import Array
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization.finite_volume import (
     CurvatureEvidence,
     CurvatureStatus,
@@ -455,7 +456,7 @@ def test_parabolic_fallback_refuses_rank_deficient_primary_facets() -> None:
     ((False, jnp.float32), (True, jnp.float64)),
 )
 def test_parabolic_fallback_jit_preserves_dtype(x64_enabled: bool, dtype: Any) -> None:
-    with jax.enable_x64(x64_enabled):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=x64_enabled)):
         plic = StructuredPLICPlan(_grid(8, 2, dtype=dtype))
         alpha = _ball_fraction(8, 2, (0.513, 0.507), 0.28).astype(dtype)
         reconstruction = plic.reconstruct(alpha)

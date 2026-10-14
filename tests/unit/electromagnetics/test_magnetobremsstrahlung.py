@@ -5,13 +5,12 @@
 from math import factorial
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy import integrate, special
 
-from phydrax import ElectromagneticScaleContract
+from phydrax import config as pxconfig, ElectromagneticScaleContract
 from phydrax.electromagnetics import (
     born_thermal_gaunt,
     ColdPlasmaDielectric,
@@ -28,7 +27,7 @@ from phydrax.electromagnetics import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 # CODATA 2022 SI constants, written independently of the scale contract.
 _E = 1.602176634e-19

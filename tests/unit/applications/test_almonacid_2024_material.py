@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import (
     Almonacid2024MaterialParameters,
     almonacid_2024_material_response,
@@ -26,7 +27,7 @@ from phydrax.applications.skeletal_muscle.continuum._almonacid_2024_material imp
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.climate import (
     ClimateDrivers,
     decay_average,
@@ -24,7 +25,7 @@ from phydrax.solver import FixedStepRolloutPlan
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

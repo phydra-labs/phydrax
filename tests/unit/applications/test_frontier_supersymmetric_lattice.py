@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.supersymmetric_lattice import (
     assess_complexified_gauge_invariance,
     assess_ward_pfaffian,
@@ -26,7 +27,7 @@ from phydrax.applications.supersymmetric_lattice import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _site_gauge(shape: Any) -> Any:

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import Array
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel._forms import (
     deformation,
     mechanical_volume_residual,
@@ -51,7 +51,7 @@ def _root(residual: Callable[[Array, None], Array], initial: Array, /) -> Array:
 
 def test_constant_conductivity_cylinder_refines_to_independent_quadratic() -> None:
     surface_temperature, volumetric_heat, conductivity = 600.0, 1e8, 3.0
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         spec = synthetic_rod_specification()
         errors = []
         for cells in (8, 32):
@@ -103,7 +103,7 @@ def test_constant_conductivity_cylinder_refines_to_independent_quadratic() -> No
 
 
 def test_lame_closed_end_tube_recovers_radial_displacement() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         spec = synthetic_rod_specification()
         geometry = fuel_rod_geometry(
             spec,
@@ -162,7 +162,7 @@ def test_lame_closed_end_tube_recovers_radial_displacement() -> None:
 def test_geometry_refuses_invalid_zone_edges(
     zone_edges: tuple[float, ...] | tuple[tuple[float, float], ...],
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         spec = synthetic_rod_specification()
         with pytest.raises(ValueError, match="zone_edges must start at 0"):
             fuel_rod_geometry(

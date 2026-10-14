@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nucleic_acid_biophysics._construct import NucleicAcidConstruct
 from phydrax.applications.nucleic_acid_biophysics.electronics import (
     electronic_coherences,
@@ -43,7 +44,7 @@ from phydrax.units import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 USE = dict(commercial_use=False, redistribution=False, training_use=False, export=False)
 UNITS = AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
 PER_FS = derived_unit("1/fs", ((FEMTOSECOND, -1),))

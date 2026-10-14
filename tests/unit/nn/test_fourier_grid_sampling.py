@@ -12,8 +12,8 @@ import phydrax as phx
 
 def test_fourier_grid_sampling_scenario_1() -> None:
     assert "sample_fourier_grid" in phx.nn.layers.__all__
-    assert "sample_fourier_grid" not in vars(phx.nn.models)
-    assert "sample_fourier_grid" not in vars(phx.nn)
+    assert "sample_fourier_grid" not in dir(phx.nn.models)
+    assert "sample_fourier_grid" not in dir(phx.nn)
     size = 9
     nodes = -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
     values = jnp.stack(

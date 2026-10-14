@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.electrophysiology._events import (
     build_source_fanout,
     cancel_neural_events,
@@ -28,7 +29,7 @@ from phydrax.applications.electrophysiology._synapses import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 _enqueue = jax.jit(enqueue_neural_event)

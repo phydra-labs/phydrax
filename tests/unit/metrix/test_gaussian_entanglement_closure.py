@@ -3,10 +3,10 @@
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.metrix._bosonic_gaussian import BosonicGaussianState
 from phydrax.metrix._gaussian_entanglement import (
     gaussian_entropy,
@@ -17,7 +17,7 @@ from phydrax.metrix._gaussian_entanglement import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _thermal_entropy(occupation: Any) -> Any:

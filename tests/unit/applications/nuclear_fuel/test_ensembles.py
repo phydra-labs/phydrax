@@ -2,16 +2,16 @@
 
 from pathlib import Path
 
-import jax
 import pytest
 
 from examples.nuclear_fuel_calibration import prepare_synthetic_inference_rod
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import FuelEnsembleMember, PreparedFuelRod
 
 
 @pytest.fixture(scope="module")
 def prepared() -> PreparedFuelRod:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return prepare_synthetic_inference_rod()
 
 
@@ -21,7 +21,7 @@ def prepared() -> PreparedFuelRod:
 def test_ensemble_member_rejects_nonfinite_or_nonpositive_time_step(
     prepared: PreparedFuelRod, tmp_path: Path, time_step: float
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         with pytest.raises(ValueError, match="time_step must be finite and positive"):
             FuelEnsembleMember(
                 prepared,

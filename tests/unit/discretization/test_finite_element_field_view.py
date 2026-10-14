@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     CellLocationStatus,
     DiscreteFieldFunctionView,
@@ -24,7 +25,7 @@ from phydrax.discretization.fem import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _SQUARE = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
 _DIAGONAL_CELLS = ((0, 1, 2), (0, 2, 3))

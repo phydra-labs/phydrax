@@ -59,7 +59,9 @@ def _hello_worker(tmp_path: Any, identity: Any) -> Any:
 def test_real_vorocrust_preserves_closed_cube_volume() -> None:
     executable = shutil.which(os.environ.get("PHYDRAX_VOROCRUST_EXECUTABLE", "vc_mesh"))
     worker = shutil.which(
-        os.environ.get("PHYDRAX_VOROCRUST_WORKER", "phydrax-vorocrust-worker")
+        "phydrax-vorocrust-worker"
+        if (configured := phx.config.snapshot().workers.get("vorocrust")) is None
+        else configured
     )
     if executable is None or worker is None:
         pytest.skip(

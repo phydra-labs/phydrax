@@ -10,6 +10,7 @@ import pytest
 from jax import Array
 from numpy.typing import NDArray
 
+from phydrax import config as pxconfig
 from phydrax.linalg import compound_matrix, SmallLinearSolvePlan, solve_small_linear
 
 
@@ -124,7 +125,10 @@ def test_four_by_four_complex_batches_obey_strict_rank_and_dtype_contracts() -> 
     matrix += 7 * np.eye(4, dtype=np.complex128)
     rhs = random.normal(size=(2, 3, 4)) + 1j * random.normal(size=(2, 3, 4))
     plan = SmallLinearSolvePlan(4)
-    with jax.numpy_rank_promotion("raise"), jax.numpy_dtype_promotion("strict"):
+    with (
+        pxconfig.context(pxconfig.NumericsConfig(rank_promotion="raise")),
+        pxconfig.context(pxconfig.NumericsConfig(dtype_promotion="strict")),
+    ):
         result = jax.jit(lambda matrix, rhs: solve_small_linear(plan, matrix, rhs))(
             jnp.asarray(matrix, dtype=jnp.complex128),
             jnp.asarray(rhs, dtype=jnp.complex128),
@@ -150,7 +154,7 @@ def test_multiaxis_batched_compound_jvp_broadcasts_cofactor_signs_explicitly() -
                 - tangent[..., a, d] * matrix[..., b, c]
                 - matrix[..., a, d] * tangent[..., b, c]
             )
-    with jax.numpy_rank_promotion("raise"):
+    with pxconfig.context(pxconfig.NumericsConfig(rank_promotion="raise")):
         _, derivative = jax.jvp(
             jax.jit(lambda value: compound_matrix(value, 2)),
             (jnp.asarray(matrix, dtype=jnp.float64),),

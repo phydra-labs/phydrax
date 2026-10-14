@@ -4,14 +4,14 @@
 
 """Independent continuum-device limits, not assertions about solver plumbing."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications import semiconductor as sc
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 Q = 1.602176634e-19
 
 

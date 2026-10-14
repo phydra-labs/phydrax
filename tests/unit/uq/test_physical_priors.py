@@ -1,4 +1,3 @@
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -6,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 def test_physical_priors_scenario_1() -> None:
@@ -45,7 +45,7 @@ def test_physical_priors_scenario_1() -> None:
 
 
 def test_batched_truncated_normal_preserves_each_normalized_law() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         law = phx.uq.TruncatedNormal(
             0.0,
             np.asarray([1.0, 2.0], dtype=np.float64),
@@ -82,7 +82,10 @@ def test_batched_truncated_normal_refuses_one_invalid_member(
     low: tuple[float, float],
     high: tuple[float, float],
 ) -> None:
-    with jax.enable_x64(), pytest.raises(ValueError):
+    with (
+        pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)),
+        pytest.raises(ValueError),
+    ):
         phx.uq.TruncatedNormal(
             jnp.asarray(0.0, dtype=jnp.float64),
             jnp.asarray(scale, dtype=jnp.float64),

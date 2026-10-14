@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.cardiovascular.circulation._devices import (
     Cannula,
     ControlEvent,
@@ -59,7 +59,7 @@ from phydrax.applications.cardiovascular.circulation._vascular_1d import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _pump_map() -> PumpHeadFlowMap:

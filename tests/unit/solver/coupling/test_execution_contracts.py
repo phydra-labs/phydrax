@@ -546,7 +546,7 @@ def test_lanes_on_an_execution_group_match_single_device_reference(
     devices = jax.device_count()
     if devices < 2:
         pytest.skip(
-            "Run with XLA_FLAGS=--xla_force_host_platform_device_count=4 to exercise "
+            "Run with JAX_NUM_CPU_DEVICES=4 to exercise "
             "lanes placed on an execution group."
         )
     from phydrax._execution_runtime import ExecutionRuntime

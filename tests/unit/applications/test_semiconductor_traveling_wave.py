@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.semiconductor._optical_response import (
     LinearizedCarrierOpticalResponsePlan,
 )
@@ -25,7 +26,7 @@ from phydrax.applications.semiconductor._traveling_wave import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _response(*, internal_loss: Any = 1.0e3) -> Any:

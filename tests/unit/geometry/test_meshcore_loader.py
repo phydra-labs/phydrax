@@ -5,6 +5,7 @@
 
 import importlib.metadata
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,54 @@ import numpy._core._multiarray_umath as numpy_extension
 import pytest
 
 import phydrax._meshcore as meshcore
+from phydrax import _config_state, config as pxconfig
 from phydrax._meshcore import load_meshcore, meshcore_available, MeshcoreUnavailableError
+
+
+@pytest.fixture(autouse=True)
+def restore_meshcore_setting() -> Iterator[None]:
+    """Own meshcore test overrides without changing other provider settings."""
+    previous = _config_state._STATE.libraries.copy()
+    _config_state._STATE.libraries.pop("meshcore", None)
+    try:
+        yield
+    finally:
+        _config_state._STATE.libraries.clear()
+        _config_state._STATE.libraries.update(previous)
+
+
+@pytest.mark.parametrize("blank", ("", " \t "))
+def test_blank_meshcore_path_keeps_the_absent_path_fallback(
+    monkeypatch: pytest.MonkeyPatch, blank: str
+) -> None:
+    monkeypatch.delenv("PHYDRAX_MESHCORE_LIBRARY", raising=False)
+    if meshcore_available():
+        fallback = load_meshcore()
+        monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", blank)
+        assert load_meshcore() is fallback
+    else:
+        with pytest.raises(MeshcoreUnavailableError) as absent:
+            load_meshcore()
+        monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", blank)
+        with pytest.raises(MeshcoreUnavailableError) as empty:
+            load_meshcore()
+        assert str(empty.value) == str(absent.value)
+
+
+@pytest.mark.parametrize("layer", ("environment", "configured"))
+def test_missing_meshcore_path_refuses_packaged_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, layer: str
+) -> None:
+    path = str(tmp_path / "missing-meshcore")
+    if layer == "environment":
+        monkeypatch.setenv("PHYDRAX_MESHCORE_LIBRARY", path)
+    else:
+        pxconfig.configure(pxconfig.ProviderConfig(library_paths={"meshcore": path}))
+    assert not meshcore_available()
+    with pytest.raises(
+        MeshcoreUnavailableError, match="PHYDRAX_MESHCORE_LIBRARY names a missing"
+    ):
+        load_meshcore()
 
 
 def test_shared_library_without_the_meshcore_abi_is_unavailable(monkeypatch: Any) -> None:

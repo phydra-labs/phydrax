@@ -11,6 +11,7 @@ from jax import Array
 from numpy.typing import NDArray
 
 from examples.nuclear_fuel_calibration import prepare_synthetic_inference_rod
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     fuel_parameterization,
     FuelFixedGrid,
@@ -62,7 +63,7 @@ class _CheckpointTangent:
 @pytest.fixture(scope="module")
 def checkpoint_tangent() -> _CheckpointTangent:
     """Phonon-resistivity tangent of a 5-20 s history from a frozen 5 s checkpoint."""
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         # Deliberately synthetic transport data makes pressure-driven helium
         # absorption resolvable on this small fixed grid; it is not UO2 evidence.
         source = "synthetic-implicit-tangent-verification:helium-coupling"
@@ -170,7 +171,7 @@ def test_full_history_forward_tangent_matches_independent_richardson_replay(
         assert bool(replay.successful)
         return np.asarray(_observable_history(replay.states[-1]))
 
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         coarse = (solved_observables(h) - solved_observables(-h)) / (2.0 * h)
         fine = (solved_observables(h / 2.0) - solved_observables(-h / 2.0)) / h
     reference = (4.0 * fine - coarse) / 3.0
@@ -190,7 +191,7 @@ def test_full_history_forward_tangent_matches_independent_richardson_replay(
 
 
 def test_contact_closure_is_reported_as_branchwise_derivative_event() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         # At 1000 W/m the steady pellet runs 313 K at the centre and 303 K at
         # the surface (area mean 307 K), so UO2 thermal expansion moves the
         # pellet surface by 9.8e-6 /K * 4.095e-3 m * 7.1 K = 284 nm, plus
@@ -237,7 +238,7 @@ def test_contact_closure_is_reported_as_branchwise_derivative_event() -> None:
 def test_tangent_capacity_refuses_before_tangent_allocation(
     parameter_capacity: int, maximum_working_set_bytes: int, message: str
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_synthetic_inference_rod()
         grid = FuelFixedGrid((0.0, 5.0), prepared.prepared_id)
         parameterization, values = fuel_parameterization(
@@ -257,7 +258,7 @@ def test_tangent_capacity_refuses_before_tangent_allocation(
 
 @pytest.fixture(scope="module")
 def bundle() -> FuelModelBundle:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return synthetic_model_bundle(mode_count=4)
 
 
@@ -284,7 +285,7 @@ def bundle() -> FuelModelBundle:
 def test_canonical_coordinates_preserve_source_parameter_domains(
     bundle: FuelModelBundle, name: FuelParameterName, value: float
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         parameterization, _ = fuel_parameterization(bundle, (name,))
         with pytest.raises(eqx.EquinoxRuntimeError):
             parameterization.bundle(bundle, jnp.asarray([value], dtype=jnp.float64))
@@ -293,7 +294,7 @@ def test_canonical_coordinates_preserve_source_parameter_domains(
 def test_zero_intrinsic_diffusivity_remains_a_valid_physical_boundary(
     bundle: FuelModelBundle,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         parameterization, _ = fuel_parameterization(
             bundle, ("gas-intrinsic-diffusivity-prefactor",)
         )
@@ -307,7 +308,7 @@ def test_zero_intrinsic_diffusivity_remains_a_valid_physical_boundary(
 def test_signed_coordinates_preserve_physical_temperature_response(
     bundle: FuelModelBundle, custom: bool
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         if custom:
 
             def update(base: FuelModelBundle, values: Array) -> FuelModelBundle:
@@ -341,7 +342,7 @@ def test_signed_coordinates_preserve_physical_temperature_response(
 def test_float32_coordinates_use_float64_source_execution_without_value_change(
     bundle: FuelModelBundle,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         parameterization, nominal = fuel_parameterization(
             bundle, ("fuel-phonon-resistivity",)
         )

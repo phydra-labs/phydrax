@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import FuelRodState, PreparedFuelRod
 from tests._support.nuclear_fuel import prepare_low_power_startup_rod
 
@@ -46,12 +46,12 @@ def _negative_species_positive_total(state: FuelRodState) -> FuelRodState:
 
 @pytest.fixture(scope="module")
 def prepared() -> PreparedFuelRod:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return prepare_low_power_startup_rod()
 
 
 def test_fabricated_state_is_an_admissible_trial(prepared: PreparedFuelRod) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         problem = prepared.nonlinear_problem
         unknown = prepared.pack_unknown(prepared.initial_state())
         assert bool(problem.trial_valid(unknown, prepared.nonlinear_template.args))
@@ -79,7 +79,7 @@ def test_fabricated_state_is_an_admissible_trial(prepared: PreparedFuelRod) -> N
 def test_unphysical_trial_is_outside_the_newton_trial_domain(
     prepared: PreparedFuelRod, perturb: Callable[[FuelRodState], FuelRodState]
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         problem = prepared.nonlinear_problem
         unknown = prepared.pack_unknown(perturb(prepared.initial_state()))
         assert not bool(problem.trial_valid(unknown, prepared.nonlinear_template.args))

@@ -16,9 +16,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _band_pattern(size: int, *, symmetric: bool = False) -> phx.sparse.SparsePattern:

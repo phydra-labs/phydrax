@@ -3,7 +3,7 @@
 Lane-reference ownership runs the owner regions as named vmap lanes on one
 device with the same collectives as device-collective ownership; the
 device-collective case runs only in a dedicated process with
-``XLA_FLAGS=--xla_force_host_platform_device_count=2``. Forced CPU devices
+``JAX_NUM_CPU_DEVICES=2``. Forced CPU devices
 prove functional collective parity only, not accelerator or multi-host
 qualification. The oracle enumerates every periodic image route on the host
 by brute force and evaluates the same native MACE layers on the global graph
@@ -97,8 +97,7 @@ def _ownership(owners: int, *, devices: bool = False) -> DistributedOwnershipPla
     if devices:
         if count < owners or count % owners:
             pytest.skip(
-                "Run with XLA_FLAGS=--xla_force_host_platform_device_count=2 to "
-                "exercise device-collective owners."
+                "Run with JAX_NUM_CPU_DEVICES=2 to exercise device-collective owners."
             )
         return DistributedOwnershipPlan(
             address, runtime.child_groups(count // owners)[0], 8

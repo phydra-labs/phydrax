@@ -1,15 +1,15 @@
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.compact_objects._self_force import (
     FirstOrderSelfForceModeSum,
     ModeSumRegularizationParameters,
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_mode_sum_contracts() -> None:

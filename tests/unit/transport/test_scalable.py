@@ -341,4 +341,4 @@ def test_scalable_scenario_2() -> None:
         "PositiveKernelFactors",
     }
     assert expected <= set(phx.transport.__all__)
-    assert all(vars(phx.transport)[name] is not None for name in expected)
+    assert all(getattr(phx.transport, name) is not None for name in expected)

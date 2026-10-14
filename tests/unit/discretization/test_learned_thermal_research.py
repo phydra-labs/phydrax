@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization.discrete_velocity._learned_thermal_research import (
     IntegerVelocityFrameShiftPlan,
     LearnedThermalResearchStatus,
@@ -24,7 +25,7 @@ from phydrax.discretization.discrete_velocity._quadrature import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _d2q9_quadrature() -> Any:

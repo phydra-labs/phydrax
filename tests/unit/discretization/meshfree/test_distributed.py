@@ -1,7 +1,7 @@
 """Distributed meshfree operators on forced CPU devices.
 
 Run in a dedicated process with
-``XLA_FLAGS=--xla_force_host_platform_device_count=4``. Forced CPU devices
+``JAX_NUM_CPU_DEVICES=4``. Forced CPU devices
 prove functional parity with the single-device operator only; accelerator and
 multi-host performance require real hardware runs. References are the prepared
 single-device ``MeshfreeOperator`` and independent NumPy dense assemblies.
@@ -39,10 +39,7 @@ from phydrax.sparse import SparseCoordinateOperator
 def _owner_group() -> ExecutionGroup:
     devices = jax.devices()
     if len(devices) < 4 or len(devices) % 4:
-        pytest.skip(
-            "Run with XLA_FLAGS=--xla_force_host_platform_device_count=4 to "
-            "exercise four owners."
-        )
+        pytest.skip("Run with JAX_NUM_CPU_DEVICES=4 to exercise four owners.")
     return ExecutionRuntime.current().child_groups(len(devices) // 4)[0]
 
 

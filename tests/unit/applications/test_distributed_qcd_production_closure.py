@@ -7,13 +7,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 
-jax.config.update("jax_enable_x64", True)
+
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 from phydrax._array_archive import (
     ArrayArchiveCorruptionError,

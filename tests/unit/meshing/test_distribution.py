@@ -1,3 +1,6 @@
+import ctypes.util
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -6,8 +9,21 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import _config_state
 from phydrax.meshing._assembly import MeshPart
 from phydrax.meshing._distribution import MeshDistribution
+
+
+@pytest.fixture(autouse=True)
+def restore_metis_setting() -> Iterator[None]:
+    """Own METIS test overrides without changing other provider settings."""
+    previous = _config_state._STATE.libraries.copy()
+    _config_state._STATE.libraries.pop("metis", None)
+    try:
+        yield
+    finally:
+        _config_state._STATE.libraries.clear()
+        _config_state._STATE.libraries.update(previous)
 
 
 def _cell_part(name: Any = "cells", scale: Any = 1.0, single: Any = False) -> Any:
@@ -374,6 +390,35 @@ def test_provider_and_graph_routes_take_explicit_ownership_or_fail_closed(
         patched.setenv("PHYDRAX_METIS_LIBRARY", "/nonexistent/libmetis.dylib")
         with pytest.raises(phx.meshing.MetisUnavailableError, match="missing"):
             phx.meshing.prepare_mesh_distribution(part, policy=graph)
+
+
+@pytest.mark.parametrize("path", (None, "", " \t "))
+def test_absent_or_blank_metis_path_uses_platform_fallback(
+    monkeypatch: pytest.MonkeyPatch, path: str | None
+) -> None:
+    if path is None:
+        monkeypatch.delenv("PHYDRAX_METIS_LIBRARY", raising=False)
+    else:
+        monkeypatch.setenv("PHYDRAX_METIS_LIBRARY", path)
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: None)
+    part, _ = _quad_mesh(4, 4)
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.GRAPH, 2)
+    with pytest.raises(phx.meshing.MetisUnavailableError, match="requires METIS; set"):
+        phx.meshing.prepare_mesh_distribution(part, policy=policy)
+
+
+def test_configured_missing_metis_path_refuses_platform_fallback(tmp_path: Path) -> None:
+    phx.config.configure(
+        phx.config.ProviderConfig(
+            library_paths={"metis": str(tmp_path / "missing-metis")}
+        )
+    )
+    part, _ = _quad_mesh(4, 4)
+    policy = phx.meshing.MeshPartitionPolicy(phx.meshing.MeshPartitionKind.GRAPH, 2)
+    with pytest.raises(
+        phx.meshing.MetisUnavailableError, match="PHYDRAX_METIS_LIBRARY names a missing"
+    ):
+        phx.meshing.prepare_mesh_distribution(part, policy=policy)
 
 
 def test_graph_route_partitions_with_metis_deterministically() -> None:

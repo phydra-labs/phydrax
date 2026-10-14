@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.linalg import DenseLinearOperator, LinearSystem, prepare
 from phydrax.operators.integral._convolution_quadrature import (
     ConvolutionQuadratureContourPolicy,
@@ -34,7 +35,7 @@ def _node_family(parameter: jax.Array, action: str) -> Any:
 
 
 def test_vector_cq_transpose_and_adjoint_are_dual_to_forward_history_map() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         options = dict(
             node_family_id="test-vector-resolvent",
             fft_length=16,

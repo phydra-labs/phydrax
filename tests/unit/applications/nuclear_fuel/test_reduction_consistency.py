@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import Array
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     FuelFixedGrid,
     FuelGeometryReduction,
@@ -32,7 +32,7 @@ def _replay(reduction: FuelGeometryReduction, /) -> FuelReplayResult:
 
 @pytest.fixture(scope="module")
 def replays() -> tuple[FuelReplayResult, FuelReplayResult]:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         return _replay("layered-radial"), _replay("axisymmetric-rz")
 
 

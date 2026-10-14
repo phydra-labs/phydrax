@@ -2,7 +2,7 @@
 """Dedicated four-device process for the ownership-migration restart scenario.
 
 Run as ``python -m tests.integration._meshfree_runtime_migration ROOT`` with
-``XLA_FLAGS=--xla_force_host_platform_device_count=4``; it prints one JSON
+``JAX_NUM_CPU_DEVICES=4``; it prints one JSON
 report consumed by ``test_meshfree_runtime_restart.py``. Forced CPU devices
 prove the restart relation and partition parity only, not accelerator
 performance.

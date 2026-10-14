@@ -14,6 +14,8 @@ from typing import Iterable
 
 import pytest
 
+from phydrax import config as pxconfig
+
 
 _DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 _REPO_ROOT = _DOCS_DIR.parent
@@ -113,8 +115,14 @@ def test_docs_python_examples_run(tmp_path: Path, md_path: Path) -> None:
     env["PYTHONPATH"] = os.pathsep.join(
         [str(_REPO_ROOT), env.get("PYTHONPATH", "")]
     ).strip(os.pathsep)
-    env.setdefault("JAX_PLATFORM_NAME", "cpu")
-    env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    env = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            platforms=("cpu",),
+            launch_environment=pxconfig.LaunchEnvironmentConfig(preallocate=False),
+        ),
+        base=env,
+        mode="defaults",
+    )
 
     relative_path = md_path.relative_to(_REPO_ROOT)
     timeout_s = 60 * (20 if relative_path in _LONG_RUNNING_DOCS else 10)
