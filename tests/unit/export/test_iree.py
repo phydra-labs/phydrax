@@ -12,6 +12,10 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._numerics._checkpointed_scan import (
+    checkpointed_scan,
+    CheckpointedScanMode,
+)
 
 
 def _manifest() -> Any:
@@ -377,3 +381,43 @@ def test_iree_refuses_shared_splat_loop_allocations(
             inputs=(jnp.asarray([1.0, -1.0], dtype=jnp.float32),),
         )
     assert not (tmp_path / "shared-tape.phxiree").exists()
+
+
+@pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
+@pytest.mark.parametrize("mode", ("full", "step"))
+def test_iree_exports_differentiated_one_step_checkpointed_scans(
+    tmp_path: Any, mode: CheckpointedScanMode
+) -> None:
+    # Two layers with equal output shapes: one-step scan loops would start their
+    # output and derivative tapes from one merged constant buffer.
+    def layer(scale: float, x: jax.Array) -> jax.Array:
+        def body(
+            carry: jax.Array, row: jax.Array
+        ) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
+            carry = carry + scale * jnp.sin(row)
+            return carry, (carry * row, row > 0)
+
+        _, (values, flags) = checkpointed_scan(
+            body, jnp.zeros((3,), x.dtype), x, length=1, mode=mode
+        )
+        return jnp.sum(jnp.where(flags, values, 0.0))
+
+    def model(x: jax.Array, *, key: Any = None) -> tuple[jax.Array, jax.Array]:
+        del key
+        return jax.value_and_grad(
+            lambda points: layer(1.5, points) + layer(-0.5, points)
+        )(x)
+
+    x = jnp.asarray([[0.25, -0.5, 1.0]], dtype=jnp.float32)
+    result = phx.export.save_iree(
+        model, tmp_path / "one-step.phxiree", inputs=(x,), validate=True
+    )
+    deployed = phx.export.load_iree(
+        result.path, trusted_module_sha256=result.manifest.module_sha256
+    )
+    for deployed_value, native_value in zip(
+        deployed(np.asarray(x)), model(x), strict=True
+    ):
+        np.testing.assert_allclose(
+            deployed_value, np.asarray(native_value), rtol=1.0e-6, atol=1.0e-6
+        )

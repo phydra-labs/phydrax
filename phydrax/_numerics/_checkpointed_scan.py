@@ -171,6 +171,41 @@ def _flatten_blocks(value: Array, /) -> Array:
     return value.reshape((value.shape[0] * value.shape[1],) + value.shape[2:])
 
 
+def _require_carry_type(initial: Any, carry: Any, /) -> None:
+    initial_leaves, initial_tree = jax.tree.flatten(initial)
+    carry_leaves, carry_tree = jax.tree.flatten(carry)
+    if initial_tree != carry_tree or any(
+        jnp.shape(before) != jnp.shape(after)
+        or jnp.result_type(before) != jnp.result_type(after)
+        for before, after in zip(initial_leaves, carry_leaves, strict=True)
+    ):
+        raise TypeError(
+            "checkpointed_scan body must return a carry with the structure, "
+            "shapes, and dtypes of its input carry."
+        )
+
+
+def _scan(
+    body: Callable[[Any, Any], tuple[Any, Any]],
+    initial: Any,
+    xs: Any,
+    length: int,
+    /,
+) -> tuple[Any, Any]:
+    """`jax.lax.scan`, with a one-step scan applied as one body call.
+
+    A one-step scan emits no loop, so neither its stacked outputs nor the tapes
+    JAX derives for its derivatives become loop-carried constant buffers, which
+    IREE 3.11 stream copy elision can alias across scans.
+    """
+
+    if length != 1:
+        return jax.lax.scan(body, initial, xs, length=length)
+    carry, output = body(initial, jax.tree.map(lambda value: value[0], xs))
+    _require_carry_type(initial, carry)
+    return carry, jax.tree.map(lambda value: jnp.expand_dims(value, 0), output)
+
+
 def checkpointed_scan(
     body: Callable[[Any, Any], tuple[Any, Any]],
     initial: Any,
@@ -186,6 +221,7 @@ def checkpointed_scan(
 
     Block and scheduled modes checkpoint each complete inner scan and retain only
     immutable boundary carries. ``xs`` must have the declared leading ``length``.
+    A one-step scan or block is applied without a loop (see `_scan`).
     """
 
     count = int(length)
@@ -196,7 +232,7 @@ def checkpointed_scan(
         if block_size is not None or schedule is not None:
             raise ValueError("Full/step replay accepts no block or schedule.")
         selected = jax.checkpoint(body) if mode == "step" else body
-        return jax.lax.scan(selected, initial, xs, length=count)
+        return _scan(selected, initial, xs, count)
     if mode == "scheduled":
         if block_size is not None:
             raise ValueError("Scheduled replay does not accept block_size.")
@@ -218,9 +254,7 @@ def checkpointed_scan(
             def run_scheduled_block(
                 block_carry: Any, block_inputs: Any
             ) -> tuple[Any, Any]:
-                return jax.lax.scan(
-                    body, block_carry, block_inputs, length=scheduled_size
-                )
+                return _scan(body, block_carry, block_inputs, scheduled_size)
 
             carry, block_outputs = jax.checkpoint(run_scheduled_block)(
                 carry, scheduled_inputs
@@ -260,13 +294,10 @@ def checkpointed_scan(
         )
 
         def run_block(block_carry: Any, block_inputs: Any) -> tuple[Any, Any]:
-            return jax.lax.scan(body, block_carry, block_inputs, length=size)
+            return _scan(body, block_carry, block_inputs, size)
 
-        carry, block_outputs = jax.lax.scan(
-            jax.checkpoint(run_block),
-            carry,
-            complete_inputs,
-            length=complete_count,
+        carry, block_outputs = _scan(
+            jax.checkpoint(run_block), carry, complete_inputs, complete_count
         )
         complete_outputs = (
             None
@@ -278,11 +309,8 @@ def checkpointed_scan(
         return carry, complete_outputs
 
     remainder_inputs = jax.tree.map(lambda value: value[complete_length:], xs)
-    carry, remainder_outputs = jax.lax.scan(
-        jax.checkpoint(body),
-        carry,
-        remainder_inputs,
-        length=remainder,
+    carry, remainder_outputs = _scan(
+        jax.checkpoint(body), carry, remainder_inputs, remainder
     )
     if complete_outputs is None:
         return carry, remainder_outputs
