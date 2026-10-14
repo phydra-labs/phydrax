@@ -15,7 +15,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...geometry import intersect_tetrahedra
+from ...geometry._tetra_intersections import intersect_tetrahedra
 from ...typing import checked
 from .._cell_mesh import CellMesh
 

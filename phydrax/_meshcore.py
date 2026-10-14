@@ -14,8 +14,8 @@ validated and converted to contiguous float64/int32 arrays, results are fresh
 arrays, and native statuses reach the caller (per-item status arrays for batched
 clipping, exceptions for rejected calls).
 
-Library lookup order: the ``PHYDRAX_MESHCORE_LIBRARY`` environment variable
-(path to the shared library), then ``phydrax_meshcore.library_path()``.  A
+Library lookup order: the native ``ProviderConfig.library_paths`` override,
+then ``PHYDRAX_MESHCORE_LIBRARY``, then ``phydrax_meshcore.library_path()``. A
 library is usable only when it exports every C ABI symbol bound here and its
 version equals the installed ``phydrax`` release; anything else is reported as
 :class:`MeshcoreUnavailableError` with the reason.
@@ -28,7 +28,6 @@ import functools
 import importlib
 import importlib.metadata
 import importlib.util
-import os
 from collections.abc import Callable, Mapping
 from enum import IntEnum
 from pathlib import Path
@@ -36,8 +35,10 @@ from typing import Any, final
 
 import numpy as np
 
+from ._config_environment import LIBRARY_ENVIRONMENT
+from ._config_state import library_input
 
-_ENVIRONMENT = "PHYDRAX_MESHCORE_LIBRARY"
+
 _MAX_POINTS = 2147483646
 
 
@@ -159,13 +160,13 @@ def _library_location(configured: str, /) -> Path | str:
     if configured:
         path = Path(configured)
         if not path.is_file():
-            return f"{_ENVIRONMENT} names a missing meshcore library: {configured!r}."
+            return f"{LIBRARY_ENVIRONMENT['meshcore']} names a missing meshcore library: {configured!r}."
         return path
     if importlib.util.find_spec("phydrax_meshcore") is None:
         return (
             "The meshcore library is unavailable: install the optional "
             "'phydrax[meshcore]' extra or set "
-            f"{_ENVIRONMENT} to libphydrax_meshcore."
+            f"{LIBRARY_ENVIRONMENT['meshcore']} to libphydrax_meshcore."
         )
     return Path(importlib.import_module("phydrax_meshcore").library_path())
 
@@ -273,7 +274,7 @@ def _resolve(configured: str, /) -> MeshcoreLibrary | str:
 
 
 def _current() -> MeshcoreLibrary | str:
-    return _resolve(os.environ.get(_ENVIRONMENT, "").strip())
+    return _resolve((library_input("meshcore") or "").strip())
 
 
 def meshcore_available() -> bool:

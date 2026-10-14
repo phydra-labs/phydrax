@@ -7,6 +7,7 @@
 from importlib import import_module
 from typing import Any
 
+from ..._jax_config import process_numerics
 from ._optical_media import (
     HenyeyGreensteinScattering,
     lorenz_mie,
@@ -74,11 +75,12 @@ _PHOTODETECTION_EXPORTS = frozenset(
 
 
 def __getattr__(name: str) -> Any:
-    if name not in _PHOTODETECTION_EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = import_module("._photodetection", __package__).__dict__[name]
-    globals()[name] = value
-    return value
+    with process_numerics():
+        if name not in _PHOTODETECTION_EXPORTS:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        value = import_module("._photodetection", __package__).__dict__[name]
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:

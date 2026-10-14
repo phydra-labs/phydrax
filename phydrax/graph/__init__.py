@@ -11,278 +11,16 @@ global features.
 """
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from . import compat, nn
-from ._abelian_gauge import (
-    abelian_current_continuity,
-    abelian_curvature,
-    abelian_gauge_transform,
-    abelian_maxwell_action,
-    abelian_maxwell_residual,
-    AbelianGaugeDiagnostics,
-    AbelianMaxwellOperator,
-    validate_abelian_gauge_system,
-)
-from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
-from ._charged_scalar_gauge import (
-    ChargedGaugeEvidence,
-    ChargedGaugeState,
-    ChargedScalarGaugePlan,
-)
-from ._cochain import (
-    CochainComplexIR,
-    graph_to_cochain_complex,
-    GraphEdgeSemantics,
-    GraphNodeMeasure,
-)
-from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
-from ._cochain_ops import (
-    cochain_codifferential,
-    cochain_exterior_derivative,
-    cochain_harmonic_projection,
-    cochain_hodge_laplacian,
-    CochainCodifferential,
-    CochainExteriorDerivative,
-    CochainHarmonicProjection,
-    CochainHodgeLaplacian,
-)
-from ._cochain_residual import CochainResidualProgram
-from ._data import Batch, Data
-from ._derived import (
-    line_graph,
-    LineGraph,
-    LineGraphConnectivity,
-    mesh_to_dual_graph,
-    MeshDualGraph,
-)
-from ._diffusion import (
-    FixedTopologyGraphDiffusion,
-    graph_denoising_loss,
-    GraphPayloadKind,
-)
-from ._effective_resistance import (
-    EffectiveResistancePlan,
-    EffectiveResistanceResult,
-    EffectiveResistanceStatus,
-)
-from ._equivariant import (
-    EquivariantGraphConvolution,
-    euclidean_edge_features,
-    gaussian_radial_basis,
-)
-from ._facet_adjacency import facet_adjacency, FacetAdjacency
+from .._deferred_exports import deferred_exports
 from ._gauge_transport import __all__ as _gauge_transport_all
-from ._generators import (
-    get_fully_connected_graph,
-    sparse_matrix_to_graph,
-    sparse_matrix_to_graphs_tuple,
-)
-from ._geometry import (
-    GeometryGraph,
-    knn_graph,
-    knn_query_graph,
-    mesh_to_geometry_graph,
-    mesh_to_graph,
-    mollified_kernel_weight,
-    point_cloud_to_graph,
-    query_graph_from_edges,
-    QueryGraph,
-    radius_graph,
-    radius_query_graph,
-)
-from ._graph import ensure_graph, Graph, graph_counts, is_graph_like
-from ._hypergraph import (
-    hypergraph_to_bipartite_graph,
-    HypergraphBipartiteGraph,
-    HypergraphConvolution,
-    incidence_to_bipartite_graph,
-)
-from ._index import (
-    add_remaining_self_loops,
-    add_self_loops,
-    coalesce,
-    degree,
-    in_degree,
-    maybe_num_nodes,
-    out_degree,
-    remove_self_loops,
-    to_dense_adj,
-    to_edge_index,
-    to_undirected,
-)
-from ._ir import (
-    batch,
-    batch_graphs,
-    batch_np,
-    GraphIR,
-    unbatch,
-    unbatch_graph,
-    unbatch_np,
-)
-from ._kernels import (
-    scatter_add,
-    scatter_max,
-    scatter_mean,
-    scatter_min,
-    segment_log_normalize,
-    segment_logsumexp,
-    segment_max,
-    segment_max_or_constant,
-    segment_mean,
-    segment_min,
-    segment_min_or_constant,
-    segment_normalize,
-    segment_softmax,
-    segment_sum,
-    segment_variance,
-)
-from ._layout import LayoutPlan, pack_graphs
-from ._matrix_gauge import (
-    closed_path_trace,
-    gauge_transform_links,
-    MatrixGaugeLinkSpace,
-)
-from ._mesh import (
-    mesh_cotangent_weights,
-    mesh_face_areas,
-    mesh_face_normals,
-    mesh_lumped_vertex_areas,
-    mesh_to_cotangent_graph,
-    mesh_vertex_normals,
-    MeshCotangentLaplacian,
-    MeshLaplacianSign,
-)
-from ._models import (
-    DeepSets,
-    GAT,
-    graph_map_features,
-    GraphConvolution,
-    GraphMapFeatures,
-    GraphNetGAT,
-    GraphNetwork,
-    InteractionNetwork,
-    RelationNetwork,
-)
-from ._mp import MessagePassing
-from ._multigraph import (
-    gaot_operator,
-    gino_operator,
-    GraphEncodeProcessDecode,
-    GraphFieldProcessor,
-    query_encode_process_decode,
-    query_graph_with_source_features,
-    query_target_features,
-    QueryGraphOperator,
-    RegionalGraphProcessor,
-    rigno_operator,
-    transolver_operator,
-)
-from ._multiscale import (
-    GraphClusterPool,
-    GraphMultiscaleBlock,
-    GraphPoolReduce,
-    pool_graph_by_cluster,
-    unpool_nodes_by_cluster,
-)
-from ._neural_operators import (
-    GraphAttentionOperator,
-    GraphDiffusion,
-    GraphFiniteVolumeDiffusion,
-    GraphFiniteVolumeDivergence,
-    GraphKernelIntegral,
-    GraphNeuralOperator,
-    GraphProcessor,
-    RepeatedGraphProcessor,
-)
-from ._operator_topology import (
-    broadcast_operator_topology,
-    operator_graph_fingerprint,
-    operator_topology_fingerprint,
-    OperatorTopology,
-    OperatorTopologyEntity,
-    OperatorTopologyKind,
-    OperatorTopologySite,
-    pad_operator_topology,
-    slice_operator_topology,
-    stack_operator_topologies,
-    take_operator_topology,
-)
-from ._ops import concatenated_args, partition_softmax
-from ._padding import (
-    dynamically_batch,
-    get_edge_padding_mask,
-    get_graph_padding_mask,
-    get_node_padding_mask,
-    get_number_of_padding_with_graphs_edges,
-    get_number_of_padding_with_graphs_graphs,
-    get_number_of_padding_with_graphs_nodes,
-    pad_with_graphs,
-    unpad_with_graphs,
-    with_zero_out_padding_outputs,
-    zero_out_padding,
-)
-from ._process import (
-    AutoregressiveGraphRollout,
-    euler_step,
-    EulerGraphStepper,
-    GraphFeatureName,
-    GraphRolloutReduction,
-    rk4_step,
-    RK4GraphStepper,
-    rollout,
-    rollout_feature_loss,
-    rollout_features,
-)
-from ._query_batch import (
-    batched_knn_graph,
-    batched_knn_query_graph,
-    query_neighbors,
-    QueryNeighborhood,
-    QueryNeighborhoodEvidence,
-)
-from ._randomized_shortest_path import (
-    RandomizedShortestPathPlan,
-    RandomizedShortestPathResult,
-    RandomizedShortestPathStatus,
-)
-from ._route_payload import RouteLocal
-from ._simplicial import (
-    SimplicialComplexGraph,
-    triangle_mesh_to_simplicial_graph,
-)
-from ._sketched_resistance import (
-    SketchedEffectiveResistancePlan,
-    SketchedResistanceEmbedding,
-)
-from ._spectral import (
-    graph_adjacency_apply,
-    graph_laplacian_apply,
-    GraphChebyshevFilter,
-    GraphFilterOperator,
-    GraphFlow,
-    GraphLaplacianNormalization,
-    GraphLaplacianOperator,
-    GraphPolynomialFilter,
-    spectral_discretization_from_graph,
-    spectral_discretization_from_triangle_mesh,
-)
-from ._typed import (
-    edge_type_ids,
-    edge_type_indices,
-    node_type_ids,
-    node_type_indices,
-    RelationalGraphConvolution,
-    typed_edges_component,
-    typed_nodes_component,
-)
-from .nn import GCNConv, GINConv, SAGEConv
 
 
 _FACADE_EXPORT_MODULES = ("._gauge_transport",)
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -292,8 +30,503 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
+def _facade_dir() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "compat": "module:.compat",
+    "nn": "module:.nn",
+    "abelian_current_continuity": "._abelian_gauge",
+    "abelian_curvature": "._abelian_gauge",
+    "abelian_gauge_transform": "._abelian_gauge",
+    "abelian_maxwell_action": "._abelian_gauge",
+    "abelian_maxwell_residual": "._abelian_gauge",
+    "AbelianGaugeDiagnostics": "._abelian_gauge",
+    "AbelianMaxwellOperator": "._abelian_gauge",
+    "validate_abelian_gauge_system": "._abelian_gauge",
+    "MeshGraphNet": "._architectures",
+    "MeshGraphNetBlock": "._architectures",
+    "RowMLP": "._architectures",
+    "ChargedGaugeEvidence": "._charged_scalar_gauge",
+    "ChargedGaugeState": "._charged_scalar_gauge",
+    "ChargedScalarGaugePlan": "._charged_scalar_gauge",
+    "CochainComplexIR": "._cochain",
+    "graph_to_cochain_complex": "._cochain",
+    "GraphEdgeSemantics": "._cochain",
+    "GraphNodeMeasure": "._cochain",
+    "cochain_metric_reduce": "._cochain_metric",
+    "CochainMetricReduction": "._cochain_metric",
+    "cochain_codifferential": "._cochain_ops",
+    "cochain_exterior_derivative": "._cochain_ops",
+    "cochain_harmonic_projection": "._cochain_ops",
+    "cochain_hodge_laplacian": "._cochain_ops",
+    "CochainCodifferential": "._cochain_ops",
+    "CochainExteriorDerivative": "._cochain_ops",
+    "CochainHarmonicProjection": "._cochain_ops",
+    "CochainHodgeLaplacian": "._cochain_ops",
+    "CochainResidualProgram": "._cochain_residual",
+    "Batch": "._data",
+    "Data": "._data",
+    "line_graph": "._derived",
+    "LineGraph": "._derived",
+    "LineGraphConnectivity": "._derived",
+    "mesh_to_dual_graph": "._derived",
+    "MeshDualGraph": "._derived",
+    "FixedTopologyGraphDiffusion": "._diffusion",
+    "graph_denoising_loss": "._diffusion",
+    "GraphPayloadKind": "._diffusion",
+    "EffectiveResistancePlan": "._effective_resistance",
+    "EffectiveResistanceResult": "._effective_resistance",
+    "EffectiveResistanceStatus": "._effective_resistance",
+    "EquivariantGraphConvolution": "._equivariant",
+    "euclidean_edge_features": "._equivariant",
+    "gaussian_radial_basis": "._equivariant",
+    "facet_adjacency": "._facet_adjacency",
+    "FacetAdjacency": "._facet_adjacency",
+    "get_fully_connected_graph": "._generators",
+    "sparse_matrix_to_graph": "._generators",
+    "sparse_matrix_to_graphs_tuple": "._generators",
+    "GeometryGraph": "._geometry",
+    "knn_graph": "._geometry",
+    "knn_query_graph": "._geometry",
+    "mesh_to_geometry_graph": "._geometry",
+    "mesh_to_graph": "._geometry",
+    "mollified_kernel_weight": "._geometry",
+    "point_cloud_to_graph": "._geometry",
+    "query_graph_from_edges": "._geometry",
+    "QueryGraph": "._geometry",
+    "radius_graph": "._geometry",
+    "radius_query_graph": "._geometry",
+    "ensure_graph": "._graph",
+    "Graph": "._graph",
+    "graph_counts": "._graph",
+    "is_graph_like": "._graph",
+    "hypergraph_to_bipartite_graph": "._hypergraph",
+    "HypergraphBipartiteGraph": "._hypergraph",
+    "HypergraphConvolution": "._hypergraph",
+    "incidence_to_bipartite_graph": "._hypergraph",
+    "add_remaining_self_loops": "._index",
+    "add_self_loops": "._index",
+    "coalesce": "._index",
+    "degree": "._index",
+    "in_degree": "._index",
+    "maybe_num_nodes": "._index",
+    "out_degree": "._index",
+    "remove_self_loops": "._index",
+    "to_dense_adj": "._index",
+    "to_edge_index": "._index",
+    "to_undirected": "._index",
+    "batch": "._ir",
+    "batch_graphs": "._ir",
+    "batch_np": "._ir",
+    "GraphIR": "._ir",
+    "unbatch": "._ir",
+    "unbatch_graph": "._ir",
+    "unbatch_np": "._ir",
+    "scatter_add": "._kernels",
+    "scatter_max": "._kernels",
+    "scatter_mean": "._kernels",
+    "scatter_min": "._kernels",
+    "segment_log_normalize": "._kernels",
+    "segment_logsumexp": "._kernels",
+    "segment_max": "._kernels",
+    "segment_max_or_constant": "._kernels",
+    "segment_mean": "._kernels",
+    "segment_min": "._kernels",
+    "segment_min_or_constant": "._kernels",
+    "segment_normalize": "._kernels",
+    "segment_softmax": "._kernels",
+    "segment_sum": "._kernels",
+    "segment_variance": "._kernels",
+    "LayoutPlan": "._layout",
+    "pack_graphs": "._layout",
+    "closed_path_trace": "._matrix_gauge",
+    "gauge_transform_links": "._matrix_gauge",
+    "MatrixGaugeLinkSpace": "._matrix_gauge",
+    "mesh_cotangent_weights": "._mesh",
+    "mesh_face_areas": "._mesh",
+    "mesh_face_normals": "._mesh",
+    "mesh_lumped_vertex_areas": "._mesh",
+    "mesh_to_cotangent_graph": "._mesh",
+    "mesh_vertex_normals": "._mesh",
+    "MeshCotangentLaplacian": "._mesh",
+    "MeshLaplacianSign": "._mesh",
+    "DeepSets": "._models",
+    "GAT": "._models",
+    "graph_map_features": "._models",
+    "GraphConvolution": "._models",
+    "GraphMapFeatures": "._models",
+    "GraphNetGAT": "._models",
+    "GraphNetwork": "._models",
+    "InteractionNetwork": "._models",
+    "RelationNetwork": "._models",
+    "MessagePassing": "._mp",
+    "gaot_operator": "._multigraph",
+    "gino_operator": "._multigraph",
+    "GraphEncodeProcessDecode": "._multigraph",
+    "GraphFieldProcessor": "._multigraph",
+    "query_encode_process_decode": "._multigraph",
+    "query_graph_with_source_features": "._multigraph",
+    "query_target_features": "._multigraph",
+    "QueryGraphOperator": "._multigraph",
+    "RegionalGraphProcessor": "._multigraph",
+    "rigno_operator": "._multigraph",
+    "transolver_operator": "._multigraph",
+    "GraphClusterPool": "._multiscale",
+    "GraphMultiscaleBlock": "._multiscale",
+    "GraphPoolReduce": "._multiscale",
+    "pool_graph_by_cluster": "._multiscale",
+    "unpool_nodes_by_cluster": "._multiscale",
+    "GraphAttentionOperator": "._neural_operators",
+    "GraphDiffusion": "._neural_operators",
+    "GraphFiniteVolumeDiffusion": "._neural_operators",
+    "GraphFiniteVolumeDivergence": "._neural_operators",
+    "GraphKernelIntegral": "._neural_operators",
+    "GraphNeuralOperator": "._neural_operators",
+    "GraphProcessor": "._neural_operators",
+    "RepeatedGraphProcessor": "._neural_operators",
+    "broadcast_operator_topology": "._operator_topology",
+    "operator_graph_fingerprint": "._operator_topology",
+    "operator_topology_fingerprint": "._operator_topology",
+    "OperatorTopology": "._operator_topology",
+    "OperatorTopologyEntity": "._operator_topology",
+    "OperatorTopologyKind": "._operator_topology",
+    "OperatorTopologySite": "._operator_topology",
+    "pad_operator_topology": "._operator_topology",
+    "slice_operator_topology": "._operator_topology",
+    "stack_operator_topologies": "._operator_topology",
+    "take_operator_topology": "._operator_topology",
+    "concatenated_args": "._ops",
+    "partition_softmax": "._ops",
+    "dynamically_batch": "._padding",
+    "get_edge_padding_mask": "._padding",
+    "get_graph_padding_mask": "._padding",
+    "get_node_padding_mask": "._padding",
+    "get_number_of_padding_with_graphs_edges": "._padding",
+    "get_number_of_padding_with_graphs_graphs": "._padding",
+    "get_number_of_padding_with_graphs_nodes": "._padding",
+    "pad_with_graphs": "._padding",
+    "unpad_with_graphs": "._padding",
+    "with_zero_out_padding_outputs": "._padding",
+    "zero_out_padding": "._padding",
+    "AutoregressiveGraphRollout": "._process",
+    "euler_step": "._process",
+    "EulerGraphStepper": "._process",
+    "GraphFeatureName": "._process",
+    "GraphRolloutReduction": "._process",
+    "rk4_step": "._process",
+    "RK4GraphStepper": "._process",
+    "rollout": "._process",
+    "rollout_feature_loss": "._process",
+    "rollout_features": "._process",
+    "batched_knn_graph": "._query_batch",
+    "batched_knn_query_graph": "._query_batch",
+    "query_neighbors": "._query_batch",
+    "QueryNeighborhood": "._query_batch",
+    "QueryNeighborhoodEvidence": "._query_batch",
+    "RandomizedShortestPathPlan": "._randomized_shortest_path",
+    "RandomizedShortestPathResult": "._randomized_shortest_path",
+    "RandomizedShortestPathStatus": "._randomized_shortest_path",
+    "RouteLocal": "._route_payload",
+    "SimplicialComplexGraph": "._simplicial",
+    "triangle_mesh_to_simplicial_graph": "._simplicial",
+    "SketchedEffectiveResistancePlan": "._sketched_resistance",
+    "SketchedResistanceEmbedding": "._sketched_resistance",
+    "graph_adjacency_apply": "._spectral",
+    "graph_laplacian_apply": "._spectral",
+    "GraphChebyshevFilter": "._spectral",
+    "GraphFilterOperator": "._spectral",
+    "GraphFlow": "._spectral",
+    "GraphLaplacianNormalization": "._spectral",
+    "GraphLaplacianOperator": "._spectral",
+    "GraphPolynomialFilter": "._spectral",
+    "spectral_discretization_from_graph": "._spectral",
+    "spectral_discretization_from_triangle_mesh": "._spectral",
+    "edge_type_ids": "._typed",
+    "edge_type_indices": "._typed",
+    "node_type_ids": "._typed",
+    "node_type_indices": "._typed",
+    "RelationalGraphConvolution": "._typed",
+    "typed_edges_component": "._typed",
+    "typed_nodes_component": "._typed",
+    "GCNConv": ".nn",
+    "GINConv": ".nn",
+    "SAGEConv": ".nn",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from . import compat, nn
+    from ._abelian_gauge import (
+        abelian_current_continuity,
+        abelian_curvature,
+        abelian_gauge_transform,
+        abelian_maxwell_action,
+        abelian_maxwell_residual,
+        AbelianGaugeDiagnostics,
+        AbelianMaxwellOperator,
+        validate_abelian_gauge_system,
+    )
+    from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
+    from ._charged_scalar_gauge import (
+        ChargedGaugeEvidence,
+        ChargedGaugeState,
+        ChargedScalarGaugePlan,
+    )
+    from ._cochain import (
+        CochainComplexIR,
+        graph_to_cochain_complex,
+        GraphEdgeSemantics,
+        GraphNodeMeasure,
+    )
+    from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
+    from ._cochain_ops import (
+        cochain_codifferential,
+        cochain_exterior_derivative,
+        cochain_harmonic_projection,
+        cochain_hodge_laplacian,
+        CochainCodifferential,
+        CochainExteriorDerivative,
+        CochainHarmonicProjection,
+        CochainHodgeLaplacian,
+    )
+    from ._cochain_residual import CochainResidualProgram
+    from ._data import Batch, Data
+    from ._derived import (
+        line_graph,
+        LineGraph,
+        LineGraphConnectivity,
+        mesh_to_dual_graph,
+        MeshDualGraph,
+    )
+    from ._diffusion import (
+        FixedTopologyGraphDiffusion,
+        graph_denoising_loss,
+        GraphPayloadKind,
+    )
+    from ._effective_resistance import (
+        EffectiveResistancePlan,
+        EffectiveResistanceResult,
+        EffectiveResistanceStatus,
+    )
+    from ._equivariant import (
+        EquivariantGraphConvolution,
+        euclidean_edge_features,
+        gaussian_radial_basis,
+    )
+    from ._facet_adjacency import facet_adjacency, FacetAdjacency
+    from ._generators import (
+        get_fully_connected_graph,
+        sparse_matrix_to_graph,
+        sparse_matrix_to_graphs_tuple,
+    )
+    from ._geometry import (
+        GeometryGraph,
+        knn_graph,
+        knn_query_graph,
+        mesh_to_geometry_graph,
+        mesh_to_graph,
+        mollified_kernel_weight,
+        point_cloud_to_graph,
+        query_graph_from_edges,
+        QueryGraph,
+        radius_graph,
+        radius_query_graph,
+    )
+    from ._graph import ensure_graph, Graph, graph_counts, is_graph_like
+    from ._hypergraph import (
+        hypergraph_to_bipartite_graph,
+        HypergraphBipartiteGraph,
+        HypergraphConvolution,
+        incidence_to_bipartite_graph,
+    )
+    from ._index import (
+        add_remaining_self_loops,
+        add_self_loops,
+        coalesce,
+        degree,
+        in_degree,
+        maybe_num_nodes,
+        out_degree,
+        remove_self_loops,
+        to_dense_adj,
+        to_edge_index,
+        to_undirected,
+    )
+    from ._ir import (
+        batch,
+        batch_graphs,
+        batch_np,
+        GraphIR,
+        unbatch,
+        unbatch_graph,
+        unbatch_np,
+    )
+    from ._kernels import (
+        scatter_add,
+        scatter_max,
+        scatter_mean,
+        scatter_min,
+        segment_log_normalize,
+        segment_logsumexp,
+        segment_max,
+        segment_max_or_constant,
+        segment_mean,
+        segment_min,
+        segment_min_or_constant,
+        segment_normalize,
+        segment_softmax,
+        segment_sum,
+        segment_variance,
+    )
+    from ._layout import LayoutPlan, pack_graphs
+    from ._matrix_gauge import (
+        closed_path_trace,
+        gauge_transform_links,
+        MatrixGaugeLinkSpace,
+    )
+    from ._mesh import (
+        mesh_cotangent_weights,
+        mesh_face_areas,
+        mesh_face_normals,
+        mesh_lumped_vertex_areas,
+        mesh_to_cotangent_graph,
+        mesh_vertex_normals,
+        MeshCotangentLaplacian,
+        MeshLaplacianSign,
+    )
+    from ._models import (
+        DeepSets,
+        GAT,
+        graph_map_features,
+        GraphConvolution,
+        GraphMapFeatures,
+        GraphNetGAT,
+        GraphNetwork,
+        InteractionNetwork,
+        RelationNetwork,
+    )
+    from ._mp import MessagePassing
+    from ._multigraph import (
+        gaot_operator,
+        gino_operator,
+        GraphEncodeProcessDecode,
+        GraphFieldProcessor,
+        query_encode_process_decode,
+        query_graph_with_source_features,
+        query_target_features,
+        QueryGraphOperator,
+        RegionalGraphProcessor,
+        rigno_operator,
+        transolver_operator,
+    )
+    from ._multiscale import (
+        GraphClusterPool,
+        GraphMultiscaleBlock,
+        GraphPoolReduce,
+        pool_graph_by_cluster,
+        unpool_nodes_by_cluster,
+    )
+    from ._neural_operators import (
+        GraphAttentionOperator,
+        GraphDiffusion,
+        GraphFiniteVolumeDiffusion,
+        GraphFiniteVolumeDivergence,
+        GraphKernelIntegral,
+        GraphNeuralOperator,
+        GraphProcessor,
+        RepeatedGraphProcessor,
+    )
+    from ._operator_topology import (
+        broadcast_operator_topology,
+        operator_graph_fingerprint,
+        operator_topology_fingerprint,
+        OperatorTopology,
+        OperatorTopologyEntity,
+        OperatorTopologyKind,
+        OperatorTopologySite,
+        pad_operator_topology,
+        slice_operator_topology,
+        stack_operator_topologies,
+        take_operator_topology,
+    )
+    from ._ops import concatenated_args, partition_softmax
+    from ._padding import (
+        dynamically_batch,
+        get_edge_padding_mask,
+        get_graph_padding_mask,
+        get_node_padding_mask,
+        get_number_of_padding_with_graphs_edges,
+        get_number_of_padding_with_graphs_graphs,
+        get_number_of_padding_with_graphs_nodes,
+        pad_with_graphs,
+        unpad_with_graphs,
+        with_zero_out_padding_outputs,
+        zero_out_padding,
+    )
+    from ._process import (
+        AutoregressiveGraphRollout,
+        euler_step,
+        EulerGraphStepper,
+        GraphFeatureName,
+        GraphRolloutReduction,
+        rk4_step,
+        RK4GraphStepper,
+        rollout,
+        rollout_feature_loss,
+        rollout_features,
+    )
+    from ._query_batch import (
+        batched_knn_graph,
+        batched_knn_query_graph,
+        query_neighbors,
+        QueryNeighborhood,
+        QueryNeighborhoodEvidence,
+    )
+    from ._randomized_shortest_path import (
+        RandomizedShortestPathPlan,
+        RandomizedShortestPathResult,
+        RandomizedShortestPathStatus,
+    )
+    from ._route_payload import RouteLocal
+    from ._simplicial import (
+        SimplicialComplexGraph,
+        triangle_mesh_to_simplicial_graph,
+    )
+    from ._sketched_resistance import (
+        SketchedEffectiveResistancePlan,
+        SketchedResistanceEmbedding,
+    )
+    from ._spectral import (
+        graph_adjacency_apply,
+        graph_laplacian_apply,
+        GraphChebyshevFilter,
+        GraphFilterOperator,
+        GraphFlow,
+        GraphLaplacianNormalization,
+        GraphLaplacianOperator,
+        GraphPolynomialFilter,
+        spectral_discretization_from_graph,
+        spectral_discretization_from_triangle_mesh,
+    )
+    from ._typed import (
+        edge_type_ids,
+        edge_type_indices,
+        node_type_ids,
+        node_type_indices,
+        RelationalGraphConvolution,
+        typed_edges_component,
+        typed_nodes_component,
+    )
+    from .nn import GCNConv, GINConv, SAGEConv
 
 
 __all__ = [

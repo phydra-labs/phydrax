@@ -4,161 +4,297 @@
 
 """Prepared local finite-difference and generic patch-kernel calculus."""
 
-from ._adjoint import (
-    CheckpointedFDAdjointPlan,
-    FDActionAdjointPlan,
-    FDAdjointIdentityReport,
-    FDCheckpointingMode,
-    FDTimeAdjointResult,
-)
-from ._blocked import BlockLocalStencilExecutionPlan, BlockLocalStencilResult
-from ._boundary import (
-    AxisBoundaryPair,
-    BoundaryAffineMap,
-    BoundaryConditionKind,
-    BoundaryRealizationKind,
-    BoundaryRealizationPlan,
-    HaloPlan,
-)
-from ._boundary_runtime import (
-    BoundaryStageContext,
-    BoundaryWorkspace,
-    CellGhostBoundary,
-    ConformingInterfaceRuntime,
-    CornerPolicy,
-    GhostConditionKind,
-    NodalBoundaryRuntime,
-)
-from ._certification import (
-    certify_operator_adjoint,
-    certify_operator_conservation,
-    certify_stencil_consistency,
-    FDAdjointReport,
-    FDConservationReport,
-    FDConsistencyReport,
-    FDEvidenceKind,
-    FDStabilityReport,
-)
-from ._coefficients import fornberg_weights, StencilCoefficientPlan
-from ._compact import (
-    CompactDerivativePlan,
-    CompactInterpolationPlan,
-    CompactOperatorKind,
-    CompactOperatorReport,
-    PreparedCompactOperator,
-)
-from ._diagonalization import (
-    diagonalize_fd_laplacian,
-    FDBoundaryKind,
-    FDBoundaryPair,
-    FDLaplacianDiagonalization,
-    FDLaplacianSolvePlan,
-    FDTransformAxisReport,
-    solve_fd_laplacian,
-)
-from ._distributed import (
-    DistributedHaloSchedule,
-    DistributedStencilPartition,
-    HaloExchangeDescriptor,
-)
-from ._execution import (
-    ClosureStencilKernel,
-    InteriorStencilKernel,
-    lower_stencil_operator,
-    PreparedStencilExecutionOperator,
-    StencilExecutionPlan,
-    StencilExecutionReport,
-)
-from ._field_view import (
-    BSplineGridInterpolation,
-    FiniteDifferenceFieldReconstructionKernel,
-    MultilinearGridInterpolation,
-    prepare_finite_difference_field_reconstruction,
-)
-from ._flux_differencing import (
-    PreparedSBPConservationDynamics,
-    SBPFluxDifferencingDiagnostics,
-    SBPFluxDifferencingMethodPlan,
-    SBPFluxDifferencingReport,
-    TensorSBPDiscretization,
-    TensorSBPPlan,
-)
-from ._kernel import (
-    OrderedPatchKernelPlan,
-    PatchExecutionKind,
-    PatchKernelPlan,
-    PreparedPatchKernel,
-    SweepDirection,
-)
-from ._lifecycle import (
-    FDCheckpoint,
-    FDCheckpointPlan,
-    read_fd_checkpoint,
-    write_fd_checkpoint,
-)
-from ._mapped_grid import (
-    evaluate_mapped_metrics,
-    MappedDiffusionOperator,
-    MappedMetricIdentityReport,
-    MappedMetricMode,
-    MappedTensorGridPlan,
-    PreparedMappedTensorGrid,
-)
-from ._multigrid import (
-    PreparedStructuredMultigrid,
-    StructuredCoarsening,
-    StructuredMGCompatibility,
-    StructuredMGGauge,
-    StructuredMultigridPlan,
-    StructuredMultigridResult,
-    StructuredSmootherKind,
-    StructuredTensorTransferOperator,
-    StructuredTransferPlan,
-    StructuredTransferReport,
-)
-from ._operators import prepare_linear_stencil, PreparedStencilOperator
-from ._plan import (
-    FiniteDifferencePlan,
-    periodic_finite_difference,
-    PreparedFiniteDifferenceDiscretization,
-)
-from ._precision import FDExecutionPrecisionPolicy
-from ._preflight import FDExecutionPreflightPlan, FDResourceEstimate
-from ._program import (
-    FDPipelineReport,
-    PreparedStencilProgram,
-    StencilAssignment,
-    StencilProgramPlan,
-)
-from ._request import (
-    BoundaryClosureKind,
-    DerivativeRequest,
-    GridRegion,
-    GridRegionKind,
-    StencilBias,
-)
-from ._sbp import (
-    CompatibleSBPSecondDerivative,
-    PreparedSBPOperator,
-    SATBoundaryPlan,
-    SATConditionKind,
-    SATInterfaceFlux,
-    SATInterfacePlan,
-    SBPClosureEvidence,
-    SBPDerivativePlan,
-    SBPFamily,
-    SBPGridNorm,
-    SBPInteriorOrder,
-    SBPNormKind,
-    SBPNormLayout,
-)
-from ._stencil import (
-    BoundaryStencilSet,
-    LinearStencil,
-    StencilFootprint,
-    StencilRowKind,
-    StencilRowReport,
-)
+from typing import TYPE_CHECKING
+
+from ..._deferred_exports import deferred_exports
+
+
+# Exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_SYMBOL_MODULES = {
+    "CheckpointedFDAdjointPlan": "._adjoint",
+    "FDActionAdjointPlan": "._adjoint",
+    "FDAdjointIdentityReport": "._adjoint",
+    "FDCheckpointingMode": "._adjoint",
+    "FDTimeAdjointResult": "._adjoint",
+    "BlockLocalStencilExecutionPlan": "._blocked",
+    "BlockLocalStencilResult": "._blocked",
+    "AxisBoundaryPair": "._boundary",
+    "BoundaryAffineMap": "._boundary",
+    "BoundaryConditionKind": "._boundary",
+    "BoundaryRealizationKind": "._boundary",
+    "BoundaryRealizationPlan": "._boundary",
+    "HaloPlan": "._boundary",
+    "BoundaryStageContext": "._boundary_runtime",
+    "BoundaryWorkspace": "._boundary_runtime",
+    "CellGhostBoundary": "._boundary_runtime",
+    "ConformingInterfaceRuntime": "._boundary_runtime",
+    "CornerPolicy": "._boundary_runtime",
+    "GhostConditionKind": "._boundary_runtime",
+    "NodalBoundaryRuntime": "._boundary_runtime",
+    "certify_operator_adjoint": "._certification",
+    "certify_operator_conservation": "._certification",
+    "certify_stencil_consistency": "._certification",
+    "FDAdjointReport": "._certification",
+    "FDConservationReport": "._certification",
+    "FDConsistencyReport": "._certification",
+    "FDEvidenceKind": "._certification",
+    "FDStabilityReport": "._certification",
+    "fornberg_weights": "._coefficients",
+    "StencilCoefficientPlan": "._coefficients",
+    "CompactDerivativePlan": "._compact",
+    "CompactInterpolationPlan": "._compact",
+    "CompactOperatorKind": "._compact",
+    "CompactOperatorReport": "._compact",
+    "PreparedCompactOperator": "._compact",
+    "diagonalize_fd_laplacian": "._diagonalization",
+    "FDBoundaryKind": "._diagonalization",
+    "FDBoundaryPair": "._diagonalization",
+    "FDLaplacianDiagonalization": "._diagonalization",
+    "FDLaplacianSolvePlan": "._diagonalization",
+    "FDTransformAxisReport": "._diagonalization",
+    "solve_fd_laplacian": "._diagonalization",
+    "DistributedHaloSchedule": "._distributed",
+    "DistributedStencilPartition": "._distributed",
+    "HaloExchangeDescriptor": "._distributed",
+    "ClosureStencilKernel": "._execution",
+    "InteriorStencilKernel": "._execution",
+    "lower_stencil_operator": "._execution",
+    "PreparedStencilExecutionOperator": "._execution",
+    "StencilExecutionPlan": "._execution",
+    "StencilExecutionReport": "._execution",
+    "BSplineGridInterpolation": "._field_view",
+    "FiniteDifferenceFieldReconstructionKernel": "._field_view",
+    "MultilinearGridInterpolation": "._field_view",
+    "prepare_finite_difference_field_reconstruction": "._field_view",
+    "PreparedSBPConservationDynamics": "._flux_differencing",
+    "SBPFluxDifferencingDiagnostics": "._flux_differencing",
+    "SBPFluxDifferencingMethodPlan": "._flux_differencing",
+    "SBPFluxDifferencingReport": "._flux_differencing",
+    "TensorSBPDiscretization": "._flux_differencing",
+    "TensorSBPPlan": "._flux_differencing",
+    "OrderedPatchKernelPlan": "._kernel",
+    "PatchExecutionKind": "._kernel",
+    "PatchKernelPlan": "._kernel",
+    "PreparedPatchKernel": "._kernel",
+    "SweepDirection": "._kernel",
+    "FDCheckpoint": "._lifecycle",
+    "FDCheckpointPlan": "._lifecycle",
+    "read_fd_checkpoint": "._lifecycle",
+    "write_fd_checkpoint": "._lifecycle",
+    "evaluate_mapped_metrics": "._mapped_grid",
+    "MappedDiffusionOperator": "._mapped_grid",
+    "MappedMetricIdentityReport": "._mapped_grid",
+    "MappedMetricMode": "._mapped_grid",
+    "MappedTensorGridPlan": "._mapped_grid",
+    "PreparedMappedTensorGrid": "._mapped_grid",
+    "PreparedStructuredMultigrid": "._multigrid",
+    "StructuredCoarsening": "._multigrid",
+    "StructuredMGCompatibility": "._multigrid",
+    "StructuredMGGauge": "._multigrid",
+    "StructuredMultigridPlan": "._multigrid",
+    "StructuredMultigridResult": "._multigrid",
+    "StructuredSmootherKind": "._multigrid",
+    "StructuredTensorTransferOperator": "._multigrid",
+    "StructuredTransferPlan": "._multigrid",
+    "StructuredTransferReport": "._multigrid",
+    "prepare_linear_stencil": "._operators",
+    "PreparedStencilOperator": "._operators",
+    "FiniteDifferencePlan": "._plan",
+    "periodic_finite_difference": "._plan",
+    "PreparedFiniteDifferenceDiscretization": "._plan",
+    "FDExecutionPrecisionPolicy": "._precision",
+    "FDExecutionPreflightPlan": "._preflight",
+    "FDResourceEstimate": "._preflight",
+    "FDPipelineReport": "._program",
+    "PreparedStencilProgram": "._program",
+    "StencilAssignment": "._program",
+    "StencilProgramPlan": "._program",
+    "BoundaryClosureKind": "._request",
+    "DerivativeRequest": "._request",
+    "GridRegion": "._request",
+    "GridRegionKind": "._request",
+    "StencilBias": "._request",
+    "CompatibleSBPSecondDerivative": "._sbp",
+    "PreparedSBPOperator": "._sbp",
+    "SATBoundaryPlan": "._sbp",
+    "SATConditionKind": "._sbp",
+    "SATInterfaceFlux": "._sbp",
+    "SATInterfacePlan": "._sbp",
+    "SBPClosureEvidence": "._sbp",
+    "SBPDerivativePlan": "._sbp",
+    "SBPFamily": "._sbp",
+    "SBPGridNorm": "._sbp",
+    "SBPInteriorOrder": "._sbp",
+    "SBPNormKind": "._sbp",
+    "SBPNormLayout": "._sbp",
+    "BoundaryStencilSet": "._stencil",
+    "LinearStencil": "._stencil",
+    "StencilFootprint": "._stencil",
+    "StencilRowKind": "._stencil",
+    "StencilRowReport": "._stencil",
+}
+
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _SYMBOL_MODULES)
+
+
+if TYPE_CHECKING:
+    from ._adjoint import (
+        CheckpointedFDAdjointPlan,
+        FDActionAdjointPlan,
+        FDAdjointIdentityReport,
+        FDCheckpointingMode,
+        FDTimeAdjointResult,
+    )
+    from ._blocked import BlockLocalStencilExecutionPlan, BlockLocalStencilResult
+    from ._boundary import (
+        AxisBoundaryPair,
+        BoundaryAffineMap,
+        BoundaryConditionKind,
+        BoundaryRealizationKind,
+        BoundaryRealizationPlan,
+        HaloPlan,
+    )
+    from ._boundary_runtime import (
+        BoundaryStageContext,
+        BoundaryWorkspace,
+        CellGhostBoundary,
+        ConformingInterfaceRuntime,
+        CornerPolicy,
+        GhostConditionKind,
+        NodalBoundaryRuntime,
+    )
+    from ._certification import (
+        certify_operator_adjoint,
+        certify_operator_conservation,
+        certify_stencil_consistency,
+        FDAdjointReport,
+        FDConservationReport,
+        FDConsistencyReport,
+        FDEvidenceKind,
+        FDStabilityReport,
+    )
+    from ._coefficients import fornberg_weights, StencilCoefficientPlan
+    from ._compact import (
+        CompactDerivativePlan,
+        CompactInterpolationPlan,
+        CompactOperatorKind,
+        CompactOperatorReport,
+        PreparedCompactOperator,
+    )
+    from ._diagonalization import (
+        diagonalize_fd_laplacian,
+        FDBoundaryKind,
+        FDBoundaryPair,
+        FDLaplacianDiagonalization,
+        FDLaplacianSolvePlan,
+        FDTransformAxisReport,
+        solve_fd_laplacian,
+    )
+    from ._distributed import (
+        DistributedHaloSchedule,
+        DistributedStencilPartition,
+        HaloExchangeDescriptor,
+    )
+    from ._execution import (
+        ClosureStencilKernel,
+        InteriorStencilKernel,
+        lower_stencil_operator,
+        PreparedStencilExecutionOperator,
+        StencilExecutionPlan,
+        StencilExecutionReport,
+    )
+    from ._field_view import (
+        BSplineGridInterpolation,
+        FiniteDifferenceFieldReconstructionKernel,
+        MultilinearGridInterpolation,
+        prepare_finite_difference_field_reconstruction,
+    )
+    from ._flux_differencing import (
+        PreparedSBPConservationDynamics,
+        SBPFluxDifferencingDiagnostics,
+        SBPFluxDifferencingMethodPlan,
+        SBPFluxDifferencingReport,
+        TensorSBPDiscretization,
+        TensorSBPPlan,
+    )
+    from ._kernel import (
+        OrderedPatchKernelPlan,
+        PatchExecutionKind,
+        PatchKernelPlan,
+        PreparedPatchKernel,
+        SweepDirection,
+    )
+    from ._lifecycle import (
+        FDCheckpoint,
+        FDCheckpointPlan,
+        read_fd_checkpoint,
+        write_fd_checkpoint,
+    )
+    from ._mapped_grid import (
+        evaluate_mapped_metrics,
+        MappedDiffusionOperator,
+        MappedMetricIdentityReport,
+        MappedMetricMode,
+        MappedTensorGridPlan,
+        PreparedMappedTensorGrid,
+    )
+    from ._multigrid import (
+        PreparedStructuredMultigrid,
+        StructuredCoarsening,
+        StructuredMGCompatibility,
+        StructuredMGGauge,
+        StructuredMultigridPlan,
+        StructuredMultigridResult,
+        StructuredSmootherKind,
+        StructuredTensorTransferOperator,
+        StructuredTransferPlan,
+        StructuredTransferReport,
+    )
+    from ._operators import prepare_linear_stencil, PreparedStencilOperator
+    from ._plan import (
+        FiniteDifferencePlan,
+        periodic_finite_difference,
+        PreparedFiniteDifferenceDiscretization,
+    )
+    from ._precision import FDExecutionPrecisionPolicy
+    from ._preflight import FDExecutionPreflightPlan, FDResourceEstimate
+    from ._program import (
+        FDPipelineReport,
+        PreparedStencilProgram,
+        StencilAssignment,
+        StencilProgramPlan,
+    )
+    from ._request import (
+        BoundaryClosureKind,
+        DerivativeRequest,
+        GridRegion,
+        GridRegionKind,
+        StencilBias,
+    )
+    from ._sbp import (
+        CompatibleSBPSecondDerivative,
+        PreparedSBPOperator,
+        SATBoundaryPlan,
+        SATConditionKind,
+        SATInterfaceFlux,
+        SATInterfacePlan,
+        SBPClosureEvidence,
+        SBPDerivativePlan,
+        SBPFamily,
+        SBPGridNorm,
+        SBPInteriorOrder,
+        SBPNormKind,
+        SBPNormLayout,
+    )
+    from ._stencil import (
+        BoundaryStencilSet,
+        LinearStencil,
+        StencilFootprint,
+        StencilRowKind,
+        StencilRowReport,
+    )
 
 
 __all__ = [

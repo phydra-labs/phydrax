@@ -1,94 +1,198 @@
 """Scientific image supports, camera models, and audited medical preparation."""
 
-from . import camera, interchange, mri, tomography
-from ._asset import ImageAsset, ImageFieldSpec
-from ._core import (
-    DeidentificationEvidence,
-    DiffusionTensorImage,
-    HostMetadataValue,
-    ImageAxisConvention,
-    ImageIndexAffine,
-    LabelDefinition,
-    LabelOntology,
-    LabelVolume,
-    MedicalImageAsset,
-    MedicalImageSupport,
-    VoxelReference,
-)
-from ._ct import (
-    apply_hu_calibration,
-    HUCalibrationAnchor,
-    HUToMaterialCalibration,
-    HUToMaterialResult,
-)
-from ._nibabel import NibabelImageProvider, NiftiExportResult
-from ._plane import ImagePlaneSupport
-from ._providers import (
-    ANTsRegistrationProvider,
-    Dcm2NiixProvider,
-    FastSurferProvider,
-    FreeSurferProvider,
-    GreedyRegistrationProvider,
-    MedicalToolProvider,
-    MedicalToolResult,
-    SynthSegProvider,
-)
-from ._qualification import imaging_candidate_profile, imaging_candidate_profiles
-from ._registration import (
-    PreparedRegistrationEvaluation,
-    RegistrationCandidate,
-    RegistrationCheckpoint,
-    RegistrationDirection,
-    RegistrationEvaluationPlan,
-    RegistrationEvidence,
-)
-from ._sampling import backward_warp, bilinear_sample, image_coordinates, ImageSample2D
-from ._segmentation import (
-    build_compartment_complex,
-    CompartmentSurface,
-    CompartmentSurfaceResult,
-    extract_compartment_surfaces,
-    SegmentationOperation,
-    SegmentationOperationKind,
-    SegmentationOperationReport,
-    SegmentationProcessingPlan,
-    SegmentationTransition,
-)
-from ._transfer import (
-    ConservativeVoxelCellTransfer,
-    CoveragePolicy,
-    ImageToP1ProjectionPlan,
-    ImageTransferResult,
-    LabelImageTransferPlan,
-    PreparedImageToP1Projection,
-    ProbabilityImageTransferPlan,
-    TensorImageTransferPlan,
-    TensorInterpolationPolicy,
-    TransferEvidence,
-)
-from .schlieren import (
-    BackgroundOrientedSchlierenPlan,
-    CurvedSchlierenPlan,
-    CurvedSchlierenResult,
-    GladstoneDaleRelation,
-    HelmholtzContinuationEvidence,
-    HelmholtzContinuationResult,
-    KnifeEdgeSchlierenPlan,
-    MultisliceEvidence,
-    MultisliceRefractivePlan,
-    MultisliceResult,
-    RefractivePhaseEvidence,
-    RefractivePhaseScreenPlan,
-    ScalarHelmholtzContinuationPlan,
-    SchlierenDeflectionPlan,
-    SchlierenDeflectionResult,
-    SchlierenImageFormationResult,
-    SchlierenImagePair,
-    SchlierenMethod,
-    WaveSchlierenEvidence,
-    WaveSchlierenPlan,
-    WaveSchlierenResult,
-)
+from typing import TYPE_CHECKING
+
+from .._deferred_exports import deferred_exports
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "camera": "module:.camera",
+    "interchange": "module:.interchange",
+    "mri": "module:.mri",
+    "tomography": "module:.tomography",
+    "ImageAsset": "._asset",
+    "ImageFieldSpec": "._asset",
+    "DeidentificationEvidence": "._core",
+    "DiffusionTensorImage": "._core",
+    "HostMetadataValue": "._core",
+    "ImageAxisConvention": "._core",
+    "ImageIndexAffine": "._core",
+    "LabelDefinition": "._core",
+    "LabelOntology": "._core",
+    "LabelVolume": "._core",
+    "MedicalImageAsset": "._core",
+    "MedicalImageSupport": "._core",
+    "VoxelReference": "._core",
+    "apply_hu_calibration": "._ct",
+    "HUCalibrationAnchor": "._ct",
+    "HUToMaterialCalibration": "._ct",
+    "HUToMaterialResult": "._ct",
+    "NibabelImageProvider": "._nibabel",
+    "NiftiExportResult": "._nibabel",
+    "ImagePlaneSupport": "._plane",
+    "ANTsRegistrationProvider": "._providers",
+    "Dcm2NiixProvider": "._providers",
+    "FastSurferProvider": "._providers",
+    "FreeSurferProvider": "._providers",
+    "GreedyRegistrationProvider": "._providers",
+    "MedicalToolProvider": "._providers",
+    "MedicalToolResult": "._providers",
+    "SynthSegProvider": "._providers",
+    "imaging_candidate_profile": "._qualification",
+    "imaging_candidate_profiles": "._qualification",
+    "PreparedRegistrationEvaluation": "._registration",
+    "RegistrationCandidate": "._registration",
+    "RegistrationCheckpoint": "._registration",
+    "RegistrationDirection": "._registration",
+    "RegistrationEvaluationPlan": "._registration",
+    "RegistrationEvidence": "._registration",
+    "backward_warp": "._sampling",
+    "bilinear_sample": "._sampling",
+    "image_coordinates": "._sampling",
+    "ImageSample2D": "._sampling",
+    "build_compartment_complex": "._segmentation",
+    "CompartmentSurface": "._segmentation",
+    "CompartmentSurfaceResult": "._segmentation",
+    "extract_compartment_surfaces": "._segmentation",
+    "SegmentationOperation": "._segmentation",
+    "SegmentationOperationKind": "._segmentation",
+    "SegmentationOperationReport": "._segmentation",
+    "SegmentationProcessingPlan": "._segmentation",
+    "SegmentationTransition": "._segmentation",
+    "ConservativeVoxelCellTransfer": "._transfer",
+    "CoveragePolicy": "._transfer",
+    "ImageToP1ProjectionPlan": "._transfer",
+    "ImageTransferResult": "._transfer",
+    "LabelImageTransferPlan": "._transfer",
+    "PreparedImageToP1Projection": "._transfer",
+    "ProbabilityImageTransferPlan": "._transfer",
+    "TensorImageTransferPlan": "._transfer",
+    "TensorInterpolationPolicy": "._transfer",
+    "TransferEvidence": "._transfer",
+    "BackgroundOrientedSchlierenPlan": ".schlieren",
+    "CurvedSchlierenPlan": ".schlieren",
+    "CurvedSchlierenResult": ".schlieren",
+    "GladstoneDaleRelation": ".schlieren",
+    "HelmholtzContinuationEvidence": ".schlieren",
+    "HelmholtzContinuationResult": ".schlieren",
+    "KnifeEdgeSchlierenPlan": ".schlieren",
+    "MultisliceEvidence": ".schlieren",
+    "MultisliceRefractivePlan": ".schlieren",
+    "MultisliceResult": ".schlieren",
+    "RefractivePhaseEvidence": ".schlieren",
+    "RefractivePhaseScreenPlan": ".schlieren",
+    "ScalarHelmholtzContinuationPlan": ".schlieren",
+    "SchlierenDeflectionPlan": ".schlieren",
+    "SchlierenDeflectionResult": ".schlieren",
+    "SchlierenImageFormationResult": ".schlieren",
+    "SchlierenImagePair": ".schlieren",
+    "SchlierenMethod": ".schlieren",
+    "WaveSchlierenEvidence": ".schlieren",
+    "WaveSchlierenPlan": ".schlieren",
+    "WaveSchlierenResult": ".schlieren",
+}
+
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
+
+
+if TYPE_CHECKING:
+    from . import camera, interchange, mri, tomography
+    from ._asset import ImageAsset, ImageFieldSpec
+    from ._core import (
+        DeidentificationEvidence,
+        DiffusionTensorImage,
+        HostMetadataValue,
+        ImageAxisConvention,
+        ImageIndexAffine,
+        LabelDefinition,
+        LabelOntology,
+        LabelVolume,
+        MedicalImageAsset,
+        MedicalImageSupport,
+        VoxelReference,
+    )
+    from ._ct import (
+        apply_hu_calibration,
+        HUCalibrationAnchor,
+        HUToMaterialCalibration,
+        HUToMaterialResult,
+    )
+    from ._nibabel import NibabelImageProvider, NiftiExportResult
+    from ._plane import ImagePlaneSupport
+    from ._providers import (
+        ANTsRegistrationProvider,
+        Dcm2NiixProvider,
+        FastSurferProvider,
+        FreeSurferProvider,
+        GreedyRegistrationProvider,
+        MedicalToolProvider,
+        MedicalToolResult,
+        SynthSegProvider,
+    )
+    from ._qualification import imaging_candidate_profile, imaging_candidate_profiles
+    from ._registration import (
+        PreparedRegistrationEvaluation,
+        RegistrationCandidate,
+        RegistrationCheckpoint,
+        RegistrationDirection,
+        RegistrationEvaluationPlan,
+        RegistrationEvidence,
+    )
+    from ._sampling import (
+        backward_warp,
+        bilinear_sample,
+        image_coordinates,
+        ImageSample2D,
+    )
+    from ._segmentation import (
+        build_compartment_complex,
+        CompartmentSurface,
+        CompartmentSurfaceResult,
+        extract_compartment_surfaces,
+        SegmentationOperation,
+        SegmentationOperationKind,
+        SegmentationOperationReport,
+        SegmentationProcessingPlan,
+        SegmentationTransition,
+    )
+    from ._transfer import (
+        ConservativeVoxelCellTransfer,
+        CoveragePolicy,
+        ImageToP1ProjectionPlan,
+        ImageTransferResult,
+        LabelImageTransferPlan,
+        PreparedImageToP1Projection,
+        ProbabilityImageTransferPlan,
+        TensorImageTransferPlan,
+        TensorInterpolationPolicy,
+        TransferEvidence,
+    )
+    from .schlieren import (
+        BackgroundOrientedSchlierenPlan,
+        CurvedSchlierenPlan,
+        CurvedSchlierenResult,
+        GladstoneDaleRelation,
+        HelmholtzContinuationEvidence,
+        HelmholtzContinuationResult,
+        KnifeEdgeSchlierenPlan,
+        MultisliceEvidence,
+        MultisliceRefractivePlan,
+        MultisliceResult,
+        RefractivePhaseEvidence,
+        RefractivePhaseScreenPlan,
+        ScalarHelmholtzContinuationPlan,
+        SchlierenDeflectionPlan,
+        SchlierenDeflectionResult,
+        SchlierenImageFormationResult,
+        SchlierenImagePair,
+        SchlierenMethod,
+        WaveSchlierenEvidence,
+        WaveSchlierenPlan,
+        WaveSchlierenResult,
+    )
 
 
 __all__ = [

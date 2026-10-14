@@ -34,7 +34,8 @@ from ..discretization._axis import (
     sdf_mask_from_adf,
     TensorGridPlan,
 )
-from ..geometry import BoundaryAtlasProvider, sample_boundary_atlas
+from ..geometry._capabilities import BoundaryAtlasProvider
+from ..geometry._sampling import sample_boundary_atlas
 from ..typing import PRNGKey
 from ._base import AbstractGeometry, EnforcementGateMethod
 from ._dataset import DatasetDomain

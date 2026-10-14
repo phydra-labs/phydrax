@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .._fingerprint import canonical_fingerprint
-from ..lifecycle import ArrayArtifactProvenance
+from ..lifecycle._array_artifact import ArrayArtifactProvenance
 from ..typing import checked
 from ._registry import ReleaseGateEvidence, SupportTuple
 

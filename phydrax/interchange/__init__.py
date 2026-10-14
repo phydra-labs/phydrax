@@ -5,262 +5,17 @@
 """Generic external-representation interchange contracts."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .. import _external_runtime as external_runtime
-from .._document_resource import (
-    decode_json_resource,
-    decode_text_resource,
-    decode_xml_resource,
-    DecodedJSON,
-    DecodedText,
-    DecodedXML,
-)
-from .._external_resource import (
-    account_bounded_resource,
-    bounded_resource_from_bytes,
-    BoundedResource,
-    open_bounded_resource,
-    OpenedResource,
-    read_bounded_resource,
-    ResourceLimits,
-    ResourceManifest,
-    ResourceReadError,
-)
+from .._deferred_exports import deferred_exports
 from .._external_runtime import __all__ as _external_runtime_all
-from .._hdf5_resource import (
-    HDF5DatasetManifest,
-    HDF5Limits,
-    HDF5Manifest,
-    inspect_hdf5_resource,
-)
-from .._numpy_resource import (
-    decode_npy_resource,
-    decode_npz_resource,
-    DecodedNumpyArchive,
-    DecodedNumpyArray,
-    NumpyFormatLimits,
-)
-from .._publication import (
-    PublicationMode,
-    PublicationReceipt,
-    publish_bytes,
-    publish_file,
-    publish_resource_set,
-    PublishedMemberReceipt,
-    ResourceSetPublicationReceipt,
-)
-from .._resource_archive import (
-    admit_zip_resource,
-    ArchiveLimits,
-    ArchiveMemberManifest,
-    BoundedArchive,
-    read_zip_members,
-)
-from .._resource_set import (
-    BoundedResourceSet,
-    read_bounded_resource_set,
-    ResourceMemberManifest,
-    ResourceSetLimits,
-    ResourceSetManifest,
-    ResourceSetReadError,
-)
-from . import (
-    dafoam,
-    fmi,
-    geant4_detector_design,
-    helics,
-    hfss_design,
-    opticstudio,
-    xfoil,
-)
-from ._bilby_result import ImportedBilbyResult, read_bilby_result_json
-from ._black_hole import (
-    BlackHoleArtifactKind,
-    BlackHoleArtifactRights,
-    BlackHoleArtifactSchema,
-    BlackHoleArtifactUsePolicy,
-    map_black_hole_artifact,
-    map_field_artifact,
-    map_image_artifact,
-    map_numeric_model_artifact,
-    map_visibility_artifact,
-    map_waveform_artifact,
-    NeutralBlackHoleArtifact,
-)
-from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
-from ._catalog import (
-    CarrierKind,
-    format_capabilities,
-    FormatCapability,
-    FormatDirection,
-)
-from ._compressible_kinetic import (
-    CompressibleKineticCaseIR,
-    import_packed_kinetic_boundary,
-    LegacyKineticBoundaryImport,
-    read_compressible_kinetic_yaml,
-)
-from ._coordinate_transform import (
-    CoordinateTransformPlan,
-    CoordinateTransformResult,
-    execute_coordinate_transform,
-    GeodeticDependencyError,
-)
-from ._electrical_formats import ElectricalTabularSurvey, read_electrical_survey_csv
-from ._em_formats import MTImpedanceData, read_edi_impedance, read_emtf_xml_impedance
-from ._geodetic_formats import (
-    GeodeticFormatDependencyError,
-    read_rinex_observations,
-    read_sinex_positions,
-    RINEXObservationData,
-    SINEXPositionSolution,
-)
-from ._geospatial import (
-    geospatial_cell_field,
-    GeospatialCellField,
-    GeospatialContract,
-    GeospatialTransform,
-    QualifiedGeospatialGrid,
-)
-from ._inspection import (
-    HostInspectionConversion,
-    HostInspectionField,
-    HostInspectionFrame,
-)
-from ._layout import (
-    decode_layout_bytes,
-    decode_layout_resource,
-    LayoutAdapterError,
-    LayoutFormat,
-    LayoutImportPolicy,
-    LayoutImportResult,
-    LayoutLayerKey,
-    LayoutModel,
-    LayoutRegion,
-    read_layout,
-)
-from ._mesh_arrays import (
-    MeshArrayArtifact,
-    MeshArrayAssociation,
-    MeshArrayBlock,
-    MeshArrayField,
-    MeshArraySelection,
-)
-from ._openpmd_laser import (
-    OpenPMDLaserEnvelopeError,
-    OpenPMDLaserEnvelopeExportResult,
-    OpenPMDLaserEnvelopeImportPolicy,
-    OpenPMDLaserEnvelopeImportResult,
-    OpenPMDLaserEnvelopeProfile,
-    read_openpmd_laser_envelope_hdf5,
-    write_openpmd_laser_envelope_hdf5,
-)
-from ._openpmd_mesh import (
-    convert_openpmd_hdf5_to_adios2,
-    OpenPMDADIOS2Artifact,
-    OpenPMDADIOS2Provider,
-    OpenPMDFieldRecordName,
-    OpenPMDMeshError,
-    OpenPMDMeshExportResult,
-    OpenPMDMeshGeometry,
-    OpenPMDMeshImportPolicy,
-    OpenPMDMeshImportResult,
-    OpenPMDMeshIteration,
-    OpenPMDMeshRecord,
-    read_openpmd_adios2,
-    read_openpmd_meshes_hdf5,
-    write_openpmd_meshes_hdf5,
-)
-from ._openpmd_particles import (
-    OpenPMDParticleTrackError,
-    OpenPMDParticleTrackExportResult,
-    OpenPMDParticleTrackImportPolicy,
-    OpenPMDParticleTrackImportResult,
-    OpenPMDParticleTrackSelection,
-    read_openpmd_particle_tracks_hdf5,
-    write_openpmd_particle_tracks_hdf5,
-)
-from ._openpmd_pic import (
-    OpenPMDPICExportResult,
-    OpenPMDPICImportResult,
-    OpenPMDPICLayout,
-    OpenPMDPICStreamReceipt,
-    OpenPMDPICStreamWriter,
-    read_openpmd_pic_state,
-    write_openpmd_pic_state,
-)
-from ._potential_formats import (
-    GeomagneticHarmonicModel,
-    ICGEMGravityModel,
-    read_geomagnetic_coefficients,
-    read_icgem_gfc,
-)
-from ._pygmt import (
-    export_geospatial_grid,
-    GeospatialDependencyError,
-    PyGMTRenderResult,
-    render_geospatial_grid,
-    XarrayGridExport,
-)
-from ._raster_formats import (
-    GeospatialFormatDependencyError,
-    read_cf_netcdf_grid,
-    read_consolidated_zip_zarr_grid,
-    read_geotiff_grid,
-)
-from ._reference_body import PlanetaryCoordinateContract, ReferenceBodyContract
-from ._report import (
-    AdapterCapability,
-    AdapterError,
-    AdapterFormatProfile,
-    AdapterLoss,
-    AdapterNegotiationResult,
-    AdapterReport,
-    AdapterRequirement,
-    AdapterStatus,
-    AdapterWaiver,
-    compose_adapter_reports,
-    negotiate_adapter,
-    require_lossless,
-)
-from ._segy import (
-    decode_segy_bytes,
-    decode_segy_resource,
-    DecodedSEGY,
-    read_segy,
-    SEGYDecodeError,
-    SEGYRev1IEEEProfile,
-)
-from ._segy_rev2 import (
-    decode_segy_rev2_bytes,
-    decode_segy_rev2_resource,
-    read_segy_rev2,
-    SEGYRev2IEEEProfile,
-)
-from ._time_reference import (
-    convert_time,
-    LeapSecondTable,
-    TimeReferenceContract,
-    TimeScale,
-    TimeTransform,
-)
-from ._waveform_formats import (
-    QualifiedWaveformCollection,
-    QualifiedWaveformTrace,
-    read_miniseed3,
-    read_sac,
-    read_stationxml,
-    SeismicFormatDependencyError,
-    StationChannelMetadata,
-    StationXMLMetadata,
-)
-from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependencyError
 
 
-def __getattr__(name: str) -> Any:
-    if name == "hep":
-        value = import_module(".hep", __name__)
+def _facade_getattr(name: str) -> Any:
+    if name in ("cosmology", "hep"):
+        # Cosmology interchange depends on application products; both load on use.
+        value = import_module(f".{name}", __name__)
     elif name in _external_runtime_all:
         value = external_runtime.__dict__[name]
     else:
@@ -269,8 +24,467 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-def __dir__() -> list[str]:
-    return sorted(set(globals()) | {"hep"} | set(_external_runtime_all))
+def _facade_dir() -> list[str]:
+    return sorted(set(globals()) | {"cosmology", "hep"} | set(_external_runtime_all))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "decode_json_resource": ".._document_resource",
+    "decode_text_resource": ".._document_resource",
+    "decode_xml_resource": ".._document_resource",
+    "DecodedJSON": ".._document_resource",
+    "DecodedText": ".._document_resource",
+    "DecodedXML": ".._document_resource",
+    "account_bounded_resource": ".._external_resource",
+    "bounded_resource_from_bytes": ".._external_resource",
+    "BoundedResource": ".._external_resource",
+    "open_bounded_resource": ".._external_resource",
+    "OpenedResource": ".._external_resource",
+    "read_bounded_resource": ".._external_resource",
+    "ResourceLimits": ".._external_resource",
+    "ResourceManifest": ".._external_resource",
+    "ResourceReadError": ".._external_resource",
+    "HDF5DatasetManifest": ".._hdf5_resource",
+    "HDF5Limits": ".._hdf5_resource",
+    "HDF5Manifest": ".._hdf5_resource",
+    "inspect_hdf5_resource": ".._hdf5_resource",
+    "decode_npy_resource": ".._numpy_resource",
+    "decode_npz_resource": ".._numpy_resource",
+    "DecodedNumpyArchive": ".._numpy_resource",
+    "DecodedNumpyArray": ".._numpy_resource",
+    "NumpyFormatLimits": ".._numpy_resource",
+    "PublicationMode": ".._publication",
+    "PublicationReceipt": ".._publication",
+    "publish_bytes": ".._publication",
+    "publish_file": ".._publication",
+    "publish_resource_set": ".._publication",
+    "PublishedMemberReceipt": ".._publication",
+    "ResourceSetPublicationReceipt": ".._publication",
+    "admit_zip_resource": ".._resource_archive",
+    "ArchiveLimits": ".._resource_archive",
+    "ArchiveMemberManifest": ".._resource_archive",
+    "BoundedArchive": ".._resource_archive",
+    "read_zip_members": ".._resource_archive",
+    "BoundedResourceSet": ".._resource_set",
+    "read_bounded_resource_set": ".._resource_set",
+    "ResourceMemberManifest": ".._resource_set",
+    "ResourceSetLimits": ".._resource_set",
+    "ResourceSetManifest": ".._resource_set",
+    "ResourceSetReadError": ".._resource_set",
+    "dafoam": "module:.dafoam",
+    "fmi": "module:.fmi",
+    "geant4_detector_design": "module:.geant4_detector_design",
+    "helics": "module:.helics",
+    "hfss_design": "module:.hfss_design",
+    "opticstudio": "module:.opticstudio",
+    "xfoil": "module:.xfoil",
+    "ImportedBilbyResult": "._bilby_result",
+    "read_bilby_result_json": "._bilby_result",
+    "BlackHoleArtifactKind": "._black_hole",
+    "BlackHoleArtifactRights": "._black_hole",
+    "BlackHoleArtifactSchema": "._black_hole",
+    "BlackHoleArtifactUsePolicy": "._black_hole",
+    "map_black_hole_artifact": "._black_hole",
+    "map_field_artifact": "._black_hole",
+    "map_image_artifact": "._black_hole",
+    "map_numeric_model_artifact": "._black_hole",
+    "map_visibility_artifact": "._black_hole",
+    "map_waveform_artifact": "._black_hole",
+    "NeutralBlackHoleArtifact": "._black_hole",
+    "BoreholeInterval": "._borehole",
+    "BoreholeTrajectory": "._borehole",
+    "PreparedBoreholeSampling": "._borehole",
+    "CarrierKind": "._catalog",
+    "format_capabilities": "._catalog",
+    "FormatCapability": "._catalog",
+    "FormatDirection": "._catalog",
+    "CompressibleKineticCaseIR": "._compressible_kinetic",
+    "import_packed_kinetic_boundary": "._compressible_kinetic",
+    "LegacyKineticBoundaryImport": "._compressible_kinetic",
+    "read_compressible_kinetic_yaml": "._compressible_kinetic",
+    "CoordinateTransformPlan": "._coordinate_transform",
+    "CoordinateTransformResult": "._coordinate_transform",
+    "execute_coordinate_transform": "._coordinate_transform",
+    "GeodeticDependencyError": "._coordinate_transform",
+    "ElectricalTabularSurvey": "._electrical_formats",
+    "read_electrical_survey_csv": "._electrical_formats",
+    "MTImpedanceData": "._em_formats",
+    "read_edi_impedance": "._em_formats",
+    "read_emtf_xml_impedance": "._em_formats",
+    "GeodeticFormatDependencyError": "._geodetic_formats",
+    "read_rinex_observations": "._geodetic_formats",
+    "read_sinex_positions": "._geodetic_formats",
+    "RINEXObservationData": "._geodetic_formats",
+    "SINEXPositionSolution": "._geodetic_formats",
+    "geospatial_cell_field": "._geospatial",
+    "GeospatialCellField": "._geospatial",
+    "GeospatialContract": "._geospatial",
+    "GeospatialTransform": "._geospatial",
+    "QualifiedGeospatialGrid": "._geospatial",
+    "HostInspectionConversion": "._inspection",
+    "HostInspectionField": "._inspection",
+    "HostInspectionFrame": "._inspection",
+    "decode_layout_bytes": "._layout",
+    "decode_layout_resource": "._layout",
+    "LayoutAdapterError": "._layout",
+    "LayoutFormat": "._layout",
+    "LayoutImportPolicy": "._layout",
+    "LayoutImportResult": "._layout",
+    "LayoutLayerKey": "._layout",
+    "LayoutModel": "._layout",
+    "LayoutRegion": "._layout",
+    "read_layout": "._layout",
+    "MeshArrayArtifact": "._mesh_arrays",
+    "MeshArrayAssociation": "._mesh_arrays",
+    "MeshArrayBlock": "._mesh_arrays",
+    "MeshArrayField": "._mesh_arrays",
+    "MeshArraySelection": "._mesh_arrays",
+    "OpenPMDLaserEnvelopeError": "._openpmd_laser",
+    "OpenPMDLaserEnvelopeExportResult": "._openpmd_laser",
+    "OpenPMDLaserEnvelopeImportPolicy": "._openpmd_laser",
+    "OpenPMDLaserEnvelopeImportResult": "._openpmd_laser",
+    "OpenPMDLaserEnvelopeProfile": "._openpmd_laser",
+    "read_openpmd_laser_envelope_hdf5": "._openpmd_laser",
+    "write_openpmd_laser_envelope_hdf5": "._openpmd_laser",
+    "convert_openpmd_hdf5_to_adios2": "._openpmd_mesh",
+    "OpenPMDADIOS2Artifact": "._openpmd_mesh",
+    "OpenPMDADIOS2Provider": "._openpmd_mesh",
+    "OpenPMDFieldRecordName": "._openpmd_mesh",
+    "OpenPMDMeshError": "._openpmd_mesh",
+    "OpenPMDMeshExportResult": "._openpmd_mesh",
+    "OpenPMDMeshGeometry": "._openpmd_mesh",
+    "OpenPMDMeshImportPolicy": "._openpmd_mesh",
+    "OpenPMDMeshImportResult": "._openpmd_mesh",
+    "OpenPMDMeshIteration": "._openpmd_mesh",
+    "OpenPMDMeshRecord": "._openpmd_mesh",
+    "read_openpmd_adios2": "._openpmd_mesh",
+    "read_openpmd_meshes_hdf5": "._openpmd_mesh",
+    "write_openpmd_meshes_hdf5": "._openpmd_mesh",
+    "OpenPMDParticleTrackError": "._openpmd_particles",
+    "OpenPMDParticleTrackExportResult": "._openpmd_particles",
+    "OpenPMDParticleTrackImportPolicy": "._openpmd_particles",
+    "OpenPMDParticleTrackImportResult": "._openpmd_particles",
+    "OpenPMDParticleTrackSelection": "._openpmd_particles",
+    "read_openpmd_particle_tracks_hdf5": "._openpmd_particles",
+    "write_openpmd_particle_tracks_hdf5": "._openpmd_particles",
+    "OpenPMDPICExportResult": "._openpmd_pic",
+    "OpenPMDPICImportResult": "._openpmd_pic",
+    "OpenPMDPICLayout": "._openpmd_pic",
+    "OpenPMDPICStreamReceipt": "._openpmd_pic",
+    "OpenPMDPICStreamWriter": "._openpmd_pic",
+    "read_openpmd_pic_state": "._openpmd_pic",
+    "write_openpmd_pic_state": "._openpmd_pic",
+    "GeomagneticHarmonicModel": "._potential_formats",
+    "ICGEMGravityModel": "._potential_formats",
+    "read_geomagnetic_coefficients": "._potential_formats",
+    "read_icgem_gfc": "._potential_formats",
+    "export_geospatial_grid": "._pygmt",
+    "GeospatialDependencyError": "._pygmt",
+    "PyGMTRenderResult": "._pygmt",
+    "render_geospatial_grid": "._pygmt",
+    "XarrayGridExport": "._pygmt",
+    "GeospatialFormatDependencyError": "._raster_formats",
+    "read_cf_netcdf_grid": "._raster_formats",
+    "read_consolidated_zip_zarr_grid": "._raster_formats",
+    "read_geotiff_grid": "._raster_formats",
+    "PlanetaryCoordinateContract": "._reference_body",
+    "ReferenceBodyContract": "._reference_body",
+    "AdapterCapability": "._report",
+    "AdapterError": "._report",
+    "AdapterFormatProfile": "._report",
+    "AdapterLoss": "._report",
+    "AdapterNegotiationResult": "._report",
+    "AdapterReport": "._report",
+    "AdapterRequirement": "._report",
+    "AdapterStatus": "._report",
+    "AdapterWaiver": "._report",
+    "compose_adapter_reports": "._report",
+    "negotiate_adapter": "._report",
+    "require_lossless": "._report",
+    "decode_segy_bytes": "._segy",
+    "decode_segy_resource": "._segy",
+    "DecodedSEGY": "._segy",
+    "read_segy": "._segy",
+    "SEGYDecodeError": "._segy",
+    "SEGYRev1IEEEProfile": "._segy",
+    "decode_segy_rev2_bytes": "._segy_rev2",
+    "decode_segy_rev2_resource": "._segy_rev2",
+    "read_segy_rev2": "._segy_rev2",
+    "SEGYRev2IEEEProfile": "._segy_rev2",
+    "convert_time": "._time_reference",
+    "LeapSecondTable": "._time_reference",
+    "TimeReferenceContract": "._time_reference",
+    "TimeScale": "._time_reference",
+    "TimeTransform": "._time_reference",
+    "QualifiedWaveformCollection": "._waveform_formats",
+    "QualifiedWaveformTrace": "._waveform_formats",
+    "read_miniseed3": "._waveform_formats",
+    "read_sac": "._waveform_formats",
+    "read_stationxml": "._waveform_formats",
+    "SeismicFormatDependencyError": "._waveform_formats",
+    "StationChannelMetadata": "._waveform_formats",
+    "StationXMLMetadata": "._waveform_formats",
+    "QualifiedWellLog": "._well_formats",
+    "read_las_curve": "._well_formats",
+    "WellFormatDependencyError": "._well_formats",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from .._document_resource import (
+        decode_json_resource,
+        decode_text_resource,
+        decode_xml_resource,
+        DecodedJSON,
+        DecodedText,
+        DecodedXML,
+    )
+    from .._external_resource import (
+        account_bounded_resource,
+        bounded_resource_from_bytes,
+        BoundedResource,
+        open_bounded_resource,
+        OpenedResource,
+        read_bounded_resource,
+        ResourceLimits,
+        ResourceManifest,
+        ResourceReadError,
+    )
+    from .._hdf5_resource import (
+        HDF5DatasetManifest,
+        HDF5Limits,
+        HDF5Manifest,
+        inspect_hdf5_resource,
+    )
+    from .._numpy_resource import (
+        decode_npy_resource,
+        decode_npz_resource,
+        DecodedNumpyArchive,
+        DecodedNumpyArray,
+        NumpyFormatLimits,
+    )
+    from .._publication import (
+        PublicationMode,
+        PublicationReceipt,
+        publish_bytes,
+        publish_file,
+        publish_resource_set,
+        PublishedMemberReceipt,
+        ResourceSetPublicationReceipt,
+    )
+    from .._resource_archive import (
+        admit_zip_resource,
+        ArchiveLimits,
+        ArchiveMemberManifest,
+        BoundedArchive,
+        read_zip_members,
+    )
+    from .._resource_set import (
+        BoundedResourceSet,
+        read_bounded_resource_set,
+        ResourceMemberManifest,
+        ResourceSetLimits,
+        ResourceSetManifest,
+        ResourceSetReadError,
+    )
+    from . import (
+        dafoam,
+        fmi,
+        geant4_detector_design,
+        helics,
+        hfss_design,
+        opticstudio,
+        xfoil,
+    )
+    from ._bilby_result import ImportedBilbyResult, read_bilby_result_json
+    from ._black_hole import (
+        BlackHoleArtifactKind,
+        BlackHoleArtifactRights,
+        BlackHoleArtifactSchema,
+        BlackHoleArtifactUsePolicy,
+        map_black_hole_artifact,
+        map_field_artifact,
+        map_image_artifact,
+        map_numeric_model_artifact,
+        map_visibility_artifact,
+        map_waveform_artifact,
+        NeutralBlackHoleArtifact,
+    )
+    from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
+    from ._catalog import (
+        CarrierKind,
+        format_capabilities,
+        FormatCapability,
+        FormatDirection,
+    )
+    from ._compressible_kinetic import (
+        CompressibleKineticCaseIR,
+        import_packed_kinetic_boundary,
+        LegacyKineticBoundaryImport,
+        read_compressible_kinetic_yaml,
+    )
+    from ._coordinate_transform import (
+        CoordinateTransformPlan,
+        CoordinateTransformResult,
+        execute_coordinate_transform,
+        GeodeticDependencyError,
+    )
+    from ._electrical_formats import ElectricalTabularSurvey, read_electrical_survey_csv
+    from ._em_formats import MTImpedanceData, read_edi_impedance, read_emtf_xml_impedance
+    from ._geodetic_formats import (
+        GeodeticFormatDependencyError,
+        read_rinex_observations,
+        read_sinex_positions,
+        RINEXObservationData,
+        SINEXPositionSolution,
+    )
+    from ._geospatial import (
+        geospatial_cell_field,
+        GeospatialCellField,
+        GeospatialContract,
+        GeospatialTransform,
+        QualifiedGeospatialGrid,
+    )
+    from ._inspection import (
+        HostInspectionConversion,
+        HostInspectionField,
+        HostInspectionFrame,
+    )
+    from ._layout import (
+        decode_layout_bytes,
+        decode_layout_resource,
+        LayoutAdapterError,
+        LayoutFormat,
+        LayoutImportPolicy,
+        LayoutImportResult,
+        LayoutLayerKey,
+        LayoutModel,
+        LayoutRegion,
+        read_layout,
+    )
+    from ._mesh_arrays import (
+        MeshArrayArtifact,
+        MeshArrayAssociation,
+        MeshArrayBlock,
+        MeshArrayField,
+        MeshArraySelection,
+    )
+    from ._openpmd_laser import (
+        OpenPMDLaserEnvelopeError,
+        OpenPMDLaserEnvelopeExportResult,
+        OpenPMDLaserEnvelopeImportPolicy,
+        OpenPMDLaserEnvelopeImportResult,
+        OpenPMDLaserEnvelopeProfile,
+        read_openpmd_laser_envelope_hdf5,
+        write_openpmd_laser_envelope_hdf5,
+    )
+    from ._openpmd_mesh import (
+        convert_openpmd_hdf5_to_adios2,
+        OpenPMDADIOS2Artifact,
+        OpenPMDADIOS2Provider,
+        OpenPMDFieldRecordName,
+        OpenPMDMeshError,
+        OpenPMDMeshExportResult,
+        OpenPMDMeshGeometry,
+        OpenPMDMeshImportPolicy,
+        OpenPMDMeshImportResult,
+        OpenPMDMeshIteration,
+        OpenPMDMeshRecord,
+        read_openpmd_adios2,
+        read_openpmd_meshes_hdf5,
+        write_openpmd_meshes_hdf5,
+    )
+    from ._openpmd_particles import (
+        OpenPMDParticleTrackError,
+        OpenPMDParticleTrackExportResult,
+        OpenPMDParticleTrackImportPolicy,
+        OpenPMDParticleTrackImportResult,
+        OpenPMDParticleTrackSelection,
+        read_openpmd_particle_tracks_hdf5,
+        write_openpmd_particle_tracks_hdf5,
+    )
+    from ._openpmd_pic import (
+        OpenPMDPICExportResult,
+        OpenPMDPICImportResult,
+        OpenPMDPICLayout,
+        OpenPMDPICStreamReceipt,
+        OpenPMDPICStreamWriter,
+        read_openpmd_pic_state,
+        write_openpmd_pic_state,
+    )
+    from ._potential_formats import (
+        GeomagneticHarmonicModel,
+        ICGEMGravityModel,
+        read_geomagnetic_coefficients,
+        read_icgem_gfc,
+    )
+    from ._pygmt import (
+        export_geospatial_grid,
+        GeospatialDependencyError,
+        PyGMTRenderResult,
+        render_geospatial_grid,
+        XarrayGridExport,
+    )
+    from ._raster_formats import (
+        GeospatialFormatDependencyError,
+        read_cf_netcdf_grid,
+        read_consolidated_zip_zarr_grid,
+        read_geotiff_grid,
+    )
+    from ._reference_body import PlanetaryCoordinateContract, ReferenceBodyContract
+    from ._report import (
+        AdapterCapability,
+        AdapterError,
+        AdapterFormatProfile,
+        AdapterLoss,
+        AdapterNegotiationResult,
+        AdapterReport,
+        AdapterRequirement,
+        AdapterStatus,
+        AdapterWaiver,
+        compose_adapter_reports,
+        negotiate_adapter,
+        require_lossless,
+    )
+    from ._segy import (
+        decode_segy_bytes,
+        decode_segy_resource,
+        DecodedSEGY,
+        read_segy,
+        SEGYDecodeError,
+        SEGYRev1IEEEProfile,
+    )
+    from ._segy_rev2 import (
+        decode_segy_rev2_bytes,
+        decode_segy_rev2_resource,
+        read_segy_rev2,
+        SEGYRev2IEEEProfile,
+    )
+    from ._time_reference import (
+        convert_time,
+        LeapSecondTable,
+        TimeReferenceContract,
+        TimeScale,
+        TimeTransform,
+    )
+    from ._waveform_formats import (
+        QualifiedWaveformCollection,
+        QualifiedWaveformTrace,
+        read_miniseed3,
+        read_sac,
+        read_stationxml,
+        SeismicFormatDependencyError,
+        StationChannelMetadata,
+        StationXMLMetadata,
+    )
+    from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependencyError
 
 
 __all__ = [

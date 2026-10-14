@@ -20,6 +20,7 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.sparse import EdgeRelation
 
+from ..._jax_config import x64_enabled
 from ...typing import parse
 from ._morton import (
     _canonical_morton_point_order,
@@ -191,7 +192,7 @@ def _validated_capacities(
         raise TypeError("address_plan must be a MortonAddressPlan.")
     # Morton codes, sort keys and stable identities are 64-bit; without x64
     # JAX silently narrows them to 32 bits, which is not a supported address.
-    if not jax.config.read("jax_enable_x64"):
+    if not x64_enabled():
         raise ValueError(
             "Morton spatial queries require jax_enable_x64 for 64-bit Morton codes; "
             "float32 coordinates are supported with x64 enabled (dtype=float32)."

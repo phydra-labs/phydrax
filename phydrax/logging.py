@@ -2,7 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Structured, privacy-bounded event logging for PhydraX."""
+"""Structured, privacy-bounded event logging for PhydraX.
+
+Emission is enabled through `phydrax.config.configure(LoggingConfig(...))`; this
+module owns sinks, correlation context, and canonical event formatting.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from loguru import logger as _loguru_logger
 if TYPE_CHECKING:
     from loguru import FormatFunction, Record
 
+from ._config_state import logging_enabled
 from ._privacy import JSONValue, REDACTED, SecretRedactor
 
 
@@ -41,29 +46,15 @@ _CONTEXT: ContextVar[Mapping[str, object]] = ContextVar(
     "phydrax_logging_context", default=MappingProxyType({})
 )
 _REDACTOR = SecretRedactor()
-_ENABLED = False
 
 
-def enable() -> None:
-    """Enable PhydraX event emission without changing application handlers."""
+def _synchronize_emission() -> None:
+    """Make Loguru's named PhydraX filter follow the configured emission flag."""
 
-    global _ENABLED
-    _loguru_logger.enable("phydrax")
-    _ENABLED = True
-
-
-def disable() -> None:
-    """Disable PhydraX event emission without changing application handlers."""
-
-    global _ENABLED
-    _ENABLED = False
-    _loguru_logger.disable("phydrax")
-
-
-def is_enabled() -> bool:
-    """Return whether PhydraX event emission is enabled."""
-
-    return _ENABLED
+    if logging_enabled():
+        _loguru_logger.enable("phydrax")
+    else:
+        _loguru_logger.disable("phydrax")
 
 
 @contextmanager
@@ -85,7 +76,7 @@ def context(**values: object) -> Iterator[None]:
 def emit(level: LogLevel, event: str, message: str, /, **fields: object) -> None:
     """Emit one canonical PhydraX event when logging is enabled."""
 
-    if not _ENABLED:
+    if not logging_enabled():
         return
     if not _EVENT_NAME.fullmatch(event):
         raise ValueError(f"Invalid logging event name: {event!r}.")
@@ -411,7 +402,7 @@ def _canonical_json(value: object, /) -> str:
 
 
 _LOGGER = _loguru_logger.patch(_patch_record)
-disable()
+_synchronize_emission()
 
 
 __all__ = [
@@ -419,9 +410,6 @@ __all__ = [
     "add_json_sink",
     "add_text_sink",
     "context",
-    "disable",
     "emit",
-    "enable",
-    "is_enabled",
     "remove_sink",
 ]

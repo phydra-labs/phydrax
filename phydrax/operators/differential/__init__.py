@@ -1,183 +1,9 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from typing import Any, TYPE_CHECKING
 
-from typing import Any
-
-from ._clifford import clifford_dirac
-from ._dimension_estimators import (
-    coordinate_divergence_samples,
-    coordinate_second_derivative_samples,
-    dimension_sum_samples,
-    DimensionContributionEvaluation,
-    DimensionOperatorEstimate,
-    DimensionOperatorSamples,
-    DimensionSamplingMode,
-    DimensionSamplingPolicy,
-    estimate_dimension_sum,
-)
-from ._domain_ops import (
-    bilaplacian,
-    cauchy_from_pk2,
-    cauchy_strain,
-    cauchy_stress,
-    curl,
-    deformation_gradient,
-    deviatoric_stress,
-    directional_derivative,
-    div,
-    div_cauchy_stress,
-    div_diag_k_grad,
-    div_K_grad,
-    div_k_grad,
-    div_tensor,
-    dt,
-    dt_n,
-    EquivalentStressConvention,
-    grad,
-    green_lagrange_strain,
-    hessian,
-    hydrostatic_pressure,
-    hydrostatic_stress,
-    laplacian,
-    linear_elastic_cauchy_stress_2d,
-    linear_elastic_orthotropic_stress_2d,
-    linear_elastic_stress,
-    material_derivative,
-    maxwell_stress,
-    navier_stokes_divergence,
-    navier_stokes_stress,
-    neo_hookean_cauchy,
-    neo_hookean_pk1,
-    neo_hookean_reference_energy,
-    partial_n,
-    partial_t,
-    partial_x,
-    partial_y,
-    partial_z,
-    pk1_from_pk2,
-    scalar_curl_2d,
-    strain_rate,
-    strain_rate_magnitude,
-    svk_pk2_stress,
-    vector_curl_2d,
-    viscous_stress,
-    von_mises_stress,
-)
-from ._form_ops import (
-    domain_codifferential,
-    domain_differential_form,
-    domain_exterior_derivative,
-    domain_hodge_laplacian,
-    domain_hodge_star,
-    domain_interior_product,
-    domain_lie_derivative,
-    domain_maxwell_residuals,
-    domain_pullback_form,
-    domain_to_twisted,
-    domain_to_untwisted,
-    domain_wedge,
-    DomainDifferentialForm,
-    DomainMaxwellResiduals,
-)
-from ._fractional_ops import (
-    fractional_derivative_gl_mc,
-    fractional_laplacian,
-    riesz_fractional_derivative_gl_mc,
-)
-from ._level_set import (
-    level_set_coarea_density,
-    level_set_curvature,
-    level_set_gradient_norm,
-    level_set_normal,
-    level_set_normal_velocity,
-    level_set_phase_indicator,
-    regularized_delta,
-    regularized_heaviside,
-)
-from ._lie_ops import lie_bracket
-from ._map_ops import (
-    riemannian_map_conformality_residual,
-    riemannian_map_energy,
-    riemannian_map_isometry_residual,
-    riemannian_map_tension,
-)
-from ._metric_measure_ops import (
-    weighted_fokker_planck_operator,
-    weighted_kolmogorov_generator,
-    weighted_laplacian,
-    weighted_probability_current,
-    weighted_riemannian_div,
-    weighted_riemannian_grad,
-)
-from ._monge_ampere import (
-    domain_kahler_positivity_margin,
-    domain_monge_ampere_residual,
-)
-from ._requests import (
-    DerivativeExecutionPlan,
-    DerivativeExecutionStrategy,
-    DerivativeRequest,
-    DerivativeStep,
-    DerivativeStepKind,
-    evaluate_fused_coordinate_derivatives,
-    FusedDerivativeEvaluation,
-    plan_derivative_execution,
-    trace_derivative_requests,
-)
-from ._riemannian_ops import (
-    covariant_derivative,
-    covariant_hessian,
-    riemannian_div,
-    riemannian_div_tensor,
-    riemannian_grad,
-)
-from ._semi_riemannian_ops import (
-    as_lorentzian_metric_field,
-    domain_einstein_tensor,
-    domain_ricci_tensor,
-    domain_riemann_tensor,
-    domain_scalar_curvature,
-    intrinsic_dalembertian,
-    lorentzian_metric_from_field,
-    semi_riemannian_grad,
-)
-from ._stochastic_estimators import (
-    directional_stratonovich_correction,
-    estimate_kolmogorov_generator,
-    estimate_stochastic_trace,
-    exact_state_divergence,
-    factor_hvp_contraction,
-    ProbeDistribution,
-    stochastic_bilaplacian_samples,
-    stochastic_divergence_samples,
-    stochastic_trace_samples,
-    StochasticOperatorEstimate,
-    StochasticOperatorSamples,
-    StochasticTracePolicy,
-)
-from ._sub_riemannian_ops import horizontal_grad, sub_laplacian
-from ._surface_ops import (
-    ambient_surface_hessian_trace,
-    laplace_beltrami,
-    surface_curl_scalar,
-    surface_curl_vector,
-    surface_div,
-    surface_grad,
-    tangential_component,
-)
-from ._taylor_contracts import (
-    TaylorContractionPolicy,
-    TaylorContractionRequest,
-    TaylorContractionResources,
-    TaylorContractionStrategy,
-)
-from ._taylor_execution import evaluate_taylor_contractions, TaylorContractionResult
-from ._taylor_planning import plan_taylor_contractions, TaylorContractionPlan
-from ._time_fractional_ops import (
-    caputo_time_fractional,
-    caputo_time_fractional_dw,
-)
+from ..._deferred_exports import deferred_exports
 
 
 _STOCHASTIC_OPERATOR_EXPORTS = frozenset(
@@ -193,7 +19,7 @@ _STOCHASTIC_OPERATOR_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     if name in _STOCHASTIC_OPERATOR_EXPORTS:
         from . import _stochastic_ops as module
 
@@ -208,6 +34,341 @@ def __getattr__(name: str) -> Any:
         }
         return exports[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "clifford_dirac": "._clifford",
+    "coordinate_divergence_samples": "._dimension_estimators",
+    "coordinate_second_derivative_samples": "._dimension_estimators",
+    "dimension_sum_samples": "._dimension_estimators",
+    "DimensionContributionEvaluation": "._dimension_estimators",
+    "DimensionOperatorEstimate": "._dimension_estimators",
+    "DimensionOperatorSamples": "._dimension_estimators",
+    "DimensionSamplingMode": "._dimension_estimators",
+    "DimensionSamplingPolicy": "._dimension_estimators",
+    "estimate_dimension_sum": "._dimension_estimators",
+    "bilaplacian": "._domain_ops",
+    "cauchy_from_pk2": "._domain_ops",
+    "cauchy_strain": "._domain_ops",
+    "cauchy_stress": "._domain_ops",
+    "curl": "._domain_ops",
+    "deformation_gradient": "._domain_ops",
+    "deviatoric_stress": "._domain_ops",
+    "directional_derivative": "._domain_ops",
+    "div": "._domain_ops",
+    "div_cauchy_stress": "._domain_ops",
+    "div_diag_k_grad": "._domain_ops",
+    "div_K_grad": "._domain_ops",
+    "div_k_grad": "._domain_ops",
+    "div_tensor": "._domain_ops",
+    "dt": "._domain_ops",
+    "dt_n": "._domain_ops",
+    "EquivalentStressConvention": "._domain_ops",
+    "grad": "._domain_ops",
+    "green_lagrange_strain": "._domain_ops",
+    "hessian": "._domain_ops",
+    "hydrostatic_pressure": "._domain_ops",
+    "hydrostatic_stress": "._domain_ops",
+    "laplacian": "._domain_ops",
+    "linear_elastic_cauchy_stress_2d": "._domain_ops",
+    "linear_elastic_orthotropic_stress_2d": "._domain_ops",
+    "linear_elastic_stress": "._domain_ops",
+    "material_derivative": "._domain_ops",
+    "maxwell_stress": "._domain_ops",
+    "navier_stokes_divergence": "._domain_ops",
+    "navier_stokes_stress": "._domain_ops",
+    "neo_hookean_cauchy": "._domain_ops",
+    "neo_hookean_pk1": "._domain_ops",
+    "neo_hookean_reference_energy": "._domain_ops",
+    "partial_n": "._domain_ops",
+    "partial_t": "._domain_ops",
+    "partial_x": "._domain_ops",
+    "partial_y": "._domain_ops",
+    "partial_z": "._domain_ops",
+    "pk1_from_pk2": "._domain_ops",
+    "scalar_curl_2d": "._domain_ops",
+    "strain_rate": "._domain_ops",
+    "strain_rate_magnitude": "._domain_ops",
+    "svk_pk2_stress": "._domain_ops",
+    "vector_curl_2d": "._domain_ops",
+    "viscous_stress": "._domain_ops",
+    "von_mises_stress": "._domain_ops",
+    "domain_codifferential": "._form_ops",
+    "domain_differential_form": "._form_ops",
+    "domain_exterior_derivative": "._form_ops",
+    "domain_hodge_laplacian": "._form_ops",
+    "domain_hodge_star": "._form_ops",
+    "domain_interior_product": "._form_ops",
+    "domain_lie_derivative": "._form_ops",
+    "domain_maxwell_residuals": "._form_ops",
+    "domain_pullback_form": "._form_ops",
+    "domain_to_twisted": "._form_ops",
+    "domain_to_untwisted": "._form_ops",
+    "domain_wedge": "._form_ops",
+    "DomainDifferentialForm": "._form_ops",
+    "DomainMaxwellResiduals": "._form_ops",
+    "fractional_derivative_gl_mc": "._fractional_ops",
+    "fractional_laplacian": "._fractional_ops",
+    "riesz_fractional_derivative_gl_mc": "._fractional_ops",
+    "level_set_coarea_density": "._level_set",
+    "level_set_curvature": "._level_set",
+    "level_set_gradient_norm": "._level_set",
+    "level_set_normal": "._level_set",
+    "level_set_normal_velocity": "._level_set",
+    "level_set_phase_indicator": "._level_set",
+    "regularized_delta": "._level_set",
+    "regularized_heaviside": "._level_set",
+    "lie_bracket": "._lie_ops",
+    "riemannian_map_conformality_residual": "._map_ops",
+    "riemannian_map_energy": "._map_ops",
+    "riemannian_map_isometry_residual": "._map_ops",
+    "riemannian_map_tension": "._map_ops",
+    "weighted_fokker_planck_operator": "._metric_measure_ops",
+    "weighted_kolmogorov_generator": "._metric_measure_ops",
+    "weighted_laplacian": "._metric_measure_ops",
+    "weighted_probability_current": "._metric_measure_ops",
+    "weighted_riemannian_div": "._metric_measure_ops",
+    "weighted_riemannian_grad": "._metric_measure_ops",
+    "domain_kahler_positivity_margin": "._monge_ampere",
+    "domain_monge_ampere_residual": "._monge_ampere",
+    "DerivativeExecutionPlan": "._requests",
+    "DerivativeExecutionStrategy": "._requests",
+    "DerivativeRequest": "._requests",
+    "DerivativeStep": "._requests",
+    "DerivativeStepKind": "._requests",
+    "evaluate_fused_coordinate_derivatives": "._requests",
+    "FusedDerivativeEvaluation": "._requests",
+    "plan_derivative_execution": "._requests",
+    "trace_derivative_requests": "._requests",
+    "covariant_derivative": "._riemannian_ops",
+    "covariant_hessian": "._riemannian_ops",
+    "riemannian_div": "._riemannian_ops",
+    "riemannian_div_tensor": "._riemannian_ops",
+    "riemannian_grad": "._riemannian_ops",
+    "as_lorentzian_metric_field": "._semi_riemannian_ops",
+    "domain_einstein_tensor": "._semi_riemannian_ops",
+    "domain_ricci_tensor": "._semi_riemannian_ops",
+    "domain_riemann_tensor": "._semi_riemannian_ops",
+    "domain_scalar_curvature": "._semi_riemannian_ops",
+    "intrinsic_dalembertian": "._semi_riemannian_ops",
+    "lorentzian_metric_from_field": "._semi_riemannian_ops",
+    "semi_riemannian_grad": "._semi_riemannian_ops",
+    "directional_stratonovich_correction": "._stochastic_estimators",
+    "estimate_kolmogorov_generator": "._stochastic_estimators",
+    "estimate_stochastic_trace": "._stochastic_estimators",
+    "exact_state_divergence": "._stochastic_estimators",
+    "factor_hvp_contraction": "._stochastic_estimators",
+    "ProbeDistribution": "._stochastic_estimators",
+    "stochastic_bilaplacian_samples": "._stochastic_estimators",
+    "stochastic_divergence_samples": "._stochastic_estimators",
+    "stochastic_trace_samples": "._stochastic_estimators",
+    "StochasticOperatorEstimate": "._stochastic_estimators",
+    "StochasticOperatorSamples": "._stochastic_estimators",
+    "StochasticTracePolicy": "._stochastic_estimators",
+    "horizontal_grad": "._sub_riemannian_ops",
+    "sub_laplacian": "._sub_riemannian_ops",
+    "ambient_surface_hessian_trace": "._surface_ops",
+    "laplace_beltrami": "._surface_ops",
+    "surface_curl_scalar": "._surface_ops",
+    "surface_curl_vector": "._surface_ops",
+    "surface_div": "._surface_ops",
+    "surface_grad": "._surface_ops",
+    "tangential_component": "._surface_ops",
+    "TaylorContractionPolicy": "._taylor_contracts",
+    "TaylorContractionRequest": "._taylor_contracts",
+    "TaylorContractionResources": "._taylor_contracts",
+    "TaylorContractionStrategy": "._taylor_contracts",
+    "evaluate_taylor_contractions": "._taylor_execution",
+    "TaylorContractionResult": "._taylor_execution",
+    "plan_taylor_contractions": "._taylor_planning",
+    "TaylorContractionPlan": "._taylor_planning",
+    "caputo_time_fractional": "._time_fractional_ops",
+    "caputo_time_fractional_dw": "._time_fractional_ops",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr
+)
+
+
+if TYPE_CHECKING:
+    from ._clifford import clifford_dirac
+    from ._dimension_estimators import (
+        coordinate_divergence_samples,
+        coordinate_second_derivative_samples,
+        dimension_sum_samples,
+        DimensionContributionEvaluation,
+        DimensionOperatorEstimate,
+        DimensionOperatorSamples,
+        DimensionSamplingMode,
+        DimensionSamplingPolicy,
+        estimate_dimension_sum,
+    )
+    from ._domain_ops import (
+        bilaplacian,
+        cauchy_from_pk2,
+        cauchy_strain,
+        cauchy_stress,
+        curl,
+        deformation_gradient,
+        deviatoric_stress,
+        directional_derivative,
+        div,
+        div_cauchy_stress,
+        div_diag_k_grad,
+        div_K_grad,
+        div_k_grad,
+        div_tensor,
+        dt,
+        dt_n,
+        EquivalentStressConvention,
+        grad,
+        green_lagrange_strain,
+        hessian,
+        hydrostatic_pressure,
+        hydrostatic_stress,
+        laplacian,
+        linear_elastic_cauchy_stress_2d,
+        linear_elastic_orthotropic_stress_2d,
+        linear_elastic_stress,
+        material_derivative,
+        maxwell_stress,
+        navier_stokes_divergence,
+        navier_stokes_stress,
+        neo_hookean_cauchy,
+        neo_hookean_pk1,
+        neo_hookean_reference_energy,
+        partial_n,
+        partial_t,
+        partial_x,
+        partial_y,
+        partial_z,
+        pk1_from_pk2,
+        scalar_curl_2d,
+        strain_rate,
+        strain_rate_magnitude,
+        svk_pk2_stress,
+        vector_curl_2d,
+        viscous_stress,
+        von_mises_stress,
+    )
+    from ._form_ops import (
+        domain_codifferential,
+        domain_differential_form,
+        domain_exterior_derivative,
+        domain_hodge_laplacian,
+        domain_hodge_star,
+        domain_interior_product,
+        domain_lie_derivative,
+        domain_maxwell_residuals,
+        domain_pullback_form,
+        domain_to_twisted,
+        domain_to_untwisted,
+        domain_wedge,
+        DomainDifferentialForm,
+        DomainMaxwellResiduals,
+    )
+    from ._fractional_ops import (
+        fractional_derivative_gl_mc,
+        fractional_laplacian,
+        riesz_fractional_derivative_gl_mc,
+    )
+    from ._level_set import (
+        level_set_coarea_density,
+        level_set_curvature,
+        level_set_gradient_norm,
+        level_set_normal,
+        level_set_normal_velocity,
+        level_set_phase_indicator,
+        regularized_delta,
+        regularized_heaviside,
+    )
+    from ._lie_ops import lie_bracket
+    from ._map_ops import (
+        riemannian_map_conformality_residual,
+        riemannian_map_energy,
+        riemannian_map_isometry_residual,
+        riemannian_map_tension,
+    )
+    from ._metric_measure_ops import (
+        weighted_fokker_planck_operator,
+        weighted_kolmogorov_generator,
+        weighted_laplacian,
+        weighted_probability_current,
+        weighted_riemannian_div,
+        weighted_riemannian_grad,
+    )
+    from ._monge_ampere import (
+        domain_kahler_positivity_margin,
+        domain_monge_ampere_residual,
+    )
+    from ._requests import (
+        DerivativeExecutionPlan,
+        DerivativeExecutionStrategy,
+        DerivativeRequest,
+        DerivativeStep,
+        DerivativeStepKind,
+        evaluate_fused_coordinate_derivatives,
+        FusedDerivativeEvaluation,
+        plan_derivative_execution,
+        trace_derivative_requests,
+    )
+    from ._riemannian_ops import (
+        covariant_derivative,
+        covariant_hessian,
+        riemannian_div,
+        riemannian_div_tensor,
+        riemannian_grad,
+    )
+    from ._semi_riemannian_ops import (
+        as_lorentzian_metric_field,
+        domain_einstein_tensor,
+        domain_ricci_tensor,
+        domain_riemann_tensor,
+        domain_scalar_curvature,
+        intrinsic_dalembertian,
+        lorentzian_metric_from_field,
+        semi_riemannian_grad,
+    )
+    from ._stochastic_estimators import (
+        directional_stratonovich_correction,
+        estimate_kolmogorov_generator,
+        estimate_stochastic_trace,
+        exact_state_divergence,
+        factor_hvp_contraction,
+        ProbeDistribution,
+        stochastic_bilaplacian_samples,
+        stochastic_divergence_samples,
+        stochastic_trace_samples,
+        StochasticOperatorEstimate,
+        StochasticOperatorSamples,
+        StochasticTracePolicy,
+    )
+    from ._sub_riemannian_ops import horizontal_grad, sub_laplacian
+    from ._surface_ops import (
+        ambient_surface_hessian_trace,
+        laplace_beltrami,
+        surface_curl_scalar,
+        surface_curl_vector,
+        surface_div,
+        surface_grad,
+        tangential_component,
+    )
+    from ._taylor_contracts import (
+        TaylorContractionPolicy,
+        TaylorContractionRequest,
+        TaylorContractionResources,
+        TaylorContractionStrategy,
+    )
+    from ._taylor_execution import evaluate_taylor_contractions, TaylorContractionResult
+    from ._taylor_planning import plan_taylor_contractions, TaylorContractionPlan
+    from ._time_fractional_ops import (
+        caputo_time_fractional,
+        caputo_time_fractional_dw,
+    )
 
 
 __all__ = [

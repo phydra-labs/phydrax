@@ -25,6 +25,7 @@ from ..._identity import (
     NumericRevision,
     SemanticProvenance,
 )
+from ..._jax_config import default_prng_implementation
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._plant import (
@@ -575,7 +576,7 @@ class PreparedRobotEnvironment(StrictModule, NonTrainableState):
                 "prng_representation": {
                     "format": "legacy-key-data",
                     "dtype": "uint32",
-                    "implementation": str(jax.config.jax_default_prng_impl),
+                    "implementation": default_prng_implementation(),
                 },
             }
         )

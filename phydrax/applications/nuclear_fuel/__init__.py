@@ -14,6 +14,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from ..._jax_config import process_numerics
+
 
 if TYPE_CHECKING:
     from ._acceptance import (
@@ -313,12 +315,13 @@ __all__ = list(_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in _EXPORTS:
-        raise AttributeError(f"{__name__!r} has no public capability {name!r}.")
-    module = import_module(f"{__name__}.{_EXPORTS[name]}")
-    value = getattr(module, name)
-    globals()[name] = value
-    return value
+    with process_numerics():
+        if name not in _EXPORTS:
+            raise AttributeError(f"{__name__!r} has no public capability {name!r}.")
+        module = import_module(f"{__name__}.{_EXPORTS[name]}")
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:

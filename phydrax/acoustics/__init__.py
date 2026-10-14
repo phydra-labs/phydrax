@@ -5,6 +5,7 @@
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
 
+from .._jax_config import process_numerics
 from ._core import (
     AcousticMedium,
     acoustics_candidate_profiles,
@@ -45,9 +46,10 @@ _BUBBLY_EXPORTS = frozenset(
 
 
 def __getattr__(name: str) -> Any:
-    if name in _BUBBLY_EXPORTS:
-        return import_module(f"{__name__}._bubbly").__dict__[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        if name in _BUBBLY_EXPORTS:
+            return import_module(f"{__name__}._bubbly").__dict__[name]
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

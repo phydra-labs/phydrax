@@ -35,6 +35,7 @@ from ...._identity import (
     SemanticProvenance,
     strict_module_payload,
 )
+from ...._jax_config import x64_enabled
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState, parameter_field
 from ....ein import contract
@@ -448,7 +449,7 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
     def prepare(
         self, parameters: Almonacid2024MuscleAponeurosisParameters, /
     ) -> PreparedAlmonacid2024MuscleAponeurosis:
-        if not bool(jax.config.read("jax_enable_x64")):
+        if not x64_enabled():
             raise ValueError("The source-matched continuum requires JAX float64 enabled.")
         geometry = prepare_geometry(self.geometry, self.pulling_face_id)
         dtype = parameters.density_kg_per_m3.dtype

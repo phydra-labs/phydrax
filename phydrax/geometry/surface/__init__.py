@@ -7,6 +7,7 @@
 from importlib import import_module
 from typing import Any
 
+from ..._jax_config import process_numerics
 from ._contracts import (
     InterfaceSide,
     SurfaceAuditPolicy,
@@ -37,13 +38,14 @@ _FACADE_EXPORT_MODULES = ("._g1_multipatch", "._high_order", "._interop")
 
 
 def __getattr__(name: str) -> Any:
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        for module_name in reversed(_FACADE_EXPORT_MODULES):
+            module = import_module(module_name, __package__)
+            if name in module.__all__:
+                value = getattr(module, name)
+                globals()[name] = value
+                return value
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:

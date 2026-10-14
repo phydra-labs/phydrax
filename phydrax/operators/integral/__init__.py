@@ -1,17 +1,13 @@
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+from ..._deferred_exports import deferred_exports
 
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-from . import layer_potential, multipole as multipole, vortex as vortex
-from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
-from ._diffrax_collocation import DiffraxCollocationIntegralOperator
 from ._free_space_convolution import __all__ as _free_space_convolution_all
-from ._local_ops import local_integral, local_integral_ball
-from ._spatial_ops import nonlocal_integral, spatial_integral
-from ._time_convolution import time_convolution
 from .layer_potential import (
     __all__ as _layer_potential_all,
     AbstractLayerBackend,
@@ -97,7 +93,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -107,8 +103,41 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
+def _facade_dir() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "layer_potential": "module:.layer_potential",
+    "multipole": "module:.multipole",
+    "vortex": "module:.vortex",
+    "integral": "._batch_ops",
+    "integrate_boundary": "._batch_ops",
+    "integrate_interior": "._batch_ops",
+    "mean": "._batch_ops",
+    "DiffraxCollocationIntegralOperator": "._diffrax_collocation",
+    "local_integral": "._local_ops",
+    "local_integral_ball": "._local_ops",
+    "nonlocal_integral": "._spatial_ops",
+    "spatial_integral": "._spatial_ops",
+    "time_convolution": "._time_convolution",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from . import layer_potential, multipole as multipole, vortex as vortex
+    from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
+    from ._diffrax_collocation import DiffraxCollocationIntegralOperator
+    from ._local_ops import local_integral, local_integral_ball
+    from ._spatial_ops import nonlocal_integral, spatial_integral
+    from ._time_convolution import time_convolution
 
 
 __all__ = [

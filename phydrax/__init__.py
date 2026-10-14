@@ -1,261 +1,439 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: I001
 
-# Ensure JAX uses 64-bit floats by default for numerical robustness.
-import jax
+"""Phydrax: composable scientific machine learning on JAX.
+
+Importing the package applies the process configuration (`phydrax.config`) and
+joins a launcher-requested distributed process set before any numerical module
+loads. It never initializes a JAX backend: subpackages and root symbols load
+on first access, and the first numerical operation initializes devices under
+the configured settings.
+"""
+
+import os as _os
+from types import MappingProxyType
+from typing import Final, TYPE_CHECKING
+
+from ._jax_config import set_x64 as _set_x64, startup_x64 as _startup_x64
 
 
-jax.config.update("jax_enable_x64", True)
+# Module-level constants of Phydrax modules are staged when they load, so the
+# 64-bit startup choice precedes every other Phydrax import.
+if _startup_x64(_os.environ):
+    _set_x64(True)
 
-# Launcher-provided rank settings must be consumed before any device-owning module
-# is imported. Local imports remain unchanged and preserve the package's deliberate
-# dependency order.
-from ._execution_bootstrap import RuntimeBootstrap, initialize_from_environment
+from ._config_state import initialize_process as _initialize_process
 
 
-if RuntimeBootstrap.from_environment() is not None:
-    initialize_from_environment()
+_initialize_process()
 
-from . import logging as logging
+from . import config as config
+from ._deferred_exports import load_module as _load_module
+from ._package_modules import PUBLIC_MODULES as _PUBLIC_MODULES
 
-from . import ein as ein
 
-from . import (
-    acoustics,
-    algebraic,
-    axes,
-    backends,
-    combinatorial,
-    conditions,
-    continuation,
-    control,
-    coresets,
-    data_utils,
-    correlation,
-    series,
-    discretization,
-    diagnostics,
-    topology,
-    domain,
-    dynamics,
-    durability,
-    enforcement,
-    electrochemistry,
-    electrohydrodynamics,
-    electromagnetics,
-    variational,
-    equations,
-    export,
-    exterior,
-    fidelity,
-    execution,
-    geometry,
-    frequency,
-    graph,
-    interchange,
-    imaging,
-    meshing,
-    integration,
-    lifecycle,
-    interfacial_transport,
-    kernels,
-    linalg,
-    metrix,
-    ml,
-    measurement,
-    signal,
-    nn,
-    manufacturing,
-    materials,
-    membranes,
-    nonlinear,
-    operators,
-    optim,
-    pgm,
-    precision,
-    privacy,
-    particle_physics,
-    qualification,
-    rendering,
-    optomechanics,
-    phoresis,
-    population_balance,
-    process_systems,
-    sensing,
-    rom,
-    service,
-    rheology,
-    spatial_sampling,
-    sampling,
-    solver,
-    sparse,
-    special,
-    stochastic,
-    tensor_network,
-    tensor_decomposition,
-    tensor_train,
-    structural_dynamics,
-    surface_chemistry,
-    system_modeling,
-    thermal_systems,
-    tribology,
-    threshold_dynamics,
-    typing,
-    smart_materials,
-    chemo_mechanics,
-    terms,
-    transport,
-    uq,
-    units,
-    circuit,
-    optics,
-    velocimetry,
-    weighting,
-    # Bubble clouds compose spatial discretization and geometry; load them afterward.
-    bubble_dynamics,
-)
-from . import artifacts, events, observation
-from . import causal
-from ._array_archive import (
-    ArrayArchiveCorruptionError,
-    ArrayArchiveError,
-    ArrayArchiveLimits,
-)
-from ._admissibility import (
-    AdmissibilityHeader,
-    AdmissibilityReason,
-    AdmissibilityTransitionRequest,
-    combine_admissibility,
-    reason_bits_where,
-)
-from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
-from ._differentiation import (
-    AbstractConstructionCertificate,
-    admit_regularity,
-    authority_admits,
-    branch_policy_contract,
-    BranchDifferentiationPolicy,
-    CapabilityEvidenceKind,
-    CapabilityRequirement,
-    ComponentAuthority,
-    DERIVATIVE_SUPPORTED,
-    DERIVATIVE_UNSUPPORTED,
-    DerivativeAdmission,
-    DerivativeContract,
-    DerivativeRegularity,
-    DerivativeRoute,
-    DerivativeSurface,
-    DifferentiationRequest,
-    gradient_level_at_least,
-    GradientLevel,
-    is_owned_surface,
-    ObjectiveKind,
-    OwnerDerivativeCapability,
-    RegularityPieces,
-    RegularityPolicy,
-    resolve_gradient_level,
-    SurfaceDerivative,
-    weakest_level,
-)
-from ._fingerprint import array_tree_fingerprint
-from ._execution_resources import ExecutionResourceEvidence
-from ._identity import (
-    ArtifactBindingIdentity,
-    callable_payload,
-    ExecutableSignature,
-    NumericRevision,
-    SemanticProvenance,
-    strict_module_payload,
-)
-from ._model import (
-    AbstractArrayModel,
-    AbstractComponentSlot,
-    admit_randomness,
-    artifact_value,
-    artifact_value_id,
-    bind_component,
-    CertificateRecord,
-    ComponentBinding,
-    ComponentContract,
-    ComponentPrecisionContract,
-    ComponentSlotContract,
-    ExecutionCapabilities,
-    ExecutionTier,
-    FrozenRealization,
-    ModelExecutionContract,
-    ModelPorts,
-    operator_architecture_codec,
-    operator_architecture_codec_for,
-    OperatorArchitectureCodec,
-    PortBindingEvidence,
-    PortMapping,
-    PortProvider,
-    PortVariance,
-    RandomnessContract,
-    RandomnessMode,
-    register_artifact_value,
-    register_operator_architecture_codec,
-    resolve_port_mapping,
-    supports_derivative,
-    ValuePort,
-)
-from ._strict import StrictModule
-from ._trainable import (
-    ArrayRole,
-    combine_parameters,
-    ExplicitFreeze,
-    fixed_field,
-    LaneLayout,
-    model_state_field,
-    NonTrainableState,
-    parameter_field,
-    ParameterOwner,
-    partition_parameters,
-    require_parameter_roles,
-    resolve_array_roles,
-    RoleResolution,
-)
-from ._physical import (
-    DimensionalScaleContract,
-    ElectromagneticScaleContract,
-    LengthCoordinateKind,
-    RelativityScaleContract,
-    SpatialCoordinateContract,
-)
-from ._lorentz import (
-    boost_event,
-    boost_fields,
-    boost_matrix,
-    boost_proper_velocity,
-    boost_wavevector,
-    FourMomentum,
-    LorentzFrame,
-    LorentzSpectralTransform,
-    lower_four_vector,
-    MINKOWSKI_METRIC,
-    minkowski_dot,
-    SpectralEmissionCompleteness,
-    transform_spectral_energy,
+_SUBMODULES: Final = frozenset(name for name in _PUBLIC_MODULES if "." not in name)
+_SYMBOL_OWNERS: Final = MappingProxyType(
+    {
+        name: owner
+        for owner, names in (
+            (
+                "._array_archive",
+                (
+                    "ArrayArchiveCorruptionError",
+                    "ArrayArchiveError",
+                    "ArrayArchiveLimits",
+                ),
+            ),
+            (
+                "._admissibility",
+                (
+                    "AdmissibilityHeader",
+                    "AdmissibilityReason",
+                    "AdmissibilityTransitionRequest",
+                    "combine_admissibility",
+                    "reason_bits_where",
+                ),
+            ),
+            ("._array_tree", ("ArrayLeafSchema", "ArrayPyTreeSchema")),
+            (
+                "._differentiation",
+                (
+                    "AbstractConstructionCertificate",
+                    "admit_regularity",
+                    "authority_admits",
+                    "branch_policy_contract",
+                    "BranchDifferentiationPolicy",
+                    "CapabilityEvidenceKind",
+                    "CapabilityRequirement",
+                    "ComponentAuthority",
+                    "DERIVATIVE_SUPPORTED",
+                    "DERIVATIVE_UNSUPPORTED",
+                    "DerivativeAdmission",
+                    "DerivativeContract",
+                    "DerivativeRegularity",
+                    "DerivativeRoute",
+                    "DerivativeSurface",
+                    "DifferentiationRequest",
+                    "gradient_level_at_least",
+                    "GradientLevel",
+                    "is_owned_surface",
+                    "ObjectiveKind",
+                    "OwnerDerivativeCapability",
+                    "RegularityPieces",
+                    "RegularityPolicy",
+                    "resolve_gradient_level",
+                    "SurfaceDerivative",
+                    "weakest_level",
+                ),
+            ),
+            ("._fingerprint", ("array_tree_fingerprint",)),
+            ("._execution_resources", ("ExecutionResourceEvidence",)),
+            (
+                "._identity",
+                (
+                    "ArtifactBindingIdentity",
+                    "callable_payload",
+                    "ExecutableSignature",
+                    "NumericRevision",
+                    "SemanticProvenance",
+                    "strict_module_payload",
+                ),
+            ),
+            (
+                "._model",
+                (
+                    "AbstractArrayModel",
+                    "AbstractComponentSlot",
+                    "admit_randomness",
+                    "artifact_value",
+                    "artifact_value_id",
+                    "bind_component",
+                    "CertificateRecord",
+                    "ComponentBinding",
+                    "ComponentContract",
+                    "ComponentPrecisionContract",
+                    "ComponentSlotContract",
+                    "ExecutionCapabilities",
+                    "ExecutionTier",
+                    "FrozenRealization",
+                    "ModelExecutionContract",
+                    "ModelPorts",
+                    "operator_architecture_codec",
+                    "operator_architecture_codec_for",
+                    "OperatorArchitectureCodec",
+                    "PortBindingEvidence",
+                    "PortMapping",
+                    "PortProvider",
+                    "PortVariance",
+                    "RandomnessContract",
+                    "RandomnessMode",
+                    "register_artifact_value",
+                    "register_operator_architecture_codec",
+                    "resolve_port_mapping",
+                    "supports_derivative",
+                    "ValuePort",
+                ),
+            ),
+            ("._strict", ("StrictModule",)),
+            (
+                "._trainable",
+                (
+                    "ArrayRole",
+                    "combine_parameters",
+                    "ExplicitFreeze",
+                    "fixed_field",
+                    "LaneLayout",
+                    "model_state_field",
+                    "NonTrainableState",
+                    "parameter_field",
+                    "ParameterOwner",
+                    "partition_parameters",
+                    "require_parameter_roles",
+                    "resolve_array_roles",
+                    "RoleResolution",
+                ),
+            ),
+            (
+                "._physical",
+                (
+                    "DimensionalScaleContract",
+                    "ElectromagneticScaleContract",
+                    "LengthCoordinateKind",
+                    "RelativityScaleContract",
+                    "SpatialCoordinateContract",
+                ),
+            ),
+            (
+                "._lorentz",
+                (
+                    "boost_event",
+                    "boost_fields",
+                    "boost_matrix",
+                    "boost_proper_velocity",
+                    "boost_wavevector",
+                    "FourMomentum",
+                    "LorentzFrame",
+                    "LorentzSpectralTransform",
+                    "lower_four_vector",
+                    "MINKOWSKI_METRIC",
+                    "minkowski_dot",
+                    "SpectralEmissionCompleteness",
+                    "transform_spectral_energy",
+                ),
+            ),
+        )
+        for name in names
+    }
 )
 
-from . import atomistic, chemistry, nuclear
 
-# Closure-data and statistical-dynamics packages depend on loaded numerical substrates.
-from . import closure_data, statistical_dynamics
-
-# Finance composes the loaded numerical, stochastic, and qualification substrates.
-from . import finance
-
-# Applications depend on public equation/solver substrates and load last.
-from . import applications
-
-# Cosmology interchange depends on application products and therefore loads after apps.
-from .interchange import cosmology as _cosmology_interchange  # noqa: F401
+def __getattr__(name: str) -> object:
+    if name in _SUBMODULES:
+        value = _load_module(f".{name}", __name__)
+    elif name in _SYMBOL_OWNERS:
+        value = _load_module(_SYMBOL_OWNERS[name], __name__).__dict__[name]
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
 
 
-# Explicit re-exports for star import
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _SUBMODULES | _SYMBOL_OWNERS.keys())
+
+
+if TYPE_CHECKING:
+    from . import (
+        acoustics,
+        algebraic,
+        applications,
+        artifacts,
+        atomistic,
+        axes,
+        backends,
+        bubble_dynamics,
+        causal,
+        chemistry,
+        chemo_mechanics,
+        circuit,
+        closure_data,
+        combinatorial,
+        conditions,
+        continuation,
+        control,
+        coresets,
+        correlation,
+        data_utils,
+        diagnostics,
+        discretization,
+        domain,
+        durability,
+        dynamics,
+        ein,
+        electrochemistry,
+        electrohydrodynamics,
+        electromagnetics,
+        enforcement,
+        equations,
+        events,
+        execution,
+        export,
+        exterior,
+        fidelity,
+        finance,
+        frequency,
+        geometry,
+        graph,
+        imaging,
+        integration,
+        interchange,
+        interfacial_transport,
+        kernels,
+        lifecycle,
+        linalg,
+        logging,
+        manufacturing,
+        materials,
+        measurement,
+        membranes,
+        meshing,
+        metrix,
+        ml,
+        nn,
+        nonlinear,
+        nuclear,
+        observation,
+        operators,
+        optics,
+        optim,
+        optomechanics,
+        particle_physics,
+        pgm,
+        phoresis,
+        population_balance,
+        precision,
+        privacy,
+        process_systems,
+        qualification,
+        rendering,
+        rheology,
+        rom,
+        sampling,
+        sensing,
+        series,
+        service,
+        signal,
+        smart_materials,
+        solver,
+        sparse,
+        spatial_sampling,
+        special,
+        statistical_dynamics,
+        stochastic,
+        structural_dynamics,
+        surface_chemistry,
+        system_modeling,
+        tensor_decomposition,
+        tensor_network,
+        tensor_train,
+        terms,
+        thermal_systems,
+        threshold_dynamics,
+        topology,
+        transport,
+        tribology,
+        typing,
+        units,
+        uq,
+        variational,
+        velocimetry,
+        weighting,
+    )
+    from ._admissibility import (
+        AdmissibilityHeader,
+        AdmissibilityReason,
+        AdmissibilityTransitionRequest,
+        combine_admissibility,
+        reason_bits_where,
+    )
+    from ._array_archive import (
+        ArrayArchiveCorruptionError,
+        ArrayArchiveError,
+        ArrayArchiveLimits,
+    )
+    from ._array_tree import ArrayLeafSchema, ArrayPyTreeSchema
+    from ._differentiation import (
+        AbstractConstructionCertificate,
+        admit_regularity,
+        authority_admits,
+        branch_policy_contract,
+        BranchDifferentiationPolicy,
+        CapabilityEvidenceKind,
+        CapabilityRequirement,
+        ComponentAuthority,
+        DERIVATIVE_SUPPORTED,
+        DERIVATIVE_UNSUPPORTED,
+        DerivativeAdmission,
+        DerivativeContract,
+        DerivativeRegularity,
+        DerivativeRoute,
+        DerivativeSurface,
+        DifferentiationRequest,
+        gradient_level_at_least,
+        GradientLevel,
+        is_owned_surface,
+        ObjectiveKind,
+        OwnerDerivativeCapability,
+        RegularityPieces,
+        RegularityPolicy,
+        resolve_gradient_level,
+        SurfaceDerivative,
+        weakest_level,
+    )
+    from ._execution_resources import ExecutionResourceEvidence
+    from ._fingerprint import array_tree_fingerprint
+    from ._identity import (
+        ArtifactBindingIdentity,
+        callable_payload,
+        ExecutableSignature,
+        NumericRevision,
+        SemanticProvenance,
+        strict_module_payload,
+    )
+    from ._lorentz import (
+        boost_event,
+        boost_fields,
+        boost_matrix,
+        boost_proper_velocity,
+        boost_wavevector,
+        FourMomentum,
+        LorentzFrame,
+        LorentzSpectralTransform,
+        lower_four_vector,
+        minkowski_dot,
+        MINKOWSKI_METRIC,
+        SpectralEmissionCompleteness,
+        transform_spectral_energy,
+    )
+    from ._model import (
+        AbstractArrayModel,
+        AbstractComponentSlot,
+        admit_randomness,
+        artifact_value,
+        artifact_value_id,
+        bind_component,
+        CertificateRecord,
+        ComponentBinding,
+        ComponentContract,
+        ComponentPrecisionContract,
+        ComponentSlotContract,
+        ExecutionCapabilities,
+        ExecutionTier,
+        FrozenRealization,
+        ModelExecutionContract,
+        ModelPorts,
+        operator_architecture_codec,
+        operator_architecture_codec_for,
+        OperatorArchitectureCodec,
+        PortBindingEvidence,
+        PortMapping,
+        PortProvider,
+        PortVariance,
+        RandomnessContract,
+        RandomnessMode,
+        register_artifact_value,
+        register_operator_architecture_codec,
+        resolve_port_mapping,
+        supports_derivative,
+        ValuePort,
+    )
+    from ._physical import (
+        DimensionalScaleContract,
+        ElectromagneticScaleContract,
+        LengthCoordinateKind,
+        RelativityScaleContract,
+        SpatialCoordinateContract,
+    )
+    from ._strict import StrictModule
+    from ._trainable import (
+        ArrayRole,
+        combine_parameters,
+        ExplicitFreeze,
+        fixed_field,
+        LaneLayout,
+        model_state_field,
+        NonTrainableState,
+        parameter_field,
+        ParameterOwner,
+        partition_parameters,
+        require_parameter_roles,
+        resolve_array_roles,
+        RoleResolution,
+    )
+
+
 __all__ = [
     "FourMomentum",
     "LorentzFrame",
@@ -360,6 +538,7 @@ __all__ = [
     "combine_admissibility",
     "combine_parameters",
     "conditions",
+    "config",
     "continuation",
     "control",
     "coresets",
