@@ -7,9 +7,17 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from jax.sharding import PartitionSpec
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_available
+
+
+# The supermesh common refinement is owned by the optional meshcore provider.
+requires_meshcore = pytest.mark.skipif(
+    not meshcore_available(), reason="phydrax-meshcore unavailable"
+)
 
 
 def _hierarchy() -> Any:
@@ -32,6 +40,8 @@ def _hierarchy() -> Any:
     return phx.discretization.canonicalize_patch_hierarchy(topology)
 
 
+@pytest.mark.meshcore
+@requires_meshcore
 def test_block_amr_execution_production_scenario_1() -> None:
     policy = phx.discretization.PatchSignaturePolicy(
         (2, 2),

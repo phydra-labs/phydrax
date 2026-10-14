@@ -10,6 +10,13 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_available
+
+
+# The supermesh common refinement is owned by the optional meshcore provider.
+requires_meshcore = pytest.mark.skipif(
+    not meshcore_available(), reason="phydrax-meshcore unavailable"
+)
 
 
 def _topology() -> Any:
@@ -388,6 +395,8 @@ def test_relative_cut_transfer_adjoint_restricts_coupled_gram_before_solving() -
     assert np.max(np.abs(wrong - expected[indices])) > 1.0e-4
 
 
+@pytest.mark.meshcore
+@requires_meshcore
 def test_block_amr_cut_complex_3d_scenario_2() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
@@ -588,6 +597,8 @@ def _ordered_components(complex_: Any) -> Any:
     return np.argsort(np.asarray(complex_.component_centers)[:count, 0])
 
 
+@pytest.mark.meshcore
+@requires_meshcore
 def test_block_amr_cut_complex_3d_scenario_3() -> None:
     body = phx.discretization.EmbeddedLevelSetBody(
         lambda points, time, args: points[:, 0] - 0.37,
@@ -735,6 +746,8 @@ def test_adaptive_implicit_certificate_detects_corner_invisible_surface() -> Non
     assert complex_.component_count == 2
 
 
+@pytest.mark.meshcore
+@requires_meshcore
 def test_localized_moving_step_resolves_multiple_enter_exit_events() -> None:
     def oscillating_plane(points: Any, time: Any, args: Any) -> Any:
         del args
@@ -782,6 +795,8 @@ def test_localized_moving_step_resolves_multiple_enter_exit_events() -> None:
     )
 
 
+@pytest.mark.meshcore
+@requires_meshcore
 def test_changed_cut_cochain_transfer_matches_dense_pinv_oracle() -> None:
     source_cut = _plane_complex(0.37, 1)
     target_cut = _plane_complex(0.37, 3)
