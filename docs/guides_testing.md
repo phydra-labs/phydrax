@@ -28,6 +28,30 @@ uv run --extra tests pytest -n auto --ff
 Rerunning a failed statistical test is not an acceptance policy. Statistical tests use
 deterministic key addressing and a tolerance justified by their standard error.
 
+## Configuration boundaries in tests
+
+The `strict_jax` marker enters a native configuration context for strict dtype
+promotion and rank-promotion refusal. Keep such contexts local to the numerical
+contract they test rather than changing process settings for unrelated tests:
+
+```python executable
+from phydrax import config
+
+before = config.snapshot()
+with config.context(
+    config.NumericsConfig(dtype_promotion="strict", rank_promotion="raise")
+):
+    assert config.snapshot().dtype_promotion == "strict"
+assert config.snapshot().dtype_promotion == before.dtype_promotion
+```
+
+Startup behavior needs a fresh subprocess: project launch settings with
+`config.environment(config.RuntimeConfig(...), base=...)` and pass the result
+to the subprocess environment before it imports Phydrax. Test explicit x64 false,
+CPU topology, cold lazy-root/config access without backend initialization, and
+launcher coordination separately from device discovery. A context in an already
+initialized pytest worker cannot test startup or late-bootstrap refusal.
+
 ## Memory benchmark smoke runs
 
 Run memory drivers serially with `python -m benchmarks.memory_<area> --smoke`.

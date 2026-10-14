@@ -1,5 +1,7 @@
 # Examples
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 This section collects public [Marimo](https://marimo.io) notebooks and directly runnable repository scripts.
 
 ## Monolithic implicit contact

@@ -1,5 +1,7 @@
 # Native projector Monte Carlo
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 The `phydrax.solver` projector evolves sparse signed or complex coefficients toward a ground state of an explicitly self-adjoint native lattice Hamiltonian. It is a bounded, single-device algorithm, not variational Monte Carlo (VMC), TDVP, quantum jumps, or a deterministic eigensolver. Start with the [complete cookbook](cookbook/projector_monte_carlo.md), [solver API](api/solver/projector_monte_carlo.md), and executable [public example](https://github.com/phydra-labs/phydrax/blob/dev/examples/projector_monte_carlo.py).
 
 ## Addresses, columns, and bindings

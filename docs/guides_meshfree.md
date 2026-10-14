@@ -1,5 +1,7 @@
 # Meshfree solvers
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 Meshfree preparation belongs to `phydrax.discretization.meshfree`. Sparse relations,
 linear algebra, exterior calculus, time integration, and coupling remain owned by
 the corresponding native substrates. These capabilities are unreleased candidates;

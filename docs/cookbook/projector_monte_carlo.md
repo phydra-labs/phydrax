@@ -46,7 +46,9 @@ from phydrax.solver import (
 from phydrax.typing import Float64, Scalar
 from phydrax.units import HARTREE, ONE, derived_unit
 
-jax.config.update("jax_enable_x64", True)
+from phydrax import config
+
+config.configure(config.RuntimeConfig(enable_x64=True))
 
 left = LocalSpacePlan.boson("left", 3)
 right = LocalSpacePlan.boson("right", 3)

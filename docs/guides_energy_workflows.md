@@ -1,5 +1,7 @@
 # Executable energy workflows and qualification
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 These are consumer examples of the actual domain APIs, not an additional solver,
 report schema, generic coupling framework, or performance claim. Run them from the
 repository root in the worktree environment with 64-bit JAX enabled:

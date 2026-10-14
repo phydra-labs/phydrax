@@ -1,5 +1,7 @@
 # Interactive-column calibration and intervention design
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications.geophysics._inference` binds the actual
 `InteractiveMoistColumnPlan` to native geophysical observation products, bounded
 least squares, fixed-step replay, UQ information actions and pairing-aware SVD.

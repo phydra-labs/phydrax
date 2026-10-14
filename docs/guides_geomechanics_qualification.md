@@ -1,5 +1,7 @@
 # Geomechanics candidate qualification
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `tools/geomechanics_qualification.py` executes bounded, deterministic scientific
 comparisons through public Phydrax APIs. It composes the existing `ScientificCase`,
 `SupportTuple`, `PublicationReference`, `QualificationCriterion`,

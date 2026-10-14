@@ -1,5 +1,7 @@
 # Phase-field production
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications.phase_field` provides prepared finite-element Allen–Cahn,
 Cahn–Hilliard, and dense grand-potential evolution with physical accepted-step
 ledgers. The package also supplies wetting and driven boundary laws, periodic
@@ -295,7 +297,7 @@ Integrated closure qualification:
 
 ```console
 PYTHONPATH=. JAX_ENABLE_X64=1 \
-XLA_FLAGS=--xla_force_host_platform_device_count=2 \
+JAX_NUM_CPU_DEVICES=2 \
 python tools/phase_field_extended_qualification.py
 ```
 

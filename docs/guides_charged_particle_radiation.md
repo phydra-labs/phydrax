@@ -133,7 +133,7 @@ With constant `β` per segment, the acceleration is a set of jumps `Δa_j` of
 `Σ_j Δa_j exp(iωτ_j)`. `"segment-exact"` evaluates it in the velocity form
 `−iω Σ_j a_j Δτ_j exp(iωτ_mid) sinc(ωΔτ_j/2)` plus the boundary terms of each
 active run; `"node-gridded"` evaluates the jump sum with the Type-3 nonuniform
-Fourier transform of `phydrax._spectral` over the declared
+Fourier transform of the native spectral substrate over the declared
 `observer_time_window`, reporting the absolute floor `ε · |q m| Σ|Δa_j|` for the
 requested `TrajectoryRadiationResources.gridded_tolerance`. Its difference from
 `"segment-exact"` stays inside that floor at every frequency, including the

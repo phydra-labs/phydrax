@@ -1,5 +1,7 @@
 # Finite-element applications
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications` contains executable, single-device workflows built on
 the finite-element form, nonlinear, accepted-step, material-state, adaptation,
 and native linear-algebra substrates. The planar electrical-machine profile is

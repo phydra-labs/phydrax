@@ -1,5 +1,7 @@
 # Coupled phase-field multiphysics
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications.phase_field` includes one compositional closure for
 nonisothermal solidification, anti-trapping alloy transport, nucleation, mechanics,
 incompressible Model-H flow, and electrostatic/electrochemical coupling.
@@ -174,7 +176,7 @@ available:
 
 ```console
 PYTHONPATH=. JAX_ENABLE_X64=1 \
-XLA_FLAGS=--xla_force_host_platform_device_count=2 \
+JAX_NUM_CPU_DEVICES=2 \
 python tools/phase_field_multiphysics_qualification.py
 ```
 

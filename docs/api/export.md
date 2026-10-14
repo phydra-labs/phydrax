@@ -283,7 +283,9 @@ whose predicate depends on a runtime input, and host-runtime custom calls (such 
 LAPACK) that IREE cannot compile. Remaining guards depend only on frozen data and are
 proven inactive by a raise-mode evaluation; tracing then runs in a pinned isolated
 worker with `EQX_ON_ERROR=nan` (failure policy `"equinox-nan-status"`), whose
-environment carries only `EQX_ON_ERROR`, `JAX_ENABLE_X64`, and `JAX_PLATFORMS`. The
+environment carries only `EQX_ON_ERROR`, `JAX_ENABLE_X64`, and `JAX_PLATFORMS`.
+The x64 setting preserves the parent's effective value, including false;
+the worker does not unconditionally enable x64. The
 worker rebuilds model, plan, structure, and contract from one pickle-free archive.
 `path` is published atomically only after the parent's frozen program matches the native
 provider at the reference geometry and the loaded module reproduces the frozen

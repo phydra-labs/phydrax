@@ -1,5 +1,7 @@
 # Biophysical sources and qualification
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 The delivered surfaces are [protein folding](guides_protein_folding.md),
 [nucleic-acid biophysics](guides_nucleic_acid_biophysics.md),
 [radiation biophysics](guides_radiation_biophysics.md), and
