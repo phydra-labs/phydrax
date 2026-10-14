@@ -1,7 +1,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 """Runnable local-Gaussian and physical-column inverse-experiment qualification.
 
-JAX_ENABLE_X64=1 PYTHONPATH=. python tools/column_inference_qualification.py
+PYTHONPATH=. python tools/column_inference_qualification.py
 Synthetic evidence qualifies implementation, NOT Earth prediction or coverage.
 """
 

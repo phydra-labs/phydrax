@@ -34,7 +34,6 @@ It raises if any accepted-step or agreement check fails.
 
 import time
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.optimize
@@ -44,7 +43,7 @@ from examples import _coupled_heat_transient as heat
 from phydrax.solver import coupling as cpl
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 CELLS = 4
 REFINED_CELLS = 8

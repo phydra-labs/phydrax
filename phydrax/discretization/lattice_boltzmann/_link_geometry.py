@@ -15,7 +15,8 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...geometry import CompiledGeometry, GeometryCapability
+from ...geometry._capabilities import GeometryCapability
+from ...geometry._contracts import CompiledGeometry
 from ...typing import checked
 from ._discretization import LatticeBoltzmannDiscretization
 

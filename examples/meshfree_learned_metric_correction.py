@@ -338,7 +338,7 @@ def train(
 
 def run_training(*, size: int = 6, seed: int = 0, steps: int = 6) -> TrainingReport:
     """Gradient check, native training, and rejection of a failed attempt."""
-    with jax.enable_x64(True):
+    with phx.config.context(phx.config.NumericsConfig(enable_x64=True)):
         training = prepare_training(size=size)
         target = objective(training)
         point = jnp.asarray([0.2, -0.1], dtype=jnp.float64)

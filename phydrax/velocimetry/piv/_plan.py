@@ -8,9 +8,9 @@ import math
 from collections.abc import Sequence
 
 import equinox as eqx
-import jax
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import ImagePlaneSupport
@@ -246,7 +246,7 @@ class PreparedPIV(StrictModule, NonTrainableState):
 
 def _resolved_dtypes(requested: str) -> tuple[str, str]:
     resolved = requested
-    if requested == "float64" and not bool(jax.config.read("jax_enable_x64")):
+    if requested == "float64" and not x64_enabled():
         resolved = "float32"
     return resolved, "complex128" if resolved == "float64" else "complex64"
 

@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 def _problem() -> Any:
@@ -86,7 +87,7 @@ def test_guided_particle_scenario_1() -> None:
         exact.total_log_likelihood,
         atol=0.08,
     )
-    with jax.disable_jit():
+    with pxconfig.context(pxconfig.NumericsConfig(disable_jit=True)):
         proposal = phx.uq.BootstrapParticleProposal((2,))
         try:
             phx.uq.guided_particle_filter(

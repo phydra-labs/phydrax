@@ -49,6 +49,7 @@ boundaries.
 
 from typing import Any, TYPE_CHECKING
 
+from .._jax_config import process_numerics
 from . import advanced, coupling, maxwell
 from ._adaptive_tdvp import (
     AdaptiveTDVPPlan,
@@ -2873,51 +2874,52 @@ _FACADE_EXPORT_MODULES = (
 
 
 def __getattr__(name: str) -> Any:
-    # Application phase operators load only after solver exports initialize.
-    if name in (
-        "advance_double_point_mpm_step",
-        "DoublePointMPMPlan",
-        "DoublePointMPMState",
-        "DoublePointMPMStatus",
-        "DoublePointMPMStepResult",
-        "MixedMPMProjectionResult",
-        "project_double_point_velocity",
-    ):
+    with process_numerics():
+        # Application phase operators load only after solver exports initialize.
+        if name in (
+            "advance_double_point_mpm_step",
+            "DoublePointMPMPlan",
+            "DoublePointMPMState",
+            "DoublePointMPMStatus",
+            "DoublePointMPMStepResult",
+            "MixedMPMProjectionResult",
+            "project_double_point_velocity",
+        ):
+            from importlib import import_module
+
+            return import_module("._mpm_double_point", __package__).__dict__[name]
+        if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
+            from importlib import import_module
+
+            module = import_module(f"{__name__}.functional_decomposition")
+            return module if name == "functional_decomposition" else module.__dict__[name]
+        if name in _CHARACTERISTIC_PROJECTION_EXPORTS:
+            from . import _characteristic_projection as module
+
+            exports = {
+                "CharacteristicProjectionProblem": module.CharacteristicProjectionProblem,
+                "CharacteristicProjectionResult": module.CharacteristicProjectionResult,
+                "CharacteristicTraceResult": module.CharacteristicTraceResult,
+                "CharacteristicVelocity": module.CharacteristicVelocity,
+                "CharacteristicWrap": module.CharacteristicWrap,
+                "solve_characteristic_projection": module.solve_characteristic_projection,
+                "trace_characteristics": module.trace_characteristics,
+                "CharacteristicBoundaryAction": module.CharacteristicBoundaryAction,
+                "CharacteristicBoundaryPolicy": module.CharacteristicBoundaryPolicy,
+                "DiffusiveCharacteristicPlan": module.DiffusiveCharacteristicPlan,
+                "DiffusiveCharacteristicResult": module.DiffusiveCharacteristicResult,
+                "trace_diffusive_characteristics": module.trace_diffusive_characteristics,
+            }
+            return exports[name]
         from importlib import import_module
 
-        return import_module("._mpm_double_point", __package__).__dict__[name]
-    if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
-        from importlib import import_module
-
-        module = import_module(f"{__name__}.functional_decomposition")
-        return module if name == "functional_decomposition" else module.__dict__[name]
-    if name in _CHARACTERISTIC_PROJECTION_EXPORTS:
-        from . import _characteristic_projection as module
-
-        exports = {
-            "CharacteristicProjectionProblem": module.CharacteristicProjectionProblem,
-            "CharacteristicProjectionResult": module.CharacteristicProjectionResult,
-            "CharacteristicTraceResult": module.CharacteristicTraceResult,
-            "CharacteristicVelocity": module.CharacteristicVelocity,
-            "CharacteristicWrap": module.CharacteristicWrap,
-            "solve_characteristic_projection": module.solve_characteristic_projection,
-            "trace_characteristics": module.trace_characteristics,
-            "CharacteristicBoundaryAction": module.CharacteristicBoundaryAction,
-            "CharacteristicBoundaryPolicy": module.CharacteristicBoundaryPolicy,
-            "DiffusiveCharacteristicPlan": module.DiffusiveCharacteristicPlan,
-            "DiffusiveCharacteristicResult": module.DiffusiveCharacteristicResult,
-            "trace_diffusive_characteristics": module.trace_diffusive_characteristics,
-        }
-        return exports[name]
-    from importlib import import_module
-
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        for module_name in reversed(_FACADE_EXPORT_MODULES):
+            module = import_module(module_name, __package__)
+            if name in module.__all__:
+                value = getattr(module, name)
+                globals()[name] = value
+                return value
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:

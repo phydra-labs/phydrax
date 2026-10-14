@@ -11,10 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.operators.quantum.lattice import (
     CharacterSectorPlan,
     FiniteGroupActionPlan,
@@ -38,7 +38,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _matrix(operator: Any) -> Any:

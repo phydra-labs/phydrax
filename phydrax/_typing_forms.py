@@ -215,4 +215,4 @@ def _tensor_forms() -> Mapping[TypeAliasType, TensorForm]:
 
 
 TENSOR_FORMS: Mapping[TypeAliasType, TensorForm] = _tensor_forms()
-"""Tensor alias registrations, keyed by alias identity."""
+"""Declared tensor alias registrations, independent of effective JAX x64 policy."""

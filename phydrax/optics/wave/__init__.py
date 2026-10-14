@@ -5,180 +5,19 @@
 """Immutable physical plane fields and scalar wave-optics actions."""
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from ._angular_spectrum import (
-    AngularSpectrumEvidence,
-    AngularSpectrumPlan,
-    AngularSpectrumResult,
-    AngularSpectrumStatus,
-    PreparedAngularSpectrum,
-    propagate_angular_spectrum,
-)
+from ..._deferred_exports import deferred_exports
 from ._atmosphere import __all__ as _atmosphere_all
-from ._coherence import coherent_mode_intensity
-from ._coupled_envelope import (
-    assess_envelope_full_field_bridge,
-    coupled_envelope_adjoint,
-    CoupledEnvelopeEvidence,
-    CoupledEnvelopeMethod,
-    CoupledEnvelopePlan,
-    CoupledEnvelopeRun,
-    EnvelopeFullFieldBridgeEvidence,
-    propagate_coupled_envelope,
-    read_coupled_envelope_archive,
-    write_coupled_envelope_archive,
-)
-from ._coupled_mode import (
-    BidirectionalCoupledModeEvidence,
-    BidirectionalCoupledModePlan,
-    BidirectionalCoupledModeResult,
-    BidirectionalCoupledModeStatus,
-    CoupledModeBoundary,
-    prepare_bidirectional_coupled_mode,
-    PreparedBidirectionalCoupledMode,
-    solve_bidirectional_coupled_mode,
-)
-from ._cylindrical import (
-    CylindricalAnalyticPulseField,
-    CylindricalUnidirectionalPropagationEvidence,
-    CylindricalUnidirectionalPropagationPlan,
-    CylindricalUnidirectionalPropagationResult,
-    CylindricalUnidirectionalPropagationStatus,
-    prepare_cylindrical_unidirectional_propagation,
-    PreparedCylindricalUnidirectionalPropagation,
-    propagate_cylindrical_unidirectional,
-)
-from ._envelope import (
-    analytic_field_to_envelope,
-    envelope_to_analytic_field,
-    GaussianPulseEnvelopeEvidence,
-    GaussianPulseEnvelopePlan,
-    GaussianPulseEnvelopeResult,
-    GaussianPulseEnvelopeStatus,
-    prepare_gaussian_pulse_envelope,
-    prepare_pulse_envelope_bridge,
-    PreparedGaussianPulseEnvelope,
-    PreparedPulseEnvelopeBridge,
-    PulseEnvelopeBridgeEvidence,
-    PulseEnvelopeBridgePlan,
-    PulseEnvelopeBridgeResult,
-    PulseEnvelopeBridgeStatus,
-    PulseEnvelopeField,
-    PulseEnvelopePolarization,
-    sample_focused_gaussian_pulse_envelope,
-    sample_gaussian_pulse_envelope,
-)
-from ._envelope_propagation import (
-    AdaptiveEnvelopeEvidence,
-    AdaptiveEnvelopePolicy,
-    AdaptiveEnvelopePropagationResult,
-    EnvelopePropagationEvidence,
-    EnvelopePropagationPlan,
-    EnvelopePropagationResult,
-    EnvelopePropagationStatus,
-    prepare_envelope_propagation,
-    PreparedEnvelopePropagation,
-    propagate_envelope,
-    propagate_envelope_adaptive,
-)
-from ._envelope_qualification import envelope_propagation_candidate_profiles
-from ._envelope_response import (
-    envelope_spectrum,
-    envelope_time_values,
-    EnvelopeNonlinearResponsePlan,
-    EnvelopeResponseEvaluation,
-    EnvelopeResponseEvidence,
-    evaluate_envelope_nonlinear_response,
-    prepare_envelope_nonlinear_response,
-    PreparedEnvelopeNonlinearResponse,
-)
-from ._fields import (
-    IntensityPlane,
-    PlaneFieldSpace,
-    ScalarPlaneField,
-    TangentialPlaneField,
-)
-from ._fresnel import (
-    DirectFresnelPlan,
-    FresnelPropagationEvidence,
-    FresnelPropagationResult,
-    FresnelPropagationStatus,
-    prepare_direct_fresnel,
-    PreparedDirectFresnel,
-    propagate_direct_fresnel,
-)
 from ._imaging import __all__ as _imaging_all
-from ._material_response import (
-    DelayedRamanResponsePlan,
-    DrudePlasmaEvaluation,
-    DrudePlasmaResponsePlan,
-    IonizingDrudeResponsePlan,
-    MultiphotonIonizationRatePlan,
-    PreparedDelayedRamanResponse,
-    PreparedDrudePlasmaResponse,
-    PreparedIonizingDrudeResponse,
-)
-from ._maxwell_adapter import (
-    fourier_modal_field_to_tangential_plane,
-    FourierModalPlaneAdapterResult,
-    FourierModalPlaneEvidence,
-    PeriodicWindowAdapterResult,
-    PeriodicWindowConversionEvidence,
-    TangentialElectromagneticPlane,
-    tile_periodic_plane_to_finite_window,
-)
-from ._maxwell_antenna_adapter import (
-    openpmd_laser_envelope_antenna,
-    pulse_envelope_antenna,
-    pulse_envelope_quasi_cylindrical_antenna,
-)
-from ._measurement import ideal_square_law, integrate_intensity
-from ._nonlinear_response import (
-    AbstractCarrierResolvedResponse,
-    AnalyticPulseField,
-    CarrierResolvedResponseEvaluation,
-    CarrierResolvedResponseEvidence,
-    CarrierResolvedResponseStatus,
-    instantaneous_nonlinear_polarization,
-    InstantaneousScalarSusceptibility,
-    OrientedTensorSusceptibility,
-    prepare_carrier_resolved_response,
-    PreparedCarrierResolvedResponse,
-    PulseResponseLedger,
-)
-from ._pulse_time import PulseTimeSpace, PulseTimeTopology
 from ._pupil import __all__ as _pupil_all
-from ._pupil_adapter import (
-    PupilFieldAdapterEvidence,
-    PupilFieldAdapterStatus,
-    PupilToScalarFieldResult,
-    sequential_pupil_to_scalar_field,
-)
 from ._statistical_ao import __all__ as _statistical_ao_all
-from ._thin import JonesThinTransmission, ScalarThinTransmission, thin_lens
-from ._thin_film import (
-    ThinFilmInterferenceEvidence,
-    ThinFilmInterferencePlan,
-    ThinFilmInterferenceResult,
-    ThinFilmInterferenceStatus,
-)
-from ._thin_film_qualification import thin_film_interference_candidate_profiles
-from ._unidirectional import (
-    prepare_unidirectional_propagation,
-    PreparedUnidirectionalPropagation,
-    propagate_unidirectional,
-    UnidirectionalApproximationEvidence,
-    UnidirectionalPropagationPlan,
-    UnidirectionalPropagationResult,
-    UnidirectionalPropagationStatus,
-)
 
 
 _FACADE_EXPORT_MODULES = ("._atmosphere", "._imaging", "._pupil", "._statistical_ao")
 
 
-def __getattr__(name: str) -> Any:
+def _facade_getattr(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:
@@ -188,8 +27,318 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def __dir__() -> list[str]:
+def _facade_dir() -> list[str]:
     return sorted(set(globals()) | set(__all__))
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "AngularSpectrumEvidence": "._angular_spectrum",
+    "AngularSpectrumPlan": "._angular_spectrum",
+    "AngularSpectrumResult": "._angular_spectrum",
+    "AngularSpectrumStatus": "._angular_spectrum",
+    "PreparedAngularSpectrum": "._angular_spectrum",
+    "propagate_angular_spectrum": "._angular_spectrum",
+    "coherent_mode_intensity": "._coherence",
+    "assess_envelope_full_field_bridge": "._coupled_envelope",
+    "coupled_envelope_adjoint": "._coupled_envelope",
+    "CoupledEnvelopeEvidence": "._coupled_envelope",
+    "CoupledEnvelopeMethod": "._coupled_envelope",
+    "CoupledEnvelopePlan": "._coupled_envelope",
+    "CoupledEnvelopeRun": "._coupled_envelope",
+    "EnvelopeFullFieldBridgeEvidence": "._coupled_envelope",
+    "propagate_coupled_envelope": "._coupled_envelope",
+    "read_coupled_envelope_archive": "._coupled_envelope",
+    "write_coupled_envelope_archive": "._coupled_envelope",
+    "BidirectionalCoupledModeEvidence": "._coupled_mode",
+    "BidirectionalCoupledModePlan": "._coupled_mode",
+    "BidirectionalCoupledModeResult": "._coupled_mode",
+    "BidirectionalCoupledModeStatus": "._coupled_mode",
+    "CoupledModeBoundary": "._coupled_mode",
+    "prepare_bidirectional_coupled_mode": "._coupled_mode",
+    "PreparedBidirectionalCoupledMode": "._coupled_mode",
+    "solve_bidirectional_coupled_mode": "._coupled_mode",
+    "CylindricalAnalyticPulseField": "._cylindrical",
+    "CylindricalUnidirectionalPropagationEvidence": "._cylindrical",
+    "CylindricalUnidirectionalPropagationPlan": "._cylindrical",
+    "CylindricalUnidirectionalPropagationResult": "._cylindrical",
+    "CylindricalUnidirectionalPropagationStatus": "._cylindrical",
+    "prepare_cylindrical_unidirectional_propagation": "._cylindrical",
+    "PreparedCylindricalUnidirectionalPropagation": "._cylindrical",
+    "propagate_cylindrical_unidirectional": "._cylindrical",
+    "analytic_field_to_envelope": "._envelope",
+    "envelope_to_analytic_field": "._envelope",
+    "GaussianPulseEnvelopeEvidence": "._envelope",
+    "GaussianPulseEnvelopePlan": "._envelope",
+    "GaussianPulseEnvelopeResult": "._envelope",
+    "GaussianPulseEnvelopeStatus": "._envelope",
+    "prepare_gaussian_pulse_envelope": "._envelope",
+    "prepare_pulse_envelope_bridge": "._envelope",
+    "PreparedGaussianPulseEnvelope": "._envelope",
+    "PreparedPulseEnvelopeBridge": "._envelope",
+    "PulseEnvelopeBridgeEvidence": "._envelope",
+    "PulseEnvelopeBridgePlan": "._envelope",
+    "PulseEnvelopeBridgeResult": "._envelope",
+    "PulseEnvelopeBridgeStatus": "._envelope",
+    "PulseEnvelopeField": "._envelope",
+    "PulseEnvelopePolarization": "._envelope",
+    "sample_focused_gaussian_pulse_envelope": "._envelope",
+    "sample_gaussian_pulse_envelope": "._envelope",
+    "AdaptiveEnvelopeEvidence": "._envelope_propagation",
+    "AdaptiveEnvelopePolicy": "._envelope_propagation",
+    "AdaptiveEnvelopePropagationResult": "._envelope_propagation",
+    "EnvelopePropagationEvidence": "._envelope_propagation",
+    "EnvelopePropagationPlan": "._envelope_propagation",
+    "EnvelopePropagationResult": "._envelope_propagation",
+    "EnvelopePropagationStatus": "._envelope_propagation",
+    "prepare_envelope_propagation": "._envelope_propagation",
+    "PreparedEnvelopePropagation": "._envelope_propagation",
+    "propagate_envelope": "._envelope_propagation",
+    "propagate_envelope_adaptive": "._envelope_propagation",
+    "envelope_propagation_candidate_profiles": "._envelope_qualification",
+    "envelope_spectrum": "._envelope_response",
+    "envelope_time_values": "._envelope_response",
+    "EnvelopeNonlinearResponsePlan": "._envelope_response",
+    "EnvelopeResponseEvaluation": "._envelope_response",
+    "EnvelopeResponseEvidence": "._envelope_response",
+    "evaluate_envelope_nonlinear_response": "._envelope_response",
+    "prepare_envelope_nonlinear_response": "._envelope_response",
+    "PreparedEnvelopeNonlinearResponse": "._envelope_response",
+    "IntensityPlane": "._fields",
+    "PlaneFieldSpace": "._fields",
+    "ScalarPlaneField": "._fields",
+    "TangentialPlaneField": "._fields",
+    "DirectFresnelPlan": "._fresnel",
+    "FresnelPropagationEvidence": "._fresnel",
+    "FresnelPropagationResult": "._fresnel",
+    "FresnelPropagationStatus": "._fresnel",
+    "prepare_direct_fresnel": "._fresnel",
+    "PreparedDirectFresnel": "._fresnel",
+    "propagate_direct_fresnel": "._fresnel",
+    "DelayedRamanResponsePlan": "._material_response",
+    "DrudePlasmaEvaluation": "._material_response",
+    "DrudePlasmaResponsePlan": "._material_response",
+    "IonizingDrudeResponsePlan": "._material_response",
+    "MultiphotonIonizationRatePlan": "._material_response",
+    "PreparedDelayedRamanResponse": "._material_response",
+    "PreparedDrudePlasmaResponse": "._material_response",
+    "PreparedIonizingDrudeResponse": "._material_response",
+    "fourier_modal_field_to_tangential_plane": "._maxwell_adapter",
+    "FourierModalPlaneAdapterResult": "._maxwell_adapter",
+    "FourierModalPlaneEvidence": "._maxwell_adapter",
+    "PeriodicWindowAdapterResult": "._maxwell_adapter",
+    "PeriodicWindowConversionEvidence": "._maxwell_adapter",
+    "TangentialElectromagneticPlane": "._maxwell_adapter",
+    "tile_periodic_plane_to_finite_window": "._maxwell_adapter",
+    "openpmd_laser_envelope_antenna": "._maxwell_antenna_adapter",
+    "pulse_envelope_antenna": "._maxwell_antenna_adapter",
+    "pulse_envelope_quasi_cylindrical_antenna": "._maxwell_antenna_adapter",
+    "ideal_square_law": "._measurement",
+    "integrate_intensity": "._measurement",
+    "AbstractCarrierResolvedResponse": "._nonlinear_response",
+    "AnalyticPulseField": "._nonlinear_response",
+    "CarrierResolvedResponseEvaluation": "._nonlinear_response",
+    "CarrierResolvedResponseEvidence": "._nonlinear_response",
+    "CarrierResolvedResponseStatus": "._nonlinear_response",
+    "instantaneous_nonlinear_polarization": "._nonlinear_response",
+    "InstantaneousScalarSusceptibility": "._nonlinear_response",
+    "OrientedTensorSusceptibility": "._nonlinear_response",
+    "prepare_carrier_resolved_response": "._nonlinear_response",
+    "PreparedCarrierResolvedResponse": "._nonlinear_response",
+    "PulseResponseLedger": "._nonlinear_response",
+    "PulseTimeSpace": "._pulse_time",
+    "PulseTimeTopology": "._pulse_time",
+    "PupilFieldAdapterEvidence": "._pupil_adapter",
+    "PupilFieldAdapterStatus": "._pupil_adapter",
+    "PupilToScalarFieldResult": "._pupil_adapter",
+    "sequential_pupil_to_scalar_field": "._pupil_adapter",
+    "JonesThinTransmission": "._thin",
+    "ScalarThinTransmission": "._thin",
+    "thin_lens": "._thin",
+    "ThinFilmInterferenceEvidence": "._thin_film",
+    "ThinFilmInterferencePlan": "._thin_film",
+    "ThinFilmInterferenceResult": "._thin_film",
+    "ThinFilmInterferenceStatus": "._thin_film",
+    "thin_film_interference_candidate_profiles": "._thin_film_qualification",
+    "prepare_unidirectional_propagation": "._unidirectional",
+    "PreparedUnidirectionalPropagation": "._unidirectional",
+    "propagate_unidirectional": "._unidirectional",
+    "UnidirectionalApproximationEvidence": "._unidirectional",
+    "UnidirectionalPropagationPlan": "._unidirectional",
+    "UnidirectionalPropagationResult": "._unidirectional",
+    "UnidirectionalPropagationStatus": "._unidirectional",
+}
+
+
+__getattr__, __dir__ = deferred_exports(
+    __name__, globals(), _DEFERRED_EXPORTS, fallback=_facade_getattr, listing=_facade_dir
+)
+
+
+if TYPE_CHECKING:
+    from ._angular_spectrum import (
+        AngularSpectrumEvidence,
+        AngularSpectrumPlan,
+        AngularSpectrumResult,
+        AngularSpectrumStatus,
+        PreparedAngularSpectrum,
+        propagate_angular_spectrum,
+    )
+    from ._coherence import coherent_mode_intensity
+    from ._coupled_envelope import (
+        assess_envelope_full_field_bridge,
+        coupled_envelope_adjoint,
+        CoupledEnvelopeEvidence,
+        CoupledEnvelopeMethod,
+        CoupledEnvelopePlan,
+        CoupledEnvelopeRun,
+        EnvelopeFullFieldBridgeEvidence,
+        propagate_coupled_envelope,
+        read_coupled_envelope_archive,
+        write_coupled_envelope_archive,
+    )
+    from ._coupled_mode import (
+        BidirectionalCoupledModeEvidence,
+        BidirectionalCoupledModePlan,
+        BidirectionalCoupledModeResult,
+        BidirectionalCoupledModeStatus,
+        CoupledModeBoundary,
+        prepare_bidirectional_coupled_mode,
+        PreparedBidirectionalCoupledMode,
+        solve_bidirectional_coupled_mode,
+    )
+    from ._cylindrical import (
+        CylindricalAnalyticPulseField,
+        CylindricalUnidirectionalPropagationEvidence,
+        CylindricalUnidirectionalPropagationPlan,
+        CylindricalUnidirectionalPropagationResult,
+        CylindricalUnidirectionalPropagationStatus,
+        prepare_cylindrical_unidirectional_propagation,
+        PreparedCylindricalUnidirectionalPropagation,
+        propagate_cylindrical_unidirectional,
+    )
+    from ._envelope import (
+        analytic_field_to_envelope,
+        envelope_to_analytic_field,
+        GaussianPulseEnvelopeEvidence,
+        GaussianPulseEnvelopePlan,
+        GaussianPulseEnvelopeResult,
+        GaussianPulseEnvelopeStatus,
+        prepare_gaussian_pulse_envelope,
+        prepare_pulse_envelope_bridge,
+        PreparedGaussianPulseEnvelope,
+        PreparedPulseEnvelopeBridge,
+        PulseEnvelopeBridgeEvidence,
+        PulseEnvelopeBridgePlan,
+        PulseEnvelopeBridgeResult,
+        PulseEnvelopeBridgeStatus,
+        PulseEnvelopeField,
+        PulseEnvelopePolarization,
+        sample_focused_gaussian_pulse_envelope,
+        sample_gaussian_pulse_envelope,
+    )
+    from ._envelope_propagation import (
+        AdaptiveEnvelopeEvidence,
+        AdaptiveEnvelopePolicy,
+        AdaptiveEnvelopePropagationResult,
+        EnvelopePropagationEvidence,
+        EnvelopePropagationPlan,
+        EnvelopePropagationResult,
+        EnvelopePropagationStatus,
+        prepare_envelope_propagation,
+        PreparedEnvelopePropagation,
+        propagate_envelope,
+        propagate_envelope_adaptive,
+    )
+    from ._envelope_qualification import envelope_propagation_candidate_profiles
+    from ._envelope_response import (
+        envelope_spectrum,
+        envelope_time_values,
+        EnvelopeNonlinearResponsePlan,
+        EnvelopeResponseEvaluation,
+        EnvelopeResponseEvidence,
+        evaluate_envelope_nonlinear_response,
+        prepare_envelope_nonlinear_response,
+        PreparedEnvelopeNonlinearResponse,
+    )
+    from ._fields import (
+        IntensityPlane,
+        PlaneFieldSpace,
+        ScalarPlaneField,
+        TangentialPlaneField,
+    )
+    from ._fresnel import (
+        DirectFresnelPlan,
+        FresnelPropagationEvidence,
+        FresnelPropagationResult,
+        FresnelPropagationStatus,
+        prepare_direct_fresnel,
+        PreparedDirectFresnel,
+        propagate_direct_fresnel,
+    )
+    from ._material_response import (
+        DelayedRamanResponsePlan,
+        DrudePlasmaEvaluation,
+        DrudePlasmaResponsePlan,
+        IonizingDrudeResponsePlan,
+        MultiphotonIonizationRatePlan,
+        PreparedDelayedRamanResponse,
+        PreparedDrudePlasmaResponse,
+        PreparedIonizingDrudeResponse,
+    )
+    from ._maxwell_adapter import (
+        fourier_modal_field_to_tangential_plane,
+        FourierModalPlaneAdapterResult,
+        FourierModalPlaneEvidence,
+        PeriodicWindowAdapterResult,
+        PeriodicWindowConversionEvidence,
+        TangentialElectromagneticPlane,
+        tile_periodic_plane_to_finite_window,
+    )
+    from ._maxwell_antenna_adapter import (
+        openpmd_laser_envelope_antenna,
+        pulse_envelope_antenna,
+        pulse_envelope_quasi_cylindrical_antenna,
+    )
+    from ._measurement import ideal_square_law, integrate_intensity
+    from ._nonlinear_response import (
+        AbstractCarrierResolvedResponse,
+        AnalyticPulseField,
+        CarrierResolvedResponseEvaluation,
+        CarrierResolvedResponseEvidence,
+        CarrierResolvedResponseStatus,
+        instantaneous_nonlinear_polarization,
+        InstantaneousScalarSusceptibility,
+        OrientedTensorSusceptibility,
+        prepare_carrier_resolved_response,
+        PreparedCarrierResolvedResponse,
+        PulseResponseLedger,
+    )
+    from ._pulse_time import PulseTimeSpace, PulseTimeTopology
+    from ._pupil_adapter import (
+        PupilFieldAdapterEvidence,
+        PupilFieldAdapterStatus,
+        PupilToScalarFieldResult,
+        sequential_pupil_to_scalar_field,
+    )
+    from ._thin import JonesThinTransmission, ScalarThinTransmission, thin_lens
+    from ._thin_film import (
+        ThinFilmInterferenceEvidence,
+        ThinFilmInterferencePlan,
+        ThinFilmInterferenceResult,
+        ThinFilmInterferenceStatus,
+    )
+    from ._thin_film_qualification import thin_film_interference_candidate_profiles
+    from ._unidirectional import (
+        prepare_unidirectional_propagation,
+        PreparedUnidirectionalPropagation,
+        propagate_unidirectional,
+        UnidirectionalApproximationEvidence,
+        UnidirectionalPropagationPlan,
+        UnidirectionalPropagationResult,
+        UnidirectionalPropagationStatus,
+    )
 
 
 __all__ = [

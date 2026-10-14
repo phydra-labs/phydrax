@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ....tensor_network import su2_clebsch_gordan, su2_fusion
+from ....tensor_network._su2 import su2_clebsch_gordan, su2_fusion
 from ....typing import checked
 
 

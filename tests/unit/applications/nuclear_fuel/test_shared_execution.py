@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     FuelNumericalExecution,
     FuelRodSimulation,
@@ -81,7 +81,7 @@ class _SharedStep:
 @pytest.fixture(scope="module")
 def shared_steps() -> tuple[_SharedStep, _SharedStep]:
     """One step of two distinct rods through one execution built from the first."""
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         first, second = execution_rod(), _second_rod()
         owner = FuelNumericalExecution(first)
         index = jnp.asarray(_STEP_INDEX, dtype=jnp.int32)
@@ -133,7 +133,7 @@ def test_shared_step_matches_the_case_bound_step(
     shared_steps: tuple[_SharedStep, _SharedStep], index: int
 ) -> None:
     case = shared_steps[index]
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         native = eqx.filter_jit(FuelStepMethod(case.prepared).step)(
             jnp.asarray(_STEP_INDEX, dtype=jnp.int32),
             jnp.asarray(_TIME, dtype=jnp.float64),
@@ -153,7 +153,7 @@ def test_shared_step_matches_the_case_bound_step(
 
 
 def test_shared_execution_refuses_a_rod_of_different_layout() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         owner = FuelNumericalExecution(execution_rod())
         with pytest.raises(
             ValueError, match="layout, topology, or scientific role mismatch"
@@ -162,7 +162,7 @@ def test_shared_execution_refuses_a_rod_of_different_layout() -> None:
 
 
 def test_binding_refuses_a_checkpoint_of_another_rod() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = execution_rod()
         binding = FuelNumericalExecution(prepared).bind(_second_rod())
         with pytest.raises(ValueError, match="different prepared FE identity"):
@@ -177,7 +177,7 @@ def test_binding_refuses_a_checkpoint_of_another_rod() -> None:
 def test_shared_execution_retains_independent_case_checkpoints(
     tmp_path: Path,
 ) -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         first, second = execution_rod(), _second_rod()
         owner = FuelNumericalExecution(first)
         runs = tuple(

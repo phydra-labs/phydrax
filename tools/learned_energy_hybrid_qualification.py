@@ -21,6 +21,7 @@ import numpy as np
 import phydrax.ein as ein
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment
+from phydrax import config as pxconfig
 from phydrax._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
@@ -1879,7 +1880,7 @@ def main() -> int:
         raise ValueError(
             "Hybrid qualification output must not overwrite a parent artifact."
         )
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = qualification_report(
             parent_spatial_path=arguments.parent_spatial,
             parent_stage_two_path=arguments.parent_stage_two,

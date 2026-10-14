@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from examples.interactive_moist_column import build_column, physical_report
+from phydrax import config as pxconfig
 from phydrax.applications.atmosphere._interactive_column import InteractiveMoistColumnPlan
 from phydrax.metrix import EuclideanStateGeometry
 from phydrax.solver._fixed_step import FixedStepProblem, FixedStepRolloutPlan
@@ -180,7 +181,7 @@ def main() -> None:
         or args.wind_factor < 0
     ):
         parser.error("layers/steps>=2, spinup>=0, dt>0, wind-factor>=0 are required")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     plan, initial = build_column(args.layers)
     forcing = dict(solar_down=340.0, wind_speed=5.0, ventilation=0.05, shear=0.01)
     run = eqx.filter_jit(

@@ -16,13 +16,13 @@ from collections.abc import Mapping
 from typing import assert_never, final, Literal, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._precision import (
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
@@ -56,7 +56,7 @@ def _requested(value: DTypeLike, name: str, /) -> MeshfreePrecisionDType:
     # Read the requested name before JAX canonicalization so that float64 is
     # refused, not silently narrowed, when x64 is disabled.
     dtype = parse(np.dtype(value).name, MeshfreePrecisionDType, name)
-    if dtype == "float64" and not bool(jax.config.read("jax_enable_x64")):
+    if dtype == "float64" and not x64_enabled():
         raise ValueError(f"{name} requests float64 but JAX x64 is disabled.")
     return dtype
 

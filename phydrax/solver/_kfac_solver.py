@@ -27,6 +27,7 @@ import jax.random as jr
 from jax import Array
 from jax.flatten_util import ravel_pytree
 
+from .._config_state import logging_enabled as _logging_enabled
 from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -53,7 +54,6 @@ from .._training_kernel import (
     TrainingKernelState,
 )
 from .._tree_math import tree_allfinite, tree_where
-from ..logging import is_enabled as _logging_enabled
 from ..optim._iterative._globalization import (
     armijo_backtracking,
     ArmijoLineSearch,

@@ -23,6 +23,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.linalg import (
     hermitian_exp,
     hermitian_inverse_sqrt,
@@ -105,7 +106,7 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.repeats < 1 or any(size < 1 for size in arguments.batch_sizes):
         raise ValueError("Batch sizes and repeats must be positive.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     functions = (
         ("hermitian-log", hermitian_log),
         ("hermitian-exp", hermitian_exp),

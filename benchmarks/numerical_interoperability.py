@@ -34,6 +34,7 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.discretization import SimplicialLocationPolicy
 from phydrax.discretization.fem import prepare_finite_element_field_reconstruction
 from phydrax.solver.coupling._interface_quadrature import (
@@ -41,7 +42,7 @@ from phydrax.solver.coupling._interface_quadrature import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 type RowFunction = Callable[[bool, int, int], list[dict[str, Any]]]
 
@@ -2433,19 +2434,11 @@ _PARITY_CHILD = "PHYDRAX_BENCHMARK_FORCED_HOST_DEVICES"
 
 def _forced_host_environment(devices: int, /) -> dict[str, str]:
     """This environment on ``devices`` forced CPU host devices, other XLA flags kept."""
-    prefix = "--xla_force_host_platform_device_count="
-    flags = [
-        flag
-        for flag in os.environ.get("XLA_FLAGS", "").split()
-        if not flag.startswith(prefix)
-    ]
-    return {
-        **os.environ,
-        # Forced host devices exist only on the CPU platform.
-        "JAX_PLATFORMS": "cpu",
-        "XLA_FLAGS": " ".join((*flags, f"{prefix}{devices}")),
-        _PARITY_CHILD: str(devices),
-    }
+    return pxconfig.environment(
+        pxconfig.RuntimeConfig(cpu_device_count=devices, platforms=("cpu",)),
+        base={**os.environ, _PARITY_CHILD: str(devices)},
+        mode="override",
+    )
 
 
 def execution_group_parity_row(

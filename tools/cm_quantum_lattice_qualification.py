@@ -10,10 +10,10 @@ import argparse
 import json
 from pathlib import Path
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.operators.quantum import CARPolynomial, FermionicFockBasis, FermionModeOrder
 from phydrax.operators.quantum.lattice import (
     FixedCardinalityFermionBasis,
@@ -31,7 +31,7 @@ from phydrax.operators.quantum.lattice import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def run_smoke() -> dict[str, object]:

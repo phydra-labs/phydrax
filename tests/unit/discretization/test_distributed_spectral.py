@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from jax import Array
 
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     AxisDomain,
     ChebyshevBasisPlan,
@@ -277,7 +278,7 @@ def test_identity_partitions_numerics_execution_and_owner_binding() -> None:
     assert default_precision.precision.coefficient_dtype == "complex64"
 
     double = SpectralPrecisionPolicy(jnp.float64)
-    if jax.config.x64_enabled:
+    if pxconfig.x64_enabled():
         different_precision = _slab((4, 4, 4), precision=double)
         assert different_precision.numerical_id != base.numerical_id
         assert (
@@ -325,7 +326,7 @@ def test_transform_autodiff_and_hilbert_adjoint() -> None:
 
 
 def test_reductions_cast_before_overflow_sensitive_products() -> None:
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         pytest.skip("float64 reduction evidence requires JAX x64 mode")
     precision = SpectralPrecisionPolicy(
         jnp.float32,
@@ -362,7 +363,7 @@ def test_reductions_cast_before_overflow_sensitive_products() -> None:
 
 
 def test_unavailable_requested_precision_is_refused() -> None:
-    if jax.config.x64_enabled:
+    if pxconfig.x64_enabled():
         pytest.skip("active JAX policy honors float64/complex128")
     precision = SpectralPrecisionPolicy(jnp.float64)
     with pytest.raises(ValueError, match="cannot honor"):

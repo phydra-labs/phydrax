@@ -31,11 +31,10 @@ def _strict_jax_numerics(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
         return
 
-    import jax
+    from phydrax import config as pxconfig
 
-    with (
-        jax.numpy_dtype_promotion("strict"),
-        jax.numpy_rank_promotion("raise"),
+    with pxconfig.context(
+        pxconfig.NumericsConfig(dtype_promotion="strict", rank_promotion="raise")
     ):
         yield
 
@@ -56,13 +55,13 @@ class CapturedPhydraxEvents:
 
 @pytest.fixture
 def phydrax_events(tmp_path: Path) -> Iterator[CapturedPhydraxEvents]:
-    from phydrax import logging as pxlogging
+    from phydrax import config as pxconfig, logging as pxlogging
 
     path = tmp_path / "events.jsonl"
     handler_id = pxlogging.add_json_sink(path, level="TRACE")
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         yield CapturedPhydraxEvents(path)
     finally:
         pxlogging.remove_sink(handler_id)
-        pxlogging.disable()
+        pxconfig.configure(pxconfig.LoggingConfig(enabled=False))

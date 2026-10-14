@@ -1,5 +1,4 @@
 import itertools
-import os
 import shutil
 from typing import Any
 
@@ -23,7 +22,12 @@ Failure = phx.meshing.MeshingFailure
 Category = phx.meshing.MeshingFailureCategory
 
 requires_worker = pytest.mark.skipif(
-    shutil.which(os.environ.get("PHYDRAX_MMG_WORKER", "phydrax-mmg-worker")) is None,
+    shutil.which(
+        "phydrax-mmg-worker"
+        if (configured := phx.config.snapshot().workers.get("mmg")) is None
+        else configured
+    )
+    is None,
     reason="phydrax-mmg-worker is not built (set PHYDRAX_MMG_WORKER)",
 )
 

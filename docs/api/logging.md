@@ -8,17 +8,17 @@ privacy, and distributed-execution contracts.
 
 ---
 
-::: phydrax.logging.enable
+Emission is process-wide configuration; sinks and correlation stay here:
 
----
+```python executable
+import phydrax as phx
 
-::: phydrax.logging.disable
+phx.config.configure(phx.config.LoggingConfig(enabled=True))
+assert phx.config.logging_enabled()
+phx.config.configure(phx.config.LoggingConfig(enabled=False))
+```
 
----
-
-::: phydrax.logging.is_enabled
-
----
+See [Configuration](configuration.md) for the configuration records and observers.
 
 ::: phydrax.logging.context
 

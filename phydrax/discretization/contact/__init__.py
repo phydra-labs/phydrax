@@ -1,167 +1,301 @@
+from typing import TYPE_CHECKING
+
+from ..._deferred_exports import deferred_exports
+
+
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from ._cache import (
-    CachedContactSearchPlan,
-    ContactSearchCacheState,
-    ContactSearchCacheUpdate,
-)
-from ._ccd import (
-    CCDStatus,
-    CertifiedAABBCCDPlan,
-    collision_free_step_limit,
-    ContactSafetyEvidence,
-    InclusionCCDPlan,
-)
-from ._compiled_search import (
-    CompiledCandidateBatch,
-    CompiledContactSearchEvidence,
-    CompiledContactSearchPlan,
-    CompiledContactSearchResult,
-    LBVHContactSearchEvidence,
-    LBVHContactSearchPlan,
-    LBVHContactSearchResult,
-)
-from ._distance import (
-    contact_tangent_basis,
-    ContactDistanceEvaluation,
-    edge_edge_distance,
-    edge_edge_mollifier,
-    edge_edge_mollifier_threshold,
-    EdgeEdgeFeature,
-    point_edge_distance,
-    point_point_distance,
-    point_triangle_distance,
-    PointEdgeFeature,
-    PointTriangleFeature,
-)
-from ._distributed import (
-    DistributedContactEpoch,
-    DistributedContactPartitionPlan,
-    partition_contact_epoch,
-)
-from ._geometric_filter import (
-    certify_closed_oriented_surface,
-    ClosedSurfaceCertificate,
-    filter_geometric_contacts,
-    GeometricContactFilterEvidence,
-    GeometricContactFilterPlan,
-    GeometricContactFilterResult,
-)
-from ._guarantee import (
-    ContactCapability,
-    ContactGuaranteeEvidence,
-    ContactGuaranteeLevel,
-)
-from ._halo import (
-    ContactHaloExchangeEvidence,
-    ContactHaloExchangePlan,
-    ContactHaloPayload,
-    ContactHaloReduction,
-    pack_contact_halo,
-    reduce_contact_halo,
-)
-from ._iga import (
-    CertifiedSplinePatchProxyPlan,
-    IGACommonRefinementEvidence,
-    IGACommonRefinementMortarPlan,
-    IGAMortarDualityEvidence,
-    IGAMortarResidual,
-    IGASweptPatchBounds,
-    IGATraceProjection,
-    IGATraceProjectionEvidence,
-    PreparedIGASplinePatchProxy,
-)
-from ._implicit_geometry import (
-    AbstractImplicitContactGeometry,
-    FunctionImplicitContactGeometry,
-    ImplicitContactEvaluation,
-    PlaneContactGeometry,
-    SphereContactGeometry,
-)
-from ._interface import (
-    assemble_contact_interface_traction,
-    ContactInterfaceKinematics,
-    ContactInterfacePlan,
-    ContactInterfaceResidual,
-    evaluate_contact_interface,
-)
-from ._inversion import (
-    InversionStatus,
-    InversionStepEvidence,
-    simplex_inversion_step_limit,
-    SimplexInversionStepPlan,
-)
-from ._kinematics import (
-    ContactKinematicsBatch,
-    ContactKinematicsEpoch,
-    ContactKinematicsEvidence,
-    evaluate_contact_kinematics,
-    evaluate_contact_kinematics_batch,
-)
-from ._participant import (
-    AbstractContactParticipant,
-    ContactParticipantScene,
-    FunctionContactParticipant,
-    LinearContactParticipant,
-    ParticipantDualityEvidence,
-    ParticipantTrajectoryBounds,
-)
-from ._patch_builder import (
-    build_triangle_mortar_interface,
-    ContactPatchBuildEvidence,
-    ContactPatchBuildResult,
-)
-from ._precision import ContactPrecisionPolicy
-from ._pressure_patch import (
-    HydroelasticPatchEvidence,
-    HydroelasticPatchExtraction,
-    HydroelasticPatchExtractionPlan,
-    HydroelasticPressureFieldPlan,
-    HydroelasticPressureFieldState,
-    HydroelasticPressurePatch,
-    PreparedHydroelasticPatchExtraction,
-)
-from ._proxy import (
-    ContactProxyEvidence,
-    ContactProxyPlan,
-    ContactProxyTransfer,
-    PreparedContactProxy,
-)
-from ._search import (
-    ContactCandidateEpoch,
-    ContactSearchLimits,
-    ContactSearchStatus,
-    DenseContactSearchPlan,
-    SweepAndPruneContactSearchPlan,
-)
-from ._stencils import (
-    canonical_contact_route_keys,
-    ContactStencilBatch,
-    ContactStencilEvaluation,
-    ContactStencilKind,
-    evaluate_contact_stencils,
-)
-from ._surface import (
-    CollisionFeatureKind,
-    CollisionFeaturePolicy,
-    CollisionMapEvidence,
-    CollisionSurfacePlan,
-    ContactPairPolicy,
-    prepare_cell_mesh_collision_surface,
-    PreparedCollisionScene,
-    PreparedCollisionSurface,
-    selection_collision_operator,
-    static_collision_operator,
-)
-from ._trajectory import (
-    AbstractContactTrajectory,
-    ContactTrajectoryEvaluation,
-    CubicHermiteContactTrajectory,
-    LinearContactTrajectory,
-    RigidSweepContactTrajectory,
-)
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "CachedContactSearchPlan": "._cache",
+    "ContactSearchCacheState": "._cache",
+    "ContactSearchCacheUpdate": "._cache",
+    "CCDStatus": "._ccd",
+    "CertifiedAABBCCDPlan": "._ccd",
+    "collision_free_step_limit": "._ccd",
+    "ContactSafetyEvidence": "._ccd",
+    "InclusionCCDPlan": "._ccd",
+    "CompiledCandidateBatch": "._compiled_search",
+    "CompiledContactSearchEvidence": "._compiled_search",
+    "CompiledContactSearchPlan": "._compiled_search",
+    "CompiledContactSearchResult": "._compiled_search",
+    "LBVHContactSearchEvidence": "._compiled_search",
+    "LBVHContactSearchPlan": "._compiled_search",
+    "LBVHContactSearchResult": "._compiled_search",
+    "contact_tangent_basis": "._distance",
+    "ContactDistanceEvaluation": "._distance",
+    "edge_edge_distance": "._distance",
+    "edge_edge_mollifier": "._distance",
+    "edge_edge_mollifier_threshold": "._distance",
+    "EdgeEdgeFeature": "._distance",
+    "point_edge_distance": "._distance",
+    "point_point_distance": "._distance",
+    "point_triangle_distance": "._distance",
+    "PointEdgeFeature": "._distance",
+    "PointTriangleFeature": "._distance",
+    "DistributedContactEpoch": "._distributed",
+    "DistributedContactPartitionPlan": "._distributed",
+    "partition_contact_epoch": "._distributed",
+    "certify_closed_oriented_surface": "._geometric_filter",
+    "ClosedSurfaceCertificate": "._geometric_filter",
+    "filter_geometric_contacts": "._geometric_filter",
+    "GeometricContactFilterEvidence": "._geometric_filter",
+    "GeometricContactFilterPlan": "._geometric_filter",
+    "GeometricContactFilterResult": "._geometric_filter",
+    "ContactCapability": "._guarantee",
+    "ContactGuaranteeEvidence": "._guarantee",
+    "ContactGuaranteeLevel": "._guarantee",
+    "ContactHaloExchangeEvidence": "._halo",
+    "ContactHaloExchangePlan": "._halo",
+    "ContactHaloPayload": "._halo",
+    "ContactHaloReduction": "._halo",
+    "pack_contact_halo": "._halo",
+    "reduce_contact_halo": "._halo",
+    "CertifiedSplinePatchProxyPlan": "._iga",
+    "IGACommonRefinementEvidence": "._iga",
+    "IGACommonRefinementMortarPlan": "._iga",
+    "IGAMortarDualityEvidence": "._iga",
+    "IGAMortarResidual": "._iga",
+    "IGASweptPatchBounds": "._iga",
+    "IGATraceProjection": "._iga",
+    "IGATraceProjectionEvidence": "._iga",
+    "PreparedIGASplinePatchProxy": "._iga",
+    "AbstractImplicitContactGeometry": "._implicit_geometry",
+    "FunctionImplicitContactGeometry": "._implicit_geometry",
+    "ImplicitContactEvaluation": "._implicit_geometry",
+    "PlaneContactGeometry": "._implicit_geometry",
+    "SphereContactGeometry": "._implicit_geometry",
+    "assemble_contact_interface_traction": "._interface",
+    "ContactInterfaceKinematics": "._interface",
+    "ContactInterfacePlan": "._interface",
+    "ContactInterfaceResidual": "._interface",
+    "evaluate_contact_interface": "._interface",
+    "InversionStatus": "._inversion",
+    "InversionStepEvidence": "._inversion",
+    "simplex_inversion_step_limit": "._inversion",
+    "SimplexInversionStepPlan": "._inversion",
+    "ContactKinematicsBatch": "._kinematics",
+    "ContactKinematicsEpoch": "._kinematics",
+    "ContactKinematicsEvidence": "._kinematics",
+    "evaluate_contact_kinematics": "._kinematics",
+    "evaluate_contact_kinematics_batch": "._kinematics",
+    "AbstractContactParticipant": "._participant",
+    "ContactParticipantScene": "._participant",
+    "FunctionContactParticipant": "._participant",
+    "LinearContactParticipant": "._participant",
+    "ParticipantDualityEvidence": "._participant",
+    "ParticipantTrajectoryBounds": "._participant",
+    "build_triangle_mortar_interface": "._patch_builder",
+    "ContactPatchBuildEvidence": "._patch_builder",
+    "ContactPatchBuildResult": "._patch_builder",
+    "ContactPrecisionPolicy": "._precision",
+    "HydroelasticPatchEvidence": "._pressure_patch",
+    "HydroelasticPatchExtraction": "._pressure_patch",
+    "HydroelasticPatchExtractionPlan": "._pressure_patch",
+    "HydroelasticPressureFieldPlan": "._pressure_patch",
+    "HydroelasticPressureFieldState": "._pressure_patch",
+    "HydroelasticPressurePatch": "._pressure_patch",
+    "PreparedHydroelasticPatchExtraction": "._pressure_patch",
+    "ContactProxyEvidence": "._proxy",
+    "ContactProxyPlan": "._proxy",
+    "ContactProxyTransfer": "._proxy",
+    "PreparedContactProxy": "._proxy",
+    "ContactCandidateEpoch": "._search",
+    "ContactSearchLimits": "._search",
+    "ContactSearchStatus": "._search",
+    "DenseContactSearchPlan": "._search",
+    "SweepAndPruneContactSearchPlan": "._search",
+    "canonical_contact_route_keys": "._stencils",
+    "ContactStencilBatch": "._stencils",
+    "ContactStencilEvaluation": "._stencils",
+    "ContactStencilKind": "._stencils",
+    "evaluate_contact_stencils": "._stencils",
+    "CollisionFeatureKind": "._surface",
+    "CollisionFeaturePolicy": "._surface",
+    "CollisionMapEvidence": "._surface",
+    "CollisionSurfacePlan": "._surface",
+    "ContactPairPolicy": "._surface",
+    "prepare_cell_mesh_collision_surface": "._surface",
+    "PreparedCollisionScene": "._surface",
+    "PreparedCollisionSurface": "._surface",
+    "selection_collision_operator": "._surface",
+    "static_collision_operator": "._surface",
+    "AbstractContactTrajectory": "._trajectory",
+    "ContactTrajectoryEvaluation": "._trajectory",
+    "CubicHermiteContactTrajectory": "._trajectory",
+    "LinearContactTrajectory": "._trajectory",
+    "RigidSweepContactTrajectory": "._trajectory",
+}
+
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
+
+
+if TYPE_CHECKING:
+    from ._cache import (
+        CachedContactSearchPlan,
+        ContactSearchCacheState,
+        ContactSearchCacheUpdate,
+    )
+    from ._ccd import (
+        CCDStatus,
+        CertifiedAABBCCDPlan,
+        collision_free_step_limit,
+        ContactSafetyEvidence,
+        InclusionCCDPlan,
+    )
+    from ._compiled_search import (
+        CompiledCandidateBatch,
+        CompiledContactSearchEvidence,
+        CompiledContactSearchPlan,
+        CompiledContactSearchResult,
+        LBVHContactSearchEvidence,
+        LBVHContactSearchPlan,
+        LBVHContactSearchResult,
+    )
+    from ._distance import (
+        contact_tangent_basis,
+        ContactDistanceEvaluation,
+        edge_edge_distance,
+        edge_edge_mollifier,
+        edge_edge_mollifier_threshold,
+        EdgeEdgeFeature,
+        point_edge_distance,
+        point_point_distance,
+        point_triangle_distance,
+        PointEdgeFeature,
+        PointTriangleFeature,
+    )
+    from ._distributed import (
+        DistributedContactEpoch,
+        DistributedContactPartitionPlan,
+        partition_contact_epoch,
+    )
+    from ._geometric_filter import (
+        certify_closed_oriented_surface,
+        ClosedSurfaceCertificate,
+        filter_geometric_contacts,
+        GeometricContactFilterEvidence,
+        GeometricContactFilterPlan,
+        GeometricContactFilterResult,
+    )
+    from ._guarantee import (
+        ContactCapability,
+        ContactGuaranteeEvidence,
+        ContactGuaranteeLevel,
+    )
+    from ._halo import (
+        ContactHaloExchangeEvidence,
+        ContactHaloExchangePlan,
+        ContactHaloPayload,
+        ContactHaloReduction,
+        pack_contact_halo,
+        reduce_contact_halo,
+    )
+    from ._iga import (
+        CertifiedSplinePatchProxyPlan,
+        IGACommonRefinementEvidence,
+        IGACommonRefinementMortarPlan,
+        IGAMortarDualityEvidence,
+        IGAMortarResidual,
+        IGASweptPatchBounds,
+        IGATraceProjection,
+        IGATraceProjectionEvidence,
+        PreparedIGASplinePatchProxy,
+    )
+    from ._implicit_geometry import (
+        AbstractImplicitContactGeometry,
+        FunctionImplicitContactGeometry,
+        ImplicitContactEvaluation,
+        PlaneContactGeometry,
+        SphereContactGeometry,
+    )
+    from ._interface import (
+        assemble_contact_interface_traction,
+        ContactInterfaceKinematics,
+        ContactInterfacePlan,
+        ContactInterfaceResidual,
+        evaluate_contact_interface,
+    )
+    from ._inversion import (
+        InversionStatus,
+        InversionStepEvidence,
+        simplex_inversion_step_limit,
+        SimplexInversionStepPlan,
+    )
+    from ._kinematics import (
+        ContactKinematicsBatch,
+        ContactKinematicsEpoch,
+        ContactKinematicsEvidence,
+        evaluate_contact_kinematics,
+        evaluate_contact_kinematics_batch,
+    )
+    from ._participant import (
+        AbstractContactParticipant,
+        ContactParticipantScene,
+        FunctionContactParticipant,
+        LinearContactParticipant,
+        ParticipantDualityEvidence,
+        ParticipantTrajectoryBounds,
+    )
+    from ._patch_builder import (
+        build_triangle_mortar_interface,
+        ContactPatchBuildEvidence,
+        ContactPatchBuildResult,
+    )
+    from ._precision import ContactPrecisionPolicy
+    from ._pressure_patch import (
+        HydroelasticPatchEvidence,
+        HydroelasticPatchExtraction,
+        HydroelasticPatchExtractionPlan,
+        HydroelasticPressureFieldPlan,
+        HydroelasticPressureFieldState,
+        HydroelasticPressurePatch,
+        PreparedHydroelasticPatchExtraction,
+    )
+    from ._proxy import (
+        ContactProxyEvidence,
+        ContactProxyPlan,
+        ContactProxyTransfer,
+        PreparedContactProxy,
+    )
+    from ._search import (
+        ContactCandidateEpoch,
+        ContactSearchLimits,
+        ContactSearchStatus,
+        DenseContactSearchPlan,
+        SweepAndPruneContactSearchPlan,
+    )
+    from ._stencils import (
+        canonical_contact_route_keys,
+        ContactStencilBatch,
+        ContactStencilEvaluation,
+        ContactStencilKind,
+        evaluate_contact_stencils,
+    )
+    from ._surface import (
+        CollisionFeatureKind,
+        CollisionFeaturePolicy,
+        CollisionMapEvidence,
+        CollisionSurfacePlan,
+        ContactPairPolicy,
+        prepare_cell_mesh_collision_surface,
+        PreparedCollisionScene,
+        PreparedCollisionSurface,
+        selection_collision_operator,
+        static_collision_operator,
+    )
+    from ._trajectory import (
+        AbstractContactTrajectory,
+        ContactTrajectoryEvaluation,
+        CubicHermiteContactTrajectory,
+        LinearContactTrajectory,
+        RigidSweepContactTrajectory,
+    )
 
 
 __all__ = [

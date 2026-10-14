@@ -12,15 +12,17 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import (
-    CellComplexTopology,
-    DiscreteFieldSpace,
-    DiscreteSupport,
-    EntityDofLayout,
+from ..discretization._oriented_path import (
+    ordered_path_transport,
     oriented_edge_endpoints,
     OrientedEdgePathPlan,
 )
-from ..discretization._oriented_path import ordered_path_transport
+from ..discretization._spaces import (
+    DiscreteFieldSpace,
+    EntityDofLayout,
+)
+from ..discretization._support import DiscreteSupport
+from ..discretization._topology import CellComplexTopology
 from ..linalg import ArraySpace
 from ..metrix import (
     AbstractLieGroup,

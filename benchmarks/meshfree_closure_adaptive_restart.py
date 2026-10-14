@@ -45,7 +45,7 @@ from benchmarks.meshfree_scaling import (
     PROJECT_ROOT,
     unit_cube_probes,
 )
-from phydrax import ArrayArchiveCorruptionError, execution, solver, uq
+from phydrax import ArrayArchiveCorruptionError, config as pxconfig, execution, solver, uq
 from phydrax.discretization import (
     PointBoundaryCondition,
     PointBoundaryPlan,
@@ -2637,7 +2637,9 @@ def _cli(root: Path, log: Path, *extra: str) -> subprocess.Popen[str]:
             *extra,
         ],
         cwd=PROJECT_ROOT,
-        env={**os.environ, "JAX_ENABLE_X64": "1"},
+        env=pxconfig.environment(
+            pxconfig.RuntimeConfig(enable_x64=True), base=os.environ
+        ),
         stdout=subprocess.PIPE,
         stderr=log.open("w", encoding="utf-8"),
         text=True,

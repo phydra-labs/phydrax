@@ -9,15 +9,13 @@ claim about a real medium.
 
 from __future__ import annotations
 
-from jax import config
+import phydrax as phx
 
 
-config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 import jax.numpy as jnp
 import jax.random as jr
-
-import phydrax as phx
 
 
 def _manifest(name: str) -> phx.qualification.ReferenceArtifactManifest:

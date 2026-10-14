@@ -15,6 +15,7 @@ import numpy as np
 from jax.sharding import Mesh, PartitionSpec as P
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 
 
@@ -361,7 +362,7 @@ def _adaptive_stochastic_distributed() -> dict[str, object]:
 
 
 def qualify() -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Extended phase-field qualification requires float64.")
     sections = {
         "binary_boundary": _binary_and_boundary(),

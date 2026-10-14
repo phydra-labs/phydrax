@@ -141,7 +141,7 @@ not the full graph ordering, indexes the returned matrix:
     import jax.numpy as jnp
     import phydrax as phx
 
-    jax.config.update("jax_enable_x64", True)
+    phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
     relation = phx.sparse.EdgeRelation(
         jnp.array([0, 1], dtype=jnp.int32),

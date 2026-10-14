@@ -6,7 +6,7 @@ from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 
-from ..operators.differential import tangential_component
+from ..operators.differential._surface_ops import tangential_component
 from ._base import Residual
 from ._field_ops import cross, dot
 from .boundary import _condition_value, ConditionValue

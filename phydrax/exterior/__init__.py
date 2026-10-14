@@ -6,6 +6,8 @@ Core types and algebra load independently of smooth and discrete realizations.
 from importlib import import_module
 from typing import Any, TYPE_CHECKING
 
+from .._jax_config import process_numerics
+
 
 _FACADE_EXPORT_MODULES: dict[str, str] = {
     "FiberProduct": "._form_type",
@@ -174,12 +176,13 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
-    module = _FACADE_EXPORT_MODULES.get(name)
-    if module is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module, __name__), name)
-    globals()[name] = value
-    return value
+    with process_numerics():
+        module = _FACADE_EXPORT_MODULES.get(name)
+        if module is None:
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        value = getattr(import_module(module, __name__), name)
+        globals()[name] = value
+        return value
 
 
 def __dir__() -> list[str]:

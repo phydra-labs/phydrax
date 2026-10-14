@@ -3,17 +3,17 @@
 #
 """Public-API bounded tetrahedral affine-body/fixed-wall contact example.
 
-Run: JAX_ENABLE_X64=1 python -m examples.monolithic_contact
+Run: python -m examples.monolithic_contact
 """
 
 from __future__ import annotations
 
 import json
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.contact import (
     AffineBodyHistory,
     AffineBodyPlan,
@@ -43,7 +43,7 @@ def make_case(
     body_count: int = 1, capacity_scale: int = 1, *, friction: bool = False
 ) -> tuple[MonolithicContactPlan, MonolithicContactState]:
     """Prepare separated tetrahedra over a finite wall; capacities are explicit."""
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("This example requires JAX_ENABLE_X64=1.")
     if body_count < 1 or capacity_scale < 1:
         raise ValueError("Body count and capacity scale must be positive.")

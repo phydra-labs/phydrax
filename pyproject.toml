@@ -283,6 +283,20 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 fixable = ["F401", "F841", "I001", "RUF100"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Existing TID251 exemptions remain; the configuration text audit covers those files.
+"jax.config".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.enable_x64".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.default_matmul_precision".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.numpy_dtype_promotion".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.numpy_rank_promotion".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.transfer_guard".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.transfer_guard_host_to_device".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.transfer_guard_device_to_device".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.transfer_guard_device_to_host".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.disable_jit".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.default_prng_impl".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax.default_device".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
+"jax._src.config".msg = "Use phydrax.config; phydrax/_jax_config.py is the sole JAX configuration owner."
 "opt_einsum".msg = "Use phydrax.ein; direct upstream imports are substrate-owner only."
 "jax.numpy.einsum".msg = "Use phydrax.ein.contract for package contractions."
 "jax.numpy.interp".msg = "Use phydrax interpolation with explicit support and bounds."
@@ -319,6 +333,7 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "jaxtyping.UInt64".msg = "Use the phydrax.typing tensor forms."
 
 [tool.ruff.lint.per-file-ignores]
+"phydrax/_jax_config.py" = ["TID251"]
 "phydrax/_strict.py" = ["TID251"]
 "phydrax/ein/__init__.py" = ["TID251"]
 "phydrax/tensor_network/_contraction.py" = ["TID251"]

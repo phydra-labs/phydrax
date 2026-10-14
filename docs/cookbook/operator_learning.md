@@ -782,7 +782,7 @@ quadrature and masks have `case_shape + sample_shape`. The following batch has
 two independently deformed source clouds and two independent query clouds.
 
 This executable survey evaluates several unrelated one-shot programs under
-`jax.disable_jit()` so documentation validation does not spend most of its time
+`phx.config.context(phx.config.NumericsConfig(disable_jit=True))` so documentation validation does not spend most of its time
 compiling throwaway shapes. Remove that scope for repeated training or deployment
 calls and compile the stable model/batch signature instead.
 
@@ -908,7 +908,7 @@ gaot = phx.nn.operator.architectures.GAOT(
     key=jr.key(23),
 )
 
-with jax.disable_jit():
+with phx.config.context(phx.config.NumericsConfig(disable_jit=True)):
     geometry_predictions = {
         "gino": gino(geometry_batch),
         "geometry_flower": geometry_flower(geometry_batch),
@@ -1000,7 +1000,7 @@ conservative_flower = phx.nn.operator.architectures.GeometryInformedFlower(
     conservation_source_key="density",
     key=jr.key(24),
 )
-with jax.disable_jit():
+with phx.config.context(phx.config.NumericsConfig(disable_jit=True)):
     conservative_prediction, conservative_diagnostics = (
         conservative_flower.evaluate_with_diagnostics(conservative_batch)
     )

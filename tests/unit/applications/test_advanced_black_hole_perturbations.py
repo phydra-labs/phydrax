@@ -1,9 +1,9 @@
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.compact_objects._advanced_perturbations import (
     ExcitationResiduePlan,
     MassiveFieldQuasiBoundPlan,
@@ -11,7 +11,7 @@ from phydrax.applications.compact_objects._advanced_perturbations import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_advanced_black_hole_perturbations_scenario_1() -> None:

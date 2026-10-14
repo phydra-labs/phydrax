@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.supersymmetric_lattice import (
     assess_twisted_fermion_algebra,
     assess_twisted_n2_chain,
@@ -28,7 +29,7 @@ from phydrax.applications.supersymmetric_lattice import (
 from phydrax.sampling import RHMCResourcePolicy
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def run_qualification() -> dict[str, object]:

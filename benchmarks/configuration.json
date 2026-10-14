@@ -1,0 +1,259 @@
+{
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "de592d6c56ad5f17f465e43964b2a1db11d2cf0e502102a5295c0c74949a202d",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.11.2",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.11.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.5.3",
+    "package_fingerprint": "23eccbd3b5595e22db3e71ea6b0a92730642b77813264a0970684c2cad4fc3aa",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "NPROC": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "identity": {
+    "benchmark_driver_fingerprint": "ed56b24e46ad2b609f791d331f6c21f48def75c178bb1523547e89eea0345ca9",
+    "evidence_schema": {
+      "fields": [
+        "backends_initialized",
+        "configuration_id",
+        "context",
+        "import",
+        "peak_rss_bytes",
+        "resolve",
+        "scenario",
+        "scoped_dtype",
+        "weight_count"
+      ],
+      "signature": "241ddc1dd2241a77f5e99ce5ecedeeefd0a2d7369bd4f72b99407427a748f2b6"
+    },
+    "fingerprint": "eeecf92594f1c832bd1d2aead016dd123cf61a80ac5502d8779e63c2ab4f9d01",
+    "source_build_fingerprint": "a6c4f9c130a6e032a0d85ce0693a46abd7ec79625fde2ef31f7c9b6e37590da1"
+  },
+  "imports": [
+    {
+      "backends_initialized": null,
+      "import": {
+        "count": 5,
+        "max_seconds": 0.33939145799377,
+        "mean_seconds": 0.33662776639830555,
+        "median_seconds": 0.3361872499954188,
+        "min_seconds": 0.3353927080024732,
+        "samples_seconds": [
+          0.33939145799377,
+          0.33573929099657107,
+          0.3353927080024732,
+          0.3361872499954188,
+          0.33642812500329455
+        ],
+        "std_seconds": 0.0014273514215678133
+      },
+      "peak_rss_bytes": 125714432,
+      "scenario": "jax"
+    },
+    {
+      "backends_initialized": null,
+      "import": {
+        "count": 5,
+        "max_seconds": 0.4375419160060119,
+        "mean_seconds": 0.42834523340134184,
+        "median_seconds": 0.4279863340052543,
+        "min_seconds": 0.4151832919960725,
+        "samples_seconds": [
+          0.43557870799850207,
+          0.4375419160060119,
+          0.4151832919960725,
+          0.42543591700086836,
+          0.4279863340052543
+        ],
+        "std_seconds": 0.007984131235508621
+      },
+      "peak_rss_bytes": 135970816,
+      "scenario": "root"
+    },
+    {
+      "backends_initialized": false,
+      "import": {
+        "count": 5,
+        "max_seconds": 0.4346272080001654,
+        "mean_seconds": 0.428118458201061,
+        "median_seconds": 0.4255925830002525,
+        "min_seconds": 0.4245165829997859,
+        "samples_seconds": [
+          0.4255925830002525,
+          0.42484695900202496,
+          0.4245165829997859,
+          0.4346272080001654,
+          0.43100895800307626
+        ],
+        "std_seconds": 0.004019330057552015
+      },
+      "peak_rss_bytes": 135020544,
+      "scenario": "configuration"
+    },
+    {
+      "backends_initialized": true,
+      "import": {
+        "count": 5,
+        "max_seconds": 3.571917958004633,
+        "mean_seconds": 3.5461396168000645,
+        "median_seconds": 3.5417171249937383,
+        "min_seconds": 3.527174125003512,
+        "samples_seconds": [
+          3.571917958004633,
+          3.5417171249937383,
+          3.5511716670007445,
+          3.5387172089976957,
+          3.527174125003512
+        ],
+        "std_seconds": 0.014994564714776507
+      },
+      "peak_rss_bytes": 572784640,
+      "scenario": "geometry"
+    },
+    {
+      "backends_initialized": true,
+      "import": {
+        "count": 5,
+        "max_seconds": 3.582444583000324,
+        "mean_seconds": 3.5684195329988144,
+        "median_seconds": 3.579691749997437,
+        "min_seconds": 3.547966082995117,
+        "samples_seconds": [
+          3.5798319159948733,
+          3.5521633330063196,
+          3.582444583000324,
+          3.579691749997437,
+          3.547966082995117
+        ],
+        "std_seconds": 0.015077234789624722
+      },
+      "peak_rss_bytes": 574554112,
+      "scenario": "lazy-geometry"
+    },
+    {
+      "backends_initialized": true,
+      "import": {
+        "count": 5,
+        "max_seconds": 12.071156250000058,
+        "mean_seconds": 11.475425291800638,
+        "median_seconds": 11.405486625000776,
+        "min_seconds": 10.885049625001557,
+        "samples_seconds": [
+          12.058918167000229,
+          12.071156250000058,
+          11.405486625000776,
+          10.956515792000573,
+          10.885049625001557
+        ],
+        "std_seconds": 0.5134318307255288
+      },
+      "peak_rss_bytes": 1061634048,
+      "scenario": "complete"
+    }
+  ],
+  "package_root": "/Users/lgleyzer/PHYDRA/phydra-labs/.worktrees/native-configuration",
+  "resolution": [
+    {
+      "configuration_id": "46697c1d66a3630e8fe9af7e9cf4b9ced5473ad4aa3f10ddc2b4da92846327ed",
+      "resolve": {
+        "count": 5,
+        "max_seconds": 0.000510541,
+        "mean_seconds": 0.00046880840000000006,
+        "median_seconds": 0.000454334,
+        "min_seconds": 0.000428458,
+        "samples_seconds": [
+          0.000504917,
+          0.000510541,
+          0.000454334,
+          0.000445792,
+          0.000428458
+        ],
+        "std_seconds": 3.290245766261239e-05
+      },
+      "weight_count": 1
+    },
+    {
+      "configuration_id": "3ec482771c8c6dd93ba4ed76b5e91694e02d5fc4e4e0417696dc448c18ab7b88",
+      "resolve": {
+        "count": 5,
+        "max_seconds": 0.0005345,
+        "mean_seconds": 0.000496875,
+        "median_seconds": 0.000489,
+        "min_seconds": 0.000478792,
+        "samples_seconds": [
+          0.000489,
+          0.000478792,
+          0.0005345,
+          0.000483583,
+          0.0004985
+        ],
+        "std_seconds": 1.991968387299358e-05
+      },
+      "weight_count": 16
+    },
+    {
+      "configuration_id": "94577ab617e014eba474a362c96261f062ea64056825344909becb77f5856406",
+      "resolve": {
+        "count": 5,
+        "max_seconds": 0.00138575,
+        "mean_seconds": 0.0013637418,
+        "median_seconds": 0.001370584,
+        "min_seconds": 0.001318542,
+        "samples_seconds": [
+          0.00138575,
+          0.001366958,
+          0.001376875,
+          0.001370584,
+          0.001318542
+        ],
+        "std_seconds": 2.3482007464439667e-05
+      },
+      "weight_count": 256
+    }
+  ],
+  "rss_bytes": 201768960,
+  "scope": {
+    "context": {
+      "count": 5,
+      "max_seconds": 1.225e-05,
+      "mean_seconds": 7.191599999999999e-06,
+      "median_seconds": 5.708e-06,
+      "min_seconds": 5.375e-06,
+      "samples_seconds": [
+        1.225e-05,
+        7.042e-06,
+        5.708e-06,
+        5.583e-06,
+        5.375e-06
+      ],
+      "std_seconds": 2.59609280265556e-06
+    },
+    "scoped_dtype": "float64"
+  }
+}

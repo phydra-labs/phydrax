@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.cellular_mechanics import BiomembranePlan
 from phydrax.geometry.multiregion_surface import (
     EdgeFlipProposal,
@@ -23,7 +24,7 @@ from phydrax.geometry.multiregion_surface import (
 from tests._support.assertions import assert_tree_equal
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _tetrahedron() -> Any:

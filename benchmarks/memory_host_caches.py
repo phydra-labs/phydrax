@@ -23,6 +23,7 @@ from benchmarks._memory import (
     process_peak_rss_bytes,
 )
 from benchmarks._runtime import capture_benchmark_identity, capture_environment
+from phydrax import config as pxconfig
 
 
 # These supported preparation workloads determine the ceilings, not guessed RSS.
@@ -346,7 +347,7 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     root = Path(__file__).resolve().parents[1]
     identity = capture_benchmark_identity(
         root,

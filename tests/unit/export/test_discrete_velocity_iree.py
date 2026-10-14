@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax.export._discrete_velocity_iree as d2v_iree
+from phydrax import config as pxconfig
 from phydrax._identity import SemanticProvenance
 from phydrax._model import AbstractArrayModel
 from phydrax.backends._types import BackendAvailability, BackendUnavailableError
@@ -41,7 +42,7 @@ from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.export._iree import IREEArtifactManifest, IREEExportPolicy, IREEExportResult
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 class _ZeroDualModel(AbstractArrayModel):

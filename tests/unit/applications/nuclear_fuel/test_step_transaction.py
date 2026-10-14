@@ -5,11 +5,11 @@ from __future__ import annotations
 import dataclasses
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     FUEL_GAS_SPECIES,
     FuelAcceptancePolicy,
@@ -39,7 +39,7 @@ def increment_limited_attempt(
     request: pytest.FixtureRequest,
 ) -> tuple[FuelRodState, FixedStepResult]:
     reduction: FuelGeometryReduction = request.param
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_low_power_startup_rod(reduction=reduction)
         initial = prepared.initial_state()
         method = FuelStepMethod(
@@ -75,7 +75,7 @@ def test_refused_candidate_reports_increment_limit_and_retains_its_heating(
 
 
 def test_release_fraction_increment_propagates_invalid_production() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         previous = prepare_low_power_startup_rod().initial_state()
         krypton = FUEL_GAS_SPECIES.index("Kr")
 
@@ -97,7 +97,7 @@ def test_release_fraction_increment_propagates_invalid_production() -> None:
 
 
 def test_result_refuses_attempts_of_another_history() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_low_power_startup_rod()
         attempt = evidence_prototype(prepared, FuelAcceptancePolicy())
         foreign = dataclasses.replace(attempt, history_id="another-history")

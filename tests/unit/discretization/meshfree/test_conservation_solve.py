@@ -9,6 +9,7 @@ import pytest
 
 import phydrax as phx
 from examples.meshfree_learned_edge_flux import prepare_recovery
+from phydrax import config as pxconfig
 from phydrax.discretization.meshfree._conservation_solve import (
     MeshfreeConservationProblem,
     MeshfreeContractionStatus,
@@ -46,7 +47,7 @@ from phydrax.units import DIMENSIONLESS
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Iterator[None]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

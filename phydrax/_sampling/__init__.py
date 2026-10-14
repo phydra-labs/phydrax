@@ -1,83 +1,158 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from typing import TYPE_CHECKING
 
-from ._adaptation import (
-    adapt_proposal_scale,
-    AdaptiveProposalState,
-    initialize_proposal_adaptation,
-    RobbinsMonroScalePolicy,
-)
-from ._addressing import derive_key, SampleAddress
-from ._chain import AbstractChainSampleResult
-from ._chunks import (
-    MarkovChunkIterationMetrics,
-    MarkovChunkPlan,
-    MarkovChunkResult,
-    sample_markov_chunked,
-)
-from ._designs import (
-    host_design,
-    host_design_factory,
-    materialize_design,
-    seed_from_key,
-)
-from ._hamiltonian import (
-    adapt_hamiltonian_kernel,
-    HamiltonianAdaptationPlan,
-    HamiltonianAdaptationResult,
-    HamiltonianChainState,
-    HamiltonianIterationMetrics,
-    HamiltonianSampleResult,
-    initialize_hamiltonian_state,
-    prepare_hamiltonian_kernel,
-    PreparedHamiltonianKernel,
-    sample_hamiltonian,
-)
-from ._markov import (
-    MarkovIterationMetrics,
-    MarkovSampleResult,
-    MarkovState,
-    MarkovTransitionInfo,
-    MetropolisHastings,
-    sample_markov,
-)
-from ._proposals import (
-    AbstractProposal,
-    CallableProposal,
-    GaussianRandomWalkProposal,
-    ProposalMove,
-    SingleCoordinateGaussianProposal,
-    SingleCoordinatePeriodicProposal,
-    SingleCoordinateProposalPayload,
-    SingleElectronSphereProposal,
-    SphereElectronProposalPayload,
-)
-from ._targets import (
-    FullMarkovTarget,
-    IncrementalMarkovTarget,
-    IncrementalTargetProposal,
-    MarkovTargetState,
-)
-from ._transports import UnitCubeTransport
-from ._types import (
-    AntitheticDesign,
-    design_capabilities,
-    design_name,
-    design_signature,
-    DesignCapabilities,
-    DesignLike,
-    DesignName,
-    HaltonDesign,
-    HammersleyDesign,
-    IIDDesign,
-    LatinHypercubeDesign,
-    normalize_design_name,
-    RandomizedQMCDesign,
-    resolve_design,
-    SobolDesign,
-    UnitDesign,
-)
+from .._deferred_exports import deferred_exports
+
+
+# Exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_SYMBOL_MODULES = {
+    "adapt_proposal_scale": "._adaptation",
+    "AdaptiveProposalState": "._adaptation",
+    "initialize_proposal_adaptation": "._adaptation",
+    "RobbinsMonroScalePolicy": "._adaptation",
+    "derive_key": "._addressing",
+    "SampleAddress": "._addressing",
+    "AbstractChainSampleResult": "._chain",
+    "MarkovChunkIterationMetrics": "._chunks",
+    "MarkovChunkPlan": "._chunks",
+    "MarkovChunkResult": "._chunks",
+    "sample_markov_chunked": "._chunks",
+    "host_design": "._designs",
+    "host_design_factory": "._designs",
+    "materialize_design": "._designs",
+    "seed_from_key": "._designs",
+    "adapt_hamiltonian_kernel": "._hamiltonian",
+    "HamiltonianAdaptationPlan": "._hamiltonian",
+    "HamiltonianAdaptationResult": "._hamiltonian",
+    "HamiltonianChainState": "._hamiltonian",
+    "HamiltonianIterationMetrics": "._hamiltonian",
+    "HamiltonianSampleResult": "._hamiltonian",
+    "initialize_hamiltonian_state": "._hamiltonian",
+    "prepare_hamiltonian_kernel": "._hamiltonian",
+    "PreparedHamiltonianKernel": "._hamiltonian",
+    "sample_hamiltonian": "._hamiltonian",
+    "MarkovIterationMetrics": "._markov",
+    "MarkovSampleResult": "._markov",
+    "MarkovState": "._markov",
+    "MarkovTransitionInfo": "._markov",
+    "MetropolisHastings": "._markov",
+    "sample_markov": "._markov",
+    "AbstractProposal": "._proposals",
+    "CallableProposal": "._proposals",
+    "GaussianRandomWalkProposal": "._proposals",
+    "ProposalMove": "._proposals",
+    "SingleCoordinateGaussianProposal": "._proposals",
+    "SingleCoordinatePeriodicProposal": "._proposals",
+    "SingleCoordinateProposalPayload": "._proposals",
+    "SingleElectronSphereProposal": "._proposals",
+    "SphereElectronProposalPayload": "._proposals",
+    "FullMarkovTarget": "._targets",
+    "IncrementalMarkovTarget": "._targets",
+    "IncrementalTargetProposal": "._targets",
+    "MarkovTargetState": "._targets",
+    "UnitCubeTransport": "._transports",
+    "AntitheticDesign": "._types",
+    "design_capabilities": "._types",
+    "design_name": "._types",
+    "design_signature": "._types",
+    "DesignCapabilities": "._types",
+    "DesignLike": "._types",
+    "DesignName": "._types",
+    "HaltonDesign": "._types",
+    "HammersleyDesign": "._types",
+    "IIDDesign": "._types",
+    "LatinHypercubeDesign": "._types",
+    "normalize_design_name": "._types",
+    "RandomizedQMCDesign": "._types",
+    "resolve_design": "._types",
+    "SobolDesign": "._types",
+    "UnitDesign": "._types",
+}
+
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _SYMBOL_MODULES)
+
+
+if TYPE_CHECKING:
+    from ._adaptation import (
+        adapt_proposal_scale,
+        AdaptiveProposalState,
+        initialize_proposal_adaptation,
+        RobbinsMonroScalePolicy,
+    )
+    from ._addressing import derive_key, SampleAddress
+    from ._chain import AbstractChainSampleResult
+    from ._chunks import (
+        MarkovChunkIterationMetrics,
+        MarkovChunkPlan,
+        MarkovChunkResult,
+        sample_markov_chunked,
+    )
+    from ._designs import (
+        host_design,
+        host_design_factory,
+        materialize_design,
+        seed_from_key,
+    )
+    from ._hamiltonian import (
+        adapt_hamiltonian_kernel,
+        HamiltonianAdaptationPlan,
+        HamiltonianAdaptationResult,
+        HamiltonianChainState,
+        HamiltonianIterationMetrics,
+        HamiltonianSampleResult,
+        initialize_hamiltonian_state,
+        prepare_hamiltonian_kernel,
+        PreparedHamiltonianKernel,
+        sample_hamiltonian,
+    )
+    from ._markov import (
+        MarkovIterationMetrics,
+        MarkovSampleResult,
+        MarkovState,
+        MarkovTransitionInfo,
+        MetropolisHastings,
+        sample_markov,
+    )
+    from ._proposals import (
+        AbstractProposal,
+        CallableProposal,
+        GaussianRandomWalkProposal,
+        ProposalMove,
+        SingleCoordinateGaussianProposal,
+        SingleCoordinatePeriodicProposal,
+        SingleCoordinateProposalPayload,
+        SingleElectronSphereProposal,
+        SphereElectronProposalPayload,
+    )
+    from ._targets import (
+        FullMarkovTarget,
+        IncrementalMarkovTarget,
+        IncrementalTargetProposal,
+        MarkovTargetState,
+    )
+    from ._transports import UnitCubeTransport
+    from ._types import (
+        AntitheticDesign,
+        design_capabilities,
+        design_name,
+        design_signature,
+        DesignCapabilities,
+        DesignLike,
+        DesignName,
+        HaltonDesign,
+        HammersleyDesign,
+        IIDDesign,
+        LatinHypercubeDesign,
+        normalize_design_name,
+        RandomizedQMCDesign,
+        resolve_design,
+        SobolDesign,
+        UnitDesign,
+    )
 
 
 __all__ = [

@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- One-step checkpointed scans (and one-step replay blocks) apply their body once
+  instead of emitting a loop, so differentiated single-tile streamed relations,
+  such as the periodic MACE water export, no longer start output and derivative
+  tapes from merged constant buffers that the IREE aliasing audit refuses.
+  Multi-step differentiated scans remain refused under iree-base-compiler 3.11.
+  Block-AMR cut-cell tests that need the supermesh now skip at the optional
+  meshcore provider boundary.
 - Memory-pattern auditing now uses deterministic AST findings and exact justified
   symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
   memory-scaling ratchet recomputes recorded ratio gates in matching environments.
@@ -471,6 +478,19 @@
   before execution.
 
 ### Added
+- Native `phydrax.config`: typed Python-first resolution of frozen configuration
+  records (defaults, declared and native environment inputs, values, and
+  data-only dotted overrides) with canonical content IDs and field origins;
+  process-wide `configure` for runtime, logging, and provider settings with
+  refusal of backend-bound changes after initialization and per-field evidence of
+  partial application; thread-local numerical `context`; child-process
+  `environment` projection; and backend-inert `snapshot`. Records persist with
+  tagged union values, explicit nominal kinds, and enum name/value payloads, and
+  restore losslessly; `FieldOrigin.environment_keys` names every contributing
+  variable. Bootstrap timeouts project as `PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS` and
+  `PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS`. `phydrax/_jax_config.py` is the sole
+  JAX configuration owner, enforced by lint and an alias-aware static audit of
+  sources, embedded scripts, and documentation fences.
 - Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
@@ -2739,6 +2759,19 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `import phydrax` is lazy and device-inert: it applies the process configuration
+  and joins a launcher-requested process set without discovering devices, and
+  subpackages load on first use. Hub package facades defer their re-exports, so
+  every public subpackage imports directly without import cycles; deferred loads,
+  including nested facades, run under the process-wide numerical settings and
+  default device, never a caller's scope; cold artifact restore loads built-in
+  registrations on demand. An explicit `JAX_ENABLE_X64=0` is now respected
+  (Phydrax still enables x64 otherwise), and `JAX_NUM_CPU_DEVICES` selects forced
+  CPU topology.
+- Exact dtype forms keep their declared width: JAX forms such as `Float64` follow
+  the effective x64 setting when checked or converted, including after
+  `config.configure` or inside `config.context`, and NumPy host forms such as
+  `HostFloat64` always require their exact width.
 - Bound exact gravity target rows and quadratic-ringdown time batches with explicit
   chunk controls; replace dense FEL wake products with exact FFT convolution.
 - Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer
@@ -3720,6 +3753,12 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Removed
+- `phydrax.logging.enable`, `disable`, and `is_enabled`: use
+  `config.configure(config.LoggingConfig(enabled=...))` and
+  `config.logging_enabled()`. `phydrax.execution.RuntimeBootstrap`, `initialize`,
+  and `initialize_from_environment`: use `config.RuntimeBootstrap`,
+  `config.configure(config.RuntimeConfig(bootstrap=...))` or launcher settings,
+  and `execution.runtime_info()`. No aliases remain.
 - Dense CSR `line_table` and lattice `origin_differences` retained leaves, and
   London `hessian`, `factorization`, and `current_basis` state; preparations and
   persisted PyTree structures use bounded actions instead, without aliases.

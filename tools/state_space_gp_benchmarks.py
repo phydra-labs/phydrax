@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 @dataclass(frozen=True)
@@ -351,7 +352,7 @@ def run_state_space_gp_benchmarks(
             "jax": jax.__version__,
             "backend": jax.default_backend(),
             "device": jax.devices()[0].device_kind,
-            "x64": bool(jax.config.x64_enabled),
+            "x64": bool(pxconfig.x64_enabled()),
         },
         "source_provenance": _source_provenance(),
         "records": [asdict(record) for record in records],

@@ -7,12 +7,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax import ElectromagneticScaleContract
+from phydrax import config as pxconfig, ElectromagneticScaleContract
 from phydrax._external_runtime import pin_executable
 from phydrax.electromagnetics import (
     ColdPlasmaDielectric,
@@ -36,7 +35,7 @@ from phydrax.electromagnetics import (
 from phydrax.interchange import AdapterStatus
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 # CODATA 2022 SI constants, written independently of the scale contract.
 _E = 1.602176634e-19

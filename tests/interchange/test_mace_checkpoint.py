@@ -1114,8 +1114,8 @@ class RefuseProvider(importlib.abc.MetaPathFinder):
 
 
 sys.meta_path.insert(0, RefuseProvider())
-import jax
-jax.config.update("jax_enable_x64", True)
+from phydrax import config as pxconfig
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 import numpy as np
 from phydrax.atomistic._model_artifact import read_atomistic_model_artifact
 from tests._support.mace_source import configurations, native_case

@@ -15,6 +15,7 @@ import numpy as np
 
 import phydrax.equations as equations
 from benchmarks._io import write_json_atomic
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.closure_data._kinetic_equilibrium_artifact import (
     LearnedEnergyEquilibriumArtifact,
@@ -759,7 +760,7 @@ def _validate_output_path(arguments: argparse.Namespace, /) -> None:
 def main() -> int:
     arguments = _parse_arguments()
     _validate_output_path(arguments)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = _qualification(arguments.model_artifact, arguments.parent_spatial)
     if not report["passed"]:
         print(json.dumps(report, ensure_ascii=True, sort_keys=True))

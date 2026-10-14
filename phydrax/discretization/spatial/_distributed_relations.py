@@ -38,6 +38,7 @@ from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...backends.distributed import JaxCollectiveProvider
@@ -92,7 +93,7 @@ def _require_x64() -> None:
     disabled they would be silently truncated to 32 bits, changing neighbor
     identity. Float32 coordinates are supported with x64 enabled.
     """
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not x64_enabled():
         raise ValueError(
             "Distributed point relations require jax_enable_x64=True for uint64 "
             "Morton codes and int64 stable IDs; float32 coordinates are "

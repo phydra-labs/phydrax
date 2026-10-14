@@ -57,7 +57,9 @@ they do not constitute statistical or spatial convergence evidence.
 ```python executable
 import jax
 
-jax.config.update("jax_enable_x64", True)
+from phydrax import config
+
+config.configure(config.RuntimeConfig(enable_x64=True))
 
 import jax.numpy as jnp
 import numpy as np

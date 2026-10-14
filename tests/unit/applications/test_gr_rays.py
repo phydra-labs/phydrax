@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax._physical import RelativityScaleContract
 from phydrax._strict import StrictModule
 from phydrax.applications.astrophysics._gr_bundles import (
@@ -32,7 +33,7 @@ from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.units import KILOGRAM
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 _SCALE = RelativityScaleContract.geometric(KILOGRAM)
 _CONVENTION = RelativityConvention.canonical()
 _COORDINATE_UNIT = _SCALE.dimensional_scale.length_unit

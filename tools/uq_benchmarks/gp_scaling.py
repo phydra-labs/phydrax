@@ -20,6 +20,7 @@ from benchmarks._runtime import (
     measure_synchronized,
     synchronize,
 )
+from phydrax import config as pxconfig
 
 from .report import (
     BenchmarkReport,
@@ -536,7 +537,7 @@ def run_gp_scaling_benchmark(
         repetitions = 7
     else:
         raise ValueError("profile must be 'smoke' or 'standard'.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     started_at = utc_now_iso()
     started = time.perf_counter()
     scenario_values = []

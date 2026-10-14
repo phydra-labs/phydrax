@@ -6,12 +6,12 @@
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization.finite_volume._unstructured_embedded_boundary import (
     EmbeddedBoundaryStabilizationPolicy,
     EmbeddedBoundaryStatus,
@@ -123,9 +123,9 @@ def test_embedded_boundary_has_exact_full_fluid_and_solid_limits() -> None:
 
 def test_embedded_boundary_rejects_float32_extreme_slivers() -> None:
     for sliver_width in [1.0e-40, 1.0e-50]:
-        with jax.enable_x64(True):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
             discretization = _quadrilateral_grid(nx=1, ny=1)
-        with jax.enable_x64(False):
+        with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
             assert discretization.vertices.dtype == jnp.float64
             vertex_values = np.asarray(
                 (sliver_width, -1.0, sliver_width, -1.0), dtype=np.float64
@@ -148,9 +148,9 @@ def test_embedded_boundary_identity_fingerprints_realized_metric_dtype() -> None
         field_id="realized-metric-dtype",
     )
 
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         float32_metrics = plan.prepare()
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         float64_metrics = plan.prepare()
 
     assert float32_metrics.volume_fraction.dtype == jnp.float32
@@ -283,7 +283,7 @@ def test_embedded_boundary_closure_thresholds_produce_typed_failed_evidence() ->
 
 
 def test_embedded_boundary_float32_oblique_closure_uses_realized_epsilon_floor() -> None:
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         discretization = _quadrilateral_grid()
         policy = EmbeddedBoundaryStabilizationPolicy(
             minimum_volume_fraction=0.05,

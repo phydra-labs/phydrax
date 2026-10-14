@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.discretization import (
     BoundaryImposition,
     FacetTraceRule,
@@ -34,7 +35,7 @@ from phydrax.linalg import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _monomial_integral(shape: str, exponents: tuple[int, ...]) -> float:

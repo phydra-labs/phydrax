@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.linalg import (
     ArraySpace,
     DenseLinearOperator,
@@ -66,7 +67,7 @@ def elasticity_bem() -> Any:
 
 @pytest.fixture
 def elasticity_bem_f64() -> Iterator[Any]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield _prepare_elasticity_bem(jnp.float64)
 
 

@@ -6,12 +6,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,9 +25,10 @@ from _runtime import (
 )
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _compiler_record(compiled: Any) -> dict[str, object]:

@@ -19,6 +19,7 @@ from jax import Array
 from jax.typing import ArrayLike
 from numpy.typing import NDArray
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     admit_fuel_rod,
     CladdingSpecification,
@@ -441,7 +442,7 @@ def main() -> None:
     parser.add_argument("--maximum-optimizer-steps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=17)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     print(
         json.dumps(
             run_synthetic_calibration(

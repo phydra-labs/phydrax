@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
 from benchmarks._runtime import capture_environment
+from phydrax import config as pxconfig
 
 
 periodic = phx.chemistry.periodic
@@ -394,7 +394,7 @@ def main() -> None:
         default=Path("benchmarks/cm_periodic_electronic_qualification.json"),
     )
     arguments = parser.parse_args()
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("Periodic electronic qualification requires JAX_ENABLE_X64=1.")
     payload = qualification()
     arguments.output.parent.mkdir(parents=True, exist_ok=True)

@@ -17,7 +17,6 @@ named setup.
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -25,7 +24,7 @@ from jax import Array
 import phydrax as phx
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 _CAPACITY = np.asarray([2.0, 3.0, 5.0])
 _CONDUCTANCE = 1.0e-3

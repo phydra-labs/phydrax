@@ -13,7 +13,6 @@ the column counts, and dense NumPy solves.
 from math import prod
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -21,9 +20,10 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 la = phx.linalg
 mx = phx.solver.maxwell

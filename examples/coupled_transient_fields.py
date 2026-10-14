@@ -46,7 +46,7 @@ from phydrax.discretization import EntitySelection, FacetTraceRule, IntegrationD
 from phydrax.solver import coupling as cpl
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 INTERFACE_X = 1.0
 CELLS = 6

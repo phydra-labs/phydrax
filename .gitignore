@@ -46,6 +46,11 @@ benchmarks/*
 !benchmarks/numerical_interoperability.py
 !benchmarks/numerical_interoperability.json
 !benchmarks/analyze_adaptive_campaign.py
+# Configuration import/resolution driver; the baseline record measures the
+# pre-substrate tree through --package-root.
+!benchmarks/configuration.py
+!benchmarks/configuration.json
+!benchmarks/configuration_baseline.json
 # Streamed atomistic drivers and retained CPU/source qualification records.
 !benchmarks/atomistic_streamed_consumers.py
 !benchmarks/atomistic_streamed_consumers.json

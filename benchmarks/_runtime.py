@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import jaxlib
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 
 
@@ -490,7 +491,9 @@ def _driver_source_paths(root: Path, initial: Iterable[Path], /) -> tuple[Path, 
                     continue
                 module_path = root.joinpath(*parts)
                 candidates = (module_path.with_suffix(".py"), module_path / "__init__.py")
-                pending.extend(candidate for candidate in candidates if candidate.is_file())
+                pending.extend(
+                    candidate for candidate in candidates if candidate.is_file()
+                )
     return tuple(sorted(visited, key=lambda path: path.relative_to(root).as_posix()))
 
 
@@ -677,7 +680,7 @@ def capture_environment() -> RuntimeEnvironment:
     phydrax_version = importlib.metadata.version("phydrax")
     package_fingerprint = installed_package_fingerprint()
     backend = jax.default_backend()
-    x64_enabled = bool(jax.config.read("jax_enable_x64"))
+    x64_enabled = bool(pxconfig.x64_enabled())
     default_float_dtype = str(jnp.asarray(0.0).dtype)
     evidence = {
         "python_version": python_version,

@@ -13,10 +13,11 @@ a foreign mechanism has the same equations, units, reset, or parameter meanings.
 ## Import explicit resources
 
 ```python
-import jax
 from phydrax.applications import electrophysiology as ep
 
-jax.config.update("jax_enable_x64", True)
+from phydrax import config
+
+config.configure(config.RuntimeConfig(enable_x64=True))
 
 circuit = ep.import_sonata(
     node_files=(ep.SONATAFilePair("nodes.h5", "node_types.csv"),),

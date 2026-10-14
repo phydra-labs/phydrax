@@ -1,11 +1,11 @@
 from collections.abc import Iterator
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization import CellMesh
 from phydrax.discretization._cell_complex import TetrahedralConnectivity
 from phydrax.discretization.bem import (
@@ -55,7 +55,7 @@ def _boundary_policy() -> MaxwellEFIEPolicy3D:
 
 @pytest.fixture(scope="module")
 def matching() -> Iterator[PreparedMatchingMaxwellFEMBEM3D]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         complex = FiniteElementDeRhamComplex(
             CellMesh.from_tetrahedra(_POINTS, np.asarray([[0, 1, 2, 3]], dtype=np.int32)),
             family="trimmed",
@@ -161,7 +161,7 @@ def _analytic_maxwell_matrix(edges: npt.NDArray[np.int32]) -> npt.NDArray[np.com
 def test_matching_trace_is_outward_rotated_whitney_and_dual(
     matching: PreparedMatchingMaxwellFEMBEM3D,
 ) -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         constant = np.asarray([0.3, -0.4, 0.7])
         edges = _tet_edges(matching.volume_complex)
         circulation = (constant @ (_POINTS[edges[:, 1]] - _POINTS[edges[:, 0]]).T).astype(
@@ -188,7 +188,7 @@ def test_matching_trace_is_outward_rotated_whitney_and_dual(
 def test_matching_actual_boundary_solve_recovers_prescribed_state(
     matching: PreparedMatchingMaxwellFEMBEM3D,
 ) -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         n = matching.volume_complex.cell_counts[1]
         q = np.asarray([0.1, -0.2, 0.3, -0.4, 0.5, -0.6], dtype=np.complex128)
         u = np.arange(1, n + 1, dtype=np.float64).astype(np.complex128) * (0.1 + 0.02j)
@@ -232,7 +232,7 @@ def test_matching_actual_boundary_solve_recovers_prescribed_state(
 def test_nonmatching_solved_surface_and_conormal_fault_adequacy(
     matching: PreparedMatchingMaxwellFEMBEM3D,
 ) -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         # Subdivide one face only: this boundary is not the volume facet mesh.
         points = np.concatenate((_POINTS, _POINTS[_FACES[0]].mean(axis=0)[None]))
         faces = np.concatenate(
@@ -290,7 +290,10 @@ def test_nonmatching_solved_surface_and_conormal_fault_adequacy(
 def test_matching_refuses_low_frequency_unsupported_boundary(
     matching: PreparedMatchingMaxwellFEMBEM3D,
 ) -> None:
-    with jax.enable_x64(True), pytest.raises(ValueError, match="Low-frequency"):
+    with (
+        pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)),
+        pytest.raises(ValueError, match="Low-frequency"),
+    ):
         prepare_matching_maxwell_fem_bem_3d(
             matching.volume_complex,
             matching.coupled.interior_operator,

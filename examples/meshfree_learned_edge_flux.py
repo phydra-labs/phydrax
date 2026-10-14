@@ -307,7 +307,7 @@ def run_workflow(
     """Train, check the implicit derivative, and predict an independent unseen cloud."""
     if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
         raise ValueError("Training steps must be a positive integer.")
-    with jax.enable_x64(True):
+    with phx.config.context(phx.config.NumericsConfig(enable_x64=True)):
         recovery = prepare_recovery(size=size, dimension=dimension, seed=seed)
         objective = phx.solver.SolverObjective(
             recovery,

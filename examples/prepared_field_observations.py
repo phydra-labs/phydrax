@@ -19,7 +19,6 @@ reconstruction changes, never the observation workflow.
 from collections.abc import Callable
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
@@ -34,7 +33,7 @@ from phydrax.discretization.finite_difference import (
 from phydrax.discretization.spectral import prepare_spectral_field_reconstruction
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 
 def _mesh(resolution: int) -> phx.discretization.CellMesh:

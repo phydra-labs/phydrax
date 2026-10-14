@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.metrix._black_hole_metrics import (
     boyer_lindquist_to_ingoing_kerr_transition,
     ExactMetricDomainStatus,
@@ -23,7 +24,7 @@ from phydrax.metrix._chart import CoordinateChart
 from phydrax.metrix._lorentzian import schwarzschild_metric
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _charts() -> Any:

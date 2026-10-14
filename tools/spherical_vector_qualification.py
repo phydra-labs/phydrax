@@ -20,6 +20,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax import config as pxconfig
 from phydrax.discretization import SphericalSpectralPlan
 from phydrax.discretization.spectral._spherical_vector import (
     PreparedSphericalVectorOperators,
@@ -126,7 +127,7 @@ def run_qualification(
         "execution": execution,
         "radius": radius,
         "repeats": repeats,
-        "x64_enabled": jax.config.x64_enabled,
+        "x64_enabled": pxconfig.x64_enabled(),
         "backend": jax.default_backend(),
         "sample_shape": space.sample_shape,
         "sampled_poles": int(

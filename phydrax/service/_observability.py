@@ -18,6 +18,7 @@ from types import MappingProxyType
 
 import jax
 
+from .._jax_config import x64_enabled
 from .._privacy import (
     JSONValue,
     PrivacyClassification,
@@ -224,7 +225,7 @@ class HostTelemetryCollector:
                     ),
                     TelemetryDatum(
                         "runtime.jax.x64_enabled",
-                        bool(jax.config.read("jax_enable_x64")),
+                        x64_enabled(),
                         "boolean",
                         PrivacyClassification.INTERNAL,
                         now,

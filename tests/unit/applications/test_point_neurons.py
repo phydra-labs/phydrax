@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
 
+from phydrax import config as pxconfig
 from phydrax.applications.electrophysiology._neurons import (
     AdaptiveExponentialIntegrateAndFire,
     advance_point_neuron,
@@ -26,7 +27,7 @@ from phydrax.applications.electrophysiology._neurons import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_point_neurons_scenario_1() -> None:

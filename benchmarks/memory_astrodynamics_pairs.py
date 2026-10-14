@@ -30,6 +30,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
+from phydrax import config as pxconfig
 
 
 def context() -> Any:
@@ -147,7 +148,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--baseline", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     sizes = [32, 64] if args.smoke else [32, 64, 128, 256]
     near_sizes = [4, 8] if args.smoke else [4, 8, 16, 32]
     rows = [

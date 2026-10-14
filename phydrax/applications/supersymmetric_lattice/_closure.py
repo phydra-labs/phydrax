@@ -19,6 +19,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._jax_config import default_device
 from ..._limit_study import (
     run_scientific_limit_study,
     ScientificLimitAxis,
@@ -519,7 +520,7 @@ def sample_distributed_twisted_n2_rhmc(
     device_ids: list[int] = []
     for index, (configuration, key) in enumerate(zip(configurations, keys_, strict=True)):
         device = devices[index]
-        with jax.default_device(device):
+        with default_device(device):
             run = sample_twisted_n2_rhmc(
                 prepared,
                 jax.device_put(configuration, device),

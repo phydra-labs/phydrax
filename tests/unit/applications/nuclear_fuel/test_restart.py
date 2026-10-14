@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import jax
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     FuelRodResult,
     FuelRodSimulation,
@@ -35,7 +35,7 @@ def _times(states: tuple[FuelRodState, ...], /) -> list[float]:
 @pytest.fixture(scope="module")
 def restart(tmp_path_factory: pytest.TempPathFactory) -> _RestartScenario:
     directory = tmp_path_factory.mktemp("restart")
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         prepared = prepare_low_power_startup_rod()
         baseline = FuelRodSimulation(
             prepared, time_step=_TIME_STEP, checkpoint_directory=directory / "baseline"

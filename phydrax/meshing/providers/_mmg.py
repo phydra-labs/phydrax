@@ -1768,8 +1768,9 @@ def _adapted_metric(
 class MmgProvider:
     """Persistent Mmg library worker: mmg2d, mmgs, and mmg3d (or collective ParMmg).
 
-    The worker executable is ``executable``, else ``PHYDRAX_MMG_WORKER``, else
-    ``phydrax-mmg-worker`` on PATH; one session is launched lazily and reused
+    The worker executable is ``executable``, else native ``ProviderConfig.workers``
+    or ``PHYDRAX_MMG_WORKER``, else ``phydrax-mmg-worker`` on PATH; one session is
+    launched lazily and reused
     across calls. ``launcher`` (for example ``("mpiexec", "-n", "4")``) runs
     the collective ``phydrax-parmmg-worker``.
     """
@@ -1785,7 +1786,7 @@ class MmgProvider:
         self.worker = ProviderWorker(
             "mmg",
             executable=executable,
-            environment_variable="PHYDRAX_MMG_WORKER",
+            setting="mmg",
             default_executable="phydrax-mmg-worker",
             build_hint=_BUILD_HINT,
             launcher=launcher,

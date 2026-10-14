@@ -18,6 +18,7 @@ from examples.energy._artifacts import (
     archive_workflow,
     execution_identity,
 )
+from phydrax import config as pxconfig
 from phydrax.applications import power
 from phydrax.dynamics import TimeGrid
 from phydrax.solver import solve_dae
@@ -30,7 +31,7 @@ def run_power_fault(output_dir: Any, *, execution: Any = None) -> Any:
     Q/voltage before initialization. The infinite grid is explicitly declared;
     the machine is not turned into an infinite source by its PV study control.
     """
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("This qualification requires JAX_ENABLE_X64=1.")
     execution = execution_identity() if execution is None else execution
     network = power.PowerNetwork(

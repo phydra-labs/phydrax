@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import pytest
 from loguru import logger
 
-from phydrax import logging as pxlogging
+from phydrax import config as pxconfig, logging as pxlogging
 from phydrax._training import (
     TrainingController,
     TrainingIterationKind,
@@ -32,9 +32,9 @@ class _ExplosiveRepresentation:
 
 @pytest.fixture(autouse=True)
 def _reset_phydrax_logging() -> Iterator[None]:
-    pxlogging.disable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=False))
     yield
-    pxlogging.disable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=False))
 
 
 def _read_events(buffer: io.StringIO) -> list[dict[str, object]]:
@@ -51,7 +51,7 @@ def test_logging_scenario_1() -> None:
     assert buffer.getvalue() == ""
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         with pxlogging.context(run_id="run-1", authorization="Bearer secret"):
             pxlogging.emit(
@@ -85,7 +85,7 @@ def test_logging_scenario_1() -> None:
     assert buffer.getvalue().count("\n") == 1
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         with pxlogging.context(run_id="outer"):
             pxlogging.emit("INFO", "runtime.scope.entered", "Outer")
@@ -106,7 +106,7 @@ def test_logging_scenario_1() -> None:
 def test_logging_scenario_2() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
 
     async def emit_for(run_id: str) -> None:
         with pxlogging.context(run_id=run_id):
@@ -128,7 +128,7 @@ def test_logging_scenario_2() -> None:
     application_buffer = io.StringIO()
     application_handler = logger.add(application_buffer, format="{message}")
     phydrax_handler = pxlogging.add_json_sink(phydrax_buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         pxlogging.remove_sink(phydrax_handler)
         logger.info("application remains")
@@ -138,7 +138,7 @@ def test_logging_scenario_2() -> None:
     assert phydrax_buffer.getvalue() == ""
     buffer = io.StringIO()
     handler_id = pxlogging.add_text_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         with pxlogging.context(run_id="run-1"):
             pxlogging.emit("INFO", "runtime.operation.completed", "One\nline", value=2)
@@ -155,7 +155,7 @@ def test_logging_scenario_2() -> None:
 def test_json_file_sink_is_owner_only(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     handler_id = pxlogging.add_json_sink(path)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         pxlogging.emit("INFO", "runtime.operation.completed", "Completed")
     finally:
@@ -171,7 +171,7 @@ def test_json_file_sink_is_owner_only(tmp_path: Path) -> None:
 def test_logging_scenario_3() -> None:
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         pxlogging.emit(
             "INFO",
@@ -189,7 +189,7 @@ def test_logging_scenario_3() -> None:
     assert "fields.values.*" in event["omitted_fields"]
     buffer = io.StringIO()
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         controller = TrainingController(
             total_steps=1,
@@ -215,7 +215,7 @@ def test_logging_scenario_3() -> None:
         sinks=(CallableIterationSink(delivered.append, "capture-training-events"),),
     )
     handler_id = pxlogging.add_json_sink(buffer)
-    pxlogging.enable()
+    pxconfig.configure(pxconfig.LoggingConfig(enabled=True))
     try:
         controller = TrainingController(
             total_steps=1,

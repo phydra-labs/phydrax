@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -15,6 +14,7 @@ from jax import Array
 from jax.typing import DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -42,15 +42,13 @@ class HybridPressureCoordinate(StrictModule, NonTrainableState):
         dtype: DTypeLike | None = None,
     ) -> None:
         dtype_ = (
-            np.dtype(
-                np.float64 if bool(jax.config.read("jax_enable_x64")) else np.float32
-            )
+            np.dtype(np.float64 if x64_enabled() else np.float32)
             if dtype is None
             else np.dtype(dtype)
         )
         if dtype_ not in (np.dtype("float32"), np.dtype("float64")):
             raise ValueError("Hybrid coefficients require float32 or float64 precision.")
-        if dtype_ == np.dtype("float64") and not bool(jax.config.read("jax_enable_x64")):
+        if dtype_ == np.dtype("float64") and not x64_enabled():
             raise ValueError(
                 "Enable JAX double precision to restore float64 hybrid coordinates."
             )

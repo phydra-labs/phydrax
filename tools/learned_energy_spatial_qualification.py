@@ -25,6 +25,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax._array_archive import (
     array_collection_digest,
     read_array_archive,
@@ -1383,7 +1384,7 @@ def _assert_output_is_not_stage_one(output: Path, parent: Path, /) -> None:
 def main() -> int:
     arguments = _parse_arguments()
     _assert_output_is_not_stage_one(arguments.output, arguments.parent_stage_one)
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report = qualification_report(
             parent_stage_one_path=arguments.parent_stage_one,
             learned_artifact_path=arguments.learned_artifact,

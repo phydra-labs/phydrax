@@ -17,9 +17,10 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _SUITES = ("valuation", "econometrics", "portfolio", "exposure", "execution", "advanced")
 
@@ -167,7 +168,9 @@ def _execution() -> Callable[[], jax.Array]:
     return solve
 
 
-def _finite_target(points: Sequence[float], weights: Sequence[float], provenance: str) -> Any:
+def _finite_target(
+    points: Sequence[float], weights: Sequence[float], provenance: str
+) -> Any:
     return phx.integration.discrete(
         jnp.asarray(points),
         cx.Field(jnp.asarray(weights), dims=("atom",)),

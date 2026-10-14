@@ -9,6 +9,7 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization.meshfree._constitutive import (
     AbstractCoupledEdgeConstitutiveLaw,
     EdgeFeatureField,
@@ -42,7 +43,7 @@ from phydrax.units import LENGTH
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Iterator[None]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

@@ -30,6 +30,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_synchronized,
 )
+from phydrax import config as pxconfig
 from phydrax.optim import adam
 
 
@@ -1111,7 +1112,7 @@ def _parse_arguments() -> argparse.Namespace:
 
 def main() -> int:
     arguments = _parse_arguments()
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         report, binding, held_out = _qualification()
     if not report["passed"]:
         return 1

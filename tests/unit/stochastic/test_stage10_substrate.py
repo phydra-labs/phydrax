@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -36,4 +37,5 @@ def test_stage10_substrate_scenario_1() -> None:
     )
 
     assert jnp.allclose(value, jnp.asarray([14.0]))
-    assert not hasattr(phx.nn, "jump_generator_observable")
+    with pytest.raises(AttributeError):
+        phx.nn.jump_generator_observable

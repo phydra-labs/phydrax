@@ -23,12 +23,12 @@ An observed constant **stochastic** history is unresolved, not proof of zero sam
 This small example has genuinely deterministic source records; it is not a template for declaring stochastic projector output deterministic:
 
 ```python
-import jax
+from phydrax import config
 import jax.numpy as jnp
 
 from phydrax.uq import CorrelatedRatioPolicy, correlated_ratio_of_means
 
-jax.config.update("jax_enable_x64", True)
+config.configure(config.RuntimeConfig(enable_x64=True))
 result = correlated_ratio_of_means(
     jnp.asarray([[6.0]], dtype=jnp.float64),
     jnp.asarray([[3.0]], dtype=jnp.float64),

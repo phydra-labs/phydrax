@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.electrical_machines import (
     MachineAngleStudy,
     optimize_machine_design,
@@ -24,7 +25,7 @@ from phydrax.discretization import CellMesh
 from phydrax.optim import Bounds, OptimizationTermination
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _small_machine(angle: Any = 0.23, **options: Any) -> Any:

@@ -125,7 +125,8 @@ class PhydraxAdapter(BenchmarkAdapter):
                     f"{type(error).__name__}: {error}"
                 ),
             )
-        missing_names = sorted(required_names - module.__dict__.keys())
+        # Package facades defer re-exports, so `dir` is the exported namespace.
+        missing_names = sorted(required_names - set(dir(module)))
         if missing_names:
             return Availability(
                 available=False,
@@ -350,9 +351,9 @@ class PhydraxAdapter(BenchmarkAdapter):
                             (dimension, dimension),
                             symmetric=True,
                         )
-                        transferred_bytes += 2 * (3 * dimension - 2) * np.dtype(
-                            np.int64
-                        ).itemsize
+                        transferred_bytes += (
+                            2 * (3 * dimension - 2) * np.dtype(np.int64).itemsize
+                        )
                         properties = phx.linalg.OperatorProperties(
                             self_adjoint=True,
                             positive_definite=True,

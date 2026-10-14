@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._jax_config import x64_enabled
 from ...linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -326,9 +327,7 @@ def _homogeneous_scale(value: Array, /) -> Array:
 
 
 def _working_value(value: Array, /) -> Array:
-    working_dtype = (
-        jnp.float64 if bool(jax.config.read("jax_enable_x64")) else jnp.float32
-    )
+    working_dtype = jnp.float64 if x64_enabled() else jnp.float32
     return value.astype(jnp.result_type(value.dtype, working_dtype))
 
 

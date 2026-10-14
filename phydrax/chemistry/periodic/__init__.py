@@ -7,6 +7,7 @@
 from importlib import import_module
 from typing import Any
 
+from ..._jax_config import process_numerics
 from ._boltzmann import __all__ as _boltzmann_all
 from ._derivatives import __all__ as _derivatives_all
 from ._electrostatics import __all__ as _electrostatics_all
@@ -68,13 +69,14 @@ _FACADE_EXPORT_MODULES = (
 
 
 def __getattr__(name: str) -> Any:
-    for module_name in reversed(_FACADE_EXPORT_MODULES):
-        module = import_module(module_name, __package__)
-        if name in module.__all__:
-            value = getattr(module, name)
-            globals()[name] = value
-            return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    with process_numerics():
+        for module_name in reversed(_FACADE_EXPORT_MODULES):
+            module = import_module(module_name, __package__)
+            if name in module.__all__:
+                value = getattr(module, name)
+                globals()[name] = value
+                return value
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:

@@ -1,5 +1,7 @@
 # Energy-system planning
 
+Phydrax enables x64 by default; the launch recipes explicitly select it.
+
 `phydrax.applications.energy_planning` composes the native convex-program lifecycle
 and bounded mixed-integer solver. Specifications describe physical assets and
 chronology; compilations contain actual `LinearProgram` or `QuadraticProgram`

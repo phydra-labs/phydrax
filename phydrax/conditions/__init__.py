@@ -4,92 +4,185 @@
 
 """Scientific conditions independent of soft or hard numerical treatment."""
 
-from . import (
-    cfd,
-    conservation,
-    electromagnetics,
-    free_boundary,
-    solids,
-    stochastic,
-    thermal,
-)
-from ._base import (
-    AbstractCondition,
-    AbstractMomentCondition,
-    AbstractResidualCondition,
-    ConditionSupport,
-    Moment,
-    Observation,
-    Residual,
-)
-from ._evidence import (
-    AffineProjectionCertificate,
-    ConditionCertificate,
-    ConditionEvidence,
-    ConditionRealizationStamp,
-    FeasibilityCertificate,
-    NonlinearRetractionCertificate,
-    ProbabilisticConditioningEvidence,
-)
-from ._functional import (
-    EventLinearMap,
-    linear_functional_condition,
-    LinearFunctional,
-    LinearReductionAction,
-    MatrixLinearFunctional,
-    PointJetAction,
-)
-from ._ir import (
-    AbstractConditionOperator,
-    ArrayCodomain,
-    CallableConditionOperator,
-    Condition,
-    ConditionCodomain,
-    ConditionQuantifier,
-    FieldCodomain,
-    FieldSpec,
-    OperatorCapabilities,
-    OperatorLinearization,
-    ProductCodomain,
-    ProductFieldSpec,
-    ValueAxis,
-)
-from ._lowering import bind_condition, BoundCondition, lower_condition
-from ._periodic import JetAction, Periodic, PeriodicTraceAction
-from ._relations import (
-    AbstractConditionRelation,
-    Complementarity,
-    ConditionRelation,
-    ConeKind,
-    ConeMembership,
-    Equality,
-    Inequality,
-    NoisyObservation,
-)
-from ._subdomain import (
-    localize_residual,
-    LocalizedResidual,
-    subdomain_overlap_consistency,
-    SubdomainFluxJump,
-    SubdomainTransmission,
-    SubdomainValueJump,
-)
-from ._trace import (
-    AbstractJetDeclaration,
-    equal,
-    field_jet,
-    FieldJet,
-    JetDeclaration,
-    LinearTraceEquation,
-    LinearTraceExpression,
-    point_jet,
-    PointJet,
-    trace_jet,
-    TraceJet,
-)
-from .boundary import Absorbing, ConditionValue, Dirichlet, Neumann, Robin
-from .initial import Initial
-from .stochastic import StochasticBoundaryResidual
+from typing import TYPE_CHECKING
+
+from .._deferred_exports import deferred_exports
+
+
+# Re-exports load on first use, so importing one owner never imports the
+# whole package and its import cycles.
+_DEFERRED_EXPORTS = {
+    "cfd": "module:.cfd",
+    "conservation": "module:.conservation",
+    "electromagnetics": "module:.electromagnetics",
+    "free_boundary": "module:.free_boundary",
+    "solids": "module:.solids",
+    "stochastic": "module:.stochastic",
+    "thermal": "module:.thermal",
+    "AbstractCondition": "._base",
+    "AbstractMomentCondition": "._base",
+    "AbstractResidualCondition": "._base",
+    "ConditionSupport": "._base",
+    "Moment": "._base",
+    "Observation": "._base",
+    "Residual": "._base",
+    "AffineProjectionCertificate": "._evidence",
+    "ConditionCertificate": "._evidence",
+    "ConditionEvidence": "._evidence",
+    "ConditionRealizationStamp": "._evidence",
+    "FeasibilityCertificate": "._evidence",
+    "NonlinearRetractionCertificate": "._evidence",
+    "ProbabilisticConditioningEvidence": "._evidence",
+    "EventLinearMap": "._functional",
+    "linear_functional_condition": "._functional",
+    "LinearFunctional": "._functional",
+    "LinearReductionAction": "._functional",
+    "MatrixLinearFunctional": "._functional",
+    "PointJetAction": "._functional",
+    "AbstractConditionOperator": "._ir",
+    "ArrayCodomain": "._ir",
+    "CallableConditionOperator": "._ir",
+    "Condition": "._ir",
+    "ConditionCodomain": "._ir",
+    "ConditionQuantifier": "._ir",
+    "FieldCodomain": "._ir",
+    "FieldSpec": "._ir",
+    "OperatorCapabilities": "._ir",
+    "OperatorLinearization": "._ir",
+    "ProductCodomain": "._ir",
+    "ProductFieldSpec": "._ir",
+    "ValueAxis": "._ir",
+    "bind_condition": "._lowering",
+    "BoundCondition": "._lowering",
+    "lower_condition": "._lowering",
+    "JetAction": "._periodic",
+    "Periodic": "._periodic",
+    "PeriodicTraceAction": "._periodic",
+    "AbstractConditionRelation": "._relations",
+    "Complementarity": "._relations",
+    "ConditionRelation": "._relations",
+    "ConeKind": "._relations",
+    "ConeMembership": "._relations",
+    "Equality": "._relations",
+    "Inequality": "._relations",
+    "NoisyObservation": "._relations",
+    "localize_residual": "._subdomain",
+    "LocalizedResidual": "._subdomain",
+    "subdomain_overlap_consistency": "._subdomain",
+    "SubdomainFluxJump": "._subdomain",
+    "SubdomainTransmission": "._subdomain",
+    "SubdomainValueJump": "._subdomain",
+    "AbstractJetDeclaration": "._trace",
+    "equal": "._trace",
+    "field_jet": "._trace",
+    "FieldJet": "._trace",
+    "JetDeclaration": "._trace",
+    "LinearTraceEquation": "._trace",
+    "LinearTraceExpression": "._trace",
+    "point_jet": "._trace",
+    "PointJet": "._trace",
+    "trace_jet": "._trace",
+    "TraceJet": "._trace",
+    "Absorbing": ".boundary",
+    "ConditionValue": ".boundary",
+    "Dirichlet": ".boundary",
+    "Neumann": ".boundary",
+    "Robin": ".boundary",
+    "Initial": ".initial",
+    "StochasticBoundaryResidual": ".stochastic",
+}
+
+
+__getattr__, __dir__ = deferred_exports(__name__, globals(), _DEFERRED_EXPORTS)
+
+
+if TYPE_CHECKING:
+    from . import (
+        cfd,
+        conservation,
+        electromagnetics,
+        free_boundary,
+        solids,
+        stochastic,
+        thermal,
+    )
+    from ._base import (
+        AbstractCondition,
+        AbstractMomentCondition,
+        AbstractResidualCondition,
+        ConditionSupport,
+        Moment,
+        Observation,
+        Residual,
+    )
+    from ._evidence import (
+        AffineProjectionCertificate,
+        ConditionCertificate,
+        ConditionEvidence,
+        ConditionRealizationStamp,
+        FeasibilityCertificate,
+        NonlinearRetractionCertificate,
+        ProbabilisticConditioningEvidence,
+    )
+    from ._functional import (
+        EventLinearMap,
+        linear_functional_condition,
+        LinearFunctional,
+        LinearReductionAction,
+        MatrixLinearFunctional,
+        PointJetAction,
+    )
+    from ._ir import (
+        AbstractConditionOperator,
+        ArrayCodomain,
+        CallableConditionOperator,
+        Condition,
+        ConditionCodomain,
+        ConditionQuantifier,
+        FieldCodomain,
+        FieldSpec,
+        OperatorCapabilities,
+        OperatorLinearization,
+        ProductCodomain,
+        ProductFieldSpec,
+        ValueAxis,
+    )
+    from ._lowering import bind_condition, BoundCondition, lower_condition
+    from ._periodic import JetAction, Periodic, PeriodicTraceAction
+    from ._relations import (
+        AbstractConditionRelation,
+        Complementarity,
+        ConditionRelation,
+        ConeKind,
+        ConeMembership,
+        Equality,
+        Inequality,
+        NoisyObservation,
+    )
+    from ._subdomain import (
+        localize_residual,
+        LocalizedResidual,
+        subdomain_overlap_consistency,
+        SubdomainFluxJump,
+        SubdomainTransmission,
+        SubdomainValueJump,
+    )
+    from ._trace import (
+        AbstractJetDeclaration,
+        equal,
+        field_jet,
+        FieldJet,
+        JetDeclaration,
+        LinearTraceEquation,
+        LinearTraceExpression,
+        point_jet,
+        PointJet,
+        trace_jet,
+        TraceJet,
+    )
+    from .boundary import Absorbing, ConditionValue, Dirichlet, Neumann, Robin
+    from .initial import Initial
+    from .stochastic import StochasticBoundaryResidual
 
 
 __all__ = [

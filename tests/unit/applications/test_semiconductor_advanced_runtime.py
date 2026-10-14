@@ -3,16 +3,16 @@
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications import semiconductor as sc
 from phydrax.meshing import MeshZone, MeshZoneRole
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 Q = sc.ELEMENTARY_CHARGE_SI
 EPS0 = sc.VACUUM_PERMITTIVITY_SI

@@ -65,6 +65,8 @@ from jax import Array
 from jax.extend import core as jax_core
 
 from .._array_archive import read_array_archive, write_array_archive
+from .._config_environment import runtime_environment
+from .._config_types import RuntimeConfig
 from .._external_runtime import (
     _require_execution,
     ExternalExecutionPolicy,
@@ -75,6 +77,7 @@ from .._external_runtime import (
     run_pinned_command,
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._jax_config import x64_enabled
 from .._model import model_structure_recipe, register_artifact_value
 from .._model._component import ExecutionCapabilities
 from .._model._structure import model_from_array_recipe, pack_model_array_tree
@@ -1068,7 +1071,7 @@ def _implementation_root() -> Path:
 def _runtime_record() -> dict[str, Any]:
     return {
         "python": platform.python_version(),
-        "jax_enable_x64": bool(jax.config.jax_enable_x64),
+        "jax_enable_x64": x64_enabled(),
         "distributions": {
             name: importlib.metadata.version(name) for name in _RUNTIME_DISTRIBUTIONS
         },
@@ -1153,11 +1156,11 @@ def _read_export_request(path: Path, /) -> _ExportRequest:
 
 
 def _worker_environment() -> dict[str, str]:
-    return {
-        "EQX_ON_ERROR": "nan",
-        "JAX_ENABLE_X64": "1" if jax.config.jax_enable_x64 else "0",
-        "JAX_PLATFORMS": "cpu",
-    }
+    environment = runtime_environment(
+        RuntimeConfig(enable_x64=x64_enabled(), platforms=("cpu",)), {}, "override"
+    )
+    environment["EQX_ON_ERROR"] = "nan"
+    return environment
 
 
 def _run_export_worker(

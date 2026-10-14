@@ -12,7 +12,6 @@ owner partition is compared under a declared reduction-order tolerance.
 from __future__ import annotations
 
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -33,7 +32,7 @@ from examples.meshfree_bulk_surface_exchange import (
 from examples.meshfree_moving_surface_reaction_diffusion import (
     prepare_workflow as prepare_moving_surface,
 )
-from phydrax import ArrayArchiveCorruptionError, execution, solver
+from phydrax import ArrayArchiveCorruptionError, config as pxconfig, execution, solver
 from phydrax.discretization import PointCloudPlan, PreparedPointCloudDiscretization
 from phydrax.discretization.meshfree import (
     LocalStencilPolicy,
@@ -717,9 +716,9 @@ def test_moving_surface_restart_keeps_live_history_and_archive_cursor(
 
 
 def test_ownership_migration_restart_in_a_four_device_process(tmp_path: Path) -> None:
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
-    environment["JAX_ENABLE_X64"] = "1"
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(enable_x64=True, cpu_device_count=4)
+    )
     completed = subprocess.run(
         [_PYTHON, "-m", "tests.integration._meshfree_runtime_migration", str(tmp_path)],
         cwd=_ROOT,
@@ -759,8 +758,7 @@ def test_ownership_migration_restart_in_a_four_device_process(tmp_path: Path) ->
 def _cli(
     root: Path, *extra: str, module: str = "examples.meshfree_production_restart"
 ) -> subprocess.Popen[str]:
-    environment = dict(os.environ)
-    environment["JAX_ENABLE_X64"] = "1"
+    environment = pxconfig.environment(pxconfig.RuntimeConfig(enable_x64=True))
     return subprocess.Popen(
         [_PYTHON, "-m", module, "--root", str(root), *extra],
         cwd=_ROOT,

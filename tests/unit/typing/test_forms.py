@@ -13,6 +13,7 @@ from hypothesis import given
 from jax import export
 
 import phydrax.typing as pt
+from phydrax import config as pxconfig
 from tests._support.strategies import finite_arrays
 
 
@@ -298,3 +299,23 @@ def test_contract_checks_trace_without_numerical_operations() -> None:
             vector_body,
             jax.ShapeDtypeStruct((symbolic_size,), jnp.float64),
         )
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["x64-off", "x64-on"])
+def test_exact_forms_resolve_backend_width(enabled: bool) -> None:
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=enabled)):
+        host_cases = (
+            (pt.HostFloat64[NodeDim], np.float64, np.float32),
+            (pt.HostInt64[NodeDim], np.int64, np.int32),
+            (pt.HostComplex128[NodeDim], np.complex128, np.complex64),
+        )
+        for form, dtype, wrong in host_cases:
+            host = np.ones(2, dtype=dtype)
+            assert pt.parse(host, form, "host") is host
+            with pytest.raises(TypeError, match=np.dtype(dtype).name):
+                pt.parse(np.ones(2, dtype=wrong), form, "host")
+        effective = np.float64 if enabled else np.float32
+        array = jnp.ones(2, dtype=effective)
+        assert pt.parse(array, pt.Float64[NodeDim], "array") is array
+        with pytest.raises(TypeError, match=np.dtype(effective).name):
+            pt.parse(jnp.ones(2, dtype=np.int32), pt.Float64[NodeDim], "array")

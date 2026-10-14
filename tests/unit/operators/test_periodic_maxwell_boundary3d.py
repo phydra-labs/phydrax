@@ -1,8 +1,8 @@
 from itertools import product
 
-import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.discretization import PeriodicCell
 from phydrax.discretization.bem import (
     OrientedTriangleSurfaceComplex3D,
@@ -16,7 +16,7 @@ from phydrax.operators.integral.layer_potential._periodic_maxwell_boundary3d imp
 
 
 def test_periodic_mfie_has_actual_central_magnetic_action_and_oriented_jump() -> None:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         vertices = np.asarray(
             [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             dtype=np.float64,

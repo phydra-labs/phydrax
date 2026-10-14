@@ -64,7 +64,8 @@ def register_native_ml_artifacts() -> None:
             )
     kernel_module = importlib.import_module("phydrax.kernels")
     for name in vars(kernel_module).get("__all__", ()):
-        value = vars(kernel_module)[name]
+        # `phydrax.kernels` defers its re-exports; resolve them as attributes.
+        value = getattr(kernel_module, name)
         if isinstance(value, type) and value.__module__.startswith("phydrax.kernels."):
             register_artifact_value(
                 f"phydrax.kernels:{name}",

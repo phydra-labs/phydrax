@@ -9,6 +9,7 @@ import opt_einsum as oe
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 _ARRAY_FIELDS = (
@@ -168,7 +169,7 @@ def test_gaussian_chain_scenario_1() -> None:
     parallel = phx.uq.kalman_filter(problem, method="parallel")
     _assert_filter_equivalent(sequential, parallel)
     assert parallel.filtered_means.shape == case_shape + (num_steps, 1)
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         problem = _problem(num_steps=12)
         sequential = phx.uq.kalman_filter(problem, method="sequential")
         parallel = phx.uq.kalman_filter(problem, method="parallel")

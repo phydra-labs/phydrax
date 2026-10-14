@@ -40,6 +40,7 @@ from pathlib import Path
 
 import jax
 
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.qualification import (
     CampaignObservationRecord,
@@ -531,7 +532,7 @@ def main() -> None:
         build_id=source_build_id(),
         environment=runtime_environment(),
         backend=jax.default_backend(),
-        precision="float64" if jax.config.jax_enable_x64 else "float32",
+        precision="float64" if pxconfig.x64_enabled() else "float32",
     )
     payload = serialize_report(report)
     if arguments.output is None:

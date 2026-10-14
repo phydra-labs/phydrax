@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.linalg import DenseLinearOperator, LinearSystem, prepare
 from phydrax.operators.integral._convolution_quadrature import (
     bdf_symbol,
@@ -35,7 +36,7 @@ def _declaration(dimension: int, *, provider: str = "phydrax.linalg") -> Any:
         geometry="fixed caller-supplied discrete geometry",
         formulation="BDF convolution quadrature of prepared transfer solves",
         provider=provider,
-        precision="complex128 node algebra under jax.enable_x64",
+        precision="complex128 node algebra under native x64 numerics",
         non_goals=("continuum certification", "physics-kernel construction"),
     )
 
@@ -83,7 +84,7 @@ def test_convolution_quadrature_scenario_1() -> None:
     assert radius**64 == pytest.approx(1.0e-10)
     explicit = ConvolutionQuadratureContourPolicy(radius=0.82, tolerance=1.0e-8)
     assert explicit.resolve(128) == 0.82
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         contour = prepare_convolution_quadrature_contour(
             0.125,
             5,
@@ -107,7 +108,7 @@ def test_convolution_quadrature_scenario_1() -> None:
     assert transformed.shape == (16, 2)
     assert jnp.allclose(recovered, history, rtol=2.0e-13, atol=2.0e-13)
     assert not contour.conjugate_symmetric
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         factory, _ = _scalar_factory(0.7)
         prepared = prepare_convolution_quadrature(
             factory,
@@ -159,7 +160,7 @@ def _terminal_smooth_forcing_error(method: str, steps: int) -> float:
 
 
 def test_convolution_quadrature_scenario_2() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         bdf1_coarse = _terminal_smooth_forcing_error("bdf1", 24)
         bdf1_fine = _terminal_smooth_forcing_error("bdf1", 48)
         bdf2_coarse = _terminal_smooth_forcing_error("bdf2", 24)
@@ -168,7 +169,7 @@ def test_convolution_quadrature_scenario_2() -> None:
     assert bdf1_coarse / bdf1_fine > 1.7
     assert bdf2_coarse / bdf2_fine > 3.2
     assert bdf2_fine < bdf1_fine
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         full_factory, full_calls = _scalar_factory(0.4)
         reduced_factory, reduced_calls = _scalar_factory(0.4)
         common = dict(
@@ -204,7 +205,7 @@ def test_convolution_quadrature_scenario_2() -> None:
     assert reduced.resource_evidence.solved_node_count_per_action == 9
     with pytest.raises(TypeError, match="real history"):
         reduced.apply(history.astype(jnp.complex128))
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         factory, _ = _scalar_factory(0.25)
         prepared = prepare_convolution_quadrature(
             factory,
@@ -226,7 +227,7 @@ def test_convolution_quadrature_scenario_2() -> None:
 
 
 def test_convolution_quadrature_scenario_3() -> None:
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         factory, _ = _scalar_factory(0.5, singular_first_forward=True)
         prepared = prepare_convolution_quadrature(
             factory,
@@ -243,7 +244,7 @@ def test_convolution_quadrature_scenario_3() -> None:
     assert len(result.node_results) == prepared.contour.fft_length
     assert jnp.any(result.error_evidence.node_statuses != 0)
     assert not bool(result.error_evidence.node_solves_successful)
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         base = jnp.asarray([[0.8 + 0.2j, -0.3 + 0.1j], [0.4j, 1.1 - 0.2j]])
         factory, _ = _system_factory(
             lambda parameter: parameter * jnp.eye(2, dtype=jnp.complex128) + base
@@ -276,7 +277,7 @@ def test_convolution_quadrature_scenario_3() -> None:
     assert jnp.allclose(bilinear_left, bilinear_right, rtol=3.0e-11, atol=3.0e-11)
     assert jnp.allclose(hermitian_left, hermitian_right, rtol=3.0e-11, atol=3.0e-11)
     assert adjointed.parameter_indices == tuple((-index) % 16 for index in range(16))
-    with jax.enable_x64():
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         factory, _ = _scalar_factory(0.9)
         prepared = prepare_convolution_quadrature(
             factory,

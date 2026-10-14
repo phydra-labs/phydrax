@@ -53,7 +53,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Literal
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -89,7 +88,7 @@ from phydrax.solver.coupling import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 HOLE, INTERFACE, OUTER = 0.5, 1.0, 1.5
 INNER_KAPPA = 4.0

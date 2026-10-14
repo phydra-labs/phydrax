@@ -14,9 +14,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.quantum_hall import (
     evaluate_subband_coulomb_form_factor,
     SubbandCoulombFormFactorPlan,
@@ -190,7 +190,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     root = Path(__file__).resolve().parents[1]
     qh_sizes = [5, 101] if args.smoke else args.qh_sizes
     scenario_sizes = [64, 128] if args.smoke else args.scenario_sizes

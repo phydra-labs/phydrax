@@ -3,7 +3,7 @@
 
 Every workload owns all devices of the current JAX runtime, one owner per
 device. Forced host CPU devices
-(``XLA_FLAGS=--xla_force_host_platform_device_count=<k>``) prove functional
+(``RuntimeConfig(cpu_device_count=k)``) prove functional
 distributed parity only: neighbor completeness against an independent
 ``scipy.spatial.cKDTree`` oracle, halo transpose duality, single-device action
 equality, migration preserving stable IDs and values, and owner-collective
@@ -48,6 +48,7 @@ from benchmarks.meshfree_scaling import (
     PhaseRecorder,
     PROJECT_ROOT,
 )
+from phydrax import config as pxconfig
 from phydrax.discretization.meshfree import (
     distributed_inner,
     distributed_norm,
@@ -154,13 +155,13 @@ def run_forced_device_workloads(
         "--output",
         str(output),
     ]
-    flags = f"--xla_force_host_platform_device_count={devices}"
-    environment = {
-        **os.environ,
-        "XLA_FLAGS": flags,
-        "JAX_PLATFORMS": "cpu",
-        "JAX_ENABLE_X64": "1",
-    }
+    environment = pxconfig.environment(
+        pxconfig.RuntimeConfig(
+            cpu_device_count=devices, platforms=("cpu",), enable_x64=True
+        ),
+        base=os.environ,
+        mode="override",
+    )
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter()
     completed = subprocess.run(
@@ -182,7 +183,7 @@ def run_forced_device_workloads(
     record["subprocess"] = {
         "command": command,
         "devices": devices,
-        "xla_flags": flags,
+        "xla_flags": environment.get("XLA_FLAGS", ""),
         "wall_seconds": wall,
         "cpu_seconds": (after.ru_utime - before.ru_utime)
         + (after.ru_stime - before.ru_stime),
@@ -838,8 +839,7 @@ def _record(
             "device_count": len(devices),
             "process_count": jax.process_count(),
             "owner_processes": list(setup.plan.owner_processes),
-            "forced_host_devices": "xla_force_host_platform_device_count"
-            in os.environ.get("XLA_FLAGS", ""),
+            "forced_host_devices": pxconfig.snapshot().cpu_device_count is not None,
         },
         "phases": recorder.record(),
         "metrics": metrics,

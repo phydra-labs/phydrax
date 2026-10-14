@@ -34,14 +34,14 @@ from .._iteration import (
     update_iteration,
 )
 from .._strict import StrictModule
-from ..linalg import (
-    DenseLinearOperator,
+from ..linalg._factorizations import (
     FactorizationPolicy,
     factorize,
-    HermitianSpectrum,
-    OperatorProperties,
     PreparedFactorization,
 )
+from ..linalg._hermitian_spectral import HermitianSpectrum
+from ..linalg._operators import DenseLinearOperator
+from ..linalg._properties import OperatorProperties
 from ..typing import PRNGKey
 from ._adaptation import (
     adapt_proposal_scale,

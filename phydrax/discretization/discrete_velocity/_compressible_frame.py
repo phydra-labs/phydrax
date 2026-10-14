@@ -10,7 +10,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
-from ..._exponential_family import solve_finite_support_mean
+from ..._exponential_family._finite_support import solve_finite_support_mean
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState

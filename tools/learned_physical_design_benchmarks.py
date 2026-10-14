@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._score_field import StateTimeScoreField
 from phydrax.applications.solid_mechanics._learned_design import (
     MechanicsPotentialGuidance,
@@ -436,7 +437,7 @@ def main() -> None:
     parser.add_argument("--segments", type=int, default=3)
     parser.add_argument("--steps", type=int, default=100)
     options = parser.parse_args()
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     print(json.dumps(run(options.segments, options.steps), indent=2, sort_keys=True))
 
 

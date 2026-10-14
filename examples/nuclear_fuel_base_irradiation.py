@@ -16,9 +16,9 @@ import json
 from pathlib import Path
 from typing import get_args
 
-import jax
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.nuclear_fuel import (
     admit_fuel_rod,
     FUEL_GAS_SPECIES,
@@ -31,7 +31,7 @@ from phydrax.typing import parse
 from tools.nuclear_fuel_qualification import history_observables, numerical_rod_inputs
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def main() -> None:

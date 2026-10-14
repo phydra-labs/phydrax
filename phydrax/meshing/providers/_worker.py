@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from ..._config_state import worker_input
+from ..._config_types import WorkerSetting
 from ..._external_runtime import (
     NativeWorker,
     NativeWorkerCall,
@@ -74,8 +76,9 @@ def _failure(provider: str, stage: str, error: NativeWorkerError, /) -> MeshingF
 class ProviderWorker:
     """One lazily launched native worker session reused by a provider.
 
-    The executable is the explicit path, else ``environment_variable``, else
-    ``default_executable`` on PATH. Runtime identity is probed once per session;
+    The executable is the explicit path, else the configured or ambient worker
+    ``setting``, else ``default_executable`` on PATH. Selection is resolved only
+    when starting a session. Runtime identity is probed once per session;
     a failed, closed, or call-exhausted session is replaced by a fresh launch at
     the next call and ``launches`` counts every session ever started. One
     reentrant lock serializes session creation, replacement, calls, and close
@@ -88,7 +91,7 @@ class ProviderWorker:
         /,
         *,
         executable: str | os.PathLike[str] | None,
-        environment_variable: str,
+        setting: WorkerSetting,
         default_executable: str,
         build_hint: str,
         launcher: Sequence[str] = (),
@@ -98,7 +101,7 @@ class ProviderWorker:
     ) -> None:
         self.provider = str(provider)
         self.executable = None if executable is None else str(executable)
-        self.environment_variable = str(environment_variable)
+        self.setting = setting
         self.default_executable = str(default_executable)
         self.build_hint = str(build_hint)
         self.launcher = tuple(str(value) for value in launcher)
@@ -112,8 +115,10 @@ class ProviderWorker:
         self._worker: NativeWorker | None = None
 
     def _resolve(self) -> str:
-        requested = self.executable or os.environ.get(
-            self.environment_variable, self.default_executable
+        requested = self.executable or (
+            self.default_executable
+            if (configured := worker_input(self.setting)) is None
+            else configured
         )
         located = shutil.which(requested)
         if located is None:

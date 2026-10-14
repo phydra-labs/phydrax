@@ -24,6 +24,7 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
+from ._jax_config import x64_enabled
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
@@ -1244,7 +1245,7 @@ def bvh_overlap_pairs(
             raise ValueError(f"{name} must be positive, got {value}.")
     if not isinstance(include_touching, bool):
         raise TypeError("include_touching must be a bool.")
-    if not jax.config.read("jax_enable_x64"):
+    if not x64_enabled():
         raise RuntimeError(
             "bvh_overlap_pairs counts pairs in int64; enable jax_enable_x64."
         )

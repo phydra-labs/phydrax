@@ -4,7 +4,6 @@
 
 
 import itertools
-import os
 import subprocess
 import sys
 import textwrap
@@ -18,6 +17,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._meshcore import meshcore_available
 from phydrax.discretization import (
     AdaptiveSimplexPolicy,
@@ -518,8 +518,7 @@ def test_device_adaptation_scenario_3() -> None:
     # ty: ignore[unresolved-attribute]
     assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
     _assert_conforming(result.target.mesh, 1.0)
-    environment = dict(os.environ)
-    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+    environment = pxconfig.environment(pxconfig.RuntimeConfig(cpu_device_count=4))
     environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
     completed = subprocess.run(
         [sys.executable, "-c", _PARTS_SCRIPT],

@@ -12,6 +12,7 @@ import pytest
 from scipy.interpolate import BSpline
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._interpolation import apply_gather_stencil, rectilinear_stencil
 from phydrax._model._ports import ValuePort
 from phydrax.discretization import (
@@ -42,7 +43,7 @@ def _spline_knots(nodes: np.ndarray, degree: int) -> np.ndarray:
     )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _VALID = int(FieldQueryStatus.VALID)
 _OUTSIDE = int(FieldQueryStatus.OUTSIDE_SUPPORT)

@@ -12,6 +12,9 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from ._config_environment import bootstrap_timeout_overrides, runtime_environment
+from ._config_types import RuntimeBootstrap, RuntimeConfig
+
 
 @dataclass(frozen=True, slots=True)
 class RankEnvironment:
@@ -36,20 +39,26 @@ class RankEnvironment:
 
     def apply(self, environment: Mapping[str, str] | None = None) -> dict[str, str]:
         values = dict(os.environ if environment is None else environment)
-        values.update(
-            {
-                "PHYDRAX_COORDINATOR_ADDRESS": self.coordinator_address,
-                "PHYDRAX_NUM_PROCESSES": str(self.num_processes),
-                "PHYDRAX_PROCESS_ID": str(self.process_id),
-            }
+        timeouts = bootstrap_timeout_overrides(values)
+        defaults = RuntimeBootstrap()
+        bootstrap = RuntimeBootstrap(
+            coordinator_address=self.coordinator_address,
+            num_processes=self.num_processes,
+            process_id=self.process_id,
+            local_device_ids=self.local_device_ids,
+            coordinator_bind_address=self.coordinator_bind_address,
+            heartbeat_timeout_seconds=(
+                defaults.heartbeat_timeout_seconds
+                if timeouts.heartbeat_timeout_seconds is None
+                else timeouts.heartbeat_timeout_seconds
+            ),
+            initialization_timeout_seconds=(
+                defaults.initialization_timeout_seconds
+                if timeouts.initialization_timeout_seconds is None
+                else timeouts.initialization_timeout_seconds
+            ),
         )
-        if self.local_device_ids is not None:
-            values["PHYDRAX_LOCAL_DEVICE_IDS"] = ",".join(
-                str(value) for value in self.local_device_ids
-            )
-        if self.coordinator_bind_address is not None:
-            values["PHYDRAX_COORDINATOR_BIND_ADDRESS"] = self.coordinator_bind_address
-        return values
+        return runtime_environment(RuntimeConfig(bootstrap=bootstrap), values, "override")
 
 
 @dataclass(frozen=True, slots=True)

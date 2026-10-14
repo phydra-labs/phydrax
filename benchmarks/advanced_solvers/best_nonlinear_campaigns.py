@@ -18,7 +18,6 @@ from typing import Any, Callable, Literal
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.flatten_util import ravel_pytree
 
 import phydrax as phx
 from benchmarks._io import write_json_atomic
@@ -31,6 +30,7 @@ from benchmarks.advanced_solvers.nonlinear_peer_runners import (
     run_python_peer,
     stable_fingerprint,
 )
+from phydrax import config as pxconfig
 
 
 Family = Literal[
@@ -809,7 +809,7 @@ def _run_root(case_id: Any, implementation: Any) -> Any:
             reason=reason,
             detail=detail,
         )
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     initial = jnp.asarray(case.initial, dtype=jnp.float64)
     args = None if case.args is None else jnp.asarray(case.args, dtype=jnp.float64)
     space = phx.linalg.ArraySpace(initial.shape, dtype=initial.dtype)
@@ -982,9 +982,7 @@ def _least_squares_cases() -> Any:
             None,
         ),
         "rank-deficient": (
-            lambda x, a: jnp.asarray(
-                [x[0] + x[1] - 1.0, 2.0 * x[0] + 2.0 * x[1] - 2.0]
-            ),
+            lambda x, a: jnp.asarray([x[0] + x[1] - 1.0, 2.0 * x[0] + 2.0 * x[1] - 2.0]),
             jnp.zeros(2),
             None,
             None,
@@ -1256,11 +1254,7 @@ def _independent_constrained_certificate(
     /,
 ) -> dict[str, Any]:
     value = np.asarray(parameters, dtype=np.float64)
-    target = (
-        np.asarray([0.0, 1.0])
-        if case_id == "circle"
-        else np.asarray([0.2, 0.8])
-    )
+    target = np.asarray([0.0, 1.0]) if case_id == "circle" else np.asarray([0.2, 0.8])
     objective = float(np.sum((value - target) ** 2))
     gradient = 2.0 * (value - target)
     if case_id == "circle":
@@ -1287,9 +1281,7 @@ def _independent_constrained_certificate(
             primal_feasibility,
             float(np.max(np.maximum(-value, 0.0), initial=0.0)),
         )
-    dual_feasibility = float(
-        np.max(np.maximum(-lower_multipliers, 0.0), initial=0.0)
-    )
+    dual_feasibility = float(np.max(np.maximum(-lower_multipliers, 0.0), initial=0.0))
     complementarity = float(
         np.max(
             np.abs(lower_multipliers * value[active_lower]),
@@ -1801,8 +1793,7 @@ def _external_raw_observation(
         elif case_id == "rosenbrock":
             objective_value = float(
                 np.sum(
-                    100.0 * (value[1:] - value[:-1] ** 2) ** 2
-                    + (1.0 - value[:-1]) ** 2
+                    100.0 * (value[1:] - value[:-1] ** 2) ** 2 + (1.0 - value[:-1]) ** 2
                 )
             )
         else:
@@ -2185,7 +2176,7 @@ def run_campaign(
     if warmup_ < 0 or repeats_ < 1:
         raise ValueError("warmup must be non-negative and repeats must be positive.")
     if family == "root":
-        jax.config.update("jax_enable_x64", True)
+        pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     runners: dict[
         str,
         tuple[
@@ -2388,9 +2379,7 @@ def superiority_audit(
             "certificate_value": row.certificate_value,
         }
         for row in observations
-        if row.available
-        and row.backend_success is True
-        and row.certified is False
+        if row.available and row.backend_success is True and row.certified is False
     ]
     backend_false_negatives = [
         {
@@ -2401,9 +2390,7 @@ def superiority_audit(
             "backend_scope": row.backend_scope,
         }
         for row in observations
-        if row.available
-        and row.backend_success is False
-        and row.certified is True
+        if row.available and row.backend_success is False and row.certified is True
     ]
     peer_ids = sorted(
         {

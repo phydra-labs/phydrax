@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
 def _strip_plan(system: Any, nx: Any = 2) -> Any:
@@ -302,7 +303,7 @@ def test_asymmetric_cut_source_uses_fluid_centroids_before_inactive_masking() ->
         )
         return jnp.zeros_like(state).at[:, -1].set(linear_density)
 
-    with jax.enable_x64(False):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=False)):
         discretization, system, dynamics, runtime = _runtime(
             lambda points, args: points[:, 0] + 0.25 * points[:, 1] - 0.6,
             source=source,

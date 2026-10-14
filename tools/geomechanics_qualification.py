@@ -27,6 +27,7 @@ from scipy.integrate import quad
 from scipy.optimize import brentq
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.applications.solid_mechanics import MechanicalLoadState
 from phydrax.discretization import (
     CompliantDEMMethodPlan,
@@ -469,7 +470,7 @@ def qualify(
     names = tuple(parse(name, CaseName, "case") for name in case_names)
     if not names or len(names) > MAX_CASES or len(set(names)) != len(names):
         raise ValueError("Choose one to nine distinct registered cases.")
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError(
             "Qualification requires JAX float64; enable jax_enable_x64 before execution."
         )
@@ -646,7 +647,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args(argv)
     names = get_args(CaseName) if arguments.all else arguments.case
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
     def checkpoint(report: dict[str, Any]) -> None:
         if arguments.output is not None:
@@ -3818,7 +3819,7 @@ def run_terzaghi_1d_consolidation() -> dict[str, Any]:
     at their actual accepted time and target-time fraction. The refinement
     sequence does not turn an inconclusive finite-inertia run into qualification.
     """
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError(
             "Terzaghi qualification requires jax_enable_x64 before execution."
         )

@@ -9,7 +9,6 @@ from numbers import Integral
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
@@ -17,6 +16,7 @@ from jax.typing import ArrayLike
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 
+from ..._jax_config import x64_enabled
 from ...typing import checked
 
 
@@ -235,7 +235,7 @@ def round_to_minor_atoms(
         raise TypeError("monetary must be a MonetaryArray.")
     if not isinstance(rounding, MonetaryRounding):
         raise TypeError("rounding must be a MonetaryRounding.")
-    if not jax.config.read("jax_enable_x64"):
+    if not x64_enabled():
         raise RuntimeError("Exact monetary atoms require JAX 64-bit mode.")
     scales = jnp.asarray(
         tuple(currency.atoms_per_unit for currency in monetary.currencies),

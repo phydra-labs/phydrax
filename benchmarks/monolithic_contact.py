@@ -3,7 +3,7 @@
 #
 """Bounded ABD-wall capacity campaign; timings include explicit synchronization.
 
-Run: JAX_ENABLE_X64=1 python -m benchmarks.monolithic_contact --contended
+Run: python -m benchmarks.monolithic_contact --contended
 """
 
 from __future__ import annotations

@@ -10,13 +10,15 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 from jax import Array
 
-from phydrax.coresets import (
-    CoresetSelection,
+from phydrax.coresets._herding import (
     kernel_herd,
     KernelHerding,
+)
+from phydrax.coresets._recombination import (
     moment_recombine,
     MomentRecombination,
 )
+from phydrax.coresets._types import CoresetSelection
 
 from .._strict import StrictModule
 from ._measure_transform import (

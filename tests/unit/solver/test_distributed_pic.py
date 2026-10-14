@@ -6,7 +6,7 @@
 
 Multi-device tests need forced host devices and run in a dedicated invocation,
 once with four and once with eight devices:
-``XLA_FLAGS=--xla_force_host_platform_device_count=4 pytest
+``JAX_NUM_CPU_DEVICES=4 pytest
 tests/unit/solver/test_distributed_pic.py`` (and ``=8``).
 """
 
@@ -45,8 +45,7 @@ def _mesh(shape: tuple[int, ...], names: tuple[str, ...] | None = None) -> Mesh:
     count = math.prod(shape)
     if len(jax.devices()) < count:
         pytest.skip(
-            f"Needs {count} devices: run with "
-            f"XLA_FLAGS=--xla_force_host_platform_device_count={max(count, 4)}."
+            f"Needs {count} devices: run with JAX_NUM_CPU_DEVICES={max(count, 4)}."
         )
     axes = names if names is not None else ("x", "y", "z")[: len(shape)]
     return Mesh(np.asarray(jax.devices()[:count], dtype=object).reshape(shape), axes)

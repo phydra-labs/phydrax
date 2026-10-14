@@ -20,7 +20,7 @@ from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy
 from ..metrix import BuresDensityManifold, FaithfulDensityReport
 from ..typing import checked
-from ..uq import (
+from ..uq._quantum_tomography import (
     QuantumPOVM,
     QuantumTomographyData,
     tomography_log_likelihood,

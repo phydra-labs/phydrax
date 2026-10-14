@@ -13,7 +13,11 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from .._physical import SpatialCoordinateContract
-from ..interchange import AdapterLoss, AdapterReport, AdapterStatus
+from ..interchange._report import (
+    AdapterLoss,
+    AdapterReport,
+    AdapterStatus,
+)
 from ..qualification import open_reference_artifact, ReferenceArtifactManifest
 from ..typing import checked
 from ..units import ONE, SECOND, UnitDefinition

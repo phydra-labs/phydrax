@@ -2366,7 +2366,7 @@ equals the per-owner gradient, and a lane-grouped second derivative is refused),
 changed `pure_callback` host function does not, refuses a working set above its
 bound, capacities outside `[1, 64]`, and runtime arguments outside the prepared
 signature, and checks that caller states and lane data remain reusable. Under
-`XLA_FLAGS=--xla_force_host_platform_device_count=4` it also checks lanes placed on a
+`JAX_NUM_CPU_DEVICES=4` it also checks lanes placed on a
 four-device group against the single-device reference.
 
 The benchmark rows `homogeneous-worksets` (component count 4 to 64, lane capacity,
@@ -2581,7 +2581,7 @@ The runner collects the referenced test files once and runs every resolved node 
 per device count. Single-device nodes run in-process (`--workers N` distributes them
 with pytest-xdist). Scenarios with execution `forced-host-devices-4` (distributed PIC,
 lanes on an execution group) run in a fresh interpreter started with
-`XLA_FLAGS=--xla_force_host_platform_device_count=4`, so their device-count skips do
+`JAX_NUM_CPU_DEVICES=4`, so their device-count skips do
 not occur. `--route-timeout SECONDS` bounds each fresh-interpreter route: a route
 still running at the deadline is killed together with its pytest-xdist workers and
 observes no node. Each scenario becomes one `phydrax.qualification` record chain: the support

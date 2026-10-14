@@ -18,6 +18,11 @@ import optax
 from jax import Array
 from jaxtyping import PyTree
 
+from .._config_state import (
+    context as configuration_context,
+    logging_enabled as _logging_enabled,
+)
+from .._config_types import NumericsConfig
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
@@ -49,7 +54,6 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveAccumulator, _ObjectiveContribution
 from .._tree_math import tree_negative, tree_where
-from ..logging import is_enabled as _logging_enabled
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
 from ..optim._composite import CompositeLeastSquaresProblem
@@ -314,7 +318,9 @@ def _precision_context(precision: FunctionalPrecisionPolicy | None, /) -> Any:
     return (
         nullcontext()
         if precision is None
-        else jax.default_matmul_precision(precision.matmul_precision)
+        else configuration_context(
+            NumericsConfig(matmul_precision=precision.matmul_precision)
+        )
     )
 
 

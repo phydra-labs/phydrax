@@ -68,25 +68,25 @@ def test_operator_training_substrate_has_explicit_namespace_ownership() -> None:
         "population",
         "quantum",
     }
-    assert {"MLP", "SeparableMLP"} <= set(vars(phx.nn.models))
+    assert {"MLP", "SeparableMLP"} <= set(dir(phx.nn.models))
     assert {"Linear", "MeasureAwareAttention", "RandomFourierFeatureEmbeddings"} <= set(
-        vars(phx.nn.layers)
+        dir(phx.nn.layers)
     )
-    assert {"ParameterSubspace", "PositiveTransform"} <= set(vars(phx.nn.parameters))
-    assert {"FNO", "DeepONet"} <= set(vars(phx.nn.operator.architectures))
-    assert {"AbstractOperatorModel", "OperatorModel"} <= set(vars(phx.nn.operator))
+    assert {"ParameterSubspace", "PositiveTransform"} <= set(dir(phx.nn.parameters))
+    assert {"FNO", "DeepONet"} <= set(dir(phx.nn.operator.architectures))
+    assert {"AbstractOperatorModel", "OperatorModel"} <= set(dir(phx.nn.operator))
     assert {"OperatorAttention", "BasisSpectralConvND"} <= set(
-        vars(phx.nn.operator.layers)
+        dir(phx.nn.operator.layers)
     )
     assert {"TrainedOperator", "OperatorExecutionPlan"} <= set(
-        vars(phx.nn.operator.training)
+        dir(phx.nn.operator.training)
     )
-    assert {"MLP", "Linear", "FNO", "TrainedOperator"}.isdisjoint(vars(phx.nn))
+    assert {"MLP", "Linear", "FNO", "TrainedOperator"}.isdisjoint(dir(phx.nn))
     assert {"FNO", "OperatorAttention", "RandomFourierFeatureEmbeddings"}.isdisjoint(
-        vars(phx.nn.models)
+        dir(phx.nn.models)
     )
-    assert {"OperatorAttention", "BasisSpectralConvND"}.isdisjoint(vars(phx.nn.layers))
-    assert training_exports.isdisjoint(vars(phx.nn))
+    assert {"OperatorAttention", "BasisSpectralConvND"}.isdisjoint(dir(phx.nn.layers))
+    assert training_exports.isdisjoint(dir(phx.nn))
 
 
 def _point_samples(

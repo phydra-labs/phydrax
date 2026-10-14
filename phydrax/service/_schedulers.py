@@ -27,6 +27,12 @@ from types import MappingProxyType
 from typing import IO, Literal, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
+from .._config_environment import (
+    COORDINATOR_ADDRESS,
+    COORDINATOR_BIND_ADDRESS,
+    NUM_PROCESSES,
+    PROCESS_ID,
+)
 from .._execution_resources import ResourceRequest
 from ..logging import emit
 from ._contracts import IntegrityError
@@ -993,11 +999,11 @@ def _kubernetes_job_body(
     if processes > 1:
         environment = [
             {
-                "name": "PHYDRAX_NUM_PROCESSES",
+                "name": NUM_PROCESSES,
                 "value": str(processes),
             },
             {
-                "name": "PHYDRAX_PROCESS_ID",
+                "name": PROCESS_ID,
                 "valueFrom": {
                     "fieldRef": {
                         "fieldPath": (
@@ -1007,13 +1013,13 @@ def _kubernetes_job_body(
                 },
             },
             {
-                "name": "PHYDRAX_COORDINATOR_ADDRESS",
+                "name": COORDINATOR_ADDRESS,
                 "value": (
                     f"{name}-0.{name}.{spec.namespace}.svc.cluster.local:{spec.coordinator_port}"
                 ),
             },
             {
-                "name": "PHYDRAX_COORDINATOR_BIND_ADDRESS",
+                "name": COORDINATOR_BIND_ADDRESS,
                 "value": f"0.0.0.0:{spec.coordinator_port}",
             },
         ]

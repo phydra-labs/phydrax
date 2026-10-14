@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.applications.geophysics._ensembles import (
     geophysical_analysis_increments,
     GeophysicalAnalysisInventory,
@@ -41,7 +42,7 @@ from phydrax.uq import (
 
 @pytest.fixture(autouse=True)
 def _double_precision() -> Any:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

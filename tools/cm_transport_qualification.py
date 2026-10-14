@@ -11,12 +11,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 from benchmarks._runtime import capture_environment
-from phydrax import ElectromagneticScaleContract
+from phydrax import config as pxconfig, ElectromagneticScaleContract
 from phydrax.chemistry.periodic._boltzmann import (
     ConstantRelaxationTime,
     PeriodicBoltzmannPlan,
@@ -146,7 +145,7 @@ def main() -> None:
         default=Path("benchmarks/cm_transport_qualification.json"),
     )
     arguments = parser.parse_args()
-    if not jax.config.x64_enabled:
+    if not pxconfig.x64_enabled():
         raise ValueError("Transport qualification requires JAX_ENABLE_X64=1.")
     payload = qualification()
     arguments.output.parent.mkdir(parents=True, exist_ok=True)

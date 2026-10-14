@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.tensor_network._anyon import (
     AnyonicTensor,
     AnyonicTensorBlock,
@@ -17,7 +18,7 @@ from phydrax.tensor_network._anyon import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_frontier_contracts() -> None:

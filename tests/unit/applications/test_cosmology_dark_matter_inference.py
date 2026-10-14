@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax.applications.cosmology._dark_matter_inference import (
     ConstantExternalDarkMatterProduct,
     DarkMatterCoordinateContract,
@@ -41,7 +42,7 @@ NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _provenance(*, source_kind: Any = "native", differentiation: Any = None) -> Any:

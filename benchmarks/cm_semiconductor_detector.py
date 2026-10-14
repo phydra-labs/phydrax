@@ -6,13 +6,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from _runtime import (
@@ -22,6 +20,7 @@ from _runtime import (
     measure_repeated,
 )
 
+from phydrax import config as pxconfig
 from phydrax.applications.semiconductor._detector import (
     DetectorBiasElectrostaticPlan,
     DetectorElectrode,
@@ -42,7 +41,7 @@ from phydrax.discretization import (
 from phydrax.dynamics import StateLayout, TrajectoryData
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 _EPSILON = 11.7 * 8.8541878128e-12
 
 

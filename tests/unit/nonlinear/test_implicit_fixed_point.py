@@ -8,9 +8,10 @@ import pytest
 import phydrax as phx
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 _COUPLING = jnp.asarray([[0.6, -0.3], [0.2, 0.5]])
 

@@ -7,7 +7,10 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
-from ..uq import QuantumTomographyData, tetrahedral_qubit_povm
+from ..uq._quantum_tomography import (
+    QuantumTomographyData,
+    tetrahedral_qubit_povm,
+)
 from ._quantum_tomography import QuantumTomographyProblem
 
 

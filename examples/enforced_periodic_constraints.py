@@ -27,7 +27,6 @@ and incompatible constant jumps at the corner of two periodic directions.
 
 import time
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -37,7 +36,7 @@ from jax.typing import ArrayLike
 import phydrax as phx
 
 
-jax.config.update("jax_enable_x64", True)
+phx.config.configure(phx.config.RuntimeConfig(enable_x64=True))
 
 FINAL_TIME = 0.2
 PRESSURE_DROP = 0.75

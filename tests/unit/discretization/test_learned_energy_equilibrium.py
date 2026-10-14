@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.discretization.discrete_velocity._energy_equilibrium import (
     EnergyEquilibriumStatus,
     PositiveEnergyEquilibriumPlan,
@@ -20,7 +21,7 @@ from phydrax.discretization.discrete_velocity._quadrature import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def _energy_flux(populations: Any, velocities: Any) -> Any:

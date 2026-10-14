@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import config as pxconfig
 from phydrax.optics.wave._coupled_mode import (
     BidirectionalCoupledModePlan,
     BidirectionalCoupledModeStatus,
@@ -19,7 +20,7 @@ from phydrax.optics.wave._coupled_mode import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 def test_coupled_mode_scenario_1() -> None:

@@ -28,6 +28,7 @@ from benchmarks._runtime import (
     RuntimeEnvironment,
     source_build_fingerprint,
 )
+from phydrax import config as pxconfig
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax.applications.nuclear_fuel import (
     fuel_parameterization,
@@ -50,7 +51,7 @@ from tools.nuclear_fuel_qualification import (
 )
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 
 @dataclass(frozen=True, slots=True)

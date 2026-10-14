@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 from .report import (
     BenchmarkReport,
@@ -315,7 +316,7 @@ def run_nuts_scheduling_benchmark(
         raise ValueError("targets must be distinct.")
     if len(selected_chain_counts) != len(set(selected_chain_counts)):
         raise ValueError("chain_counts must be distinct.")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     started_at = utc_now_iso()
     started = time.perf_counter()
     cases = tuple(

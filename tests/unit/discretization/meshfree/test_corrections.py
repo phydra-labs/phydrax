@@ -34,6 +34,7 @@ from examples.meshfree_learned_metric_correction import (
     train,
     training_loss,
 )
+from phydrax import config as pxconfig
 from phydrax.discretization.meshfree import (
     MeshfreeCorrectionStatus,
     MeshfreeEdgeFluxCandidate,
@@ -66,7 +67,7 @@ class _Dense(NamedTuple):
 
 @pytest.fixture(scope="module", autouse=True)
 def _double_precision() -> Iterator[None]:
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         yield
 
 

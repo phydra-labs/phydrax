@@ -9,16 +9,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import h5py
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications import electrophysiology as ep
 from phydrax.interchange import require_lossless
 
 
 def main() -> None:
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     with TemporaryDirectory(prefix="phydrax-sonata-") as directory:
         root = Path(directory)
         (root / "lif.json").write_text(

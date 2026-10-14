@@ -14,6 +14,7 @@ from pathlib import Path
 import equinox as eqx
 import jax
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import almonacid_2024_repository_case
 
 
@@ -34,7 +35,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.steps < 1:
         parser.error("--steps must be positive")
-    jax.config.update("jax_enable_x64", True)
+    pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
     plan, parameters, history, dt, end = almonacid_2024_repository_case(
         args.inputs, refinement=args.refinement, protocol=args.protocol
     )

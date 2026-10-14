@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,9 +23,10 @@ import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 
 import phydrax as phx
+from phydrax import config as pxconfig
 
 
-jax.config.update("jax_enable_x64", True)
+pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
 
 la = phx.linalg
 

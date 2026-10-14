@@ -16,6 +16,7 @@ import numpy as np
 from jax.sharding import Mesh, PartitionSpec as P
 
 import phydrax as phx
+from phydrax import config as pxconfig
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 
 
@@ -492,7 +493,7 @@ def _flagship() -> dict[str, object]:
 
 
 def qualify() -> dict[str, object]:
-    if not bool(jax.config.read("jax_enable_x64")):
+    if not bool(pxconfig.x64_enabled()):
         raise ValueError("Multiphysics phase-field qualification requires float64.")
     sections = {
         "thermal_solidification_reference": _thermal_solidification(),

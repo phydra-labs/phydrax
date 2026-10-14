@@ -13,10 +13,10 @@ import tarfile
 from pathlib import Path
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax import config as pxconfig
 from phydrax.applications.skeletal_muscle.continuum import (
     Almonacid2024MaterialParameters,
     almonacid_2024_material_response,
@@ -138,7 +138,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--oracle", type=Path, default=_DEFAULT_ORACLE)
     args = parser.parse_args()
-    with jax.enable_x64(True):
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
         print(json.dumps(qualify(args.oracle), indent=2, sort_keys=True, allow_nan=False))
 
 

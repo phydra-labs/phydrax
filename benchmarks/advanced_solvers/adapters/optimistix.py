@@ -8,6 +8,8 @@ import importlib.metadata
 from dataclasses import dataclass
 from typing import Any
 
+from phydrax import config as pxconfig
+
 from ..problems import NonlinearProblem, OptimizationProblem
 from ._availability import import_module, probe_modules
 from .base import (
@@ -80,8 +82,7 @@ class OptimistixAdapter(BenchmarkAdapter):
         )
 
     def setup(self, spec: CaseSpec, /) -> _OptimistixState:
-        jax = import_module("jax")
-        jax.config.update("jax_enable_x64", True)
+        pxconfig.configure(pxconfig.RuntimeConfig(enable_x64=True))
         jnp = import_module("jax.numpy")
         problem = spec.problem
         if isinstance(problem, OptimizationProblem):
