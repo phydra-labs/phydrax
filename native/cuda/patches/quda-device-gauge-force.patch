@@ -1,0 +1,25 @@
+# Upstream: https://github.com/lattice/quda/blob/ba501e4/lib/interface_quda.cpp
+# State: local fix for computeGaugeForceQuda ignoring QudaGaugeParam.location.
+# Remove when the pinned upstream honors the declared location for external fields.
+# Both the gauge links and momentum may be CUDA-resident; reference wrappers must
+# describe their actual location so GaugeField::copy does not stage through host.
+--- a/lib/interface_quda.cpp
++++ b/lib/interface_quda.cpp
+@@ -4100,7 +4100,7 @@
+   checkGaugeParam(qudaGaugeParam);
+ 
+   GaugeFieldParam gParam(*qudaGaugeParam, siteLink);
+-  gParam.location = QUDA_CPU_FIELD_LOCATION;
++  gParam.location = qudaGaugeParam->location;
+   GaugeField cpuSiteLink = !qudaGaugeParam->use_resident_gauge ? GaugeField(gParam) : GaugeField();
+ 
+   if (qudaGaugeParam->use_resident_gauge && !gaugePrecise) errorQuda("No resident gauge field to use");
+@@ -4112,7 +4112,7 @@
+   GaugeField cudaSiteLink = qudaGaugeParam->use_resident_gauge ? gaugePrecise->create_alias() : GaugeField(gParam);
+ 
+   GaugeFieldParam gParamMom(*qudaGaugeParam, mom, QUDA_ASQTAD_MOM_LINKS);
+-  gParamMom.location = QUDA_CPU_FIELD_LOCATION;
++  gParamMom.location = qudaGaugeParam->location;
+ 
+   GaugeField cpuMom = !qudaGaugeParam->use_resident_mom ? GaugeField(gParamMom) : GaugeField();
+ 

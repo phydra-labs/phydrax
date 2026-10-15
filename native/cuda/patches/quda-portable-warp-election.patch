@@ -1,0 +1,55 @@
+# Upstream: https://github.com/lattice/quda/blob/ba501e4/include/targets/cuda/target_device.h
+# State: local CUDA 12 CCCL compatibility and pre-SM90 warp-election fix.
+# Remove when the pinned upstream supplies a toolkit/architecture-portable
+# warp election and declares its cuda_runtime.h prerequisite.
+--- a/include/targets/cuda/target_device.h
++++ b/include/targets/cuda/target_device.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cuda_runtime.h>
+ #include <quda_api.h>
+ #include <type_traits>
+ #include <algorithm>
+@@ -191,6 +192,23 @@
+       }
+     }
+ 
++    // elect.sync is available in PTX 8.0, but CUDA 12 CCCL has no C++
++    // wrapper. Keep its converged-warp semantics on both toolkit majors.
++#ifdef QUDA_CUDA_CC
++    __device__ inline bool elect_one_lane()
++    {
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
++      unsigned int elected;
++      asm volatile("{ .reg .pred p; elect.sync _|p, %1; selp.b32 %0, 1, 0, p; }"
++                   : "=r"(elected) : "r"(0xFFFFFFFFu));
++      return elected != 0;
++#else
++      const auto lane = thread_idx_linear<3>() % 32;
++      return lane == static_cast<unsigned int>(__ffs(__activemask()) - 1);
++#endif
++    }
++#endif
++
+     template <bool is_device> struct is_thread_zero_impl {
+       template <class T> bool operator()(const T &) { return true; }
+     };
+@@ -203,7 +221,7 @@
+         unsigned int warp_id = tid / 32;
+         unsigned int uniform_warp_id = __shfl_sync(0xFFFFFFFF, warp_id, 0); // Broadcast from lane 0
+         // unsigned int uniform_warp_id = __reduce_min_sync(~0, warp_id == 0); perhaps faster on sm_100
+-        return (uniform_warp_id == 0 && cuda::ptx::elect_sync(0xFFFFFFFF));
++        return (uniform_warp_id == 0 && elect_one_lane());
+       }
+     };
+ #endif
+@@ -227,7 +245,7 @@
+     };
+ #ifdef QUDA_CUDA_CC
+     template <> struct is_lane_zero_impl<true> {
+-      __device__ bool operator()() { return cuda::ptx::elect_sync(0xFFFFFFFF); }
++      __device__ bool operator()() { return elect_one_lane(); }
+     };
+ #endif
+ 

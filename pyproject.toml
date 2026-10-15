@@ -90,8 +90,15 @@ scip = [
 commercial = [
   "cryptography>=50.0.1,<51",
 ]
-cudss = [
-  "spineax>=0.0.5,<0.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+cuda12 = [
+  "jax[cuda12]>=0.11.2,<0.12; sys_platform == 'linux'",
+  "phydrax-cuda-major==12.*",
+  "phydrax-cuda12==0.2.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+cuda13 = [
+  "jax[cuda13]>=0.11.2,<0.12; sys_platform == 'linux'",
+  "phydrax-cuda-major==13.*",
+  "phydrax-cuda13==0.2.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 fmi = [
   "fmpy>=0.3.32,<0.4",
@@ -242,6 +249,8 @@ qa = [
     "ty==0.0.84",
     "scipy-stubs>=1.18.1.1,<1.19",
     "cadquery-ocp-stubs>=8.0.1.0.0,<9",
+    # Typing the CUDA companion build backends (native/cuda12, native/cuda13).
+    "scikit-build-core>=1.1.0,<2",
 ]
 
 
@@ -251,10 +260,22 @@ conflicts = [
     {extra = "fmi"},
     {extra = "privacy-jax"},
   ],
+  [{extra = "cuda12"}, {extra = "cuda13"}],
 ]
 
 [tool.uv.sources]
 phydrax-meshcore = { path = "native/meshcore" }
+phydrax-cuda-major = [
+  { path = "packaging/cuda-major/12", extra = "cuda12" },
+  { path = "packaging/cuda-major/13", extra = "cuda13" },
+]
+phydrax-cuda12 = { path = "native/cuda12", extra = "cuda12" }
+phydrax-cuda13 = { path = "native/cuda13", extra = "cuda13" }
+
+[tool.uv.extra-build-variables]
+# Developer builds target only the local GPU; release wheels use tools/build_cuda_wheels.py.
+phydrax-cuda12 = { SKBUILD_CMAKE_DEFINE = "PHX_CUDA_ARCHITECTURES=native" }
+phydrax-cuda13 = { SKBUILD_CMAKE_DEFINE = "PHX_CUDA_ARCHITECTURES=native" }
 
 
 [tool.ruff]
@@ -362,6 +383,8 @@ include = [
   "examples",
   "mkdocstrings_setup.py",
   "native/meshcore/python",
+  "native/cuda12",
+  "native/cuda13",
 ]
 
 [tool.ty.analysis]
@@ -377,6 +400,7 @@ replace-imports-with-any = [
   "dafoam.**",
   "design.**",
   "e3nn.**",
+  "gpt.**",
   "h5py.h5o",
   "mace.**",
   "manifold3d.**",
@@ -391,6 +415,8 @@ replace-imports-with-any = [
   "pyvista.**",
   "qdesignoptimizer.**",
   "qiskit_metal.**",
+  "qlat.**",
+  "qlat_utils.**",
   "scikits.**",
   "sklearn.**",
   "sksparse.**",
@@ -426,6 +452,7 @@ markers = [
     "typecheck: runs the pinned ty checker over static typing fixtures",
     "strict_jax: enforces strict dtype/rank promotion and warnings at native-JAX contract surfaces",
     "meshcore: requires the native phydrax-meshcore library (installed or PHYDRAX_MESHCORE_LIBRARY)",
+    "cuda_native: requires a Phydrax CUDA companion library (installed or PHYDRAX_CUDA_<COMPONENT>_LIBRARY)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",

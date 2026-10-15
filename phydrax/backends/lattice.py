@@ -7,7 +7,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import (
+    Any,
+    assert_never,
+    ClassVar,
+    Literal,
+    Protocol,
+    runtime_checkable,
+    TypeAlias,
+)
 
 import equinox as eqx
 import jax
@@ -21,8 +29,9 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import checked
-from ._availability import probe_backend
+from ..typing import checked, parse
+from ._availability import probe_backend, probe_cuda_component
+from ._lattice_geometry import wilson_geometry
 from ._types import (
     BackendAvailability,
     BackendCapabilities,
@@ -187,17 +196,28 @@ class LatticeKernelProvider(Protocol):
     @property
     def capabilities(self) -> LatticeKernelCapabilities: ...
 
+    def status(self) -> LatticeProviderStatus: ...
+
     def gauge_action(
-        self, plaquettes: ArrayLike, beta: ArrayLike, owned_mask: ArrayLike, /
+        self,
+        links: ArrayLike,
+        beta: ArrayLike,
+        owned_mask: ArrayLike,
+        /,
+        *,
+        lattice_shape: tuple[int, ...],
+        periodic: tuple[bool, ...],
     ) -> Array: ...
 
     def gauge_force(
         self,
         links: ArrayLike,
-        staples: ArrayLike,
         beta: ArrayLike,
         owned_mask: ArrayLike,
         /,
+        *,
+        lattice_shape: tuple[int, ...],
+        periodic: tuple[bool, ...],
     ) -> Array: ...
 
     def wilson_dslash(
@@ -235,13 +255,11 @@ NATIVE_JAX_LATTICE_CAPABILITIES = LatticeKernelCapabilities(
 )
 
 
-class NativeJaxLatticeProvider:
+class NativeJaxLatticeProvider(StrictModule):
     """Allocation-transparent JAX kernels over canonical site/link arrays."""
 
-    __slots__ = ()
-
-    provider_id = "jax-native-lattice"
-    capabilities = NATIVE_JAX_LATTICE_CAPABILITIES
+    provider_id: ClassVar[str] = "jax-native-lattice"
+    capabilities: ClassVar[LatticeKernelCapabilities] = NATIVE_JAX_LATTICE_CAPABILITIES
 
     def status(self, /) -> LatticeProviderStatus:
         return LatticeProviderStatus(
@@ -252,14 +270,20 @@ class NativeJaxLatticeProvider:
         )
 
     def gauge_action(
-        self, plaquettes: ArrayLike, beta: ArrayLike, owned_mask: ArrayLike, /
+        self,
+        links: ArrayLike,
+        beta: ArrayLike,
+        owned_mask: ArrayLike,
+        /,
+        *,
+        lattice_shape: tuple[int, ...],
+        periodic: tuple[bool, ...],
     ) -> Array:
-        values = jnp.asarray(plaquettes)
+        values, valid, _ = wilson_geometry(links, lattice_shape, periodic)
         mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
-        if values.ndim < 3 or values.shape[-1] != values.shape[-2]:
-            raise ValueError("Plaquettes must end in square color-matrix axes.")
         if mask.shape != values.shape[:-2]:
             raise ValueError("owned_mask must match the plaquette batch shape.")
+        mask = mask & valid
         self.capabilities.require(_GAUGE_ACTION, values.dtype)
         colors = values.shape[-1]
         density = 1.0 - jnp.real(jnp.trace(values, axis1=-2, axis2=-1)) / colors
@@ -270,26 +294,22 @@ class NativeJaxLatticeProvider:
     def gauge_force(
         self,
         links: ArrayLike,
-        staples: ArrayLike,
         beta: ArrayLike,
         owned_mask: ArrayLike,
         /,
+        *,
+        lattice_shape: tuple[int, ...],
+        periodic: tuple[bool, ...],
     ) -> Array:
         """Return negative Wilson gradient in left algebra coordinates.
 
-        The provider accepts staples S with plaquette trace Re Tr(U S†).
-        For anti-Hermitian A and U(t)=exp(t A)U, the returned F obeys
+        Staples are constructed from the declared block geometry. For
+        anti-Hermitian A and U(t)=exp(t A)U, the returned F obeys
         dS_W/dt=Re Tr(A F), using the metric <A,F>=-Re Tr(A F).
         """
         links_ = jnp.asarray(links)
-        staples_ = jnp.asarray(staples)
+        _, _, staples_ = wilson_geometry(links_, lattice_shape, periodic)
         mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
-        if (
-            links_.shape != staples_.shape
-            or links_.ndim < 3
-            or links_.shape[-1] != links_.shape[-2]
-        ):
-            raise ValueError("Links and staples must share square color-matrix axes.")
         if mask.shape != links_.shape[:-2]:
             raise ValueError("owned_mask must match the link batch shape.")
         self.capabilities.require(_GAUGE_FORCE, links_.dtype)
@@ -378,7 +398,7 @@ class NativeJaxLatticeProvider:
 
 
 _QUDA_BACKEND = BackendCapabilities(
-    backend="pyquda",
+    backend="quda",
     problem_kinds=(
         _GAUGE_ACTION,
         _GAUGE_FORCE,
@@ -392,14 +412,14 @@ _QUDA_BACKEND = BackendCapabilities(
     supports_assembled=False,
     coordinate_dtypes=("complex64", "complex128"),
     distribution=BackendDistributionCapabilities(
-        array_model="rank_local",
-        scopes=("single_device", "multi_device", "multi_host"),
+        array_model="global",
+        scopes=("single_device",),
         platforms=("cuda",),
-        collectives=("halo_exchange", "sum"),
-        transformations=("operation_specific_jvp",),
-        communicator_model="external",
-        supports_process_local_input=True,
-        supports_distributed_output=True,
+        collectives=(),
+        transformations=("jit",),
+        communicator_model="none",
+        supports_process_local_input=False,
+        supports_distributed_output=False,
         supports_topology_change_restart=False,
     ),
 )
@@ -419,82 +439,127 @@ _GRID_BACKEND = BackendCapabilities(
     supports_assembled=False,
     coordinate_dtypes=("complex64", "complex128"),
     distribution=BackendDistributionCapabilities(
-        array_model="rank_local",
-        scopes=("single_device", "multi_process", "multi_host"),
-        platforms=("cpu", "cuda"),
-        collectives=("halo_exchange", "sum"),
+        array_model="host",
+        scopes=("single_device",),
+        platforms=("cpu",),
+        collectives=(),
         transformations=(),
-        communicator_model="external",
-        supports_process_local_input=True,
-        supports_distributed_output=True,
-        supports_topology_change_restart=True,
+        communicator_model="none",
+        supports_process_local_input=False,
+        supports_distributed_output=False,
+        supports_topology_change_restart=False,
     ),
 )
 
 _QLAT_BACKEND = BackendCapabilities(
     backend="qlat",
-    problem_kinds=(_GAUGE_ACTION, _GAUGE_FORCE, _WILSON_DSLASH),
+    problem_kinds=(_GAUGE_ACTION, _GAUGE_FORCE),
     execution="host",
     host_only=True,
     supports_matrix_free=True,
     supports_assembled=False,
     coordinate_dtypes=("complex128",),
     distribution=BackendDistributionCapabilities(
-        array_model="rank_local",
-        scopes=("single_device", "multi_process"),
+        array_model="host",
+        scopes=("single_device",),
         platforms=("cpu",),
-        collectives=("halo_exchange", "sum"),
+        collectives=(),
         transformations=(),
-        communicator_model="external",
-        supports_process_local_input=True,
-        supports_distributed_output=True,
+        communicator_model="none",
+        supports_process_local_input=False,
+        supports_distributed_output=False,
         supports_topology_change_restart=False,
     ),
 )
 
 
-def pyquda_availability() -> BackendAvailability:
-    return probe_backend(
+def quda_availability() -> BackendAvailability:
+    """Probe the owned single-process QUDA companion without initializing QUDA."""
+    evidence = probe_cuda_component(
         _QUDA_BACKEND,
-        module="pyquda",
-        requirement="install PyQUDA with an ABI-compatible QUDA and CUDA runtime",
-        distributions=("pyquda",),
+        component="quda",
+        requirement="install the matching Phydrax CUDA extra and companion",
     )
+    if evidence.available and jax.process_count() != 1:
+        return BackendAvailability(
+            capabilities=evidence.capabilities,
+            available=False,
+            requirement=evidence.requirement,
+            reason="packaged QUDA requires a single JAX process (QUDA_MPI=OFF)",
+            versions=evidence.versions,
+            environment_issues=evidence.environment_issues,
+        )
+    return evidence
 
 
 def grid_availability() -> BackendAvailability:
-    return probe_backend(
-        _GRID_BACKEND,
-        module="gpt",
-        requirement="install the Grid Python GPT bindings and their native runtime",
-        distributions=("gpt",),
+    from ._lattice_gpt import adapter_availability
+
+    return adapter_availability(
+        probe_backend(
+            _GRID_BACKEND,
+            module="gpt",
+            requirement="install the Grid Python GPT bindings and their native runtime",
+            distributions=("gpt",),
+        )
     )
 
 
 def qlat_availability() -> BackendAvailability:
-    return probe_backend(
-        _QLAT_BACKEND,
-        module="qlat",
-        requirement="install qlat and its native MPI/OpenMP runtime",
-        distributions=("qlat",),
+    from ._lattice_qlat import adapter_availability
+
+    return adapter_availability(
+        probe_backend(
+            _QLAT_BACKEND,
+            module="qlat",
+            requirement="install qlat and its native MPI/OpenMP runtime",
+            distributions=("qlat",),
+        )
     )
 
 
 def optional_lattice_provider_availability() -> tuple[BackendAvailability, ...]:
     """Return honest discovery evidence; no unavailable adapter is constructed."""
 
-    return (pyquda_availability(), grid_availability(), qlat_availability())
+    return (quda_availability(), grid_availability(), qlat_availability())
+
+
+LatticeProviderName: TypeAlias = Literal["jax-native-lattice", "quda", "gpt-grid", "qlat"]
+
+
+def create_lattice_provider(selector: LatticeProviderName, /) -> LatticeKernelProvider:
+    """Construct a provider only after its canonical runtime admission boundary."""
+    selected = parse(selector, LatticeProviderName, "selector")
+    match selected:
+        case "jax-native-lattice":
+            return NativeJaxLatticeProvider()
+        case "quda":
+            from ._lattice_quda import QudaLatticeProvider
+
+            return QudaLatticeProvider()
+        case "gpt-grid":
+            from ._lattice_gpt import GridLatticeProvider
+
+            return GridLatticeProvider()
+        case "qlat":
+            from ._lattice_qlat import QlatLatticeProvider
+
+            return QlatLatticeProvider()
+        case _:
+            assert_never(selected)
 
 
 __all__ = [
+    "create_lattice_provider",
     "grid_availability",
     "LatticeKernelCapabilities",
     "LatticeKernelCapabilityError",
     "LatticeKernelProvider",
+    "LatticeProviderName",
     "LatticeProviderStatus",
     "NATIVE_JAX_LATTICE_CAPABILITIES",
     "NativeJaxLatticeProvider",
     "optional_lattice_provider_availability",
-    "pyquda_availability",
+    "quda_availability",
     "qlat_availability",
 ]

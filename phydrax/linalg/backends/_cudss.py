@@ -7,11 +7,11 @@ from __future__ import annotations
 import importlib
 from math import prod
 from types import ModuleType
-from typing import Any
+from typing import Any, final
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, lax
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
@@ -20,13 +20,15 @@ from .._results import LinearSolveStatus
 from .._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
 
-class SpineaxSymbolicState(StrictModule):
+@final
+class CudssSymbolicState(StrictModule):
     token: Any
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
 
 
-class SpineaxFactorState(StrictModule):
+@final
+class CudssFactorState(StrictModule):
     token: Any
     storage: SparseStorage
     positive_inertia: Array
@@ -36,32 +38,37 @@ class SpineaxFactorState(StrictModule):
     structure_id: str = eqx.field(static=True)
 
 
-class SpineaxBackendOutput(StrictModule):
+@final
+class CudssBackendOutput(StrictModule):
     value: Array
     status: Array
     iterations: Array
+    refinement_steps: Array
     rank: Array
     condition_estimate: Array
     singular_values: Array | None
+    native_rebuilds: Array
 
 
-def _cudss() -> ModuleType:
-    return importlib.import_module("spineax.cudss")
+def _ffi() -> ModuleType:
+    return importlib.import_module("phydrax.linalg.backends._cudss_ffi")
 
 
 def _storage(problem: Any, /) -> SparseStorage:
     operator = problem.operator
     if not isinstance(operator, AbstractSparseLinearOperator):
-        raise TypeError("Spineax preparation requires an AbstractSparseLinearOperator.")
+        raise TypeError("cuDSS preparation requires an AbstractSparseLinearOperator.")
     storage = operator.sparse_storage()
-    if jnp.issubdtype(storage.values.dtype, jnp.complexfloating):
-        raise ValueError("Spineax requires real-valued CSR storage.")
+    if storage.values.dtype not in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
+        raise ValueError(
+            "cuDSS requires real-valued CSR storage with float32/float64 values."
+        )
     if not storage.canonical or not storage.sorted_indices:
-        raise ValueError("Spineax requires sorted canonical CSR storage.")
+        raise ValueError("cuDSS requires sorted canonical CSR storage.")
     if storage.shape[0] != storage.shape[1]:
-        raise ValueError("Spineax requires square CSR storage.")
+        raise ValueError("cuDSS requires square CSR storage.")
     if storage.index_width != 32:
-        raise ValueError("Spineax requires 32-bit CSR indices.")
+        raise ValueError("cuDSS requires 32-bit CSR indices.")
     nnz = storage.nnz
     positions = jnp.arange(nnz, dtype=storage.indptr.dtype)
     rows = jnp.searchsorted(storage.indptr[1:], positions, side="right")
@@ -79,68 +86,58 @@ def _storage(problem: Any, /) -> SparseStorage:
     values = eqx.error_if(
         storage.values,
         invalid,
-        "Spineax CSR storage must be finite, bounded, monotone, sorted, and unique.",
+        "cuDSS CSR storage must be finite, bounded, monotone, sorted, and unique.",
     )
     return eqx.tree_at(lambda item: item.values, storage, values)
 
 
 def _factor_values(storage: SparseStorage, /) -> Array:
-    if not storage.batch_shape:
-        return storage.values
-    return storage.values.reshape((prod(storage.batch_shape), storage.nnz))
+    return (
+        storage.values.reshape((prod(storage.batch_shape), storage.nnz))
+        if storage.batch_shape
+        else storage.values
+    )
 
 
 def _inertia(token: Any, batch_shape: tuple[int, ...], /) -> tuple[Array, Array, Array]:
-    cudss = _cudss()
-    batch_size = prod(batch_shape) if batch_shape else 1
-    counts = cudss.inertia(cudss.query(token), batch_size=batch_size)
-    if not batch_shape:
-        positive, negative = counts[0], counts[1]
-        zero = jnp.asarray(-1, dtype=jnp.int32)
-    else:
-        shaped = counts.reshape(batch_shape + (2,))
-        positive = shaped[..., 0]
-        negative = shaped[..., 1]
-        zero = jnp.full(batch_shape, -1, dtype=jnp.int32)
-    return positive, negative, zero
+    diagonal, _ = _ffi().diagonal(lax.stop_gradient(token))
+    shaped = diagonal.reshape(batch_shape + (-1,))
+    positive = jnp.sum(shaped >= 1e-13, axis=-1, dtype=jnp.int32)
+    negative = jnp.sum(shaped <= -1e-13, axis=-1, dtype=jnp.int32)
+    return positive, negative, jnp.full(batch_shape, -1, dtype=jnp.int32)
 
 
-def analyze_spineax(problem: Any, plan: LinearSolvePlan, /) -> SpineaxSymbolicState:
+def analyze_cudss(problem: Any, plan: LinearSolvePlan, /) -> CudssSymbolicState:
+    from ..._cuda_native import cuda_partition_key
+
     method = plan.policy.method
     if not isinstance(method, SparseLDLT):
-        raise TypeError("Spineax analysis requires SparseLDLT.")
+        raise TypeError("cuDSS analysis requires SparseLDLT.")
     storage = _storage(problem)
-    cudss = _cudss()
-    token = cudss.analyze(
+    token = _ffi().analyze(
         _factor_values(storage),
         storage.indptr,
         storage.indices,
-        mtype_id="symmetric",
-        mview_id="full",
+        partition=cuda_partition_key(plan.plan_id),
+        capacity=method.factor_cache_capacity,
         reordering=method.reordering,
         memory=method.memory_mode,
     )
-    return SpineaxSymbolicState(
-        token,
-        storage.batch_shape,
-        problem.operator.operator_id,
-    )
+    return CudssSymbolicState(token, storage.batch_shape, problem.operator.operator_id)
 
 
-def bind_spineax(
-    symbolic: SpineaxSymbolicState,
-    problem: Any,
-    plan: LinearSolvePlan,
-    /,
-) -> SpineaxFactorState:
-    if not isinstance(symbolic, SpineaxSymbolicState):
-        raise TypeError("Spineax binding requires SpineaxSymbolicState.")
+def bind_cudss(
+    symbolic: CudssSymbolicState, problem: Any, plan: LinearSolvePlan, /
+) -> CudssFactorState:
+    del plan
+    if not isinstance(symbolic, CudssSymbolicState):
+        raise TypeError("cuDSS binding requires CudssSymbolicState.")
     storage = _storage(problem)
     if problem.operator.operator_id != symbolic.structure_id:
-        raise ValueError("Spineax binding cannot change sparse structure.")
-    token = _cudss().factorize(symbolic.token, _factor_values(storage))
+        raise ValueError("cuDSS binding cannot change sparse structure.")
+    token = _ffi().factorize(symbolic.token, _factor_values(storage))
     positive, negative, zero = _inertia(token, storage.batch_shape)
-    return SpineaxFactorState(
+    return CudssFactorState(
         token,
         storage,
         positive,
@@ -151,22 +148,22 @@ def bind_spineax(
     )
 
 
-def refresh_spineax(
-    symbolic: SpineaxSymbolicState,
-    previous: SpineaxFactorState,
+def refresh_cudss(
+    symbolic: CudssSymbolicState,
+    previous: CudssFactorState,
     problem: Any,
     plan: LinearSolvePlan,
     /,
-) -> SpineaxFactorState:
+) -> CudssFactorState:
     del symbolic, plan
-    if not isinstance(previous, SpineaxFactorState):
-        raise TypeError("Spineax refresh requires SpineaxFactorState.")
+    if not isinstance(previous, CudssFactorState):
+        raise TypeError("cuDSS refresh requires CudssFactorState.")
     storage = _storage(problem)
     if problem.operator.operator_id != previous.structure_id:
-        raise ValueError("Spineax refresh cannot change sparse structure.")
-    token = _cudss().refactorize(previous.token, _factor_values(storage))
+        raise ValueError("cuDSS refresh cannot change sparse structure.")
+    token = _ffi().refactorize(previous.token, _factor_values(storage))
     positive, negative, zero = _inertia(token, storage.batch_shape)
-    return SpineaxFactorState(
+    return CudssFactorState(
         token,
         storage,
         positive,
@@ -177,30 +174,25 @@ def refresh_spineax(
     )
 
 
-def solve_spineax(
-    state: SpineaxFactorState,
-    rhs: Array,
-    plan: LinearSolvePlan,
-    /,
-) -> SpineaxBackendOutput:
-    if not isinstance(state, SpineaxFactorState):
-        raise TypeError("Spineax solve requires SpineaxFactorState.")
+def solve_cudss(
+    state: CudssFactorState, rhs: Array, plan: LinearSolvePlan, /
+) -> CudssBackendOutput:
+    if not isinstance(state, CudssFactorState):
+        raise TypeError("cuDSS solve requires CudssFactorState.")
     if rhs.ndim < 2:
         raise ValueError("Canonical right-hand sides must end with (n, k).")
     method = plan.policy.method
     if not isinstance(method, SparseLDLT):
-        raise TypeError("Spineax solve requires SparseLDLT.")
-    batch_size = prod(state.batch_shape) if state.batch_shape else 1
+        raise TypeError("cuDSS solve requires SparseLDLT.")
     canonical = (
-        rhs.reshape((batch_size, rhs.shape[-2], rhs.shape[-1]))
+        rhs.reshape((prod(state.batch_shape), rhs.shape[-2], rhs.shape[-1]))
         if state.batch_shape
         else rhs
     )
-    spineax_rhs = jnp.moveaxis(canonical, -1, 0)
-    solved = _cudss().solve(
+    solved, rebuilt = _ffi().solve(
         state.token,
-        spineax_rhs,
-        ir_nsteps=method.refinement_steps,
+        jnp.moveaxis(canonical, -1, 0),
+        refinement_steps=method.refinement_steps,
     )
     canonical_value = jnp.moveaxis(solved, 0, -1)
     value = (
@@ -210,33 +202,33 @@ def solve_spineax(
     )
     finite = jnp.all(jnp.isfinite(value), axis=-2)
     status = jnp.where(
-        finite,
-        int(LinearSolveStatus.SUCCESS),
-        int(LinearSolveStatus.NONFINITE_OUTPUT),
+        finite, int(LinearSolveStatus.SUCCESS), int(LinearSolveStatus.NONFINITE_OUTPUT)
     ).astype(jnp.int32)
-    return SpineaxBackendOutput(
+    return CudssBackendOutput(
         value=value,
         status=status,
         iterations=jnp.full(status.shape, method.refinement_steps, dtype=jnp.int32),
+        refinement_steps=jnp.full(status.shape, method.refinement_steps, dtype=jnp.int32),
         rank=jnp.asarray(-1, dtype=jnp.int32),
         condition_estimate=jnp.full(status.shape, jnp.nan, dtype=rhs.real.dtype),
         singular_values=None,
+        native_rebuilds=jnp.asarray(rebuilt, dtype=jnp.int32).reshape(()),
     )
 
 
-def release_spineax(state: SpineaxFactorState, /) -> bool:
-    if not isinstance(state, SpineaxFactorState):
-        raise TypeError("Spineax release requires SpineaxFactorState.")
-    return _cudss().release(state.token)
+def release_cudss(state: CudssFactorState, /) -> bool | Array:
+    if not isinstance(state, CudssFactorState):
+        raise TypeError("cuDSS release requires CudssFactorState.")
+    return _ffi().release(state.token)
 
 
 __all__ = [
-    "SpineaxBackendOutput",
-    "SpineaxFactorState",
-    "SpineaxSymbolicState",
-    "analyze_spineax",
-    "bind_spineax",
-    "refresh_spineax",
-    "release_spineax",
-    "solve_spineax",
+    "CudssBackendOutput",
+    "CudssFactorState",
+    "CudssSymbolicState",
+    "analyze_cudss",
+    "bind_cudss",
+    "refresh_cudss",
+    "release_cudss",
+    "solve_cudss",
 ]

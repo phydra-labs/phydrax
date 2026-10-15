@@ -1,0 +1,57 @@
+[build-system]
+requires = [
+  "scikit-build-core>=1.1.0,<2",
+  "cmake>=4.4.3,<5",
+  "ninja>=1.13.2,<2",
+  "jax>=0.11.2,<0.12",
+  "jaxlib>=0.11.2,<0.12",
+  "nvidia-cuda-nvcc>=13.4.92,<14",
+  "nvidia-cuda-crt>=13.4.92,<14",
+  "nvidia-nvvm>=13.4.92,<14",
+  "nvidia-cuda-runtime>=13.4.92,<14",
+  "nvidia-cuda-cccl>=13.3.4.3.1,<14",
+  "nvidia-cublas>=13.8.0.4,<14",
+  "nvidia-cusparse>=12.8.6.72,<13",
+  "nvidia-cusolver>=12.3.4.7,<13",
+  "nvidia-curand>=10.4.4.72,<11",
+  "nvidia-nvjitlink>=13.4.92,<14",
+  "nvidia-nvtx>=13.4.92,<14",
+  "nvidia-nvml-dev>=13.4.92,<14",
+  "nvidia-cuda-profiler-api>=13.4.92,<14",
+  "nvidia-cudss-cu13>=0.8,<0.9",
+]
+build-backend = "_build_backend"
+backend-path = ["."]
+
+[project]
+name = "phydrax-cuda13"
+# Released in lockstep with phydrax, which pins and verifies this exact version.
+version = "0.2.2"
+description = "CUDA 13 native cuDSS, AmgX, and QUDA components for Phydrax (plain C ABI)."
+requires-python = ">=3.12,<3.13"
+authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]
+license = {text = "Phydra Non-Production License (PNPL)"}
+dependencies = [
+  "phydrax-cuda-major==13.*",
+  "nvidia-cudss-cu13>=0.8,<0.9",
+  "nvidia-cublas>=13.8.0.4,<14",
+  "nvidia-cusparse>=12.8.6.72,<13",
+  "nvidia-cusolver>=12.3.4.7,<13",
+  "nvidia-curand>=10.4.4.72,<11",
+  "nvidia-cuda-runtime>=13.4.92,<14",
+  "nvidia-nvjitlink>=13.4.92,<14",
+]
+
+[tool.scikit-build]
+minimum-version = "1.1"
+cmake.version = ">=4.4.3,<5"
+ninja.version = ">=1.13.2,<2"
+cmake.build-type = "Release"
+cmake.source-dir = "../cuda"
+cmake.define.PHX_CUDA_MAJOR = "13"
+# ctypes loads the component libraries without a CPython extension ABI.
+wheel.py-api = "py3"
+wheel.packages = ["python/phydrax_cuda13"]
+# CMake installs the repository license notices into SKBUILD_METADATA_DIR/licenses.
+# PEP 639 project.license-files cannot reference files outside this project root.
+wheel.license-files = []

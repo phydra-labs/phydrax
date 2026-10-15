@@ -1,0 +1,127 @@
+# Phydrax companion specialization: only the public dDDI mode is exposed.
+# Keep hDDI and integer double-matrix vectors internally for host/device copies
+# and classical AMG graph operations. Do not remove algorithms or solver types.
+# This cuts unused float/mixed/complex instantiations, not numerical precision.
+# Qualified by the same aggregation/classical, refresh, multi-RHS GPU tests.
+diff --git a/include/amgx_config.h b/include/amgx_config.h
+--- a/include/amgx_config.h
++++ b/include/amgx_config.h
+@@ -124,5 +124,19 @@ typedef enum
+ } AMGX_Mode;
+ 
++#ifdef PHX_AMGX_DDDI_ONLY
++#define AMGX_FORALL_BUILDS_HOST(codeLineMacro) codeLineMacro(AMGX_mode_hDDI)
++#define AMGX_FORINTVEC_BUILDS_HOST(codeLineMacro) codeLineMacro(AMGX_mode_hIDI)
++#define AMGX_FORALL_BUILDS_DEVICE(codeLineMacro) codeLineMacro(AMGX_mode_dDDI)
++#define AMGX_FORINTVEC_BUILDS_DEVICE(codeLineMacro) codeLineMacro(AMGX_mode_dIDI)
++#define AMGX_FORCOMPLEX_BUILDS_DEVICE(codeLineMacro)
++#define AMGX_FORCOMPLEX_BUILDS_HOST(codeLineMacro)
++#define AMGX_FORALL_BUILDS(codeLineMacro) \
++  AMGX_FORALL_BUILDS_HOST(codeLineMacro) AMGX_FORALL_BUILDS_DEVICE(codeLineMacro)
++#define AMGX_FORCOMPLEX_BUILDS(codeLineMacro)
++#define AMGX_FORINTVEC_BUILDS(codeLineMacro) \
++  AMGX_FORINTVEC_BUILDS_HOST(codeLineMacro) AMGX_FORINTVEC_BUILDS_DEVICE(codeLineMacro)
++#else
++
+ /* Builds for host */
+ #ifdef AMGX_build_host
+ #define AMGX_FORALL_BUILDS_HOST(codeLineMacro)\
+@@ -175,6 +189,7 @@ typedef enum
+ #define AMGX_FORINTVEC_BUILDS(codeLineMacro)\
+   AMGX_FORINTVEC_BUILDS_HOST(codeLineMacro)\
+   AMGX_FORINTVEC_BUILDS_DEVICE(codeLineMacro)
++#endif
+ 
+ 
+ #if defined(__cplusplus)
+diff --git a/src/amg.cu b/src/amg.cu
+--- a/src/amg.cu
++++ b/src/amg.cu
+@@ -1553,6 +1553,7 @@
+ 
+ // real valued case
+ template class AMG<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class AMG<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class AMG<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+@@ -1560,6 +1561,7 @@
+ template class AMG<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class AMG<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class AMG<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif
+ 
+ // Emits the device code of thrust::sequence on integer vectors, which the
+ // inline Matrix::colorMatrix used here launches. Without it, nvcc 13 builds
+diff --git a/src/cycles/cg_cycle.cu b/src/cycles/cg_cycle.cu
+--- a/src/cycles/cg_cycle.cu
++++ b/src/cycles/cg_cycle.cu
+@@ -111,7 +111,9 @@
+ template class CG_CycleDispatcher<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class CG_CycleDispatcher<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class CG_CycleDispatcher<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+ template class CG_CycleDispatcher<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class CG_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class CG_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif
+diff --git a/src/cycles/cg_flex_cycle.cu b/src/cycles/cg_flex_cycle.cu
+--- a/src/cycles/cg_flex_cycle.cu
++++ b/src/cycles/cg_flex_cycle.cu
+@@ -115,7 +115,9 @@
+ template class CG_Flex_CycleDispatcher<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class CG_Flex_CycleDispatcher<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class CG_Flex_CycleDispatcher<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+ template class CG_Flex_CycleDispatcher<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class CG_Flex_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class CG_Flex_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif
+diff --git a/src/cycles/f_cycle.cu b/src/cycles/f_cycle.cu
+--- a/src/cycles/f_cycle.cu
++++ b/src/cycles/f_cycle.cu
+@@ -29,7 +29,9 @@
+ template class F_CycleDispatcher<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class F_CycleDispatcher<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class F_CycleDispatcher<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+ template class F_CycleDispatcher<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class F_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class F_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif
+diff --git a/src/cycles/w_cycle.cu b/src/cycles/w_cycle.cu
+--- a/src/cycles/w_cycle.cu
++++ b/src/cycles/w_cycle.cu
+@@ -28,7 +28,9 @@
+ template class W_CycleDispatcher<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class W_CycleDispatcher<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class W_CycleDispatcher<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+ template class W_CycleDispatcher<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class W_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class W_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif
+diff --git a/src/readers.cu b/src/readers.cu
+--- a/src/readers.cu
++++ b/src/readers.cu
+@@ -658,12 +658,16 @@
+     // if we are in the real-valued mode and complex conversion is specified and we are reading actual matrix
+     if (complex_conversion != 0 && !types::util<ValueTypeA>::is_complex && !types::util<ValueTypeB>::is_complex && !io_config::hasProps(io_config::SIZE, props))
+     {
++#ifdef PHX_AMGX_DDDI_ONLY
++        FatalError("Complex MatrixMarket conversion is not part of the dDDI companion.", AMGX_ERR_NOT_SUPPORTED_TARGET);
++#else
+         // read system as complex valued system of same precision and convert it to our matrices
+         typedef typename TConfig_h::template setVecPrec<vecRealToComplexPrec<TConfig_h::vecPrec>::CPrec>::Type TConfig_h_cvec;
+         typedef typename TConfig_h_cvec::template setMatPrec<matRealToComplexPrec<TConfig_h::matPrec>::CPrec>::Type TComplex_h;
+         ReadAndConvert<TConfig_h, TComplex_h, IVector_h, types::util<ValueTypeA>::is_complex>::readAndConvert(fin, fname, complex_conversion, A, b, x, props, rank_rows);
+         return true;
++#endif
+     }
+ 
+     //skip comments and read amgx relevant parameters
+     std::list<std::string> nvConfig;

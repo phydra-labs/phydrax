@@ -519,7 +519,7 @@ def test_sparse_assembly_refresh_reuses_structure_and_rejects_route_changes() ->
 
 
 def test_assembly_contracts_scenario_2() -> None:
-    from phydrax.linalg.backends._spineax import _storage
+    from phydrax.linalg.backends._cudss import _storage
 
     space = la.ArraySpace((2,), dtype=jnp.complex128)
     relation = phx.sparse.EdgeRelation(

@@ -1,0 +1,14 @@
+# Phydrax dDDI specialization, alongside amgx-dddi-only.patch.
+# Preserve upstream v_cycle.cu CRLF bytes; apply with patch --binary.
+--- a/src/cycles/v_cycle.cu
++++ b/src/cycles/v_cycle.cu
+@@ -25,7 +25,9 @@
+ template class V_CycleDispatcher<AMGX_vecDouble, AMGX_matDouble, AMGX_indInt>;
++#ifndef PHX_AMGX_DDDI_ONLY
+ template class V_CycleDispatcher<AMGX_vecFloat, AMGX_matFloat, AMGX_indInt>;
+ template class V_CycleDispatcher<AMGX_vecDouble, AMGX_matFloat, AMGX_indInt>;
+ 
+ template class V_CycleDispatcher<AMGX_vecComplex, AMGX_matComplex, AMGX_indInt>;
+ template class V_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matComplex, AMGX_indInt>;
+ template class V_CycleDispatcher<AMGX_vecDoubleComplex, AMGX_matDoubleComplex, AMGX_indInt>;
++#endif

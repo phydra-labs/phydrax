@@ -7,6 +7,21 @@
 from importlib import import_module
 from typing import Any
 
+from .._cuda_environment import (
+    assess_cuda_environment,
+    cuda_environment,
+    CudaEnvironmentFacts,
+    CudaEnvironmentIssue,
+    CudaEnvironmentReport,
+    CudaIssueCode,
+    CudaIssueSeverity,
+    MappedCudaLibrary,
+)
+from .._cuda_native import (
+    cuda_native_resources,
+    CudaNativePartition,
+    CudaNativeResources,
+)
 from .._jax_config import process_numerics
 from ._availability import distribution_versions, import_backend_module, probe_backend
 from ._types import (
@@ -55,6 +70,11 @@ from .clarabel import (
     ClarabelPlan,
     prepare_clarabel,
     PreparedClarabel,
+)
+from .cudss import (
+    cudss_availability,
+    CUDSS_CAPABILITIES,
+    CudssBackend,
 )
 from .cvxpy import cvxpy_availability, CVXPY_CAPABILITIES
 from .distributed import (
@@ -143,13 +163,9 @@ from .slepc import (
 from .spatial import (
     pallas_spatial_availability,
     PALLAS_SPATIAL_CAPABILITIES,
+    spatial_leaf_pair_fragment,
     spatial_pair_acceleration,
     spatial_squared_norm,
-)
-from .spineax import (
-    spineax_availability,
-    SPINEAX_CAPABILITIES,
-    SpineaxBackend,
 )
 
 
@@ -178,6 +194,17 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "assess_cuda_environment",
+    "cuda_environment",
+    "CudaEnvironmentFacts",
+    "CudaEnvironmentIssue",
+    "CudaEnvironmentReport",
+    "CudaIssueCode",
+    "CudaIssueSeverity",
+    "MappedCudaLibrary",
+    "cuda_native_resources",
+    "CudaNativeResources",
+    "CudaNativePartition",
     "ATOMISTIC_KERNEL_LIMITS",
     "AtomisticAccelerationTarget",
     "AtomisticKernelAdmission",
@@ -223,12 +250,13 @@ __all__ = [
     "SCIPPlan",
     "prepare_scip",
     "scip_availability",
-    "SPINEAX_CAPABILITIES",
+    "CUDSS_CAPABILITIES",
     "PALLAS_SPATIAL_CAPABILITIES",
     "pallas_spatial_availability",
     "spatial_squared_norm",
     "spatial_pair_acceleration",
-    "SpineaxBackend",
+    "spatial_leaf_pair_fragment",
+    "CudssBackend",
     "AMD_JAX_PROFILE",
     "APPLE_METAL_PROFILE",
     "INTEL_JAX_PROFILE",
@@ -241,7 +269,7 @@ __all__ = [
     "Mpi4JaxCollectiveProvider",
     "mpi4jax_availability",
     "vendor_execution_profiles",
-    "spineax_availability",
+    "cudss_availability",
     "AMGX_CAPABILITIES",
     "PYAMGCL_CAPABILITIES",
     "AMGBackendName",

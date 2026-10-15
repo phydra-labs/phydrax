@@ -3,6 +3,7 @@
 *.txt
 !native/providers/**/CMakeLists.txt
 !native/meshcore/**/CMakeLists.txt
+!native/cuda/**/CMakeLists.txt
 !LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
 !LICENSES/JZTREE-MIT.txt
@@ -16,6 +17,10 @@
 !LICENSES/BILBY-MIT.txt
 !LICENSES/JAXNRSUR-MIT.txt
 !LICENSES/RIPPLE-MIT.txt
+!LICENSES/QUDA-MIT.txt
+!LICENSES/AMGX-BSD-3-CLAUSE.txt
+!LICENSES/AMGX-NOTICES.txt
+!LICENSES/EIGEN-MPL-2.0.txt
 *.log
 *.egg-info
 *.cache

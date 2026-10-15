@@ -5,6 +5,7 @@
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -57,7 +58,7 @@ def _available(capabilities: Any) -> Any:
     )
 
 
-def test_dependency_absence_is_precise_and_importing_phydrax_remains_lazy(
+def test_pyamgcl_dependency_absence_is_precise(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr(
@@ -66,12 +67,9 @@ def test_dependency_absence_is_precise_and_importing_phydrax_remains_lazy(
     )
 
     cpu = amg.PyAMGCLBackend().availability()
-    gpu = amg.AmgXBackend().availability()
 
     assert not cpu.available
-    assert not gpu.available
     assert "not installed" in cpu.reason
-    assert "not installed" in gpu.reason
     with pytest.raises(phx.backends.BackendUnavailableError, match="pyamgcl"):
         cpu.require("linear-system")
 
@@ -92,6 +90,17 @@ def test_policy_configuration_is_canonical_and_fingerprinted() -> None:
 
     assert left.config == right.config
     assert left.policy_id == right.policy_id
+    assert left.hierarchy_cache_capacity == 2
+    assert (
+        amg.AmgXPolicy(hierarchy_cache_capacity=1).policy_id
+        != amg.AmgXPolicy(hierarchy_cache_capacity=2).policy_id
+    )
+
+
+@pytest.mark.parametrize("capacity", [0, -1])
+def test_amgx_cache_capacity_must_be_positive(capacity: int) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        amg.AmgXPolicy(hierarchy_cache_capacity=capacity)
 
 
 class _FakePyAMGCLSolver:
@@ -172,136 +181,330 @@ def test_pyamgcl_source_api_preserves_pytree_rhs_and_refreshes(monkeypatch: Any)
         amg.refresh_pyamgcl(prepared, _problem(changed_pattern))
 
 
-class _FakeHandle:
-    def __init__(self, provider: Any) -> None:
-        self.provider = provider
-        self.destroyed = 0
-
-    def destroy(self) -> None:
-        self.destroyed += 1
+@pytest.fixture
+def native_amgx() -> None:
+    availability = amg.amgx_availability()
+    if not availability.available:
+        pytest.skip(availability.reason)
 
 
-class _FakeConfig(_FakeHandle):
-    def create_from_dict(self, config: Any) -> Any:
-        self.provider.config = config
-        return self
+def _poisson_problem(
+    *, dtype: Any = jnp.float64, operator_id: str = "amgx-native-poisson"
+) -> tuple[Any, jax.Array, jax.Array]:
+    # Large enough to exercise multigrid rather than exact tiny Krylov breakdown.
+    size = 64
+    matrix = (
+        2.0 * jnp.eye(size, dtype=dtype)
+        - jnp.eye(size, k=1, dtype=dtype)
+        - jnp.eye(size, k=-1, dtype=dtype)
+    )
+    rows, columns = np.nonzero(np.asarray(matrix))
+    space = la.ArraySpace((size,), dtype=dtype)
+    operator = phx.sparse.SparseCoordinateOperator(
+        phx.sparse.EdgeRelation(columns, rows, source_size=size, target_size=size),
+        matrix[rows, columns],
+        source=space,
+        target=space,
+        operator_id=operator_id,
+    )
+    rhs = jnp.stack(
+        (
+            jnp.ones((size,), dtype=dtype),
+            jnp.linspace(-1.0, 1.0, size, dtype=dtype),
+        ),
+        axis=1,
+    )
+    return la.LinearSystem(operator), matrix, rhs
 
 
-class _FakeResources(_FakeHandle):
-    def create_simple(self, config: Any) -> Any:
-        self.config = config
-        return self
-
-
-class _FakeMatrix(_FakeHandle):
-    def create(self, resources: Any) -> Any:
-        self.resources = resources
-        return self
-
-    def upload_CSR(self, matrix: Any) -> None:
-        self.array = matrix.toarray()
-        self.provider.matrix_uploads += 1
-
-
-class _FakeVector(_FakeHandle):
-    def create(self, resources: Any) -> Any:
-        self.resources = resources
-        self.provider.vectors.append(self)
-        return self
-
-    def upload(self, value: Any) -> None:
-        self.array = np.array(value, copy=True)
-
-    def download(self) -> Any:
-        return np.array(self.array, copy=True)
-
-
-class _FakeSolver(_FakeHandle):
-    def create(self, resources: Any, config: Any) -> Any:
-        self.resources = resources
-        self.config = config
-        return self
-
-    def setup(self, matrix: Any) -> None:
-        self.matrix = matrix
-        self.provider.setup_calls += 1
-
-    def solve(self, right_hand_side: Any, solution: Any) -> None:
-        solution.array = np.linalg.solve(self.matrix.array, right_hand_side.array)
-        self.provider.solve_calls += 1
-
-    def get_iterations_number(self) -> int:
-        return 5
-
-    def get_status(self) -> str:
-        return "converged"
-
-
-class _FakeAmgX:
-    def __init__(self) -> None:
-        self.initialized = 0
-        self.finalized = 0
-        self.matrix_uploads = 0
-        self.setup_calls = 0
-        self.solve_calls = 0
-        self.vectors = []
-        self.config = None
-        self.Config = lambda: _FakeConfig(self)
-        self.Resources = lambda: _FakeResources(self)
-        self.Matrix = lambda: _FakeMatrix(self)
-        self.Vector = lambda: _FakeVector(self)
-        self.Solver = lambda: _FakeSolver(self)
-
-    def initialize(self) -> None:
-        self.initialized += 1
-
-    def finalize(self) -> None:
-        self.finalized += 1
-
-
-def test_amgx_official_lifecycle_reuses_hierarchy_for_multiple_rhs(
-    monkeypatch: Any,
+def _assert_dense_parity(
+    result: Any, matrix: jax.Array, rhs: jax.Array, *, rtol: float = 1e-5
 ) -> None:
-    provider = _FakeAmgX()
-    monkeypatch.setattr(
-        amg.AmgXBackend,
-        "availability",
-        lambda self: _available(self.capabilities),
-    )
-    monkeypatch.setattr(amg, "import_backend_module", lambda *args: provider)
-    matrix = jnp.asarray([[4.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 3.0]])
-    problem = _problem(matrix)
-    plan = amg.plan_amgx(problem)
-    prepared = amg.prepare_amgx(problem, plan)
-    result = amg.solve_amgx(prepared, _rhs())
+    reference = np.linalg.solve(np.asarray(matrix), np.asarray(rhs))
+    np.testing.assert_allclose(result.value, reference, rtol=rtol, atol=1e-7)
+    assert jnp.all(result.success)
+    assert jnp.all(result.diagnostics.native_status == 0)
+    assert result.diagnostics.native_status.shape == rhs.shape[1:]
+    assert result.diagnostics.iterations.shape == rhs.shape[1:]
+    assert result.diagnostics.native_residual_norm.shape == rhs.shape[1:]
+    assert jnp.all(jnp.isfinite(result.diagnostics.native_residual_norm))
+    assert jnp.all(result.diagnostics.iterations >= 0)
 
-    coordinates = jax.vmap(problem.operator.source.flatten, in_axes=1, out_axes=1)(
-        result.value
-    )
-    expected_rhs = jax.vmap(problem.operator.target.flatten, in_axes=1, out_axes=1)(
-        _rhs()
-    )
-    assert provider.initialized == 1
-    assert provider.matrix_uploads == 1
-    assert provider.setup_calls == 1
-    assert provider.solve_calls == 2
-    assert jnp.allclose(matrix @ coordinates, expected_rhs)
-    assert jnp.all(result.diagnostics.iterations == 5)
-    assert result.diagnostics.provider_reasons == ("converged", "converged")
-    assert int(result.transfers.host_to_device_bytes) == 2 * expected_rhs.nbytes
-    assert int(result.transfers.device_to_host_bytes) == expected_rhs.nbytes
-    assert int(result.transfers.synchronization_count) == 2
 
-    persistent_handles = (
-        prepared.runtime.solver,
-        prepared.runtime.matrix,
-        prepared.runtime.resources,
-        prepared.runtime.config,
+def _amgx_partition(prepared: Any) -> Any:
+    from phydrax._cuda_native import cuda_partition_key
+
+    jax.effects_barrier()
+    partition = cuda_partition_key(prepared.plan.plan_id)
+    matches = tuple(
+        entry
+        for entry in phx.backends.cuda_native_resources().partitions
+        if entry.component == "amgx" and entry.partition == partition
     )
-    amg.release_amgx(prepared)
-    amg.release_amgx(prepared)
-    assert prepared.released
-    assert provider.finalized == 1
-    assert all(handle.destroyed == 1 for handle in persistent_handles)
-    with pytest.raises(ValueError, match="released"):
-        amg.solve_amgx(prepared, _rhs())
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _amgx_live_count(prepared: amg.PreparedAmgX) -> int:
+    jax.effects_barrier()
+    return sum(
+        entry.live
+        for entry in phx.backends.cuda_native_resources().partitions
+        if entry.component == "amgx" and entry.partition == prepared.partition
+    )
+
+
+@pytest.mark.cuda_native
+@pytest.mark.parametrize("multi_rhs", [False, True], ids=("single-rhs", "multi-rhs"))
+def test_amgx_native_dense_parity(native_amgx: None, multi_rhs: bool) -> None:
+    problem, matrix, rhs = _poisson_problem()
+    if not multi_rhs:
+        rhs = rhs[:, 0]
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem))
+    try:
+        result = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(result, matrix, rhs)
+        assert result.diagnostics.native_rebuilds is not None
+        assert int(result.diagnostics.native_rebuilds) == 0
+        assert not result.provenance.promoted_to_float64
+        assert int(result.transfers.host_to_device_bytes) == 0
+        assert int(result.transfers.device_to_host_bytes) == 0
+    finally:
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_native_jit_matches_eager(native_amgx: None) -> None:
+    problem, matrix, rhs = _poisson_problem(operator_id="amgx-jit-parity")
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem))
+    try:
+        eager = amg.solve_amgx(prepared, rhs)
+        compiled = eqx.filter_jit(amg.solve_amgx)(prepared, rhs)
+        _assert_dense_parity(compiled, matrix, rhs)
+        np.testing.assert_allclose(compiled.value, eager.value, rtol=1e-12, atol=1e-12)
+        np.testing.assert_array_equal(
+            compiled.diagnostics.native_status, eager.diagnostics.native_status
+        )
+        np.testing.assert_array_equal(compiled.status, eager.status)
+    finally:
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_refresh_is_independent_and_old_coefficients_rebuild(
+    native_amgx: None,
+) -> None:
+    problem, matrix, rhs = _poisson_problem(operator_id="amgx-refresh-independent")
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem))
+    changed = eqx.tree_at(
+        lambda item: item.operator.coefficients,
+        problem,
+        2.0 * problem.operator.coefficients,
+    )
+    refreshed = amg.refresh_amgx(prepared, changed)
+    fresh = amg.prepare_amgx(changed, amg.plan_amgx(changed))
+    try:
+        assert refreshed is not prepared
+        assert not jnp.array_equal(refreshed.native_id, prepared.native_id)
+        assert int(refreshed.native_rebuilds) == 0
+        assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
+        refreshed_result = amg.solve_amgx(refreshed, rhs)
+        fresh_result = amg.solve_amgx(fresh, rhs)
+        _assert_dense_parity(refreshed_result, 2.0 * matrix, rhs)
+        np.testing.assert_allclose(
+            refreshed_result.value, fresh_result.value, rtol=1e-12, atol=1e-12
+        )
+        before = _amgx_partition(prepared).rebuilds
+        original_result = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(original_result, matrix, rhs)
+        assert original_result.diagnostics.native_rebuilds is not None
+        assert int(original_result.diagnostics.native_rebuilds) == 1
+        assert _amgx_partition(prepared).rebuilds == before + 1
+    finally:
+        amg.release_amgx(fresh)
+        amg.release_amgx(refreshed)
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_nonconvergence_preserves_per_rhs_provider_failure(
+    native_amgx: None,
+) -> None:
+    problem, _, rhs = _poisson_problem(operator_id="amgx-nonconvergence")
+    policy = amg.AmgXPolicy(
+        {
+            "config_version": 2,
+            "solver": {
+                "solver": "CG",
+                "preconditioner": {"solver": "NOSOLVER"},
+                "max_iters": 1,
+                "tolerance": 1e-14,
+                "norm": "L2",
+                "monitor_residual": 1,
+                "convergence": "RELATIVE_INI_CORE",
+            },
+        }
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    try:
+        result = amg.solve_amgx(prepared, rhs)
+        assert result.status.shape == (2,)
+        assert jnp.all(result.status == int(amg.AMGSolveStatus.PROVIDER_FAILURE))
+        assert jnp.all(~result.success)
+        assert result.diagnostics.native_status is not None
+        assert result.diagnostics.native_status.shape == (2,)
+        assert jnp.all(result.diagnostics.native_status != 0)
+        assert result.diagnostics.iterations is not None
+        assert jnp.all(result.diagnostics.iterations <= 1)
+        assert jnp.all(result.diagnostics.relative_residual_norm > 1e-14)
+    finally:
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+@pytest.mark.strict_jax
+def test_amgx_float32_promotion_is_recorded(native_amgx: None) -> None:
+    problem, matrix, rhs = _poisson_problem(
+        dtype=jnp.float32, operator_id="amgx-float32-promotion"
+    )
+    policy = amg.AmgXPolicy(
+        {
+            "config_version": 2,
+            "solver": {
+                "solver": "CG",
+                "max_iters": 100,
+                "tolerance": 1e-4,
+                "norm": "L2",
+                "monitor_residual": 1,
+                "convergence": "RELATIVE_INI_CORE",
+            },
+        }
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    try:
+        result = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(result, matrix, rhs, rtol=1e-2)
+        assert prepared.values.dtype == jnp.float64
+        assert result.provenance.promoted_to_float64
+        assert result.diagnostics.native_residual_norm is not None
+        assert result.diagnostics.native_residual_norm.dtype == jnp.float64
+    finally:
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_cuda13_classical_amg_pr386_regression(native_amgx: None) -> None:
+    from phydrax._cuda_native import load_cuda_component
+
+    if load_cuda_component("amgx").major != 13:
+        pytest.skip("Classical AMG PR #386 regression requires the CUDA 13 companion")
+    problem, matrix, rhs = _poisson_problem(operator_id="amgx-classical-cuda13")
+    policy = amg.AmgXPolicy(
+        {
+            "config_version": 2,
+            "solver": {
+                "solver": "FGMRES",
+                "preconditioner": {
+                    "solver": "AMG",
+                    "algorithm": "CLASSICAL",
+                    "selector": "PMIS",
+                    "interpolator": "D2",
+                    "coarse_solver": "DENSE_LU_SOLVER",
+                    "max_iters": 1,
+                    "max_levels": 10,
+                    "min_coarse_rows": 2,
+                },
+                "max_iters": 100,
+                "tolerance": 1e-8,
+                "norm": "L2",
+                "monitor_residual": 1,
+                "convergence": "RELATIVE_INI_CORE",
+            },
+        }
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    try:
+        _assert_dense_parity(amg.solve_amgx(prepared, rhs), matrix, rhs)
+    finally:
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+@pytest.mark.parametrize("capacity", [1, 2], ids=("capacity-one", "capacity-two"))
+def test_amgx_repeated_traced_refreshes_bound_native_resources(
+    native_amgx: None, capacity: int
+) -> None:
+    problem, matrix, rhs = _poisson_problem(
+        operator_id=f"amgx-traced-capacity-{capacity}"
+    )
+    policy = amg.AmgXPolicy(hierarchy_cache_capacity=capacity)
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem, policy))
+    refresh = eqx.filter_jit(amg.refresh_amgx)
+    current = prepared
+    try:
+        for step in range(8):
+            scale = 1.0 + (step + 1) / 8.0
+            changed = eqx.tree_at(
+                lambda item: item.operator.coefficients,
+                problem,
+                scale * problem.operator.coefficients,
+            )
+            current = refresh(current, changed)
+            result = amg.solve_amgx(current, rhs)
+            _assert_dense_parity(result, scale * matrix, rhs)
+            resources = _amgx_partition(current)
+            assert resources.capacity == capacity
+            assert 0 < resources.live <= capacity
+        old_result = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(old_result, matrix, rhs)
+        assert old_result.diagnostics.native_rebuilds is not None
+        assert int(old_result.diagnostics.native_rebuilds) == 1
+        assert _amgx_partition(prepared).live <= capacity
+    finally:
+        amg.release_amgx(current)
+        amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+def test_amgx_arrays_on_nondefault_gpu(native_amgx: None) -> None:
+    from phydrax._jax_config import default_device
+
+    devices = tuple(device for device in jax.devices() if device.platform == "gpu")
+    if len(devices) < 2:
+        pytest.skip("Non-default GPU AmgX qualification requires at least two GPUs")
+    device = devices[1]
+    with default_device(device):
+        problem, matrix, rhs = _poisson_problem(operator_id="amgx-nondefault-gpu")
+        prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem))
+        try:
+            result = eqx.filter_jit(amg.solve_amgx)(prepared, rhs)
+            _assert_dense_parity(result, matrix, rhs)
+            assert result.value.devices() == {device}
+            assert _amgx_partition(prepared).device == device.id
+        finally:
+            amg.release_amgx(prepared)
+
+
+@pytest.mark.cuda_native
+@pytest.mark.parametrize("traced", [False, True], ids=("eager", "traced"))
+def test_amgx_release_is_idempotent_and_preparation_rebuilds(
+    native_amgx: None, traced: bool
+) -> None:
+    problem, matrix, rhs = _poisson_problem(
+        operator_id=f"amgx-release-{'traced' if traced else 'eager'}"
+    )
+    prepared = amg.prepare_amgx(problem, amg.plan_amgx(problem))
+    release = eqx.filter_jit(amg.release_amgx) if traced else amg.release_amgx
+    try:
+        assert _amgx_partition(prepared).live == 1
+        release(prepared)
+        assert _amgx_live_count(prepared) == 0
+        release(prepared)
+        assert _amgx_live_count(prepared) == 0
+        result = amg.solve_amgx(prepared, rhs)
+        _assert_dense_parity(result, matrix, rhs)
+        assert result.diagnostics.native_rebuilds is not None
+        assert int(result.diagnostics.native_rebuilds) == 1
+        assert _amgx_partition(prepared).live == 1
+    finally:
+        amg.release_amgx(prepared)

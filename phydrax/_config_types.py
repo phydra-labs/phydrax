@@ -27,7 +27,9 @@ RankPromotion: TypeAlias = Literal["allow", "warn", "raise"]
 TransferGuard: TypeAlias = Literal[
     "allow", "log", "disallow", "log_explicit", "disallow_explicit"
 ]
-LibrarySetting: TypeAlias = Literal["meshcore", "metis"]
+LibrarySetting: TypeAlias = Literal[
+    "meshcore", "metis", "cuda_cudss", "cuda_amgx", "cuda_quda"
+]
 WorkerSetting: TypeAlias = Literal["mmg", "omega_h", "tioga", "vorocrust"]
 EnvironmentMerge: TypeAlias = Literal["override", "defaults"]
 

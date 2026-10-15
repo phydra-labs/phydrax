@@ -326,17 +326,32 @@ def test_native_provider_environment_retains_empty_text_and_aggregate_keys() -> 
     environment = {
         "PHYDRAX_MESHCORE_LIBRARY": "",
         "PHYDRAX_METIS_LIBRARY": "/metis",
+        "PHYDRAX_CUDA_CUDSS_LIBRARY": "/cuda/cudss",
+        "PHYDRAX_CUDA_AMGX_LIBRARY": "/cuda/amgx",
+        "PHYDRAX_CUDA_QUDA_LIBRARY": "/cuda/quda",
         "PHYDRAX_MMG_WORKER": "",
         "PHYDRAX_TIOGA_WORKER": "/tioga",
     }
     resolved = pxconfig.resolve(pxconfig.ProviderConfig, environment=environment)
     assert resolved.value == pxconfig.ProviderConfig(
-        library_paths={"meshcore": "", "metis": "/metis"},
+        library_paths={
+            "meshcore": "",
+            "metis": "/metis",
+            "cuda_cudss": "/cuda/cudss",
+            "cuda_amgx": "/cuda/amgx",
+            "cuda_quda": "/cuda/quda",
+        },
         workers={"mmg": "", "tioga": "/tioga"},
     )
     origins = {origin.path: origin.environment_keys for origin in resolved.origins}
     assert origins == {
-        "library_paths": ("PHYDRAX_MESHCORE_LIBRARY", "PHYDRAX_METIS_LIBRARY"),
+        "library_paths": (
+            "PHYDRAX_CUDA_AMGX_LIBRARY",
+            "PHYDRAX_CUDA_CUDSS_LIBRARY",
+            "PHYDRAX_CUDA_QUDA_LIBRARY",
+            "PHYDRAX_MESHCORE_LIBRARY",
+            "PHYDRAX_METIS_LIBRARY",
+        ),
         "workers": ("PHYDRAX_MMG_WORKER", "PHYDRAX_TIOGA_WORKER"),
     }
     assert (

@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from enum import IntEnum
 from math import isfinite, prod
-from threading import Lock
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias, TypedDict
 
 import equinox as eqx
@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.core import Tracer
 from jax.tree_util import PyTreeDef
 from jaxtyping import PyTree
 
@@ -23,17 +24,20 @@ from .._strict import StrictModule
 from ..linalg._problems import LinearSystem
 from ..linalg._spaces import AbstractVectorSpace
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
-from ._availability import import_backend_module, probe_backend
+from ._availability import import_backend_module, probe_backend, probe_cuda_component
 from ._types import (
     AbstractExternalBackend,
     BackendAvailability,
     BackendCapabilities,
+    BackendDistributionCapabilities,
     BackendTransferEvidence,
 )
 
 
 if TYPE_CHECKING:
     import scipy.sparse as sp
+
+    from ..sparse._linear import _SparseStoragePlan
 
 
 AMGBackendName: TypeAlias = Literal["pyamgcl", "amgx"]
@@ -57,7 +61,13 @@ AMGX_CAPABILITIES = BackendCapabilities(
     supports_matrix_free=False,
     supports_assembled=True,
     coordinate_dtypes=("float32", "float64"),
-    requires_explicit_release=True,
+    requires_explicit_release=False,
+    distribution=BackendDistributionCapabilities(
+        array_model="global",
+        scopes=("single_device",),
+        platforms=("cuda",),
+        transformations=("jit",),
+    ),
 )
 
 
@@ -68,10 +78,18 @@ _DEFAULT_AMGX_CONFIG = {
     "config_version": 2,
     "solver": {
         "solver": "FGMRES",
-        "preconditioner": {"solver": "AMG", "algorithm": "AGGREGATION"},
+        "preconditioner": {
+            "solver": "AMG",
+            "algorithm": "AGGREGATION",
+            # AmgX defaults to the classical PMIS selector, which aggregation lacks.
+            "selector": "SIZE_2",
+            "max_iters": 1,
+        },
         "max_iters": 100,
         "tolerance": 1.0e-8,
         "norm": "L2",
+        "monitor_residual": 1,
+        "convergence": "RELATIVE_INI_CORE",
     },
 }
 
@@ -144,12 +162,32 @@ class AmgXPolicy(StrictModule):
     """Immutable canonical AmgX configuration."""
 
     config: CanonicalConfig = eqx.field(static=True)
+    hierarchy_cache_capacity: int = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, config: Mapping[str, Any] | None = None, /) -> None:
+    def __init__(
+        self,
+        config: Mapping[str, Any] | None = None,
+        /,
+        *,
+        hierarchy_cache_capacity: int = 2,
+    ) -> None:
+        if isinstance(hierarchy_cache_capacity, bool) or not isinstance(
+            hierarchy_cache_capacity, int
+        ):
+            raise TypeError("AmgX hierarchy_cache_capacity must be an integer.")
+        if hierarchy_cache_capacity < 1:
+            raise ValueError("AmgX hierarchy_cache_capacity must be positive.")
         config_ = _canonical_config(_DEFAULT_AMGX_CONFIG if config is None else config)
         self.config = config_
-        self.policy_id = canonical_fingerprint({"kind": "amgx-policy", "config": config_})
+        self.hierarchy_cache_capacity = hierarchy_cache_capacity
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "amgx-policy",
+                "config": config_,
+                "hierarchy_cache_capacity": hierarchy_cache_capacity,
+            }
+        )
 
 
 class AMGSolveStatus(IntEnum):
@@ -166,6 +204,9 @@ class AMGSolveDiagnostics(StrictModule):
     relative_residual_norm: Array
     iterations: Array | None
     provider_reasons: tuple[str | None, ...] = eqx.field(static=True)
+    native_status: Array | None = None
+    native_residual_norm: Array | None = None
+    native_rebuilds: Array | None = None
 
 
 class AMGProvenance(StrictModule):
@@ -175,6 +216,7 @@ class AMGProvenance(StrictModule):
     backend: AMGBackendName = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
+    promoted_to_float64: bool = eqx.field(static=True, default=False)
 
 
 class AMGSolveResult(StrictModule):
@@ -205,6 +247,7 @@ class PyAMGCLPlan(StrictModule):
 
 class AmgXPlan(StrictModule):
     policy: AmgXPolicy
+    storage_plan: _SparseStoragePlan | None
     shape: tuple[int, int] = eqx.field(static=True)
     source_space_id: str = eqx.field(static=True)
     target_space_id: str = eqx.field(static=True)
@@ -222,23 +265,6 @@ class _PyAMGCLRuntime:
         self.solver = solver
 
 
-class _AmgXRuntime:
-    def __init__(
-        self,
-        module: Any,
-        config: Any,
-        resources: Any,
-        matrix: Any,
-        solver: Any,
-    ) -> None:
-        self.module = module
-        self.config = config
-        self.resources = resources
-        self.matrix = matrix
-        self.solver = solver
-        self.released = False
-
-
 class PreparedPyAMGCL(StrictModule):
     problem: LinearSystem
     plan: PyAMGCLPlan
@@ -253,12 +279,13 @@ class PreparedAmgX(StrictModule):
     plan: AmgXPlan
     numeric_version: Array
     transfers: BackendTransferEvidence
-    runtime: Any = eqx.field(static=True)
+    native_id: Array
+    indptr: Array
+    indices: Array
+    values: Array
+    native_rebuilds: Array
+    partition: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
-
-    @property
-    def released(self) -> bool:
-        return bool(self.runtime.released)
 
 
 class PyAMGCLBackend(AbstractExternalBackend):
@@ -311,11 +338,10 @@ class AmgXBackend(AbstractExternalBackend):
         return AMGX_CAPABILITIES
 
     def availability(self, /) -> BackendAvailability:
-        return probe_backend(
+        return probe_cuda_component(
             self.capabilities,
-            module="pyamgx",
-            requirement="install NVIDIA AmgX and the optional pyamgx bindings",
-            distributions=("pyamgx",),
+            component="amgx",
+            requirement="install phydrax[cuda12] or phydrax[cuda13] for the JAX CUDA major",
         )
 
     def plan(
@@ -348,11 +374,15 @@ def pyamgcl_availability() -> BackendAvailability:
 
 
 def amgx_availability() -> BackendAvailability:
-    """Probe pyamgx without retaining or importing it at package import time."""
+    """Probe the AmgX companion without loading it at package import time."""
     return AmgXBackend().availability()
 
 
-def _storage(problem: LinearSystem, /) -> SparseStorage:
+def _storage(
+    problem: LinearSystem, /, *, storage_plan: _SparseStoragePlan | None = None
+) -> SparseStorage:
+    from ..sparse._linear import SparseCoordinateOperator, SparseLinearMap
+
     if not isinstance(problem, LinearSystem):
         raise TypeError("AMG backends require a LinearSystem.")
     operator = problem.operator
@@ -360,7 +390,12 @@ def _storage(problem: LinearSystem, /) -> SparseStorage:
         raise TypeError("AMG backends require AbstractSparseLinearOperator storage.")
     if operator.batch_shape or not operator.source.compatible(operator.target):
         raise ValueError("AMG backends require an unbatched square endomorphism.")
-    storage = operator.sparse_storage()
+    storage = (
+        storage_plan.apply(operator.coefficients, relation=operator.relation)
+        if storage_plan is not None
+        and isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
+        else operator.sparse_storage()
+    )
     if storage.shape[0] != storage.shape[1]:
         raise ValueError("AMG backends require square CSR storage.")
     if not storage.canonical or not storage.sorted_indices:
@@ -393,9 +428,14 @@ class _AMGPlanFields(TypedDict):
 
 
 def _plan_fields(
-    problem: LinearSystem, policy_id: str, backend: AMGBackendName, /
+    problem: LinearSystem,
+    policy_id: str,
+    backend: AMGBackendName,
+    /,
+    *,
+    storage_plan: _SparseStoragePlan | None = None,
 ) -> _AMGPlanFields:
-    storage = _storage(problem)
+    storage = _storage(problem, storage_plan=storage_plan)
     pattern_id = _pattern_id(storage)
     coordinate_dtype = np.dtype(storage.values.dtype).name
     payload = {
@@ -439,14 +479,43 @@ def plan_amgx(
     policy: AmgXPolicy | None = None,
     /,
 ) -> AmgXPlan:
+    from ..sparse._linear import (
+        _SparseStoragePlan,
+        SparseCoordinateOperator,
+        SparseLinearMap,
+    )
+
     policy_ = AmgXPolicy() if policy is None else policy
     if not isinstance(policy_, AmgXPolicy):
         raise TypeError("policy must be AmgXPolicy or None.")
-    return AmgXPlan(policy=policy_, **_plan_fields(problem, policy_.policy_id, "amgx"))
+    operator = problem.operator
+    if (
+        isinstance(operator, SparseCoordinateOperator)
+        and operator._storage_plan is not None
+    ):
+        storage_plan = operator._storage_plan
+    elif isinstance(operator, (SparseCoordinateOperator, SparseLinearMap)):
+        storage_plan = _SparseStoragePlan(
+            operator.relation,
+            block_shape=operator.block_shape
+            if isinstance(operator, SparseCoordinateOperator)
+            else None,
+        )
+    else:
+        storage_plan = None
+    return AmgXPlan(
+        policy=policy_,
+        storage_plan=storage_plan,
+        **_plan_fields(problem, policy_.policy_id, "amgx", storage_plan=storage_plan),
+    )
 
 
-def _validate_plan_problem(plan: Any, problem: LinearSystem, /) -> SparseStorage:
-    storage = _storage(problem)
+def _validate_plan_problem(
+    plan: Any, problem: LinearSystem, /, *, check_pattern: bool = True
+) -> SparseStorage:
+    storage = _storage(
+        problem, storage_plan=plan.storage_plan if isinstance(plan, AmgXPlan) else None
+    )
     if (
         storage.shape != plan.shape
         or problem.operator.source.space_id != plan.source_space_id
@@ -456,7 +525,7 @@ def _validate_plan_problem(plan: Any, problem: LinearSystem, /) -> SparseStorage
         raise ValueError(
             "AMG numeric binding must preserve its symbolic operator contract."
         )
-    if _pattern_id(storage) != plan.pattern_id:
+    if check_pattern and _pattern_id(storage) != plan.pattern_id:
         raise ValueError("AMG numeric refresh requires an unchanged CSR pattern.")
     if np.dtype(storage.values.dtype).name != plan.coordinate_dtype:
         raise TypeError("AMG numeric refresh must preserve coordinate dtype.")
@@ -513,28 +582,27 @@ def prepare_pyamgcl(
     )
 
 
-_AMGX_LOCK = Lock()
-_AMGX_REFERENCES: dict[int, int] = {}
+def _amgx_attributes(plan: AmgXPlan, partition: int, /) -> dict[str, Any]:
+    return {
+        "partition": np.int64(partition),
+        "capacity": np.int64(plan.policy.hierarchy_cache_capacity),
+        "config": json.dumps(
+            _config_dict(plan.policy.config), sort_keys=True, separators=(",", ":")
+        ),
+    }
 
 
-def _acquire_amgx(module: Any, /) -> None:
-    key = id(module)
-    with _AMGX_LOCK:
-        count = _AMGX_REFERENCES.get(key, 0)
-        if count == 0:
-            module.initialize()
-        _AMGX_REFERENCES[key] = count + 1
-
-
-def _release_amgx_module(module: Any, /) -> None:
-    key = id(module)
-    with _AMGX_LOCK:
-        count = _AMGX_REFERENCES.get(key, 0)
-        if count <= 1:
-            _AMGX_REFERENCES.pop(key, None)
-            module.finalize()
-        else:
-            _AMGX_REFERENCES[key] = count - 1
+def _amgx_storage(storage: SparseStorage, /) -> tuple[Array, Array, Array]:
+    if max(*storage.shape, storage.nnz) > np.iinfo(np.int32).max:
+        raise ValueError("AmgX dDDI requires CSR dimensions and capacity to fit int32.")
+    values = storage.values.astype(jnp.float64)
+    if values.dtype != jnp.float64:
+        raise ValueError("AmgX dDDI requires JAX float64 support to be enabled.")
+    return (
+        storage.indptr.astype(jnp.int32),
+        storage.indices.astype(jnp.int32),
+        values,
+    )
 
 
 def prepare_amgx(
@@ -544,35 +612,32 @@ def prepare_amgx(
     *,
     numeric_version: Any = 0,
 ) -> PreparedAmgX:
+    from .._cuda_native import cuda_partition_key, load_cuda_component
+
     if not isinstance(plan, AmgXPlan):
         raise TypeError("plan must be AmgXPlan.")
     storage = _validate_plan_problem(plan, problem)
-    availability = AmgXBackend().availability()
-    module = import_backend_module(availability, "linear-system", "pyamgx")
-    _acquire_amgx(module)
-    config = resources = matrix = solver = None
-    try:
-        config = module.Config().create_from_dict(_config_dict(plan.policy.config))
-        resources = module.Resources().create_simple(config)
-        matrix = module.Matrix().create(resources)
-        matrix.upload_CSR(_scipy_csr(storage))
-        solver = module.Solver().create(resources, config)
-        solver.setup(matrix)
-    except Exception:
-        for resource in (solver, matrix, resources, config):
-            if resource is not None:
-                resource.destroy()
-        _release_amgx_module(module)
-        raise
-    matrix_bytes = storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
+    indptr, indices, values = _amgx_storage(storage)
+    version = _version(numeric_version)
+    load_cuda_component("amgx")
+    partition = cuda_partition_key(plan.plan_id)
+    native_id = jax.ffi.ffi_call(
+        "phydrax_amgx_setup",
+        jax.ShapeDtypeStruct((1,), jnp.int32),
+        has_side_effect=True,
+        vmap_method="sequential",
+    )(indptr, indices, values, **_amgx_attributes(plan, partition))
     return PreparedAmgX(
         problem=problem,
         plan=plan,
-        numeric_version=_version(numeric_version),
-        transfers=BackendTransferEvidence(
-            host_to_device_bytes=matrix_bytes,
-        ),
-        runtime=_AmgXRuntime(module, config, resources, matrix, solver),
+        numeric_version=version,
+        transfers=BackendTransferEvidence(synchronization_count=2),
+        native_id=native_id,
+        indptr=indptr,
+        indices=indices,
+        values=values,
+        native_rebuilds=jnp.asarray(0, dtype=jnp.int32),
+        partition=partition,
         prepared_id=canonical_fingerprint(
             {"kind": "prepared-amgx", "plan": plan.plan_id}
         ),
@@ -596,12 +661,45 @@ def refresh_pyamgcl(
 def refresh_amgx(prepared: PreparedAmgX, problem: LinearSystem, /) -> PreparedAmgX:
     if not isinstance(prepared, PreparedAmgX):
         raise TypeError("prepared must be PreparedAmgX.")
-    if prepared.released:
-        raise ValueError("Cannot refresh a released AmgX preparation.")
-    return prepare_amgx(
-        problem,
-        prepared.plan,
+    from .._cuda_native import load_cuda_component
+
+    storage = _validate_plan_problem(prepared.plan, problem, check_pattern=False)
+    indptr, indices, values = _amgx_storage(storage)
+    if indptr.shape != prepared.indptr.shape or indices.shape != prepared.indices.shape:
+        raise ValueError("AMG numeric refresh requires an unchanged CSR pattern.")
+    values = eqx.error_if(
+        values,
+        jnp.any(indptr != prepared.indptr) | jnp.any(indices != prepared.indices),
+        "AMG numeric refresh requires an unchanged CSR pattern.",
+    )
+    load_cuda_component("amgx")
+    native_id, rebuilt = jax.ffi.ffi_call(
+        "phydrax_amgx_refresh",
+        (
+            jax.ShapeDtypeStruct((1,), jnp.int32),
+            jax.ShapeDtypeStruct((1,), jnp.int32),
+        ),
+        has_side_effect=True,
+        vmap_method="sequential",
+    )(
+        prepared.native_id,
+        indptr,
+        indices,
+        values,
+        **_amgx_attributes(prepared.plan, prepared.partition),
+    )
+    return PreparedAmgX(
+        problem=problem,
+        plan=prepared.plan,
         numeric_version=prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
+        transfers=BackendTransferEvidence(synchronization_count=2),
+        native_id=native_id,
+        indptr=indptr,
+        indices=indices,
+        values=values,
+        native_rebuilds=rebuilt[0],
+        partition=prepared.partition,
+        prepared_id=prepared.prepared_id,
     )
 
 
@@ -816,43 +914,42 @@ def solve_amgx(
     *,
     initial_guess: PyTree[Any] | None = None,
 ) -> AMGSolveResult:
+    from .._cuda_native import load_cuda_component
+
     if not isinstance(prepared, PreparedAmgX):
         raise TypeError("prepared must be PreparedAmgX.")
-    if prepared.released:
-        raise ValueError("Cannot solve with a released AmgX preparation.")
     space = prepared.problem.operator.target
     rhs, rhs_shape, treedef, specifications = _pack_rhs(space, right_hand_side)
     guess = _initial_coordinates(
         prepared.problem.operator.source, initial_guess, rhs_shape
     )
-    solutions = []
-    iteration_values = []
-    reasons: list[str | None] = []
-    for index in range(rhs.shape[1]):
-        rhs_vector = prepared.runtime.module.Vector().create(prepared.runtime.resources)
-        solution_vector = prepared.runtime.module.Vector().create(
-            prepared.runtime.resources
-        )
-        try:
-            rhs_vector.upload(np.asarray(rhs[:, index]))
-            initial = (
-                np.zeros((rhs.shape[0],), dtype=np.dtype(rhs.dtype))
-                if guess is None
-                else np.asarray(guess[:, index])
-            )
-            solution_vector.upload(initial)
-            prepared.runtime.solver.solve(rhs_vector, solution_vector)
-            solutions.append(np.asarray(solution_vector.download()))
-            iterations, provider_reasons = _provider_metadata(
-                prepared.runtime.solver, None
-            )
-            if iterations is not None:
-                iteration_values.append(iterations)
-            reasons.append(provider_reasons[0] if provider_reasons else None)
-        finally:
-            solution_vector.destroy()
-            rhs_vector.destroy()
-    coordinates = jnp.asarray(np.stack(solutions, axis=1), dtype=rhs.dtype)
+    native_rhs = rhs.T.astype(jnp.float64)
+    native_guess = (
+        jnp.zeros_like(native_rhs) if guess is None else guess.T.astype(jnp.float64)
+    )
+    count = native_rhs.shape[0]
+    load_cuda_component("amgx")
+    solution, native_status, iterations, native_residual, rebuilt = jax.ffi.ffi_call(
+        "phydrax_amgx_solve",
+        (
+            jax.ShapeDtypeStruct(native_rhs.shape, jnp.float64),
+            jax.ShapeDtypeStruct((count,), jnp.int32),
+            jax.ShapeDtypeStruct((count,), jnp.int32),
+            jax.ShapeDtypeStruct((count,), jnp.float64),
+            jax.ShapeDtypeStruct((1,), jnp.int32),
+        ),
+        has_side_effect=False,
+        vmap_method="sequential",
+    )(
+        prepared.native_id,
+        prepared.indptr,
+        prepared.indices,
+        prepared.values,
+        native_rhs,
+        native_guess,
+        **_amgx_attributes(prepared.plan, prepared.partition),
+    )
+    coordinates = solution.T.astype(rhs.dtype)
     residual, relative = _residual_diagnostics(
         prepared.problem, rhs, coordinates, rhs_shape
     )
@@ -862,62 +959,51 @@ def solve_amgx(
         rhs_shape,
         _configured_tolerance(prepared.plan.policy, "amgx"),
     )
-    iterations = (
-        None
-        if len(iteration_values) != rhs.shape[1]
-        else jnp.asarray(iteration_values, dtype=jnp.int32).reshape(rhs_shape or ())
-    )
-    bytes_per_columns = rhs.nbytes
+    provider_status = native_status.reshape(rhs_shape or ())
+    status = jnp.where(
+        (status == int(AMGSolveStatus.SUCCESS)) & (provider_status != 0),
+        int(AMGSolveStatus.PROVIDER_FAILURE),
+        status,
+    ).astype(jnp.int32)
     return AMGSolveResult(
         value=_unpack_rhs(coordinates, rhs_shape, treedef, specifications),
         status=status,
         diagnostics=AMGSolveDiagnostics(
             residual_norm=residual,
             relative_residual_norm=relative,
-            iterations=iterations,
-            provider_reasons=tuple(reasons),
+            iterations=iterations.reshape(rhs_shape or ()),
+            provider_reasons=(),
+            native_status=provider_status,
+            native_residual_norm=native_residual.reshape(rhs_shape or ()),
+            native_rebuilds=rebuilt[0],
         ),
         provenance=AMGProvenance(
             numeric_version=prepared.numeric_version,
             backend="amgx",
             plan_id=prepared.plan.plan_id,
             prepared_id=prepared.prepared_id,
+            promoted_to_float64=prepared.plan.coordinate_dtype == "float32",
         ),
-        transfers=BackendTransferEvidence(
-            host_to_device_bytes=2 * bytes_per_columns,
-            device_to_host_bytes=bytes_per_columns,
-            synchronization_count=rhs.shape[1],
-        ),
+        transfers=BackendTransferEvidence(synchronization_count=2),
     )
 
 
 def release_amgx(prepared: PreparedAmgX, /) -> None:
-    """Idempotently destroy one AmgX hierarchy and release global state."""
+    """Idempotently free a memo entry; later use rebuilds from preparation leaves."""
+    from .._cuda_native import release_cuda_entries
+
     if not isinstance(prepared, PreparedAmgX):
         raise TypeError("prepared must be PreparedAmgX.")
-    runtime = prepared.runtime
-    if runtime.released:
-        return
-    runtime.released = True
-    failure: Exception | None = None
-    for resource in (
-        runtime.solver,
-        runtime.matrix,
-        runtime.resources,
-        runtime.config,
-    ):
-        try:
-            resource.destroy()
-        except Exception as error:
-            if failure is None:
-                failure = error
-    try:
-        _release_amgx_module(runtime.module)
-    except Exception as error:
-        if failure is None:
-            failure = error
-    if failure is not None:
-        raise failure
+    # The id can be a closed-over eager array even when release is being traced.
+    if isinstance(jnp.asarray(0, dtype=jnp.int32), Tracer):
+        jax.ffi.ffi_call(
+            "phydrax_amgx_release",
+            jax.ShapeDtypeStruct((1,), jnp.int32),
+            has_side_effect=True,
+            vmap_method="sequential",
+        )(prepared.native_id, partition=np.int64(prepared.partition))
+    else:
+        release_cuda_entries("amgx", prepared.partition, prepared.native_id)
 
 
 __all__ = [
