@@ -2,7 +2,60 @@
 
 ## Unreleased
 
+### Breaking
+- Rename provider `spineax-cudss` to `cudss` and lattice provider `pyquda` to
+  `quda`, with no compatibility aliases. Rename `SpineaxBackend`,
+  `SPINEAX_CAPABILITIES`, and `spineax_availability` to `CudssBackend`,
+  `CUDSS_CAPABILITIES`, and `cudss_availability`; rename `pyquda_availability`
+  to `quda_availability`.
+- Add positive `SparseLDLT.factor_cache_capacity` (default 8) and
+  `AmgXPolicy.hierarchy_cache_capacity` (default 2), intentionally changing
+  policy and plan identities.
+
+### Added
+- Mutually exclusive `cuda12` and `cuda13` installation extras with JAX's CUDA
+  plugin, NVIDIA wheels, a CUDA-major marker, and matching wheel-only
+  `phydrax-cuda12`/`phydrax-cuda13` companions on Linux x86-64. Both companions
+  include cuDSS, AmgX, and QUDA; cuDSS now also supports CUDA 12.
+- Device-resident, jittable AmgX and QUDA through public JAX FFI. AmgX uses
+  dDDI with explicit float32-promotion evidence, per-RHS native diagnostics,
+  and in-place native coefficient refresh while returning independent
+  preparations.
+- Declared per-plan native cache capacities, exact rebuild evidence, and
+  `phydrax.backends.cuda_native_resources()` snapshots of loaded components
+  and native memo partitions. cuDSS and AmgX no longer require explicit release:
+  release retires memo entries early, and released preparations remain usable
+  by rebuilding from their operands.
+- `ProviderConfig.library_paths` settings `cuda_cudss`, `cuda_amgx`, and
+  `cuda_quda`, with `PHYDRAX_CUDA_CUDSS_LIBRARY`, `PHYDRAX_CUDA_AMGX_LIBRARY`,
+  and `PHYDRAX_CUDA_QUDA_LIBRARY` development overrides.
+- CUDA issue codes `companion-missing`, `companion-invalid`,
+  `companion-version-mismatch`, `companion-major-mismatch`, and
+  `native-dependency-missing`.
+- `phydrax.backends.cuda_environment()` and pure `assess_cuda_environment()`,
+  with `CudaEnvironmentReport`, `CudaEnvironmentIssue`, `CudaEnvironmentFacts`,
+  `MappedCudaLibrary`, `CudaIssueCode`, and `CudaIssueSeverity`.
+- `BackendAvailability.environment_issues` (a new field, which changes the
+  `BackendAvailability` PyTree structure) and pre-import CUDA-major refusal for
+  user-provided mpi4jax native dependencies.
+
+### Removed
+- Spineax, pyamgx, PyQUDA, and CuPy provider paths and dependencies in favor
+  of the owned CUDA companions.
+- **Breaking:** the `cudss` extra. Use `phydrax[cuda12]` or `phydrax[cuda13]`
+  for native cuDSS on Linux x86-64.
+
 ### Fixed
+- `GaussConstraintNetwork` stores its static `incidence_pattern` as Python
+  integers instead of NumPy scalars, which equinox treated as arrays set as
+  static and warned about; network identities and PyTree structure are unchanged.
+- `PETScLinearPlan` stores its static `operator_pattern` and
+  `preconditioner_pattern` as Python integers instead of NumPy scalars, which
+  equinox warned about as arrays set as static; plan identities are unchanged.
+- `ConicProgram` bound-role indices and `PreparedConicSensitivity` index fields
+  are stored as Python integers instead of NumPy scalars (equinox warned about
+  arrays set as static); sensitivity preparation reuses the program's indices
+  instead of recomputing them. Structure identities are unchanged.
 - One-step checkpointed scans (and one-step replay blocks) apply their body once
   instead of emitting a loop, so differentiated single-tile streamed relations,
   such as the periodic MACE water export, no longer start output and derivative
@@ -10,6 +63,20 @@
   Multi-step differentiated scans remain refused under iree-base-compiler 3.11.
   Block-AMR cut-cell tests that need the supermesh now skip at the optional
   meshcore provider boundary.
+- Vectorized `PackedBVH` nearest-item and leaf-candidate traversals (used by
+  `bvh_nearest_items`, `point_select_leaf_items`, and their geometry, field-query,
+  splatting, and optics consumers) no longer materialize the whole tree, item
+  boxes, and IDs once per query lane; a batched `lax.cond` inside the traversal
+  loop was broadcasting every closed-over array to the lane count.
+- `UniformFMMPlan` with `short_range_scale` and `execution_backend="pallas"` now
+  executes the split near-field kernel in Pallas (CUDA libdevice `erfc`) instead of
+  silently evaluating it in JAX; compiled CPU, TPU, and ROCm Pallas execution is
+  refused explicitly.
+- `MortonPlaneSchedulePlan.refresh` and `MortonPointHierarchyPlan.refresh` report
+  `refitted` only when they actually reuse topology without sorting or rebuilding;
+  previously both built a complete candidate before comparing it.
+- Failed Cartesian FMM evaluations (stream, schedule, interaction, or resource
+  failure) return invalidated payloads and derivatives instead of usable zeros.
 - Memory-pattern auditing now uses deterministic AST findings and exact justified
   symbol/rule dispositions, rejecting stale or duplicate exceptions. The aggregate
   memory-scaling ratchet recomputes recorded ratio gates in matching environments.
@@ -228,6 +295,74 @@
   prepared mass actions inside mixed-method coupling scans without NumPy
   tracer conversion. Namespace and grouped-derivative refusal tests now reflect
   the public periodic certificate and explicit-coordinate-axis contract.
+- Spineax cuDSS numeric-refresh implicit matrix derivatives, batched prepared
+  transpose/adjoint solves, batched factor resource bounds, and refinement-step
+  diagnostics.
+- Automatically selected CUDA SparseQR prepares numerically and enforces the
+  same 32-bit CSR index contract as explicitly selected CUDA QR. Because the native
+  call raises on singular systems instead of returning failure status, automatic
+  planning selects it only under `FailurePolicy("error")`; the default status policy
+  selects a status-capable Krylov route. CUDA SparseQR declares complex support.
+- Default `DenseSVD()` resolves to the QR driver on CUDA, where divide-and-conquer
+  is unsupported, and keeps divide-and-conquer elsewhere (CPU plan identity is
+  unchanged); explicit divide-and-conquer on CUDA is refused at planning.
+  Randomized SVD lifting and orthogonality evidence use full float32 precision.
+- Rectangular dense SVDs with aspect ratio at least 2:1 are QR-reduced before the
+  economy decomposition, so CUDA no longer allocates a long-dimension square
+  scratch factor beyond the admitted workspace; dense-SVD resource estimates
+  include that scratch, and pseudoinverse construction and certification products
+  use full float32 precision.
+- `BiCGStab` runs on the native Krylov substrate instead of Lineax (backend
+  provenance and plan identities change). It confirms true-residual convergence
+  of the alpha half-step before stabilization, so exact half-step convergence no
+  longer produces `0/0`, and counts every executed operator action.
+- Spineax cuDSS and AmgX availability require a JAX CUDA device; the structured
+  IPM refusal of Spineax cuDSS states that it applies to convex problems too.
+- Eager accelerated MACE coupling checks the platform of its operands rather than
+  the default backend.
+- Linux host memory samples read current RSS and its high-water mark from one
+  `/proc/self/status` snapshot (`procfs_status`); the approximate Linux high-water
+  mark is no longer reported as a phase peak upper bound. Live-array device memory
+  is counted through each requested PJRT client and attributed by actual device,
+  so CPU samples in an accelerator process no longer mix in GPU buffers.
+- NVIDIA CUDA is identified from the loaded JAX runtime, so CUDA clients reporting
+  the generic `"gpu"` platform are admitted and ROCm devices are no longer admitted
+  to CUDA-only routes (accelerated MACE coupling, CUDA sparse QR, Spineax cuDSS,
+  Pallas spatial kernels). Discovered resource inventories now report the device
+  vendor, so vendor-constrained resource requests can match real accelerators.
+- Accelerated MACE coupling admits the explicit CUDA architecture set {9.0, 12.0}
+  instead of every compute capability at or above 9.0.
+- Compiled Pallas spatial norms and pair accelerations pad coordinates and blocks
+  to powers of two, so three-dimensional Morton queries, radius relations, particle
+  neighborhoods, and the particle-FMM near field compile on GPUs. Complete compiled
+  `UniformFMMPlan` evaluation (fields, signed strength refreshes, strength JVP/VJP,
+  and reverse-mode position/mass derivatives) is regression-tested on CUDA in
+  float32 and float64 against the JAX backend and direct references.
+- AmgX: the default policy uses an aggregation selector the provider registers;
+  float32 systems are promoted at the pyamgx double-precision boundary; provider
+  iteration counts and status reach the result and set failure status; refreshed
+  and released hierarchies no longer free native pools still used by live ones;
+  capabilities no longer claim JAX transformations.
+- Lattice kernel providers share one links-and-geometry contract: gauge action and
+  force take canonical links, explicit block geometry/boundary flags, and owned
+  output masks instead of precomputed plaquettes and staples (native provider and
+  distributed QCD consumers migrated). `create_lattice_provider()` constructs
+  executable PyQUDA (CUDA; gauge action/force and Wilson/clover Dirac actions,
+  adjoints, and blocks; DLPack interchange eagerly, host-staged under `jit`), GPT/Grid
+  (CPU; the same operations in complex64/complex128), and Qlat (CPU; complex128
+  gauge action/force only, since Qlat exposes no Wilson Dirac primitive) adapters.
+  Availability reports an external provider only when its adapter can execute,
+  and PyQUDA no longer claims operation-specific JVPs.
+- `Mpi4JaxCollectiveProvider(gpu_direct=...)` must agree with the process-global
+  `MPI4JAX_USE_CUDA_MPI` setting, and CUDA-direct transport requires CUDA-aware MPI;
+  the transport route is part of `provider_id`. Two-rank GPU collectives are
+  qualified for both device-buffer (CUDA-aware OpenMPI) and host-staged routes;
+  device-buffer dispatch is not a CUDA IPC or GPUDirect RDMA claim.
+- `FunctionalPrecisionPolicy` evidence no longer reports unobserved compute and
+  accumulation dtypes.
+- Resolving `phydrax.atomistic.interchange.NativeASECalculator` or
+  `NativeASECalculatorPlan` without ASE installed raises `ImportError`, like other
+  optional-provider exports, instead of the conversion-boundary `AdapterError`.
 - Exact first-order Hermitian matrix-function and isotropic spectral-map
   derivatives at repeated spectra; differentiable cardiovascular inverse growth
   and relativistic tetrad derivative evidence.
@@ -491,6 +626,33 @@
   `PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS`. `phydrax/_jax_config.py` is the sole
   JAX configuration owner, enforced by lint and an alias-aware static audit of
   sources, embedded scripts, and documentation fences.
+- Reusable prepared Morton sources (`MortonSourcePlan`, `PreparedMortonSources`,
+  `MortonSourceTransition`): one canonical sort serves any number of target
+  batches and kNN, radius, and shell queries; `refresh` skips the sort when the
+  previous order remains canonical.
+- Exact BVH point queries on a capacity-fixed MEDIAN hierarchy built in JAX on the
+  device (`BVHSourcePlan`, `PreparedBVHSources`, `BVHNeighborQueryPlan`,
+  `BVHNeighborQueryResult`, `BVHNeighborQueryEvidence`, `BVHNeighborQueryStatus`),
+  admissible for clustered and coincident clouds; periodic axes use exact but weak
+  zero lower bounds.
+- `phydrax.graph.query_neighbors`, `batched_knn_query_graph`, and
+  `batched_knn_graph` accept BVH plans and prepared Morton/BVH source artifacts
+  (unbatched or stacked) with their matching plan.
+- `UniformFMMPlan.refresh_structure` and `UniformFMMStructureTransition`: certified
+  geometry refit of the FMM topology with atomic rejection, rebuilding when the
+  order changes, a retained far pair fails the opening criterion, or a cutoff plan
+  moves.
+- `MortonPlaneInteractionPlan.recheck` and an optional `frontier_widths` ladder for
+  width-adaptive dual-tree refinement with order and refusal identical to
+  full-width traversal.
+- Streamed Cartesian FMM near and far execution through `phydrax.sparse`, and the
+  Pallas leaf-pair fragment kernel `phydrax.backends.spatial_leaf_pair_fragment`
+  with a JAX-reference custom JVP.
+- `translation_route="rotation"` (`TranslationRoute3D`) for
+  `LaplaceMultipolePlan3D`: native rotate-to-axis M2M/M2L/L2L through order 8 with
+  exact axial and zero-shift derivatives.
+- `StreamedRelationPlan.prepare(..., capacity_bounded=True)` for schedules whose
+  static extents must not depend on concrete topology.
 - Reusable linear-workspace `ChebyshevDifferentiationAction`, explicit
   `LondonSolvePolicy`, and synthetic PTV occlusion capacity controls.
 - Exact refittable `SegmentBVH` with deterministic two-neighbor queries and
@@ -2772,6 +2934,38 @@
   the effective x64 setting when checked or converted, including after
   `config.configure` or inside `config.context`, and NumPy host forms such as
   `HostFloat64` always require their exact width.
+- Breaking: `MortonNeighborQueryPlan`, `MortonRadiusRelationPlan`, and
+  `MortonRadiusShellWitnessPlan` are constructed from a `MortonSourcePlan`, and
+  their `query`/`certify` methods accept only `PreparedMortonSources` from that
+  plan; raw source points and source mask/ID arguments are removed, and query plan
+  identities change. `MortonPlaneScheduleState.point_order` and
+  `MortonPointHierarchyState.point_order` are `PreparedMortonSources`; the embedded
+  `encoding` is removed in favor of live `points` and storage-order
+  `sorted_coordinates`.
+- `PreparedUniformFMMStructure` holds prepared streamed near/far relations instead
+  of point-pair routes and relation execution states; Cartesian FMM plan, structure,
+  and interaction-plan identities change. Accepted far pairs are appended to fixed
+  capacity buffers instead of concatenated per refinement step.
+- `LaplaceMultipolePlan3D` identities include the translation route, and resource
+  evidence includes translation table and workspace bytes.
+- Omitted `LinearDerivativeSolvePolicy` tolerances resolve from the coordinate
+  dtype (relative `max(1e-8, 10 * eps)`, absolute `1e-10`), so float32 implicit
+  derivatives, including Spineax cuDSS matrix-value JVPs/VJPs, no longer fail
+  float64-scale residual checks and return NaN. Float64 effective defaults and
+  explicit tolerances are unchanged; solve provenance reports the effective
+  derivative tolerances, and default policy and plan identities change.
+- `AdjointLinearOperator` preserves positive-definite and semidefinite claims, so
+  certified SPD systems remain admissible to PCG adjoint solves.
+- Direct primal solves are no longer charged derivative-only Krylov basis bytes
+  per right-hand side; implicit derivative solves enforce that budget for their
+  actual right-hand-side count when they execute.
+- Process startup sets the default matmul precision to `"highest"` unless
+  `JAX_DEFAULT_MATMUL_PRECISION` is set or the process already selected one, so
+  float32 contractions no longer default to TF32 on NVIDIA GPUs;
+  `config.snapshot().matmul_precision` reports it. Contractions traced without an
+  explicit precision now carry `Precision.HIGHEST` in their jaxprs.
+  `FunctionalPrecisionPolicy()` defaults to `"highest"`; `"default"` still selects
+  JAX's backend default explicitly.
 - Bound exact gravity target rows and quadratic-ringdown time batches with explicit
   chunk controls; replace dense FEL wake products with exact FFT convolution.
 - Use linear-workspace Limber tails, finite-width Coulomb recurrences, polymer

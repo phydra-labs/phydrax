@@ -136,14 +136,19 @@ solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 
 Requires Python 3.12.
 
-First, install your preferred JAX distribution.
-Otherwise, Phydrax will default to the cpu version.
+The base install uses CPU JAX. For NVIDIA GPUs on Linux, choose one CUDA major:
 
 ```bash
-uv add phydrax
+pip install phydrax             # CPU
+pip install "phydrax[cuda12]"    # Driver reports CUDA >= 12.0 (R525+)
+pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
 
-No special builds or containers. Batteries-included, ready to go.
+The CUDA extras install JAX's CUDA plugin, NVIDIA wheels, and an exclusivity
+marker. On Linux x86-64, matching CUDA 12 and CUDA 13 companion wheels include
+cuDSS, AmgX, and QUDA; aarch64 has no companion yet. The extras cannot be combined.
+See [Installation](installation.md) for diagnostics, architecture coverage,
+native-provider contracts, and multi-GPU deployment.
 
 ## Why JAX?
 

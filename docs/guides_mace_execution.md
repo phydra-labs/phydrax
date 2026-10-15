@@ -358,10 +358,16 @@ It is not qualified automatically:
 coupling. The kernels are written once for Pallas Mosaic GPU with 128-lane
 warpgroup channel tiles:
 
-- `"cuda"` compiles them for an NVIDIA device with compute capability at least
-  9.0. `pallas_atomistic_availability("cuda")` refuses other devices with a
-  reason. No CUDA hardware qualification has been recorded: this target has no
-  measured correctness, performance, or memory tuple.
+- `"cuda"` admits NVIDIA devices with compute capability 9.0 or 12.0, not every
+  architecture above a numeric minimum. `pallas_atomistic_availability("cuda")`
+  identifies CUDA from the runtime, including JAX clients labeled `"gpu"`, and
+  refuses other devices with a reason. The Lane kernels execute on RTX 5090
+  (12.0) with JAX/JAXlib 0.11.2 and the CUDA 13 plugin; this is correctness
+  evidence for that configuration, not a general GPU performance or memory
+  qualification. Forward and operand derivatives agree with native JAX at
+  float32 tolerances `rtol=atol=2e-5` (reverse mode `rtol=2e-4`) under
+  Phydrax's full-precision float32 contraction default; float64 forward agrees
+  at `rtol=atol=1e-12`.
 - `"cpu_interpret"` runs the same kernel bodies through the Mosaic GPU
   interpreter on CPU. It is semantic reference verification only. It is never
   GPU correctness, performance, or memory evidence.

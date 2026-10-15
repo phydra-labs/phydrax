@@ -244,7 +244,10 @@ training loss, term diagnostics, data metrics, and final objective settling.
 This experiment is deliberately restricted to standard Optax transformations;
 line-search ExtraArgs transforms, native iterative/least-squares methods, KFAC,
 Riemannian methods, and distribution evolution are rejected rather than
-receiving a partial policy. Parameter leaves must share one dtype.
+receiving a partial policy. Parameter leaves must share one dtype. The policy
+defaults to `"highest"`, matching Phydrax's float32 contraction default; reduced
+formats such as `"TF32_TF32_F32"`, `"BF16_BF16_F32"`, or JAX's backend
+`"default"` must be requested explicitly.
 
 The returned solver retains the policy and a content-addressed precision
 evidence envelope. Its functional discretization records include that evidence

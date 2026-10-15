@@ -503,7 +503,7 @@ if amgx.available:
     amgx_prepared = phx.backends.prepare_amgx(sparse_system, amgx_plan)
     try:
         amgx_result = phx.backends.solve_amgx(amgx_prepared, rhs)
-        print(amgx_result.provenance.transfer)
+        print(amgx_result.transfers)
     finally:
         phx.backends.release_amgx(amgx_prepared)
 ```

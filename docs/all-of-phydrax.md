@@ -1433,9 +1433,10 @@ diagnostics, provenance, and certificate contracts.
 topology from refreshable numeric data. Native `PrimalDualInteriorPoint`
 explicitly selects dense filter, matrix-free, or sparse augmented KKT
 execution; structured methods return portable primal/dual warm starts and may
-run input-ordered completion pools. Sparse LDLT through optional
-Spineax/cuDSS remains an explicit provider with reported inertia and resource
-release. Native methods also include Newton--Krylov, Steihaug--Toint,
+run input-ordered completion pools. Sparse LDLT through explicit cuDSS
+(`SparseLDLT(provider="cudss", factor_cache_capacity=8)`) reports inertia and
+native rebuilds with bounded per-plan factor caches and explicit release.
+Native methods also include Newton--Krylov, Steihaug--Toint,
 dense/subspace dogleg and dogbox, robust-loss GN/LM, trust-reflective bounds,
 variable projection, POUNDERS, projected quasi-Newton, augmented Lagrangian,
 and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,

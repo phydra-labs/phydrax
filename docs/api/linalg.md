@@ -491,9 +491,20 @@ coverage of a resident dense operator) whose retained and discarded singular-val
 bounds clear the cutoff interval by more than the SVD backward-error bound, and
 `matches(A)` rebinds the certificate to the certified numeric revision on device.
 `svd.DenseSVD(algorithm=...)` declares the dense driver: `"divide-and-conquer"`
-(the default, fastest) or `"qr"` (robust on exactly clustered spectra, where
-divide and conquer can fail to converge); `certify_rectangular_rank` defaults to
-`"qr"`. A driver that does not converge reports its `SVDSolveStatus` in the
+(fast on CPU and ROCm) or `"qr"` (robust on exactly clustered spectra, where
+divide and conquer can fail to converge). Omitting `algorithm` selects `"qr"`
+on the current default CUDA device and `"divide-and-conquer"` elsewhere. This
+construction-time choice is stored in the method and its plan identity; rebuild
+the default method when moving a policy between platforms. CPU defaults retain
+their existing driver and plan identity. Explicit divide-and-conquer on CUDA
+raises `ValueError` at planning, using dense operand placement when known and
+the current default device otherwise; preparation rechecks materialized placement.
+The randomized method's compressed SVD uses the same platform-aware default;
+its singular-vector lift and diagonal-metric orthogonality evidence retain full
+coordinate precision rather than reduced-precision tensor-core products. Operator
+actions continue to honor the caller's matmul-precision policy.
+`certify_rectangular_rank` defaults to `"qr"`.
+A driver that does not converge reports its `SVDSolveStatus` in the
 certificate's `svd_status`, with `rank == -1`, NaN singular-value bounds, and
 `converged=False`.
 The `"mathematical"` derivative of a minimum-norm solve is
@@ -636,10 +647,13 @@ implementation may require additional scratch.
 materialization, factorization storage, `preparation_workspace_bytes`,
 `solve_workspace_bytes_per_rhs`, `operator_apply_workspace_bytes_per_rhs`,
 and `krylov_basis_bytes_per_rhs`. Operator-batch multiplicity is included.
-Planning checks that preparation and one canonical right-hand side are feasible;
-`solve` and `solve_many` multiply all per-RHS estimates by the actual number of
-shared right-hand sides before execution. Input and output arrays are
-caller-owned and are not counted as solver scratch.
+Planning checks that preparation and one canonical right-hand side are feasible.
+`solve` and `solve_many` multiply the executed per-RHS workspace, and the Krylov
+basis of Krylov primal backends, by the actual number of shared right-hand sides
+before execution; a direct primal solve is not charged for derivative-only
+Krylov basis. Implicit tangent and cotangent solves enforce the derivative basis
+budget for their actual right-hand-side count when the derivative executes.
+Input and output arrays are caller-owned and are not counted as solver scratch.
 
 `PreconditionerCostEstimate` separately accounts for prepared action storage,
 setup workspace, apply workspace per right-hand side, and setup operator
@@ -657,12 +671,12 @@ before any numeric setup runs.
 | --- | --- | --- |
 | `StructuredDirect` | `jax-structured` | Recognized exact diagonal, triangular, tridiagonal, rooted-tree, banded, block-diagonal, Kronecker, or diagonal-plus-low-rank structure; any dense fallback is included in materialization and resource checks |
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
-| `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical unbatched CSR square system on CUDA through native JAX sparse QR |
+| `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical CSR square system, including shared-pattern batches and complex coordinates, on CUDA through native JAX sparse QR with 32-bit indices. A singular system raises from the native call instead of returning failure status, so automatic planning selects it only under `FailurePolicy("error")` |
 | `SparseLU(provider="jax-cpu")` | `jax-sparse` | Canonical CSR square system through JAX's JIT-compatible CPU lowering to SciPy sparse LU; mathematical solve derivatives are supported, algorithmic factorization derivatives are not |
-| `SparseLDLT(provider="spineax-cudss")` | `spineax-cudss` | Optional Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
+| `SparseLDLT(provider="cudss", factor_cache_capacity=8)` | `cudss` | Linux x86-64 CUDA 12/13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
 | `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
-| `GMRES`, `PCG`, `MINRES`, `FGMRES`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `LSMR` retains the real Euclidean unweighted envelope |
-| `ConjugateGradient`, `BiCGStab` | `lineax` | Lineax-backed Euclidean or diagonal-metric methods; CG additionally requires real coordinates |
+| `GMRES`, `PCG`, `MINRES`, `FGMRES`, `BiCGStab`, `LSMR`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods; `BiCGStab` requires Euclidean or diagonal-metric coordinates, and `LSMR` retains the real Euclidean unweighted envelope |
+| `ConjugateGradient` | `lineax` | Lineax-backed Euclidean or diagonal-metric CG with real coordinates |
 
 Host sparse prepared state retains shape/batch metadata and provider factors,
 not a second CSR copy. SuperLU and CHOLMOD accept matrix RHS blocks using one
@@ -687,6 +701,15 @@ threshold. Otherwise the recurrence restarts from the true residual (residual
 replacement; van der Vorst & Ye, *SIAM J. Sci. Comput.* 22 (2000) 1035–1062). The
 stop test and the certified status are one test on one quantity. The extra
 actions are counted in `matvec_count`.
+
+Native `BiCGStab` uses fixed linear right preconditioning. It confirms
+convergence of the alpha half-step before evaluating the omega stabilization,
+so an exact zero intermediate residual is successful convergence, not a
+`0 / 0` breakdown. Both half-step and full-step nominations are checked against
+`b - A x`; a failed confirmation restarts the recurrence from the true residual.
+Genuine scalar breakdowns retain the last valid iterate and report failure.
+The default iteration limit remains ten times the source dimension, and
+`matvec_count` includes every executed convergence confirmation.
 
 Native `GMRES` and `FGMRES` also certify each restart-cycle candidate against
 `b - A x`. Projected convergence can end an Arnoldi cycle early, but if the
@@ -1535,10 +1558,13 @@ value = compiled_solve(jnp.array([1.0, 2.0]))
 ```
 
 Device dense, structured, native Krylov, Lineax, native CUDA sparse QR, and
-optional Spineax/cuDSS execution are JIT-compatible. Host sparse
+cuDSS execution are JIT-compatible. Host sparse
 providers are intentionally non-JIT and require
-`DifferentiationPolicy("none")`. Spineax preparation retains provider-owned
-factor resources; call `phx.linalg.release(prepared)` when their lifetime ends.
+`DifferentiationPolicy("none")`. cuDSS preparation uses bounded per-plan native
+factor memos; call `phx.linalg.release(prepared)` to free entries early.
+`SparseLDLT.factor_cache_capacity` defaults to 8, must be positive, and changes
+policy/plan identity. Evicted factors rebuild from operands; solve provenance
+reports exact int32 `native_rebuilds`.
 Public dense factorizations and matrix-function/spectral artifacts are currently
 unbatched; shared-pattern sparse LDLT values may carry explicit batch axes.
 
@@ -1612,6 +1638,20 @@ derivative solve leaves the primal result inspectable but produces NaN
 derivatives; error mode raises. Matrix-free implicit actions use this checked
 native callable Krylov route; tree factorizations retain their native direct
 tangent and transpose solves.
+
+Omitted derivative tolerances are represented by `None`: the relative tolerance
+resolves to `max(1e-8, 10 * eps)` in the real derivative coordinate dtype, and
+the absolute tolerance resolves to `1e-10`. Float64 and complex128 retain the
+previous effective defaults; float32 and complex64 use a relative tolerance
+of approximately `1.19e-6`, avoiding a sub-roundoff true-residual requirement.
+Explicit values, including zero or tighter-than-roundoff requests, are honored
+verbatim. These defaults apply consistently to Krylov, primal-factor, and
+minimum-norm derivative routes and checked adjoint acceptance.
+`result.provenance.derivative_relative_tolerance` and
+`derivative_absolute_tolerance` expose the resolved requirements for the solve.
+Default-constructed derivative policies now carry `None` rather than fixed
+numbers, so their policy structure and linear plan identities intentionally
+change; provenance also gains the two effective-tolerance fields.
 
 An implicit right-hand side with one independent batch and one column projects
 directly into the same native vector GMRES and restores its complete canonical
@@ -2535,7 +2575,7 @@ Refresh rejects changed spaces, patterns, index width, or batch shape.
 `InertiaEvidence`. The bounded-dense source verifies Hermiticity and encloses
 every eigenvalue using reconstruction and orthogonality defects. Certification
 is for the declared numerical zero threshold only, not exact symbolic nullity.
-Spineax/cuDSS remains truthful partial evidence: its positive and negative
+cuDSS remains truthful partial evidence: its positive and negative
 counts do not make its unavailable zero count reliable.
 
 ### FP8 and microscaling
@@ -2734,8 +2774,8 @@ Current boundaries are deliberate and reported before execution:
 - iterative providers require an unbatched operator; use explicit outer
   `vmap`/batch policy rather than accidental batch semantics;
 - native device sparse QR requires CUDA canonical CSR;
-- Spineax/cuDSS requires an explicitly installed optional backend on Linux
-  x86-64 with CUDA 13, uses 32-bit canonical CSR indices, and reports
+- cuDSS requires the matching CUDA 12 or CUDA 13 companion on Linux
+  x86-64, uses 32-bit canonical CSR indices, and reports
   positive/negative inertia without claiming reliable zero inertia;
 - host sparse direct providers are non-JIT and non-differentiable;
 - provider-owned sparse LDLT resources require explicit release;
