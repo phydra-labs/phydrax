@@ -485,8 +485,10 @@ def _materialize_prepared_pseudoinverse(
     )
     reciprocal = jnp.where(state.retained, 1.0 / safe, 0.0)
     right = jnp.conj(jnp.swapaxes(state.vh, -1, -2))
-    reduced_value = (right * reciprocal.astype(right.dtype)[..., None, :]) @ jnp.conj(
-        jnp.swapaxes(state.u, -1, -2)
+    reduced_value = jnp.matmul(
+        right * reciprocal.astype(right.dtype)[..., None, :],
+        jnp.conj(jnp.swapaxes(state.u, -1, -2)),
+        precision=jax.lax.Precision.HIGHEST,
     )
     reduced_value = fixed_rank_pseudoinverse_value(
         state.design,
@@ -500,7 +502,14 @@ def _materialize_prepared_pseudoinverse(
         value = value * state.square_root_weights.astype(value.dtype)[..., None, :]
 
     matrix = state.original_matrix
-    residual = matrix @ value @ matrix - matrix
+    residual = (
+        jnp.matmul(
+            jnp.matmul(matrix, value, precision=jax.lax.Precision.HIGHEST),
+            matrix,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        - matrix
+    )
     residual_norm = jnp.sqrt(jnp.sum(jnp.abs(residual) ** 2, axis=(-2, -1)))
     matrix_norm = jnp.sqrt(jnp.sum(jnp.abs(matrix) ** 2, axis=(-2, -1)))
     tiny = jnp.asarray(jnp.finfo(matrix.real.dtype).tiny, dtype=matrix.real.dtype)

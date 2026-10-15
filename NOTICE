@@ -287,11 +287,32 @@ implementation. See LICENSES/PETSC-BSD-2-CLAUSE.txt.
 Spineax
 Copyright (c) 2025 John Viljoen
 Licensed under the MIT License.
-The optional `spineax-cudss` provider uses Spineax's public JAX FFI API for
-cuDSS symbolic analysis, numerical factorization/refactorization, multiple-RHS
-solves, inertia queries, and explicit resource release. Phydrax retains its own
-sparse operator, planning, precision, residual-certification, KKT, and result
-contracts. See LICENSES/SPINEAX-MIT.txt.
+The native cuDSS implementation adapts Spineax's cudss/solver.cpp, and the
+Python factor-token and transformation layer adapts cudss/solver.py. These
+adaptations provide symbolic analysis, factorization/refactorization,
+multiple-RHS solves, inertia queries, and release through public JAX FFI.
+Phydrax retains its own sparse operator, planning, precision,
+residual-certification, KKT, and result contracts.
+See LICENSES/SPINEAX-MIT.txt.
+
+QUDA
+Copyright (c) 2009-2022, QUDA Developers
+Licensed under the MIT License and accompanying bundled-component terms.
+The CUDA companions statically link QUDA for single-process lattice kernels.
+See LICENSES/QUDA-MIT.txt for the upstream license and bundled notices.
+
+NVIDIA AmgX
+Copyright (c) 2017 - 2024 NVIDIA CORPORATION. All rights reserved.
+Licensed under the BSD 3-Clause License, with bundled-component notices.
+The CUDA companions statically link AmgX for algebraic multigrid.
+See LICENSES/AMGX-BSD-3-CLAUSE.txt and LICENSES/AMGX-NOTICES.txt; the latter
+retains the upstream NOTICES for bundled components.
+
+Eigen 3.4
+Licensed under the Mozilla Public License 2.0.
+Eigen headers are compiled into the QUDA component of the CUDA companions.
+See LICENSES/EIGEN-MPL-2.0.txt. Corresponding upstream source:
+https://gitlab.com/libeigen/eigen/-/archive/e67c494cba7180066e73b9f6234d0b2129f1cdf5.tar.bz2
 
 IPC Toolkit
 Copyright (c) 2020–2025 Zachary Ferguson

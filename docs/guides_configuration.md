@@ -2,8 +2,12 @@
 
 `import phydrax` is fast and device-inert. Its lazy root loads subpackages on
 first access, not at startup. Startup enables x64 by default, but an explicit
-`JAX_ENABLE_X64=0` is respected. Launcher `PHYDRAX_*` coordination settings are
-consumed before backend discovery; see the [API reference](api/configuration.md).
+`JAX_ENABLE_X64=0` is respected. Startup also selects `"highest"` matmul
+precision unless `JAX_DEFAULT_MATMUL_PRECISION` chooses another one; reduced
+precision such as TF32 is available through that variable or a
+`NumericsConfig(matmul_precision=...)` context. Launcher `PHYDRAX_*` coordination
+settings are consumed before backend discovery; see the
+[API reference](api/configuration.md).
 
 ## Resolve intent without applying it
 

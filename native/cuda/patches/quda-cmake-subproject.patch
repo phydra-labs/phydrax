@@ -1,0 +1,189 @@
+# Upstream: https://github.com/lattice/quda/tree/ba501e4
+# State: local CMake embedding fix; upstream assumes a top-level build.
+# Remove when the pinned QUDA uses project-local source/binary roots.
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,7 +32,7 @@
+ set(CMAKE_DISABLE_SOURCE_CHANGES ON)
+ set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
+ # add a directory for cmake modules
+-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
++list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+ include(cmake/CPM.cmake)
+ 
+ find_package(Git)
+@@ -89,26 +89,26 @@
+ if(GIT_FOUND)
+   execute_process(
+     COMMAND ${GIT_EXECUTABLE} show
+-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
++    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+     RESULT_VARIABLE IS_GIT_REPOSIITORY
+     OUTPUT_QUIET ERROR_QUIET)
+   if(${IS_GIT_REPOSIITORY} EQUAL 0)
+     execute_process(
+       COMMAND ${GIT_EXECUTABLE} describe --abbrev=0
+-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
++      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+       OUTPUT_VARIABLE GITTAG
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
+     # we use git rev-list and pipe that through wc here. Newer git versions support --count as option to rev-list but
+     # that might not always be available
+     execute_process(
+       COMMAND ${GIT_EXECUTABLE} rev-list ${GITTAG}..HEAD
+-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
++      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+       COMMAND wc -l
+       OUTPUT_VARIABLE GITCOUNT
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
+     execute_process(
+       COMMAND ${GIT_EXECUTABLE} describe --match 1 --always  --long --dirty
+-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
++      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+       OUTPUT_VARIABLE GITVERSION
+       OUTPUT_STRIP_TRAILING_WHITESPACE)
+   endif()
+@@ -124,8 +124,8 @@
+ message(STATUS "")
+ message(STATUS "${PROJECT_NAME} ${PROJECT_VERSION} (${GITVERSION}) **")
+ message(STATUS "cmake version: ${CMAKE_VERSION}")
+-message(STATUS "Source location: ${CMAKE_SOURCE_DIR}")
+-message(STATUS "Build location: ${CMAKE_BINARY_DIR}")
++message(STATUS "Source location: ${CMAKE_CURRENT_SOURCE_DIR}")
++message(STATUS "Build location: ${PROJECT_BINARY_DIR}")
+ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+ message(STATUS "QUDA target: ${QUDA_TARGET_TYPE}")
+ 
+@@ -515,7 +515,7 @@
+ # We might only want to do that if using QUDA_DOWNLOAD_USQCD, but this does not work if not set on the initial run
+ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+   set(CMAKE_INSTALL_PREFIX
+-      ${CMAKE_BINARY_DIR}/usqcd
++      ${PROJECT_BINARY_DIR}/usqcd
+       CACHE PATH "..." FORCE)
+ endif()
+ 
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -423,7 +423,7 @@
+   if(GITVERSION)
+     find_path(
+       QUDA_GITDIR NAME HEAD
+-      PATHS ${CMAKE_SOURCE_DIR}/.git/logs
++      PATHS ${PROJECT_SOURCE_DIR}/.git/logs
+       NO_DEFAULT_PATH)
+     include(AddFileDependencies)
+     if(QUDA_GITDIR)
+@@ -616,7 +616,7 @@
+ target_include_directories(quda PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include/targets/generic>
+                                        $<INSTALL_INTERFACE:include/targets/generic>)
+ 
+-target_include_directories(quda PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include> $<INSTALL_INTERFACE:include>)
++target_include_directories(quda PUBLIC $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include> $<INSTALL_INTERFACE:include>)
+ 
+ target_include_directories(quda_cpp SYSTEM PRIVATE ../include/externals)
+ 
+@@ -830,13 +830,13 @@
+ endif()
+ 
+ configure_file(../include/quda_define.h.in ../include/quda_define.h @ONLY)
+-install(FILES "${CMAKE_BINARY_DIR}/include/quda_define.h" DESTINATION include/)
++install(FILES "${PROJECT_BINARY_DIR}/include/quda_define.h" DESTINATION include/)
+ 
+ # until we define an install step copy the include directory to the build directory
+ add_custom_command(
+   TARGET quda
+   POST_BUILD
+-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/include ${CMAKE_BINARY_DIR}/include)
++  COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include)
+ 
+ # some hackery to prevent having old shared / static builds of quda messing with the current build
+ add_custom_command(
+@@ -859,7 +859,7 @@
+   NAMESPACE QUDA::
+   DESTINATION lib/cmake/QUDA)
+ 
+-install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/ DESTINATION include)
++install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/ DESTINATION include)
+ 
+ include(CMakePackageConfigHelpers)
+ write_basic_package_version_file(
+@@ -869,7 +869,7 @@
+ 
+ include(CMakePackageConfigHelpers)
+ 
+-configure_package_config_file(${CMAKE_SOURCE_DIR}/QUDAConfig.cmake.in QUDAConfig.cmake INSTALL_DESTINATION lib/cmake/QUDA)
++configure_package_config_file(${PROJECT_SOURCE_DIR}/QUDAConfig.cmake.in QUDAConfig.cmake INSTALL_DESTINATION lib/cmake/QUDA)
+ 
+ write_basic_package_version_file(
+   QUDAConfigVersion.cmake
+--- a/lib/targets/cuda/target_cuda.cmake
++++ b/lib/targets/cuda/target_cuda.cmake
+@@ -417,12 +417,12 @@
+ 
+ set(QUDA_MAX_SHARED_MEMORY "0" CACHE STRING "Max shared memory per block, 0 corresponds to architecture default")
+ mark_as_advanced(QUDA_MAX_SHARED_MEMORY)
+-configure_file(${CMAKE_SOURCE_DIR}/include/targets/cuda/device.in.hpp
+-               ${CMAKE_BINARY_DIR}/include/targets/cuda/device.hpp @ONLY)
++configure_file(${PROJECT_SOURCE_DIR}/include/targets/cuda/device.in.hpp
++               ${PROJECT_BINARY_DIR}/include/targets/cuda/device.hpp @ONLY)
+ # Expose the override to C++ translation units (e.g. device.cpp) that cannot
+ # include the CUDA-only generated device.hpp but need to cap runtime queries.
+ target_compile_definitions(quda_cpp PRIVATE QUDA_MAX_SHARED_MEMORY_OVERRIDE=${QUDA_MAX_SHARED_MEMORY})
+-install(FILES "${CMAKE_BINARY_DIR}/include/targets/cuda/device.hpp" DESTINATION include/)
++install(FILES "${PROJECT_BINARY_DIR}/include/targets/cuda/device.hpp" DESTINATION include/)
+ 
+ target_include_directories(quda SYSTEM PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:${CUDAToolkit_INCLUDE_DIRS}>)
+ target_include_directories(quda SYSTEM PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:${CUDAToolkit_MATH_INCLUDE_DIR}>)
+@@ -430,11 +430,11 @@
+ 
+ target_compile_options(quda PRIVATE $<$<COMPILE_LANG_AND_ID:CUDA,Clang>:--cuda-path=${CUDAToolkit_TARGET_DIR}>)
+ target_compile_options(quda PRIVATE $<$<COMPILE_LANG_AND_ID:CUDA,NVIDIA>:-Xfatbin=-compress-all>)
+-target_include_directories(quda PRIVATE ${CMAKE_SOURCE_DIR}/include/targets/cuda)
+-target_include_directories(quda PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include/targets/cuda>
++target_include_directories(quda PRIVATE ${PROJECT_SOURCE_DIR}/include/targets/cuda)
++target_include_directories(quda PUBLIC $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include/targets/cuda>
+                                        $<INSTALL_INTERFACE:include/targets/cuda>)
+-target_include_directories(quda SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/include/targets/cuda/externals)
+-target_include_directories(quda_cpp SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/include/targets/cuda/externals)
++target_include_directories(quda SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/include/targets/cuda/externals)
++target_include_directories(quda_cpp SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/include/targets/cuda/externals)
+ 
+ # Specific config dependent warning suppressions and lineinfo forwarding
+ 
+@@ -673,9 +673,9 @@
+   target_link_libraries(quda PUBLIC ${LIBDL_LIBRARIES})
+   target_include_directories(quda PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
+ 
+-  configure_file(${CMAKE_SOURCE_DIR}/include/targets/cuda/jitify_options.hpp.in
+-                 ${CMAKE_BINARY_DIR}/include/targets/cuda/jitify_options.hpp)
+-  install(FILES "${CMAKE_BINARY_DIR}/include/targets/cuda/jitify_options.hpp" DESTINATION include/)
++  configure_file(${PROJECT_SOURCE_DIR}/include/targets/cuda/jitify_options.hpp.in
++                 ${PROJECT_BINARY_DIR}/include/targets/cuda/jitify_options.hpp)
++  install(FILES "${PROJECT_BINARY_DIR}/include/targets/cuda/jitify_options.hpp" DESTINATION include/)
+ endif()
+ 
+ if(QUDA_INTERFACE_NVTX)
+@@ -685,4 +685,4 @@
+ 
+ add_subdirectory(targets/cuda)
+ 
+-install(FILES ${CMAKE_SOURCE_DIR}/cmake/find_target_cuda_dependencies.cmake DESTINATION lib/cmake/QUDA)
++install(FILES ${PROJECT_SOURCE_DIR}/cmake/find_target_cuda_dependencies.cmake DESTINATION lib/cmake/QUDA)
+--- a/lib/targets/cuda/CMakeLists.txt
++++ b/lib/targets/cuda/CMakeLists.txt
+@@ -9,12 +9,12 @@
+ if(QUDA_BACKWARDS)
+   set_property(
+     SOURCE malloc.cpp
+-    DIRECTORY ${CMAKE_SOURCE_DIR}/lib
++    DIRECTORY ${PROJECT_SOURCE_DIR}/lib
+     APPEND
+     PROPERTY COMPILE_DEFINITIONS ${BACKWARD_DEFINITIONS})
+   set_property(
+     SOURCE malloc.cpp
+-    DIRECTORY ${CMAKE_SOURCE_DIR}/lib
++    DIRECTORY ${PROJECT_SOURCE_DIR}/lib
+     APPEND
+     PROPERTY COMPILE_DEFINITIONS QUDA_BACKWARDSCPP)
+ endif()

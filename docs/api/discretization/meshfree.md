@@ -73,6 +73,18 @@ preparation/resource boundaries, metric admission, and migration.
 
 ---
 
+::: phydrax.discretization.spatial.MortonSourcePlan
+
+---
+
+::: phydrax.discretization.spatial.PreparedMortonSources
+
+---
+
+::: phydrax.discretization.spatial.MortonSourceTransition
+
+---
+
 ::: phydrax.discretization.spatial.MortonRadiusShellWitnessPlan
 
 ---

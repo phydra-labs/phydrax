@@ -145,9 +145,9 @@ def factorization_inertia(
     if operator.source.size != operator.target.size:
         raise ValueError("Inertia requires a square endomorphism.")
     if policy.source == "provider":
-        from .backends._spineax import SpineaxFactorState
+        from .backends._cudss import CudssFactorState
 
-        if not isinstance(state, SpineaxFactorState):
+        if not isinstance(state, CudssFactorState):
             raise ValueError("Prepared provider does not expose inertia evidence.")
         batch_shape = state.batch_shape
         unavailable = jnp.full(batch_shape, -1, dtype=jnp.int32)
@@ -162,10 +162,10 @@ def factorization_inertia(
             certified=false,
             provider_zero_capable=false,
             zero_count_reliable=false,
-            source="provider:spineax-cudss-partial",
+            source="provider:cudss-partial",
             factorization_id=factorization_id,
             precision_evidence=_precision_evidence(
-                policy, state.storage.values.real.dtype, "spineax-cudss"
+                policy, state.storage.values.real.dtype, "cudss"
             ),
             non_claim="provider positive/negative counts do not certify zero inertia",
         )

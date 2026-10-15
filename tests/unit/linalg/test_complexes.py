@@ -185,6 +185,14 @@ def test_nontrivial_ring_harmonic_projector_and_dimension_faults() -> None:
         )
 
 
+# The explicitly requested JAX CPU sparse LU executes only on the CPU backend.
+_jax_cpu_sparse_lu = la.sparse_provider_availability("jax-cpu")
+requires_jax_cpu_sparse_lu = pytest.mark.skipif(
+    not _jax_cpu_sparse_lu.available, reason=_jax_cpu_sparse_lu.reason
+)
+
+
+@requires_jax_cpu_sparse_lu
 def test_mixed_sparse_saddle_solution_and_reusable_numeric_pattern() -> None:
     complex = _triangle()
     harmonic = la.harmonic_subspace(complex, 0, expected_dimension=1)
@@ -526,6 +534,7 @@ def test_real_hilbert_complex_accepts_complex_decomposition_with_sesquilinear_ev
     assert bool(result.valid)
 
 
+@requires_jax_cpu_sparse_lu
 def test_three_block_sparse_hodge_solve_satisfies_strong_and_gauge_equations() -> None:
     complex = _triangle(filled=False)
     harmonic = la.harmonic_subspace(complex, 1, expected_dimension=1)

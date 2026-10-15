@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import final
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,12 +15,14 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
-from ._morton import _canonical_morton_point_order, MortonAddressPlan
+from ._morton import MortonAddressPlan
+from ._neighbor_sources import MortonSourcePlan, PreparedMortonSources
 
 
 _UINT64_MAX = np.iinfo(np.uint64).max
 
 
+@final
 class MortonHierarchyBuildEvidence(NonTrainableState, StrictModule):
     """Completion and resource evidence for one point hierarchy build."""
 
@@ -33,9 +37,11 @@ class MortonHierarchyBuildEvidence(NonTrainableState, StrictModule):
     maximum_leaf_occupancy: jax.Array
 
 
+@final
 class MortonPointHierarchyState(NonTrainableState, StrictModule):
-    """Packed fixed-capacity sparse quadtree/octree topology."""
+    """Packed sparse topology retaining its live prepared source artifact."""
 
+    point_order: PreparedMortonSources
     sorted_codes: jax.Array
     sorted_stable_ids: jax.Array
     sorted_active: jax.Array
@@ -58,6 +64,7 @@ class MortonPointHierarchyState(NonTrainableState, StrictModule):
     evidence: MortonHierarchyBuildEvidence
 
 
+@final
 class MortonHierarchyTransition(NonTrainableState, StrictModule):
     """Atomic point-hierarchy refresh result."""
 
@@ -68,10 +75,12 @@ class MortonHierarchyTransition(NonTrainableState, StrictModule):
     rebuilt: jax.Array
 
 
+@final
 class MortonPointHierarchyPlan(StrictModule):
     """Build deterministic fixed-capacity sparse Morton point hierarchies."""
 
     address_plan: MortonAddressPlan
+    source_plan: MortonSourcePlan
     point_capacity: int = eqx.field(static=True)
     node_capacity: int = eqx.field(static=True)
     target_leaf_occupancy: int = eqx.field(static=True)
@@ -97,22 +106,20 @@ class MortonPointHierarchyPlan(StrictModule):
             raise ValueError(
                 "node_capacity must be positive and no larger than (maximum_depth + 1) * point_capacity."
             )
-        object.__setattr__(self, "address_plan", address_plan)
-        object.__setattr__(self, "point_capacity", points)
-        object.__setattr__(self, "node_capacity", nodes)
-        object.__setattr__(self, "target_leaf_occupancy", target)
-        object.__setattr__(
-            self,
-            "plan_id",
-            canonical_fingerprint(
-                {
-                    "kind": "morton-point-hierarchy-plan",
-                    "address_plan_id": address_plan.plan_id,
-                    "point_capacity": points,
-                    "node_capacity": nodes,
-                    "target_leaf_occupancy": target,
-                }
-            ),
+        self.source_plan = MortonSourcePlan(address_plan, points)
+        self.address_plan = address_plan
+        self.point_capacity = points
+        self.node_capacity = nodes
+        self.target_leaf_occupancy = target
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "morton-point-hierarchy-plan",
+                "address_plan_id": address_plan.plan_id,
+                "source_plan_id": self.source_plan.plan_id,
+                "point_capacity": points,
+                "node_capacity": nodes,
+                "target_leaf_occupancy": target,
+            }
         )
 
     def build(
@@ -123,13 +130,17 @@ class MortonPointHierarchyPlan(StrictModule):
         stable_ids: jax.Array | None = None,
         epoch: int | jax.Array = 0,
     ) -> MortonPointHierarchyState:
-        point_order = _canonical_morton_point_order(
-            self.address_plan,
-            points,
-            point_capacity=self.point_capacity,
-            active_mask=active_mask,
-            stable_ids=stable_ids,
+        point_order = self.source_plan.prepare(
+            points, active_mask=active_mask, stable_ids=stable_ids
         )
+        return self._build_prepared(point_order, epoch=epoch)
+
+    def _build_prepared(
+        self,
+        point_order: PreparedMortonSources,
+        *,
+        epoch: int | jax.Array,
+    ) -> MortonPointHierarchyState:
         order = point_order.storage_to_logical
         inverse = point_order.logical_to_storage
         sorted_codes = point_order.sorted_codes
@@ -340,6 +351,7 @@ class MortonPointHierarchyPlan(StrictModule):
             maximum_leaf_occupancy=jnp.max(leaf_occupancy, initial=0),
         )
         return MortonPointHierarchyState(
+            point_order=point_order,
             sorted_codes=sorted_codes,
             sorted_stable_ids=sorted_ids,
             sorted_active=sorted_valid,
@@ -378,17 +390,67 @@ class MortonPointHierarchyPlan(StrictModule):
         active_mask: jax.Array | None = None,
         stable_ids: jax.Array | None = None,
     ) -> MortonHierarchyTransition:
-        candidate = self.build(
+        source_transition = self.source_plan.refresh(
+            previous.point_order,
             points,
             active_mask=active_mask,
             stable_ids=stable_ids,
-            epoch=previous.epoch + 1,
         )
-        same_topology = (
-            jnp.array_equal(candidate.node_prefixes, previous.node_prefixes)
-            & jnp.array_equal(candidate.node_levels, previous.node_levels)
-            & jnp.array_equal(candidate.node_active, previous.node_active)
-            & jnp.array_equal(candidate.sorted_stable_ids, previous.sorted_stable_ids)
+        point_order = source_transition.candidate
+        leaf_slots = previous.sorted_point_leaf_slots
+        safe_leaves = jnp.maximum(leaf_slots, 0)
+        prefixes = self.address_plan.prefix(
+            point_order.sorted_codes, previous.node_levels[safe_leaves]
+        )
+        same_leaves = jnp.all(
+            ~point_order.sorted_active
+            | ((leaf_slots >= 0) & (prefixes == previous.node_prefixes[safe_leaves]))
+        )
+        reuse_topology = (
+            previous.evidence.successful & source_transition.reused_order & same_leaves
+        )
+
+        def refit(_: None) -> MortonPointHierarchyState:
+            evidence = MortonHierarchyBuildEvidence(
+                successful=source_transition.successful,
+                active_points=point_order.active_count,
+                invalid_points=point_order.invalid_points,
+                stable_ids_unique=point_order.stable_ids_unique,
+                required_nodes=previous.evidence.required_nodes,
+                node_capacity=previous.evidence.node_capacity,
+                active_nodes=previous.evidence.active_nodes,
+                active_leaves=previous.evidence.active_leaves,
+                maximum_leaf_occupancy=previous.evidence.maximum_leaf_occupancy,
+            )
+            return MortonPointHierarchyState(
+                point_order=point_order,
+                sorted_codes=point_order.sorted_codes,
+                sorted_stable_ids=point_order.sorted_stable_ids,
+                sorted_active=point_order.sorted_active,
+                storage_to_logical=point_order.storage_to_logical,
+                logical_to_storage=point_order.logical_to_storage,
+                sorted_point_leaf_slots=previous.sorted_point_leaf_slots,
+                logical_point_leaf_slots=previous.logical_point_leaf_slots,
+                node_prefixes=previous.node_prefixes,
+                node_levels=previous.node_levels,
+                node_active=previous.node_active,
+                node_is_leaf=previous.node_is_leaf,
+                node_parents=previous.node_parents,
+                node_children=previous.node_children,
+                node_item_starts=previous.node_item_starts,
+                node_item_counts=previous.node_item_counts,
+                node_centers=previous.node_centers,
+                node_half_widths=previous.node_half_widths,
+                root_slot=previous.root_slot,
+                epoch=previous.epoch + 1,
+                evidence=evidence,
+            )
+
+        candidate = jax.lax.cond(
+            reuse_topology,
+            refit,
+            lambda _: self._build_prepared(point_order, epoch=previous.epoch + 1),
+            operand=None,
         )
         accepted_candidate = candidate.evidence.successful
         accepted = jax.lax.cond(
@@ -401,8 +463,8 @@ class MortonPointHierarchyPlan(StrictModule):
             candidate=candidate,
             accepted=accepted,
             accepted_candidate=accepted_candidate,
-            refitted=accepted_candidate & same_topology,
-            rebuilt=accepted_candidate & ~same_topology,
+            refitted=accepted_candidate & reuse_topology,
+            rebuilt=accepted_candidate & ~reuse_topology,
         )
 
 

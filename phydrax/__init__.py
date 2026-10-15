@@ -15,13 +15,25 @@ import os as _os
 from types import MappingProxyType
 from typing import Final, TYPE_CHECKING
 
-from ._jax_config import set_x64 as _set_x64, startup_x64 as _startup_x64
+from ._jax_config import (
+    set_matmul_precision as _set_matmul_precision,
+    set_x64 as _set_x64,
+    startup_matmul_precision as _startup_matmul_precision,
+    startup_x64 as _startup_x64,
+)
 
 
 # Module-level constants of Phydrax modules are staged when they load, so the
 # 64-bit startup choice precedes every other Phydrax import.
 if _startup_x64(_os.environ):
     _set_x64(True)
+
+# Float32 contractions default to IEEE float32 rather than reduced-precision
+# tensor-core formats unless startup already selected a precision.
+_startup_precision = _startup_matmul_precision(_os.environ)
+if _startup_precision is not None:
+    _set_matmul_precision(_startup_precision)
+del _startup_precision
 
 from ._config_state import initialize_process as _initialize_process
 

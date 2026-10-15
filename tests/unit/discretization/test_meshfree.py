@@ -309,13 +309,15 @@ def test_radius_shell_witness_matches_brute_force(dimension: int, periodic: bool
         (0.0,) * dimension, (1.0,) * dimension, 10, periodic_axes=(periodic,) * dimension
     )
     radius = 0.3
+    source_plan = spatial.MortonSourcePlan(address, 40)
+    sources = source_plan.prepare(jnp.asarray(points))
     for half_width in (0.002, 0.05):
         gap, incidences = _brute_shell(points, radius, half_width, periodic)
         witness = spatial.MortonRadiusShellWitnessPlan(
-            address, 40, 40, maximum_candidates=40
+            source_plan, 40, maximum_candidates=40
         ).certify(
-            jnp.asarray(points),
-            jnp.asarray(points),
+            sources,
+            sources.points,
             radius,
             half_width,
             exclude_self=True,
@@ -334,19 +336,23 @@ def test_radius_shell_witness_refuses_ties_overflow_and_missing_owners() -> None
     spatial = phx.discretization.spatial
     address = spatial.MortonAddressPlan((-1.0,), (3.0,), 10)
     points = jnp.asarray(((0.0,), (0.5,), (1.25,), (2.5,)))
-    plan = spatial.MortonRadiusShellWitnessPlan(address, 4, 4, maximum_candidates=4)
-    tie = plan.certify(points, points, 0.5, 0.1, exclude_self=True)
+    source_plan = spatial.MortonSourcePlan(address, 4)
+    sources = source_plan.prepare(points)
+    plan = spatial.MortonRadiusShellWitnessPlan(source_plan, 4, maximum_candidates=4)
+    tie = plan.certify(sources, points, 0.5, 0.1, exclude_self=True)
     assert bool(tie.evidence.successful)
     assert not bool(tie.evidence.certified)
     assert float(tie.evidence.certified_gap) == 0.0
     overflow = spatial.MortonRadiusShellWitnessPlan(
-        address, 4, 4, maximum_candidates=1
-    ).certify(points, points, 0.4, 0.05, exclude_self=True)
+        source_plan, 4, maximum_candidates=1
+    ).certify(sources, points, 0.4, 0.05, exclude_self=True)
     assert not bool(overflow.evidence.successful)
     assert int(overflow.evidence.overflow_rows) > 0
     assert float(overflow.evidence.certified_gap) == 0.0
     assert not bool(overflow.evidence.certified)
-    outside = plan.certify(points, points.at[3, 0].set(5.0), 0.4, 0.05, exclude_self=True)
+    outside = plan.certify(
+        sources, points.at[3, 0].set(5.0), 0.4, 0.05, exclude_self=True
+    )
     assert int(outside.evidence.invalid_targets) == 1
     assert not bool(outside.evidence.successful)
     assert float(outside.evidence.certified_gap) == 0.0

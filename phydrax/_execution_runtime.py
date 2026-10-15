@@ -13,6 +13,7 @@ import jax
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+from ._execution_device import device_vendor
 from ._execution_plan import ExecutionPlan
 from ._execution_resources import (
     DeviceResource,
@@ -45,6 +46,7 @@ def discover_resource_inventory() -> ResourceInventory:
             local_device_id=device.local_hardware_id,
             platform=device.platform,
             kind=device.device_kind,
+            vendor=device_vendor(device),
             # A zero allocator limit reports no usable capacity, not a capacity.
             memory_bytes=capacity.get((device.process_index, device.id)) or None,
         )

@@ -8,8 +8,23 @@ import importlib
 import importlib.metadata
 import importlib.util
 import sys
+from collections.abc import Callable
+from importlib.machinery import EXTENSION_SUFFIXES, ModuleSpec, PathFinder
+from pathlib import Path
 from types import ModuleType
 
+import jax
+
+from .._cuda_environment import (
+    assess_cuda_environment,
+    assess_provider_dependencies,
+    collect_cuda_environment,
+    cuda_enabled,
+    CudaEnvironmentFacts,
+    CudaEnvironmentIssue,
+    provider_dependency_closure,
+)
+from .._execution_device import device_platform as runtime_platform
 from ..logging import emit
 from ._types import (
     BackendAvailability,
@@ -42,6 +57,7 @@ def _probe_result(
     reason: str,
     requirement: str,
     versions: tuple[tuple[str, str], ...],
+    environment_issues: tuple[CudaEnvironmentIssue, ...] = (),
 ) -> BackendAvailability:
     result = BackendAvailability(
         capabilities=capabilities,
@@ -49,6 +65,7 @@ def _probe_result(
         requirement=requirement,
         reason=reason,
         versions=versions,
+        environment_issues=environment_issues,
     )
     emit(
         "DEBUG",
@@ -65,6 +82,119 @@ def _probe_result(
     return result
 
 
+def probe_cuda_component(
+    capabilities: BackendCapabilities,
+    /,
+    *,
+    component: str,
+    requirement: str,
+) -> BackendAvailability:
+    """Probe a Phydrax-owned CUDA component and preserve refusal evidence."""
+    from .._cuda_native import cuda_component_status, CudaNativeComponentName
+    from ..typing import parse
+
+    if not isinstance(capabilities, BackendCapabilities):
+        raise TypeError("capabilities must be BackendCapabilities.")
+    if not requirement:
+        raise ValueError("Backend requirement must be non-empty.")
+    name = parse(component, CudaNativeComponentName, "component")
+    available, reason, issues, versions = cuda_component_status(name)
+    return _probe_result(
+        capabilities,
+        available=available,
+        failure_category=None if available else "cuda_companion_refused",
+        reason=reason,
+        requirement=requirement,
+        versions=versions,
+        environment_issues=issues,
+    )
+
+
+def _native_module_specification(module: str, /) -> ModuleSpec | None:
+    # util.find_spec on a dotted name imports its parent before any CUDA guard.
+    parts = module.split(".")
+    specification = importlib.util.find_spec(parts[0])
+    for index in range(1, len(parts)):
+        if specification is None or specification.submodule_search_locations is None:
+            return None
+        specification = PathFinder.find_spec(
+            ".".join(parts[: index + 1]), specification.submodule_search_locations
+        )
+    return specification
+
+
+def module_native_libraries(module: str, /, pattern: str = "*.so") -> tuple[str, ...]:
+    """Locate native provider objects without importing the provider package."""
+    specification = _native_module_specification(module)
+    if specification is None:
+        return ()
+    if specification.submodule_search_locations is not None:
+        return tuple(
+            sorted(
+                str(path)
+                for directory in specification.submodule_search_locations
+                for path in Path(directory).glob(pattern)
+                if path.is_file()
+            )
+        )
+    origin = specification.origin
+    if origin is not None and origin.endswith(tuple(EXTENSION_SUFFIXES)):
+        return (origin,)
+    return ()
+
+
+def _cuda_dependency_issues(
+    cuda_libraries: Callable[[], tuple[str, ...]],
+    facts: CudaEnvironmentFacts,
+    /,
+    *,
+    jax_backend_preloaded: bool,
+) -> tuple[CudaEnvironmentIssue, ...]:
+    """Judge each located native library as a fresh process would load it."""
+    try:
+        return tuple(
+            issue
+            for library in cuda_libraries()
+            for issue in assess_provider_dependencies(
+                provider_dependency_closure(
+                    library,
+                    facts=facts,
+                    jax_backend_preloaded=jax_backend_preloaded,
+                ),
+                facts,
+            )
+        )
+    except (OSError, ValueError) as error:
+        return (
+            CudaEnvironmentIssue(
+                code="provider-dependency-unresolved",
+                severity="error",
+                message=f"Provider dependency inspection failed: {error}",
+                paths=(),
+            ),
+        )
+
+
+def _cuda_refusal(
+    capabilities: BackendCapabilities,
+    /,
+    *,
+    requirement: str,
+    versions: tuple[tuple[str, str], ...],
+    issues: tuple[CudaEnvironmentIssue, ...],
+) -> BackendAvailability:
+    return _probe_result(
+        capabilities,
+        available=False,
+        failure_category="cuda_environment_refused",
+        requirement=requirement,
+        reason="CUDA environment refused: "
+        + "; ".join(issue.message for issue in issues),
+        versions=versions,
+        environment_issues=issues,
+    )
+
+
 def probe_backend(
     capabilities: BackendCapabilities,
     /,
@@ -73,8 +203,17 @@ def probe_backend(
     requirement: str,
     distributions: tuple[str, ...] = (),
     supported_platforms: tuple[str, ...] | None = None,
+    device_platform: str | None = None,
+    cuda_libraries: Callable[[], tuple[str, ...]] | None = None,
 ) -> BackendAvailability:
-    """Probe one optional module and preserve missing/import/linker evidence."""
+    """Probe one optional module and preserve missing/import/linker evidence.
+
+    ``device_platform`` names the JAX runtime (for example ``"cuda"``) that a
+    device provider executes on; without such a device it is unavailable and the
+    module is not imported. ``cuda_libraries`` locates the provider's native
+    objects without importing it; with CUDA enabled, environment errors and
+    dependencies of another CUDA major refuse the provider before import.
+    """
     if not isinstance(capabilities, BackendCapabilities):
         raise TypeError("capabilities must be BackendCapabilities.")
     module_ = str(module)
@@ -93,7 +232,11 @@ def probe_backend(
             versions=versions,
         )
     try:
-        specification = importlib.util.find_spec(module_)
+        specification = (
+            _native_module_specification(module_)
+            if cuda_libraries is not None
+            else importlib.util.find_spec(module_)
+        )
     except (ImportError, ModuleNotFoundError) as error:
         return _probe_result(
             capabilities,
@@ -112,6 +255,42 @@ def probe_backend(
             reason=f"required module {module_!r} is not installed",
             versions=versions,
         )
+    facts = (
+        collect_cuda_environment(initialize_backend=False)
+        if cuda_libraries is not None
+        else None
+    )
+    cuda = facts is not None and cuda_enabled(facts)
+    if facts is not None and cuda:
+        issues = tuple(
+            issue
+            for issue in assess_cuda_environment(facts).issues
+            if issue.severity == "error"
+        )
+        if issues:
+            return _cuda_refusal(
+                capabilities, requirement=requirement_, versions=versions, issues=issues
+            )
+    if device_platform is not None and not any(
+        runtime_platform(device) == device_platform for device in jax.devices()
+    ):
+        return _probe_result(
+            capabilities,
+            available=False,
+            failure_category="unsupported_device",
+            requirement=requirement_,
+            reason=f"no JAX {device_platform} device is available",
+            versions=versions,
+        )
+    if cuda_libraries is not None and facts is not None and cuda:
+        # A device check initialized JAX, whose plugin preloaded its NVIDIA wheels.
+        issues = _cuda_dependency_issues(
+            cuda_libraries, facts, jax_backend_preloaded=device_platform is not None
+        )
+        if issues:
+            return _cuda_refusal(
+                capabilities, requirement=requirement_, versions=versions, issues=issues
+            )
     try:
         importlib.import_module(module_)
     except ModuleNotFoundError as error:

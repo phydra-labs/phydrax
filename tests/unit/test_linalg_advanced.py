@@ -1159,6 +1159,15 @@ def test_bicgstab_preconditioning_is_explicitly_right_sided() -> None:
     result = la.solve(la.LinearSystem(operator), jnp.asarray([1.0, 2.0]), policy=policy)
 
     assert bool(result.successful)
+    assert jnp.all(jnp.isfinite(result.value))
+    assert jnp.allclose(
+        result.value,
+        jnp.linalg.solve(matrix, jnp.asarray([1.0, 2.0])),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert result.diagnostics.residual_norm <= 1e-12 * jnp.sqrt(5.0)
+    assert result.provenance.backend == "native-krylov"
     assert result.provenance.preconditioning_side == "right"
     with pytest.raises(ValueError, match="requires right preconditioning"):
         la.plan(

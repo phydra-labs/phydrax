@@ -91,6 +91,7 @@ plugins:
 
 nav:
     - Getting started: "index.md"
+    - Installation: "installation.md"
     - All of Phydrax: "all-of-phydrax.md"
     - Cookbook:
         - Overview: "cookbook/index.md"

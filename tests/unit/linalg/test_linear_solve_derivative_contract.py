@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.typing import DTypeLike
 
 import phydrax as phx
 from phydrax import (
@@ -668,3 +669,162 @@ def test_pcg_implicit_derivative_preserves_spd_and_independent_work_limit() -> N
     )
     failed = jax.grad(lambda value: objective(value, 1))(rhs)
     assert np.all(np.isnan(failed))
+
+
+@pytest.mark.parametrize(
+    "dtype", [jnp.float32, jnp.float64, jnp.complex64, jnp.complex128]
+)
+@pytest.mark.parametrize("route", ["krylov", "primal-factors", "pcg"])
+def test_default_derivative_accuracy_tracks_coordinate_dtype(
+    dtype: DTypeLike,
+    route: Literal["krylov", "primal-factors", "pcg"],
+) -> None:
+    la = phx.linalg
+    with pxconfig.context(pxconfig.NumericsConfig(enable_x64=True)):
+        matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=dtype)
+        rhs = jnp.asarray([1.0, -2.0], dtype=dtype)
+        direction = jnp.eye(2, dtype=dtype) * 0.1
+        forcing_direction = jnp.ones(2, dtype=dtype) * 0.2
+        policy = la.LinearSolvePolicy(
+            la.PCG() if route == "pcg" else la.DenseLU(),
+            # Only the independent derivative policy is under test; the primal
+            # PCG must not fail a sub-roundoff float32 stopping requirement.
+            tolerance=la.TolerancePolicy(relative=1e-6) if route == "pcg" else None,
+            derivative_solve=la.LinearDerivativeSolvePolicy(
+                route="primal-factors" if route == "primal-factors" else "krylov"
+            ),
+        )
+
+        def solve(values: jax.Array, forcing: jax.Array) -> la.LinearSolveResult:
+            system = la.LinearSystem(
+                la.DenseLinearOperator(values, properties=_CERTIFIED_SPD)
+            )
+            return la.solve(system, forcing, policy=policy)
+
+        def value(values: jax.Array, forcing: jax.Array) -> jax.Array:
+            return solve(values, forcing).value
+
+        result = solve(matrix, rhs)
+        expected_relative = max(1e-8, 10.0 * float(jnp.finfo(rhs.real.dtype).eps))
+        assert result.successful
+        assert result.provenance.derivative_relative_tolerance == expected_relative
+        assert result.provenance.derivative_absolute_tolerance == 1e-10
+        _, tangent = jax.jvp(
+            jax.jit(value),
+            (matrix, rhs),
+            (direction, forcing_direction),
+        )
+        expected_value = jnp.linalg.solve(matrix, rhs)
+        expected_tangent = jnp.linalg.solve(
+            matrix, forcing_direction - direction @ expected_value
+        )
+        _, pullback = jax.vjp(value, matrix, rhs)
+        _, reference_pullback = jax.vjp(jnp.linalg.solve, matrix, rhs)
+        accuracy = 1e-5 if rhs.real.dtype == jnp.float32 else 1e-10
+        np.testing.assert_allclose(
+            tangent, expected_tangent, rtol=accuracy, atol=accuracy
+        )
+        for actual, expected in zip(
+            pullback(jnp.ones_like(rhs)),
+            reference_pullback(jnp.ones_like(rhs)),
+            strict=True,
+        ):
+            np.testing.assert_allclose(actual, expected, rtol=accuracy, atol=accuracy)
+        system = la.LinearSystem(
+            la.DenseLinearOperator(matrix, properties=_CERTIFIED_SPD)
+        )
+        _, primal_evidence = la.solve_checked(
+            system,
+            rhs,
+            policy=policy,
+            check_policy=la.LinearSolveCheckPolicy(relative_tolerance=accuracy),
+        )
+        adjoint_result, adjoint_evidence = la.solve_adjoint_checked(
+            system,
+            rhs,
+            policy=policy,
+            primal_evidence=primal_evidence,
+        )
+        assert adjoint_evidence.valid
+        assert (
+            adjoint_result.provenance.derivative_relative_tolerance == expected_relative
+        )
+        assert adjoint_result.provenance.derivative_absolute_tolerance == 1e-10
+
+
+@pytest.mark.parametrize(
+    ("relative", "absolute"),
+    [(None, 0.0), (1e-12, None), (0.0, 0.0)],
+)
+def test_explicit_derivative_tolerances_remain_verbatim(
+    relative: float | None,
+    absolute: float | None,
+) -> None:
+    la = phx.linalg
+    matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=jnp.float32)
+    rhs = jnp.ones(2, dtype=jnp.float32)
+    system = la.LinearSystem(la.DenseLinearOperator(matrix))
+    requested = la.LinearDerivativeSolvePolicy(
+        relative_tolerance=relative, absolute_tolerance=absolute
+    )
+    result = la.solve(
+        system,
+        rhs,
+        policy=la.LinearSolvePolicy(la.DenseLU(), derivative_solve=requested),
+    )
+    assert requested.relative_tolerance == relative
+    assert requested.absolute_tolerance == absolute
+    assert result.provenance.derivative_relative_tolerance == (
+        10.0 * float(jnp.finfo(jnp.float32).eps) if relative is None else relative
+    )
+    assert result.provenance.derivative_absolute_tolerance == (
+        1e-10 if absolute is None else absolute
+    )
+    if relative is not None:
+        policy = la.LinearSolvePolicy(
+            la.DenseLU(),
+            derivative_solve=requested,
+            failure=la.FailurePolicy("error"),
+        )
+        with pytest.raises(Exception, match="independent residual contract"):
+            derivative = jax.jvp(
+                lambda forcing: la.solve(system, forcing, policy=policy).value,
+                (rhs,),
+                (rhs,),
+            )[1]
+            jax.block_until_ready(derivative)
+
+
+def test_dtype_resolved_default_has_distinct_plan_identity() -> None:
+    la = phx.linalg
+    system = la.LinearSystem(la.DenseLinearOperator(jnp.eye(2, dtype=jnp.float64)))
+    automatic = la.plan(system, la.LinearSolvePolicy(la.DenseLU()))
+    explicit = la.plan(
+        system,
+        la.LinearSolvePolicy(
+            la.DenseLU(),
+            derivative_solve=la.LinearDerivativeSolvePolicy(
+                relative_tolerance=1e-8, absolute_tolerance=1e-10
+            ),
+        ),
+    )
+    assert automatic.plan_id != explicit.plan_id
+
+
+def test_pcg_adjoint_does_not_certify_an_unknown_definiteness_claim() -> None:
+    la = phx.linalg
+    matrix = jnp.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=jnp.float64)
+    operator = la.DenseLinearOperator(
+        matrix,
+        properties=la.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={"self_adjoint": "construction"},
+        ),
+    )
+    with pytest.raises(ValueError, match="certified positive definiteness"):
+        la.solve_adjoint(
+            la.LinearSystem(operator),
+            jnp.ones(2, dtype=matrix.dtype),
+            policy=la.LinearSolvePolicy(la.PCG()),
+        )

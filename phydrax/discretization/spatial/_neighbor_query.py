@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
@@ -22,12 +23,8 @@ from phydrax.sparse import EdgeRelation
 
 from ..._jax_config import x64_enabled
 from ...typing import parse
-from ._morton import (
-    _canonical_morton_point_order,
-    _MortonPointOrder,
-    morton_encode_integer,
-    MortonAddressPlan,
-)
+from ._morton import morton_encode_integer, MortonAddressPlan
+from ._neighbor_sources import _validate_sources, MortonSourcePlan, PreparedMortonSources
 
 
 SpatialDistanceBackend: TypeAlias = Literal["jax", "pallas"]
@@ -115,8 +112,8 @@ class MortonRadiusRelationResult(NonTrainableState, StrictModule):
     cell_offsets: jax.Array
 
 
-class _SortedSources(NamedTuple):
-    order: _MortonPointOrder
+class _SourceSearch(NamedTuple):
+    order: PreparedMortonSources
     search_codes: jax.Array
     coordinates: jax.Array
 
@@ -182,14 +179,13 @@ def _squared_norm(
 
 
 def _validated_capacities(
-    address_plan: MortonAddressPlan,
-    source_capacity: int,
+    source_plan: MortonSourcePlan,
     target_capacity: int,
     target_chunk_size: int | None,
     distance_backend: SpatialDistanceBackend,
 ) -> tuple[int, int]:
-    if not isinstance(address_plan, MortonAddressPlan):
-        raise TypeError("address_plan must be a MortonAddressPlan.")
+    if not isinstance(source_plan, MortonSourcePlan):
+        raise TypeError("source_plan must be a MortonSourcePlan.")
     # Morton codes, sort keys and stable identities are 64-bit; without x64
     # JAX silently narrows them to 32 bits, which is not a supported address.
     if not x64_enabled():
@@ -197,7 +193,7 @@ def _validated_capacities(
             "Morton spatial queries require jax_enable_x64 for 64-bit Morton codes; "
             "float32 coordinates are supported with x64 enabled (dtype=float32)."
         )
-    sources = int(source_capacity)
+    sources = source_plan.point_capacity
     targets = int(target_capacity)
     if sources < 1 or targets < 1:
         raise ValueError("source_capacity and target_capacity must be positive.")
@@ -215,7 +211,7 @@ def _resolved_chunk_size(
     return min(int(target_chunk_size), targets)
 
 
-def _floating_points(name: str, points: jax.Array, shape: tuple[int, int]) -> jax.Array:
+def _floating_points(name: str, points: ArrayLike, shape: tuple[int, int]) -> jax.Array:
     values = jnp.asarray(points)
     if values.shape != shape:
         raise ValueError(f"{name} must have shape {shape}.")
@@ -226,7 +222,7 @@ def _floating_points(name: str, points: jax.Array, shape: tuple[int, int]) -> ja
     return jax.lax.stop_gradient(values)
 
 
-def _target_mask(mask: jax.Array | None, capacity: int) -> jax.Array:
+def _target_mask(mask: ArrayLike | None, capacity: int) -> jax.Array:
     if mask is None:
         return jnp.ones((capacity,), dtype=jnp.bool_)
     active = jnp.asarray(mask, dtype=jnp.bool_)
@@ -235,7 +231,7 @@ def _target_mask(mask: jax.Array | None, capacity: int) -> jax.Array:
     return active
 
 
-def _target_ids(stable_ids: jax.Array | None, capacity: int) -> jax.Array:
+def _target_ids(stable_ids: ArrayLike | None, capacity: int) -> jax.Array:
     if stable_ids is None:
         return jnp.arange(capacity, dtype=jnp.int64)
     identifiers = jnp.asarray(stable_ids)
@@ -290,38 +286,9 @@ def _stencil_offsets(dimension: int) -> np.ndarray:
     return np.asarray(tuple(product((-1, 0, 1), repeat=dimension)), dtype=np.int64)
 
 
-def _prepare_sources(
-    address_plan: MortonAddressPlan,
-    points: jax.Array,
-    *,
-    capacity: int,
-    active_mask: jax.Array | None,
-    stable_ids: jax.Array | None,
-) -> _SortedSources:
-    # One Morton sort serves every prefix level: each coarse cell at any level
-    # is one contiguous span of the sorted codes, found by binary search.
-    order = _canonical_morton_point_order(
-        address_plan,
-        points,
-        point_capacity=capacity,
-        active_mask=active_mask,
-        stable_ids=stable_ids,
-    )
-    search_codes = jnp.where(
-        order.sorted_active,
-        order.sorted_codes,
-        jnp.asarray(_UINT64_MAX, dtype=jnp.uint64),
-    )
-    return _SortedSources(
-        order=order,
-        search_codes=search_codes,
-        coordinates=order.encoding.coordinates[order.storage_to_logical],
-    )
-
-
 def _stencil_spans(
     address_plan: MortonAddressPlan,
-    sources: _SortedSources,
+    sources: _SourceSearch,
     rows: _TargetRows,
     level: jax.Array,
     prune: jax.Array,
@@ -414,7 +381,7 @@ def _gather_slots(
 
 def _finest_populated_level(
     address_plan: MortonAddressPlan,
-    sources: _SortedSources,
+    sources: _SourceSearch,
     rows: _TargetRows,
     requested: jax.Array,
     prune: jax.Array,
@@ -463,7 +430,7 @@ def _map_target_chunks(
 
 
 class _QueryInputs(NamedTuple):
-    sources: _SortedSources
+    sources: _SourceSearch
     rows: _TargetRows
     target_active: jax.Array
     target_in_domain: jax.Array
@@ -473,34 +440,21 @@ class _QueryInputs(NamedTuple):
 
 def _prepare_query(
     address_plan: MortonAddressPlan,
-    source_points: jax.Array,
-    target_points: jax.Array,
+    sources: PreparedMortonSources,
+    target_points: ArrayLike,
     *,
-    source_capacity: int,
     target_capacity: int,
-    source_mask: jax.Array | None,
-    target_mask: jax.Array | None,
-    source_stable_ids: jax.Array | None,
-    target_stable_ids: jax.Array | None,
+    target_mask: ArrayLike | None,
+    target_stable_ids: ArrayLike | None,
 ) -> _QueryInputs:
     dimension = address_plan.dimension
-    sources = _floating_points(
-        "source_points", source_points, (source_capacity, dimension)
-    )
     targets = _floating_points(
         "target_points", target_points, (target_capacity, dimension)
     )
     target_active = _target_mask(target_mask, target_capacity)
     target_ids = _target_ids(target_stable_ids, target_capacity)
-    prepared = _prepare_sources(
-        address_plan,
-        sources,
-        capacity=source_capacity,
-        active_mask=source_mask,
-        stable_ids=source_stable_ids,
-    )
     encoding = address_plan.encode(targets)
-    dtype = jnp.result_type(sources.dtype, targets.dtype)
+    dtype = jnp.result_type(sources.points.dtype, targets.dtype)
     rows = _TargetRows(
         coordinates=encoding.coordinates.astype(dtype),
         integer_coordinates=encoding.integer_coordinates,
@@ -508,10 +462,18 @@ def _prepare_query(
         valid=target_active & encoding.in_domain,
         prune=jnp.full((target_capacity,), jnp.inf, dtype=dtype),
     )
-    return _QueryInputs(
-        sources=prepared._replace(
-            coordinates=prepared.coordinates.astype(dtype),
+    # Search uses a stopped-gradient view; the prepared artifact retains live geometry.
+    search = _SourceSearch(
+        order=sources,
+        search_codes=jnp.where(
+            sources.sorted_active,
+            sources.sorted_codes,
+            jnp.asarray(_UINT64_MAX, dtype=jnp.uint64),
         ),
+        coordinates=jax.lax.stop_gradient(sources.sorted_coordinates).astype(dtype),
+    )
+    return _QueryInputs(
+        sources=search,
         rows=rows,
         target_active=target_active,
         target_in_domain=encoding.in_domain,
@@ -559,7 +521,7 @@ def _row_outcomes(
     return status, {
         "complete": (overflow_rows == 0) & (uncertified_rows == 0),
         "finite": jnp.all(inputs.target_finite | ~inputs.target_active)
-        & jnp.all(order.encoding.finite | ~order.active),
+        & jnp.all(order.finite | ~order.active),
         "sources_valid": sources_valid,
         "invalid_sources": order.invalid_points,
         "invalid_targets": jnp.sum(
@@ -606,8 +568,7 @@ class MortonNeighborQueryPlan(StrictModule):
     derivation is part of ``plan_id`` and overflow is refused, never regrown.
     """
 
-    address_plan: MortonAddressPlan
-    source_capacity: int = eqx.field(static=True)
+    source_plan: MortonSourcePlan
     target_capacity: int = eqx.field(static=True)
     maximum_neighbors: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
@@ -618,8 +579,7 @@ class MortonNeighborQueryPlan(StrictModule):
 
     def __init__(
         self,
-        address_plan: MortonAddressPlan,
-        source_capacity: int,
+        source_plan: MortonSourcePlan,
         target_capacity: int,
         maximum_neighbors: int,
         *,
@@ -629,12 +589,12 @@ class MortonNeighborQueryPlan(StrictModule):
         pallas_interpret: bool = False,
     ) -> None:
         sources, targets = _validated_capacities(
-            address_plan,
-            source_capacity,
+            source_plan,
             target_capacity,
             target_chunk_size,
             distance_backend,
         )
+        address_plan = source_plan.address_plan
         neighbors = int(maximum_neighbors)
         if neighbors < 1 or neighbors > sources:
             raise ValueError("maximum_neighbors must lie in [1, source_capacity].")
@@ -649,8 +609,7 @@ class MortonNeighborQueryPlan(StrictModule):
             )
         chunk = _resolved_chunk_size(target_chunk_size, targets, candidates)
 
-        self.address_plan = address_plan
-        self.source_capacity = sources
+        self.source_plan = source_plan
         self.target_capacity = targets
         self.maximum_neighbors = neighbors
         self.maximum_candidates = candidates
@@ -660,8 +619,7 @@ class MortonNeighborQueryPlan(StrictModule):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "morton-neighbor-query-plan",
-                "address_plan_id": address_plan.plan_id,
-                "source_capacity": sources,
+                "source_plan_id": source_plan.plan_id,
                 "target_capacity": targets,
                 "maximum_neighbors": neighbors,
                 "maximum_candidates": candidates,
@@ -680,6 +638,14 @@ class MortonNeighborQueryPlan(StrictModule):
                 "pallas_interpret": bool(pallas_interpret),
             }
         )
+
+    @property
+    def address_plan(self) -> MortonAddressPlan:
+        return self.source_plan.address_plan
+
+    @property
+    def source_capacity(self) -> int:
+        return self.source_plan.point_capacity
 
     def _nearest_attempt(
         self,
@@ -790,13 +756,11 @@ class MortonNeighborQueryPlan(StrictModule):
 
     def query(
         self,
-        source_points: jax.Array,
-        target_points: jax.Array,
+        sources: PreparedMortonSources,
+        target_points: ArrayLike,
         *,
-        source_mask: jax.Array | None = None,
-        target_mask: jax.Array | None = None,
-        source_stable_ids: jax.Array | None = None,
-        target_stable_ids: jax.Array | None = None,
+        target_mask: ArrayLike | None = None,
+        target_stable_ids: ArrayLike | None = None,
         exclude_self: bool = False,
         radius: float | None = None,
         target_radii: jax.Array | None = None,
@@ -809,6 +773,7 @@ class MortonNeighborQueryPlan(StrictModule):
         ``maximum_neighbors`` sources, and its candidate buffer only has to hold
         the sources of the stencil cells within that radius.
         """
+        _validate_sources(self.source_plan, sources)
         radius_value = None if radius is None else float(radius)
         if radius_value is not None and (
             not np.isfinite(radius_value) or radius_value <= 0
@@ -828,11 +793,9 @@ class MortonNeighborQueryPlan(StrictModule):
             )
         return _compiled_nearest_query(
             self,
-            source_points,
+            sources,
             target_points,
-            source_mask,
             target_mask,
-            source_stable_ids,
             target_stable_ids,
             target_radii,
             bool(exclude_self),
@@ -842,25 +805,20 @@ class MortonNeighborQueryPlan(StrictModule):
 
 def _nearest_query(
     plan: MortonNeighborQueryPlan,
-    source_points: jax.Array,
-    target_points: jax.Array,
-    source_mask: jax.Array | None,
-    target_mask: jax.Array | None,
-    source_stable_ids: jax.Array | None,
-    target_stable_ids: jax.Array | None,
+    sources: PreparedMortonSources,
+    target_points: ArrayLike,
+    target_mask: ArrayLike | None,
+    target_stable_ids: ArrayLike | None,
     target_radii: jax.Array | None,
     exclude_self: bool,
     radius: float | None,
 ) -> MortonNeighborQueryResult:
     inputs = _prepare_query(
         plan.address_plan,
-        source_points,
+        sources,
         target_points,
-        source_capacity=plan.source_capacity,
         target_capacity=plan.target_capacity,
-        source_mask=source_mask,
         target_mask=target_mask,
-        source_stable_ids=source_stable_ids,
         target_stable_ids=target_stable_ids,
     )
     prune = inputs.rows.prune
@@ -917,7 +875,7 @@ _compiled_nearest_query = eqx.filter_jit(_nearest_query)
 
 
 def _cell_table(
-    address_plan: MortonAddressPlan, order: _MortonPointOrder, level: int
+    address_plan: MortonAddressPlan, order: PreparedMortonSources, level: int
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Occupied level cells as contiguous spans of the canonical Morton order."""
     capacity = order.sorted_codes.shape[0]
@@ -951,8 +909,7 @@ class MortonRadiusRelationPlan(StrictModule):
     overflow or failed certificate invalidates the relation and is reported.
     """
 
-    address_plan: MortonAddressPlan
-    source_capacity: int = eqx.field(static=True)
+    source_plan: MortonSourcePlan
     target_capacity: int = eqx.field(static=True)
     maximum_pairs: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
@@ -964,8 +921,7 @@ class MortonRadiusRelationPlan(StrictModule):
 
     def __init__(
         self,
-        address_plan: MortonAddressPlan,
-        source_capacity: int,
+        source_plan: MortonSourcePlan,
         target_capacity: int,
         maximum_pairs: int,
         *,
@@ -976,8 +932,7 @@ class MortonRadiusRelationPlan(StrictModule):
         pallas_interpret: bool = False,
     ) -> None:
         sources, targets = _validated_capacities(
-            address_plan,
-            source_capacity,
+            source_plan,
             target_capacity,
             target_chunk_size,
             distance_backend,
@@ -1000,8 +955,7 @@ class MortonRadiusRelationPlan(StrictModule):
             raise ValueError("maximum_candidates must lie in [1, source_capacity].")
         chunk = _resolved_chunk_size(target_chunk_size, targets, candidates)
 
-        self.address_plan = address_plan
-        self.source_capacity = sources
+        self.source_plan = source_plan
         self.target_capacity = targets
         self.maximum_pairs = pairs
         self.maximum_candidates = candidates
@@ -1012,8 +966,7 @@ class MortonRadiusRelationPlan(StrictModule):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "morton-radius-relation-plan",
-                "address_plan_id": address_plan.plan_id,
-                "source_capacity": sources,
+                "source_plan_id": source_plan.plan_id,
                 "target_capacity": targets,
                 "maximum_pairs": pairs,
                 "maximum_candidates": candidates,
@@ -1023,6 +976,14 @@ class MortonRadiusRelationPlan(StrictModule):
                 "pallas_interpret": bool(pallas_interpret),
             }
         )
+
+    @property
+    def address_plan(self) -> MortonAddressPlan:
+        return self.source_plan.address_plan
+
+    @property
+    def source_capacity(self) -> int:
+        return self.source_plan.point_capacity
 
     def _radius_chunk(
         self,
@@ -1119,17 +1080,16 @@ class MortonRadiusRelationPlan(StrictModule):
 
     def query(
         self,
-        source_points: jax.Array,
-        target_points: jax.Array,
+        sources: PreparedMortonSources,
+        target_points: ArrayLike,
         radius: float,
         *,
-        source_mask: jax.Array | None = None,
-        target_mask: jax.Array | None = None,
-        source_stable_ids: jax.Array | None = None,
-        target_stable_ids: jax.Array | None = None,
+        target_mask: ArrayLike | None = None,
+        target_stable_ids: ArrayLike | None = None,
         exclude_self: bool = False,
         pair_once: bool = False,
     ) -> MortonRadiusRelationResult:
+        _validate_sources(self.source_plan, sources)
         radius_value = float(radius)
         if not np.isfinite(radius_value) or radius_value <= 0:
             raise ValueError("radius must be finite and positive.")
@@ -1137,13 +1097,10 @@ class MortonRadiusRelationPlan(StrictModule):
             raise ValueError("pair_once requires equal source and target capacities.")
         inputs = _prepare_query(
             self.address_plan,
-            source_points,
+            sources,
             target_points,
-            source_capacity=self.source_capacity,
             target_capacity=self.target_capacity,
-            source_mask=source_mask,
             target_mask=target_mask,
-            source_stable_ids=source_stable_ids,
             target_stable_ids=target_stable_ids,
         )
         level = _static_level_wider_than(self.address_plan, radius_value, inputs.margin)
@@ -1279,8 +1236,7 @@ class MortonRadiusShellWitnessPlan(StrictModule):
     overflow makes the witness unsuccessful rather than reporting no shell.
     """
 
-    address_plan: MortonAddressPlan
-    source_capacity: int = eqx.field(static=True)
+    source_plan: MortonSourcePlan
     target_capacity: int = eqx.field(static=True)
     maximum_candidates: int = eqx.field(static=True)
     target_chunk_size: int = eqx.field(static=True)
@@ -1290,8 +1246,7 @@ class MortonRadiusShellWitnessPlan(StrictModule):
 
     def __init__(
         self,
-        address_plan: MortonAddressPlan,
-        source_capacity: int,
+        source_plan: MortonSourcePlan,
         target_capacity: int,
         *,
         maximum_candidates: int | None = None,
@@ -1300,8 +1255,7 @@ class MortonRadiusShellWitnessPlan(StrictModule):
         pallas_interpret: bool = False,
     ) -> None:
         sources, targets = _validated_capacities(
-            address_plan,
-            source_capacity,
+            source_plan,
             target_capacity,
             target_chunk_size,
             distance_backend,
@@ -1314,8 +1268,7 @@ class MortonRadiusShellWitnessPlan(StrictModule):
         if candidates < 1 or candidates > sources:
             raise ValueError("maximum_candidates must lie in [1, source_capacity].")
         chunk = _resolved_chunk_size(target_chunk_size, targets, candidates)
-        self.address_plan = address_plan
-        self.source_capacity = sources
+        self.source_plan = source_plan
         self.target_capacity = targets
         self.maximum_candidates = candidates
         self.target_chunk_size = chunk
@@ -1324,8 +1277,7 @@ class MortonRadiusShellWitnessPlan(StrictModule):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "morton-radius-shell-witness-plan",
-                "address_plan_id": address_plan.plan_id,
-                "source_capacity": sources,
+                "source_plan_id": source_plan.plan_id,
                 "target_capacity": targets,
                 "maximum_candidates": candidates,
                 "target_chunk_size": chunk,
@@ -1333,6 +1285,14 @@ class MortonRadiusShellWitnessPlan(StrictModule):
                 "pallas_interpret": bool(pallas_interpret),
             }
         )
+
+    @property
+    def address_plan(self) -> MortonAddressPlan:
+        return self.source_plan.address_plan
+
+    @property
+    def source_capacity(self) -> int:
+        return self.source_plan.point_capacity
 
     def _shell_chunk(
         self,
@@ -1390,24 +1350,25 @@ class MortonRadiusShellWitnessPlan(StrictModule):
 
     def certify(
         self,
-        source_points: jax.Array,
-        target_points: jax.Array,
+        sources: PreparedMortonSources,
+        target_points: ArrayLike,
         radius: float,
         half_width: float,
         *,
-        source_mask: jax.Array | None = None,
-        target_mask: jax.Array | None = None,
-        source_stable_ids: jax.Array | None = None,
-        target_stable_ids: jax.Array | None = None,
+        target_mask: ArrayLike | None = None,
+        target_stable_ids: ArrayLike | None = None,
         exclude_self: bool = False,
     ) -> MortonRadiusShellResult:
+        _validate_sources(self.source_plan, sources)
         radius_value = float(radius)
         width = float(half_width)
         if not np.isfinite(radius_value) or radius_value <= 0:
             raise ValueError("radius must be finite and positive.")
         if not np.isfinite(width) or width <= 0:
             raise ValueError("half_width must be finite and positive.")
-        if exclude_self and (source_stable_ids is None) != (target_stable_ids is None):
+        if exclude_self and sources.stable_ids_declared != (
+            target_stable_ids is not None
+        ):
             raise ValueError(
                 "exclude_self compares stable identities; supply both or neither."
             )
@@ -1421,13 +1382,10 @@ class MortonRadiusShellWitnessPlan(StrictModule):
             )
         inputs = _prepare_query(
             self.address_plan,
-            source_points,
+            sources,
             target_points,
-            source_capacity=self.source_capacity,
             target_capacity=self.target_capacity,
-            source_mask=source_mask,
             target_mask=target_mask,
-            source_stable_ids=source_stable_ids,
             target_stable_ids=target_stable_ids,
         )
         level = _static_level_wider_than(

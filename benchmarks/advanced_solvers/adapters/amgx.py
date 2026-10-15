@@ -50,7 +50,7 @@ class AmgxAdapter(BenchmarkAdapter):
     """Phydrax public AmgX lifecycle with the canonical FGMRES+AMG policy."""
 
     name = "amgx"
-    dependency = "phydrax+pyamgx+NVIDIA-AmgX+CUDA"
+    dependency = "phydrax+phydrax-cuda12-or-phydrax-cuda13+CUDA"
     capabilities = _CAPABILITIES
 
     def availability(self, capability: str, /) -> Availability:
@@ -67,7 +67,14 @@ class AmgxAdapter(BenchmarkAdapter):
             available=evidence.available,
             capability=capability,
             dependency=self.dependency,
-            dependency_version=versions.get("pyamgx"),
+            dependency_version=next(
+                (
+                    version
+                    for name, version in versions.items()
+                    if name in ("phydrax-cuda12", "phydrax-cuda13")
+                ),
+                None,
+            ),
             reason=None if evidence.available else evidence.reason,
         )
 
@@ -108,6 +115,8 @@ class AmgxAdapter(BenchmarkAdapter):
                     "preconditioner": {
                         "solver": "AMG",
                         "algorithm": "AGGREGATION",
+                        "selector": "SIZE_2",
+                        "max_iters": 1,
                     },
                     "max_iters": spec.tolerances.max_steps,
                     "tolerance": min(effective_tolerances),
@@ -122,6 +131,12 @@ class AmgxAdapter(BenchmarkAdapter):
             native_problem=native_problem,
             rhs=rhs,
             policy=policy,
+            preparation_host_to_device_bytes=(
+                problem.columns.nbytes
+                + problem.rows.nbytes
+                + problem.coefficients.nbytes
+                + problem.rhs.nbytes
+            ),
         )
 
     def compilation_applicable(self, setup_state: _AmgxState, /) -> bool:
@@ -172,6 +187,14 @@ class AmgxAdapter(BenchmarkAdapter):
                 "status_codes": result.status,
                 "provider_reasons": result.diagnostics.provider_reasons,
                 "numeric_version": result.provenance.numeric_version,
+                "native_status": result.diagnostics.native_status,
+                "native_iterations": result.diagnostics.iterations,
+                "native_residual_norm": result.diagnostics.native_residual_norm,
+                "native_rebuilds": result.diagnostics.native_rebuilds,
+                "refresh_native_rebuilds": prepared_state.prepared.native_rebuilds,
+                "promoted_to_float64": result.provenance.promoted_to_float64,
+                "residual_norm": result.diagnostics.residual_norm,
+                "relative_residual_norm": result.diagnostics.relative_residual_norm,
             },
             converged=jnp.all(result.success),
             message="Phydrax public AmgX solve completed with independent backend residual evidence",
@@ -179,9 +202,7 @@ class AmgxAdapter(BenchmarkAdapter):
                 "iterations": None if iterations is None else jnp.max(iterations),
                 "matvecs": None,
                 "preconditioner_applications": None,
-                "linear_solves": (
-                    1 if problem.rhs.ndim == 1 else problem.rhs.shape[1]
-                ),
+                "linear_solves": (1 if problem.rhs.ndim == 1 else problem.rhs.shape[1]),
                 "nonlinear_evaluations": 0,
                 "jacobian_evaluations": 0,
             },
@@ -213,6 +234,9 @@ class AmgxAdapter(BenchmarkAdapter):
         prepared_state.refreshed_certificate_problem = refreshed_problem
         prepared_state.preparation_host_to_device_bytes += int(
             refreshed.transfers.host_to_device_bytes
+            + refreshed_problem.columns.nbytes
+            + refreshed_problem.rows.nbytes
+            + refreshed_problem.coefficients.nbytes
         )
         return prepared_state, RefreshEvidence(
             applicable=True,
@@ -284,10 +308,9 @@ class AmgxAdapter(BenchmarkAdapter):
                 else "solve+refreshed_solve+verification+refreshed_verification"
             ),
             evidence=(
-                "exact public-backend matrix, RHS, initial-vector, and result transfer "
-                "bytes accumulated across preparation, warmup, solve, numeric refresh, "
-                "refreshed solve, verification, and refreshed verification; '+' "
-                "separates measured phases"
+                "benchmark NumPy input-array bytes transferred during setup and refresh, "
+                "plus public-backend transfer evidence and certificate downloads; "
+                "the native FFI solve keeps CSR, RHS, guess, and solution device-resident"
             ),
         )
 
@@ -327,20 +350,11 @@ def _native_linear_problem(phx: Any, jnp: Any, problem: SparseLinearProblem, /) 
     )
 
 
-def _jax_array_bytes(value: Any, /) -> int:
-    jax = import_module("jax")
-    total = 0
-    seen: set[int] = set()
-    for leaf in jax.tree.leaves(value):
-        if isinstance(leaf, jax.Array) and id(leaf) not in seen:
-            seen.add(id(leaf))
-            total += leaf.size * leaf.dtype.itemsize
-    return total
-
-
 def _version_evidence() -> dict[str, str]:
     versions = {"phydrax_source_sha256": _phydrax_amg_source_digest()}
-    for distribution in ("phydrax", "pyamgx", "jax"):
+    backends = import_module("phydrax.backends")
+    versions.update(dict(backends.amgx_availability().versions))
+    for distribution in ("phydrax", "jax"):
         try:
             versions[distribution] = importlib.metadata.version(distribution)
         except importlib.metadata.PackageNotFoundError:

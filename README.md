@@ -629,16 +629,32 @@ solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 
 Requires Python 3.12.
 
-First, install your preferred JAX distribution.
-Otherwise, Phydrax will default to the cpu version.
+The base install uses CPU JAX. Choose one CUDA extra for NVIDIA GPUs on Linux:
 
 ```bash
-uv add phydrax
+pip install phydrax             # CPU
+pip install "phydrax[cuda12]"    # Driver reports CUDA >= 12.0 (R525+)
+pip install "phydrax[cuda13]"    # Driver reports CUDA >= 13.0 (R580+)
 ```
+
+The CUDA extras install JAX's CUDA plugin, NVIDIA wheels, and an exclusivity
+marker; they cannot be combined. On Linux x86-64 they also install the matching
+`phydrax-cuda12` or `phydrax-cuda13` companion with cuDSS, AmgX, and QUDA.
+Linux aarch64 has no companion yet. GPU-direct mpi4jax requires a matching
+user-provided build. See [Installation](docs/installation.md) for diagnostics,
+architecture coverage, switching CUDA majors, and distributed deployment.
 
 The base install includes native JAXPR structural tracing and deterministic
 coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans
 integrate directly with `phydrax.linalg` and require no external tracing runtime.
+
+Importing Phydrax enables 64-bit JAX types and, unless startup already selected
+a precision (for example through `JAX_DEFAULT_MATMUL_PRECISION`), sets the
+default matmul precision to `"highest"`, so float32 contractions use IEEE float32
+arithmetic instead of TF32 tensor cores on NVIDIA GPUs. Reduced-precision
+contractions remain available through explicit per-call precision,
+`phydrax.config.NumericsConfig(matmul_precision=...)` contexts, or Phydrax
+precision policies.
 
 ## Documentation
 

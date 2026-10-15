@@ -50,6 +50,7 @@ from ._neighbor_query import (
     MortonNeighborQueryStatus,
     SpatialDistanceBackend,
 )
+from ._neighbor_sources import MortonSourcePlan, PreparedMortonSources
 
 
 class DistributedRelationStatus(IntEnum):
@@ -1014,21 +1015,18 @@ class _Candidates(NamedTuple):
 
 def _owner_evidence(
     provider: JaxCollectiveProvider,
-    address: MortonAddressPlan,
-    points: Array,
-    active: Array,
+    sources: PreparedMortonSources,
     epoch: Array,
     dtype: Any,
 ) -> _OwnerEvidence:
-    encoding = address.encode(points)
-    usable = active & encoding.in_domain
-    coordinates = encoding.coordinates.astype(dtype)
+    usable = sources.sorted_active
+    coordinates = sources.sorted_coordinates.astype(dtype)
     infinity = jnp.asarray(jnp.inf, dtype=dtype)
     lower = jnp.min(jnp.where(usable[:, None], coordinates, infinity), axis=0)
     upper = jnp.max(jnp.where(usable[:, None], coordinates, -infinity), axis=0)
-    count = jnp.sum(usable, dtype=jnp.int32)
-    valid = ~jnp.any(active & ~encoding.in_domain)
-    finite = jnp.all(encoding.finite | ~active)
+    count = sources.active_count
+    valid = ~jnp.any(sources.active & ~sources.in_domain)
+    finite = jnp.all(sources.finite | ~sources.active)
     latest = provider.maximum(epoch[0])
     return _OwnerEvidence(
         lower=provider.all_gather(lower[None], axis=0, tiled=True),
@@ -1043,8 +1041,8 @@ def _owner_evidence(
 
 def _engine_candidates(
     engine: MortonNeighborQueryPlan,
-    address: MortonAddressPlan,
-    sources: tuple[Array, Array, Array, Array],
+    sources: PreparedMortonSources,
+    source_logical: Array,
     targets: Array,
     target_active: Array,
     target_ids: Array,
@@ -1054,31 +1052,29 @@ def _engine_candidates(
     radius: float | None,
     target_radii: Array | None = None,
 ) -> tuple[_Candidates, Array, Array]:
-    points, ids, active, logical = sources
+    address = engine.address_plan
     result = engine.query(
-        points,
+        sources,
         targets,
-        source_mask=active,
         target_mask=target_active,
-        source_stable_ids=ids,
         target_stable_ids=target_ids,
         exclude_self=exclude_self,
         radius=radius,
         target_radii=target_radii,
     )
     slots = result.source_indices
-    source_coordinates = address.encode(points).coordinates
+    source_coordinates = sources.sorted_coordinates[sources.logical_to_storage[slots]]
     target_coordinates = address.encode(targets).coordinates
     relative = _minimum_image(
-        target_coordinates[:, None, :] - source_coordinates[slots], address
+        target_coordinates[:, None, :] - source_coordinates, address
     )
     distance = jnp.sum(relative * relative, axis=-1)
     candidates = _Candidates(
         distance=distance,
-        ids=ids[slots],
+        ids=sources.stable_ids[slots],
         owners=jnp.broadcast_to(owner, slots.shape).astype(jnp.int32),
         slots=slots.astype(jnp.int32),
-        logical=logical[slots],
+        logical=source_logical[slots],
         valid=result.valid,
     )
     return candidates, result.status, result.evidence.required_candidates
@@ -1129,7 +1125,7 @@ def _search_radius(
 
 def _shell_body(
     config: _ShellConfig,
-    address: MortonAddressPlan,
+    source_plan: MortonSourcePlan,
     axis: str,
     local_engine: MortonNeighborQueryPlan,
     remote_engine: MortonNeighborQueryPlan | None,
@@ -1138,6 +1134,7 @@ def _shell_body(
     pair_once: bool,
 ) -> Callable[..., tuple[Array, ...]]:
     owners = config.owners
+    address = source_plan.address_plan
 
     def body(
         source_points: Array,
@@ -1154,14 +1151,14 @@ def _shell_body(
         rank = jax.lax.axis_index(axis).astype(jnp.int32)
         dtype = jnp.result_type(source_points.dtype, target_points.dtype)
         margin = _rounding_margin(address, dtype)
-        owner = _owner_evidence(
-            provider, address, source_points, source_active, source_epoch, dtype
+        sources = source_plan.prepare(
+            source_points, active_mask=source_active, stable_ids=source_ids
         )
-        sources = (source_points, source_ids, source_active, source_logical)
+        owner = _owner_evidence(provider, sources, source_epoch, dtype)
         local, local_status, local_required = _engine_candidates(
             local_engine,
-            address,
             sources,
+            source_logical,
             target_points,
             target_active,
             target_ids,
@@ -1212,9 +1209,9 @@ def _shell_body(
             answers = _remote_answers(
                 config,
                 provider,
-                address,
                 remote_engine,
                 sources,
+                source_logical,
                 rank,
                 jnp.where(required, near, jnp.asarray(jnp.inf, dtype=dtype)),
                 required_count,
@@ -1287,9 +1284,9 @@ class _RemoteAnswers(NamedTuple):
 def _remote_answers(
     config: _ShellConfig,
     provider: JaxCollectiveProvider,
-    address: MortonAddressPlan,
     engine: MortonNeighborQueryPlan,
-    sources: tuple[Array, Array, Array, Array],
+    sources: PreparedMortonSources,
+    source_logical: Array,
     rank: Array,
     required_near: Array,
     required_count: Array,
@@ -1335,8 +1332,8 @@ def _remote_answers(
 
     answers, answer_status, required_candidates = _engine_candidates(
         engine,
-        address,
         sources,
+        source_logical,
         send(target_points[target_rows], 0),
         send(jnp.ones(destination.shape, dtype=jnp.bool_), False),
         send(target_ids[target_rows], 0),
@@ -1488,6 +1485,7 @@ class _ShellQueryCore(StrictModule):
 
     source_ownership: DistributedOwnershipPlan
     target_ownership: DistributedOwnershipPlan
+    source_plan: MortonSourcePlan
     local_engine: MortonNeighborQueryPlan
     remote_engine: MortonNeighborQueryPlan | None
     config: _ShellConfig = eqx.field(static=True)
@@ -1532,10 +1530,10 @@ class _ShellQueryCore(StrictModule):
             if maximum_candidates is None
             else max(engine_neighbors, min(int(maximum_candidates), sources))
         )
-        address = source_ownership.address_plan
+        source_plan = MortonSourcePlan(source_ownership.address_plan, sources)
+        self.source_plan = source_plan
         self.local_engine = MortonNeighborQueryPlan(
-            address,
-            sources,
+            source_plan,
             targets,
             engine_neighbors,
             maximum_candidates=candidates,
@@ -1546,8 +1544,7 @@ class _ShellQueryCore(StrictModule):
             None
             if remote == 0
             else MortonNeighborQueryPlan(
-                address,
-                sources,
+                source_plan,
                 owners * halo,
                 engine_neighbors,
                 maximum_candidates=candidates,
@@ -1572,6 +1569,7 @@ class _ShellQueryCore(StrictModule):
                 "kind": "distributed-shell-query",
                 "source_ownership": source_ownership.plan_id,
                 "target_ownership": target_ownership.plan_id,
+                "source_plan": source_plan.plan_id,
                 "local_engine": self.local_engine.plan_id,
                 "remote_engine": (
                     None if self.remote_engine is None else self.remote_engine.plan_id
@@ -1615,7 +1613,7 @@ class _ShellQueryCore(StrictModule):
         axis = self.source_ownership.axis_name
         body = _shell_body(
             self.config,
-            self.source_ownership.address_plan,
+            self.source_plan,
             axis,
             self.local_engine,
             self.remote_engine,

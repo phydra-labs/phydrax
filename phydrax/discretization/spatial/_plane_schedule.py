@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import ceil
+from typing import final
 
 import equinox as eqx
 import jax
@@ -14,9 +15,11 @@ from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
-from ._morton import _canonical_morton_point_order, _MortonPointOrder, MortonAddressPlan
+from ._morton import MortonAddressPlan
+from ._neighbor_sources import MortonSourcePlan, PreparedMortonSources
 
 
+@final
 class MortonPlaneBuildEvidence(NonTrainableState, StrictModule):
     """Completion and resource evidence for one compact plane build."""
 
@@ -37,10 +40,11 @@ class MortonPlaneBuildEvidence(NonTrainableState, StrictModule):
     invalid_padding: jax.Array
 
 
+@final
 class MortonPlaneScheduleState(NonTrainableState, StrictModule):
     """Compact execution planes over one canonical Morton point order."""
 
-    point_order: _MortonPointOrder
+    point_order: PreparedMortonSources
     plane_offsets: jax.Array
     plane_active_counts: jax.Array
     node_active: jax.Array
@@ -62,6 +66,7 @@ class MortonPlaneScheduleState(NonTrainableState, StrictModule):
     evidence: MortonPlaneBuildEvidence
 
 
+@final
 class MortonPlaneTransition(NonTrainableState, StrictModule):
     """Atomic compact-plane refresh result."""
 
@@ -70,6 +75,21 @@ class MortonPlaneTransition(NonTrainableState, StrictModule):
     accepted_candidate: jax.Array
     refitted: jax.Array
     rebuilt: jax.Array
+
+
+@final
+class _MortonPlaneGeometry(NonTrainableState, StrictModule):
+    """Current numerical geometry on frozen contiguous plane groups."""
+
+    node_bit_levels: jax.Array
+    node_prefixes: jax.Array
+    node_centers: jax.Array
+    node_half_widths: jax.Array
+    node_scales: jax.Array
+    scale_exponents: jax.Array
+    valid_scales: jax.Array
+    bounding_padding: jax.Array
+    padding_valid: jax.Array
 
 
 def _common_prefix(
@@ -81,7 +101,7 @@ def _common_prefix(
 ) -> tuple[jax.Array, jax.Array]:
     xor = jnp.asarray(first, dtype=jnp.uint64) ^ jnp.asarray(last, dtype=jnp.uint64)
     shifts = jnp.arange(total_bits - 1, -1, -1, dtype=jnp.uint64)
-    differs = ((xor[:, None] >> shifts[None, :]) & jnp.uint64(1)).astype("bool")
+    differs = ((xor[:, None] >> shifts[None, :]) & jnp.uint64(1)).astype(jnp.bool_)
     has_difference = jnp.any(differs, axis=1)
     first_difference = jnp.argmax(differs, axis=1).astype(jnp.int32)
     bit_levels = jnp.where(has_difference, first_difference, total_bits)
@@ -122,10 +142,12 @@ def _group_bounds(
     )
 
 
+@final
 class MortonPlaneSchedulePlan(StrictModule):
     """Build compact Morton-ordered execution planes with contiguous children."""
 
     address_plan: MortonAddressPlan
+    source_plan: MortonSourcePlan
     point_capacity: int = eqx.field(static=True)
     node_capacity: int = eqx.field(static=True)
     maximum_leaf_occupancy: int = eqx.field(static=True)
@@ -168,28 +190,26 @@ class MortonPlaneSchedulePlan(StrictModule):
                 "node_capacity must be positive and no larger than the compact plane capacity."
             )
 
-        object.__setattr__(self, "address_plan", address_plan)
-        object.__setattr__(self, "point_capacity", points)
-        object.__setattr__(self, "node_capacity", nodes)
-        object.__setattr__(self, "maximum_leaf_occupancy", leaf_occupancy)
-        object.__setattr__(self, "coarsening_factor", coarse)
-        object.__setattr__(self, "target_top_nodes", top_nodes)
-        object.__setattr__(self, "plane_capacities", tuple(capacities))
-        object.__setattr__(self, "rectangular_capacity", rectangular)
-        object.__setattr__(
-            self,
-            "plan_id",
-            canonical_fingerprint(
-                {
-                    "kind": "morton-plane-schedule-plan",
-                    "address_plan_id": address_plan.plan_id,
-                    "point_capacity": points,
-                    "node_capacity": nodes,
-                    "maximum_leaf_occupancy": leaf_occupancy,
-                    "coarsening_factor": coarse,
-                    "target_top_nodes": top_nodes,
-                }
-            ),
+        self.source_plan = MortonSourcePlan(address_plan, points)
+        self.address_plan = address_plan
+        self.point_capacity = points
+        self.node_capacity = nodes
+        self.maximum_leaf_occupancy = leaf_occupancy
+        self.coarsening_factor = coarse
+        self.target_top_nodes = top_nodes
+        self.plane_capacities = tuple(capacities)
+        self.rectangular_capacity = rectangular
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "morton-plane-schedule-plan",
+                "address_plan_id": address_plan.plan_id,
+                "source_plan_id": self.source_plan.plan_id,
+                "point_capacity": points,
+                "node_capacity": nodes,
+                "maximum_leaf_occupancy": leaf_occupancy,
+                "coarsening_factor": coarse,
+                "target_top_nodes": top_nodes,
+            }
         )
 
     @property
@@ -205,37 +225,24 @@ class MortonPlaneSchedulePlan(StrictModule):
         bounding_padding: jax.Array | float = 0.0,
         epoch: int | jax.Array = 0,
     ) -> MortonPlaneScheduleState:
-        point_order = _canonical_morton_point_order(
-            self.address_plan,
-            points,
-            point_capacity=self.point_capacity,
-            active_mask=active_mask,
-            stable_ids=stable_ids,
+        point_order = self.source_plan.prepare(
+            points, active_mask=active_mask, stable_ids=stable_ids
         )
-        sorted_coordinates = point_order.encoding.coordinates[
-            point_order.storage_to_logical
-        ]
-        sorted_codes = point_order.sorted_codes
-        active_count = point_order.active_count
-        total_bits = self.address_plan.dimension * self.address_plan.maximum_depth
-        padding = jnp.asarray(bounding_padding, dtype=sorted_coordinates.dtype)
-        if padding.ndim == 0:
-            padding = jnp.full(
-                (self.address_plan.dimension,), padding, dtype=padding.dtype
-            )
-        if padding.shape != (self.address_plan.dimension,):
-            raise ValueError("bounding_padding must be scalar or match dimension.")
-        padding_valid = jnp.all(jnp.isfinite(padding) & (padding >= 0))
-        safe_padding = jnp.where(padding_valid, padding, 0.0)
+        return self._build_prepared(
+            point_order, bounding_padding=bounding_padding, epoch=epoch
+        )
 
+    def _build_prepared(
+        self,
+        point_order: PreparedMortonSources,
+        *,
+        bounding_padding: jax.Array | float,
+        epoch: int | jax.Array,
+    ) -> MortonPlaneScheduleState:
+        active_count = point_order.active_count
         plane_active: list[jax.Array] = []
         plane_starts: list[jax.Array] = []
         plane_counts: list[jax.Array] = []
-        plane_lower: list[jax.Array] = []
-        plane_upper: list[jax.Array] = []
-        plane_bit_levels: list[jax.Array] = []
-        plane_prefixes: list[jax.Array] = []
-
         leaf_capacity = self.plane_capacities[0]
         leaf_slots = jnp.arange(leaf_capacity, dtype=jnp.int32)
         leaf_starts = leaf_slots * self.maximum_leaf_occupancy
@@ -245,34 +252,12 @@ class MortonPlaneSchedulePlan(StrictModule):
             self.maximum_leaf_occupancy,
         ).astype(jnp.int32)
         leaf_active = leaf_counts > 0
-        leaf_lower, leaf_upper = _group_bounds(
-            sorted_coordinates,
-            point_order.sorted_active,
-            group_count=leaf_capacity,
-            group_size=self.maximum_leaf_occupancy,
-        )
-        safe_first = jnp.minimum(leaf_starts, self.point_capacity - 1)
-        safe_last = jnp.minimum(
-            leaf_starts + jnp.maximum(leaf_counts, 1) - 1,
-            self.point_capacity - 1,
-        )
-        bit_levels, prefixes = _common_prefix(
-            sorted_codes[safe_first],
-            sorted_codes[safe_last],
-            leaf_active,
-            total_bits=total_bits,
-        )
         plane_active.append(leaf_active)
         plane_starts.append(jnp.where(leaf_active, leaf_starts, 0))
         plane_counts.append(leaf_counts)
-        plane_lower.append(leaf_lower)
-        plane_upper.append(leaf_upper)
-        plane_bit_levels.append(bit_levels)
-        plane_prefixes.append(prefixes)
 
         for plane in range(1, self.plane_count):
             capacity = self.plane_capacities[plane]
-            child_capacity = self.plane_capacities[plane - 1]
             slots = jnp.arange(capacity, dtype=jnp.int32)
             child_starts = slots * self.coarsening_factor
             child_counts = jnp.clip(
@@ -282,26 +267,6 @@ class MortonPlaneSchedulePlan(StrictModule):
             ).astype(jnp.int32)
             active = child_counts > 0
 
-            padding = capacity * self.coarsening_factor - child_capacity
-            padded_active = jnp.pad(plane_active[plane - 1], (0, padding))
-            grouped_active = padded_active.reshape((capacity, self.coarsening_factor))
-            lower_values = jnp.pad(
-                plane_lower[plane - 1], ((0, padding), (0, 0))
-            ).reshape((capacity, self.coarsening_factor, self.address_plan.dimension))
-            upper_values = jnp.pad(
-                plane_upper[plane - 1], ((0, padding), (0, 0))
-            ).reshape((capacity, self.coarsening_factor, self.address_plan.dimension))
-            positive = jnp.asarray(jnp.inf, dtype=sorted_coordinates.dtype)
-            negative = jnp.asarray(-jnp.inf, dtype=sorted_coordinates.dtype)
-            lower = jnp.min(
-                jnp.where(grouped_active[..., None], lower_values, positive), axis=1
-            )
-            upper = jnp.max(
-                jnp.where(grouped_active[..., None], upper_values, negative), axis=1
-            )
-            lower = jnp.where(active[:, None], lower, jnp.zeros_like(lower))
-            upper = jnp.where(active[:, None], upper, jnp.zeros_like(upper))
-
             item_starts = child_starts * (
                 self.maximum_leaf_occupancy * self.coarsening_factor ** (plane - 1)
             )
@@ -310,24 +275,9 @@ class MortonPlaneSchedulePlan(StrictModule):
                 0,
                 self.maximum_leaf_occupancy * self.coarsening_factor**plane,
             ).astype(jnp.int32)
-            safe_first = jnp.minimum(item_starts, self.point_capacity - 1)
-            safe_last = jnp.minimum(
-                item_starts + jnp.maximum(item_counts, 1) - 1,
-                self.point_capacity - 1,
-            )
-            bit_levels, prefixes = _common_prefix(
-                sorted_codes[safe_first],
-                sorted_codes[safe_last],
-                active,
-                total_bits=total_bits,
-            )
             plane_active.append(active)
             plane_starts.append(jnp.where(active, item_starts, 0))
             plane_counts.append(item_counts)
-            plane_lower.append(lower)
-            plane_upper.append(upper)
-            plane_bit_levels.append(bit_levels)
-            plane_prefixes.append(prefixes)
 
         rectangular_offsets = []
         running = 0
@@ -339,10 +289,6 @@ class MortonPlaneSchedulePlan(StrictModule):
         flat_active = jnp.concatenate(plane_active)
         flat_starts = jnp.concatenate(plane_starts)
         flat_counts = jnp.concatenate(plane_counts)
-        flat_lower = jnp.concatenate(plane_lower)
-        flat_upper = jnp.concatenate(plane_upper)
-        flat_bit_levels = jnp.concatenate(plane_bit_levels)
-        flat_prefixes = jnp.concatenate(plane_prefixes)
         flat_planes = jnp.concatenate(
             [
                 jnp.full((capacity,), plane, dtype=jnp.int32)
@@ -413,30 +359,17 @@ class MortonPlaneSchedulePlan(StrictModule):
         plane_offsets = jnp.concatenate(
             (jnp.zeros((1,), dtype=jnp.int32), jnp.cumsum(active_per_plane))
         )
-        node_lower = jnp.where(
-            packed_active[:, None],
-            flat_lower[safe_selected] - safe_padding,
-            0,
+        node_planes = jnp.where(packed_active, flat_planes[safe_selected], 0)
+        node_item_starts = jnp.where(packed_active, flat_starts[safe_selected], 0)
+        node_item_counts = jnp.where(packed_active, flat_counts[safe_selected], 0)
+        geometry = self._geometry(
+            point_order,
+            node_active=packed_active,
+            node_planes=node_planes,
+            node_item_starts=node_item_starts,
+            node_item_counts=node_item_counts,
+            bounding_padding=bounding_padding,
         )
-        node_upper = jnp.where(
-            packed_active[:, None],
-            flat_upper[safe_selected] + safe_padding,
-            0,
-        )
-        node_half_widths = 0.5 * (node_upper - node_lower)
-        node_radii = jnp.sqrt(jnp.sum(node_half_widths * node_half_widths, axis=-1))
-        scale_floor = jnp.asarray(
-            jnp.finfo(sorted_coordinates.dtype).tiny,
-            dtype=sorted_coordinates.dtype,
-        )
-        safe_radii = jnp.maximum(node_radii, scale_floor)
-        scale_exponents = jnp.ceil(jnp.log2(safe_radii))
-        node_scales = jnp.where(
-            packed_active,
-            jnp.exp2(scale_exponents),
-            jnp.asarray(1.0, dtype=sorted_coordinates.dtype),
-        )
-        valid_scale = (~packed_active) | (jnp.isfinite(node_scales) & (node_scales > 0))
 
         sorted_slots = jnp.arange(self.point_capacity, dtype=jnp.int32)
         leaf_rectangular = sorted_slots // self.maximum_leaf_occupancy
@@ -451,11 +384,175 @@ class MortonPlaneSchedulePlan(StrictModule):
             .set(sorted_point_leaf_slots)
         )
 
+        evidence = self._evidence(
+            point_order,
+            geometry,
+            required_nodes=required_nodes,
+            node_active=packed_active,
+            active_leaves=active_per_plane[0],
+            maximum_leaf_occupancy=jnp.max(leaf_counts, initial=0),
+        )
+        return MortonPlaneScheduleState(
+            point_order=point_order,
+            plane_offsets=plane_offsets,
+            plane_active_counts=active_per_plane,
+            node_active=packed_active,
+            node_planes=node_planes,
+            node_bit_levels=geometry.node_bit_levels,
+            node_prefixes=geometry.node_prefixes,
+            node_parents=rectangular_to_packed[parent_rectangular],
+            node_child_starts=rectangular_to_packed[child_rectangular],
+            node_child_counts=child_counts,
+            node_item_starts=node_item_starts,
+            node_item_counts=node_item_counts,
+            node_centers=geometry.node_centers,
+            node_half_widths=geometry.node_half_widths,
+            node_scales=geometry.node_scales,
+            sorted_point_leaf_slots=sorted_point_leaf_slots,
+            logical_point_leaf_slots=logical_point_leaf_slots,
+            bounding_padding=geometry.bounding_padding,
+            epoch=jnp.asarray(epoch, dtype=jnp.int32),
+            evidence=evidence,
+        )
+
+    def _geometry(
+        self,
+        point_order: PreparedMortonSources,
+        *,
+        node_active: jax.Array,
+        node_planes: jax.Array,
+        node_item_starts: jax.Array,
+        node_item_counts: jax.Array,
+        bounding_padding: jax.Array | float,
+    ) -> _MortonPlaneGeometry:
+        coordinates = point_order.sorted_coordinates
+        padding = jnp.asarray(bounding_padding, dtype=coordinates.dtype)
+        if padding.ndim == 0:
+            padding = jnp.full(
+                (self.address_plan.dimension,), padding, dtype=padding.dtype
+            )
+        if padding.shape != (self.address_plan.dimension,):
+            raise ValueError("bounding_padding must be scalar or match dimension.")
+        padding_valid = jnp.all(jnp.isfinite(padding) & (padding >= 0))
+        safe_padding = jnp.where(padding_valid, padding, 0.0)
+
+        leaf_capacity = self.plane_capacities[0]
+        lower, upper = _group_bounds(
+            coordinates,
+            point_order.sorted_active,
+            group_count=leaf_capacity,
+            group_size=self.maximum_leaf_occupancy,
+        )
+        active = (
+            jnp.arange(leaf_capacity, dtype=jnp.int32) * self.maximum_leaf_occupancy
+            < point_order.active_count
+        )
+        lower_by_plane = [lower]
+        upper_by_plane = [upper]
+        offsets = [0]
+        group_sizes = [self.maximum_leaf_occupancy]
+        for plane in range(1, self.plane_count):
+            capacity = self.plane_capacities[plane]
+            child_capacity = self.plane_capacities[plane - 1]
+            group_padding = capacity * self.coarsening_factor - child_capacity
+            grouped_active = jnp.pad(active, (0, group_padding)).reshape(
+                (capacity, self.coarsening_factor)
+            )
+            grouped_lower = jnp.pad(lower, ((0, group_padding), (0, 0))).reshape(
+                (capacity, self.coarsening_factor, self.address_plan.dimension)
+            )
+            grouped_upper = jnp.pad(upper, ((0, group_padding), (0, 0))).reshape(
+                (capacity, self.coarsening_factor, self.address_plan.dimension)
+            )
+            lower = jnp.min(
+                jnp.where(
+                    grouped_active[..., None],
+                    grouped_lower,
+                    jnp.asarray(jnp.inf, dtype=coordinates.dtype),
+                ),
+                axis=1,
+            )
+            upper = jnp.max(
+                jnp.where(
+                    grouped_active[..., None],
+                    grouped_upper,
+                    jnp.asarray(-jnp.inf, dtype=coordinates.dtype),
+                ),
+                axis=1,
+            )
+            active = jnp.any(grouped_active, axis=1)
+            lower = jnp.where(active[:, None], lower, jnp.zeros_like(lower))
+            upper = jnp.where(active[:, None], upper, jnp.zeros_like(upper))
+            lower_by_plane.append(lower)
+            upper_by_plane.append(upper)
+            offsets.append(offsets[-1] + child_capacity)
+            group_sizes.append(group_sizes[-1] * self.coarsening_factor)
+
+        rectangular_slots = (
+            jnp.asarray(offsets, dtype=jnp.int32)[node_planes]
+            + node_item_starts // jnp.asarray(group_sizes, dtype=jnp.int32)[node_planes]
+        )
+        node_lower = jnp.where(
+            node_active[:, None],
+            jnp.concatenate(lower_by_plane)[rectangular_slots] - safe_padding,
+            0,
+        )
+        node_upper = jnp.where(
+            node_active[:, None],
+            jnp.concatenate(upper_by_plane)[rectangular_slots] + safe_padding,
+            0,
+        )
+        half_widths = 0.5 * (node_upper - node_lower)
+        radii = jax.lax.stop_gradient(
+            jnp.sqrt(jnp.sum(half_widths * half_widths, axis=-1))
+        )
+        scale_floor = jnp.asarray(
+            jnp.finfo(coordinates.dtype).tiny, dtype=coordinates.dtype
+        )
+        scale_exponents = jnp.ceil(jnp.log2(jnp.maximum(radii, scale_floor)))
+        scales = jnp.where(
+            node_active,
+            jnp.exp2(scale_exponents),
+            jnp.asarray(1.0, dtype=coordinates.dtype),
+        )
+        first = jnp.minimum(node_item_starts, self.point_capacity - 1)
+        last = jnp.minimum(
+            node_item_starts + jnp.maximum(node_item_counts, 1) - 1,
+            self.point_capacity - 1,
+        )
+        bit_levels, prefixes = _common_prefix(
+            point_order.sorted_codes[first],
+            point_order.sorted_codes[last],
+            node_active,
+            total_bits=self.address_plan.dimension * self.address_plan.maximum_depth,
+        )
+        return _MortonPlaneGeometry(
+            node_bit_levels=bit_levels,
+            node_prefixes=prefixes,
+            node_centers=0.5 * (node_lower + node_upper),
+            node_half_widths=half_widths,
+            node_scales=scales,
+            scale_exponents=scale_exponents,
+            valid_scales=(~node_active) | (jnp.isfinite(scales) & (scales > 0)),
+            bounding_padding=safe_padding,
+            padding_valid=padding_valid,
+        )
+
+    def _evidence(
+        self,
+        point_order: PreparedMortonSources,
+        geometry: _MortonPlaneGeometry,
+        *,
+        required_nodes: jax.Array,
+        node_active: jax.Array,
+        active_leaves: jax.Array,
+        maximum_leaf_occupancy: jax.Array,
+    ) -> MortonPlaneBuildEvidence:
         run_boundary = point_order.sorted_active & jnp.concatenate(
             (
-                jnp.asarray([True]),
+                jnp.asarray([True], dtype=jnp.bool_),
                 (~point_order.sorted_active[:-1])
-                | (sorted_codes[1:] != sorted_codes[:-1]),
+                | (point_order.sorted_codes[1:] != point_order.sorted_codes[:-1]),
             )
         )
         run_count = jnp.sum(run_boundary, dtype=jnp.int32)
@@ -464,28 +561,26 @@ class MortonPlaneSchedulePlan(StrictModule):
             size=self.point_capacity,
             fill_value=self.point_capacity,
         )[0].astype(jnp.int32)
-        run_slots = jnp.arange(self.point_capacity, dtype=jnp.int32)
-        run_valid = run_slots < run_count
-        run_next = jnp.concatenate((run_starts[1:], active_count[None]))
+        run_valid = jnp.arange(self.point_capacity, dtype=jnp.int32) < run_count
+        run_next = jnp.concatenate((run_starts[1:], point_order.active_count[None]))
         run_lengths = jnp.where(run_valid, run_next - run_starts, 0)
-
         successful = (
             (point_order.invalid_points == 0)
             & point_order.stable_ids_unique
             & (required_nodes <= self.node_capacity)
-            & jnp.all(valid_scale)
-            & padding_valid
+            & jnp.all(geometry.valid_scales)
+            & geometry.padding_valid
         )
-        evidence = MortonPlaneBuildEvidence(
+        return MortonPlaneBuildEvidence(
             successful=successful,
-            active_points=active_count,
+            active_points=point_order.active_count,
             invalid_points=point_order.invalid_points,
             stable_ids_unique=point_order.stable_ids_unique,
             required_nodes=required_nodes,
             node_capacity=jnp.asarray(self.node_capacity, dtype=jnp.int32),
             active_nodes=jnp.minimum(required_nodes, self.node_capacity),
-            active_leaves=active_per_plane[0],
-            maximum_leaf_occupancy=jnp.max(leaf_counts, initial=0),
+            active_leaves=active_leaves,
+            maximum_leaf_occupancy=maximum_leaf_occupancy,
             oversized_terminal_buckets=jnp.sum(
                 run_valid & (run_lengths > self.maximum_leaf_occupancy),
                 dtype=jnp.int32,
@@ -494,7 +589,7 @@ class MortonPlaneSchedulePlan(StrictModule):
             minimum_scale_exponent=jnp.where(
                 required_nodes > 0,
                 jnp.min(
-                    jnp.where(packed_active, scale_exponents, jnp.inf),
+                    jnp.where(node_active, geometry.scale_exponents, jnp.inf),
                     initial=jnp.inf,
                 ),
                 0.0,
@@ -502,37 +597,13 @@ class MortonPlaneSchedulePlan(StrictModule):
             maximum_scale_exponent=jnp.where(
                 required_nodes > 0,
                 jnp.max(
-                    jnp.where(packed_active, scale_exponents, -jnp.inf),
+                    jnp.where(node_active, geometry.scale_exponents, -jnp.inf),
                     initial=-jnp.inf,
                 ),
                 0.0,
             ),
-            invalid_scales=jnp.sum(~valid_scale, dtype=jnp.int32),
-            invalid_padding=(~padding_valid).astype(jnp.int32),
-        )
-        return MortonPlaneScheduleState(
-            point_order=point_order,
-            plane_offsets=plane_offsets,
-            plane_active_counts=active_per_plane,
-            node_active=packed_active,
-            node_planes=jnp.where(packed_active, flat_planes[safe_selected], 0),
-            node_bit_levels=jnp.where(packed_active, flat_bit_levels[safe_selected], 0),
-            node_prefixes=jnp.where(
-                packed_active, flat_prefixes[safe_selected], jnp.uint64(0)
-            ),
-            node_parents=rectangular_to_packed[parent_rectangular],
-            node_child_starts=rectangular_to_packed[child_rectangular],
-            node_child_counts=child_counts,
-            node_item_starts=jnp.where(packed_active, flat_starts[safe_selected], 0),
-            node_item_counts=jnp.where(packed_active, flat_counts[safe_selected], 0),
-            node_centers=0.5 * (node_lower + node_upper),
-            node_half_widths=node_half_widths,
-            node_scales=node_scales,
-            sorted_point_leaf_slots=sorted_point_leaf_slots,
-            logical_point_leaf_slots=logical_point_leaf_slots,
-            bounding_padding=safe_padding,
-            epoch=jnp.asarray(epoch, dtype=jnp.int32),
-            evidence=evidence,
+            invalid_scales=jnp.sum(~geometry.valid_scales, dtype=jnp.int32),
+            invalid_padding=(~geometry.padding_valid).astype(jnp.int32),
         )
 
     def refresh(
@@ -544,21 +615,68 @@ class MortonPlaneSchedulePlan(StrictModule):
         stable_ids: jax.Array | None = None,
         bounding_padding: jax.Array | float = 0.0,
     ) -> MortonPlaneTransition:
-        candidate = self.build(
+        source_transition = self.source_plan.refresh(
+            previous.point_order,
             points,
             active_mask=active_mask,
             stable_ids=stable_ids,
-            bounding_padding=bounding_padding,
-            epoch=previous.epoch + 1,
         )
-        same_topology = (
-            jnp.array_equal(candidate.node_planes, previous.node_planes)
-            & jnp.array_equal(candidate.node_bit_levels, previous.node_bit_levels)
-            & jnp.array_equal(candidate.node_prefixes, previous.node_prefixes)
-            & jnp.array_equal(
-                candidate.point_order.sorted_stable_ids,
-                previous.point_order.sorted_stable_ids,
+        point_order = source_transition.candidate
+        # Leaf groups are fixed-size sorted ranges; every parent groups a fixed
+        # number of adjacent children. Unchanged canonical order and activity
+        # therefore preserve all group memberships and connectivity, regardless
+        # of changes to their current common Morton prefixes.
+        reuse_topology = previous.evidence.successful & source_transition.reused_order
+
+        def refit(_: None) -> MortonPlaneScheduleState:
+            geometry = self._geometry(
+                point_order,
+                node_active=previous.node_active,
+                node_planes=previous.node_planes,
+                node_item_starts=previous.node_item_starts,
+                node_item_counts=previous.node_item_counts,
+                bounding_padding=bounding_padding,
             )
+            evidence = self._evidence(
+                point_order,
+                geometry,
+                required_nodes=previous.evidence.required_nodes,
+                node_active=previous.node_active,
+                active_leaves=previous.evidence.active_leaves,
+                maximum_leaf_occupancy=previous.evidence.maximum_leaf_occupancy,
+            )
+            return MortonPlaneScheduleState(
+                point_order=point_order,
+                plane_offsets=previous.plane_offsets,
+                plane_active_counts=previous.plane_active_counts,
+                node_active=previous.node_active,
+                node_planes=previous.node_planes,
+                node_bit_levels=geometry.node_bit_levels,
+                node_prefixes=geometry.node_prefixes,
+                node_parents=previous.node_parents,
+                node_child_starts=previous.node_child_starts,
+                node_child_counts=previous.node_child_counts,
+                node_item_starts=previous.node_item_starts,
+                node_item_counts=previous.node_item_counts,
+                node_centers=geometry.node_centers,
+                node_half_widths=geometry.node_half_widths,
+                node_scales=geometry.node_scales,
+                sorted_point_leaf_slots=previous.sorted_point_leaf_slots,
+                logical_point_leaf_slots=previous.logical_point_leaf_slots,
+                bounding_padding=geometry.bounding_padding,
+                epoch=previous.epoch + 1,
+                evidence=evidence,
+            )
+
+        candidate = jax.lax.cond(
+            reuse_topology,
+            refit,
+            lambda _: self._build_prepared(
+                point_order,
+                bounding_padding=bounding_padding,
+                epoch=previous.epoch + 1,
+            ),
+            operand=None,
         )
         accepted_candidate = candidate.evidence.successful
         accepted = jax.lax.cond(
@@ -571,8 +689,8 @@ class MortonPlaneSchedulePlan(StrictModule):
             candidate=candidate,
             accepted=accepted,
             accepted_candidate=accepted_candidate,
-            refitted=accepted_candidate & same_topology,
-            rebuilt=accepted_candidate & ~same_topology,
+            refitted=accepted_candidate & reuse_topology,
+            rebuilt=accepted_candidate & ~reuse_topology,
         )
 
 

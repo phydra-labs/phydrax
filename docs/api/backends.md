@@ -19,6 +19,13 @@ assembled from matrix-free support, supported coordinate dtypes, lifecycle suppo
 and required explicit release. `BackendTransferEvidence` records host-to-device bytes,
 device-to-host bytes, and explicit synchronization count for each result.
 
+`BackendAvailability.environment_issues` is a tuple of `CudaEnvironmentIssue`
+records (empty by default). cuDSS, AmgX, and QUDA load lazily from the matching
+CUDA companion wheel, with version, component, handler, and CUDA-major checks.
+NVIDIA dependencies are preloaded by absolute path from installed NVIDIA wheels,
+not selected through `LD_LIBRARY_PATH`. GPU-direct mpi4jax remains user-provided
+and must match JAX's CUDA major.
+
 ```python
 import jax.numpy as jnp
 import phydrax as phx
@@ -48,6 +55,74 @@ else:
 
 ::: phydrax.backends.AbstractExternalBackend
 
+## CUDA environment
+
+`cuda_environment()` collects host facts, probes the JAX backend, and reports
+mapped CUDA libraries on Linux. `assess_cuda_environment(facts)` assesses an
+explicit immutable `CudaEnvironmentFacts` record without collecting host state
+or initializing a backend. A `CudaEnvironmentReport` contains `facts` and
+`issues`; `successful` means no issue has severity `"error"`.
+
+Facts include host platform and machine, requested and installed plugin majors,
+foreign NVIDIA distributions, `wheel_library_majors` (realpath/major pairs),
+selected platforms, backend initialization and probe state, runtime and driver
+versions, `backend_error`, CUDA library-path directories, and mapped libraries.
+`MappedCudaLibrary` records `soname`, real `path`, and `major` (`None` when
+unknown). `CudaEnvironmentIssue` records `code`, `severity`, `message`, and
+related `paths`. `CudaIssueCode` is the closed set of issue codes;
+`CudaIssueSeverity` is `"error"` or `"warning"`.
+
+The mapped-library audit is diagnostic only; companion availability validates
+installed identities and preloads NVIDIA wheel dependencies. Provider-specific issues appear in
+`BackendAvailability.environment_issues`, not by probing every provider in
+`cuda_environment()`. See [Installation](../installation.md#inspect-the-environment)
+for usage, every issue code, and remedies.
+
+Companion refusals use `companion-missing`, `companion-invalid`,
+`companion-version-mismatch`, `companion-major-mismatch`, or
+`native-dependency-missing`. Availability retains these typed issues without
+changing the `BackendAvailability` record.
+
+`cuda_native_resources()` snapshots loaded component identities and native memo
+partitions without discovering or loading other components. Each partition
+reports its component, device, partition key, live entries, declared capacity,
+and counted rebuilds. Native state is released by the owned process-exit handler.
+
+::: phydrax.backends.cuda_native_resources
+
+---
+
+
+::: phydrax.backends.cuda_environment
+
+---
+
+::: phydrax.backends.assess_cuda_environment
+
+---
+
+::: phydrax.backends.CudaEnvironmentReport
+
+---
+
+::: phydrax.backends.CudaEnvironmentIssue
+
+---
+
+::: phydrax.backends.CudaEnvironmentFacts
+
+---
+
+::: phydrax.backends.MappedCudaLibrary
+
+---
+
+::: phydrax.backends.CudaIssueCode
+
+---
+
+::: phydrax.backends.CudaIssueSeverity
+
 ## Distributed and vendor execution capabilities
 
 `BackendDistributionCapabilities` distinguishes global JAX arrays from
@@ -58,11 +133,38 @@ a provider boundary; an exact `qualification.SupportTuple` is still required
 for a hardware support claim.
 
 `JaxCollectiveProvider` is the native named-axis route used inside
-`shard_map`. `Mpi4JaxCollectiveProvider` is an optional explicit rank-local MPI
-route installed with `phydrax[mpi]`. Its communicator is caller-owned, and
+`shard_map`, using JAX/NCCL for NVIDIA multi-GPU and multi-node communication.
+[Startup coordination](execution.md#bootstrap-before-device-initialization)
+automatically handles `srun`/`mpirun` launches; MPI is only a launcher or optional
+interop route. `Mpi4JaxCollectiveProvider` is an explicit rank-local MPI route
+installed with `phydrax[mpi]`. Its communicator is caller-owned, and
 automatic differentiation and batching remain operation-specific. Host
 `mpi4py` traffic must not be interleaved on the same communicator with deferred
-device MPI operations.
+device MPI operations. mpi4jax selects GPU transport once per process from
+`MPI4JAX_USE_CUDA_MPI`; set it to `1` before importing/using mpi4jax for
+`gpu_direct=True`, or `0` for `gpu_direct=False` (host staging), and do not change
+it afterward. Direct transport requires a CUDA-enabled mpi4jax build, a CUDA
+device, and CUDA-aware MPI: the MPI library actually linked by mpi4py must
+report `MPIX_Query_cuda_support() == 1`. Use a site CUDA-aware MPI and build both
+mpi4py and mpi4jax against that installation's `mpicc`; use its matching
+`mpirun`, not a launcher from another MPI installation. Ordinary PyPI MPI wheels
+are built without CUDA support and may shadow the site's MPI. The mpi4jax CUDA
+bridge must match JAX's CUDA major and is checked before import, even for
+host-staged use. See the [verified CUDA 13 build recipe](../installation.md#gpu-direct-mpi-interoperability)
+using a `CUDA_ROOT` toolkit view, an explicit NVIDIA-wheel RPATH, and
+`uv pip install --no-cache --no-build-isolation --reinstall mpi4jax`.
+MPI libraries must remain discoverable through RPATH or the deployment's library
+path. Direct mode passes device buffers to MPI
+without mpi4jax host staging; MPI may still copy internally. CUDA awareness does
+not guarantee CUDA IPC or network GPUDirect RDMA. Single-node OpenMPI can use
+its CUDA-aware shared-memory transport without UCX, including a copy route when
+CUDA IPC export is unavailable. The provider refuses an unqualified direct
+route instead of falling back.
+Rank-local MPI does not require JAX multi-host initialization; avoid enabling
+the independent launcher-detected Phydrax/JAX distributed bootstrap when both
+ranks deliberately share one GPU. Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` for
+that deployment. The CUDA MPI integration test accepts a matching launcher
+(and deployment-specific flags) through `PHYDRAX_MPI_LAUNCHER`.
 
 Vendor profiles are admission envelopes rather than blanket qualification:
 
@@ -90,6 +192,68 @@ Phydrax does not claim one heterogeneous global JAX mesh.
 ---
 
 ::: phydrax.backends.mpi4jax_availability
+
+## Lattice kernel providers
+
+`create_lattice_provider("jax-native-lattice" | "quda" | "gpt-grid" | "qlat")`
+selects one canonical `LatticeKernelProvider`. The external availability functions
+(`quda_availability`, `grid_availability`, `qlat_availability`, and
+`optional_lattice_provider_availability`) admit executable adapter prerequisites,
+not merely importable packages. Construction refuses unavailable runtimes; no
+adapter silently substitutes native JAX execution.
+
+Gauge operations take canonical `(site, direction, color, color)` links, `beta`,
+an owned-output mask, and explicit `lattice_shape` and `periodic` keyword arguments.
+Site ordering is C order. Action masks are `(site, plane)` with planes ordered
+by ascending `mu < nu`; force masks are `(site, direction)`. Native JAX supports
+periodic axes and bounded halo-extended blocks, excluding faces that leave bounded
+axes. External adapters currently support single-process periodic 4D SU(3)
+lattices; their action requires full ownership, while force supports output masks.
+The QUDA and Grid adapters additionally require even lattice extents; QUDA
+requires Wilson `r=1`.
+No external adapter currently declares distributed halo exchange or MPI reductions.
+
+Fermion operations consume canonical Wilson/clover-Wilson operators and
+`(site, spin, color)` spinors (an optional final RHS axis denotes a block).
+They execute the full Dirac action, including mass, spacing, boundary phases,
+spin-basis conversion, and supplied local clover blocks—not just the library's
+raw hopping term. The adjoint flag denotes the Hermitian adjoint.
+QUDA uses Wilson hopping with faithful spin-basis conversion, including arbitrary
+validated gamma bases, and applies the operator's arbitrary local clover blocks
+on device through the native JAX clover owner; it does not replace those blocks
+with QUDA's gauge-generated clover term.
+
+| Provider | Operations | Dtypes | JAX transformations |
+| --- | --- | --- | --- |
+| Native JAX | Gauge action/force, Wilson/clover/block, projected halo | complex64/complex128 | jit, vmap, jvp, vjp, rematerialization |
+| QUDA | Gauge action/force, Wilson/clover/block | complex64/complex128 | jit (device-resident public JAX FFI); no autodiff |
+| Grid/gpt | Gauge action/force, Wilson/clover/block | complex64/complex128 | eager only |
+| Qlat | Gauge action/force | complex128 | eager only |
+
+QUDA executes through the companion's public JAX FFI handlers without host-staged
+callbacks. Every call reloads device gauge links; only the scalar action result
+crosses to the host. Calls synchronize XLA inputs and await QUDA completion, so
+they are explicit synchronization points. A process mutex serializes QUDA's
+global runtime. Only one JAX process is supported; the first call initializes one
+CUDA device and later calls on another device are refused.
+
+When unset, `QUDA_RESOURCE_PATH` defaults to
+`$XDG_CACHE_HOME/phydrax/quda/<build hash>/<QUDA variant>` (using `~/.cache` when
+`XDG_CACHE_HOME` is unset). The variant is QUDA's own tune-cache key (CPU
+architecture, compiled GPU architectures, CUDA compiler version), so CUDA 12 and
+CUDA 13 companions, or development and release builds, never share a tune cache
+that QUDA would reject. An explicit resource path is preserved. The owned exit
+handler calls `endQuda`.
+
+CPU adapters explicitly transfer arrays to their host runtime. External adapters
+declare no automatic differentiation; differentiating through them is refused
+rather than returning an incorrect derivative. Provider status preserves runtime
+and version evidence.
+
+::: phydrax.backends.quda_availability
+
+::: phydrax.backends.create_lattice_provider
+
 
 
 ## Clarabel conic programming
@@ -183,34 +347,40 @@ constraint-dual values with their canonical signs.
 
 ::: phydrax.backends.CVXPY_CAPABILITIES
 
-## Spineax cuDSS sparse direct execution
+## cuDSS (native)
 
-Spineax is an optional Linux x86-64 CUDA 13 bridge to NVIDIA cuDSS. Install the
-`cudss` extra only on a supported NVIDIA system, inspect
-`spineax_availability`, and select
-`SparseLDLT(provider="spineax-cudss")` explicitly. Importing Phydrax does not
-import Spineax or initialize CUDA.
+The Linux x86-64 CUDA companions provide cuDSS for both `phydrax[cuda12]` and
+`phydrax[cuda13]`. Inspect `cudss_availability`, then select
+`SparseLDLT(provider="cudss", factor_cache_capacity=8)` explicitly.
+Importing Phydrax does not load the companion or initialize CUDA.
 
-The provider accepts sorted canonical 32-bit CSR structure, supports
-shared-pattern numeric value batches, retains symbolic analysis across
-`phydrax.linalg.refresh`, reuses factors for multiple right-hand sides, and
-requires explicit `phydrax.linalg.release`. Original-coordinate residual
-certification remains Phydrax-owned.
+The provider accepts sorted canonical 32-bit CSR structure and real float32 or
+float64 symmetric systems. It supports shared-pattern numeric value batches,
+retains symbolic analysis across `phydrax.linalg.refresh`, reuses factors for
+multiple right-hand sides, and supports optional `phydrax.linalg.release` to
+retire memo entries early.
+Refinement and original-coordinate residual certification remain JAX-side.
 
-Spineax reports positive and negative LDLᵀ inertia. Its current cuDSS path does
-not claim reliable zero inertia; this limitation is retained in capability and
-KKT evidence rather than inferred away. No unavailable or insufficient-inertia
-execution falls back to another provider.
+Each plan has a separate bounded native factor-cache partition; the positive
+`factor_cache_capacity` participates in policy and plan identity. Evicted state
+is rebuilt from call operands, so release or eviction does not invalidate a
+prepared value. Solve provenance reports exact int32 `native_rebuilds`.
+Use `cuda_native_resources()` to inspect live entries, capacities, and rebuilds.
 
-Accordingly, the current nonconvex structured IPM rejects Spineax as its KKT
-provider until that zero-inertia capability is certified. The provider remains
-available for ordinary sparse linear systems.
+cuDSS reports positive and negative LDLᵀ inertia, but does not claim reliable
+zero inertia. Accordingly, the current nonconvex structured IPM rejects cuDSS as
+its KKT provider until that capability is certified. No unavailable or
+insufficient-inertia execution falls back to another provider.
 
-::: phydrax.backends.SpineaxBackend
+::: phydrax.backends.CudssBackend
 
 ---
 
-::: phydrax.backends.spineax_availability
+::: phydrax.backends.CUDSS_CAPABILITIES
+
+---
+
+::: phydrax.backends.cudss_availability
 
 ---
 
@@ -479,13 +649,27 @@ Both AMG providers accept only square canonical-CSR `LinearSystem` problems with
 immutable, recursively canonicalized configuration. Numeric refresh preserves the
 pattern and increments the numeric version; structural drift is an error.
 
-PyAMGCL is a host provider. Its result reports iteration or reason data only when the
-binding exposes them; missing counters remain absent. AmgX is a device provider. One
-prepared hierarchy uploads CSR once, solves multiple right-hand sides without setup
-repetition, downloads before independent residual verification, and reports exact
-transfer and synchronization evidence. `release_amgx` is idempotent and releases the
-solver, vectors, matrix, resources, configuration, and reference-counted global AmgX
-runtime.
+PyAMGCL is a host provider. Its result reports iteration or reason data only when
+the binding exposes them; missing counters remain absent. AmgX uses the CUDA
+companion's public JAX FFI for device-resident, jittable execution, without
+automatic differentiation. Its dDDI specialization promotes float32 buffers to
+float64 and casts results back; `provenance.promoted_to_float64` records this.
+The companion synchronizes the XLA stream before and after AmgX work, so these
+calls are explicit synchronization points despite keeping numerical arrays on
+device. Restricting compiled modes to dDDI does not prune solver algorithms.
+
+`AmgXPolicy(hierarchy_cache_capacity=2)` declares a positive per-plan native
+hierarchy-cache capacity and includes it in policy identity. Native refresh
+replaces coefficients and resets the solver in place when resident, while
+`refresh_amgx` returns an independent preparation. The old value remains usable:
+its next solve rebuilds its original hierarchy once and counts that rebuild.
+Evicted state is also rebuilt from complete operands. Diagnostics expose per-RHS
+`native_status`, `iterations`, and `native_residual_norm`, plus `native_rebuilds`;
+independent residual verification remains JAX-side. `release_amgx` is idempotent
+and optional: it retires entries early without invalidating preparations. A
+subsequent solve rebuilds state and records that work in `native_rebuilds`.
+AmgX initialization/finalization is reference counted inside the companion.
+The owned exit handler releases native state and finalizes loaded components.
 
 ```python
 if phx.backends.amgx_availability().available:

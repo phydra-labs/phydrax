@@ -36,7 +36,11 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
 from .._validation import positive_finite_float, positive_integer
-from ..discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
+from ..discretization.spatial import (
+    MortonAddressPlan,
+    MortonRadiusRelationPlan,
+    MortonSourcePlan,
+)
 from ..solver import CartesianExpansionSpace, CartesianFMMResourceEvidence, UniformFMMPlan
 from ..typing import checked, parse
 from ._cloud_coupling import (
@@ -897,10 +901,7 @@ def _fmm_preparation(
     points = np.asarray(position)
     largest = float(np.max(np.asarray(radius)))
     certificate = (
-        resources.minimum_contact_ratio
-        * resources.overlap_growth_bound
-        * 2.0
-        * largest
+        resources.minimum_contact_ratio * resources.overlap_growth_bound * 2.0 * largest
     )
     extent = float(np.max(np.ptp(points, axis=0)))
     margin = max(extent, largest) * 0.03125 + 2.0 * largest
@@ -923,11 +924,13 @@ def _fmm_preparation(
         maximum_iterations=resources.maximum_coupling_iterations,
     )
     address = MortonAddressPlan(tuple(lower), tuple(lower + side), resources.fmm_depth)
+    source_plan = MortonSourcePlan(address, plan.bubble_count)
+    sources = source_plan.prepare(position)
     relation_plan = MortonRadiusRelationPlan(
-        address, plan.bubble_count, plan.bubble_count, resources.maximum_candidate_pairs
+        source_plan, plan.bubble_count, resources.maximum_candidate_pairs
     )
     query = relation_plan.query(
-        position, position, certificate, exclude_self=True, pair_once=True
+        sources, sources.points, certificate, exclude_self=True, pair_once=True
     )
     relation = query.relation
     pairs = (

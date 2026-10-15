@@ -241,13 +241,12 @@ def test_batched_query_graph_is_jittable_and_differentiable() -> None:
 
 def test_query_neighbors_support_morton_execution_and_geometry_gradients() -> None:
     plan = phx.discretization.spatial.MortonNeighborQueryPlan(
-        phx.discretization.spatial.MortonAddressPlan(
-            (0.0,),
-            (1.0,),
-            16,
-            periodic_axes=(True,),
+        phx.discretization.spatial.MortonSourcePlan(
+            phx.discretization.spatial.MortonAddressPlan(
+                (0.0,), (1.0,), 16, periodic_axes=(True,)
+            ),
+            2,
         ),
-        2,
         1,
         2,
     )
@@ -351,8 +350,9 @@ def test_host_query_edges_match_brute_force_across_source_tiles(kind: str) -> No
 def test_graph_query_morton_overflow_refuses_neighbors() -> None:
     source = jnp.full((8, 1), 0.25, dtype=jnp.float64)
     plan = phx.discretization.spatial.MortonNeighborQueryPlan(
-        phx.discretization.spatial.MortonAddressPlan((0.0,), (1.0,), 8),
-        8,
+        phx.discretization.spatial.MortonSourcePlan(
+            phx.discretization.spatial.MortonAddressPlan((0.0,), (1.0,), 8), 8
+        ),
         1,
         1,
         maximum_candidates=2,
@@ -469,3 +469,170 @@ def test_query_budget_preserves_empty_case_refusal() -> None:
             jnp.zeros((0, 2, 2), dtype=jnp.float64),
             max_neighbors=1,
         )
+
+
+def _spatial_plan(family: str, periodic: bool = False) -> Any:
+    spatial = phx.discretization.spatial
+    if family == "bvh":
+        source = spatial.BVHSourcePlan(
+            1, 4, leaf_size=2, periodic_lengths=(1.0,) if periodic else None
+        )
+        return spatial.BVHNeighborQueryPlan(source, 4, 2)
+    address = spatial.MortonAddressPlan((0.0,), (1.0,), 3, periodic_axes=(periodic,))
+    return spatial.MortonNeighborQueryPlan(
+        spatial.MortonSourcePlan(address, 4), 4, 2, maximum_candidates=4
+    )
+
+
+@pytest.mark.parametrize("family", ["morton", "bvh"])
+@pytest.mark.parametrize("periodic", [False, True])
+@pytest.mark.parametrize("exclude_self", [False, True])
+def test_planned_prepared_graph_parity(
+    family: str, periodic: bool, exclude_self: bool
+) -> None:
+    points = jnp.asarray([[0.125], [0.375], [0.375], [0.875]], dtype=jnp.float64)
+    targets = jnp.stack((points, points + 0.015625))
+    plan = _spatial_plan(family, periodic)
+    prepared = plan.source_plan.prepare(points)
+    periodic_lengths = (1.0,) if periodic else None
+
+    def query(source: Any, query_plan: Any = None) -> phx.graph.QueryNeighborhood:
+        return phx.graph.query_neighbors(
+            source,
+            targets,
+            max_neighbors=2,
+            radius=0.25,
+            exclude_self=exclude_self,
+            periodic_lengths=periodic_lengths,
+            plan=query_plan,
+        )
+
+    dense = query(points)
+    raw = query(points, plan)
+    reused = query(prepared, plan)
+    stacked = jax.vmap(plan.source_plan.prepare)(jnp.stack((points, points)))
+    stacked_result = query(stacked, plan)
+    for result in (raw, reused, stacked_result):
+        assert result.evidence.backend == family
+        assert bool(result.evidence.successful)
+        np.testing.assert_array_equal(
+            result.indices[result.mask], dense.indices[dense.mask]
+        )
+        np.testing.assert_array_equal(result.mask, dense.mask)
+        np.testing.assert_allclose(result.relative, dense.relative)
+        np.testing.assert_allclose(result.distance_squared, dense.distance_squared)
+    for builder in (
+        lambda source: (
+            phx.graph.batched_knn_query_graph(source, targets, k=2, plan=plan).graph
+        ),
+        lambda source: phx.graph.batched_knn_graph(source, k=2, plan=plan),
+    ):
+        expected = builder(points)
+        actual = builder(prepared)
+        np.testing.assert_array_equal(actual.senders, expected.senders)
+        np.testing.assert_array_equal(actual.edge_mask, expected.edge_mask)
+
+
+@pytest.mark.parametrize("family", ["morton", "bvh"])
+def test_prepared_graph_refusals(family: str) -> None:
+    plan = _spatial_plan(family)
+    points = jnp.full((4, 1), 0.3, dtype=jnp.float64)
+    prepared = plan.source_plan.prepare(points)
+    with pytest.raises(ValueError, match="explicit"):
+        phx.graph.query_neighbors(prepared, points)
+    with pytest.raises(ValueError, match="activity"):
+        phx.graph.query_neighbors(prepared, points, plan=plan, source_mask=[True] * 4)
+    with pytest.raises(TypeError, match="float64"):
+        phx.graph.query_neighbors(
+            plan.source_plan.prepare(points.astype(jnp.float32)), points, plan=plan
+        )
+    with pytest.raises(ValueError, match="logical-index"):
+        phx.graph.query_neighbors(
+            plan.source_plan.prepare(points, stable_ids=jnp.arange(4)),
+            points,
+            plan=plan,
+        )
+    with pytest.raises(TypeError, match="requires Prepared"):
+        phx.graph.query_neighbors(
+            prepared,
+            points,
+            plan=_spatial_plan("bvh" if family == "morton" else "morton"),
+        )
+    with pytest.raises(ValueError, match="source plan"):
+        phx.graph.query_neighbors(prepared, points, plan=_spatial_plan(family, True))
+    with pytest.raises(ValueError, match="periodic_lengths"):
+        phx.graph.query_neighbors(prepared, points, plan=plan, periodic_lengths=(1.0,))
+
+
+@pytest.mark.parametrize("family", ["morton", "bvh"])
+def test_prepared_graph_live_geometry_gradients(family: str) -> None:
+    plan = _spatial_plan(family)
+    points = jnp.asarray([[0.1], [0.3], [0.6], [0.9]], dtype=jnp.float64)
+    targets = points + 0.01
+
+    def loss(source: Any, target: Any, planned: bool) -> Any:
+        result = phx.graph.query_neighbors(
+            plan.source_plan.prepare(source) if planned else source,
+            target,
+            max_neighbors=2,
+            plan=plan if planned else None,
+        )
+        return jnp.sum(result.relative**2) + jnp.sum(result.distance)
+
+    dense = jax.grad(loss, argnums=(0, 1))(points, targets, False)
+    prepared = jax.grad(loss, argnums=(0, 1))(points, targets, True)
+    for actual, expected in zip(prepared, dense, strict=True):
+        np.testing.assert_allclose(actual, expected)
+
+
+def test_stacked_bvh_graph_shares_capacity_fixed_topology() -> None:
+    import equinox as eqx
+
+    plan = _spatial_plan("bvh")
+    points = jnp.asarray(
+        [[[0.125], [0.375], [0.625], [0.875]], [[0.25], [0.375], [0.625], [0.875]]],
+        dtype=jnp.float64,
+    )
+    stacked = jax.vmap(plan.source_plan.prepare)(points)
+    shared = eqx.tree_at(
+        lambda sources: (
+            sources.tree.left,
+            sources.tree.right,
+            sources.tree.leaf_id,
+            sources.tree.leaf_node,
+        ),
+        stacked,
+        tuple(
+            value[0]
+            for value in (
+                stacked.tree.left,
+                stacked.tree.right,
+                stacked.tree.leaf_id,
+                stacked.tree.leaf_node,
+            )
+        ),
+    )
+    result = phx.graph.query_neighbors(shared, points, plan=plan)
+    raw = phx.graph.query_neighbors(points, points, plan=plan)
+    np.testing.assert_array_equal(result.indices, raw.indices)
+    np.testing.assert_array_equal(result.mask, raw.mask)
+
+
+@pytest.mark.parametrize("family", ["morton", "bvh"])
+def test_prepared_graph_squared_distance_gradient_at_coincidence(family: str) -> None:
+    plan = _spatial_plan(family)
+    points = jnp.full((4, 1), 0.5, dtype=jnp.float64)
+
+    def loss(source: Any, planned: bool) -> Any:
+        result = phx.graph.query_neighbors(
+            plan.source_plan.prepare(source) if planned else source,
+            points,
+            max_neighbors=2,
+            plan=plan if planned else None,
+        )
+        return jnp.sum(result.distance_squared)
+
+    actual = jax.grad(loss)(points, True)
+    expected = jax.grad(loss)(points, False)
+    np.testing.assert_array_equal(actual, expected)
+    assert bool(jnp.all(jnp.isfinite(actual)))

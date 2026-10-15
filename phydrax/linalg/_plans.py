@@ -11,12 +11,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .._execution_device import device_platform
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..typing import parse
 from ._assembly import assemble_sparse, SparseAssemblyPolicy
 from ._bordered import _bordered_base
 from ._costs import LinearCostEstimate
+from ._dense_svd import economy_svd_workspace_bytes
 from ._operators import (
     AbstractLinearOperator,
     AdjointLinearOperator,
@@ -103,7 +105,7 @@ LinearBackend: TypeAlias = Literal[
     "jax-dense",
     "jax-sparse",
     "host-sparse",
-    "spineax-cudss",
+    "cudss",
     "native-krylov",
     "native-block-krylov",
     "lineax",
@@ -365,6 +367,7 @@ def plan(
         selected_estimate,
         policy_,
         1 if rhs_layout is None else rhs_layout.size,
+        backend=backend,
     )
     estimates = tuple(_rejected_estimate(entry) for entry in rejected) + (
         selected_estimate,
@@ -471,7 +474,7 @@ def _validate_precision_policy(
             )
         if factorization_dtype != coordinate_dtype:
             raise LinearCapabilityError(
-                f"{rejection}: Spineax cuDSS currently requires factorization_dtype to match stored sparse coordinates."
+                f"{rejection}: cuDSS currently requires factorization_dtype to match stored sparse coordinates."
             )
         if (
             precision.preconditioner_dtype is not None
@@ -779,10 +782,11 @@ def _auto_method(
             _cuda_sparse_available()
             and policy.preconditioning is None
             and not _has_rank_cutoff(policy)
+            and policy.failure.mode == "error"
         ):
             return SparseQR(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
-            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, and no numerical rank cutoff"
+            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, no numerical rank cutoff, and FailurePolicy('error'); singular CUDA QR raises instead of returning failure status"
         )
     if isinstance(problem, LinearSystem):
         dense_method: AbstractLinearMethod
@@ -988,7 +992,7 @@ def _validate_sparse_direct(
         if not operator.properties.certifies("self_adjoint"):
             raise ValueError("SparseLDLT requires certified self-adjoint structure.")
         if operator.sparse_storage().index_width != 32:
-            raise ValueError("Spineax cuDSS execution requires 32-bit CSR indices.")
+            raise ValueError("cuDSS execution requires 32-bit CSR indices.")
         if policy.differentiation.mode == "algorithmic":
             raise ValueError(
                 "SparseLDLT exposes mathematical differentiation, not an algorithmic factorization derivative."
@@ -996,7 +1000,7 @@ def _validate_sparse_direct(
         availability = sparse_provider_availability(method.provider)
         if not availability.available:
             raise ValueError(availability.reason)
-        return "spineax-cudss"
+        return "cudss"
     if isinstance(method, SparseLU) and method.provider == "jax-cpu":
         if jax.default_backend() != "cpu":
             raise ValueError("SparseLU(provider='jax-cpu') requires the JAX CPU backend.")
@@ -1255,7 +1259,7 @@ def _validate_bicgstab(
     if not isinstance(problem, LinearSystem):
         raise TypeError("bicgstab requires a LinearSystem.")
     if not _has_diagonal_pairing(operator.source):
-        raise ValueError("Lineax methods require a Euclidean or diagonal source pairing.")
+        raise ValueError("BiCGStab requires a Euclidean or diagonal source pairing.")
     if preconditioner_properties is not None and not (
         preconditioner_properties.certifies("linear")
         and preconditioner_properties.certifies("stationary")
@@ -1263,8 +1267,11 @@ def _validate_bicgstab(
         raise ValueError(
             "BiCGStab requires fixed linear preconditioning; use FGMRES for variable or nonlinear actions."
         )
-    _reject_algorithmic_lineax(policy)
-    return "lineax"
+    if policy.differentiation.mode == "algorithmic":
+        raise ValueError(
+            "BiCGStab does not expose the executed finite iteration derivative."
+        )
+    return "native-krylov"
 
 
 def _validate_iterative_problem(
@@ -1721,7 +1728,11 @@ def _dense_candidate_fits(
     )
     if factor > policy.resources.factorization_bytes:
         return False, f"factorization estimate {factor} exceeds budget"
-    workspace = batch_count * rows * columns * itemsize
+    workspace = batch_count * (
+        economy_svd_workspace_bytes(rows, columns, factorization_itemsize)
+        if isinstance(method, DenseSVD)
+        else rows * columns * itemsize
+    )
     if workspace > policy.resources.workspace_bytes:
         return False, f"workspace estimate {workspace} exceeds budget"
     return True, f"dense factors fit declared budgets ({factor} factor bytes)"
@@ -1799,7 +1810,7 @@ def _selected_estimate(
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         regularizer_action_cost = estimate_operator_action_cost(problem.regularizer)
         existing += regularizer_action_cost.storage_bytes
-    sparse_direct = backend in ("jax-sparse", "host-sparse", "spineax-cudss")
+    sparse_direct = backend in ("jax-sparse", "host-sparse", "cudss")
     structured_direct = backend == "jax-structured"
     dense_requires_materialization = dense_direct and _requires_dense_materialization(
         problem
@@ -1822,15 +1833,23 @@ def _selected_estimate(
             columns,
             factorization_itemsize,
         )
-        preparation_workspace_bytes = batch_count * rows * columns * itemsize
+        preparation_workspace_bytes = batch_count * (
+            economy_svd_workspace_bytes(rows, columns, factorization_itemsize)
+            if isinstance(method, DenseSVD)
+            else rows * columns * itemsize
+        )
     elif sparse_lu_analysis is not None:
         # George–Ng fill bound under the owned column ordering; one factor per batch.
         factorization_bytes = sparse_lu_analysis.factor_bytes(itemsize, batch_count)
         preparation_workspace_bytes = sparse_lu_analysis.workspace_bytes(itemsize)
     elif sparse_direct:
         # Providers that choose their own ordering keep the dense bound.
-        factorization_bytes = rows * columns * itemsize
-        preparation_workspace_bytes = rows * columns * itemsize
+        # Each plan owns a bounded partition; each entry holds the whole batch.
+        sparse_factor_count = batch_count if backend == "cudss" else 1
+        per_factor_bytes = sparse_factor_count * rows * columns * itemsize
+        capacity = method.factor_cache_capacity if isinstance(method, SparseLDLT) else 1
+        factorization_bytes = capacity * per_factor_bytes
+        preparation_workspace_bytes = per_factor_bytes
     elif structured_direct:
         factorization_bytes = structured_factor_bytes
         preparation_workspace_bytes = _structured_preparation_workspace_bytes(
@@ -1874,7 +1893,7 @@ def _selected_estimate(
     preconditioner_cost = (
         None if preconditioner_plan is None else preconditioner_plan.cost
     )
-    forward_actions, adjoint_actions = _lsmr_action_bounds(problem, method, policy)
+    forward_actions, adjoint_actions = _krylov_action_bounds(problem, method, policy)
     return LinearCostEstimate(
         provider=backend,
         method=method.name,
@@ -1942,13 +1961,13 @@ def _row_blocks(problem: AbstractLinearProblem, /) -> tuple[int, ...]:
     return blocks
 
 
-def _lsmr_action_bounds(
+def _krylov_action_bounds(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
     /,
 ) -> tuple[int | None, int | None]:
-    """Forward and adjoint action bounds of one rectangular Krylov right-hand side.
+    """Forward and adjoint action bounds of one native Krylov right-hand side.
 
     LSMR executes ``steps + 3`` forward and ``steps + 2`` adjoint actions plus at
     most one true-quantity confirmation per step (``steps`` forward and
@@ -1960,8 +1979,14 @@ def _lsmr_action_bounds(
     final residuals, then one adjoint action for ``z = B* y``. Minimum-norm
     solves add the residual (one forward) plus left-null witness and
     normal-reference (two adjoint) actions of their acceptance audit.
+
+    BiCGStab uses at most two search actions and one true-residual confirmation
+    per step, plus its initial and final residual actions.
     """
     operator = problem.operator
+    if isinstance(method, BiCGStab):
+        steps = policy.tolerance.max_steps or 10 * max(1, operator.source.size)
+        return 3 * steps + 2, 0
     steps = policy.tolerance.max_steps or max(operator.source.size, operator.target.size)
     if isinstance(method, Craig):
         gram_actions = steps + steps + 2
@@ -2180,7 +2205,12 @@ def _require_selected_resources(
     policy: LinearSolvePolicy,
     rhs_count: int = 1,
     /,
+    *,
+    backend: LinearBackend,
 ) -> None:
+    basis_rhs_count = (
+        rhs_count if backend in ("native-krylov", "native-block-krylov", "lineax") else 1
+    )
     checks = (
         (
             "factorization",
@@ -2205,7 +2235,7 @@ def _require_selected_resources(
         ),
         (
             "Krylov basis",
-            rhs_count * estimate.krylov_basis_bytes_per_rhs,
+            basis_rhs_count * estimate.krylov_basis_bytes_per_rhs,
             policy.resources.krylov_basis_bytes,
         ),
         (
@@ -2297,10 +2327,7 @@ def _is_explicit_operator(operator: AbstractLinearOperator, /) -> bool:
 
 
 def _cuda_sparse_available() -> bool:
-    return any(
-        device.platform == "gpu" and "nvidia" in device.device_kind.lower()
-        for device in jax.devices()
-    )
+    return any(device_platform(device) == "cuda" for device in jax.devices())
 
 
 def _certified_positive_definite(operator: AbstractLinearOperator, /) -> bool:
@@ -2379,6 +2406,7 @@ def _method_configuration(
             configuration["reordering"] = method.reordering
             configuration["memory_mode"] = method.memory_mode
             configuration["refinement_steps"] = method.refinement_steps
+            configuration["factor_cache_capacity"] = method.factor_cache_capacity
     return configuration
 
 

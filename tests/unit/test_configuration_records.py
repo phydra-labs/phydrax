@@ -18,6 +18,9 @@ def test_snapshot_record_is_json_compatible_and_contains_only_declared_inputs(
 ) -> None:
     monkeypatch.setenv("CONFIGURATION_PRIVATE_SECRET", "must-not-be-captured")
     monkeypatch.setenv("PHYDRAX_METIS_LIBRARY", "/declared/metis")
+    monkeypatch.setenv("PHYDRAX_CUDA_CUDSS_LIBRARY", "/declared/cudss")
+    monkeypatch.setenv("PHYDRAX_CUDA_AMGX_LIBRARY", "/declared/amgx")
+    monkeypatch.setenv("PHYDRAX_CUDA_QUDA_LIBRARY", "/declared/quda")
     snapshot = pxconfig.snapshot()
     record = snapshot.to_record()
     encoded = json.dumps(record, sort_keys=True, allow_nan=False)
@@ -27,6 +30,9 @@ def test_snapshot_record_is_json_compatible_and_contains_only_declared_inputs(
     assert record["library_paths"] == dict(snapshot.library_paths)
     assert record["workers"] == dict(snapshot.workers)
     assert snapshot.library_paths["metis"] == "/declared/metis"
+    assert snapshot.library_paths["cuda_cudss"] == "/declared/cudss"
+    assert snapshot.library_paths["cuda_amgx"] == "/declared/amgx"
+    assert snapshot.library_paths["cuda_quda"] == "/declared/quda"
     assert set(record) == {
         "requested",
         "enable_x64",

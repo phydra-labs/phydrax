@@ -360,9 +360,7 @@ class PrimalDualInteriorPoint(AbstractStructuredNonlinearMethod):
                 transformed
                 or (
                     isinstance(self.structured_linear_policy.method, SparseLDLT)
-                    and sparse_provider_capabilities(
-                        "spineax-cudss"
-                    ).reliable_zero_inertia
+                    and sparse_provider_capabilities("cudss").reliable_zero_inertia
                 )
             ),
         )

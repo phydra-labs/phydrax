@@ -279,7 +279,11 @@ def test_sparse_plans_reuse_global_structural_jacobian_and_hessian_patterns() ->
     assert hessian_plan.num_colors < space.size
     assert jnp.allclose(hessian.as_dense(), hessian_matrix)
     rhs = jnp.asarray([1.0, -2.0, 0.5, 3.0])
-    result = phx.linalg.solve(phx.linalg.LinearSystem(hessian), rhs)
+    system = phx.linalg.LinearSystem(hessian)
+    selected_plan = phx.linalg.plan(system)
+    assert selected_plan.policy.failure.mode == "status"
+    assert selected_plan.method == "pcg"
+    result = phx.linalg.solve(system, rhs, policy=selected_plan)
     assert bool(result.successful)
     assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))
 

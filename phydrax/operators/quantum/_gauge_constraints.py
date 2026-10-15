@@ -175,7 +175,10 @@ class GaussConstraintNetwork(StrictModule):
         )
         self.layout = layout
         self.vertex_link_incidence = jnp.asarray(incidence_host, dtype=jnp.int8)
-        self.incidence_pattern = tuple(tuple(row) for row in incidence_host)
+        # Static metadata holds Python ints; NumPy scalars count as arrays.
+        self.incidence_pattern = tuple(
+            tuple(row) for row in incidence_host.astype(np.int8).tolist()
+        )
         self.link_left_generators = left
         self.link_right_generators = right
         self.matter_charge_generators = matter

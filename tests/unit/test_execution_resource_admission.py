@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
+import jax
 import pytest
 
+from phydrax._execution_device import device_vendor
 from phydrax._execution_plan import (
     ExecutionAdmissionError,
     ExecutionCandidate,
@@ -241,3 +244,27 @@ def test_execution_resource_admission_scenario_3() -> None:
             inventory,
             _distributed_host_candidate(inventory),
         )
+
+
+@pytest.mark.parametrize(
+    ("platform", "client", "runtime", "vendor"),
+    [
+        ("gpu", "gpu", "cuda 13040", "nvidia"),
+        ("gpu", "cuda", "", "nvidia"),
+        ("gpu", "gpu", "rocm 60300", "amd"),
+        ("gpu", "gpu", "", None),
+        ("tpu", "tpu", "", "google"),
+        ("cpu", "cpu", "", None),
+    ],
+    ids=("cuda-runtime", "cuda-client", "rocm-runtime", "unknown-gpu", "tpu", "cpu"),
+)
+def test_accelerator_vendor_comes_from_the_loaded_runtime(
+    platform: str, client: str, runtime: str, vendor: str | None
+) -> None:
+    # A generic JAX "gpu" device is only attributed to a vendor by its runtime.
+    device = SimpleNamespace(
+        platform=platform,
+        device_kind="accelerator",
+        client=SimpleNamespace(platform=client, platform_version=runtime),
+    )
+    assert device_vendor(cast(jax.Device, device)) == vendor

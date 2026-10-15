@@ -25,7 +25,10 @@ See the [configuration guide](../guides_configuration.md) for complete examples.
   process facts belong to `phydrax.execution.runtime_info()`, which discovers devices.
 
 The lazy `import phydrax` is fast and device-inert: it enables x64 unless
-`JAX_ENABLE_X64` is set, including an explicit `JAX_ENABLE_X64=0`. It consumes
+`JAX_ENABLE_X64` is set, including an explicit `JAX_ENABLE_X64=0`, and it sets
+the default matmul precision to `"highest"` unless `JAX_DEFAULT_MATMUL_PRECISION`
+is set or the process already selected a precision, so float32 contractions use
+IEEE float32 rather than TF32 tensor cores on NVIDIA GPUs. It consumes
 `PHYDRAX_CPU_COLLECTIVES` and launcher coordination settings before device use.
 `PHYDRAX_COORDINATOR_ADDRESS`, `PHYDRAX_NUM_PROCESSES`, and `PHYDRAX_PROCESS_ID`
 are required together; optional settings are `PHYDRAX_LOCAL_DEVICE_IDS`,
@@ -58,6 +61,21 @@ explicit trusted type without reading the environment or filling defaults.
 ::: phydrax.config.LoggingConfig
 
 ::: phydrax.config.ProviderConfig
+
+`ProviderConfig.library_paths` accepts `LibrarySetting` keys `meshcore`, `metis`,
+`cuda_cudss`, `cuda_amgx`, and `cuda_quda`. CUDA library overrides are intended
+for development builds and must be configured before the component's first use:
+
+| Library setting | Environment variable |
+| --- | --- |
+| `cuda_cudss` | `PHYDRAX_CUDA_CUDSS_LIBRARY` |
+| `cuda_amgx` | `PHYDRAX_CUDA_AMGX_LIBRARY` |
+| `cuda_quda` | `PHYDRAX_CUDA_QUDA_LIBRARY` |
+
+Each value points to the built `libphydrax_cuda_<component>.so`. Overrides retain
+release-version, CUDA-major, component, and handler checks; they do not override
+the NVIDIA dependencies selected from installed wheels.
+
 
 ::: phydrax.config.ConfigurationApplicationError
 

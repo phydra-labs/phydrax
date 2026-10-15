@@ -976,6 +976,24 @@ the orthonormal Condon--Shortley `(ell,m)` layout, source-normal dipoles,
 separate far/near values, stale-topology behavior, and the geometric
 truncation bound.
 
+`translation_route="dense"` (the default) applies M2M, M2L, and L2L by
+equivalent-charge projection on a prepared spherical quadrature.
+`translation_route="rotation"` instead rotates each displacement onto the
+polar axis with the shared spherical rotation substrate, applies the exact
+axial translation coefficients of the same orthonormal complex `(ell,m)`
+layout, and rotates back; it allocates no projection quadrature. It supports
+expansion orders 0 through 8 and finite displacements up to `1e8`. M2L refuses
+coincident centers (radius below `1e-8`), while zero-shift M2M and L2L are exact
+identities with their analytic displacement derivatives. Derivatives with
+respect to centers, positions, and strengths are exact on and near the polar
+axis. Resource evidence includes the translation tables and workspace. The
+Helmholtz and modified Helmholtz plans refuse the rotation route. Rotation
+translations apply Wigner blocks and axial tables directly to coefficient
+vectors, so per-pair workspace grows with the cube of the order rather than its
+fourth power, and far M2L runs in bounded event batches. Compilation is much
+cheaper than for the dense route at moderate and high orders; strength
+derivatives can be slower, so the dense route remains the default.
+
 The prepared adaptive-octree action executes:
 
 ```text
@@ -1072,10 +1090,29 @@ required/allocated interaction capacity, per-pass work counts, node scale
 range, accumulation policy, and completion. Capacity exhaustion invalidates
 the complete result rather than evaluating a truncated traversal.
 
-The optional Pallas P2P realization has a native custom JVP for relative
-positions and source masses; its VJP is the transpose of that same rule.
-Masked pairs remain zero. This bidirectional primitive capability does not
-change the whole-FMM orientation below.
+Near and far work run through the shared `phydrax.sparse` streamed relation
+owner. Accepted near leaf pairs and far node pairs are prepared once as
+receiver-major bounded fragments; each fragment evaluates its leaf-pair
+messages (softened potential and gradient for every target particle) or far
+M2L messages and accumulates them with the selected `accumulation` policy into
+the receiver, so particle-pair and far-message working storage is bounded by
+the fragment, not by the near or far capacity.
+
+Select the optional Pallas near-field realization with
+`execution_backend="pallas", pallas_interpret=False` for compiled CUDA
+execution. Each Pallas program owns one receiver leaf: it loads the target
+particles once, walks the fragment's ordered source leaves, applies masks and
+self exclusion, evaluates the softened kernel (or the erfc split kernel of a
+`short_range_scale` plan, through CUDA libdevice), accumulates in registers with
+the selected policy, and stores once. `phx.backends.pallas_spatial_availability()`
+is its availability boundary. On CPU, explicitly select `pallas_interpret=True`
+for the semantic interpreter; compiled CPU, TPU, and ROCm execution are refused,
+as are mixed or unsupported floating dtypes. The kernel's JVP is the JAX
+reference of the same bounded fragment, so potential and gradient cotangents
+and mixed derivatives are exact; derivative passes execute that JAX reference.
+This does not change the whole-FMM orientation below: `evaluate` supports
+reverse-mode differentiation, not JVP. The JAX realization remains the default;
+no speedup is implied by selecting Pallas.
 
 The whole FMM has a rematerializing custom VJP: the forward pass does not
 retain an ordinary JAX tape for every tree pass, and the backward pass rebuilds
@@ -1086,8 +1123,8 @@ positions and masses remain differentiable within the accepted branch.
 `evaluate_monopole` exposes the same pass chain as a signed Laplace monopole
 field. `prepare_structure` builds the position-dependent part once as a
 `PreparedUniformFMMStructure`: the Morton plane schedule and sorted point
-order, the dual-tree far/near lists with their reduction orders, and the near
-pair routes. Each `evaluate_monopole(structure, strengths)` call consumes only
+order, the dual-tree far/near lists, and their prepared streamed relations.
+Each `evaluate_monopole(structure, strengths)` call consumes only
 the strength vector and returns a `LaplaceMonopoleFieldResult` with
 `potential[i] = G * sum_{j != i} q[j] / sqrt(|x[i] - x[j]|**2 + eps**2)` over
 active sources and `gradient[i]`, the true derivative of `potential[i]` with
@@ -1095,14 +1132,25 @@ respect to `x[i]`. The gradient is the acceleration `evaluate` returns for
 masses equal to `q`. Strengths are signed, so zero-net and dipole-like source
 sets are valid; inactive rows are zero. `G` and `eps` are the plan's
 `gravitational_constant` and `softening`. The result carries the same
-`CartesianFMMResourceEvidence`. Capacity exhaustion or an active point outside
-the box sets `successful` to false; it is not raised. The structure is a PyTree
-whose metadata is static, so a matrix-free Krylov solve can close over it
-inside `jax.jit` and `lax.while_loop` and refresh strengths on every
-iteration. The gravity route `evaluate` composes the same preparation and
-kernel. Plans with `short_range_scale` are refused. With the Pallas P2P
-backend, the near gradient uses that kernel; the near potential sum is plain
-JAX.
+`CartesianFMMResourceEvidence`. Capacity exhaustion, an active point outside
+the box, or a failed stream sets `successful` to false and invalidates the
+payload; it is not raised and never reported as a usable zero field. The
+structure is a PyTree whose metadata is static, so a matrix-free Krylov solve
+can close over it inside `jax.jit` and `lax.while_loop` and refresh strengths on
+every iteration. The gravity route `evaluate` composes the same preparation and
+kernel. Plans with `short_range_scale` are refused. On a fixed prepared
+structure, strength refreshes and forward- and reverse-mode strength
+differentiation use this same field route.
+
+`refresh_structure(previous, positions, box_size=..., depth=...)` returns a
+`UniformFMMStructureTransition`. When the plane schedule refits without
+reordering (unchanged membership, activity, IDs, and canonical order) and every
+retained far pair still satisfies the opening criterion under current geometry,
+the interaction topology and prepared streams are reused (`reused_topology`);
+otherwise the structure is rebuilt (`rebuilt`). A refit and a fresh build can
+choose different valid far/near partitions. Plans with a short-range cutoff
+rebuild whenever positions move, because pairs omitted by the cutoff are not
+re-examined. A failed candidate never replaces the accepted structure.
 
 ```python
 plan = phx.solver.UniformFMMPlan(

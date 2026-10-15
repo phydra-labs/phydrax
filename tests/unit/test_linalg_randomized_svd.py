@@ -95,6 +95,7 @@ def _policy(
     )
 
 
+# The independent reference assumes IEEE float32 operator actions, not TF32.
 @pytest.mark.strict_jax
 @pytest.mark.parametrize("rows,columns,count", [(14, 7, 3), (8, 20, 5)])
 @pytest.mark.parametrize(
@@ -124,13 +125,38 @@ def test_rectangular_clipped_width_and_complex_triplets(
     assert np.allclose(result.singular_values, expected, rtol=2e-5, atol=2e-5)
     values = result.singular_values.astype(result.left_coordinates.dtype)[None, :]
     assert np.allclose(
-        matrix @ result.right_coordinates,
-        result.left_coordinates * values,
+        np.asarray(matrix) @ np.asarray(result.right_coordinates),
+        np.asarray(result.left_coordinates) * np.asarray(values),
         rtol=2e-5,
         atol=2e-5,
     )
     assert result.singular_values.dtype == matrix.real.dtype
     assert bool(result.leading_evidence.certified)
+
+
+@pytest.mark.parametrize(
+    "dtype", (np.dtype(np.float32), np.dtype(np.complex64)), ids=("float32", "complex64")
+)
+def test_randomized_orthogonality_matches_coordinate_precision(dtype: np.dtype) -> None:
+    matrix = _matrix(14, 7, dtype)
+    prepared = svd.prepare_svd(
+        svd.SVDProblem(la.DenseLinearOperator(matrix)),
+        _policy(3, oversampling=8, power_iterations=2),
+        key=jax.random.key(12),
+    )
+    result = svd.svd(prepared)
+    assert bool(result.successful)
+    left, right = (
+        np.asarray(result.left_coordinates),
+        np.asarray(result.right_coordinates),
+    )
+    for columns, error in (
+        (left, result.diagnostics.left_orthogonality_error),
+        (right, result.diagnostics.right_orthogonality_error),
+    ):
+        expected = np.max(np.abs(columns.conj().T @ columns - np.eye(3)))
+        np.testing.assert_allclose(error, expected, atol=1e-6)
+        assert float(error) < 2e-5
 
 
 def test_nonmaterializing_shell_has_independent_audit_and_opaque_scratch() -> None:

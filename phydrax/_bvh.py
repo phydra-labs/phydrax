@@ -551,6 +551,199 @@ def prepare_bvh(
     return _pack(lower, upper, levels, policy, storage)
 
 
+class _MedianBVHLayout(StrictModule):
+    """Depth-sized integer metadata for capacity-fixed MEDIAN topology."""
+
+    item_capacity: int = eqx.field(static=True)
+    leaf_size: int = eqx.field(static=True)
+    level_node_counts: tuple[int, ...] = eqx.field(static=True)
+    leaf_count: int = eqx.field(static=True)
+    level_offsets: tuple[int, ...] = eqx.field(static=True)
+    max_depth: int = eqx.field(static=True)
+
+    def __init__(self, item_capacity: int, leaf_size: int) -> None:
+        for name, value in (("item_capacity", item_capacity), ("leaf_size", leaf_size)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer.")
+            if value < 1:
+                raise ValueError(f"{name} must be positive.")
+        if item_capacity > np.iinfo(np.int32).max:
+            raise ValueError("item_capacity exceeds int32 indexing.")
+
+        sizes = {item_capacity: 1}
+        level_counts: list[int] = []
+        offsets = [0]
+        leaf_count = 0
+        # Each level has at most two distinct segment sizes. Multiplicities,
+        # rather than individual nodes/items, keep host preparation O(depth).
+        while sizes:
+            count = sum(sizes.values())
+            level_counts.append(count)
+            offsets.append(offsets[-1] + count)
+            children: dict[int, int] = {}
+            for size, multiplicity in sizes.items():
+                if size <= leaf_size:
+                    leaf_count += multiplicity
+                else:
+                    lower_size = size // 2
+                    upper_size = size - lower_size
+                    children[lower_size] = children.get(lower_size, 0) + multiplicity
+                    children[upper_size] = children.get(upper_size, 0) + multiplicity
+            sizes = children
+        if offsets[-1] > np.iinfo(np.int32).max:
+            raise ValueError("node count exceeds int32 indexing.")
+        self.item_capacity = item_capacity
+        self.leaf_size = leaf_size
+        self.level_node_counts = tuple(level_counts)
+        self.level_offsets = tuple(offsets)
+        self.max_depth = len(level_counts) - 1
+        self.leaf_count = leaf_count
+
+
+def _median_bvh_topology(
+    layout: _MedianBVHLayout, /
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Construct breadth-first child and leaf indices entirely on device."""
+    node_count = layout.level_offsets[-1]
+    starts = jnp.zeros((node_count,), dtype=jnp.int32)
+    stops = jnp.zeros((node_count,), dtype=jnp.int32).at[0].set(layout.item_capacity)
+    left = jnp.full((node_count,), -1, dtype=jnp.int32)
+    right = jnp.full((node_count,), -1, dtype=jnp.int32)
+    for level in range(layout.max_depth):
+        first = layout.level_offsets[level]
+        last = layout.level_offsets[level + 1]
+        node_starts = starts[first:last]
+        node_stops = stops[first:last]
+        dividing = node_stops - node_starts > layout.leaf_size
+        child_rank = jnp.cumsum(dividing, dtype=jnp.int32) - 1
+        left_child = last + 2 * child_rank
+        right_child = left_child + 1
+        left = left.at[first:last].set(jnp.where(dividing, left_child, -1))
+        right = right.at[first:last].set(jnp.where(dividing, right_child, -1))
+        middle = node_starts + (node_stops - node_starts) // 2
+        # Nondividing nodes have no children; out-of-range scatter indices are
+        # explicitly dropped, including levels with both leaves and internals.
+        left_slot = jnp.where(dividing, left_child, node_count)
+        right_slot = jnp.where(dividing, right_child, node_count)
+        starts = starts.at[left_slot].set(node_starts, mode="drop")
+        stops = stops.at[left_slot].set(middle, mode="drop")
+        starts = starts.at[right_slot].set(middle, mode="drop")
+        stops = stops.at[right_slot].set(node_stops, mode="drop")
+    leaf_node = jnp.nonzero(left < 0, size=layout.leaf_count)[0].astype(jnp.int32)
+    leaf_id = (
+        jnp.full((node_count,), -1, dtype=jnp.int32)
+        .at[leaf_node]
+        .set(jnp.arange(layout.leaf_count, dtype=jnp.int32))
+    )
+    return left, right, leaf_id, leaf_node, starts[leaf_node], stops[leaf_node]
+
+
+def _build_median_bvh(
+    layout: _MedianBVHLayout,
+    item_bbox_min: Array,
+    item_bbox_max: Array,
+    /,
+    *,
+    active_mask: Array | None = None,
+) -> PackedBVH:
+    """Device MEDIAN build; masked trees are private to point-query consumers.
+
+    Host MEDIAN computes extents and centers in float64. Use that same decision
+    precision under x64, without changing the input/storage dtype. A single
+    segmented sort per dividing level preserves completed ranges.
+    """
+    lower = jax.lax.stop_gradient(item_bbox_min)
+    upper = jax.lax.stop_gradient(item_bbox_max)
+    if lower.shape != upper.shape or lower.shape[0] != layout.item_capacity:
+        raise ValueError("item bounds must match layout capacity and each other.")
+    if lower.ndim != 2 or lower.shape[1] < 1:
+        raise ValueError("item bounds must have shape (capacity, dimension > 0).")
+    if lower.dtype != upper.dtype or not jnp.issubdtype(lower.dtype, jnp.floating):
+        raise TypeError("item bounds must have the same floating dtype.")
+    active = jnp.all(jnp.isfinite(lower) & jnp.isfinite(upper) & (lower <= upper), axis=1)
+    if active_mask is not None:
+        if active_mask.shape != (layout.item_capacity,):
+            raise ValueError("active_mask must match layout capacity.")
+        active &= active_mask
+    decision_lower = lower.astype(jnp.float64 if x64_enabled() else lower.dtype)
+    decision_upper = upper.astype(decision_lower.dtype)
+    centers = (decision_lower + decision_upper) * jnp.asarray(
+        0.5, dtype=decision_lower.dtype
+    )
+    positions = jnp.arange(layout.item_capacity, dtype=jnp.int32)
+    order = positions
+    starts = jnp.zeros((layout.item_capacity,), dtype=jnp.int32)
+    stops = jnp.full((layout.item_capacity,), layout.item_capacity, dtype=jnp.int32)
+    for _ in range(layout.max_depth):
+        dividing = stops - starts > layout.leaf_size
+        # Completed positions have singleton segment IDs and cannot move.
+        segment_ids = jnp.where(dividing, starts, positions)
+        admitted = active[order, None]
+        lower_bounds = jax.ops.segment_min(
+            jnp.where(admitted, decision_lower[order], jnp.inf),
+            segment_ids,
+            num_segments=layout.item_capacity,
+            indices_are_sorted=True,
+        )
+        upper_bounds = jax.ops.segment_max(
+            jnp.where(admitted, decision_upper[order], -jnp.inf),
+            segment_ids,
+            num_segments=layout.item_capacity,
+            indices_are_sorted=True,
+        )
+        axes = jnp.argmax(upper_bounds - lower_bounds, axis=1).astype(jnp.int32)[
+            segment_ids
+        ]
+        key = centers[order, axes]
+        _, _, _, order = jax.lax.sort(
+            (
+                segment_ids,
+                jnp.where(active[order], key, jnp.inf),
+                order,
+                order,
+            ),
+            num_keys=3,
+        )
+        middle = starts + (stops - starts) // 2
+        goes_left = positions < middle
+        starts = jnp.where(dividing & ~goes_left, middle, starts)
+        stops = jnp.where(dividing & goes_left, middle, stops)
+    left, right, leaf_id, leaf_node, leaf_starts, leaf_stops = _median_bvh_topology(
+        layout
+    )
+    slots = leaf_starts[:, None] + jnp.arange(layout.leaf_size, dtype=jnp.int32)[None, :]
+    items = order[jnp.minimum(slots, layout.item_capacity - 1)]
+    valid = (slots < leaf_stops[:, None]) & active[items]
+    # Sorting the Boolean occupancy compacts each leaf, including unsplit roots.
+    _, items = jax.lax.sort(
+        (~valid, jnp.where(valid, items, -1)), dimension=1, num_keys=1
+    )
+    node_shape = (layout.level_offsets[-1], lower.shape[1])
+    tree = PackedBVH(
+        bbox_min=jnp.zeros(node_shape, dtype=lower.dtype),
+        bbox_max=jnp.zeros(node_shape, dtype=lower.dtype),
+        left=left,
+        right=right,
+        leaf_id=leaf_id,
+        leaf_items=items,
+        leaf_node=leaf_node,
+        item_bbox_min=lower,
+        item_bbox_max=upper,
+        leaf_size=layout.leaf_size,
+        max_depth=layout.max_depth,
+        level_offsets=layout.level_offsets,
+        build_kind=BVHBuildKind.MEDIAN,
+    )
+    return eqx.tree_at(
+        lambda value: (value.bbox_min, value.bbox_max),
+        tree,
+        (
+            reduce_packed_bvh_nodes(tree, lower, reduction="min"),
+            reduce_packed_bvh_nodes(tree, upper, reduction="max"),
+        ),
+    )
+
+
 def reduce_packed_bvh_nodes(
     bvh: PackedBVH,
     item_values: ArrayLike,
@@ -792,12 +985,13 @@ def _bounded_leaf_candidates(
         leaf = hit & (bvh.leaf_id[node] >= 0)
         internal = hit & ~leaf
         leaf_index = jnp.maximum(bvh.leaf_id[node], 0)
-        values, count = jax.lax.cond(
-            leaf,
-            lambda carry: visit_leaf(bvh.leaf_items[leaf_index], carry),
-            lambda carry: carry,
-            (values, count),
+        # Arithmetic selection: a batched lax.cond would broadcast every
+        # closed-over tree array to the query lane count.
+        visited_values, visited_count = visit_leaf(
+            bvh.leaf_items[leaf_index], (values, count)
         )
+        values = jnp.where(leaf, visited_values, values)
+        count = jnp.where(leaf, visited_count, count)
         can_push = popped_top + 1 < stack_capacity
         push = internal & can_push
         stack_overflow = stack_overflow | (internal & ~can_push)
@@ -1002,68 +1196,145 @@ def _item_box_distance(bvh: PackedBVH, /) -> Any:
     return distance
 
 
-def _nearest_items_one(bvh: PackedBVH, point: Array, k: int, distance: Any, /) -> Any:
+def _nearest_items_one(
+    bvh: PackedBVH,
+    point: Array,
+    k: int,
+    distance: Callable[[Array, Array], Array],
+    /,
+    *,
+    item_filter: Callable[[Array], Array] | None = None,
+    stable_ids: Array | None = None,
+    node_empty: Array | None = None,
+    node_min_id: Array | None = None,
+    node_distance: Callable[[Array, Array], Array] | None = None,
+    maximum_distance: Array | None = None,
+    stop_selection_gradient: bool = False,
+    runnable: Array | None = None,
+) -> tuple[Array, Array, Array, Array]:
+    # Batched lax.cond converts to a select that broadcasts every closed-over
+    # operand (the whole tree, points, and IDs) to the lane count. The traversal
+    # therefore selects branch results arithmetically, and admission filters
+    # only the visited leaf items.
+    if stop_selection_gradient:
+        point = jax.lax.stop_gradient(point)
     infinity = jnp.asarray(jnp.inf, dtype=point.dtype)
-    sentinel = jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32)
-    # Depth-first order keeps at most one pending sibling per depth, so
-    # `max_depth + 2` slots bound the stack exactly.
+    identifiers = (
+        jnp.arange(bvh.item_count, dtype=jnp.int32) if stable_ids is None else stable_ids
+    )
+    empty = (
+        jnp.zeros((bvh.node_count,), dtype=jnp.bool_)
+        if node_empty is None
+        else node_empty
+    )
+    limit = infinity if maximum_distance is None else maximum_distance
+
+    def bound(node: Array) -> Array:
+        if node_distance is None:
+            return aabb_dist2(point, bvh.bbox_min[node], bvh.bbox_max[node])
+        return node_distance(point, node)
+
+    # Depth-first order keeps at most one pending sibling per depth.
     stack = jnp.zeros((bvh.max_depth + 2,), dtype=jnp.int32)
 
-    def visit_leaf(node: Any, state: Any) -> Any:
-        stack_, top, best_distance, best_key = state
-        items = bvh.leaf_items[jnp.maximum(bvh.leaf_id[node], 0)]
-        candidate = distance(point, jnp.maximum(items, 0)).astype(point.dtype)
-        valid = (items >= 0) & (candidate < infinity)
+    def visit_leaf(node: Array, state: Any) -> Any:
+        stack_, top, best_distance, best_items, best_ids, visits, complete = state
+        leaf = bvh.leaf_id[node]
+        items = bvh.leaf_items[jnp.clip(leaf, 0, bvh.leaf_items.shape[0] - 1)]
+        safe_items = jnp.maximum(items, 0)
+        candidate = distance(point, safe_items).astype(point.dtype)
+        if stop_selection_gradient:
+            candidate = jax.lax.stop_gradient(candidate)
+        valid = (items >= 0) & (items < bvh.item_count)
+        if item_filter is not None:
+            valid &= item_filter(safe_items)
+        valid &= jnp.isfinite(candidate) & (candidate <= limit)
         merged_distance = jnp.concatenate(
             (best_distance, jnp.where(valid, candidate, infinity))
         )
-        merged_key = jnp.concatenate((best_key, jnp.where(valid, items, sentinel)))
-        order = jnp.lexsort((merged_key, merged_distance))[:k]
-        return stack_, top, merged_distance[order], merged_key[order]
-
-    def visit_internal(node: Any, state: Any) -> Any:
-        stack_, top, best_distance, best_key = state
-        left = bvh.left[node]
-        right = bvh.right[node]
-        left_bound = aabb_dist2(point, bvh.bbox_min[left], bvh.bbox_max[left])
-        right_bound = aabb_dist2(point, bvh.bbox_min[right], bvh.bbox_max[right])
-        near_left = left_bound <= right_bound
-        stack_ = stack_.at[top].set(jnp.where(near_left, right, left))
-        stack_ = stack_.at[top + 1].set(jnp.where(near_left, left, right))
-        return stack_, top + 2, best_distance, best_key
-
-    def body(state: Any) -> Any:
-        stack_, top, best_distance, best_key = state
-        top = top - 1
-        node = stack_[top]
-        bound = aabb_dist2(point, bvh.bbox_min[node], bvh.bbox_max[node])
-        # Ties at the k-th distance are explored so equal distances resolve by
-        # item index.
-        visit = bound <= best_distance[k - 1]
-
-        def active(carry: Any) -> Any:
-            return jax.lax.cond(
-                bvh.leaf_id[node] >= 0,
-                lambda value: visit_leaf(node, value),
-                lambda value: visit_internal(node, value),
-                carry,
-            )
-
-        return jax.lax.cond(
-            visit, active, lambda carry: carry, (stack_, top, best_distance, best_key)
+        merged_items = jnp.concatenate((best_items, jnp.where(valid, items, -1)))
+        merged_ids = jnp.concatenate((best_ids, identifiers[safe_items]))
+        order = jnp.lexsort((merged_ids, merged_distance, merged_items < 0))[:k]
+        complete &= (leaf < bvh.leaf_items.shape[0]) & jnp.all(items < bvh.item_count)
+        return (
+            stack_,
+            top,
+            merged_distance[order],
+            merged_items[order],
+            merged_ids[order],
+            visits,
+            complete,
         )
 
-    _, _, best_distance, best_key = jax.lax.while_loop(
-        lambda state: state[1] > 0,
+    def visit_internal(node: Array, state: Any) -> Any:
+        stack_, top, best_distance, best_items, best_ids, visits, complete = state
+        left, right = bvh.left[node], bvh.right[node]
+        fits = (top + 2 <= stack_.shape[0]) & (left >= 0) & (right >= 0)
+        fits &= (left < bvh.node_count) & (right < bvh.node_count)
+        near_left = bound(left) <= bound(right)
+        stack_ = stack_.at[top].set(jnp.where(near_left, right, left))
+        stack_ = stack_.at[top + 1].set(jnp.where(near_left, left, right))
+        return (
+            stack_,
+            jnp.where(fits, top + 2, 0),
+            best_distance,
+            best_items,
+            best_ids,
+            visits,
+            complete & fits,
+        )
+
+    def body(state: Any) -> Any:
+        stack_, top, best_distance, best_items, best_ids, visits, complete = state
+        top -= 1
+        raw_node = stack_[top]
+        node = jnp.clip(raw_node, 0, bvh.node_count - 1)
+        complete &= (raw_node >= 0) & (raw_node < bvh.node_count)
+        lower = bound(node)
+        worst = jnp.minimum(limit, best_distance[k - 1])
+        visit = ~empty[node] & (lower <= worst)
+        if node_min_id is not None:
+            # IDs never encode absence: int64/uint64 maximum is a valid ID.
+            visit &= (
+                (best_items[k - 1] < 0)
+                | (lower < best_distance[k - 1])
+                | (node_min_id[node] < best_ids[k - 1])
+            )
+        carry = (stack_, top, best_distance, best_items, best_ids, visits + 1, complete)
+        is_leaf = bvh.leaf_id[node] >= 0
+        stepped = jax.tree.map(
+            lambda leaf_value, internal_value: jnp.where(
+                is_leaf, leaf_value, internal_value
+            ),
+            visit_leaf(node, carry),
+            visit_internal(node, carry),
+        )
+        take = visit & complete
+        return jax.tree.map(lambda new, old: jnp.where(take, new, old), stepped, carry)
+
+    state = jax.lax.while_loop(
+        lambda value: (value[1] > 0) & (value[5] < bvh.node_count) & value[6],
         body,
         (
             stack,
-            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32)
+            if runnable is None
+            else jnp.where(runnable, 1, 0).astype(jnp.int32),
             jnp.full((k,), infinity),
-            jnp.full((k,), sentinel),
+            jnp.full((k,), -1, dtype=jnp.int32),
+            jnp.zeros((k,), dtype=identifiers.dtype),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(True, dtype=jnp.bool_),
         ),
     )
-    return jnp.where(best_key == sentinel, -1, best_key), best_distance
+    _, top, best_distance, best_items, _, visits, complete = state
+    complete &= top == 0
+    return (
+        jnp.where(complete, best_items, -1),
+        jnp.where(complete, best_distance, infinity),
+        complete,
+        visits,
+    )
 
 
 def bvh_nearest_items(
@@ -1101,7 +1372,7 @@ def bvh_nearest_items(
     )
 
     def query(point: Any) -> Any:
-        return _nearest_items_one(bvh, point, k, distance)
+        return _nearest_items_one(bvh, point, k, distance)[:2]
 
     if single:
         items, distance_squared = query(values[0])

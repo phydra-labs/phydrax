@@ -29,6 +29,7 @@ from .._certificates import KernelCertificate
 from .._operators import AbstractLinearOperator
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import (
+    BiCGStab,
     Craig,
     FGMRES,
     GeneralizedLSMR,
@@ -74,6 +75,12 @@ _KrylovAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array]
 _KrylovResult: TypeAlias = tuple[Array, _KrylovAuxiliary, IterationRuntimeState | None]
 # `_KrylovAuxiliary` followed by the executed true-residual confirmation count.
 _PCGResult: TypeAlias = tuple[
+    Array,
+    tuple[Array, Array, Array, Array, Array, Array],
+    IterationRuntimeState | None,
+]
+# `_KrylovAuxiliary` followed by the executed operator action count.
+_BiCGStabResult: TypeAlias = tuple[
     Array,
     tuple[Array, Array, Array, Array, Array, Array],
     IterationRuntimeState | None,
@@ -245,6 +252,22 @@ class NativeKrylovBackendOutput(StrictModule):
     least_squares_stationary: Array | None
 
 
+class _BiCGStabState(NamedTuple):
+    x: Array
+    residual: Array
+    shadow: Array
+    direction: Array
+    image: Array
+    rho: Array
+    alpha: Array
+    omega: Array
+    iterations: Array
+    active: Array
+    breakdown: Array
+    action_count: Array
+    iteration_state: IterationRuntimeState | None
+
+
 class _LSMRState(NamedTuple):
     iteration: Array
     alpha: Array
@@ -399,7 +422,9 @@ def _runtime_controls(
     # tighten it.
     tolerance = plan.policy.tolerance
     structural_max_steps = tolerance.max_steps or (
-        max(problem.operator.source.size, problem.operator.target.size)
+        10 * max(1, problem.operator.source.size)
+        if plan.method == BiCGStab().name
+        else max(problem.operator.source.size, problem.operator.target.size)
         if isinstance(problem, (LeastSquaresProblem, MinimumNormProblem))
         else max(1, problem.operator.source.size)
     )
@@ -548,6 +573,21 @@ def solve_native_krylov(
                 guess,
                 plan,
                 "gmres",
+                preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+                iteration=inner_plan,
+                iteration_state=observed_state,
+            )
+        if method_name == BiCGStab().name:
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "bicgstab",
                 preconditioner=state.preconditioner,
                 relative=relative_tolerance,
                 absolute=absolute_tolerance,
@@ -817,6 +857,23 @@ def _square_solve(
             )
             auxiliary = pcg_auxiliary[:5]
             matvec_count = auxiliary[0] + pcg_auxiliary[5] + 2
+        elif method == "bicgstab":
+            value, bicgstab_auxiliary, next_iteration_state = _bicgstab_raw(
+                selected_action,
+                target,
+                initial,
+                inner,
+                precondition,
+                structural_max_steps,
+                tolerance[0],
+                tolerance[1],
+                step_limit=max_steps,
+                driver=driver,
+                iteration=iteration,
+                iteration_state=iteration_state,
+            )
+            auxiliary = bicgstab_auxiliary[:5]
+            matvec_count = bicgstab_auxiliary[5]
         elif method == "minres":
             value, minres_auxiliary, next_iteration_state = _minres_raw(
                 selected_action,
@@ -1309,6 +1366,247 @@ def _confirmed_residual(
 ) -> tuple[Array, Array]:
     residual = rhs - action(value)
     return residual, _norm(residual, inner)
+
+
+def _bicgstab_candidate(
+    action: _Action,
+    inner: _Inner,
+    precondition: _Precondition,
+    rhs: Array,
+    half_value: Array,
+    half_residual: Array,
+    threshold: Array,
+    index: Array,
+    invalid: Array,
+    nonfinite: Array,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    """Confirm a nominated alpha half-step before attempting stabilization."""
+    half_norm = _norm(half_residual, inner)
+    epsilon = jnp.finfo(rhs.real.dtype).eps
+
+    def confirm_half() -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+        residual, norm = _confirmed_residual(action, inner, rhs, half_value)
+        return (
+            half_value,
+            residual,
+            norm,
+            jnp.asarray(1.0, dtype=rhs.dtype),
+            invalid,
+            nonfinite,
+            (norm > threshold) & ~invalid,
+            jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    def stabilize() -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+        transformed = precondition(half_residual, index)
+        image = action(transformed)
+        denominator = jnp.real(inner(image, image))
+        numerator = inner(image, half_residual)
+        nonfinite_action = (
+            ~jnp.all(jnp.isfinite(transformed))
+            | ~jnp.all(jnp.isfinite(image))
+            | ~jnp.isfinite(denominator)
+            | ~jnp.isfinite(numerator)
+        )
+        invalid_omega = (
+            nonfinite_action
+            | (denominator <= 0.0)
+            | (_safe_abs(numerator) <= epsilon * _norm(image, inner) * half_norm)
+        )
+        omega = jnp.where(
+            invalid_omega, 0.0, numerator / jnp.where(invalid_omega, 1.0, denominator)
+        ).astype(rhs.dtype)
+        value = jnp.where(nonfinite_action, half_value, half_value + omega * transformed)
+        recursive = half_residual - omega * image
+        recursive_norm = _norm(recursive, inner)
+        nominated = (recursive_norm <= threshold) | invalid_omega
+        residual, norm = jax.lax.cond(
+            nominated,
+            lambda: _confirmed_residual(action, inner, rhs, value),
+            lambda: (recursive, recursive_norm),
+        )
+        return (
+            value,
+            residual,
+            norm,
+            omega,
+            invalid_omega,
+            nonfinite_action,
+            nominated & (norm > threshold) & ~invalid_omega,
+            jnp.asarray(1, dtype=jnp.int32) + nominated.astype(jnp.int32),
+        )
+
+    return jax.lax.cond((half_norm <= threshold) | invalid, confirm_half, stabilize)
+
+
+def _bicgstab_raw(
+    action: _Action,
+    rhs: Array,
+    initial: Array,
+    inner: _Inner,
+    precondition: _Precondition,
+    max_steps: int,
+    relative: Array,
+    absolute: Array,
+    *,
+    step_limit: Array | None = None,
+    driver: KrylovLoopDriver = "early-exit",
+    iteration: IterationPlan | None = None,
+    iteration_state: IterationRuntimeState | None = None,
+) -> _BiCGStabResult:
+    """Right-preconditioned BiCGStab with true-residual convergence evidence.
+
+    The alpha half-step can solve the system before the omega minimization.
+    Confirm it first: an exact zero s makes both omega products zero, and
+    evaluating their quotient would destroy the already-converged iterate.
+    A failed convergence confirmation restarts from the true residual.
+    """
+    if step_limit is None:
+        step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
+    residual, norm = _confirmed_residual(action, inner, rhs, initial)
+    rhs_norm = _norm(rhs, inner)
+    threshold = absolute + relative * rhs_norm
+    finite = jnp.all(jnp.isfinite(initial)) & jnp.isfinite(norm)
+    one = jnp.asarray(1.0, dtype=rhs.dtype)
+    zero = jnp.asarray(0, dtype=jnp.int32)
+    state = _BiCGStabState(
+        initial,
+        residual,
+        residual,
+        jnp.zeros_like(rhs),
+        jnp.zeros_like(rhs),
+        one,
+        one,
+        one,
+        zero,
+        finite & (norm > threshold) & ~_iteration_stop(iteration_state),
+        jnp.where(
+            finite,
+            int(KrylovBreakdownStatus.NONE),
+            int(KrylovBreakdownStatus.NONFINITE_ACTION),
+        ).astype(jnp.int32),
+        jnp.asarray(1, dtype=jnp.int32),
+        iteration_state,
+    )
+    epsilon = jnp.finfo(rhs.real.dtype).eps
+
+    def step(index: Array, current: _BiCGStabState) -> _BiCGStabState:
+        def execute(previous: _BiCGStabState) -> _BiCGStabState:
+            rho = inner(previous.shadow, previous.residual)
+            beta = (rho / previous.rho) * (previous.alpha / previous.omega)
+            direction = previous.residual + beta * (
+                previous.direction - previous.omega * previous.image
+            )
+            transformed = precondition(direction, index)
+            image = action(transformed)
+            denominator = inner(previous.shadow, image)
+            shadow_norm = _norm(previous.shadow, inner)
+            nonfinite = (
+                ~jnp.isfinite(rho)
+                | ~jnp.isfinite(denominator)
+                | ~jnp.all(jnp.isfinite(transformed))
+                | ~jnp.all(jnp.isfinite(image))
+            )
+            invalid = (
+                nonfinite
+                | (
+                    _safe_abs(rho)
+                    <= epsilon * shadow_norm * _norm(previous.residual, inner)
+                )
+                | (_safe_abs(denominator) <= epsilon * shadow_norm * _norm(image, inner))
+            )
+            alpha = jnp.where(
+                invalid, 0.0, rho / jnp.where(invalid, 1.0, denominator)
+            ).astype(rhs.dtype)
+            half_value = jnp.where(invalid, previous.x, previous.x + alpha * transformed)
+            half_residual = jnp.where(
+                invalid, previous.residual, previous.residual - alpha * image
+            )
+            value, residual, norm, omega, invalid, nonfinite, replaced, actions = (
+                _bicgstab_candidate(
+                    action,
+                    inner,
+                    precondition,
+                    rhs,
+                    half_value,
+                    half_residual,
+                    threshold,
+                    index,
+                    invalid,
+                    nonfinite,
+                )
+            )
+            finite = ~nonfinite & jnp.all(jnp.isfinite(value)) & jnp.isfinite(norm)
+            converged = norm <= threshold
+            breakdown = jnp.where(
+                finite,
+                jnp.where(
+                    converged,
+                    int(KrylovBreakdownStatus.HAPPY),
+                    jnp.where(
+                        invalid,
+                        int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                        int(KrylovBreakdownStatus.NONE),
+                    ),
+                ),
+                int(KrylovBreakdownStatus.NONFINITE_ACTION),
+            ).astype(jnp.int32)
+            # Every accepted nomination was true-residual confirmed. If its
+            # confirmation failed, reset the biorthogonal recurrence rather
+            # than continuing with the stale recursive residual.
+            action_count = previous.action_count + 1 + actions
+            next_iteration = _update_krylov_iteration(
+                iteration,
+                previous.iteration_state,
+                index + 1,
+                norm,
+                rhs_norm,
+                breakdown,
+                matvec_count=action_count,
+            )
+            return _BiCGStabState(
+                value,
+                residual,
+                jnp.where(replaced, residual, previous.shadow),
+                jnp.where(replaced, jnp.zeros_like(direction), direction),
+                jnp.where(replaced, jnp.zeros_like(image), image),
+                jnp.where(replaced, one, rho),
+                jnp.where(replaced, one, alpha),
+                jnp.where(replaced, one, omega),
+                jnp.asarray(index + 1, dtype=jnp.int32),
+                finite & ~invalid & ~converged & ~_iteration_stop(next_iteration),
+                breakdown,
+                action_count,
+                next_iteration,
+            )
+
+        return jax.lax.cond(
+            current.active & (index < step_limit),
+            execute,
+            lambda previous: previous,
+            current,
+        )
+
+    final = _gated_loop(
+        step,
+        state,
+        max_steps,
+        lambda index, current: current.active & (index < step_limit),
+        driver,
+    )
+    _, residual_norm = _confirmed_residual(action, inner, rhs, final.x)
+    return (
+        final.x,
+        (
+            final.iterations,
+            residual_norm,
+            jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+            jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+            final.breakdown,
+            final.action_count + 1,
+        ),
+        final.iteration_state,
+    )
 
 
 def _minres_raw(

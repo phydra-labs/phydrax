@@ -155,7 +155,9 @@ def test_cosmology_tree_gravity_scenario_2() -> None:
     assert not bool(result.successful)
     assert result.fmm_evidence is not None
     assert not bool(result.fmm_evidence.successful)
-    np.testing.assert_array_equal(result.acceleration, 0.0)
+    assert not bool(result.evidence.traversal_complete)
+    assert not bool(result.evidence.finite)
+    assert np.isnan(np.asarray(result.acceleration)).all()
     positions = jnp.asarray(
         [
             [0.10, 0.10, 0.10],

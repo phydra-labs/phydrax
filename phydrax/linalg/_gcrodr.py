@@ -300,7 +300,7 @@ def _build_result(
     relative_tolerance: Array,
     absolute_tolerance: Array,
 ) -> LinearSolveResult:
-    from ._runtime import _implicit_root_value
+    from ._runtime import _derivative_tolerances, _implicit_root_value
 
     problem = prepared.problem
     if not isinstance(problem, LinearSystem):
@@ -413,6 +413,9 @@ def _build_result(
         matvec_count=matvec_count,
         adjoint_matvec_count=0,
     )
+    derivative_relative, derivative_absolute = _derivative_tolerances(
+        prepared.plan.policy.derivative_solve, rhs.real.dtype
+    )
     provenance = LinearSolveProvenance(
         backend=prepared.plan.backend,
         method=f"gcro-dr-{prepared.plan.method}",
@@ -425,6 +428,8 @@ def _build_result(
         operator_numeric_version=prepared.numeric_version,
         recycling_capacity=prepared.plan.recycling_capacity,
         recycling_state_bytes=prepared.plan.recycling_state_bytes,
+        derivative_relative_tolerance=derivative_relative,
+        derivative_absolute_tolerance=derivative_absolute,
     )
     if prepared.plan.policy.failure.mode == "error":
         value = eqx.error_if(

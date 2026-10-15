@@ -50,6 +50,7 @@ def iree_availability() -> BackendAvailability:
             requirement="install phydrax[iree]",
             reason="compiler and runtime distribution versions must both be discoverable",
             versions=runtime.versions,
+            environment_issues=compiler.environment_issues + runtime.environment_issues,
         )
     if compiler_version != runtime_version:
         return BackendAvailability(
@@ -60,6 +61,7 @@ def iree_availability() -> BackendAvailability:
                 f"compiler version {compiler_version!r} differs from runtime version {runtime_version!r}"
             ),
             versions=runtime.versions,
+            environment_issues=compiler.environment_issues + runtime.environment_issues,
         )
     return runtime
 

@@ -13,7 +13,7 @@ from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import _certified_rank, LinearSolvePlan
-from .._policies import BiCGStab, ConjugateGradient
+from .._policies import ConjugateGradient
 from .._preconditioners import AbstractPreconditioner
 from .._problems import (
     AbstractLinearProblem,
@@ -183,9 +183,6 @@ def solve_lineax(
         if plan.method == ConjugateGradient().name:
             matvec_count = 1 + iterations + iterations // 10
             adjoint_matvec_count = jnp.asarray(0, dtype=jnp.int32)
-        elif plan.method == BiCGStab().name:
-            matvec_count = 1 + 2 * iterations
-            adjoint_matvec_count = jnp.asarray(0, dtype=jnp.int32)
         else:
             raise ValueError(f"Unsupported Lineax method {plan.method!r}.")
         return (
@@ -227,18 +224,12 @@ def solve_lineax(
     )
 
 
-def _solver(plan: LinearSolvePlan, /) -> lx.CG | lx.BiCGStab:
+def _solver(plan: LinearSolvePlan, /) -> lx.CG:
     tolerance = plan.policy.tolerance
     method = plan.policy.method
     method_name = plan.method if method.name == "auto" else method.name
     if method_name == ConjugateGradient().name:
         return lx.CG(
-            rtol=tolerance.relative,
-            atol=tolerance.absolute,
-            max_steps=tolerance.max_steps,
-        )
-    if method_name == BiCGStab().name:
-        return lx.BiCGStab(
             rtol=tolerance.relative,
             atol=tolerance.absolute,
             max_steps=tolerance.max_steps,

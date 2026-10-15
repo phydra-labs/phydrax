@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from operator import index
-from typing import Any, Literal
+from typing import Any, assert_never, final, Literal
 
 import equinox as eqx
 import jax
@@ -40,12 +40,13 @@ from ....special._solid_harmonic import (
     solid_harmonic_regular,
 )
 from ....typing import checked, parse
+from ._laplace_rotation import _MAXIMUM_ORDER, _PreparedLaplaceRotation
 
 
-TranslationRoute3D = Literal["dense"]
+TranslationRoute3D = Literal["dense", "rotation"]
 LaplaceExecution3D = Literal["level_octree", "plane_dual"]
 
-# Targets per batch of the per-target W/U gathers, bounding their working set.
+# Events or targets per batch, bounding translation tables and W/U gather work.
 _TARGET_BATCH_SIZE = 256
 
 
@@ -107,6 +108,8 @@ class MultipoleResourceEvidence3D(StrictModule, NonTrainableState):
     required_coefficient_bytes: int = eqx.field(static=True)
     maximum_coefficient_bytes: int = eqx.field(static=True)
     quadrature_node_count: int = eqx.field(static=True)
+    translation_table_bytes: int = eqx.field(static=True)
+    translation_workspace_bytes: int = eqx.field(static=True)
     node_capacity: int = eqx.field(static=True)
     far_interaction_capacity: int = eqx.field(static=True)
     near_interaction_capacity: int = eqx.field(static=True)
@@ -290,10 +293,19 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             )
         if maximum_bytes <= 0:
             raise ValueError("maximum_coefficient_bytes must be positive.")
-        if translation_route != "dense":
-            raise ValueError(
-                "Only the complete dense Laplace translation route is available."
-            )
+        translation_route = parse(
+            translation_route, TranslationRoute3D, "translation_route"
+        )
+        match translation_route:
+            case "dense":
+                pass
+            case "rotation":
+                if order > _MAXIMUM_ORDER:
+                    raise ValueError(
+                        "Rotation Laplace translations support expansion_order at most 8."
+                    )
+            case _:
+                assert_never(translation_route)
         execution = parse(execution, LaplaceExecution3D, "execution")
         source_leaf = index(source_leaf_occupancy)
         target_leaf = index(target_leaf_occupancy)
@@ -388,10 +400,70 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, /) -> PreparedLaplaceMultipole3D:
-        """Materialize topology, projection quadrature, and bounded workspaces."""
-        # ty: ignore[missing-argument]
-        return PreparedLaplaceMultipole3D(self)
+    def prepare(
+        self, /, *, _translation_data: _LaplaceTranslationData | None = None
+    ) -> PreparedLaplaceMultipole3D:
+        """Materialize topology and route-specific bounded numerical workspaces."""
+        # ty: ignore[missing-argument, unknown-argument]
+        return PreparedLaplaceMultipole3D(self, _translation_data=_translation_data)
+
+
+@final
+class _LaplaceTranslationData(StrictModule, NonTrainableState):
+    """Numerical preparation, independent of the frozen interaction topology."""
+
+    layout: SphericalModeLayout
+    quadrature_directions: Array
+    quadrature_weights: Array
+    quadrature_harmonics: Array
+    equivalent_inverse: Array
+    rotation: _PreparedLaplaceRotation | None
+    table_bytes: int = eqx.field(static=True)
+    workspace_bytes: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: LaplaceMultipolePlan3D, /) -> None:
+        layout = SphericalModeLayout(plan.expansion_order + 1, spin=0, reality=False)
+        rotation = None
+        match plan.translation_route:
+            case "dense":
+                directions_, weights_ = _translation_quadrature(layout.bandlimit)
+                directions = jnp.asarray(directions_)
+                weights = jnp.asarray(weights_)
+                regular = _mode_basis(layout, directions, radial="regular")
+                degree_scale = 1.0 / (2.0 * jnp.arange(layout.bandlimit) + 1.0)
+                p2m_matrix = (jnp.conj(regular) * degree_scale[:, None, None]).reshape(
+                    (-1, directions.shape[0])
+                )[layout.valid_indices]
+                equivalent_inverse = jnp.linalg.pinv(p2m_matrix)
+                table_bytes = (
+                    directions.nbytes
+                    + weights.nbytes
+                    + regular.nbytes
+                    + equivalent_inverse.nbytes
+                )
+                workspace_bytes = 0
+            case "rotation":
+                rotation = _PreparedLaplaceRotation(
+                    layout, plan.maximum_coefficient_bytes
+                )
+                directions = jnp.empty((0, 3), dtype=jnp.float64)
+                weights = jnp.empty((0,), dtype=jnp.float64)
+                regular = jnp.empty(layout.coefficient_shape + (0,), dtype=jnp.complex128)
+                equivalent_inverse = jnp.empty((0, 0), dtype=jnp.complex128)
+                table_bytes = rotation.table_bytes
+                workspace_bytes = rotation.workspace_bytes
+            case _:
+                assert_never(plan.translation_route)
+        self.layout = layout
+        self.quadrature_directions = directions
+        self.quadrature_weights = weights
+        self.quadrature_harmonics = regular
+        self.equivalent_inverse = equivalent_inverse
+        self.rotation = rotation
+        self.table_bytes = table_bytes
+        self.workspace_bytes = workspace_bytes
+        self.plan_id = plan.plan_id
 
 
 class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
@@ -404,6 +476,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
     quadrature_weights: Array
     quadrature_harmonics: Array
     equivalent_inverse: Array
+    rotation: _PreparedLaplaceRotation | None
     resources: MultipoleResourceEvidence3D
     source_plane_plan: MortonPlaneSchedulePlan | None = eqx.field(static=True)
     target_plane_plan: MortonPlaneSchedulePlan | None = eqx.field(static=True)
@@ -415,17 +488,28 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
     @checked
-    def __init__(self, plan: LaplaceMultipolePlan3D, /) -> None:
-        layout = SphericalModeLayout(plan.expansion_order + 1, spin=0, reality=False)
-        directions_, weights_ = _translation_quadrature(layout.bandlimit)
-        directions = jnp.asarray(directions_)
-        weights = jnp.asarray(weights_)
-        regular = _mode_basis(layout, directions, radial="regular")
-        degree_scale = 1.0 / (2.0 * jnp.arange(layout.bandlimit) + 1.0)
-        p2m_matrix = (jnp.conj(regular) * degree_scale[:, None, None]).reshape(
-            (-1, directions.shape[0])
-        )[layout.valid_indices]
-        equivalent_inverse = jnp.linalg.pinv(p2m_matrix)
+    def __init__(
+        self,
+        plan: LaplaceMultipolePlan3D,
+        /,
+        *,
+        _translation_data: _LaplaceTranslationData | None = None,
+    ) -> None:
+        data = (
+            _LaplaceTranslationData(plan)
+            if _translation_data is None
+            else _translation_data
+        )
+        if data.plan_id != plan.plan_id:
+            raise ValueError("Laplace translation data must match the owning plan.")
+        layout = data.layout
+        rotation = data.rotation
+        directions = data.quadrature_directions
+        weights = data.quadrature_weights
+        regular = data.quadrature_harmonics
+        equivalent_inverse = data.equivalent_inverse
+        translation_table_bytes = data.table_bytes
+        translation_workspace_bytes = data.workspace_bytes
 
         topology = None
         source_plane_plan = None
@@ -532,7 +616,31 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                     "near_capacity": plan.near_interaction_capacity,
                 }
             )
-        within_budget = required_bytes <= plan.maximum_coefficient_bytes
+        if rotation is not None:
+            concurrency = node_capacity
+            if far_capacity is not None:
+                concurrency = max(concurrency, min(far_capacity, _TARGET_BATCH_SIZE))
+                required_bytes += far_capacity * coefficient_bytes
+            if source_plane_plan is not None:
+                concurrency = max(
+                    concurrency,
+                    source_plane_plan.node_capacity * source_plane_plan.coarsening_factor,
+                )
+            if topology is not None:
+                concurrency = max(
+                    concurrency,
+                    min(plan.target_capacity, _TARGET_BATCH_SIZE)
+                    * topology.w_list.row_width,
+                )
+            translation_workspace_bytes *= concurrency
+        required_rotation_bytes = (
+            translation_table_bytes + translation_workspace_bytes
+            if rotation is not None
+            else 0
+        )
+        within_budget = (
+            required_bytes + required_rotation_bytes <= plan.maximum_coefficient_bytes
+        )
         if not within_budget:
             raise ValueError(
                 "Multipole coefficient workspaces exceed maximum_coefficient_bytes."
@@ -547,6 +655,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 "required_coefficient_bytes": required_bytes,
                 "maximum_coefficient_bytes": plan.maximum_coefficient_bytes,
                 "quadrature_node_count": directions.shape[0],
+                "translation_table_bytes": translation_table_bytes,
+                "translation_workspace_bytes": translation_workspace_bytes,
                 "node_capacity": node_capacity,
                 "far_interaction_capacity": far_capacity,
                 "near_interaction_capacity": near_capacity,
@@ -560,6 +670,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         self.quadrature_weights = weights
         self.quadrature_harmonics = regular
         self.equivalent_inverse = equivalent_inverse
+        self.rotation = rotation
         self.resources = MultipoleResourceEvidence3D(
             logical_mode_count=layout.logical_mode_count,
             padded_mode_count=padded,
@@ -567,6 +678,8 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
             required_coefficient_bytes=required_bytes,
             maximum_coefficient_bytes=plan.maximum_coefficient_bytes,
             quadrature_node_count=directions.shape[0],
+            translation_table_bytes=translation_table_bytes,
+            translation_workspace_bytes=translation_workspace_bytes,
             node_capacity=node_capacity,
             # ty: ignore[invalid-argument-type]
             far_interaction_capacity=far_capacity,
@@ -593,6 +706,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
                 "layout": layout.layout_id,
                 "topology": topology_id,
                 "resources": evidence_id,
+                "rotation": None if rotation is None else rotation.prepared_id,
             }
         )
 
@@ -743,15 +857,42 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         parent = jnp.asarray(parent_center, dtype=child.dtype)
         if child.shape != (3,) or parent.shape != (3,):
             raise ValueError("M2M centers must have shape (3,).")
-        modal_flat, payload_shape = _flatten_payload(modal, 2)
-        active = modal_flat.reshape((-1, modal_flat.shape[-1]))[self.layout.valid_indices]
-        charges = self.equivalent_inverse.astype(active.dtype) @ active
-        translated = self.p2m(
-            child[None, :] + self.quadrature_directions.astype(child.dtype),
-            charges.reshape((self.quadrature_directions.shape[0],) + payload_shape),
-            parent,
-        )
-        return translated
+        match self.plan.translation_route:
+            case "rotation":
+                if self.rotation is None:
+                    raise RuntimeError("Rotation translation tables are not prepared.")
+                return self.rotation.apply(modal, child - parent, "m2m")
+            case "dense":
+                modal_flat, payload_shape = _flatten_payload(modal, 2)
+                active = modal_flat.reshape((-1, modal_flat.shape[-1]))[
+                    self.layout.valid_indices
+                ]
+                charges = self.equivalent_inverse.astype(active.dtype) @ active
+                return self.p2m(
+                    child[None, :] + self.quadrature_directions.astype(child.dtype),
+                    charges.reshape(
+                        (self.quadrature_directions.shape[0],) + payload_shape
+                    ),
+                    parent,
+                )
+            case _:
+                assert_never(self.plan.translation_route)
+
+    def _translate_far(
+        self, multipoles: Array, source_centers: Array, target_centers: Array, /
+    ) -> Array:
+        """Preserve event order while bounding rotation translation tables."""
+        match self.plan.translation_route:
+            case "rotation":
+                return jax.lax.map(
+                    lambda item: self.m2l(*item),
+                    (multipoles, source_centers, target_centers),
+                    batch_size=_TARGET_BATCH_SIZE,
+                )
+            case "dense":
+                return jax.vmap(self.m2l)(multipoles, source_centers, target_centers)
+            case _:
+                assert_never(self.plan.translation_route)
 
     def _project_local(self, function: Any, center: Array, /) -> Array:
         directions = self.quadrature_directions.astype(center.dtype)
@@ -794,15 +935,23 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         target_center: ArrayLike,
         /,
     ) -> Array:
-        """Translate a multipole to a local expansion by exact Taylor projection."""
+        """Translate a multipole to a local expansion with the selected route."""
         modal = self._validate_coefficients(multipole, "multipole")
         source = jnp.asarray(source_center)
         target = jnp.asarray(target_center, dtype=source.dtype)
         if source.shape != (3,) or target.shape != (3,):
             raise ValueError("M2L centers must have shape (3,).")
-        return self._project_local(
-            lambda point: self.multipole_to_point(modal, source, point), target
-        )
+        match self.plan.translation_route:
+            case "rotation":
+                if self.rotation is None:
+                    raise RuntimeError("Rotation translation tables are not prepared.")
+                return self.rotation.apply(modal, target - source, "m2l")
+            case "dense":
+                return self._project_local(
+                    lambda point: self.multipole_to_point(modal, source, point), target
+                )
+            case _:
+                assert_never(self.plan.translation_route)
 
     def l2l(
         self,
@@ -817,7 +966,17 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         child = jnp.asarray(child_center, dtype=parent.dtype)
         if parent.shape != (3,) or child.shape != (3,):
             raise ValueError("L2L centers must have shape (3,).")
-        return self._project_local(lambda point: self.l2p(modal, parent, point), child)
+        match self.plan.translation_route:
+            case "rotation":
+                if self.rotation is None:
+                    raise RuntimeError("Rotation translation tables are not prepared.")
+                return self.rotation.apply(modal, child - parent, "l2l")
+            case "dense":
+                return self._project_local(
+                    lambda point: self.l2p(modal, parent, point), child
+                )
+            case _:
+                assert_never(self.plan.translation_route)
 
     def p2p(
         self,
@@ -1016,10 +1175,14 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         far = self.plane_interactions.far
         source_nodes = far.source_indices
         target_nodes = far.target_indices
-        far_values = jax.vmap(self.m2l)(
-            source_moments[source_nodes],
-            source_schedule.node_centers[source_nodes],
+        source_centers = source_schedule.node_centers[source_nodes]
+        target_centers = jnp.where(
+            far.valid[:, None],
             target_schedule.node_centers[target_nodes],
+            source_centers + jnp.asarray((1.0, 0.0, 0.0), dtype=source_centers.dtype),
+        )
+        far_values = self._translate_far(
+            source_moments[source_nodes], source_centers, target_centers
         )
         far_values = jnp.where(
             far.valid.reshape((far.valid.shape[0],) + (1,) * (far_values.ndim - 1)),
@@ -1438,7 +1601,7 @@ class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
         target_center = jnp.where(
             far.valid[:, None], centers[far.target_indices], source_center + offset
         )
-        translated = jax.vmap(self.m2l)(
+        translated = self._translate_far(
             moments[far.source_indices], source_center, target_center
         )
         translated = jnp.where(

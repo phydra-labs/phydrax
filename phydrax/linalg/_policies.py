@@ -159,20 +159,22 @@ class SparseCholesky(AbstractLinearMethod):
 class SparseLDLT(AbstractLinearMethod):
     """Sparse symmetric-indefinite LDLᵀ through an explicit cuDSS provider."""
 
-    provider: Literal["spineax-cudss"] = eqx.field(static=True)
+    provider: Literal["cudss"] = eqx.field(static=True)
     reordering: Literal["default", "nested_dissection", "amd"] = eqx.field(static=True)
     memory_mode: Literal["device", "hybrid"] = eqx.field(static=True)
     refinement_steps: int = eqx.field(static=True)
+    factor_cache_capacity: int = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        provider: Literal["spineax-cudss"] = "spineax-cudss",
+        provider: Literal["cudss"] = "cudss",
         reordering: Literal["default", "nested_dissection", "amd"] = "default",
         memory_mode: Literal["device", "hybrid"] = "device",
         refinement_steps: int = 1,
+        factor_cache_capacity: int = 8,
     ) -> None:
-        if provider != "spineax-cudss":
+        if provider != "cudss":
             raise ValueError(f"Unknown sparse LDLT provider {provider!r}.")
         if reordering not in ("default", "nested_dissection", "amd"):
             raise ValueError(f"Unknown sparse LDLT reordering {reordering!r}.")
@@ -181,10 +183,17 @@ class SparseLDLT(AbstractLinearMethod):
         refinement = int(refinement_steps)
         if refinement < 0:
             raise ValueError("refinement_steps must be non-negative.")
+        if isinstance(factor_cache_capacity, bool) or not isinstance(
+            factor_cache_capacity, int
+        ):
+            raise TypeError("factor_cache_capacity must be a positive integer.")
+        if factor_cache_capacity < 1:
+            raise ValueError("factor_cache_capacity must be a positive integer.")
         self.provider = provider
         self.reordering = reordering
         self.memory_mode = memory_mode
         self.refinement_steps = refinement
+        self.factor_cache_capacity = factor_cache_capacity
 
     @property
     def name(self) -> str:
@@ -692,6 +701,13 @@ class LinearSolveCheckPolicy(StrictModule):
 class LinearDerivativeSolvePolicy(StrictModule):
     """Independent work and acceptance requirements for implicit derivative solves.
 
+    Omitted (``None``) relative tolerance resolves to
+    ``max(1e-8, 10 * eps)`` in the derivative coordinate dtype; omitted absolute
+    tolerance resolves to ``1e-10``. Explicit tolerances are honored unchanged,
+    including values below attainable roundoff. Solve provenance reports the
+    effective values. Thus float64 retains the original default accuracy while
+    float32 does not demand a sub-roundoff relative residual.
+
     ``route`` selects how implicit tangent and cotangent linear solves execute:
 
     - ``"krylov"`` runs an independent preconditioned CG solve for prepared PCG
@@ -712,8 +728,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
       therefore refuses ``require_nullspace``.
     """
 
-    relative_tolerance: float = eqx.field(static=True)
-    absolute_tolerance: float = eqx.field(static=True)
+    relative_tolerance: float | None = eqx.field(static=True)
+    absolute_tolerance: float | None = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
     nullspace_tolerance: float = eqx.field(static=True)
     stability_lower_bound: StabilityLowerBound | None
@@ -723,8 +739,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
     def __init__(
         self,
         *,
-        relative_tolerance: float = 1e-8,
-        absolute_tolerance: float = 1e-10,
+        relative_tolerance: float | None = None,
+        absolute_tolerance: float | None = None,
         maximum_steps: int | None = None,
         nullspace_tolerance: float = 1e-10,
         stability_lower_bound: StabilityLowerBound | None = None,
@@ -737,8 +753,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
             nullspace,
             stability_lower_bound,
         ) = _linear_check_parameters(
-            relative_tolerance,
-            absolute_tolerance,
+            1e-8 if relative_tolerance is None else relative_tolerance,
+            1e-10 if absolute_tolerance is None else absolute_tolerance,
             nullspace_tolerance,
             stability_lower_bound,
         )
@@ -762,8 +778,8 @@ class LinearDerivativeSolvePolicy(StrictModule):
                     )
             case _:
                 raise ValueError(f"Unsupported derivative solve route {route!r}.")
-        self.relative_tolerance = relative
-        self.absolute_tolerance = absolute
+        self.relative_tolerance = None if relative_tolerance is None else relative
+        self.absolute_tolerance = None if absolute_tolerance is None else absolute
         self.nullspace_tolerance = nullspace
         self.stability_lower_bound = stability_lower_bound
         self.maximum_steps = steps

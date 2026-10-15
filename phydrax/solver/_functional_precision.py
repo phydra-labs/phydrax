@@ -28,13 +28,18 @@ FunctionalMatmulPrecision: TypeAlias = Literal[
 
 
 class FunctionalPrecisionPolicy(StrictModule, NonTrainableState):
-    """Experimental standard-Optax model-evaluation contraction precision."""
+    """Experimental standard-Optax model-evaluation contraction precision.
+
+    The default ``"highest"`` matches Phydrax's package-wide float32 contraction
+    default; ``"default"`` explicitly selects JAX's backend default, which is
+    TF32 on NVIDIA GPUs.
+    """
 
     matmul_precision: FunctionalMatmulPrecision = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
-        self, matmul_precision: FunctionalMatmulPrecision = "default", /
+        self, matmul_precision: FunctionalMatmulPrecision = "highest", /
     ) -> None:
         matmul_precision = parse(
             matmul_precision, FunctionalMatmulPrecision, "matmul_precision"
@@ -61,8 +66,9 @@ class FunctionalPrecisionPolicy(StrictModule, NonTrainableState):
         resolution = PrecisionResolution(
             request,
             f"phydrax-functional:{self.matmul_precision}",
-            dict(request.requested),
+            {"compute": None, "accumulation": None, "output": dtype},
         )
+        # A policy and array dtype do not observe a lowered dot algorithm.
         return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
 

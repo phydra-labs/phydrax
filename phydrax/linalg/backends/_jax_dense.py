@@ -15,6 +15,7 @@ from jax import Array, core as jax_core
 
 from ..._strict import StrictModule
 from .._dense_pseudoinverse import factor_pseudoinverse
+from .._dense_svd import economy_svd
 from .._materialization import materialize
 from .._operators import DenseLinearOperator
 from .._pairings import DiagonalPairing, EuclideanPairing
@@ -566,9 +567,7 @@ def _prepare_svd(
         condition = factors.condition_estimate
         reported_singular_values = singular_values
     else:
-        _, reported_singular_values, rank_vh = jnp.linalg.svd(
-            rank_design, full_matrices=False
-        )
+        _, reported_singular_values, rank_vh = economy_svd(rank_design)
         rank_rows, rank_columns = (size for size in rank_design.shape[-2:])
         rank_retained, rank, condition = _rank_data(
             reported_singular_values,
@@ -580,8 +579,10 @@ def _prepare_svd(
             jnp.conj(jnp.swapaxes(rank_vh, -1, -2))
             * rank_retained.astype(rank_vh.dtype)[..., None, :]
         )
-        factor_design = jnp.matmul(design, source_projection)
-        u, singular_values, vh = jnp.linalg.svd(factor_design, full_matrices=False)
+        factor_design = jnp.matmul(
+            design, source_projection, precision=jax.lax.Precision.HIGHEST
+        )
+        u, singular_values, vh = economy_svd(factor_design)
         factor_rows, factor_columns = (size for size in factor_design.shape[-2:])
         retained, _, _ = _rank_data(
             singular_values,

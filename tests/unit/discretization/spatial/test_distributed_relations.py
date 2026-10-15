@@ -298,6 +298,99 @@ def test_ingress_refuses_duplicate_ids_and_capacity_overflow() -> None:
         DistributedPointLayout.from_global(plan, points, np.asarray([0, 1, 2, 4]))
 
 
+@pytest.mark.parametrize("dtype", (np.float32, np.float64), ids=("float32", "float64"))
+def test_owner_slot_identity_and_live_periodic_reply_geometry(
+    dtype: type[np.float32] | type[np.float64],
+) -> None:
+    group = ExecutionRuntime.current().child_groups(len(jax.devices()))[0]
+    address = MortonAddressPlan((0.0,), (1.0,), 10, periodic_axes=(True,))
+    ownership = DistributedOwnershipPlan(address, group, 3, owner_lanes=4)
+    active = np.tile(np.asarray([True, True, False], dtype=np.bool_), 4)
+    active_rows = np.flatnonzero(active)
+    points = np.full((12, 1), np.nan, dtype=dtype)
+    points[active_rows, 0] = np.asarray(
+        [1.875, -0.875, 2.0, -1.75, 1.5, -0.625, 2.75, -1.375], dtype=dtype
+    )
+    ids = np.zeros((12,), dtype=np.int64)
+    ids[active_rows] = np.asarray(
+        [2**63 - 1, -(2**63), 2**40 + 3, -(2**40), 91, 7, -9, 32], dtype=np.int64
+    )
+    layout = DistributedPointLayout.from_blocks(
+        ownership, points, active=active, stable_ids=ids
+    )
+    knn = DistributedNeighborQueryPlan(ownership, ownership, 2)
+    radius = DistributedRadiusQueryPlan(ownership, ownership, 0.125, 8)
+    moved = eqx.tree_at(
+        lambda value: value.points,
+        layout,
+        layout.points.at[active_rows[0], 0].add(0.0625),
+    )
+    for current in (layout, moved):
+        coordinates = np.asarray(current.points)[active]
+        distance = _minimum_image_distance(coordinates, coordinates, address)
+        np.fill_diagonal(distance, np.inf)
+        order = np.lexsort(
+            (np.broadcast_to(ids[active], distance.shape), distance), axis=1
+        )[:, :2]
+        neighbors = knn.query(current, current, exclude_self=True)
+        assert bool(neighbors.evidence.successful)
+        assert bool(neighbors.evidence.finite)
+        assert int(neighbors.evidence.communicated_targets) > 0
+        np.testing.assert_array_equal(
+            np.asarray(neighbors.source_stable_ids)[active], ids[active][order]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbors.source_logical)[active], active_rows[order]
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbors.source_owners)[active] * ownership.local_capacity
+            + np.asarray(neighbors.source_slots)[active],
+            active_rows[order],
+        )
+        np.testing.assert_allclose(
+            np.asarray(neighbors.distance_squared)[active],
+            np.take_along_axis(distance, order, axis=1),
+            rtol=0,
+            atol=0,
+        )
+        np.testing.assert_array_equal(
+            np.asarray(neighbors.status)[~active],
+            DistributedRelationStatus.INACTIVE_TARGET,
+        )
+        rows = radius.query(current, current, exclude_self=True)
+        assert bool(rows.evidence.successful)
+        for target, blocked_row in enumerate(active_rows):
+            valid = np.asarray(rows.valid)[blocked_row]
+            found = np.asarray(rows.source_stable_ids)[blocked_row][valid]
+            expected = ids[active][distance[target] <= 0.125**2]
+            assert set(found.tolist()) == set(expected.tolist())
+
+
+@pytest.mark.parametrize(
+    "bad_coordinate", (np.nan, 1.0), ids=("nonfinite", "out-of-domain")
+)
+def test_invalid_owner_sources_preserve_global_refusal_evidence(
+    bad_coordinate: float,
+) -> None:
+    group = ExecutionRuntime.current().child_groups(len(jax.devices()))[0]
+    address = MortonAddressPlan((0.0,), (1.0,), 10)
+    ownership = DistributedOwnershipPlan(address, group, 2, owner_lanes=4)
+    points = np.arange(8, dtype=np.float64)[:, None] / 8.0
+    targets = DistributedPointLayout.from_blocks(ownership, points)
+    invalid = points.copy()
+    invalid[3, 0] = bad_coordinate
+    sources = DistributedPointLayout.from_blocks(ownership, invalid)
+    result = DistributedNeighborQueryPlan(ownership, ownership, 2).query(sources, targets)
+    assert not bool(result.evidence.successful)
+    assert not bool(result.evidence.sources_valid)
+    assert bool(result.evidence.finite) == bool(np.isfinite(bad_coordinate))
+    np.testing.assert_array_equal(
+        result.status, DistributedRelationStatus.INVALID_SOURCES
+    )
+    np.testing.assert_array_equal(result.valid, False)
+    np.testing.assert_array_equal(result.counts, 0)
+
+
 def test_lane_reference_owners_run_the_same_collective_relations() -> None:
     # Four owner lanes on one device: queries, halos, and migration execute the
     # identical collective program as named vmap lanes.

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import Any
 
 import equinox as eqx
@@ -7,6 +8,7 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+from phydrax._jax_config import default_device
 from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.atomistic import (
     AtomicStructure,
@@ -406,6 +408,15 @@ def _efs(model: MACEPotential, topology: Any, positions: Any) -> tuple[Any, Any,
     return derivatives.energy, derivatives.forces, derivatives.stress
 
 
+@pytest.fixture
+def interpreter_on_cpu() -> Iterator[None]:
+    # The "cpu_interpret" target executes only on CPU devices, also when an
+    # accelerator is the default backend.
+    with default_device(jax.devices("cpu")[0]):
+        yield
+
+
+@pytest.mark.usefixtures("interpreter_on_cpu")
 @pytest.mark.parametrize("name", list(_VARIANTS))
 def test_accelerated_fragments_match_exact_energy_forces_stress_and_training_gradient(
     name: str,
@@ -445,6 +456,7 @@ def test_accelerated_fragments_match_exact_energy_forces_stress_and_training_gra
         np.testing.assert_allclose(left, right, rtol=1e-9, atol=1e-11)
 
 
+@pytest.mark.usefixtures("interpreter_on_cpu")
 def test_accelerated_raw_and_prepared_fragments_match_exact_on_a_split_receiver() -> None:
     streaming = StreamedRelationPlan(
         receiver_tile=1, edge_tile=2, channel_capacity=512, accumulation="deterministic"

@@ -931,7 +931,7 @@ def finalize_sparse_structured_ipm(
             problem_id=prepared.program.program_id,
             method=method_id,
             backend=(
-                "spineax-cudss"
+                "cudss"
                 if isinstance(linear_policy.method, SparseLDLT)
                 else "phydrax-linalg"
             ),
@@ -993,10 +993,10 @@ def solve_sparse_structured_ipm(
     if prepared.program.hessian_plan is None:
         raise ValueError("Sparse augmented IPM requires an exact Hessian plan.")
     if isinstance(linear_policy.method, SparseLDLT) and not (
-        sparse_provider_capabilities("spineax-cudss").reliable_zero_inertia
+        sparse_provider_capabilities("cudss").reliable_zero_inertia
     ):
         raise ValueError(
-            "Spineax cuDSS cannot drive the nonconvex structured IPM until zero-inertia evidence is reliable."
+            "cuDSS cannot drive the structured IPM, including convex problems, until zero-inertia evidence is reliable."
         )
     plan = plan_sparse_augmented_kkt(prepared.template)
     state = initialize_sparse_structured_ipm(

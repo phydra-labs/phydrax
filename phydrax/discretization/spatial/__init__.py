@@ -12,6 +12,14 @@ from ._block_sparse import (
     SparseBlockTopologyState,
     SparseBlockTransition,
 )
+from ._bvh_neighbor_query import (
+    BVHNeighborQueryEvidence,
+    BVHNeighborQueryPlan,
+    BVHNeighborQueryResult,
+    BVHNeighborQueryStatus,
+    BVHSourcePlan,
+    PreparedBVHSources,
+)
 from ._distributed_relations import (
     DistributedHaloEvidence,
     DistributedHaloPlan,
@@ -64,6 +72,11 @@ from ._neighbor_query import (
     MortonRadiusShellWitnessPlan,
     SpatialDistanceBackend,
 )
+from ._neighbor_sources import (
+    MortonSourcePlan,
+    MortonSourceTransition,
+    PreparedMortonSources,
+)
 from ._plane_distributed import (
     DistributedMortonNeighborEvidence,
     DistributedMortonNeighborQueryPlan,
@@ -93,6 +106,12 @@ from ._voxel import (
 
 
 __all__ = [
+    "BVHNeighborQueryEvidence",
+    "BVHNeighborQueryPlan",
+    "BVHNeighborQueryResult",
+    "BVHNeighborQueryStatus",
+    "BVHSourcePlan",
+    "PreparedBVHSources",
     "BlockKeyOrdering",
     "AdaptiveDyadicGridPlan",
     "DyadicAdaptationEvidence",
@@ -132,6 +151,9 @@ __all__ = [
     "MortonRadiusShellEvidence",
     "MortonRadiusShellResult",
     "MortonRadiusShellWitnessPlan",
+    "MortonSourcePlan",
+    "MortonSourceTransition",
+    "PreparedMortonSources",
     "MortonPrimitiveBoundsEvidence",
     "MortonPrimitiveBoundsPlan",
     "MortonPrimitiveBoundsState",

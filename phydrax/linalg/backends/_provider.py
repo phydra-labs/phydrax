@@ -7,6 +7,8 @@ from __future__ import annotations
 import abc
 from typing import Any, TYPE_CHECKING
 
+from jax import Array
+
 from ..._iteration import (
     IterationCapabilities,
     IterationPlan,
@@ -17,6 +19,13 @@ from .._plans import LinearBackend, LinearSolvePlan
 from .._policies import LinearSolveControl
 from .._preconditioners import AbstractPreconditioner
 from .._structured_operators import BandedLinearOperator
+from ._cudss import (
+    analyze_cudss,
+    bind_cudss,
+    refresh_cudss,
+    release_cudss,
+    solve_cudss,
+)
 from ._jax_dense import prepare_dense, solve_dense, solve_dense_transformed
 from ._jax_sparse import (
     HostSparseState,
@@ -37,16 +46,14 @@ from ._native_block_krylov import (
     solve_native_block_krylov,
 )
 from ._native_krylov import prepare_native_krylov, solve_native_krylov
-from ._spineax import (
-    analyze_spineax,
-    bind_spineax,
-    refresh_spineax,
-    release_spineax,
-    solve_spineax,
-)
 
 
 if TYPE_CHECKING:
+    from ._cudss import (
+        CudssBackendOutput,
+        CudssFactorState,
+        CudssSymbolicState,
+    )
     from ._jax_dense import DenseBackendOutput
     from ._jax_sparse import SparseBackendOutput
     from ._jax_structured import StructuredBackendOutput
@@ -56,11 +63,6 @@ if TYPE_CHECKING:
         NativeBlockKrylovState,
     )
     from ._native_krylov import NativeKrylovBackendOutput, NativeKrylovState
-    from ._spineax import (
-        SpineaxBackendOutput,
-        SpineaxFactorState,
-        SpineaxSymbolicState,
-    )
 
 
 class AbstractLinearProvider(abc.ABC):
@@ -69,6 +71,8 @@ class AbstractLinearProvider(abc.ABC):
     backends: tuple[LinearBackend, ...]
     accepts_initial_guess: bool = False
     supports_implicit_differentiation: bool = False
+    # Prepared transpose/adjoint solves of batched operators reuse the factors.
+    supports_batched_transformed: bool = False
     # Solve is a pure device program over prepared state: the runtime executes
     # it through its stable compiled entry so loops are traced once per structure.
     compiled_execution: bool = False
@@ -114,7 +118,7 @@ class AbstractLinearProvider(abc.ABC):
             preconditioner=preconditioner,
         )
 
-    def release(self, state: Any, /) -> bool:
+    def release(self, state: Any, /) -> bool | Array:
         """Release provider resources; array-only providers are no-ops."""
         del state
         return False
@@ -298,12 +302,13 @@ class _SparseProvider(AbstractLinearProvider):
         return solve_host_sparse_transformed(state, rhs, adjoint=adjoint)
 
 
-class _SpineaxProvider(AbstractLinearProvider):
-    backends = ("spineax-cudss",)
+class _CudssProvider(AbstractLinearProvider):
+    backends = ("cudss",)
     supports_implicit_differentiation = True
+    supports_batched_transformed = True
 
-    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> SpineaxSymbolicState:
-        return analyze_spineax(problem, plan)
+    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> CudssSymbolicState:
+        return analyze_cudss(problem, plan)
 
     def bind(
         self,
@@ -313,10 +318,10 @@ class _SpineaxProvider(AbstractLinearProvider):
         /,
         *,
         preconditioner: AbstractPreconditioner | None = None,
-    ) -> SpineaxFactorState:
+    ) -> CudssFactorState:
         if preconditioner is not None:
-            raise ValueError("Spineax direct binding rejects preconditioning.")
-        return bind_spineax(symbolic_state, problem, plan)
+            raise ValueError("cuDSS direct binding rejects preconditioning.")
+        return bind_cudss(symbolic_state, problem, plan)
 
     def refresh(
         self,
@@ -327,10 +332,10 @@ class _SpineaxProvider(AbstractLinearProvider):
         /,
         *,
         preconditioner: AbstractPreconditioner | None = None,
-    ) -> SpineaxFactorState:
+    ) -> CudssFactorState:
         if preconditioner is not None:
-            raise ValueError("Spineax direct refresh rejects preconditioning.")
-        return refresh_spineax(symbolic_state, previous_state, problem, plan)
+            raise ValueError("cuDSS direct refresh rejects preconditioning.")
+        return refresh_cudss(symbolic_state, previous_state, problem, plan)
 
     def solve(
         self,
@@ -343,21 +348,21 @@ class _SpineaxProvider(AbstractLinearProvider):
         control: LinearSolveControl | None = None,
         iteration: IterationPlan | None = None,
         iteration_state: IterationRuntimeState | None = None,
-    ) -> SpineaxBackendOutput:
+    ) -> CudssBackendOutput:
         del iteration, iteration_state
-        return solve_spineax(state, rhs, plan)
+        return solve_cudss(state, rhs, plan)
 
     def supports_transformed(self, state: Any, /) -> bool:
         return True
 
     def solve_transformed(
         self, state: Any, rhs: Any, plan: LinearSolvePlan, /, *, adjoint: bool
-    ) -> SpineaxBackendOutput:
+    ) -> CudssBackendOutput:
         del adjoint
-        return solve_spineax(state, rhs, plan)
+        return solve_cudss(state, rhs, plan)
 
-    def release(self, state: Any, /) -> bool:
-        return release_spineax(state)
+    def release(self, state: Any, /) -> bool | Array:
+        return release_cudss(state)
 
 
 class _NativeBlockKrylovProvider(AbstractLinearProvider):
@@ -496,7 +501,7 @@ _PROVIDERS: tuple[AbstractLinearProvider, ...] = (
     _StructuredProvider(),
     _DenseProvider(),
     _SparseProvider(),
-    _SpineaxProvider(),
+    _CudssProvider(),
     _NativeBlockKrylovProvider(),
     _NativeKrylovProvider(),
     _LineaxProvider(),

@@ -37,7 +37,13 @@ HEARTBEAT_TIMEOUT_SECONDS: Final = "PHYDRAX_HEARTBEAT_TIMEOUT_SECONDS"
 INITIALIZATION_TIMEOUT_SECONDS: Final = "PHYDRAX_INITIALIZATION_TIMEOUT_SECONDS"
 
 LIBRARY_ENVIRONMENT: Final[Mapping[LibrarySetting, str]] = MappingProxyType(
-    {"meshcore": "PHYDRAX_MESHCORE_LIBRARY", "metis": "PHYDRAX_METIS_LIBRARY"}
+    {
+        "meshcore": "PHYDRAX_MESHCORE_LIBRARY",
+        "metis": "PHYDRAX_METIS_LIBRARY",
+        "cuda_cudss": "PHYDRAX_CUDA_CUDSS_LIBRARY",
+        "cuda_amgx": "PHYDRAX_CUDA_AMGX_LIBRARY",
+        "cuda_quda": "PHYDRAX_CUDA_QUDA_LIBRARY",
+    }
 )
 WORKER_ENVIRONMENT: Final[Mapping[WorkerSetting, str]] = MappingProxyType(
     {

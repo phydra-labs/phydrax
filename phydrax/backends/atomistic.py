@@ -22,6 +22,7 @@ from typing import final, get_args, Literal, TypeAlias
 import equinox as eqx
 import jax
 
+from .._execution_device import device_platform
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._validation import nonnegative_integer, positive_integer
@@ -45,13 +46,14 @@ MACECouplingRole: TypeAlias = Literal[
 
 WARPGROUP_LANES = 128
 _BACKEND = "pallas-atomistic"
-# Mosaic GPU's maintained targets are Hopper and Blackwell, and lowering was
-# verified only at architecture 9.0. Upstream pre-Hopper code paths are not
-# admitted without their own compile evidence.
-_CUDA_MINIMUM_COMPUTE_CAPABILITY = (9, 0)
+# Retain the existing Hopper admission and admit consumer Blackwell
+# after Lane-kernel forward and derivative execution on an RTX 5090. This
+# family uses no WGMMA, TCGEN05, or TMA multicast instructions. Other
+# architectures need their own compile evidence, not a numeric lower bound.
+_CUDA_ADMITTED_COMPUTE_CAPABILITIES = frozenset(((9, 0), (12, 0)))
 _REQUIREMENT = (
-    "JAX Pallas Mosaic GPU on an NVIDIA CUDA device with compute capability >= "
-    f"{_CUDA_MINIMUM_COMPUTE_CAPABILITY[0]}.{_CUDA_MINIMUM_COMPUTE_CAPABILITY[1]}, "
+    "JAX Pallas Mosaic GPU on an NVIDIA CUDA device with admitted compute "
+    "capability 9.0 or 12.0, "
     "or the explicit CPU Mosaic GPU interpreter for reference verification"
 )
 
@@ -144,9 +146,9 @@ def _cuda_device() -> tuple[jax.Device | None, str]:
     if jax.default_backend() != "gpu":
         return None, f"the active JAX backend is {jax.default_backend()!r}, not a GPU"
     device = jax.devices()[0]
-    if device.client.platform != "cuda":
+    if device_platform(device) != "cuda":
         return None, (
-            f"the active GPU client is {device.client.platform!r}; only NVIDIA CUDA "
+            f"the active GPU runtime is {device_platform(device)!r}; only NVIDIA CUDA "
             "is an implemented accelerated atomistic target"
         )
     return device, "an NVIDIA CUDA device is the active JAX backend"
@@ -174,11 +176,11 @@ def pallas_atomistic_availability(
             available = device is not None
             if device is not None:
                 capability = _compute_capability(device)
-                if capability < _CUDA_MINIMUM_COMPUTE_CAPABILITY:
+                if capability not in _CUDA_ADMITTED_COMPUTE_CAPABILITIES:
                     available = False
                     reason = (
                         f"device {device.device_kind!r} has compute capability "
-                        f"{capability[0]}.{capability[1]}, below the admitted minimum"
+                        f"{capability[0]}.{capability[1]}, outside the admitted architecture set"
                     )
         case _:
             raise ValueError(f"Unsupported atomistic acceleration target {target_!r}.")

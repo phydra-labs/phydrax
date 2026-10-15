@@ -1198,7 +1198,7 @@ class DualTransposeLinearOperator(AbstractLinearOperator):
 
 
 class AdjointLinearOperator(AbstractLinearOperator):
-    """Hilbert-adjoint view relative to the source and target pairings."""
+    """Hilbert-adjoint view retaining self-adjoint and definiteness evidence."""
 
     operator: AbstractLinearOperator
 
@@ -1215,15 +1215,21 @@ class AdjointLinearOperator(AbstractLinearOperator):
             )
         )
         self_adjoint = operator.properties.self_adjoint
+        positive_definite = operator.properties.positive_definite
+        positive_semidefinite = operator.properties.positive_semidefinite
         rank = operator.properties.rank
         claimed = {
             "diagonal": diagonal,
             "self_adjoint": self_adjoint,
+            "positive_definite": positive_definite,
+            "positive_semidefinite": positive_semidefinite,
             "rank": rank,
         }
         self.properties = OperatorProperties(
             diagonal=diagonal,
             self_adjoint=self_adjoint,
+            positive_definite=positive_definite,
+            positive_semidefinite=positive_semidefinite,
             rank=rank,
             evidence=_transformed_evidence(claimed, operator),
         )

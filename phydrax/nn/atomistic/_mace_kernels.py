@@ -77,6 +77,7 @@ from jax.extend import core as jax_core
 from jax.interpreters import mlir
 from jax.typing import ArrayLike
 
+from ..._execution_device import device_platform
 from ..._execution_resources import ExecutionResourceEvidence
 from ..._execution_sampling import compiled_memory_estimate
 from ..._fingerprint import canonical_fingerprint
@@ -1358,8 +1359,10 @@ def _require_platform(plan: MACEKernelPlan, platform: str, /) -> None:
 
 
 def _eager_coupling(*operands: Array, **params: Any) -> Array:
-    platform = jax.default_backend()
-    _require_platform(params["plan"], "cuda" if platform == "gpu" else platform)
+    # Eager execution runs where the concrete operands live, which need not be
+    # the default backend (for example under ``jax.default_device``).
+    device = next(iter(operands[0].devices()))
+    _require_platform(params["plan"], device_platform(device))
     return _coupling_impl(*operands, **params)
 
 

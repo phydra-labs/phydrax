@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._dense_svd import economy_svd
 from ._spaces import ArraySpace
 from ._subspaces import LinearSubspace
 
@@ -228,7 +229,7 @@ def prepare_algebra_derivations(
         maximum_basis_bytes,
     )
     matrix = constraint.materialize(policy.dtype)
-    _, singular_values, right_adjoint = jnp.linalg.svd(matrix, full_matrices=False)
+    _, singular_values, right_adjoint = economy_svd(matrix)
     maximum = jnp.max(singular_values)
     cutoff = jnp.maximum(
         jnp.asarray(policy.absolute_cutoff, dtype=singular_values.dtype),

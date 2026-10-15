@@ -17,7 +17,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._validation import nonnegative_integer, positive_integer
-from ...discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
+from ...discretization.spatial import (
+    MortonAddressPlan,
+    MortonRadiusRelationPlan,
+    MortonSourcePlan,
+)
 from ...discretization.spatial._neighbor_query import MortonRadiusRelationEvidence
 from ...geometry import RigidFrame
 from ...imaging import ImagePlaneSupport
@@ -232,9 +236,9 @@ class PTVScenarioPlan(StrictModule, NonTrainableState):
             ),
             20,
         )
+        source_plan = MortonSourcePlan(address, capacity)
         relation = MortonRadiusRelationPlan(
-            address,
-            capacity,
+            source_plan,
             capacity,
             maximum_pairs,
             maximum_candidates=maximum_candidates,
@@ -543,13 +547,14 @@ def _occlusion_camera(
     # Zero radius still means coincident pixels; query a positive enclosing radius
     # and retain the exact original distance predicate on the emitted relation.
     query_radius = max(plan.occlusion_radius, 1.0e-12)
+    sources = plan.occlusion_relation.source_plan.prepare(
+        pixels, active_mask=visible, stable_ids=ids
+    )
     result = plan.occlusion_relation.query(
-        pixels,
-        pixels,
+        sources,
+        sources.points,
         query_radius,
-        source_mask=visible,
         target_mask=visible,
-        source_stable_ids=ids,
         target_stable_ids=ids,
         exclude_self=True,
     )

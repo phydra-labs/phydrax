@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 
 from phydrax._bvh import (
+    _build_median_bvh,
+    _MedianBVHLayout,
     bvh_nearest_items,
     bvh_overlap_pairs,
     bvh_overlap_pairs_host,
@@ -279,3 +281,71 @@ def test_packed_bvh_scenario_3() -> None:
     assert np.stack(padded, axis=1).tolist() == [[0, 0], [0, 1], [1, 0], [1, 1], [2, 2]]
     with pytest.raises(ValueError, match="include_touching"):
         bvh_overlap_pairs_host(bvh, bvh, absolute_tolerance=1.0e-3)
+
+
+@pytest.mark.parametrize("dimension", (1, 2, 3, 6))
+@pytest.mark.parametrize("dtype", (np.float32, np.float64))
+def test_device_median_matches_host(dimension: int, dtype: type[np.floating]) -> None:
+    leaf_size = 4
+    for capacity in (1, leaf_size, leaf_size + 1, 2 * leaf_size - 1, 19):
+        points = (
+            np.random.default_rng(capacity)
+            .normal(size=(capacity, dimension))
+            .astype(dtype)
+        )
+        points[::3] = 0
+        layout = _MedianBVHLayout(capacity, leaf_size)
+        # Finite boxes, not only points, exercise the longest-node-box split.
+        upper = points + np.asarray(0.25, dtype=dtype)
+        actual = _build_median_bvh(layout, jnp.asarray(points), jnp.asarray(upper))
+        expected = prepare_bvh(
+            points, upper, policy=BVHBuildPolicy(leaf_size=leaf_size), dtype=dtype
+        )
+        for name in (
+            "left",
+            "right",
+            "leaf_id",
+            "leaf_items",
+            "leaf_node",
+            "bbox_min",
+            "bbox_max",
+            "item_bbox_min",
+            "item_bbox_max",
+        ):
+            np.testing.assert_array_equal(getattr(actual, name), getattr(expected, name))
+        assert actual.max_depth == expected.max_depth
+        assert actual.level_offsets == expected.level_offsets
+        assert actual.bbox_min.dtype == dtype
+
+
+def test_device_median_masks_and_invalid_items() -> None:
+    points = jnp.asarray(
+        ((0.0, 0.0), (1.0, 1.0), (jnp.nan, 0.0), (2.0, 2.0), (3.0, 3.0)),
+        dtype=jnp.float64,
+    )
+    layout = _MedianBVHLayout(5, 3)
+    mask = jnp.asarray((True, False, True, True, False), dtype=jnp.bool_)
+    tree = _build_median_bvh(layout, points, points, active_mask=mask)
+    items = np.asarray(tree.leaf_items)
+    np.testing.assert_array_equal(np.sort(items[items >= 0]), [0, 3])
+    assert np.all(np.diff((items >= 0).astype(np.int32), axis=1) <= 0)
+    empty = _build_median_bvh(
+        layout, points, points, active_mask=jnp.zeros(5, dtype=jnp.bool_)
+    )
+    np.testing.assert_array_equal(empty.leaf_items, -np.ones((2, 3), dtype=np.int32))
+    assert np.all(np.isposinf(empty.bbox_min))
+    assert np.all(np.isneginf(empty.bbox_max))
+
+
+def test_existing_nearest_distance_jvp() -> None:
+    points = jnp.asarray([[0.0], [1.0]], dtype=jnp.float64)
+    tree = prepare_bvh(
+        points, points, dtype=jnp.float64, policy=BVHBuildPolicy(leaf_size=1)
+    )
+    query = jnp.asarray([0.9], dtype=jnp.float64)
+    _, tangent = jax.jvp(
+        lambda value: bvh_nearest_items(tree, value, k=2).distance_squared,
+        (query,),
+        (jnp.ones_like(query),),
+    )
+    np.testing.assert_allclose(tangent, [-0.2, 1.8])

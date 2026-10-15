@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 import jax.numpy as jnp
@@ -290,17 +289,15 @@ def test_structured_optimization_spine_scenario_1() -> None:
     )
     assert bool(first.finite & first.inertia_matches)
     assert float(second.residual_norm) <= 1e-10
-    capabilities = phx.linalg.sparse_provider_capabilities("spineax-cudss")
+    capabilities = phx.linalg.sparse_provider_capabilities("cudss")
     assert capabilities.factorization == "ldlt"
     assert capabilities.numeric_refactorization
     assert capabilities.inertia
     assert not capabilities.reliable_zero_inertia
     method = phx.linalg.SparseLDLT()
-    assert method.provider == "spineax-cudss"
-    availability = phx.backends.spineax_availability()
-    assert availability.capabilities.backend == "spineax-cudss"
-    if not availability.available:
-        assert "spineax.cudss" not in sys.modules
+    assert method.provider == "cudss"
+    availability = phx.backends.cudss_availability()
+    assert availability.capabilities.backend == "cudss"
     unsafe = opt.PrimalDualInteriorPoint(
         mode="sparse-augmented",
         linear_policy=phx.linalg.LinearSolvePolicy(method),

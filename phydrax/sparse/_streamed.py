@@ -353,6 +353,7 @@ class StreamedRelationPlan(StrictModule):
         stable_route_ids: ArrayLike | None = None,
         receiver_valid: ArrayLike | None = None,
         source_valid: ArrayLike | None = None,
+        capacity_bounded: bool = False,
     ) -> PreparedStreamedRelation:
         """Prepare receiver-major (and optionally source-major) tile schedules.
 
@@ -365,6 +366,12 @@ class StreamedRelationPlan(StrictModule):
         + 1``, failures reported by evidence and poisoned outputs). Events into
         or from an invalid endpoint are absent. ``owner_id`` names the topology
         owner's schema; ``epoch`` is its dynamic topology epoch.
+
+        ``capacity_bounded=True`` uses the same device preparation bound on
+        concrete and traced topology and omits the host content fingerprint.
+        This permits topology refresh through a compiled conditional without
+        changing static bindings or array extents; the owner and epoch remain
+        authoritative. The default retains compact host preparation.
         """
         match relation:
             case RowRelation():
@@ -373,6 +380,8 @@ class StreamedRelationPlan(StrictModule):
                 edge = relation
             case _:
                 raise TypeError("relation must be an EdgeRelation or RowRelation.")
+        if not isinstance(capacity_bounded, bool):
+            raise TypeError("capacity_bounded must be a bool.")
         owner = normalized_identifier(owner_id, "owner_id")
         route_shape = relation.route_shape
         with jax.ensure_compile_time_eval():
@@ -402,6 +411,7 @@ class StreamedRelationPlan(StrictModule):
                 sender_valid=source_mask,
                 receiver_tile=max(min(self.receiver_tile, edge.target_size), 1),
                 edge_tile=edge_width,
+                capacity_bounded=capacity_bounded,
             )
             source_schedule = (
                 _prepare_schedule(
@@ -413,6 +423,7 @@ class StreamedRelationPlan(StrictModule):
                     sender_valid=receiver_mask,
                     receiver_tile=max(min(self.receiver_tile, edge.source_size), 1),
                     edge_tile=edge_width,
+                    capacity_bounded=capacity_bounded,
                 )
                 if self.transpose
                 else None
@@ -420,7 +431,7 @@ class StreamedRelationPlan(StrictModule):
         topology = (edge.source_indices, edge.target_indices, edge.valid)
         content_id = (
             None
-            if _traced(*topology, ids, receiver_mask, source_mask)
+            if capacity_bounded or _traced(*topology, ids, receiver_mask, source_mask)
             else _content_id(relation, edge, ids, receiver_mask, source_mask)
         )
         binding = StreamedTopologyBinding(
@@ -515,8 +526,9 @@ class StreamedTopologyBinding(NonTrainableState, StrictModule):
     """Topology owner, host content identity and dynamic epoch of a schedule.
 
     ``content_id`` fingerprints concrete route indices, masks and stable IDs;
-    it is ``None`` for traced topology, whose identity is the owner's schema
-    and epoch. Equal shapes or capacities never imply the same topology.
+    it is ``None`` for traced or explicitly capacity-bounded topology, whose
+    identity is the owner's schema and epoch. Equal shapes or capacities never
+    imply the same topology.
     """
 
     epoch: Array
@@ -660,9 +672,11 @@ def _tile_starts(
     receiver_tile: int,
     edge_tile: int,
     /,
+    *,
+    capacity_bounded: bool,
 ) -> tuple[Array, Array, Array]:
     """Return tile start receivers/offsets and whether the stream completed."""
-    if isinstance(prefix, jax_core.Tracer):
+    if capacity_bounded or isinstance(prefix, jax_core.Tracer):
         bound = receiver_count // receiver_tile + route_capacity // edge_tile + 1
 
         def step(
@@ -714,6 +728,7 @@ def _prepare_schedule(
     sender_valid: Array,
     receiver_tile: int,
     edge_tile: int,
+    capacity_bounded: bool,
 ) -> StreamedSchedule:
     route_capacity = receivers.shape[0]
     receiver_count = receiver_valid.shape[0]
@@ -742,7 +757,12 @@ def _prepare_schedule(
         complete = jnp.asarray(True)
     else:
         starts, offsets, complete = _tile_starts(
-            prefix, receiver_count, route_capacity, receiver_tile, edge_tile
+            prefix,
+            receiver_count,
+            route_capacity,
+            receiver_tile,
+            edge_tile,
+            capacity_bounded=capacity_bounded,
         )
     extent = _tile_extent(
         jnp, prefix, starts, offsets, receiver_tile, edge_tile, receiver_count

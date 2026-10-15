@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling>=1.32.4,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phydrax-cuda-major"
+version = "13.0"
+description = "Metadata-only marker enforcing mutually exclusive Phydrax CUDA majors"
+license-files = ["LICENSE", "NOTICE"]
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

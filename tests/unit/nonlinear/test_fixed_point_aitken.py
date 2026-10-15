@@ -182,7 +182,7 @@ def test_new_solve_restarts_aitken_history() -> None:
         ),
         (
             nl.AndersonAcceleration(),
-            "anderson-fixed-point:63a144c8643dc3a956902b387098b9d49ef712fede19590537b91e6f6206cb24",
+            "anderson-fixed-point:b66e133c3792d1af01aeb00624bda0b1843a591b636b0a0e5156abcaf37c72a3",
         ),
     ],
     ids=["unaccelerated", "anderson"],

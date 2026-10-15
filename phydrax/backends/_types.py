@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
+from .._cuda_environment import CudaEnvironmentIssue
 from .._strict import StrictModule
 from ..typing import checked, parse
 
@@ -181,6 +182,7 @@ class BackendAvailability(StrictModule):
     requirement: str = eqx.field(static=True)
     reason: str = eqx.field(static=True)
     versions: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    environment_issues: tuple[CudaEnvironmentIssue, ...]
 
     @checked
     def __init__(
@@ -191,6 +193,7 @@ class BackendAvailability(StrictModule):
         requirement: str,
         reason: str,
         versions: tuple[tuple[str, str], ...] = (),
+        environment_issues: tuple[CudaEnvironmentIssue, ...] = (),
     ) -> None:
         requirement_ = str(requirement)
         reason_ = str(reason)
@@ -201,12 +204,18 @@ class BackendAvailability(StrictModule):
             )
         if any(not name or not version for name, version in versions_):
             raise ValueError("Backend version evidence must contain non-empty pairs.")
+        issues = tuple(environment_issues)
+        if any(not isinstance(issue, CudaEnvironmentIssue) for issue in issues):
+            raise TypeError(
+                "environment_issues must contain CudaEnvironmentIssue values."
+            )
         self.capabilities = capabilities
         self.backend = capabilities.backend
         self.available = bool(available)
         self.requirement = requirement_
         self.reason = reason_
         self.versions = versions_
+        self.environment_issues = issues
 
     def require(self, capability: str, /) -> None:
         """Raise a precise error unless this backend provides ``capability``."""

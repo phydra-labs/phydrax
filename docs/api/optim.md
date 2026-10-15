@@ -1066,7 +1066,7 @@ inertia is never silently treated as equivalent evidence. Final optimizer
 success remains subordinate to an independently reconstructed KKT certificate.
 An internal success whose stationarity, feasibility, regularity, or
 complementarity misses tolerance is returned as explicit certification failure.
-The current Spineax/cuDSS capability declares zero inertia unreliable, so the
+The current cuDSS capability declares zero inertia unreliable, so the
 nonconvex structured IPM rejects it as a KKT provider. The sparse-augmented
 representation remains executable through a certified dense provider; cuDSS
 becomes eligible only when its zero-inertia evidence passes the provider gate.

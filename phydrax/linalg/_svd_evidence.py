@@ -8,7 +8,11 @@ from jax import Array
 
 from ._operators import DenseLinearOperator
 from ._rank import numerical_rank_data
-from ._spaces import AbstractVectorSpace
+from ._spaces import (
+    _coordinate_pairing_weights,
+    _has_diagonal_pairing,
+    AbstractVectorSpace,
+)
 from ._svd_contracts import (
     SVDLeadingEvidence,
     SVDProblem,
@@ -40,6 +44,17 @@ def column_norms(space: AbstractVectorSpace, columns: Array, /) -> Array:
 
 
 def orthogonality_error(space: AbstractVectorSpace, columns: Array, /) -> Array:
+    if _has_diagonal_pairing(space):
+        # This Gram matrix certifies orthogonality of coordinate-dtype factors;
+        # reduced-precision tensor-core arithmetic can report false failures.
+        weights = _coordinate_pairing_weights(space)
+        gram = jnp.matmul(
+            columns.conj().T,
+            weights[:, None] * columns,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        return jnp.max(jnp.abs(gram - jnp.eye(columns.shape[1], dtype=gram.dtype)))
+
     def row(left: Array) -> Array:
         return jax.vmap(
             lambda right: space.inner(space.unflatten(left), space.unflatten(right)),

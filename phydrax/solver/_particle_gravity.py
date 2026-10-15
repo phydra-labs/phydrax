@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import Any, Literal, TypeAlias
+from typing import Any, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,12 +19,13 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..backends.spatial import spatial_pair_acceleration
+from ..backends.spatial import spatial_leaf_pair_fragment
 from ..discretization.spatial import (
     MortonAddressPlan,
     MortonPointHierarchyPlan,
     MortonPointHierarchyState,
     MortonRadiusRelationPlan,
+    MortonSourcePlan,
     SpatialDistanceBackend,
 )
 from ..discretization.spatial._plane_interactions import (
@@ -44,11 +45,15 @@ from ..operators.integral.multipole._cartesian_radial import (
 )
 from ..sparse import (
     EdgeRelation,
+    KeyGroupAccumulation,
+    PreparedStreamedRelation,
     RelationAccumulation,
-    RelationExecutionPlan,
-    RelationExecutionState,
-    RelationReductionEvidence,
+    StreamedFragment,
+    StreamedPayloadSpec,
+    StreamedRelationEvidence,
+    StreamedRelationPlan,
 )
+from ..sparse._streamed import _input_link, _poison
 from ..typing import checked
 
 
@@ -1413,29 +1418,36 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
 class PreparedUniformFMMStructure(StrictModule):
     """Position-dependent Cartesian FMM topology reused across source strengths.
 
-    Owns the compact Morton plane schedule (canonical sorted point order, node
-    centers, and power-of-two node scales), the accepted far/near interaction
-    lists with their target-grouped reduction orders, and the exact near-field
-    pair routes. It depends only on the positions, the active mask, and the
-    preparing ``UniformFMMPlan``; strengths enter only at evaluation.
-    ``positions`` are box coordinates with origin ``(0, 0, 0)`` and inactive
-    rows zeroed.
+    Owns the compact Morton plane schedule and receiver-major bounded sparse
+    streams of accepted far node pairs and near leaf pairs. Particle-pair
+    working storage is fragment-local, never proportional to near capacity.
+    Strengths enter only at evaluation. ``positions`` are box coordinates
+    with origin ``(0, 0, 0)`` and inactive rows zeroed.
     """
 
     positions: Array
     active_mask: Array
     schedule: MortonPlaneScheduleState
     interactions: MortonPlaneInteractionState
-    far_execution: RelationExecutionState
-    near_execution: RelationExecutionState
-    near_target_storage: Array
-    near_source_storage: Array
-    near_pair_valid: Array
+    far_execution: PreparedStreamedRelation
+    near_execution: PreparedStreamedRelation
+    interaction_plan: MortonPlaneInteractionPlan
     schedule_plan: MortonPlaneSchedulePlan
     box_size: tuple[float, float, float] = eqx.field(static=True)
     depth: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     structure_id: str = eqx.field(static=True)
+
+
+@final
+class UniformFMMStructureTransition(StrictModule):
+    """Atomic geometry update; a refused candidate never replaces acceptance."""
+
+    candidate: PreparedUniformFMMStructure
+    accepted: PreparedUniformFMMStructure
+    successful: Array
+    reused_topology: Array
+    rebuilt: Array
 
 
 class LaplaceMonopoleFieldResult(StrictModule):
@@ -1466,37 +1478,96 @@ class _UniformFMMField(StrictModule):
     successful: Array
 
 
-def _near_pair_routes(
-    schedule_plan: MortonPlaneSchedulePlan,
-    schedule: MortonPlaneScheduleState,
-    near: EdgeRelation,
-) -> tuple[Array, Array, Array, Array]:
-    """Expand accepted near leaf pairs into sorted-storage point pair routes."""
-    point_capacity = schedule_plan.point_capacity
-    sorted_active = schedule.point_order.sorted_active
-    leaf_offsets = jnp.arange(schedule_plan.maximum_leaf_occupancy, dtype=jnp.int32)
-    target_storage = (
-        schedule.node_item_starts[near.target_indices, None] + leaf_offsets[None, :]
-    )
-    source_storage = (
-        schedule.node_item_starts[near.source_indices, None] + leaf_offsets[None, :]
-    )
-    target_valid = near.valid[:, None] & (
-        leaf_offsets[None, :] < schedule.node_item_counts[near.target_indices, None]
-    )
-    source_valid = near.valid[:, None] & (
-        leaf_offsets[None, :] < schedule.node_item_counts[near.source_indices, None]
-    )
-    safe_targets = jnp.clip(target_storage, 0, point_capacity - 1)
-    safe_sources = jnp.clip(source_storage, 0, point_capacity - 1)
-    pair_valid = (
-        target_valid[:, :, None]
-        & source_valid[:, None, :]
-        & sorted_active[safe_targets][:, :, None]
-        & sorted_active[safe_sources][:, None, :]
-        & (safe_targets[:, :, None] != safe_sources[:, None, :])
-    )
-    return safe_targets, safe_sources, target_valid, pair_valid
+def _fmm_epilogue(
+    parameters: tuple[()],
+    receiver: tuple[Array, ...],
+    aggregate: Array,
+    /,
+) -> Array:
+    return aggregate
+
+
+def _near_epilogue(
+    parameters: tuple[()],
+    receiver: tuple[Array, ...],
+    aggregate: tuple[Array, Array],
+    /,
+) -> tuple[Array, Array]:
+    return aggregate
+
+
+@final
+class _CartesianFarEvent(StrictModule):
+    operators: CartesianFMMOperators
+
+    def __call__(
+        self,
+        parameters: tuple[()],
+        source: tuple[Array, Array, Array],
+        target: tuple[Array, Array],
+        edge: tuple[()],
+        /,
+    ) -> Array:
+        moment, source_center, source_scale = source
+        target_center, target_scale = target
+        return self.operators.m2l(
+            moment,
+            source_center,
+            target_center,
+            source_scale=source_scale,
+            target_scale=target_scale,
+        )
+
+
+@final
+class _NearFragmentAggregation(StrictModule):
+    softening: float = eqx.field(static=True)
+    coefficient: float = eqx.field(static=True)
+    short_range_scale: float | None = eqx.field(static=True)
+    short_range_cutoff: float | None = eqx.field(static=True)
+    backend: SpatialDistanceBackend = eqx.field(static=True)
+    pallas_interpret: bool = eqx.field(static=True)
+
+    def __call__(
+        self,
+        parameters: tuple[()],
+        sources: tuple[Array, Array, Array, Array],
+        receivers: tuple[Array, Array, Array],
+        edges: tuple[()],
+        fragment: StreamedFragment,
+        seed: tuple[KeyGroupAccumulation, KeyGroupAccumulation],
+        /,
+    ) -> tuple[KeyGroupAccumulation, KeyGroupAccumulation]:
+        field = spatial_leaf_pair_fragment(
+            sources,
+            receivers,
+            fragment,
+            seed[0],
+            softening=self.softening,
+            coefficient=self.coefficient,
+            short_range_scale=self.short_range_scale,
+            short_range_cutoff=self.short_range_cutoff,
+            backend=self.backend,
+            pallas_interpret=self.pallas_interpret,
+        )
+        source_position, _, source_mask, source_ids = sources
+        target_position, target_mask, target_ids = receivers
+        senders = fragment.lane_sources
+        slots = fragment.lane_slots
+        pair = (
+            fragment.lane_use[:, None, None]
+            & target_mask[slots, :, None]
+            & source_mask[senders, None, :]
+            & (target_ids[slots, :, None] != source_ids[senders, None, :])
+        )
+        if self.short_range_cutoff is not None:
+            delta = (
+                source_position[senders, None, :, :] - target_position[slots, :, None, :]
+            )
+            radius_squared = jnp.sum(delta * delta, axis=-1) + self.softening**2
+            pair = pair & (jnp.sqrt(radius_squared) <= self.short_range_cutoff)
+        counts = jnp.sum(pair, axis=(1, 2), dtype=jnp.int32)
+        return field, fragment.reduce(counts, seed[1])
 
 
 class UniformFMMPlan(StrictModule, NonTrainableState):
@@ -1624,6 +1695,13 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                 "pallas_interpret": bool(pallas_interpret),
                 "short_range_scale": split,
                 "short_range_cutoff": cutoff,
+                "stream": {
+                    "receiver_tile": 8,
+                    "edge_tile": 32,
+                    "replay": "step",
+                    "capacity_bounded": True,
+                    "near_message": "leaf-potential-gradient",
+                },
             }
         )
 
@@ -1640,16 +1718,15 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
 
         ``positions`` are box coordinates in ``[0, box_size)`` with origin
         ``(0, 0, 0)`` and ``depth`` is the Morton address depth. The compact
-        plane schedule, dual-tree far/near lists, their reduction orders, and
-        the near pair routes are built once. Node, queue, far, and near
-        capacity exhaustion and out-of-box active points are reported through
-        the evaluated result's evidence instead of raised.
+        plane schedule and receiver-major far/near streams are built once.
+        Node, queue, far, and near capacity exhaustion and out-of-box points
+        are reported through the evaluated result's evidence instead of raised.
         """
         position = jnp.asarray(positions)
         if position.ndim != 2 or position.shape[1] != 3 or position.shape[0] < 1:
             raise ValueError("FMM positions must have shape (N, 3) with N >= 1.")
-        if not jnp.issubdtype(position.dtype, jnp.floating):
-            raise TypeError("FMM positions must have a floating dtype.")
+        if position.dtype not in (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64)):
+            raise TypeError("FMM positions must have float32 or float64 dtype.")
         active = (
             jnp.ones((position.shape[0],), dtype=jnp.bool_)
             if active_mask is None
@@ -1702,31 +1779,8 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             stable_ids=jnp.arange(point_capacity, dtype=jnp.int64),
         )
         interactions = interaction_plan.build(schedule)
-        far_execution = RelationExecutionPlan(
-            maximum_active_targets=schedule_plan.node_capacity
-        ).prepare(
-            interactions.far,
-            stable_route_ids=jnp.arange(interactions.far.capacity, dtype=jnp.int64),
-        )
-        targets, sources, target_valid, pair_valid = _near_pair_routes(
-            schedule_plan,
-            schedule,
-            interactions.near,
-        )
-        point_route_valid = target_valid.reshape((-1,))
-        point_targets = targets.reshape((-1,))
-        point_relation = EdgeRelation(
-            jnp.zeros(point_targets.shape, dtype=jnp.int32),
-            jnp.where(point_route_valid, point_targets, 0),
-            source_size=1,
-            target_size=point_capacity,
-            valid=point_route_valid,
-        )
-        near_execution = RelationExecutionPlan(
-            maximum_active_targets=point_capacity
-        ).prepare(
-            point_relation,
-            stable_route_ids=jnp.arange(point_relation.capacity, dtype=jnp.int64),
+        far_execution, near_execution = self._prepare_streams(
+            schedule_plan, interactions, epoch=schedule.epoch
         )
         return PreparedUniformFMMStructure(
             positions=safe_position,
@@ -1735,9 +1789,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             interactions=interactions,
             far_execution=far_execution,
             near_execution=near_execution,
-            near_target_storage=targets,
-            near_source_storage=sources,
-            near_pair_valid=pair_valid,
+            interaction_plan=interaction_plan,
             schedule_plan=schedule_plan,
             box_size=lengths,
             depth=schedule_plan.address_plan.maximum_depth,
@@ -1750,6 +1802,161 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                     "interaction_plan": interaction_plan.plan_id,
                 }
             ),
+        )
+
+    def _prepare_streams(
+        self,
+        schedule_plan: MortonPlaneSchedulePlan,
+        interactions: MortonPlaneInteractionState,
+        /,
+        *,
+        epoch: Array,
+    ) -> tuple[PreparedStreamedRelation, PreparedStreamedRelation]:
+        """Bind bounded leaf/node streams with host/JIT-compatible extents."""
+        owner = canonical_fingerprint(
+            {
+                "kind": "uniform-fmm-stream-topology",
+                "plan_id": self.plan_id,
+                "schedule_plan_id": schedule_plan.plan_id,
+            }
+        )
+        far = StreamedRelationPlan(
+            receiver_tile=8,
+            edge_tile=32,
+            channel_capacity=self.expansion.coefficient_count,
+            accumulation=self.accumulation,
+        ).prepare(
+            interactions.far,
+            owner_id=owner,
+            epoch=epoch,
+            capacity_bounded=True,
+        )
+        leaf_capacity = schedule_plan.plane_capacities[0]
+        near_relation = EdgeRelation(
+            interactions.near.source_indices,
+            interactions.near.target_indices,
+            source_size=leaf_capacity,
+            target_size=leaf_capacity,
+            valid=interactions.near.valid,
+        )
+        near = StreamedRelationPlan(
+            receiver_tile=8,
+            edge_tile=32,
+            channel_capacity=4 * schedule_plan.maximum_leaf_occupancy + 1,
+            accumulation=self.accumulation,
+        ).prepare(
+            near_relation,
+            owner_id=owner,
+            epoch=epoch,
+            capacity_bounded=True,
+        )
+        return far, near
+
+    @checked
+    def refresh_structure(
+        self,
+        previous_structure: PreparedUniformFMMStructure,
+        positions: ArrayLike,
+        /,
+        *,
+        box_size: tuple[float, float, float],
+        depth: int,
+        active_mask: ArrayLike | None = None,
+    ) -> UniformFMMStructureTransition:
+        """Refit admitted geometry or rebuild; reject updates atomically.
+
+        Omitted activity retains the previous mask. Reuse requires the plane
+        owner's unchanged membership/order certificate and current acceptance
+        of every retained far pair. Moving cutoff geometry always rebuilds.
+        """
+        previous = previous_structure
+        if previous.plan_id != self.plan_id:
+            raise ValueError("The FMM structure belongs to a different plan.")
+        if tuple(box_size) != previous.box_size or depth != previous.depth:
+            raise ValueError("FMM refresh must retain its box and Morton depth.")
+        position = jnp.asarray(positions)
+        if position.shape != previous.positions.shape:
+            raise ValueError("FMM refresh must retain particle capacity and dimension.")
+        if position.dtype != previous.positions.dtype:
+            raise TypeError("FMM refresh must retain its floating geometry dtype.")
+        active = (
+            previous.active_mask
+            if active_mask is None
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
+        )
+        if active.shape != previous.active_mask.shape:
+            raise ValueError("FMM active_mask must have one flag per position.")
+        safe_position = jnp.where(active[:, None], position, 0.0)
+        transition = previous.schedule_plan.refresh(
+            previous.schedule,
+            safe_position,
+            active_mask=active,
+            stable_ids=previous.schedule.point_order.stable_ids,
+        )
+        schedule = transition.candidate
+        moved = jnp.any(safe_position != previous.positions)
+        if self.short_range_cutoff is None:
+            evidence = previous.interaction_plan.recheck(
+                schedule, interactions=previous.interactions
+            )
+            reusable = transition.refitted & evidence.successful
+        else:
+            evidence = previous.interactions.evidence
+            reusable = transition.refitted & ~moved & evidence.successful
+        retained = MortonPlaneInteractionState(
+            far=previous.interactions.far,
+            near=previous.interactions.near,
+            evidence=evidence,
+        )
+
+        def reuse(
+            _: None,
+        ) -> tuple[
+            MortonPlaneInteractionState,
+            PreparedStreamedRelation,
+            PreparedStreamedRelation,
+        ]:
+            return retained, previous.far_execution, previous.near_execution
+
+        def rebuild(
+            _: None,
+        ) -> tuple[
+            MortonPlaneInteractionState,
+            PreparedStreamedRelation,
+            PreparedStreamedRelation,
+        ]:
+            interactions = previous.interaction_plan.build(schedule)
+            far, near = self._prepare_streams(
+                previous.schedule_plan, interactions, epoch=schedule.epoch
+            )
+            return interactions, far, near
+
+        interactions, far, near = jax.lax.cond(reusable, reuse, rebuild, None)
+        candidate = eqx.tree_at(
+            lambda value: (
+                value.positions,
+                value.active_mask,
+                value.schedule,
+                value.interactions,
+                value.far_execution,
+                value.near_execution,
+            ),
+            previous,
+            (safe_position, active, schedule, interactions, far, near),
+        )
+        successful = (
+            transition.accepted_candidate
+            & interactions.evidence.successful
+            & far.schedule.successful
+            & near.schedule.successful
+        )
+        accepted = jax.lax.cond(successful, lambda _: candidate, lambda _: previous, None)
+        return UniformFMMStructureTransition(
+            candidate=candidate,
+            accepted=accepted,
+            successful=successful,
+            reused_topology=successful & reusable,
+            rebuilt=~reusable,
         )
 
     def _upward_pass(
@@ -1820,30 +2027,22 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         multipole: Array,
         operators: CartesianFMMOperators,
         /,
-    ) -> tuple[Array, RelationReductionEvidence, Array]:
+    ) -> tuple[Array, StreamedRelationEvidence, Array]:
         """M2L over accepted far node pairs, then L2L down the compact planes."""
         schedule = structure.schedule
-        far = structure.interactions.far
-        far_local = jax.vmap(
-            lambda multipole_, source, target, source_scale, target_scale: operators.m2l(
-                multipole_,
-                source,
-                target,
-                source_scale=source_scale,
-                target_scale=target_scale,
-            )
-        )(
-            multipole[far.source_indices],
-            schedule.node_centers[far.source_indices],
-            schedule.node_centers[far.target_indices],
-            schedule.node_scales[far.source_indices],
-            schedule.node_scales[far.target_indices],
+        shape = jax.ShapeDtypeStruct(
+            (self.expansion.coefficient_count,), structure.positions.dtype
         )
-        far_local = jnp.where(far.valid[:, None], far_local, 0.0)
-        local, far_reduction = structure.far_execution.reduce(
-            far_local,
-            accumulation=self.accumulation,
+        result = structure.far_execution.evaluate(
+            StreamedPayloadSpec(shape, shape),
+            _CartesianFarEvent(operators),
+            _fmm_epilogue,
+            (),
+            (multipole, schedule.node_centers, schedule.node_scales),
+            (schedule.node_centers, schedule.node_scales),
+            (),
         )
+        local, far_reduction = result.receiver_outputs, result.evidence
 
         l2l_count = jnp.asarray(0, dtype=jnp.int32)
         for plane in range(structure.schedule_plan.plane_count - 2, -1, -1):
@@ -1874,70 +2073,60 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         /,
         *,
         with_potential: bool,
-    ) -> tuple[Array, Array | None, RelationReductionEvidence, Array]:
-        """Exact softened P2P completion over the prepared near pair routes."""
-        targets = structure.near_target_storage
-        sources = structure.near_source_storage
-        pair_valid = structure.near_pair_valid
-        displacement = (
-            sorted_position[sources][:, None, :, :]
-            - sorted_position[targets][:, :, None, :]
+    ) -> tuple[Array, Array | None, StreamedRelationEvidence, Array]:
+        """Complete exact P2P through bounded receiver-major leaf fragments."""
+        schedule = structure.schedule
+        plan = structure.schedule_plan
+        leaves = plan.plane_capacities[0]
+        width = plan.maximum_leaf_occupancy
+        offsets = jnp.arange(width, dtype=jnp.int32)
+        leaf_slots = jnp.arange(leaves, dtype=jnp.int32)
+        leaf_nodes = jnp.minimum(leaf_slots, plan.node_capacity - 1)
+        storage = schedule.node_item_starts[leaf_nodes, None] + offsets[None, :]
+        safe_storage = jnp.clip(storage, 0, plan.point_capacity - 1)
+        mask = (
+            (leaf_slots[:, None] < plan.node_capacity)
+            & schedule.node_active[leaf_nodes, None]
+            & (offsets[None, :] < schedule.node_item_counts[leaf_nodes, None])
+            & (storage < plan.point_capacity)
+            & schedule.point_order.sorted_active[safe_storage]
         )
-        pair_radius_squared = (
-            jnp.sum(displacement * displacement, axis=-1) + self.softening**2
+        leaf_position = jnp.where(mask[..., None], sorted_position[safe_storage], 0.0)
+        leaf_strength = jnp.where(mask, sorted_strength[safe_storage], 0.0)
+        field_shape = jax.ShapeDtypeStruct((width, 4), sorted_position.dtype)
+        count_shape = jax.ShapeDtypeStruct((), jnp.int32)
+        result = structure.near_execution.evaluate_fragments(
+            StreamedPayloadSpec((field_shape, count_shape), (field_shape, count_shape)),
+            _NearFragmentAggregation(
+                self.softening,
+                self.gravitational_constant,
+                self.short_range_scale,
+                self.short_range_cutoff,
+                self.execution_backend,
+                self.pallas_interpret,
+            ),
+            _near_epilogue,
+            (),
+            (leaf_position, leaf_strength, mask, safe_storage),
+            (leaf_position, mask, safe_storage),
+            (),
         )
-        pair_radius = jnp.sqrt(pair_radius_squared)
-        source_strength = jnp.broadcast_to(
-            sorted_strength[sources][:, None, :],
-            pair_valid.shape,
+        leaf_field, leaf_count = result.receiver_outputs
+        point_leaf = jnp.maximum(schedule.sorted_point_leaf_slots, 0)
+        point_offset = (
+            jnp.arange(plan.point_capacity, dtype=jnp.int32)
+            - schedule.node_item_starts[point_leaf]
         )
-        split = self.short_range_scale
-        cutoff = self.short_range_cutoff
-        if split is None or cutoff is None:
-            pair_value = spatial_pair_acceleration(
-                displacement,
-                source_strength,
-                pair_valid,
-                softening=self.softening,
-                coefficient=self.gravitational_constant,
-                backend=self.execution_backend,
-                pallas_interpret=self.pallas_interpret,
-            )
-        else:
-            pair_valid = pair_valid & (pair_radius <= cutoff)
-            argument = pair_radius / (2.0 * split)
-            factor = pair_radius_squared ** (-1.5) * (
-                jax.scipy.special.erfc(argument)
-                + pair_radius / (split * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
-            )
-            pair_value = jnp.where(
-                pair_valid[..., None],
-                self.gravitational_constant
-                * source_strength[..., None]
-                * displacement
-                * factor[..., None],
-                0.0,
-            )
-        route_gradient = jnp.sum(pair_value, axis=2).reshape((-1, 3))
-        direct_count = jnp.sum(pair_valid, dtype=jnp.int32)
-        if not with_potential:
-            gradient, reduction = structure.near_execution.reduce(
-                route_gradient,
-                accumulation=self.accumulation,
-            )
-            return gradient, None, reduction, direct_count
-        # The P2P execution backend owns only the gradient kernel; the near
-        # potential completion is plain JAX over the same pair routes.
-        pair_potential = jnp.where(
-            pair_valid,
-            self.gravitational_constant * source_strength / pair_radius,
-            0.0,
+        point_field = leaf_field[point_leaf, jnp.clip(point_offset, 0, width - 1)]
+        point_field = jnp.where(
+            schedule.point_order.sorted_active[:, None], point_field, 0.0
         )
-        (gradient, potential), reduction = structure.near_execution.reduce(
-            (route_gradient, jnp.sum(pair_potential, axis=2).reshape((-1,))),
-            accumulation=self.accumulation,
+        return (
+            point_field[:, :3],
+            point_field[:, 3] if with_potential else None,
+            result.evidence,
+            jnp.sum(leaf_count, dtype=jnp.int32),
         )
-        return gradient, potential, reduction, direct_count
 
     def _field(
         self,
@@ -1957,7 +2146,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         )
         schedule = structure.schedule
         sorted_logical = schedule.point_order.storage_to_logical
-        sorted_position = schedule.point_order.encoding.coordinates[sorted_logical]
+        sorted_position = schedule.point_order.sorted_coordinates
         sorted_active = schedule.point_order.sorted_active
         safe_point_leaf = jnp.maximum(schedule.sorted_point_leaf_slots, 0)
         point_scale = schedule.node_scales[safe_point_leaf]
@@ -1996,7 +2185,10 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         )
         gradient = jnp.where(active[:, None], gradient, 0.0)
         finite = (
-            jnp.all(jnp.isfinite(gradient)) & far_reduction.finite & near_reduction.finite
+            jnp.all(jnp.isfinite(gradient))
+            & jnp.all(jnp.where(active, jnp.isfinite(strengths), True))
+            & far_reduction.finite
+            & near_reduction.finite
         )
         potential = None
         if near_potential is not None:
@@ -2019,6 +2211,11 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             & near_reduction.successful
             & finite
         )
+        link = _input_link((structure.positions, strengths))
+        gradient = _poison(gradient, successful, link)
+        if potential is not None:
+            potential = _poison(potential, successful, link)
+        finite = finite & successful
         return _UniformFMMField(
             gradient=gradient,
             potential=potential,
@@ -2138,9 +2335,9 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         ``G * sum_j q[j] * (x[j] - x[i]) / (|x[i] - x[j]|**2 + eps**2)**1.5``,
         which is the acceleration ``evaluate`` returns for masses equal to the
         strengths. Strengths are signed and are the only per-call input, so
-        one prepared structure serves every strength refresh. With the Pallas
-        P2P backend, the near gradient uses that kernel and the near potential
-        completion is plain JAX over the same pair routes.
+        one prepared structure serves every strength refresh. Both near
+        potential and gradient use the selected bounded fragment backend;
+        Pallas derivatives execute the same fragment's JAX reference.
         """
         if self.short_range_scale is not None:
             raise ValueError(
@@ -2367,13 +2564,16 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             else self.maximum_real_pairs
         )
         per_offset_capacity = min(capacity, count * count)
-        relation_plan = MortonRadiusRelationPlan(
+        source_plan = MortonSourcePlan(
             MortonAddressPlan(
                 self.real_address_lower,
                 self.real_address_upper,
                 21,
             ),
             count,
+        )
+        relation_plan = MortonRadiusRelationPlan(
+            source_plan,
             count,
             per_offset_capacity,
             inclusive=True,
@@ -2386,13 +2586,14 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         route_success = jnp.asarray(True)
         for offset_index in range(self.real_offsets.shape[0]):
             offset = self.real_offsets[offset_index].astype(position.dtype)
+            sources = source_plan.prepare(
+                wrapped + offset, active_mask=active, stable_ids=identifiers
+            )
             relation_result = relation_plan.query(
-                wrapped + offset,
+                sources,
                 wrapped,
                 real_cutoff,
-                source_mask=active,
                 target_mask=active,
-                source_stable_ids=identifiers,
                 target_stable_ids=identifiers,
                 exclude_self=offset_index == self.zero_offset_index,
             )
@@ -2773,4 +2974,5 @@ __all__ = [
     "TreePMSplitPolicy",
     "TreePMShortRangeKernel",
     "UniformFMMPlan",
+    "UniformFMMStructureTransition",
 ]
