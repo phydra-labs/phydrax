@@ -29,6 +29,7 @@ from jax._src import xla_bridge as _xla_bridge
 
 
 ENABLE_X64_ENVIRONMENT: Final = "JAX_ENABLE_X64"
+MATMUL_PRECISION_ENVIRONMENT: Final = "JAX_DEFAULT_MATMUL_PRECISION"
 PLATFORMS_ENVIRONMENT: Final = "JAX_PLATFORMS"
 CPU_DEVICE_COUNT_ENVIRONMENT: Final = "JAX_NUM_CPU_DEVICES"
 XLA_FLAGS_ENVIRONMENT: Final = "XLA_FLAGS"
@@ -42,7 +43,7 @@ _FORCED_HOST_DEVICES: Final = re.compile(
 _FLAG_TOKENS: Final = re.compile(r"""(?:[^\s"'\\]+|"(?:\\.|[^"\\])*"|'[^']*'|\\.)+""")
 _NUMERICS_ENVIRONMENTS: Final = {
     "enable_x64": ENABLE_X64_ENVIRONMENT,
-    "matmul_precision": "JAX_DEFAULT_MATMUL_PRECISION",
+    "matmul_precision": MATMUL_PRECISION_ENVIRONMENT,
     "dtype_promotion": "JAX_NUMPY_DTYPE_PROMOTION",
     "rank_promotion": "JAX_NUMPY_RANK_PROMOTION",
     "transfer_guard_device_to_host": "JAX_TRANSFER_GUARD_DEVICE_TO_HOST",
@@ -74,6 +75,19 @@ def process_x64_enabled() -> bool:
 def startup_x64(environment: Mapping[str, str], /) -> bool | None:
     """Default to x64 only when upstream has no explicit startup selection."""
     return None if ENABLE_X64_ENVIRONMENT in environment else True
+
+
+def startup_matmul_precision(environment: Mapping[str, str], /) -> str | None:
+    """Default to IEEE float32 contractions without an explicit startup selection.
+
+    JAX's backend default lowers float32 contractions to reduced-precision
+    tensor-core formats (TF32 on NVIDIA GPUs). A selection through the
+    environment or an earlier process setting is kept, so TF32 remains an
+    explicit opt-in.
+    """
+    if MATMUL_PRECISION_ENVIRONMENT in environment or matmul_precision() is not None:
+        return None
+    return "highest"
 
 
 def platforms() -> tuple[str, ...] | None:
@@ -135,6 +149,15 @@ def default_prng_implementation() -> str:
 
 def set_x64(enabled: bool, /) -> None:
     jax.config.update("jax_enable_x64", enabled)
+
+
+def set_matmul_precision(value: str, /) -> None:
+    jax.config.update("jax_default_matmul_precision", value)
+
+
+def default_device_selection() -> jax.Device | str | None:
+    """Effective default placement: unset, a live device, or a platform name."""
+    return jax.default_device.value
 
 
 def set_platforms(selection: tuple[str, ...], /) -> None:
@@ -400,6 +423,7 @@ def project_environment(
 __all__ = [
     "CPU_DEVICE_COUNT_ENVIRONMENT",
     "ENABLE_X64_ENVIRONMENT",
+    "MATMUL_PRECISION_ENVIRONMENT",
     "LAUNCH_ENVIRONMENT_KEYS",
     "NUMERICS_ENVIRONMENT_KEYS",
     "PLATFORMS_ENVIRONMENT",
@@ -410,6 +434,7 @@ __all__ = [
     "cpu_collectives_implementation",
     "cpu_device_count",
     "default_device",
+    "default_device_selection",
     "default_prng_implementation",
     "distributed_initialized",
     "dtype_promotion",
@@ -427,6 +452,7 @@ __all__ = [
     "set_cpu_collectives_implementation",
     "set_cpu_device_count",
     "set_platforms",
+    "set_matmul_precision",
     "set_x64",
     "transfer_guard_device_to_host",
     "validate_matmul_precision",

@@ -90,6 +90,28 @@ def test_startup_cpu_collectives_apply_without_device_discovery() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("extra_environment", "expected"),
+    [
+        ({}, "highest"),
+        ({"JAX_DEFAULT_MATMUL_PRECISION": "tensorfloat32"}, "tensorfloat32"),
+    ],
+    ids=["unset", "environment-choice"],
+)
+def test_startup_defaults_float32_contractions_without_overriding_a_choice(
+    extra_environment: dict[str, str], expected: str
+) -> None:
+    _child(
+        f"""
+        import phydrax
+        observed = phydrax.config.snapshot()
+        assert observed.matmul_precision == {expected!r}, observed.matmul_precision
+        assert not observed.backends_initialized
+    """,
+        extra_environment=extra_environment,
+    )
+
+
 # The perimeter of a 2:1 ellipse: 4 a E(m) with m = 1 - (b / a) ** 2 = 3/4. The
 # 48-point Gauss-Legendre rule is accurate to about 2e-10 relative here, while
 # quadrature constants staged under an x64-off scope lose about seven digits.
