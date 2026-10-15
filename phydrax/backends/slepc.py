@@ -85,6 +85,7 @@ def slepc_availability() -> BackendAvailability:
         requirement=_SLEPC_REQUIREMENT,
         reason="slepc4py and petsc4py imported successfully",
         versions=versions,
+        environment_issues=slepc.environment_issues + petsc.environment_issues,
     )
 
 
