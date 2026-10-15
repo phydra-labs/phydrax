@@ -4,7 +4,6 @@ import shutil
 import sys
 from typing import Any
 
-import manifold3d
 import numpy as np
 import pytest
 
@@ -16,6 +15,7 @@ _DIGEST = "a" * 64
 
 
 def _cube_surface() -> Any:
+    manifold3d = pytest.importorskip("manifold3d")
     arrays = manifold3d.Manifold.cube().to_mesh64()
     return phx.geometry.SurfaceModel.from_triangles(
         arrays.vert_properties[:, :3],

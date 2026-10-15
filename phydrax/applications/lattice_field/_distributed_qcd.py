@@ -355,7 +355,13 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
         for part in range(decomposition.partition_count):
             mask = decomposition.ownership.face_mask(part) & valid
             local_values.append(
-                self.provider.gauge_action(plaquettes, self.plan.beta, mask)
+                self.provider.gauge_action(
+                    self._links(links),
+                    self.plan.beta,
+                    mask,
+                    lattice_shape=decomposition.global_shape,
+                    periodic=decomposition.periodic,
+                )
             )
             local_counts.append(jnp.sum(mask, dtype=jnp.int32))
         local = jnp.stack(local_values)
@@ -377,27 +383,28 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
     def gauge_force(
         self,
         links: ArrayLike,
-        staples: ArrayLike,
         /,
     ) -> DistributedGaugeForceResult:
-        """Partition the negative Wilson gradient from complementary graph staples."""
+        """Partition the negative Wilson gradient of canonical lattice links."""
 
         values = self._links(links)
         self.capabilities.require("gauge.wilson_force", values.dtype)
-        staple_values = self._links(staples)
-        if staple_values.shape != values.shape:
-            raise ValueError(
-                "staples must match canonical links after graph GaugeStaplePlan evaluation."
-            )
+        from ...backends._lattice_geometry import wilson_geometry
+
+        _, _, head_staples = wilson_geometry(
+            values, self.plan.decomposition.global_shape, self.plan.decomposition.periodic
+        )
+        staple_values = _adjoint(head_staples)
         decomposition = self.plan.decomposition
         local = []
         for part in range(decomposition.partition_count):
             local.append(
                 self.provider.gauge_force(
                     values,
-                    _adjoint(staple_values),
                     self.plan.beta,
                     decomposition.ownership.link_mask(part),
+                    lattice_shape=decomposition.global_shape,
+                    periodic=decomposition.periodic,
                 )
             )
         local_values = jnp.stack(local)
@@ -461,18 +468,15 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
         edge_owner = np.zeros((edge_count,), dtype=np.int32)
         edge_owner[forward_edges] = directed_owner
         staple_values = staple_plan.staples(values)
-        local_values = jnp.stack(
-            tuple(
-                self.provider.gauge_force(
-                    values,
-                    # Graph staples are complementary C in Re Tr(U C).
-                    # The provider accepts head-to-tail S and forms U S†.
-                    jnp.swapaxes(jnp.conj(staple_values), -1, -2),
-                    self.plan.beta,
-                    jnp.asarray(edge_owner == part),
-                )
-                for part in range(self.plan.decomposition.partition_count)
+        canonical = values[transport.forward_edges]
+        computed = self.gauge_force(canonical)
+        local_values = (
+            jnp.zeros(
+                (self.plan.decomposition.partition_count,) + values.shape,
+                dtype=values.dtype,
             )
+            .at[:, transport.forward_edges]
+            .set(computed.local_values)
         )
         value = jnp.sum(local_values, axis=0)
         finite = jnp.all(jnp.isfinite(value)) & jnp.all(jnp.isfinite(staple_values))

@@ -29,7 +29,12 @@ _VOCABULARY_NAMES = frozenset(
 @functools.cache
 def _strict_dataclasses() -> tuple[type, ...]:
     for info in pkgutil.walk_packages(phx.__path__, "phydrax."):
-        importlib.import_module(info.name)
+        try:
+            importlib.import_module(info.name)
+        except ImportError:
+            # Optional-provider modules (for example the ASE calculator) import
+            # their provider at load time and cannot be inspected without it.
+            continue
     classes: list[type] = []
     stack: list[type] = [StrictModule]
     seen: set[type] = set()

@@ -4,17 +4,22 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
+from dataclasses import replace
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax import solver
 from phydrax.execution import (
     DeviceMemorySample,
     DeviceResource,
+    discover_resource_inventory,
     DistributionMode,
     ExecutionAdmissionError,
     ExecutionCandidate,
@@ -26,6 +31,7 @@ from phydrax.execution import (
     HostMemorySample,
     MemoryEnvelope,
     MemoryMeasurement,
+    PhaseMemoryEvidence,
     PhaseMemorySampler,
     resolve_execution_plan,
     ResourceInventory,
@@ -52,18 +58,25 @@ def test_host_sample_reports_resident_memory_within_kernel_and_host_bounds() -> 
     available = sample.host_available.value_bytes
     assert resident is not None and resident > 0
     assert peak is not None and total is not None and available is not None
-    # The kernel high-water mark bounds every instantaneous RSS reading.
+    # A single procfs status snapshot computes VmHWM from the RSS it prints.
+    # This ordering does not certify an upper bound on past RSS snapshots.
     assert resident <= peak + sample.process_peak_resident.resolution_bytes
     assert resident < total
     assert 0 < available <= total
-    assert sample.process_peak_resident.is_upper_bound
+    if sample.provider == "linux_procfs":
+        assert sample.process_resident.method == "procfs_status"
+        assert sample.process_peak_resident.method == "procfs_status"
+        assert not sample.process_peak_resident.is_upper_bound
+    else:
+        assert sample.process_peak_resident.is_upper_bound
     assert not sample.process_resident.is_upper_bound
     assert sample.timestamp_ns > 0
 
 
 def test_cpu_device_sample_marks_allocator_counters_unavailable() -> None:
     device = jax.devices("cpu")[0]
-    held = jax.device_put(jnp.zeros((250_000,), dtype=jnp.float32), device)
+    held = jax.device_put(np.zeros((250_000,), dtype=np.float32), device)
+    held.block_until_ready()
 
     (sample,) = sample_device_memory((device,))
 
@@ -78,8 +91,34 @@ def test_cpu_device_sample_marks_allocator_counters_unavailable() -> None:
         assert "cpu" in measurement.unavailable_reason
     assert sample.allocator_headroom_bytes is None
     live = sample.live_array_bytes.value_bytes
-    assert live is not None and live >= held.size * held.dtype.itemsize
+    assert held.device == device
+    assert sample.live_array_bytes.method == "jax_live_arrays"
+    assert live is not None and live >= held.nbytes
     assert sample.key == (device.process_index, device.id)
+
+
+def test_live_array_sampling_isolates_cpu_from_the_default_accelerator() -> None:
+    cpu = jax.devices("cpu")[0]
+    accelerator = jax.devices()[0]
+    if accelerator.platform == "cpu":
+        pytest.skip("requires distinct CPU and accelerator PJRT clients")
+    (before,) = sample_device_memory((cpu,))
+    cpu_held = jax.device_put(np.zeros((250_000,), dtype=np.float32), cpu)
+    accelerator_held = jax.device_put(
+        np.zeros((2_000_000,), dtype=np.float32), accelerator
+    )
+    cpu_held.block_until_ready()
+    accelerator_held.block_until_ready()
+
+    (cpu_sample,) = sample_device_memory((cpu,))
+    (accelerator_sample,) = sample_device_memory((accelerator,))
+
+    assert before.live_array_bytes.value_bytes is not None
+    assert cpu_sample.live_array_bytes.value_bytes == (
+        before.live_array_bytes.value_bytes + cpu_held.nbytes
+    )
+    assert accelerator_sample.live_array_bytes.value_bytes is not None
+    assert accelerator_sample.live_array_bytes.value_bytes >= accelerator_held.nbytes
 
 
 @requires_host_probe
@@ -99,12 +138,89 @@ def test_phase_sampler_captures_a_deliberate_allocation() -> None:
     assert sampled.scope == "peak"
     assert not sampled.is_upper_bound
     bound = evidence.resident_peak_upper_bound
-    assert bound.is_upper_bound
-    assert bound.value_bytes is not None and sampled.value_bytes is not None
-    assert sampled.value_bytes <= bound.value_bytes + bound.resolution_bytes
+    if evidence.final.provider == "linux_procfs":
+        assert not bound.available
+        assert not bound.is_upper_bound
+        assert bound.method == "procfs_status"
+        assert bound.unavailable_reason is not None
+        assert "approximate" in bound.unavailable_reason
+        assert not evidence.interval_peak_resident.available
+        assert evidence.to_payload()["interval_peak_resident"] == (
+            evidence.interval_peak_resident.to_payload()
+        )
+    else:
+        assert bound.is_upper_bound
+        assert bound.value_bytes is not None and sampled.value_bytes is not None
+        assert sampled.value_bytes <= bound.value_bytes + bound.resolution_bytes
     assert evidence.to_payload()["sampled_peak_resident"] == sampled.to_payload()
     with pytest.raises(RuntimeError, match="single-use"):
         sampler.__enter__()
+
+
+@requires_host_probe
+def test_inventory_retains_memory_measurement_provenance() -> None:
+    device = jax.devices()[0]
+    held = jax.device_put(np.zeros((250_000,), dtype=np.float32), device)
+    held.block_until_ready()
+
+    inventory = discover_resource_inventory()
+
+    (host,) = inventory.host_memory
+    assert host.process_index == jax.process_index()
+    if host.provider == "linux_procfs":
+        assert host.process_peak_resident.method == "procfs_status"
+        assert not host.process_peak_resident.is_upper_bound
+    sample = next(
+        sample
+        for sample in inventory.device_memory
+        if sample.key == (device.process_index, device.id)
+    )
+    assert sample.live_array_bytes.value_bytes is not None
+    assert sample.live_array_bytes.value_bytes >= held.nbytes
+
+
+@requires_host_probe
+def test_production_sampling_preserves_peak_availability_in_terminal_record(
+    tmp_path: Path,
+) -> None:
+    method = solver.SSPRK33FixedStepMethod(lambda time, state, args: jnp.ones_like(state))
+    manifest = solver.ProductionCaseManifest(
+        problem_id="sampled-constant-growth",
+        method_id=method.method_id,
+        precision_id="float64",
+        topology_id="one-state",
+        geometry_layout_id="static",
+        dtype="float64",
+    )
+    store = solver.DurableCheckpointStore(
+        tmp_path / "checkpoints", manifest, solver.CheckpointGenerationPolicy(2)
+    )
+    plan = solver.ProductionRunPlan(
+        method,
+        solver.RobustRetryPolicy(maximum_retries=1),
+        step_size=0.1,
+        end_time=0.1,
+        maximum_steps=1,
+        checkpoint_interval=1,
+    )
+    prepared = solver.PreparedProductionRun(manifest, plan, store)
+
+    result = prepared.run(
+        prepared.initial_state(jnp.asarray((0.0,), dtype=jnp.float64)),
+        memory_sampling_interval=0.002,
+    )
+
+    assert result.successful
+    assert result.memory is not None
+    terminal = json.loads((store.root / "terminal.json").read_text())
+    assert terminal["resource_evidence"] == result.memory.to_payload()
+    if result.memory.final.provider == "linux_procfs":
+        assert not result.memory.resident_peak_upper_bound.available
+        peak = terminal["resource_evidence"]["interval_peak_resident"]
+        assert peak["method"] == "procfs_status"
+        assert peak["value_bytes"] is None
+        assert peak["resolution_bytes"] is None
+        assert "approximate" in peak["unavailable_reason"]
 
 
 def _measured(value: int | None) -> MemoryMeasurement:
@@ -120,12 +236,54 @@ def _host_sample(available: int | None) -> HostMemorySample:
         "linux_procfs",
         0,
         1,
-        MemoryMeasurement.measured("procfs_statm", "baseline", 64 * _MIB, 4096),
-        MemoryMeasurement.measured("getrusage_max_rss", "peak", 96 * _MIB, 1024),
+        MemoryMeasurement.measured("procfs_status", "baseline", 64 * _MIB, 1024),
+        MemoryMeasurement.measured("procfs_status", "peak", 96 * _MIB, 1024),
         MemoryMeasurement.measured(
             "sysconf_physical_pages", "baseline", 1024 * _MIB, 4096
         ),
         _measured(available),
+    )
+
+
+@pytest.mark.parametrize(
+    "final_peak",
+    [
+        pytest.param(96 * _MIB, id="high-water-unchanged"),
+        pytest.param(128 * _MIB, id="high-water-rose"),
+    ],
+)
+def test_linux_phase_reports_approximate_peak_without_certifying_a_bound(
+    final_peak: int,
+) -> None:
+    baseline = _host_sample(300 * _MIB)
+    final = replace(
+        baseline,
+        process_peak_resident=MemoryMeasurement.measured(
+            "procfs_status", "peak", final_peak, 1024
+        ),
+    )
+    # Approximate high-water accounting can miss a larger RSS observation
+    # once that observation's allocation has been freed.
+    sampled = MemoryMeasurement.measured("interval_sampling", "peak", 160 * _MIB, 1024)
+    evidence = PhaseMemoryEvidence(
+        "freed-allocation", 0.002, 0.1, 3, 0.05, baseline, final, sampled
+    )
+
+    assert evidence.sampled_peak_increase_bytes == 96 * _MIB
+    assert final.process_peak_resident.available
+    assert not final.process_peak_resident.is_upper_bound
+    for peak in (
+        evidence.resident_peak_upper_bound,
+        evidence.interval_peak_resident,
+    ):
+        assert not peak.available
+        assert peak.method == "procfs_status"
+        assert peak.unavailable_reason is not None
+        assert "approximate" in peak.unavailable_reason
+    payload = evidence.to_payload()
+    assert payload["sampled_peak_resident"] == sampled.to_payload()
+    assert payload["interval_peak_resident"] == (
+        evidence.interval_peak_resident.to_payload()
     )
 
 

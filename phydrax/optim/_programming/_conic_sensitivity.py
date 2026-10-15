@@ -42,7 +42,6 @@ from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
 from ._lifecycle import ConvexProgramExecution, PreparedConvexProgram
 from ._policy import ConicGeneralizedDerivativePolicy, ConvexTermination
 from ._problem import (
-    _conic_bound_indices,
     _conic_matrix_mv,
     _conic_matrix_transpose_mv,
     _conic_quadratic_mv,
@@ -1000,15 +999,9 @@ def prepare_conic_sensitivity(
         raise ValueError(
             "Selected generalized derivatives require representation='matrix-free'."
         )
-    fixed_array, lower_array, upper_array = _conic_bound_indices(
-        program.bounds,
-        program.batch_shape,
-        program.num_variables,
-        program.linear.dtype,
-    )
-    fixed_indices = tuple(fixed_array)
-    lower_indices = tuple(lower_array)
-    upper_indices = tuple(upper_array)
+    fixed_indices = program.fixed_bound_indices
+    lower_indices = program.lower_bound_indices
+    upper_indices = program.upper_bound_indices
     count = math.prod(program.batch_shape) if program.batch_shape else 1
     variables = program.num_variables
     original_constraints = program.num_constraints

@@ -217,16 +217,19 @@ class PETScLinearPlan(StrictModule):
             preconditioner_operator,
             policy,
         )
-        self.operator_pattern = _pattern(operator_storage)
-        self.preconditioner_pattern = _pattern(preconditioner_storage)
+        operator_pattern = _pattern(operator_storage)
+        preconditioner_pattern = _pattern(preconditioner_storage)
+        self.operator_pattern = _static_pattern(operator_pattern)
+        self.preconditioner_pattern = _static_pattern(preconditioner_pattern)
+        # The identity payload keeps its NumPy-scalar encoding; static fields hold ints.
         self.plan_id = canonical_fingerprint(
             {
                 "backend": "petsc-ksp",
                 "problem": problem.problem_id,
                 "amat": problem.operator.operator_id,
                 "pmat": preconditioner_operator.operator_id,
-                "amat_pattern": self.operator_pattern,
-                "pmat_pattern": self.preconditioner_pattern,
+                "amat_pattern": tuple(map(tuple, operator_pattern)),
+                "pmat_pattern": tuple(map(tuple, preconditioner_pattern)),
                 "policy": _ksp_payload(policy),
             }
         )
@@ -956,10 +959,17 @@ def _canonical_storage(
     return storage
 
 
-def _pattern(storage: SparseStorage, /) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    return tuple(np.asarray(jax.device_get(storage.indptr))), tuple(
-        np.asarray(jax.device_get(storage.indices))
+def _pattern(storage: SparseStorage, /) -> tuple[np.ndarray, np.ndarray]:
+    return np.asarray(jax.device_get(storage.indptr)), np.asarray(
+        jax.device_get(storage.indices)
     )
+
+
+def _static_pattern(
+    pattern: tuple[np.ndarray, np.ndarray], /
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    indptr, indices = pattern
+    return tuple(indptr.tolist()), tuple(indices.tolist())
 
 
 def _storage_bytes(storage: SparseStorage, /) -> int:

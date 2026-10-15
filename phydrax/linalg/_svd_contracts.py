@@ -6,13 +6,16 @@ from enum import IntEnum
 from typing import final, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jaxtyping import PyTree
 
 from .._differentiation import DerivativeRoute
+from .._execution_device import device_platform
 from .._fingerprint import canonical_fingerprint
+from .._jax_config import default_device_selection
 from .._strict import StrictModule
 from .._validation import nonnegative_integer, positive_integer
 from ..typing import (
@@ -58,10 +61,25 @@ SVDDifferentiationMode: TypeAlias = Literal[
 SVDCertificateKind: TypeAlias = Literal[
     "exact-spectrum", "deterministic-frobenius", "independent-gaussian"
 ]
-# LAPACK-style dense SVD drivers. Divide and conquer (gesdd) is fastest but can
-# fail to converge on exactly clustered spectra; QR iteration (gesvd) is slower
-# and robust there. A non-converged driver reports NONFINITE_OUTPUT.
+# LAPACK-style dense SVD drivers. Divide and conquer (gesdd) is fast on CPU
+# and ROCm, but unsupported on CUDA. QR iteration (gesvd) is also robust on
+# exactly clustered spectra. A non-converged driver reports NONFINITE_OUTPUT.
 DenseSVDAlgorithm: TypeAlias = Literal["divide-and-conquer", "qr"]
+
+
+def _default_svd_device() -> jax.Device:
+    device = default_device_selection()
+    if device is None:
+        return jax.local_devices()[0]
+    if isinstance(device, str):
+        return jax.local_devices(backend=device)[0]
+    return device
+
+
+def _default_dense_svd_algorithm() -> DenseSVDAlgorithm:
+    return (
+        "qr" if device_platform(_default_svd_device()) == "cuda" else "divide-and-conquer"
+    )
 
 
 @final
@@ -106,10 +124,22 @@ class SVDProblem(StrictModule):
 
 @final
 class DenseSVD(StrictModule):
+    """Economy SVD with a concrete, construction-time dense driver.
+
+    Omitting ``algorithm`` selects QR on the current default CUDA device and
+    divide-and-conquer elsewhere, preserving the CPU driver and plan identity.
+    This choice is frozen in the method; reconstruct it when changing platforms.
+    Explicit unsupported drivers are refused at planning, not silently replaced.
+    """
+
     algorithm: DenseSVDAlgorithm = eqx.field(static=True)
 
-    def __init__(self, *, algorithm: DenseSVDAlgorithm = "divide-and-conquer") -> None:
-        self.algorithm = parse(algorithm, DenseSVDAlgorithm, "algorithm")
+    def __init__(self, *, algorithm: DenseSVDAlgorithm | None = None) -> None:
+        self.algorithm = (
+            _default_dense_svd_algorithm()
+            if algorithm is None
+            else parse(algorithm, DenseSVDAlgorithm, "algorithm")
+        )
 
     @property
     def name(self) -> str:

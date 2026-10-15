@@ -328,7 +328,9 @@ def test_davies_harte_resolution_prefix_ids_and_scale_validation() -> None:
     assert explicit.coupling_id == automatic.coupling_id == wider.coupling_id
     assert explicit.realization_id != dense.realization_id
     assert explicit.coupling_id != dense.coupling_id
-    assert jnp.array_equal(explicit.values, wider.values[:3])
+    # Leading samples share their noise; the batched FFT may round differently
+    # with the sample count (observed 2.8e-16 on CPU), which is not a contract.
+    np.testing.assert_allclose(explicit.values, wider.values[:3], rtol=0, atol=1e-14)
     assert explicit.covariance_factor is None
     assert automatic.covariance_factor is None
     assert dense.covariance_factor is not None

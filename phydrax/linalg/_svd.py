@@ -22,6 +22,7 @@ from ._singular_subspaces import (
 )
 from ._spaces import _coordinate_dtype, _has_diagonal_pairing, AbstractVectorSpace
 from ._svd_contracts import (
+    _default_dense_svd_algorithm,
     DenseSVD,
     DenseSVDState,
     PreparedSVDSolve,
@@ -39,7 +40,12 @@ from ._svd_contracts import (
     SVDSolveResult,
     SVDSolveStatus,
 )
-from ._svd_dense import prepare_dense, restore_coordinates, thin_decomposition
+from ._svd_dense import (
+    prepare_dense,
+    restore_coordinates,
+    thin_decomposition,
+    validate_dense_algorithm,
+)
 from ._svd_evidence import (
     compressed_spectrum_allowance,
     discarded_singular_maximum,
@@ -277,6 +283,13 @@ def plan_svd(
             "A partial smallest-mode selection cannot require a leading subspace."
         )
     resident = isinstance(problem.operator, DenseLinearOperator)
+    if isinstance(selected.method, DenseSVD):
+        validate_dense_algorithm(
+            selected.method.algorithm,
+            problem.operator.matrix
+            if isinstance(problem.operator, DenseLinearOperator)
+            else None,
+        )
     width, kind = _svd_method_geometry(problem, selected, resident)
     return SVDSolvePlan(
         problem, selected, _cost(problem, selected, width, resident), width, kind
@@ -416,7 +429,11 @@ def _factors(prepared: PreparedSVDSolve, /) -> _Factors:
             state.qr_full_rank,
         )
     method = plan.policy.method
-    algorithm = method.algorithm if isinstance(method, DenseSVD) else "divide-and-conquer"
+    algorithm = (
+        method.algorithm
+        if isinstance(method, DenseSVD)
+        else _default_dense_svd_algorithm()
+    )
     left, values, right = _stop_arrays(thin_decomposition(matrix, available, algorithm))
     left, values, right = canonicalize_singular_triplets(left, values, right)
     order = (
@@ -448,9 +465,10 @@ def _restore(
         return restore_coordinates(
             state.target_factor, left, state.diagonal
         ), restore_coordinates(state.source_factor, right, state.diagonal)
-    return (state.range_basis @ left) / state.target_factor[
-        :, None
-    ], right / state.source_factor[:, None]
+    # Reduced-precision tensor-core products can destroy the orthogonality of
+    # otherwise accurate QR/SVD factors when lifting single-precision vectors.
+    lifted = jnp.matmul(state.range_basis, left, precision=jax.lax.Precision.HIGHEST)
+    return lifted / state.target_factor[:, None], right / state.source_factor[:, None]
 
 
 def _attached_responses(

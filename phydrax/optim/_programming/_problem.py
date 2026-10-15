@@ -297,9 +297,10 @@ class ConicProgram(StrictModule):
         self.num_constraints = constraints
         self.constraint_is_sparse = matrix_sparse
         self.quadratic_is_sparse = quadratic_sparse
-        self.fixed_bound_indices = tuple(fixed_indices)
-        self.lower_bound_indices = tuple(lower_indices)
-        self.upper_bound_indices = tuple(upper_indices)
+        # Static metadata holds Python ints; NumPy scalars count as arrays.
+        self.fixed_bound_indices = tuple(fixed_indices.tolist())
+        self.lower_bound_indices = tuple(lower_indices.tolist())
+        self.upper_bound_indices = tuple(upper_indices.tolist())
         self.problem_id = identifier
         self.convexity_evidence = evidence
         self.structure_id = canonical_fingerprint(

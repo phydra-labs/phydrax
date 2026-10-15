@@ -89,7 +89,10 @@ _ASE_CALCULATOR_EXPORTS = ("NativeASECalculator", "NativeASECalculatorPlan")
 def __getattr__(name: str) -> Any:
     with process_numerics():
         if name in _ASE_CALCULATOR_EXPORTS:
-            require_ase()
+            # Resolving an export whose optional provider is absent fails as an import;
+            # AdapterError remains the conversion-boundary status for ASE adapters.
+            if not is_ase_available():
+                raise ImportError(f"{name} requires optional dependency 'ase'.")
             value = getattr(import_module("._ase_calculator", __package__), name)
             globals()[name] = value
             return value

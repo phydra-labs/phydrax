@@ -15,7 +15,7 @@ from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import LinearSolvePlan
-from .._policies import SparseCholesky, SparseLU, SparseQR
+from .._policies import AutoLinearMethod, SparseCholesky, SparseLU, SparseQR
 from .._results import LinearSolveStatus
 from .._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
@@ -171,14 +171,18 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
         raise ValueError("Sparse direct providers require square storage.")
     method = plan.policy.method
     if plan.backend == "jax-sparse":
-        supported = (isinstance(method, SparseQR) and method.provider == "jax-cuda") or (
+        cuda_qr = plan.method == "sparse-qr" and (
+            isinstance(method, AutoLinearMethod)
+            or (isinstance(method, SparseQR) and method.provider == "jax-cuda")
+        )
+        supported = cuda_qr or (
             isinstance(method, SparseLU) and method.provider == "jax-cpu"
         )
         if not supported:
             raise ValueError(
                 "The native sparse backend requires SparseQR(provider='jax-cuda') or SparseLU(provider='jax-cpu')."
             )
-        if isinstance(method, SparseQR) and storage.index_width != 32:
+        if cuda_qr and storage.index_width != 32:
             raise ValueError("CUDA sparse QR execution requires 32-bit CSR indices.")
         return DeviceSparseState(storage)
     if plan.backend == "host-sparse":
@@ -222,6 +226,13 @@ def solve_sparse(
     plan: LinearSolvePlan,
     /,
 ) -> SparseBackendOutput:
+    """Solve with native provider evidence only after the provider returns.
+
+    JAX's CUDA QR custom call converts cuSolver's singularity index into an
+    INTERNAL runtime error and exposes only the solution buffer. Singular CUDA
+    systems therefore cannot reach the finite/status checks below, regardless
+    of RHS compatibility or the requested failure policy.
+    """
     batch_shape = (
         state.storage.batch_shape
         if isinstance(state, DeviceSparseState)

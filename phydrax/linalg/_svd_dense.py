@@ -6,8 +6,10 @@ from typing import assert_never
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax import Array
+from jax import Array, core as jax_core
 
+from .._execution_device import device_platform
+from ._dense_svd import economy_svd
 from ._materialization import materialize
 from ._spaces import (
     _coordinate_pairing_matrix,
@@ -16,12 +18,33 @@ from ._spaces import (
     AbstractVectorSpace,
 )
 from ._svd_contracts import (
+    _default_svd_device,
+    DenseSVD,
     DenseSVDAlgorithm,
     DenseSVDState,
     SVDProblem,
     SVDSolvePlan,
     SVDSolveStatus,
 )
+
+
+def validate_dense_algorithm(
+    algorithm: DenseSVDAlgorithm, matrix: Array | None = None, /
+) -> None:
+    # Tracing cannot expose concrete placement. Plan with the current default
+    # device, then recheck materialized preparation when placement is available.
+    devices = (
+        matrix.devices()
+        if matrix is not None and not isinstance(matrix, jax_core.Tracer)
+        else (_default_svd_device(),)
+    )
+    if algorithm == "divide-and-conquer" and any(
+        device_platform(device) == "cuda" for device in devices
+    ):
+        raise ValueError(
+            "DenseSVD algorithm='divide-and-conquer' is unsupported on platform "
+            "'cuda'; use algorithm='qr'."
+        )
 
 
 def diagonal_scales(space: AbstractVectorSpace, /) -> tuple[Array, Array]:
@@ -69,6 +92,10 @@ def prepare_dense(problem: SVDProblem, plan: SVDSolvePlan, /) -> DenseSVDState:
         source, source_valid = pairing_factor(operator.source)
         target, target_valid = pairing_factor(operator.target)
     matrix = materialize(operator, plan.policy.materialization)
+    method = plan.policy.method
+    if not isinstance(method, DenseSVD):
+        raise TypeError("Dense SVD preparation requires DenseSVD.")
+    validate_dense_algorithm(method.algorithm, matrix)
     valid = source_valid & target_valid & jnp.all(jnp.isfinite(matrix))
 
     def transform(value: Array) -> Array:
@@ -90,6 +117,7 @@ def prepare_dense(problem: SVDProblem, plan: SVDSolvePlan, /) -> DenseSVDState:
 def thin_decomposition(
     matrix: Array, available: Array, algorithm: DenseSVDAlgorithm, /
 ) -> tuple[Array, Array, Array]:
+    validate_dense_algorithm(algorithm, matrix)
     rows, columns = matrix.shape
     rank = min(rows, columns)
     match algorithm:
@@ -101,9 +129,7 @@ def thin_decomposition(
             assert_never(unknown)
 
     def decompose(value: Array) -> tuple[Array, Array, Array]:
-        left, values, right_adjoint = jax.lax.linalg.svd(
-            value, full_matrices=False, algorithm=driver
-        )
+        left, values, right_adjoint = economy_svd(value, algorithm=driver)
         return left, values, right_adjoint.conj().T
 
     def unavailable(value: Array) -> tuple[Array, Array, Array]:

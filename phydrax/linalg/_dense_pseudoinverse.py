@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
+from ._dense_svd import economy_svd
 from ._policies import RankPolicy
 from ._rank import numerical_rank_data
 
@@ -45,11 +46,7 @@ def factor_pseudoinverse(
         raise ValueError("Hermitian pseudoinverse requires square matrices.")
     if hermitian:
         value = 0.5 * (value + jnp.conj(jnp.swapaxes(value, -1, -2)))
-    left, singular_values, right_adjoint = jnp.linalg.svd(
-        value,
-        full_matrices=False,
-        hermitian=hermitian,
-    )
+    left, singular_values, right_adjoint = economy_svd(value, hermitian=hermitian)
     rank = numerical_rank_data(singular_values, rows, columns, rank_policy)
     finite = rank.finite & jnp.all(jnp.isfinite(value), axis=(-2, -1))
     return DensePseudoinverseFactors(

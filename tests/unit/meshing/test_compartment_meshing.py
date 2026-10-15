@@ -1,6 +1,5 @@
 from typing import Any
 
-import manifold3d
 import numpy as np
 import pytest
 
@@ -88,6 +87,7 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface() -> Non
     )
     complex_ = phx.imaging.build_compartment_complex(labels, compartments, (interface,))
     interfaces = phx.imaging.extract_compartment_surfaces(labels, complex_)
+    manifold3d = pytest.importorskip("manifold3d")
     arrays = (
         manifold3d.Manifold.cube((5.0, 5.0, 5.0))
         .translate((-0.5, -0.5, -0.5))
