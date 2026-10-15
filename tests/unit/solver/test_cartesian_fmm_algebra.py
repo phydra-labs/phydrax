@@ -5,11 +5,13 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.operators.integral.multipole._cartesian_radial import (
     plummer_scaled_cartesian_derivatives,
 )
-from phydrax.solver import CartesianExpansionSpace, CartesianFMMOperators
+from phydrax.solver import CartesianExpansionSpace, CartesianFMMOperators, UniformFMMPlan
+from phydrax.sparse import RelationAccumulation
 
 
 def test_cartesian_fmm_algebra_scenario_1() -> None:
@@ -135,3 +137,58 @@ def test_plummer_cartesian_derivatives_match_jax() -> None:
         axes = tuple(axis for axis, count in enumerate(exponent) for _ in range(count))
         expected.append(tensors[sum(exponent)][axes] if axes else tensors[0])
     np.testing.assert_allclose(derivatives, jnp.stack(expected), rtol=2e-11, atol=2e-11)
+
+
+@pytest.mark.parametrize("accumulation", ("fast", "deterministic", "compensated"))
+def test_streamed_leaf_completion_preserves_signed_linear_field(
+    accumulation: RelationAccumulation,
+) -> None:
+    positions = jnp.asarray(
+        [
+            [0.1, 0.2, 0.3],
+            [0.13, 0.2, 0.3],
+            [0.2, 0.3, 0.4],
+            [0.5, 0.4, 0.2],
+            [0.7, 0.8, 0.6],
+            [0.8, 0.7, 0.6],
+            [0.9, 0.8, 0.7],
+        ],
+        dtype=jnp.float64,
+    )
+    first = jnp.asarray([1.0, -2.0, 0.5, 1.5, -0.75, 2.0, -1.0])
+    second = jnp.arange(7, dtype=jnp.float64) / 3 - 1
+    plan = UniformFMMPlan(
+        1.0,
+        CartesianExpansionSpace(1),
+        softening=0.03,
+        maximum_leaf_occupancy=7,
+        accumulation=accumulation,
+    )
+    structure = plan.prepare_structure(positions, box_size=(1.0, 1.0, 1.0), depth=6)
+    one = plan.evaluate_monopole(structure, first)
+    two = plan.evaluate_monopole(structure, second)
+    combined = plan.evaluate_monopole(structure, 2 * first - second)
+    assert bool(combined.successful)
+    np.testing.assert_allclose(
+        combined.potential, 2 * one.potential - two.potential, rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        combined.gradient, 2 * one.gradient - two.gradient, rtol=1e-12, atol=1e-12
+    )
+    delta = positions[None, :, :] - positions[:, None, :]
+    radius_squared = jnp.sum(delta**2, axis=-1) + 0.03**2
+    pair = ~jnp.eye(7, dtype=jnp.bool_)
+    strengths = 2 * first - second
+    expected_potential = jnp.sum(
+        jnp.where(pair, strengths[None, :] / jnp.sqrt(radius_squared), 0.0), axis=1
+    )
+    expected_gradient = jnp.sum(
+        jnp.where(
+            pair[..., None],
+            strengths[None, :, None] * delta / radius_squared[..., None] ** 1.5,
+            0.0,
+        ),
+        axis=1,
+    )
+    np.testing.assert_allclose(combined.potential, expected_potential, rtol=1e-12)
+    np.testing.assert_allclose(combined.gradient, expected_gradient, rtol=1e-12)

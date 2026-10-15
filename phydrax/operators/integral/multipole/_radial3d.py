@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from operator import index
-from typing import Literal, TypedDict
+from typing import assert_never, Literal, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,7 +26,7 @@ from ....special._spherical_bessel import (
     _spherical_j_sequence,
     _spherical_k_sequence,
 )
-from ....typing import checked
+from ....typing import checked, parse
 from ._laplace3d import (
     _flatten_payload,
     _mode_basis,
@@ -36,6 +36,7 @@ from ._laplace3d import (
     LaplaceMultipolePlan3D,
     MultipoleCapacityEvidence3D,
     MultipoleTruncationEvidence3D,
+    TranslationRoute3D,
 )
 
 
@@ -101,6 +102,7 @@ class _AbstractRadialMultipolePlan3D(StrictModule, NonTrainableState):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        translation_route: TranslationRoute3D = "dense",
         execution: Literal["level_octree", "plane_dual"] = "level_octree",
         plane_queue_capacity: int | None = None,
         source_leaf_occupancy: int = 16,
@@ -110,6 +112,18 @@ class _AbstractRadialMultipolePlan3D(StrictModule, NonTrainableState):
         plane_opening_angle: float = 0.6,
         maximum_plane_node_argument: float = 1.0,
     ) -> None:
+        translation_route = parse(
+            translation_route, TranslationRoute3D, "translation_route"
+        )
+        match translation_route:
+            case "dense":
+                pass
+            case "rotation":
+                raise ValueError(
+                    "Screened and outgoing kernels do not support the Laplace rotation translation route."
+                )
+            case _:
+                assert_never(translation_route)
         parameter_ = float(parameter)
         maximum_argument = float(maximum_dimensionless_argument)
         maximum_plane_argument = float(maximum_plane_node_argument)
@@ -190,6 +204,7 @@ class HelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        translation_route: TranslationRoute3D = "dense",
         execution: Literal["level_octree", "plane_dual"] = "level_octree",
         plane_queue_capacity: int | None = None,
         source_leaf_occupancy: int = 16,
@@ -213,6 +228,7 @@ class HelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
             near_interaction_capacity=near_interaction_capacity,
             maximum_coefficient_bytes=maximum_coefficient_bytes,
             maximum_dimensionless_argument=maximum_dimensionless_argument,
+            translation_route=translation_route,
             execution=execution,
             plane_queue_capacity=plane_queue_capacity,
             source_leaf_occupancy=source_leaf_occupancy,
@@ -250,6 +266,7 @@ class ModifiedHelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
         near_interaction_capacity: int | None = None,
         maximum_coefficient_bytes: int = 512 * 1024**2,
         maximum_dimensionless_argument: float = 24.0,
+        translation_route: TranslationRoute3D = "dense",
         execution: Literal["level_octree", "plane_dual"] = "level_octree",
         plane_queue_capacity: int | None = None,
         source_leaf_occupancy: int = 16,
@@ -273,6 +290,7 @@ class ModifiedHelmholtzMultipolePlan3D(_AbstractRadialMultipolePlan3D):
             near_interaction_capacity=near_interaction_capacity,
             maximum_coefficient_bytes=maximum_coefficient_bytes,
             maximum_dimensionless_argument=maximum_dimensionless_argument,
+            translation_route=translation_route,
             execution=execution,
             plane_queue_capacity=plane_queue_capacity,
             source_leaf_occupancy=source_leaf_occupancy,

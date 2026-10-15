@@ -18,7 +18,11 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
+from ...discretization.spatial import (
+    MortonAddressPlan,
+    MortonRadiusRelationPlan,
+    MortonSourcePlan,
+)
 from ...sparse import EdgeRelation, KeyGroupPlan
 from ...typing import parse
 
@@ -329,9 +333,10 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             self.morton_maximum_depth,
             periodic_axes=(True, True, True),
         )
+        source_plan = MortonSourcePlan(address, particle_count)
+        sources = source_plan.prepare(position, active_mask=active, stable_ids=ids)
         query = MortonRadiusRelationPlan(
-            address,
-            particle_count,
+            source_plan,
             particle_count,
             self.maximum_links,
             inclusive=True,
@@ -341,12 +346,10 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
                 else min(self.morton_maximum_candidates, particle_count)
             ),
         ).query(
-            position,
-            position,
+            sources,
+            sources.points,
             self.linking_length,
-            source_mask=active,
             target_mask=active,
-            source_stable_ids=ids,
             target_stable_ids=ids,
             exclude_self=True,
             pair_once=True,

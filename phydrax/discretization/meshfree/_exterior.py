@@ -42,7 +42,11 @@ from ...typing import Bool, Dim, Float64, Int32, parse, Scalar, Size
 from .._cochain import CochainDiscretization
 from .._cochain_hodge import DiagonalHodge
 from .._topology import CellComplexTopology, EntitySet, OrientedIncidence
-from ..spatial import MortonAddressPlan, MortonRadiusShellWitnessPlan
+from ..spatial import (
+    MortonAddressPlan,
+    MortonRadiusShellWitnessPlan,
+    MortonSourcePlan,
+)
 from ..spatial._neighbor_query import _minimum_image
 from ._exterior_metric import (
     _boundary_moment_indices,
@@ -742,22 +746,25 @@ class MeshfreeExteriorCalculusPlan(StrictModule):
             )
         )
         capacity = self.points.shape[0]
+        source_plan = MortonSourcePlan(edges.address, capacity)
+        sources = source_plan.prepare(
+            self.points,
+            active_mask=self.active,
+            stable_ids=edges.point_ids,
+        )
         shell = MortonRadiusShellWitnessPlan(
-            edges.address,
-            capacity,
+            source_plan,
             capacity,
             maximum_candidates=min(
                 capacity,
                 max(int(edge_capacity), 2 ** points.shape[1] * int(edge_required)),
             ),
         ).certify(
-            self.points,
-            self.points,
+            sources,
+            sources.points,
             self.radius,
             0.5 * self.radius,
-            source_mask=self.active,
             target_mask=self.active,
-            source_stable_ids=edges.point_ids,
             target_stable_ids=edges.point_ids,
             exclude_self=True,
         )

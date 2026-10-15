@@ -36,7 +36,7 @@ from ...linalg import (
 )
 from ...sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
 from ...typing import Dim, Float, Int32, Integer, parse
-from ..spatial._morton import canonical_morton_order, MortonAddressPlan
+from ..spatial import MortonAddressPlan, MortonSourcePlan
 from ._multilevel import PreparedMeshfreeHierarchy
 
 
@@ -515,11 +515,12 @@ def _morton_order(points: np.ndarray, stable_ids: np.ndarray, /) -> np.ndarray:
         tuple((lower + span).tolist()),
         63 // dimension,
     )
-    encoding = address.encode(jnp.asarray(points))
-    order = canonical_morton_order(
-        encoding.codes, jnp.asarray(stable_ids), encoding.in_domain
+    sources = MortonSourcePlan(address, points.shape[0]).prepare(
+        jnp.asarray(points), stable_ids=jnp.asarray(stable_ids)
     )
-    host_order, in_domain = jax.device_get((order, encoding.in_domain))
+    host_order, in_domain = jax.device_get(
+        (sources.storage_to_logical, sources.in_domain)
+    )
     if not np.all(in_domain):
         raise ValueError(
             "Morton patch ordering requires every point in its bounding box."

@@ -381,7 +381,7 @@ def test_candidate_overflow_refuses_neighborhood_preparation() -> None:
 
 @pytest.mark.parametrize("count", [40, 300], ids=["below-floor", "ragged-bucket"])
 def test_bucketed_storage_matches_logical_capacity_query_and_fit(count: int) -> None:
-    from phydrax.discretization.spatial import MortonNeighborQueryPlan
+    from phydrax.discretization.spatial import MortonNeighborQueryPlan, MortonSourcePlan
 
     points = np.random.default_rng(count).uniform(-1.0, 1.0, (count, 2))
     plan = MeshfreeNeighborhoodPlan(points, 12)
@@ -389,8 +389,10 @@ def test_bucketed_storage_matches_logical_capacity_query_and_fit(count: int) -> 
     assert prepared.storage_capacity == ((64, 64) if count == 40 else (512, 512))
     # Independent reference: the exact query at logical capacity in the
     # physical (non-canonical) address, and a brute-force distance sort.
-    reference = MortonNeighborQueryPlan(plan.address, count, count, 13).query(
-        jnp.asarray(points), jnp.asarray(points)
+    source_plan = MortonSourcePlan(plan.address, count)
+    sources = source_plan.prepare(jnp.asarray(points))
+    reference = MortonNeighborQueryPlan(source_plan, count, 13).query(
+        sources, sources.points
     )
     np.testing.assert_array_equal(
         prepared.relation.source_indices, np.asarray(reference.source_indices)[:, :12]

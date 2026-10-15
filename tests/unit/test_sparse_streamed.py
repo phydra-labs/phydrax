@@ -910,3 +910,81 @@ def test_transpose_requires_prepared_source_major_schedule() -> None:
 
     with pytest.raises(ValueError, match="transpose=True"):
         prepared.transpose()
+
+
+def test_capacity_bounded_preparation_matches_compact_and_refresh_cond() -> None:
+    relation, source, target, valid = _relation()
+    plan = phx.sparse.StreamedRelationPlan(
+        receiver_tile=3, edge_tile=5, accumulation="compensated", transpose=True
+    )
+    compact = plan.prepare(relation, owner_id="test-bounded")
+    bounded = plan.prepare(relation, owner_id="test-bounded", capacity_bounded=True)
+    assert compact.binding.content_id is not None
+    assert bounded.binding.content_id is None
+    assert bounded.schedule.tile_count == (RECEIVER_COUNT // 3 + len(_ROUTES) // 5 + 1)
+    assert compact.schedule.tile_count < bounded.schedule.tile_count
+    parameters, sources, receivers, edges = _data()
+    payload = phx.sparse.StreamedPayloadSpec(_MESSAGE, _OUTPUT, _EDGE_OUTPUT)
+
+    @jax.jit
+    def refresh(
+        replace: Array, s: Array, t: Array, active: Array
+    ) -> phx.sparse.PreparedStreamedRelation:
+        def rebuild(_: None) -> phx.sparse.PreparedStreamedRelation:
+            candidate = phx.sparse.EdgeRelation(
+                s, t, source_size=SOURCE_COUNT, target_size=RECEIVER_COUNT, valid=active
+            )
+            return plan.prepare(
+                candidate, owner_id="test-bounded", epoch=1, capacity_bounded=True
+            )
+
+        return jax.lax.cond(replace, rebuild, lambda _: bounded, None)
+
+    for replace in (False, True):
+        prepared = refresh(
+            jnp.asarray(replace),
+            jnp.asarray(source),
+            jnp.asarray(target),
+            jnp.asarray(valid),
+        )
+        assert prepared.execution_id == bounded.execution_id
+        assert (
+            prepared.transpose().schedule.tile_count
+            == bounded.transpose().schedule.tile_count
+        )
+        assert int(prepared.binding.epoch) == int(replace)
+        expected = compact.evaluate(
+            payload,
+            _message_with_edge_output,
+            _epilogue,
+            parameters,
+            sources,
+            receivers,
+            edges,
+        )
+        actual = prepared.evaluate(
+            payload,
+            _message_with_edge_output,
+            _epilogue,
+            parameters,
+            sources,
+            receivers,
+            edges,
+        )
+        assert bool(actual.evidence.successful)
+        for actual_leaf, expected_leaf in zip(
+            jax.tree.leaves((actual.receiver_outputs, actual.edge_outputs)),
+            jax.tree.leaves((expected.receiver_outputs, expected.edge_outputs)),
+            strict=True,
+        ):
+            np.testing.assert_allclose(actual_leaf, expected_leaf, rtol=1e-12, atol=1e-13)
+
+
+def test_capacity_bounded_prepare_requires_boolean() -> None:
+    relation, *_ = _relation()
+    with pytest.raises(TypeError, match="capacity_bounded"):
+        phx.sparse.StreamedRelationPlan().prepare(
+            relation,
+            owner_id="test-bounded",
+            capacity_bounded=1,  # ty: ignore[invalid-argument-type]
+        )

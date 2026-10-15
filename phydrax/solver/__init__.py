@@ -1881,6 +1881,7 @@ from ._particle_gravity import (
     TreePMShortRangeKernel,
     TreePMSplitPolicy,
     UniformFMMPlan,
+    UniformFMMStructureTransition,
 )
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
@@ -4694,6 +4695,7 @@ __all__ += [
     "TreePMSplitPolicy",
     "TreePMShortRangeKernel",
     "UniformFMMPlan",
+    "UniformFMMStructureTransition",
 ]
 
 __all__ += [

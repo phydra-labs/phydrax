@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, Sequence
+from typing import Any, assert_never, Sequence
 
 import equinox as eqx
 import jax
@@ -14,7 +14,14 @@ import jax.numpy as jnp
 from phydrax._strict import StrictModule
 from phydrax._validation import positive_integer
 
-from ..discretization.spatial import MortonNeighborQueryPlan
+from ..discretization.spatial import (
+    BVHNeighborQueryPlan,
+    BVHNeighborQueryResult,
+    MortonNeighborQueryPlan,
+    MortonNeighborQueryResult,
+    PreparedBVHSources,
+    PreparedMortonSources,
+)
 from ..sparse import gather_routes, RowRelation
 from ._geometry import mollified_kernel_weight, MollifierKind, QueryGraph
 from ._ir import GraphIR
@@ -419,61 +426,123 @@ def _query_neighbors_blocked(
     return indices, relative, squared, valid
 
 
-def _query_neighbors_morton(
+def _prepared_graph_source(
+    source: Any,
+    plan: MortonNeighborQueryPlan | BVHNeighborQueryPlan | None,
+    source_mask: Any | None,
+) -> PreparedMortonSources | PreparedBVHSources | None:
+    if not isinstance(source, (PreparedMortonSources, PreparedBVHSources)):
+        return None
+    if plan is None:
+        raise ValueError("Prepared graph sources require an explicit query plan.")
+    if source_mask is not None:
+        raise ValueError("Prepared graph sources already own source activity.")
+    if source.points.dtype != jnp.float64:
+        raise TypeError("Prepared graph sources require float64 points.")
+    if source.stable_ids_declared:
+        raise ValueError("Graph sources require undeclared logical-index IDs.")
+    if source.points.ndim not in (2, 3):
+        raise ValueError("Prepared graph sources must be unbatched or stacked cases.")
+    return source
+
+
+def _query_neighbors_planned(
     source: jnp.ndarray,
     target: jnp.ndarray,
     source_mask: jnp.ndarray,
     target_mask: jnp.ndarray,
     /,
     *,
-    plan: MortonNeighborQueryPlan,
+    plan: MortonNeighborQueryPlan | BVHNeighborQueryPlan,
+    prepared: PreparedMortonSources | PreparedBVHSources | None,
     radius: float | None,
     periodic_lengths: Sequence[float | None] | None,
     exclude_self: bool,
 ) -> QueryNeighborhood:
     source_count = source.shape[1]
     target_count = target.shape[1]
-    if plan.source_capacity != source_count:
-        raise ValueError("Morton query source_capacity must match source_points.")
+    match plan:
+        case MortonNeighborQueryPlan():
+            dimension = plan.address_plan.dimension
+            plan_lengths = tuple(
+                upper - lower if periodic else None
+                for lower, upper, periodic in zip(
+                    plan.address_plan.lower,
+                    plan.address_plan.upper,
+                    plan.address_plan.periodic_axes,
+                    strict=True,
+                )
+            )
+            backend = "morton"
+            if prepared is not None and not isinstance(prepared, PreparedMortonSources):
+                raise TypeError("Morton query requires PreparedMortonSources.")
+        case BVHNeighborQueryPlan():
+            dimension = plan.source_plan.dimension
+            plan_lengths = plan.source_plan.periodic_lengths or (None,) * dimension
+            backend = "bvh"
+            if prepared is not None and not isinstance(prepared, PreparedBVHSources):
+                raise TypeError("BVH query requires PreparedBVHSources.")
+        case _:
+            assert_never(plan)
+    if plan.source_plan.point_capacity != source_count:
+        raise ValueError("Query source capacity must match source_points.")
     if plan.target_capacity != target_count:
-        raise ValueError("Morton query target_capacity must match target_points.")
-    if plan.address_plan.dimension != source.shape[-1]:
-        raise ValueError("Morton query dimension must match the coordinate dimension.")
-
-    extents = tuple(
-        upper - lower
-        for lower, upper in zip(
-            plan.address_plan.lower,
-            plan.address_plan.upper,
-            strict=True,
-        )
-    )
-    plan_lengths = tuple(
-        extent if periodic else None
-        for extent, periodic in zip(
-            extents,
-            plan.address_plan.periodic_axes,
-            strict=True,
-        )
-    )
+        raise ValueError("Query target capacity must match target_points.")
+    if dimension != source.shape[-1]:
+        raise ValueError("Query dimension must match the coordinate dimension.")
     if periodic_lengths is not None and tuple(periodic_lengths) != plan_lengths:
-        raise ValueError(
-            "periodic_lengths must match the Morton query address-plan extents."
-        )
+        raise ValueError("periodic_lengths must match the query source plan.")
+    if prepared is not None and prepared.source_plan.plan_id != plan.source_plan.plan_id:
+        raise ValueError("Prepared sources must match the query source plan.")
 
-    source_ids = jnp.arange(source_count, dtype=jnp.int64)
-    target_ids = jnp.arange(target_count, dtype=jnp.int64)
+    def case_sources(case: jax.Array) -> PreparedMortonSources | PreparedBVHSources:
+        if prepared is None:
+            return plan.source_plan.prepare(source[case], active_mask=source_mask[case])
+        if prepared.points.ndim == 2:
+            return prepared
+
+        # Homogeneous stacks map dynamic leaves; capacity-fixed BVH topology
+        # can remain shared, rather than being replicated per case.
+        def select(path: tuple[Any, ...], leaf: Any) -> Any:
+            if not eqx.is_array(leaf):
+                return leaf
+            name = path[-1].name
+            topology = name in ("left", "right", "leaf_id", "leaf_node")
+            return leaf if topology and leaf.ndim == 1 else leaf[case]
+
+        return jax.tree_util.tree_map_with_path(select, prepared)
+
+    def query_case(
+        case: jax.Array,
+    ) -> MortonNeighborQueryResult | BVHNeighborQueryResult:
+        sources = case_sources(case)
+        match plan:
+            case MortonNeighborQueryPlan():
+                if not isinstance(sources, PreparedMortonSources):
+                    raise TypeError("Morton query requires PreparedMortonSources.")
+                return plan.query(
+                    sources,
+                    target[case],
+                    target_mask=target_mask[case],
+                    exclude_self=exclude_self,
+                    radius=radius,
+                )
+            case BVHNeighborQueryPlan():
+                if not isinstance(sources, PreparedBVHSources):
+                    raise TypeError("BVH query requires PreparedBVHSources.")
+                return plan.query(
+                    sources,
+                    target[case],
+                    target_mask=target_mask[case],
+                    exclude_self=exclude_self,
+                    radius=radius,
+                )
+            case _:
+                assert_never(plan)
+
+    batched = jax.lax.map(query_case, jnp.arange(source.shape[0], dtype=jnp.int32))
     results = [
-        plan.query(
-            source[case],
-            target[case],
-            source_mask=source_mask[case],
-            target_mask=target_mask[case],
-            source_stable_ids=source_ids,
-            target_stable_ids=target_ids,
-            exclude_self=exclude_self,
-            radius=radius,
-        )
+        jax.tree_util.tree_map(lambda leaf: leaf[case], batched)
         for case in range(source.shape[0])
     ]
     indices = jnp.stack([result.source_indices for result in results])
@@ -506,7 +575,7 @@ def _query_neighbors_morton(
             complete=complete,
             finite=finite,
             successful=successful,
-            backend="morton",
+            backend=backend,
         ),
     )
 
@@ -525,7 +594,7 @@ def query_neighbors(
     target_chunk_size: int | None = None,
     source_chunk_size: int | None = None,
     query_workspace_bytes: int = 4 * 1024 * 1024,
-    plan: MortonNeighborQueryPlan | None = None,
+    plan: MortonNeighborQueryPlan | BVHNeighborQueryPlan | None = None,
 ) -> QueryNeighborhood:
     """Return deterministic, fixed-capacity neighbors without leaving JAX.
 
@@ -536,12 +605,15 @@ def query_neighbors(
     tile loops. Explicit positive integer chunks override the respective automatic
     tile. Equal distances retain source-index order; radius boundaries are inclusive.
 
-    A Morton ``plan`` selects its bounded candidate route instead; these tile
-    arguments are still validated but do not override the plan's capacities.
-    Evidence identifies the selected backend and refuses incomplete Morton
-    results. Required target-by-neighbor output storage is not tile-bounded.
+    An explicit Morton or BVH ``plan`` selects its bounded query route; tile
+    arguments do not override its capacities. Prepared float64 sources require
+    a matching plan, undeclared logical IDs, and no competing source mask.
+    Incomplete Morton results are refused without a backend fallback.
     """
-    source_raw = jnp.asarray(source_points, dtype=jnp.float64)
+    prepared = _prepared_graph_source(source_points, plan, source_mask)
+    source_raw = jnp.asarray(
+        source_points if prepared is None else prepared.points, dtype=jnp.float64
+    )
     target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
     source = _point_array("source_points", source_raw, case_shape)
@@ -577,20 +649,24 @@ def query_neighbors(
     source = source.reshape((cases, source_count, source.shape[-1]))
     target = target.reshape((cases, target_count, target.shape[-1]))
     source_valid = _point_mask(
-        "source_mask", source_mask, case_shape, source_count
+        "source_mask",
+        source_mask if prepared is None else prepared.active,
+        case_shape,
+        source_count,
     ).reshape((cases, source_count))
     target_valid = _point_mask(
         "target_mask", target_mask, case_shape, target_count
     ).reshape((cases, target_count))
     if plan is not None:
         if plan.maximum_neighbors != neighbor_count:
-            raise ValueError("max_neighbors must match the supplied Morton query plan.")
-        return _query_neighbors_morton(
+            raise ValueError("max_neighbors must match the supplied query plan.")
+        return _query_neighbors_planned(
             source,
             target,
             source_valid,
             target_valid,
             plan=plan,
+            prepared=prepared,
             radius=radius,
             periodic_lengths=periodic_lengths,
             exclude_self=exclude_self,
@@ -698,7 +774,7 @@ def batched_knn_query_graph(
     target_chunk_size: int | None = None,
     source_chunk_size: int | None = None,
     query_workspace_bytes: int = 4 * 1024 * 1024,
-    plan: MortonNeighborQueryPlan | None = None,
+    plan: MortonNeighborQueryPlan | BVHNeighborQueryPlan | None = None,
     weight_kind: MollifierKind | None = None,
     weight_radius: float | None = None,
     source_type: int = 0,
@@ -712,7 +788,10 @@ def batched_knn_query_graph(
     ``query_workspace_bytes`` (default 4 MiB), as in ``query_neighbors``.
     Explicit positive integer chunks override automatic sizes.
     """
-    source_raw = jnp.asarray(source_points, dtype=jnp.float64)
+    prepared = _prepared_graph_source(source_points, plan, source_mask)
+    source_raw = jnp.asarray(
+        source_points if prepared is None else prepared.points, dtype=jnp.float64
+    )
     target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
     source = _point_array("source_points", source_raw, case_shape)
@@ -726,7 +805,10 @@ def batched_knn_query_graph(
     source = source.reshape((case_count, source_count, coord_dim))
     target = target.reshape((case_count, target_count, coord_dim))
     source_valid = _point_mask(
-        "source_mask", source_mask, case_shape, source_count
+        "source_mask",
+        source_mask if prepared is None else prepared.active,
+        case_shape,
+        source_count,
     ).reshape((case_count, source_count))
     target_valid = _point_mask(
         "target_mask", target_mask, case_shape, target_count
@@ -750,9 +832,9 @@ def batched_knn_query_graph(
         )
 
     neighborhood = query_neighbors(
-        source,
+        source if prepared is None else prepared,
         target,
-        source_mask=source_valid,
+        source_mask=source_valid if prepared is None else None,
         target_mask=target_valid,
         max_neighbors=int(k),
         radius=radius,
@@ -889,7 +971,7 @@ def batched_knn_graph(
     target_chunk_size: int | None = None,
     source_chunk_size: int | None = None,
     query_workspace_bytes: int = 4 * 1024 * 1024,
-    plan: MortonNeighborQueryPlan | None = None,
+    plan: MortonNeighborQueryPlan | BVHNeighborQueryPlan | None = None,
     validate: bool = True,
 ) -> GraphIR:
     """Build a JIT-compatible counts-first batch of homogeneous KNN graphs.
@@ -898,16 +980,20 @@ def batched_knn_graph(
     ``query_workspace_bytes`` (default 4 MiB), as in ``query_neighbors``.
     Explicit positive integer chunks override automatic sizes.
     """
-    raw = jnp.asarray(points, dtype=jnp.float64)
+    prepared = _prepared_graph_source(points, plan, node_mask)
+    raw = jnp.asarray(points if prepared is None else prepared.points, dtype=jnp.float64)
     case_shape = tuple(raw.shape[:-2])
     point_array = _point_array("points", raw, case_shape)
     point_count = point_array.shape[-2]
     coord_dim = point_array.shape[-1]
     case_count = prod(case_shape) if case_shape else 1
     point_array = point_array.reshape((case_count, point_count, coord_dim))
-    valid = _point_mask("node_mask", node_mask, case_shape, point_count).reshape(
-        (case_count, point_count)
-    )
+    valid = _point_mask(
+        "node_mask",
+        node_mask if prepared is None else prepared.active,
+        case_shape,
+        point_count,
+    ).reshape((case_count, point_count))
     payload = _point_features("node_features", node_features, case_shape, point_count)
     if payload is not None:
         payload = payload.reshape(
@@ -917,9 +1003,9 @@ def batched_knn_graph(
     if measure is not None:
         measure = measure.reshape((case_count, point_count))
     neighborhood = query_neighbors(
+        point_array if prepared is None else prepared,
         point_array,
-        point_array,
-        source_mask=valid,
+        source_mask=valid if prepared is None else None,
         target_mask=valid,
         max_neighbors=int(k),
         radius=radius,

@@ -391,23 +391,44 @@ parents, ordered children, leaf item ranges, and physical cell bounds. Every
 active point occurs in exactly one leaf range. Coincident points remain in one
 range even when its occupancy exceeds the preferred target.
 
-`refresh` refits when cell membership and stable IDs remain unchanged. A
-rebuild produces a complete candidate and accepts it atomically. Invalid
-points, duplicate stable IDs, or node-capacity exhaustion leave the previous
-accepted hierarchy authoritative.
+`refresh` first refreshes the prepared source order. When the canonical order,
+activity, and stable IDs are unchanged and every active point remains in its
+leaf prefix, it refits cell geometry on the existing topology without sorting
+or rebuilding (`refitted`). Otherwise it builds a complete candidate and
+accepts it atomically (`rebuilt`). Invalid points, duplicate stable IDs, or
+node-capacity exhaustion leave the previous accepted hierarchy authoritative.
 
 ## Compact plane execution and exact point queries
 
-`MortonNeighborQueryPlan` and `MortonRadiusRelationPlan` sort sources once by
-their canonical Morton code and stable ID. Every occupied cell at every prefix
-level is then one contiguous span of that order, located by binary search over
-the sorted codes, so no per-level structure is allocated. Each target visits
-the `3^d` stencil around its own coarse cell, skips stencil cells farther than
-the active search bound, and packs at most `maximum_candidates` sources into a
-fixed-width buffer. Distances and selection run only over that buffer, and
-targets are processed in bounded chunks (`target_chunk_size`), so the working
-set is bounded by chunk size times candidate capacity rather than by the
-target-by-source product.
+Exact point queries separate source preparation from target queries.
+`MortonSourcePlan(address, point_capacity).prepare(points, active_mask=...,
+stable_ids=...)` sorts the sources once by validity, canonical Morton code, and
+stable ID and returns a `PreparedMortonSources` artifact. It keeps the live
+logical `points` (differentiable), the wrapped coordinates in storage order,
+the logical/storage permutations, and source validity evidence.
+`MortonNeighborQueryPlan`, `MortonRadiusRelationPlan`, and
+`MortonRadiusShellWitnessPlan` are constructed from the source plan, and their
+`query`/`certify` methods accept only prepared sources from that same plan. One
+artifact therefore serves any number of target batches and all three query
+kinds without re-sorting. Source masks and stable IDs are fixed at preparation;
+a query refuses an artifact from a different source plan.
+
+`MortonSourcePlan.refresh(previous, points)` returns a
+`MortonSourceTransition`. When activity and IDs are unchanged, every active point
+stays in the domain, and the new codes remain in canonical order under the
+previous permutation, the sort is skipped (`reused_order`). Otherwise the order
+is rebuilt. A failed candidate never replaces the accepted artifact. Omitted
+masks or IDs retain the previous values; refresh preserves the prepared
+coordinate and ID dtypes.
+
+Every occupied cell at every prefix level is one contiguous span of the
+prepared order, located by binary search over the sorted codes, so no per-level
+structure is allocated. Each target visits the `3^d` stencil around its own
+coarse cell, skips stencil cells farther than the active search bound, and packs
+at most `maximum_candidates` sources into a fixed-width buffer. Distances and
+selection run only over that buffer, and targets are processed in bounded chunks
+(`target_chunk_size`), so the working set is bounded by chunk size times
+candidate capacity rather than by the target-by-source product.
 
 The k-nearest-neighbor query starts at the finest level whose visited stencil
 holds enough sources. Its selection is certified when the k-th distance (or the
@@ -424,31 +445,72 @@ Every result carries a per-target `status` (`MortonNeighborQueryStatus`):
 `CANDIDATE_OVERFLOW`, or `UNCERTIFIED`. Rows that are not complete return no
 neighbors, and evidence reports the required candidate width, overflowing and
 uncertified row counts, and source/target validity. A possibly wrong neighbor
-is never returned as valid.
+is never returned as valid. Candidate capacity is a hard resource bound: a
+strongly clustered cloud (in the limit, coincident points) can require every
+source as a candidate and is refused rather than truncated.
 
 ```python
+source_plan = phx.discretization.spatial.MortonSourcePlan(address, source.shape[-2])
 query_plan = phx.discretization.spatial.MortonNeighborQueryPlan(
-    address,
-    source_capacity=source.shape[-2],
+    source_plan,
     target_capacity=target.shape[-2],
     maximum_neighbors=16,
     maximum_candidates=512,
 )
-neighbors = phx.graph.query_neighbors(
-    source,
-    target,
-    max_neighbors=16,
-    plan=query_plan,
-)
+sources = source_plan.prepare(source)
+first = query_plan.query(sources, target)
+second = query_plan.query(sources, other_target)
 ```
 
-The exact query defaults to budget-derived source/target tiles:
+### Exact BVH point queries
+
+`BVHSourcePlan(dimension, point_capacity, leaf_size=8, periodic_lengths=...)`
+prepares a capacity-fixed MEDIAN bounding-volume hierarchy on the device. Median
+cut positions depend only on capacity and leaf size, so the topology layout is
+fixed when the plan is constructed and `prepare` runs entirely in JAX: one
+deterministic segmented sort per dividing level, followed by the existing
+level-wise bounds reduction. Inactive or invalid points become empty leaf
+slots. The hierarchy is the existing `PackedBVH`; host Morton and SAH builds
+through `prepare_bvh` are unchanged.
+
+`BVHNeighborQueryPlan(source_plan, target_capacity, maximum_neighbors)` runs an
+exact branch-and-bound k-nearest-neighbor query on that hierarchy. Leaves have
+bounded size even for coincident points, so the clustered clouds that exhaust a
+Morton candidate buffer remain admissible. It supports the same target masks,
+target stable IDs, self exclusion, inclusive `radius` and per-target
+`target_radii`, and (distance, stable ID) ordering, and returns logical source
+indices. Per-target status (`BVHNeighborQueryStatus`) and evidence report
+inactive or invalid targets, invalid or duplicate-ID sources, and traversal
+resource exhaustion; an incomplete row returns no neighbors. Nonperiodic
+pruning bounds use the same ordered arithmetic as candidate distances, so they
+are conservative without an epsilon. Periodic axes contribute zero to node
+lower bounds: results stay exact, but pruning is weak on periodic axes, so
+Morton plans remain the recommended periodic route. Coordinates must be finite
+and within the plan's representable magnitude; source and target precision
+must match.
+
+Targets are traversed in bounded chunks; the default chunk fills a fixed
+per-chunk slot budget (stack, `k` candidates, and one leaf per target), because
+divergent traversal lanes run until the slowest finishes and many short chunks
+would serialize the work.
+
+Neither query family falls back to the other. Morton plans suit periodic
+domains (BVH pruning is weak on periodic axes) and also provide radius
+relations and shell witnesses; BVH plans keep bounded leaves for clustered or
+coincident clouds and accept any dimension; dense or blocked graph queries need
+no preparation and suit small problems or large `k`. The crossover depends on
+point count, clustering, `k`, and the device; `tools/spatial_query_benchmarks.py
+--scenario nearest` measures preparation and repeated queries for all three.
+
+`phx.graph.query_neighbors` accepts either plan, or a prepared source artifact
+with its matching plan; see [Graph operators](api/operators/graph.md). Without a
+plan, the exact dense graph query uses budget-derived source/target tiles:
 `target_chunk_size=None`, `source_chunk_size=None`, and
 `query_workspace_bytes=4 * 1024 * 1024`. Whole-fit pair work uses one parallel
 sort without tile loops; above budget it uses exact two-axis top-k merging.
 Explicit positive integer chunks override the respective automatic extent.
 Evidence records the executed tile sizes and budget alongside the backend.
-Supplying a Morton plan is explicit because the
+Supplying a Morton or BVH plan is explicit because the
 crossover depends on point count, clustering, query/source ratio, device, and
 candidate capacity. `neighbors.evidence` identifies the realization and
 reports exactness, finite input, completeness, and success. Discrete selected
@@ -463,9 +525,25 @@ those planes. A geometric opening policy accepts unequal-size node pairs
 for far translation and opens the remainder until exact leaf completion. Every
 ordered point pair is covered by exactly one accepted ancestor or one leaf
 route. Queue, far-route, and near-route requirements are counted before their
-fixed-capacity products are accepted. Node expansion radii are finite powers
-of two that enclose their tight point bounds; scale exponent range and failures
-remain visible in schedule evidence.
+fixed-capacity products are accepted. Accepted far pairs are appended to a
+fixed-capacity buffer in traversal order, so retained storage does not grow
+with the number of refinement steps. An optional `frontier_widths` ladder of
+increasing static widths (ending at `queue_capacity`) evaluates each refinement
+step at the smallest width holding the live frontier; results, order, and
+refusal are identical to full-width traversal. Each rung compiles its own
+branch, so the ladder trades compilation time for less traversal work and
+temporary storage when the live frontier is much smaller than the queue
+capacity; full-width traversal remains the default.
+`recheck` re-evaluates the opening criterion for every retained far pair under
+current geometry with the same acceptance calculation used by `build`. Node
+expansion radii are finite powers of two that enclose their tight point bounds;
+scale exponent range and failures remain visible in schedule evidence.
+
+`MortonPlaneSchedulePlan.refresh` refits node bounds, centers, scales, and
+common prefixes on the existing groups when the source refresh reuses the
+canonical order: leaf groups are fixed-size sorted ranges and parents group a
+fixed number of adjacent children, so an unchanged order and activity preserve
+every membership and connection. Any order, mask, or ID change rebuilds.
 
 Plane schedules also support distinct source and target supports. Each schedule
 retains its own logical permutation, padded node AABBs, and child ranges;

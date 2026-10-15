@@ -22,6 +22,7 @@ from .._core import (
 from ..spatial import (
     MortonAddressPlan,
     MortonRadiusRelationPlan,
+    MortonSourcePlan,
     SpatialDistanceBackend,
 )
 from ._core import ParticleDiscretization
@@ -148,9 +149,9 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
             plan.maximum_depth,
             periodic_axes=plan.box.periodic_axes,
         )
+        source_plan = MortonSourcePlan(address, particles.capacity)
         query_plan = MortonRadiusRelationPlan(
-            address,
-            particles.capacity,
+            source_plan,
             particles.capacity,
             plan.maximum_pairs,
             inclusive=False,
@@ -236,13 +237,14 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
             if requested.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & requested
+        sources = self.query_plan.source_plan.prepare(
+            value, active_mask=active, stable_ids=self.particle_ids
+        )
         result = self.query_plan.query(
-            value,
-            value,
+            sources,
+            sources.points,
             self.plan.search_radius,
-            source_mask=active,
             target_mask=active,
-            source_stable_ids=self.particle_ids,
             target_stable_ids=self.particle_ids,
             exclude_self=True,
             pair_once=True,

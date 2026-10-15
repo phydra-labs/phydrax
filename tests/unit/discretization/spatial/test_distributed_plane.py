@@ -10,6 +10,7 @@ from phydrax.discretization.spatial import (
     DistributedMortonNeighborQueryPlan,
     MortonAddressPlan,
     MortonNeighborQueryPlan,
+    MortonSourcePlan,
 )
 
 
@@ -47,12 +48,10 @@ def test_distributed_morton_contracts() -> None:
         target,
         source_stable_ids=stable_ids,
     )
-    authority = MortonNeighborQueryPlan(
-        _address(),
-        6,
-        3,
-        3,
-    ).query(source, target, source_stable_ids=stable_ids)
+    source_plan = MortonSourcePlan(_address(), 6)
+    authority = MortonNeighborQueryPlan(source_plan, 3, 3).query(
+        source_plan.prepare(source, stable_ids=stable_ids), target
+    )
 
     assert bool(distributed.evidence.successful)
     np.testing.assert_array_equal(distributed.source_indices, authority.source_indices)
@@ -92,12 +91,10 @@ def test_distributed_morton_matches_single_device_authority(device_count: int) -
         3,
         group,
     ).query(source, target)
-    authority = MortonNeighborQueryPlan(
-        _address(),
-        24,
-        8,
-        3,
-    ).query(source, target)
+    source_plan = MortonSourcePlan(_address(), 24)
+    authority = MortonNeighborQueryPlan(source_plan, 8, 3).query(
+        source_plan.prepare(source), target
+    )
     assert bool(result.evidence.successful)
     np.testing.assert_array_equal(result.source_indices, authority.source_indices)
     np.testing.assert_array_equal(result.valid, authority.valid)

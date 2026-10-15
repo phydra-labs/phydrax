@@ -17,6 +17,7 @@ from ._laplace3d import (
     MultipoleResourceEvidence3D,
     MultipoleTruncationEvidence3D,
     PreparedLaplaceMultipole3D,
+    TranslationRoute3D,
 )
 from ._radial3d import (
     HelmholtzMultipoleEvaluation3D,
@@ -43,6 +44,7 @@ __all__ = [
     "PreparedHelmholtzMultipole3D",
     "PreparedLaplaceMultipole3D",
     "PreparedModifiedHelmholtzMultipole3D",
+    "TranslationRoute3D",
     "evaluate_laplace_layer_multipole_3d",
     "prepare_laplace_qbx_far_local_3d",
 ]

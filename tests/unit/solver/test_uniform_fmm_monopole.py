@@ -230,6 +230,8 @@ def test_capacity_exhaustion_is_reported_not_raised() -> None:
     assert not bool(far.successful)
     assert not bool(far.evidence.successful)
     assert int(far.evidence.required_far) > int(far.evidence.far_capacity)
+    assert np.isnan(np.asarray(far.potential)).all()
+    assert np.isnan(np.asarray(far.gradient)).all()
 
     node_limited = _plan(1, maximum_nodes=2)
     nodes = node_limited.evaluate_monopole(
@@ -238,6 +240,8 @@ def test_capacity_exhaustion_is_reported_not_raised() -> None:
     )
     assert not bool(nodes.successful)
     assert int(nodes.evidence.required_nodes) > int(nodes.evidence.node_capacity)
+    assert np.isnan(np.asarray(nodes.potential)).all()
+    assert np.isnan(np.asarray(nodes.gradient)).all()
 
 
 def test_monopole_route_refuses_short_range_and_foreign_structures() -> None:
@@ -258,3 +262,115 @@ def test_monopole_route_refuses_short_range_and_foreign_structures() -> None:
         _plan(2).evaluate_monopole(structure, strengths)
     with pytest.raises(ValueError, match="one value per prepared position"):
         _plan(1).evaluate_monopole(structure, strengths[:-1])
+
+
+def test_structure_refresh_reuses_geometry_and_rejects_atomically() -> None:
+    positions, strengths = _points(16, 37)
+    plan = _plan(1)
+    previous = plan.prepare_structure(positions, box_size=_BOX, depth=_DEPTH)
+    baseline = plan.evaluate_monopole(previous, strengths)
+
+    @jax.jit
+    def refresh(points: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+        transition = plan.refresh_structure(previous, points, box_size=_BOX, depth=_DEPTH)
+        field = plan.evaluate_monopole(transition.accepted, strengths)
+        return transition.successful, transition.reused_topology, field.potential
+
+    successful, reused, potential = refresh(jnp.asarray(positions))
+    assert bool(successful)
+    assert bool(reused)
+    np.testing.assert_array_equal(potential, baseline.potential)
+    moved = positions + 1e-9
+    moved_successful, moved_reused, moved_potential = refresh(jnp.asarray(moved))
+    assert bool(moved_successful)
+    assert bool(moved_reused)
+    fresh = plan.evaluate_monopole(
+        plan.prepare_structure(moved, box_size=_BOX, depth=_DEPTH), strengths
+    )
+    np.testing.assert_allclose(moved_potential, fresh.potential, rtol=1e-12, atol=1e-12)
+    changed = positions.copy()
+    changed[0, 0] = 1.25
+    rejected = plan.refresh_structure(previous, changed, box_size=_BOX, depth=_DEPTH)
+    assert not bool(rejected.successful)
+    assert not bool(rejected.candidate.interactions.evidence.successful)
+    np.testing.assert_array_equal(rejected.accepted.positions, previous.positions)
+    rolled_back = plan.evaluate_monopole(rejected.accepted, strengths)
+    np.testing.assert_array_equal(rolled_back.potential, baseline.potential)
+    assert not bool(plan.evaluate_monopole(rejected.candidate, strengths).successful)
+
+
+def test_structure_refresh_rebuilds_when_retained_far_mac_fails() -> None:
+    positions = jnp.asarray(
+        [[0.05, 0.2, 0.2], [0.25, 0.2, 0.2], [0.75, 0.2, 0.2], [0.95, 0.2, 0.2]],
+        dtype=jnp.float64,
+    )
+    plan = UniformFMMPlan(
+        1.0,
+        CartesianExpansionSpace(1),
+        softening=_SOFTENING,
+        maximum_leaf_occupancy=2,
+        coarsening_factor=2,
+        target_top_nodes=1,
+    )
+    previous = plan.prepare_structure(positions, box_size=_BOX, depth=_DEPTH)
+    assert int(previous.interactions.evidence.required_far) > 0
+    moved = positions.at[1, 0].set(0.45).at[2, 0].set(0.55)
+    schedule_update = previous.schedule_plan.refresh(previous.schedule, moved)
+    recheck = previous.interaction_plan.recheck(
+        schedule_update.candidate, interactions=previous.interactions
+    )
+    assert not bool(recheck.successful)
+    transition = plan.refresh_structure(previous, moved, box_size=_BOX, depth=_DEPTH)
+    assert bool(transition.successful)
+    assert bool(transition.rebuilt)
+    assert not bool(transition.reused_topology)
+    strengths = np.asarray([1.0, -2.0, 0.5, 3.0], dtype=np.float64)
+    result = plan.evaluate_monopole(transition.accepted, strengths)
+    expected = _direct(np.asarray(moved), strengths, np.ones(4, dtype=np.bool_))
+    np.testing.assert_allclose(result.potential, expected[0], rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(result.gradient, expected[1], rtol=1e-12, atol=1e-12)
+
+
+def test_cutoff_motion_and_activity_changes_rebuild_structure() -> None:
+    positions, _ = _points(12, 41)
+    plan = UniformFMMPlan(
+        1.0,
+        CartesianExpansionSpace(1),
+        softening=_SOFTENING,
+        short_range_scale=0.1,
+        short_range_cutoff=0.4,
+        maximum_leaf_occupancy=3,
+        coarsening_factor=2,
+        target_top_nodes=1,
+    )
+    previous = plan.prepare_structure(positions, box_size=_BOX, depth=_DEPTH)
+    unchanged = plan.refresh_structure(previous, positions, box_size=_BOX, depth=_DEPTH)
+    assert bool(unchanged.successful)
+    assert bool(unchanged.reused_topology)
+    moved = plan.refresh_structure(
+        previous, positions + 1e-6, box_size=_BOX, depth=_DEPTH
+    )
+    assert bool(moved.successful)
+    assert bool(moved.rebuilt)
+    assert not bool(moved.reused_topology)
+    active = np.ones(positions.shape[0], dtype=np.bool_)
+    active[0] = False
+    masked = plan.refresh_structure(
+        previous, positions, box_size=_BOX, depth=_DEPTH, active_mask=active
+    )
+    assert bool(masked.successful)
+    assert bool(masked.rebuilt)
+    np.testing.assert_array_equal(masked.accepted.active_mask, active)
+
+
+def test_nonfinite_active_strength_refuses_even_without_pair_events() -> None:
+    plan = _plan(1)
+    structure = plan.prepare_structure(
+        np.asarray([[0.2, 0.3, 0.4]], dtype=np.float64),
+        box_size=_BOX,
+        depth=_DEPTH,
+    )
+    result = plan.evaluate_monopole(structure, jnp.asarray([jnp.nan]))
+    assert not bool(result.successful)
+    assert np.isnan(np.asarray(result.potential)).all()
+    assert np.isnan(np.asarray(result.gradient)).all()

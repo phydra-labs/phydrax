@@ -157,3 +157,71 @@ def _clustered_layer() -> Any:
         jnp.asarray(density),
         jnp.asarray(weights),
     )
+
+
+def test_rotation_layer_payload_normals_and_qbx() -> None:
+    density = jnp.stack((DENSITY + 0.3j * DENSITY, -0.2j * DENSITY), axis=-1)
+    normals = SOURCES / jnp.linalg.norm(SOURCES, axis=-1, keepdims=True)
+    difference = TARGETS[:, None, :] - SOURCES[None, :, :]
+    radius = jnp.linalg.norm(difference, axis=-1)
+    strength = density * WEIGHTS[:, None]
+    expected_single = jnp.tensordot(
+        1.0 / (4.0 * jnp.pi * radius), strength, axes=((1,), (0,))
+    )
+    expected_double = jnp.tensordot(
+        jnp.sum(difference * normals[None, :, :], axis=-1) / (4.0 * jnp.pi * radius**3),
+        strength,
+        axes=((1,), (0,)),
+    )
+    for execution in ("level_octree", "plane_dual"):
+        prepared = phx.operators.LaplaceMultipolePlan3D(
+            SOURCES,
+            (-1.0, -1.0, -1.0),
+            (1.0, 1.0, 1.0),
+            reference_targets=TARGETS,
+            depth=3,
+            expansion_order=4,
+            translation_route="rotation",
+            execution=execution,
+            source_leaf_occupancy=1,
+            target_leaf_occupancy=1,
+            plane_coarsening_factor=2,
+            plane_target_top_nodes=1,
+        ).prepare()
+        single = phx.operators.evaluate_laplace_layer_multipole_3d(
+            prepared, SOURCES, density, WEIGHTS, TARGETS
+        )
+        double = phx.operators.evaluate_laplace_layer_multipole_3d(
+            prepared, SOURCES, density, WEIGHTS, TARGETS, source_normals=normals
+        )
+        assert bool(single.successful)
+        assert bool(double.successful)
+        np.testing.assert_allclose(single.values, expected_single, rtol=5e-3, atol=1e-4)
+        np.testing.assert_allclose(double.values, expected_double, rtol=2e-2, atol=2e-4)
+        reversed_normals = phx.operators.evaluate_laplace_layer_multipole_3d(
+            prepared, SOURCES, density, WEIGHTS, TARGETS, source_normals=-normals
+        )
+        np.testing.assert_allclose(
+            reversed_normals.values, -double.values, rtol=3e-13, atol=3e-15
+        )
+        far = phx.operators.prepare_laplace_qbx_far_local_3d(
+            prepared, SOURCES, density, WEIGHTS, TARGETS, source_normals=normals
+        )
+        assert bool(far.successful)
+        np.testing.assert_allclose(
+            jax.vmap(prepared.l2p)(far.coefficients, TARGETS, TARGETS),
+            double.far_values,
+            rtol=3e-11,
+            atol=3e-13,
+        )
+        direction = 0.1 * normals
+        _, tangent = jax.jvp(
+            lambda values: (
+                phx.operators.evaluate_laplace_layer_multipole_3d(
+                    prepared, SOURCES, density, WEIGHTS, TARGETS, source_normals=values
+                ).values
+            ),
+            (normals,),
+            (direction,),
+        )
+        np.testing.assert_allclose(tangent, 0.1 * double.values, rtol=3e-12, atol=3e-14)

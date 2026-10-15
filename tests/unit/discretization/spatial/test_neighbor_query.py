@@ -9,6 +9,7 @@ from phydrax.discretization.spatial import (
     MortonNeighborQueryPlan,
     MortonNeighborQueryStatus,
     MortonRadiusRelationPlan,
+    MortonSourcePlan,
 )
 
 
@@ -32,8 +33,9 @@ def _plan(
     periodic: tuple[bool, bool] = (False, False),
 ) -> MortonNeighborQueryPlan:
     return MortonNeighborQueryPlan(
-        MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 10, periodic_axes=periodic),
-        sources,
+        MortonSourcePlan(
+            MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 10, periodic_axes=periodic), sources
+        ),
         targets,
         neighbors,
         maximum_candidates=candidates,
@@ -84,18 +86,22 @@ def test_nearest_neighbors_match_brute_force_on_clustered_points() -> None:
             target = np.concatenate((source[:40], jittered))
             target_ids = np.arange(120, dtype=np.int64)
         k = 6
+        source_plan = MortonSourcePlan(
+            _address(dimension, periodic=periodic), source.shape[0]
+        )
         result = MortonNeighborQueryPlan(
-            _address(dimension, periodic=periodic),
-            source.shape[0],
+            source_plan,
             target.shape[0],
             k,
             maximum_candidates=256,
             target_chunk_size=32,
         ).query(
-            jnp.asarray(source),
+            source_plan.prepare(
+                jnp.asarray(source),
+                active_mask=jnp.asarray(active),
+                stable_ids=jnp.asarray(source_ids),
+            ),
             jnp.asarray(target),
-            source_mask=jnp.asarray(active),
-            source_stable_ids=jnp.asarray(source_ids),
             target_stable_ids=jnp.asarray(target_ids),
             exclude_self=exclude_self,
             radius=radius,
@@ -133,18 +139,17 @@ def test_radius_relation_matches_brute_force_on_clustered_points() -> None:
         points = _clustered(rng, 300, dimension, periodic=periodic)
         ids = rng.permutation(300).astype(np.int64) + 1000
         radius = 0.06
+        source_plan = MortonSourcePlan(_address(dimension, periodic=periodic), 300)
         result = MortonRadiusRelationPlan(
-            _address(dimension, periodic=periodic),
-            300,
+            source_plan,
             300,
             20_000,
             maximum_candidates=300,
             target_chunk_size=64,
         ).query(
-            jnp.asarray(points),
+            source_plan.prepare(jnp.asarray(points), stable_ids=jnp.asarray(ids)),
             jnp.asarray(points),
             radius,
-            source_stable_ids=jnp.asarray(ids),
             target_stable_ids=jnp.asarray(ids),
             exclude_self=True,
             pair_once=pair_once,
@@ -185,10 +190,10 @@ def test_duplicate_and_equidistant_ties_order_by_stable_id() -> None:
         ]
     )
     stable_ids = jnp.asarray([50, 70, 20, 40, 30, 10, 60])
-    result = _plan(7, 1, 7).query(
-        source,
+    plan = _plan(7, 1, 7)
+    result = plan.query(
+        plan.source_plan.prepare(source, stable_ids=stable_ids),
         jnp.asarray([[0.5, 0.5]]),
-        source_stable_ids=stable_ids,
     )
     assert bool(result.evidence.successful)
     np.testing.assert_array_equal(
@@ -199,10 +204,10 @@ def test_duplicate_and_equidistant_ties_order_by_stable_id() -> None:
 def test_nearest_neighbors_exclude_self_with_stable_ids() -> None:
     source = jnp.asarray([[0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]])
     stable_ids = jnp.asarray([40, 10, 30, 20])
-    result = _plan(4, 4, 3).query(
+    plan = _plan(4, 4, 3)
+    result = plan.query(
+        plan.source_plan.prepare(source, stable_ids=stable_ids),
         source,
-        source,
-        source_stable_ids=stable_ids,
         target_stable_ids=stable_ids,
         exclude_self=True,
     )
@@ -215,10 +220,12 @@ def test_nearest_neighbors_exclude_self_with_stable_ids() -> None:
 def test_nearest_neighbors_handle_masks_radius_and_periodicity() -> None:
     source = jnp.asarray([[0.98, 0.5], [0.1, 0.5], [0.5, 0.5], [0.75, 0.5]])
     target = jnp.asarray([[0.02, 0.5], [0.5, 0.5]])
-    result = _plan(4, 2, 3, periodic=(True, False)).query(
-        source,
+    plan = _plan(4, 2, 3, periodic=(True, False))
+    result = plan.query(
+        plan.source_plan.prepare(
+            source, active_mask=jnp.asarray([True, True, False, True])
+        ),
         target,
-        source_mask=jnp.asarray([True, True, False, True]),
         target_mask=jnp.asarray([True, False]),
         radius=0.2,
     )
@@ -237,7 +244,8 @@ def test_tiny_candidate_capacity_reports_overflow_per_row() -> None:
     crowded = [[0.3, 0.3]] * 8
     source = jnp.asarray(crowded + [[0.9, 0.9], [0.92, 0.9]])
     target = jnp.asarray([[0.3, 0.3], [0.9, 0.91]])
-    result = _plan(10, 2, 2, candidates=4).query(source, target)
+    plan = _plan(10, 2, 2, candidates=4)
+    result = plan.query(plan.source_plan.prepare(source), target)
 
     assert not bool(result.evidence.successful)
     assert int(result.evidence.overflow_rows) == 1
@@ -252,9 +260,12 @@ def test_tiny_candidate_capacity_reports_overflow_per_row() -> None:
     np.testing.assert_array_equal(result.valid[0], False)
     np.testing.assert_array_equal(result.source_indices[1], [8, 9])
 
-    relation = MortonRadiusRelationPlan(
-        _address(), 10, 10, 64, maximum_candidates=4
-    ).query(source, source, 0.05, exclude_self=True)
+    plan = MortonRadiusRelationPlan(
+        MortonSourcePlan(_address(), 10), 10, 64, maximum_candidates=4
+    )
+    relation = plan.query(
+        plan.source_plan.prepare(source), source, 0.05, exclude_self=True
+    )
     assert not bool(relation.evidence.successful)
     assert not bool(relation.evidence.complete)
     assert int(relation.evidence.overflow_rows) == 8
@@ -270,14 +281,19 @@ def test_derived_default_capacity_refuses_overflow_instead_of_growing() -> None:
     background = rng.uniform(0.0, 1.0, (100, 2))
     points = np.concatenate((cluster, background))
     k = 8
-    plan = MortonNeighborQueryPlan(_address(), 1600, 1600, k)
+    plan = MortonNeighborQueryPlan(MortonSourcePlan(_address(), 1600), 1600, k)
     declared = MortonNeighborQueryPlan(
-        _address(), 1600, 1600, k, maximum_candidates=plan.maximum_candidates
+        MortonSourcePlan(_address(), 1600),
+        1600,
+        k,
+        maximum_candidates=plan.maximum_candidates,
     )
     # The derivation, not only the resulting width, is part of the identity.
     assert plan.plan_id != declared.plan_id
 
-    result = plan.query(jnp.asarray(points), jnp.asarray(points))
+    result = plan.query(
+        plan.source_plan.prepare(jnp.asarray(points)), jnp.asarray(points)
+    )
     status = np.asarray(result.status)
     overflow = status == MortonNeighborQueryStatus.CANDIDATE_OVERFLOW
     assert overflow.any() and not bool(result.evidence.successful)
@@ -299,8 +315,11 @@ def test_target_radii_keep_exactly_the_nearest_sources_within_each_radius() -> N
     radii = rng.uniform(0.02, 0.12, 20)
     radii[0] = np.inf
     k = 6
-    result = MortonNeighborQueryPlan(_address(), 200, 20, k).query(
-        jnp.asarray(source), jnp.asarray(target), target_radii=jnp.asarray(radii)
+    plan = MortonNeighborQueryPlan(MortonSourcePlan(_address(), 200), 20, k)
+    result = plan.query(
+        plan.source_plan.prepare(jnp.asarray(source)),
+        jnp.asarray(target),
+        target_radii=jnp.asarray(radii),
     )
     assert bool(result.evidence.successful)
     distances = _squared_distances(target, source, periodic=False)
@@ -318,7 +337,8 @@ def test_target_radii_keep_exactly_the_nearest_sources_within_each_radius() -> N
 def test_out_of_domain_targets_and_sources_fail_closed() -> None:
     source = jnp.asarray([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]])
     target = jnp.asarray([[0.15, 0.15], [1.5, 0.5]])
-    result = _plan(4, 2, 2).query(source, target)
+    plan = _plan(4, 2, 2)
+    result = plan.query(plan.source_plan.prepare(source), target)
     np.testing.assert_array_equal(
         result.status,
         [MortonNeighborQueryStatus.COMPLETE, MortonNeighborQueryStatus.INVALID_TARGET],
@@ -326,8 +346,8 @@ def test_out_of_domain_targets_and_sources_fail_closed() -> None:
     assert int(result.evidence.invalid_targets) == 1
     assert not bool(result.evidence.successful)
 
-    invalid_source = _plan(4, 2, 2).query(
-        source.at[3, 0].set(jnp.nan), target[:1].repeat(2, 0)
+    invalid_source = plan.query(
+        plan.source_plan.prepare(source.at[3, 0].set(jnp.nan)), target[:1].repeat(2, 0)
     )
     assert not bool(invalid_source.evidence.sources_valid)
     assert not bool(invalid_source.evidence.finite)
@@ -340,21 +360,23 @@ def test_out_of_domain_targets_and_sources_fail_closed() -> None:
 def test_nearest_neighbor_query_jits() -> None:
     source = jnp.asarray([[0.1, 0.1], [0.3, 0.3], [0.6, 0.6], [0.9, 0.9]])
     target = jnp.asarray([[0.2, 0.2], [0.8, 0.8]])
-    query = eqx.filter_jit(_plan(4, 2, 2).query)
-    result = query(source, target)
+    plan = _plan(4, 2, 2)
+    query = eqx.filter_jit(plan.query)
+    result = query(plan.source_plan.prepare(source), target)
     assert bool(result.evidence.successful)
     np.testing.assert_array_equal(result.counts, 2)
 
 
 def test_radius_relation_is_stable_pair_once_and_periodic() -> None:
-    plan = MortonRadiusRelationPlan(_address(1, periodic=True, depth=16), 4, 4, 6)
+    plan = MortonRadiusRelationPlan(
+        MortonSourcePlan(_address(1, periodic=True, depth=16), 4), 4, 6
+    )
     points = jnp.asarray([[0.98], [0.03], [0.4], [0.65]])
     stable_ids = jnp.asarray([40, 10, 30, 20])
     result = plan.query(
-        points,
+        plan.source_plan.prepare(points, stable_ids=stable_ids),
         points,
         0.26,
-        source_stable_ids=stable_ids,
         target_stable_ids=stable_ids,
         exclude_self=True,
         pair_once=True,
@@ -370,21 +392,22 @@ def test_radius_relation_is_stable_pair_once_and_periodic() -> None:
 def test_radius_relation_boundary_and_pair_overflow_are_explicit() -> None:
     address = MortonAddressPlan((0.0,), (1.0,), 8)
     points = jnp.asarray([[0.0], [0.25], [0.5], [0.75]])
-    closed = MortonRadiusRelationPlan(address, 4, 4, 3, inclusive=True).query(
-        points, points, 0.25, exclude_self=True, pair_once=True
-    )
+    sources = MortonSourcePlan(address, 4).prepare(points)
+    closed = MortonRadiusRelationPlan(
+        MortonSourcePlan(address, 4), 4, 3, inclusive=True
+    ).query(sources, points, 0.25, exclude_self=True, pair_once=True)
     assert bool(closed.evidence.successful)
     assert int(closed.evidence.required_pairs) == 3
 
-    open_result = MortonRadiusRelationPlan(address, 4, 4, 3, inclusive=False).query(
-        points, points, 0.25, exclude_self=True, pair_once=True
-    )
+    open_result = MortonRadiusRelationPlan(
+        MortonSourcePlan(address, 4), 4, 3, inclusive=False
+    ).query(sources, points, 0.25, exclude_self=True, pair_once=True)
     assert bool(open_result.evidence.successful)
     assert int(open_result.evidence.required_pairs) == 0
 
-    overflow = MortonRadiusRelationPlan(address, 4, 4, 2, inclusive=True).query(
-        points, points, 0.25, exclude_self=True, pair_once=True
-    )
+    overflow = MortonRadiusRelationPlan(
+        MortonSourcePlan(address, 4), 4, 2, inclusive=True
+    ).query(sources, points, 0.25, exclude_self=True, pair_once=True)
     assert not bool(overflow.evidence.successful)
     assert bool(overflow.evidence.pair_overflow)
     assert int(overflow.evidence.required_pairs) == 3

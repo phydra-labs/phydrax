@@ -279,11 +279,24 @@ clamps to at least one pair. Equal distances retain source-index order.
 policy. If `max_neighbors` is omitted without a plan, k equals the source count,
 so required output can still be quadratic.
 Supplying a `MortonNeighborQueryPlan` explicitly selects coarse Morton-cell
-execution with a bounded candidate buffer per target while preserving logical
-indices, source masks, target masks, stable equal-distance ordering, optional
-self exclusion, and per-axis periodicity. Radius boundaries are inclusive.
-The tile arguments are validated with a supplied plan but do not override its
-candidate capacity or execution policy.
+execution with a bounded candidate buffer per target; a `BVHNeighborQueryPlan`
+selects exact branch-and-bound traversal of a device-built MEDIAN hierarchy,
+which keeps bounded leaves for clustered or coincident clouds. Both preserve
+logical indices, source masks, target masks, stable equal-distance ordering,
+optional self exclusion, and per-axis periodicity; evidence reports
+`backend="morton"` or `"bvh"`. Radius boundaries are inclusive. The plan's
+periodic lengths must match `periodic_lengths`. The tile arguments are
+validated with a supplied plan but do not override its capacity or execution
+policy.
+
+With raw source points, the graph prepares the plan's sources for every call.
+To reuse one preparation across target batches, pass the prepared artifact
+(`PreparedMortonSources` or `PreparedBVHSources`, unbatched or stacked over
+cases) in the source position together with its matching plan. Prepared graph
+sources must hold float64 points with undeclared (logical-index) IDs and own
+their source activity, so `source_mask` is refused. Offsets and distances are
+recomputed from the artifact's live points, so geometry gradients flow exactly
+as for raw sources.
 
 ```python
 address = phx.discretization.spatial.MortonAddressPlan(
@@ -292,9 +305,9 @@ address = phx.discretization.spatial.MortonAddressPlan(
     20,
     periodic_axes=(True, False),
 )
+source_plan = phx.discretization.spatial.MortonSourcePlan(address, source.shape[-2])
 plan = phx.discretization.spatial.MortonNeighborQueryPlan(
-    address,
-    source_capacity=source.shape[-2],
+    source_plan,
     target_capacity=target.shape[-2],
     maximum_neighbors=8,
 )
@@ -305,14 +318,22 @@ neighborhood = phx.graph.query_neighbors(
     periodic_lengths=(1.0, None),
     plan=plan,
 )
+prepared = source_plan.prepare(source)
+reused = phx.graph.query_neighbors(
+    prepared,
+    other_target,
+    max_neighbors=8,
+    periodic_lengths=(1.0, None),
+    plan=plan,
+)
 ```
 
 Candidate capacity is a completeness bound, not an approximation knob. A
 target whose visited cells overflow the buffer, or whose k-th distance cannot
 be certified against the visited region, returns no routes and sets
-`evidence.complete` and `evidence.successful` false.
-The Pallas distance realization is explicit and retains a native JVP; the
-portable JAX realization remains the default.
+`evidence.complete` and `evidence.successful` false; the graph never falls back
+to another route. The Pallas distance realization is explicit and retains a
+native JVP; the portable JAX realization remains the default.
 
 ::: phydrax.graph.query_neighbors
 
@@ -323,6 +344,30 @@ portable JAX realization remains the default.
 ---
 
 ::: phydrax.graph.QueryNeighborhoodEvidence
+
+---
+
+::: phydrax.discretization.spatial.BVHSourcePlan
+
+---
+
+::: phydrax.discretization.spatial.PreparedBVHSources
+
+---
+
+::: phydrax.discretization.spatial.BVHNeighborQueryPlan
+
+---
+
+::: phydrax.discretization.spatial.BVHNeighborQueryResult
+
+---
+
+::: phydrax.discretization.spatial.BVHNeighborQueryEvidence
+
+---
+
+::: phydrax.discretization.spatial.BVHNeighborQueryStatus
 
 ## GraphIR model blocks
 

@@ -37,6 +37,8 @@ from ..spatial import (
     MortonNeighborQueryResult,
     MortonRadiusRelationEvidence,
     MortonRadiusRelationPlan,
+    MortonSourcePlan,
+    PreparedMortonSources,
 )
 from ..spatial._neighbor_query import _minimum_image
 from ._capacity import bucketed_storage_capacity
@@ -214,22 +216,18 @@ def _padded(values: np.ndarray, storage: int, fill: np.ndarray) -> np.ndarray:
 
 def _storage_neighborhood(
     query: MortonNeighborQueryPlan,
-    sources: Array,
+    sources: PreparedMortonSources,
     targets: Array,
-    source_mask: Array,
     target_mask: Array,
-    source_ids: Array,
     radius: float | None,
 ) -> tuple[MortonNeighborQueryResult, Array]:
     result = query.query(
         sources,
         targets,
-        source_mask=source_mask,
         target_mask=target_mask,
-        source_stable_ids=source_ids,
         radius=radius,
     )
-    relative = sources[result.source_indices] - targets[:, None, :]
+    relative = sources.points[result.source_indices] - targets[:, None, :]
     if any(query.address_plan.periodic_axes):
         relative = _minimum_image(relative, query.address_plan)
     return result, jnp.linalg.norm(relative, axis=-1)
@@ -424,9 +422,9 @@ class MeshfreeNeighborhoodPlan(StrictModule):
         target_storage = bucketed_storage_capacity(target_count)
         # Padding slots repeat an in-domain coordinate, are masked inactive,
         # and carry identities above every physical identity.
+        source_plan = MortonSourcePlan(self.address, source_storage)
         query = MortonNeighborQueryPlan(
-            self.address,
-            source_storage,
+            source_plan,
             target_storage,
             requested,
             # A declared bound above the storage capacity is never binding.
@@ -437,13 +435,12 @@ class MeshfreeNeighborhoodPlan(StrictModule):
             ),
             target_chunk_size=self.target_chunk_size,
         )
-        result, distances = _compiled_storage_neighborhood(
-            query,
+        prepared_sources = source_plan.prepare(
             jax.device_put(_padded(sources, source_storage, sources[0])),
-            jax.device_put(_padded(targets, target_storage, sources[0])),
-            jax.device_put(_padded(active, source_storage, np.asarray(False))),
-            jax.device_put(np.arange(target_storage) < target_count),
-            jax.device_put(
+            active_mask=jax.device_put(
+                _padded(active, source_storage, np.asarray(False))
+            ),
+            stable_ids=jax.device_put(
                 np.concatenate(
                     (
                         identifiers,
@@ -453,6 +450,12 @@ class MeshfreeNeighborhoodPlan(StrictModule):
                     )
                 )
             ),
+        )
+        result, distances = _compiled_storage_neighborhood(
+            query,
+            prepared_sources,
+            jax.device_put(_padded(targets, target_storage, sources[0])),
+            jax.device_put(np.arange(target_storage) < target_count),
             None if self.envelope is None else self.envelope.candidate_radius,
         )
         # The single admission synchronization; logical rows are cut on host.
@@ -648,21 +651,24 @@ class MeshfreeEdgeRelationPlan(StrictModule):
 
     def prepare(self) -> PreparedMeshfreeEdgeRelation:
         count = self.points.shape[0]
+        source_plan = MortonSourcePlan(self.address, count)
+        sources = source_plan.prepare(
+            self.points.astype(self.precision.certification_dtype),
+            active_mask=self.active,
+            stable_ids=self.point_ids,
+        )
         plan = MortonRadiusRelationPlan(
-            self.address,
-            count,
+            source_plan,
             count,
             self.maximum_pairs,
             maximum_candidates=self.maximum_candidates,
             target_chunk_size=self.target_chunk_size,
         )
         result = plan.query(
-            self.points.astype(self.precision.certification_dtype),
-            self.points.astype(self.precision.certification_dtype),
+            sources,
+            sources.points,
             self.radius,
-            source_mask=self.active,
             target_mask=self.active,
-            source_stable_ids=self.point_ids,
             target_stable_ids=self.point_ids,
             exclude_self=True,
             pair_once=True,

@@ -1193,8 +1193,11 @@ def test_isogeometric_query_reproduces_tensor_quadratics_on_a_box_patch() -> Non
         atol=1e-11,
     )
     assert reconstruction.regularity.pieces == "polynomial"
+    # The box comes from a least-squares affine fit; its corners carry rounding.
     np.testing.assert_allclose(
-        np.asarray(reconstruction.support_geometry.bounds), ((0.0, 0.0), (2.0, 1.0))
+        np.asarray(reconstruction.support_geometry.bounds),
+        ((0.0, 0.0), (2.0, 1.0)),
+        atol=1e-12,
     )
 
 
